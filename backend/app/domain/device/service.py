@@ -331,3 +331,22 @@ class DeviceService:
         if not clean:
             raise ValidationError("device name must not be empty")
         return clean
+
+
+def device_service_for_session(session) -> DeviceService:
+    """The DB-backed device service, assembled inside its own domain.
+
+    Callers in other domains need a ``DeviceService`` bound to a session they
+    already own, and the obvious way to get one — importing
+    ``SqlDeviceRepository`` and wiring it up themselves — reaches across a domain
+    boundary into another domain's data layer. ``tests/unit/
+    test_domain_import_guard.py`` forbids exactly that, and it is right to: the
+    repository is an implementation detail this domain gets to change. Building it
+    here keeps the seam at the service.
+
+    The repository import is deferred so importing the service module does not
+    drag SQLAlchemy's mapper configuration in behind it.
+    """
+    from app.domain.device.sql_repository import SqlDeviceRepository
+
+    return DeviceService(SqlDeviceRepository(session))

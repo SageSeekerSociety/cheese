@@ -38,8 +38,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.domain.agent.platform_failures import PlatformFailure
-from app.domain.device.service import DeviceService
-from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.service import DeviceService, device_service_for_session
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +183,7 @@ async def handle_host_failure(
             online = device_hub.is_online
 
         async with factory() as session:
-            service = DeviceService(SqlDeviceRepository(session))
+            service = device_service_for_session(session)
             outcome = await swap_topic_device(
                 service,
                 topic_id=topic_id,
@@ -213,7 +212,7 @@ async def record_host_success(
 
             factory = async_session_factory
         async with factory() as session:
-            service = DeviceService(SqlDeviceRepository(session))
+            service = device_service_for_session(session)
             device_id = await service.topic_device(topic_id)
             if device_id is None:
                 return

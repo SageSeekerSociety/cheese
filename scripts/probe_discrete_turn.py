@@ -59,8 +59,11 @@ async def main() -> None:
         await pg.evaluate(
             """
             async ({ topicId }) => {
+              // Chat sockets need the logged-in page's session token.
+              const token = localStorage.getItem('accessToken') || '';
               const ws = new WebSocket(
-                `ws://${location.host}/api/topics/${topicId}/chat`);
+                `ws://${location.host}/api/topics/${topicId}/chat`
+                + `?token=${encodeURIComponent(token)}`);
               await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
               ws.send(JSON.stringify({
                 type: 'message', content: '芝士你好，用一句话介绍你自己',

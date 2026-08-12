@@ -35,7 +35,7 @@ from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
-from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
 
@@ -185,7 +185,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
             factory = async_session_factory
         async with factory() as session:
-            service = DeviceService(SqlDeviceRepository(session))
+            service = sql_device_service(session)
             device_id = await resolve_pinned_device(
                 service, self._hub.is_online, project_id, topic_id
             )

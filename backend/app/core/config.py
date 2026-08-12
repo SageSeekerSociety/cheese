@@ -330,6 +330,13 @@ class Settings(BaseSettings):
     # before the sweep calls it wedged and tears it down. See
     # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
     turn_silence_timeout_s: float = 1800.0
+    # How long a topic may sit on a mid-turn block before `/topics/{id}/status`
+    # calls it stalled. Lower than the sweep's ceiling above on purpose: this
+    # one only REPORTS, so a false positive costs a second look rather than a
+    # cancelled turn, and 10 minutes is already past the ceiling of a single
+    # blocking tool call — the longest a healthy turn can legitimately go
+    # without adding a block.
+    turn_stall_signal_s: float = 600.0
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
@@ -399,11 +406,20 @@ class Settings(BaseSettings):
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 60
+    # 后端报错回房间 (issue #283): how often to close expired burst windows so a
+    # flood that STOPPED still reports how big it was. Only bounds how late that
+    # summary line is — the dedup window decides whether it exists. 0 disables.
+    backend_error_flush_interval_s: int = 60
     # 自动同步上游: how often to pull the upstream's default branch into each
     # linked project's base. Falling behind is what makes accepts unable to push
     # (see SchedulerService.sync_upstreams), so this only has to run often
     # enough that the gap stays small — not on every commit. 0 disables it.
     upstream_sync_interval_s: int = 1800
+    # --- 结论卡 (2026-08-11) ---
+    # How often open conclusion cards past their absolute deadline are swept and
+    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
+    # the parent's digest turn ever running. 0 disables the loop (tests).
+    conclusion_sweep_interval_s: int = 60
     # Workflow file (under .github/workflows/) that deploys after a merge to
     # the base branch — must reach completed+success before a pr_open card's
     # topic is finally archived (2026-08-09 拍板: merge alone is not enough).
@@ -479,6 +495,15 @@ class Settings(BaseSettings):
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
     # membership check entirely if a token rollout surfaces an unexpected block.
     authz_enforce_topic_access: bool = True
+    # Escape hatch for LOCAL harnesses only (the eval runner's throwaway backend,
+    # browser probes): admit a chat WebSocket that carries no ``?token=`` and let
+    # the message body name its own author. That is the pre-token Phase-0 path —
+    # with it on, any client can post as any handle, which is why production
+    # leaves it off. It does NOT weaken the invalid/expired-token case: a socket
+    # that presents a token we cannot verify is refused either way, because
+    # silently downgrading a failed credential to "anonymous" is what let a whole
+    # batch of messages land under 匿名者 while the sender saw no error at all.
+    chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
     # (task AI advice, rank checks, email/notifications, meilisearch, real-name

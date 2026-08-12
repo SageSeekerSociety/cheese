@@ -34,6 +34,17 @@ from app.domain.device.repository import HostHealth
 DEFAULT_FAILURE_THRESHOLD = 2
 DEFAULT_QUARANTINE = timedelta(minutes=30)
 
+# How long a strike stays "recent enough" to be part of a streak. Two failures an
+# hour apart are not one dying machine; they are two incidents, and the machine
+# very likely served good turns in between.
+#
+# This is also the safety net under the success path. Clearing the streak on a good
+# turn is what "consecutive" normally means, but that clear is best-effort — the
+# turn layer only pays for it when THAT process saw the machine fail, so a strike
+# recorded before a restart has nobody left to clear it. Without this window such a
+# strike would wait indefinitely to ambush the next unrelated failure.
+DEFAULT_STREAK_WINDOW = timedelta(minutes=30)
+
 
 @dataclass(frozen=True, slots=True)
 class Verdict:
@@ -68,13 +79,21 @@ def judge_failure(
     *,
     threshold: int = DEFAULT_FAILURE_THRESHOLD,
     cooldown: timedelta = DEFAULT_QUARANTINE,
+    streak_window: timedelta = DEFAULT_STREAK_WINDOW,
 ) -> Verdict:
     """Fold one host-scoped failure into the machine's health.
 
-    The streak only continues when the code is unchanged: two *different*
-    host-scoped failures in a row are two accidents, not one dying machine.
+    A streak continues only when the previous strike was the SAME code and is
+    still recent: two *different* host-scoped failures in a row are two accidents
+    rather than one dying machine, and a strike from an hour ago is history, not
+    evidence about now.
     """
-    if health is not None and health.last_failure_code == code:
+    if (
+        health is not None
+        and health.last_failure_code == code
+        and health.last_failure_at is not None
+        and now - health.last_failure_at <= streak_window
+    ):
         streak = health.consecutive_failures + 1
     else:
         streak = 1

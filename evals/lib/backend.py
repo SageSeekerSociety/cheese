@@ -65,6 +65,13 @@ class EvalBackend:
                 "WORKSPACE_ROOT": str(self.workspace_root),
                 "SCHEDULER_INTERVAL_SECONDS": "0",
                 "SANDBOX_TOKEN": self.sandbox_token,
+                # Scenarios speak as several different people ("xinyu", "alice",
+                # …) with no login behind them, so their chat sockets carry no
+                # session token and the platform would refuse them. Safe here and
+                # nowhere else: this backend is a throwaway sqlite instance bound
+                # to 127.0.0.1 for one run. Production never sets it — with it on,
+                # any client can post as any handle.
+                "CHAT_WS_ALLOW_ANONYMOUS": "true",
                 # Never inherit the dev process' request-scoped overrides.
                 "PYTHONPATH": str(BACKEND_DIR),
             }
