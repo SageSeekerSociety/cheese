@@ -1,7 +1,7 @@
 """结论卡 (conclusion_cards) — 回流有回执、有状态、有幂等
 
 Revision ID: c8b1f4a70d29
-Revises: b8e1d4c70a92
+Revises: c1d7e0a4b839
 Create Date: 2026-08-11 09:00:00.000000
 
 """
@@ -14,10 +14,13 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c8b1f4a70d29"
-# Rechained d4a1b6f27c90 → b8e1d4c70a92: main had already landed e7f3a90c15d2 on
-# d4a1b6f27c90 while this branch sat on a 34-commit-old base, so keeping the old
-# parent forked the chain into two heads.
-down_revision: str | Sequence[str] | None = "b8e1d4c70a92"
+# Rechained twice, both times for the same reason: this branch is long-lived and
+# main keeps landing migrations under it. d4a1b6f27c90 → b8e1d4c70a92 (main had
+# added e7f3a90c15d2), then b8e1d4c70a92 → c1d7e0a4b839 (#286 added
+# accept_card_gate_started_at under b8e1d4c70a92, so staying there put us
+# side-by-side with it — two children of one parent IS the fork).
+# Re-run `uv run alembic heads` right before merging; it must print exactly one.
+down_revision: str | Sequence[str] | None = "c1d7e0a4b839"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
