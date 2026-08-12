@@ -43,6 +43,11 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         owner_handle="owner",
     )
     session = AsyncMock()
+    # 采纳即归档 now cascades (accepting a room takes the unfinished work inside
+    # it), so the accept path asks the DB for this topic's children. These tests
+    # deliver a lone topic — answer with none rather than a bare AsyncMock,
+    # which `list()` can't consume.
+    session.scalars.return_value = SimpleNamespace(all=lambda: [])
     service = AcceptService(session)
     service._repo = AsyncMock()
     service._repo.get.return_value = card
