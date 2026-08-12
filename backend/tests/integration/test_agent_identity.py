@@ -14,6 +14,7 @@ from sqlalchemy.pool import NullPool
 
 from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import TEST_DATABASE_URL
+from tests.integration.conftest import chat_ws_url
 
 
 def _own_agent(topic_id: str) -> str:
@@ -50,10 +51,8 @@ def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
 
 def _turn(client, topic_id: str) -> list[dict]:
     """Run one summoned turn against the stub agent, return its frames."""
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hi", "author": "alice", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
         frames = []
         while True:
             frame = ws.receive_json()
@@ -203,10 +202,8 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
 
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:
     """Post a human message that notifies but starts no turn."""
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": content, "author": author, "summon": False}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+        ws.send_json({"type": "message", "content": content, "summon": False})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break

@@ -95,7 +95,11 @@ async def main() -> None:
         # Post two messages over the chat WS from the page itself.
         post = """
         async ({ topicId, content, author }) => {
-          const ws = new WebSocket(`ws://${location.host}/api/topics/${topicId}/chat`);
+          // The author now comes from the socket's token, not from the frame.
+          const token = localStorage.getItem('accessToken') || '';
+          const ws = new WebSocket(
+            `ws://${location.host}/api/topics/${topicId}/chat`
+            + `?token=${encodeURIComponent(token)}`);
           await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
           ws.send(JSON.stringify({ type: 'message', content, author, summon: false }));
           const id = await new Promise((res) => {

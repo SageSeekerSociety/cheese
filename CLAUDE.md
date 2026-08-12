@@ -128,6 +128,7 @@ Route → Service → Repository → Model
 
 ## API Design
 
+- **A route's path is not a URL you can send.** The backend is mounted at `/api` on the app origin, and the gateway strips that one segment — so a 1.0 route (`/users/…`) is reached at `/api/users/…` and a 2.0 route (which carries its own `/api`) at `/api/api/topics/…`. The doubling is deliberate and load-bearing; flattening it makes six endpoints answer from the wrong generation. Writing a client, or wondering why a call 404s or returns HTML: [`docs/api-conventions.md`](docs/api-conventions.md).
 - RESTful: GET/POST/PUT/DELETE on `/resource`.
 - Pagination: `pageStart` + `pageSize`. Return `{data: [...], total: int}`.
 - Response format: `{"code": 200, "message": "...", "data": {...}}`.
@@ -241,6 +242,7 @@ Don't spend time re-diagnosing them:
 - After `git pull`, run `bash .claude/scripts/post-pull.sh`.
 - **All commits go through PR**: never commit directly to main.
 - **Multiple agents work this repo concurrently.** Before starting a fix, check open PRs and recent main commits for the same problem. In a jj workspace there is nothing to stage — the working copy is the commit — so the equivalent discipline is to run `jj status` before you hand work off and review every path in it. A cache directory in that list (43k files once) is a stop sign.
+- **Never `git stash` in a worktree.** Worktrees share one `.git`, so they share one stash stack: a `pop` returns whichever session pushed last, not yours. Two sessions collided this way on 2026-08-12 and each popped the other's diff — recoverable only via `git fsck --unreachable`, and the stack already held several `recovered:` entries from earlier collisions. To set changes aside, write a patch (`git diff > /tmp/x.patch`) or add another worktree.
 - Box operations (env changes, container recreation) go through `deploy/deploy-docker.sh` only — see the runbook in `docs/infrastructure.md`. Hand-rolled `docker compose up` drops the deploy script's image-pin exports and has broken dev before.
 
 ## Documentation Map
