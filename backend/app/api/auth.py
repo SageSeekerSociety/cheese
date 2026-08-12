@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.agent_tokens import looks_like_agent_token
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ForbiddenError
@@ -27,8 +28,17 @@ from app.core.tokens import verify_session_token
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
 from app.domain.authz.policy import authorize_topic_access
-from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
-from app.domain.identity.services import CHEESE_HANDLE, IdentityService
+from app.domain.identity.actor import (
+    Actor,
+    DelegatedIdentity,
+    TokenIdentity,
+    resolve_actor,
+)
+from app.domain.identity.services import (
+    CHEESE_HANDLE,
+    AgentTokenService,
+    IdentityService,
+)
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicRole
@@ -83,6 +93,7 @@ class ActorResolver:
         # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
         self._screen_token = screen_token
         self._identity = IdentityService(session)
+        self._agent_tokens = AgentTokenService(session)
 
     async def resolve(
         self,
@@ -125,6 +136,15 @@ class ActorResolver:
         agent_handle = (
             token_agent_handle(self._cheese_token) if self._cheese_token else None
         )
+
+        async def verify_delegated(secret: str) -> DelegatedIdentity | None:
+            # The prefix check keeps ordinary traffic off the database: a session
+            # JWT never starts with it, so only a caller actually presenting an
+            # agent token pays for the lookup.
+            if not looks_like_agent_token(secret):
+                return None
+            return await self._agent_tokens.authenticate(secret)
+
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
@@ -132,6 +152,7 @@ class ActorResolver:
             is_agent=self._identity.is_agent,
             cheese_handle=agent_handle or CHEESE_HANDLE,
             fallback_handle=fallback_handle,
+            verify_delegated=verify_delegated,
         )
         if actor is None:
             actor = Actor(

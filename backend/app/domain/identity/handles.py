@@ -33,6 +33,23 @@ def topic_agent_handle(topic_id: uuid.UUID | str) -> str:
     return f"{TOPIC_AGENT_PREFIX}{hexed[:_TOPIC_AGENT_HEX]}"
 
 
+# Suffix for the companion user a member's OWN agent acts as. Hyphen-joined on
+# purpose: the mention grammar treats ``[A-Za-z0-9_-]`` as one word, so
+# "@alice-agent" resolves to the agent and "@alice" still stops at the hyphen
+# instead of swallowing it.
+DELEGATED_AGENT_SUFFIX = "-agent"
+
+
+def delegated_agent_handle(owner_handle: str, attempt: int = 0) -> str:
+    """The handle ``owner_handle``'s own agent acts under.
+
+    ``attempt`` walks a numbered fallback for the rare case where the obvious
+    name is already someone else's: "alice-agent", "alice-agent2", …
+    """
+    base = f"{owner_handle}{DELEGATED_AGENT_SUFFIX}"
+    return base if attempt == 0 else f"{base}{attempt + 1}"
+
+
 def looks_like_agent_handle(handle: str) -> bool:
     """Whether ``handle`` belongs to 芝士 (the platform row or any topic 分身).
 

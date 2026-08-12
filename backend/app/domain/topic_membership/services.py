@@ -169,12 +169,20 @@ class TopicMemberService:
         )
 
     async def agent_handles(self, topic_id: uuid.UUID) -> list[str]:
-        """Which of this topic's members are agents, in roster order.
+        """Which of this topic's members are 芝士, in roster order.
 
         Derived from the execution binding, never a hard-coded handle check: a
-        member is an agent iff it carries an ``AgentBinding``. Returns every
-        such member, because a room may host more than one 芝士 — callers that
-        need "the agent acting here" want :meth:`resolve_agent_handle`.
+        member is 芝士 iff it carries an ``AgentBinding`` that belongs to no
+        human. Returns every such member, because a room may host more than one
+        芝士 — callers that need "the agent acting here" want
+        :meth:`resolve_agent_handle`.
+
+        A member's OWN agent (a delegated binding, reaching the platform through
+        that member's agent token) is deliberately excluded. It carries a binding
+        too, but it is that member's proxy, not the platform's: it does not read
+        the room's timeline, so a broadcast must reach it, and it must never be
+        picked as the identity 芝士 authors under — which is what including it
+        here would do the moment it took a roster seat ahead of the 分身.
         """
         from app.domain.identity.repositories import AgentBindingRepository
         from app.domain.user.repositories import UserRepository
@@ -185,7 +193,7 @@ class TopicMemberService:
         by_handle = await UserRepository(self._session).get_by_handles(
             [m.member_handle for m in members]
         )
-        agent_ids = await AgentBindingRepository(self._session).agent_user_ids(
+        agent_ids = await AgentBindingRepository(self._session).platform_agent_user_ids(
             [u.id for u in by_handle.values()]
         )
         return [

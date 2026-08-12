@@ -64,17 +64,29 @@ async def authorize_topic_access(
 ) -> bool:
     """May ``actor`` read/act in this topic's group room?
 
-    Agents (their scoped token already bound them to this project/topic at the
-    gate) and the deprecated handle-fallback are allowed; an authenticated human
-    must be a topic-roster member OR a project member — unless the topic has no
-    roster yet (legacy), which stays open."""
-    # Phase-0 fallback and agents pass through (see module docstring).
-    if not actor.authenticated or actor.is_agent:
+    Platform agents (their scoped token already bound them to this project/topic
+    at the gate) and the deprecated handle-fallback are allowed; an authenticated
+    human must be a topic-roster member OR a project member — unless the topic
+    has no roster yet (legacy), which stays open.
+
+    A member's own agent (``owner_handle`` set) is judged as that member and
+    nothing else. It gets no part of the agent pass-through above: that pass
+    exists because a scoped token is minted per turn for one topic, whereas an
+    agent token is long-lived and points at no resource, so honouring the pass
+    would hand every topic on the platform to whoever runs the agent — the exact
+    opposite of "an agent may do what its owner may do".
+    """
+    # Phase-0 fallback and platform agents pass through (see module docstring).
+    if not actor.authenticated:
         return True
-    # Authenticated human: real membership decides.
-    if await topic_role(topic_id, actor.handle) is not None:
+    if actor.is_agent and actor.owner_handle is None:
         return True
-    if await is_project_member(project_id, actor.handle):
+    # Authenticated human — or a delegated agent, weighed as its owner. Real
+    # membership decides.
+    subject = actor.owner_handle or actor.handle
+    if await topic_role(topic_id, subject) is not None:
+        return True
+    if await is_project_member(project_id, subject):
         return True
     # No roster exists yet → legacy topic, stay permissive; else it's an outsider.
     # ⚠️ 私聊 topics never get a roster (see module docstring §2), so they sit in
