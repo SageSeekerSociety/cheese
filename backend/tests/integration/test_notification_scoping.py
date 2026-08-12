@@ -6,6 +6,12 @@ caller who omitted it read everyone's mail — and ``read-all`` cleared everyone
 unread state. These tests pin the recipient to whoever is calling.
 """
 
+import asyncio
+import uuid
+
+from app.core.sandbox_auth import mint_scoped_token
+from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.repositories import BlockRepository
 from tests.integration.conftest import session_auth_headers, session_token
 
 
@@ -364,6 +370,187 @@ def test_overview_requires_auth_and_shows_only_the_callers_items(client):
 
 
 # ---- topic-unread: same rule, same layer --------------------------------------
+
+
+def _topic(client, project_id: str, title: str = "T") -> str:
+    r = client.post("/api/topics", json={"project_id": project_id, "title": title})
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["id"]
+
+
+def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            await BlockRepository(session).add(
+                project_id=uuid.UUID(project_id),
+                topic_id=uuid.UUID(topic_id),
+                author=author,
+                author_type=AuthorType.human,
+                content="msg",
+                kind=BlockKind.message,
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
+def _topic_unread(client, project_id: str, handle: str) -> dict:
+    r = client.get(
+        f"/api/projects/{project_id}/topic-unread",
+        headers=session_auth_headers(handle),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+# ---- The member page no longer hands out that member's mailbox ----------------
+
+
+def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
+    """Sibling of the /overview hole: /members/{handle}/summary read the NAMED
+    member's inbox with no auth at all, so anyone could harvest anybody's
+    pending decisions (titles + ids) by naming them in the URL."""
+    pid = _project(client)
+    _notify(client, pid, "bob拍板", target="bob", kind="decision_request")
+    _notify(client, pid, "谁来都行", kind="decision_request")
+
+    # Anonymous → 401, and nothing of bob's leaks.
+    r = client.get(f"/api/projects/{pid}/members/bob/summary")
+    assert r.status_code == 401, r.text
+    assert "bob拍板" not in r.text
+
+    # A presented-but-invalid credential is 401, not anonymous browsing.
+    r = client.get(
+        f"/api/projects/{pid}/members/bob/summary",
+        headers={"Authorization": "Bearer garbage-not-a-jwt"},
+    )
+    assert r.status_code == 401, r.text
+    assert "bob拍板" not in r.text
+
+    def waiting(handle: str) -> set[str]:
+        r = client.get(
+            f"/api/projects/{pid}/members/bob/summary",
+            headers=session_auth_headers(handle),
+        )
+        assert r.status_code == 200, r.text
+        return {w["title"] for w in r.json()["data"]["waiting_on_you"]}
+
+    # bob's own page shows bob's items; a teammate sees only the broadcasts.
+    assert waiting("bob") == {"bob拍板", "谁来都行"}
+    assert waiting("alice") == {"谁来都行"}
+
+
+# ---- topic read-cursor: identity comes from the credential, not the body ------
+
+
+def test_topic_read_cursor_belongs_to_the_verified_caller(client):
+    """POST /topics/{id}/read trusted ``body.handle`` as the identity, so anyone
+    could silently clear anyone else's unread badge."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+    _seed_message(client, pid, tid, "cheese")
+    assert _topic_unread(client, pid, "bob").get(tid) == 1
+
+    url = f"/api/topics/{tid}/read"
+
+    # Anonymous naming bob → 401; bad token naming bob → 401.
+    r = client.post(url, json={"handle": "bob"})
+    assert r.status_code == 401, r.text
+    r = client.post(
+        url,
+        json={"handle": "bob"},
+        headers={"Authorization": "Bearer garbage-not-a-jwt"},
+    )
+    assert r.status_code == 401, r.text
+
+    # Authenticated as alice, naming bob → 403, cursor unmoved.
+    r = client.post(url, json={"handle": "bob"}, headers=session_auth_headers("alice"))
+    assert r.status_code == 403, r.text
+    assert _topic_unread(client, pid, "bob").get(tid) == 1
+
+    # bob himself (asserting his own handle) clears his badge — nobody else's.
+    _seed_message(client, pid, tid, "cheese")
+    r = client.post(url, json={"handle": "bob"}, headers=session_auth_headers("bob"))
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["handle"] == "bob"
+    assert tid not in _topic_unread(client, pid, "bob")
+    assert _topic_unread(client, pid, "alice").get(tid) == 2
+
+
+# ---- creating a notification needs a credential the route itself checks -------
+
+
+def _create_body(title: str = "x") -> dict:
+    return {"level": "light", "kind": "change_alert", "title": title}
+
+
+def test_creating_a_notification_requires_a_credential(client):
+    """The route used to rely on the middleware gate alone; now it refuses the
+    unauthenticated itself. The TestClient sends the global sandbox token on
+    every request, so the bare-call cases strip it explicitly."""
+    pid = _project(client)
+    url = f"/api/projects/{pid}/notifications"
+
+    # Bare call — no cheese token, no bearer → 401, nothing created.
+    r = client.post(url, json=_create_body(), headers={"X-Cheese-Token": ""})
+    assert r.status_code == 401, r.text
+
+    # A wrong cheese token is not "no token" — still 401.
+    r = client.post(
+        url, json=_create_body(), headers={"X-Cheese-Token": "not-the-secret"}
+    )
+    assert r.status_code == 401, r.text
+
+    # A presented-but-invalid bearer must not degrade into anonymous.
+    for bad in ("garbage-not-a-jwt", session_token("alice", ttl_s=-1)):
+        r = client.post(
+            url,
+            json=_create_body(),
+            headers={"X-Cheese-Token": "", "Authorization": f"Bearer {bad}"},
+        )
+        assert r.status_code == 401, r.text
+
+    # None of the refused attempts landed.
+    r = client.get(url, headers=session_auth_headers("alice"))
+    assert r.json()["data"]["total"] == 0
+
+
+def test_creating_with_a_bearer_alone_works(client):
+    pid = _project(client)
+    r = client.post(
+        f"/api/projects/{pid}/notifications",
+        json=_create_body("人发的"),
+        headers={"X-Cheese-Token": "", **session_auth_headers("alice")},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["title"] == "人发的"
+
+
+def test_creating_with_a_scoped_token_works(client):
+    """The sandbox cheese CLI path: a per-turn token scoped to this project."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+    for token in (
+        mint_scoped_token(project_id=pid),
+        mint_scoped_token(project_id=pid, topic_id=tid),
+    ):
+        r = client.post(
+            f"/api/projects/{pid}/notifications",
+            json=_create_body("分身发的"),
+            headers={"X-Cheese-Token": token},
+        )
+        assert r.status_code == 200, r.text
+
+
+def test_a_scoped_token_for_another_project_cannot_notify_here(client):
+    pid = _project(client)
+    other = _project(client, "Other")
+    r = client.post(
+        f"/api/projects/{pid}/notifications",
+        json=_create_body(),
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=other)},
+    )
+    assert r.status_code == 403, r.text
 
 
 def test_topic_unread_refuses_an_unverified_or_mismatched_handle(client):

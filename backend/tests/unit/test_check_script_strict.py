@@ -16,13 +16,18 @@ import pytest
 
 CHECK_SH = Path(__file__).resolve().parents[3] / ".claude" / "scripts" / "check.sh"
 
+# The single revision the stub toolchain calls the migration head. check.sh
+# cross-checks it against backend/alembic/HEAD, so the stub and the fixture file
+# have to agree — hence one constant rather than two literals.
+STUB_HEAD = "abc123def456"
+
 # A `uv` that can answer everything check.sh asks of it, without a venv or a
 # network. Mirrors the real invocations: `uv run [--no-sync] <tool> ...`.
-UV_STUB = """#!/usr/bin/env bash
+UV_STUB = f"""#!/usr/bin/env bash
 args=("$@")
-for a in "${args[@]}"; do
+for a in "${{args[@]}}"; do
     case "$a" in
-        alembic) echo "abc123def456 (head)"; exit 0 ;;
+        alembic) echo "{STUB_HEAD} (head)"; exit 0 ;;
         pytest|ruff|pyright) exit 0 ;;
         python) exit 0 ;;
     esac
@@ -77,6 +82,14 @@ def _fake_repo(
     """
     repo = tmp_path / "repo"
     (repo / "backend").mkdir(parents=True)
+    # The HEAD sentinel, agreeing with what UV_STUB reports as the head. A repo
+    # whose sentinel is missing or stale is a FAIL by design, so leaving it out
+    # here would inject an unrelated red into every test that asserts green —
+    # these tests are about blocked-vs-failed accounting, not about the
+    # sentinel. `test_a_stale_head_sentinel_fails` covers the gate itself.
+    _mkdirs(repo / "backend" / "alembic" / "HEAD").write_text(
+        f"{STUB_HEAD}\n", encoding="utf-8"
+    )
     shutil.copy(CHECK_SH, _mkdirs(repo / ".claude" / "scripts" / "check.sh"))
     for name, body in (GUARDS_OK if guards is None else guards).items():
         _write_exe(repo / ".claude" / "scripts" / name, body)
@@ -262,7 +275,7 @@ def test_unreachable_database_is_a_failure_not_a_blocked_check(working_repo: Pat
         "#!/usr/bin/env bash\n"
         'for a in "$@"; do\n'
         '  case "$a" in\n'
-        "    alembic) echo 'abc123 (head)'; exit 0 ;;\n"
+        f"    alembic) echo '{STUB_HEAD} (head)'; exit 0 ;;\n"
         "    python) echo 'database unreachable at localhost:5432: refused' >&2;"
         " exit 1 ;;\n"
         "  esac\n"
@@ -273,3 +286,35 @@ def test_unreachable_database_is_a_failure_not_a_blocked_check(working_repo: Pat
 
     assert result.returncode == 1, result.stdout
     assert "FAIL: pytest (no DB" in result.stdout
+
+
+def test_a_stale_head_sentinel_fails(working_repo: Path):
+    # The whole point of the sentinel: it must be moved by the same PR that
+    # moves the chain. One head is no longer enough to pass — a repo can have
+    # exactly one head and still be about to fork, which is what happened to
+    # main on 2026-08-12.
+    (working_repo / "backend" / "alembic" / "HEAD").write_text(
+        "0000stale0000\n", encoding="utf-8"
+    )
+    result = _run(working_repo, "--no-tests", strict=True)
+
+    assert result.returncode == 1, result.stdout
+    expected = (
+        f"FAIL: backend/alembic/HEAD says '0000stale0000' but the tip is {STUB_HEAD}"
+    )
+    assert expected in result.stdout
+
+
+def test_a_missing_head_sentinel_fails_without_a_raw_shell_error(working_repo: Path):
+    # Reading the file must not be the thing that reports it missing. A bare
+    # `< alembic/HEAD` leaks bash's own redirection error to stderr *before*
+    # the written-for-humans FAIL line, and `2>/dev/null` on the command does
+    # not suppress it — the shell, not the command, is what failed. The first
+    # person to hit it then debugs "check.sh is broken" instead of "I forgot
+    # to move one line".
+    (working_repo / "backend" / "alembic" / "HEAD").unlink()
+    result = _run(working_repo, "--no-tests", strict=True)
+
+    assert result.returncode == 1, result.stdout
+    assert "FAIL: backend/alembic/HEAD says '<missing>'" in result.stdout
+    assert "No such file or directory" not in result.stderr, result.stderr

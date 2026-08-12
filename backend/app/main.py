@@ -338,7 +338,9 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/notifications$")),
+    # Notification creation is NOT here: humans post there too (Bearer), which
+    # this gate cannot see. The route enforces its own credential check via
+    # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/milestones$")),
 ]
 
