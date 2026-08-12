@@ -481,6 +481,9 @@ const commentsFolded = ref(false)
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
+// The drawer's scroll box. 现场 is the one tool that must open at its END —
+// see `scrollSiteToEnd`.
+const toolContentEl = ref<HTMLElement | null>(null)
 // 现场实时终端: when the tmux backend has this topic's container up, the 现场
 // drawer embeds the real read-only terminal (ttyd) instead of the rebuilt
 // worklog. `terminalUrl` is the backend proxy the iframe loads.
@@ -793,6 +796,18 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       toolRefreshing.value = false
     }
   }
+  if (key === 'site' && props.topic?.id === tid) await scrollSiteToEnd()
+}
+
+// 现场是施工日志，读它是为了看"刚刚发生了什么"——所以打开时停在最新一条,
+// 而不是最早一条。The timeline is rendered oldest-first (same order as the
+// chat), so "newest" means the bottom of the scroll box. Runs after the
+// spinner is gone: while `toolLoading` is true the timeline isn't in the DOM
+// yet and there is nothing to scroll.
+async function scrollSiteToEnd() {
+  await nextTick()
+  const el = toolContentEl.value
+  if (el) el.scrollTop = el.scrollHeight
 }
 
 // Panels that go stale while you watch them: 芝士 commits mid-look and the Git
@@ -2452,7 +2467,7 @@ onBeforeUnmount(() => {
             </div>
             <v-divider />
 
-            <div class="tool-content">
+            <div ref="toolContentEl" class="tool-content">
               <div v-if="toolLoading" class="d-flex justify-center py-8">
                 <v-progress-circular indeterminate color="primary" size="28" />
               </div>
