@@ -86,6 +86,41 @@ def _brief_doc(
     return "\n\n".join(parts)
 
 
+def _as_utc(moment: datetime) -> datetime:
+    """The column is TIMESTAMPTZ, but some drivers hand back a naive value and a
+    naive one raises rather than merely reading wrong when subtracted."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def _is_mid_turn_block(block: Block) -> bool:
+    """Is this block the middle of a turn rather than the end of one?
+
+    A tool action by 芝士 — `meta.tool` is stamped by the 现场 event writer, so
+    this asks what the block IS rather than parsing its text. Nothing healthy
+    leaves one as a topic's last word: the turn either keeps working (another
+    action, a message) or fails into a system event.
+    """
+    return (
+        block.kind == BlockKind.event
+        and block.author_type == AuthorType.ai
+        and bool((block.meta or {}).get("tool"))
+    )
+
+
+def _stall_block_summary(block: Block | None) -> dict | None:
+    """What the stall verdict was read off, so a caller can check it by hand
+    instead of trusting the boolean."""
+    if block is None:
+        return None
+    return {
+        "id": str(block.id),
+        "kind": str(block.kind),
+        "author_type": str(block.author_type),
+        "tool": (block.meta or {}).get("tool"),
+        "created_at": _as_utc(block.created_at).isoformat(),
+    }
+
+
 class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -205,6 +240,76 @@ class TopicService:
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
         return await self._repo.list_children(topic_id)
+
+    # ---- 轮次猝死信号 (a turn can die without the process dying) ----------
+
+    async def stall_signal(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        live_turn: dict | None,
+        background_tasks: int = 0,
+        threshold_s: float | None = None,
+    ) -> dict:
+        """Is this topic sitting on a turn that died? A queryable verdict.
+
+        The 8-hour incident (2026-08-11) was not that a turn died — turns die,
+        containers get recreated, children get OOM-killed. It was that nothing
+        on the platform could be ASKED about it: `status` still read `active`,
+        the newest block was an ordinary tool action, and the only way to find
+        out was for a human to notice the silence. The orphan sweep now cleans
+        such turns up, but a sweep is a background actor: it tells you when it
+        acts, not when you ask.
+
+        The verdict rests on two facts that a long-running turn cannot both
+        fail, which is what keeps it from crying wolf over slow work:
+
+        1. **No heartbeat.** `live_turn` is what the runner is really executing
+           for this topic (frames, tool calls included — activity the DB never
+           sees). Present and recently framed ⇒ alive, full stop. Registered
+           background commands (`cheese await`) count the same way: the agent
+           declared it is waiting on something long, so silence is expected.
+        2. **The timeline stops mid-action.** The newest block is a tool action
+           by 芝士 — the shape a turn leaves when it is cut off between doing
+           something and reporting it. A turn that ends properly leaves a
+           message, and every failure path the platform knows about leaves a
+           system event; neither counts as stalled, because in both cases the
+           topic already says what happened.
+        """
+        await self.get_or_404(topic_id)
+        if threshold_s is None:
+            threshold_s = settings.turn_stall_signal_s
+        heartbeat_s = None if live_turn is None else live_turn.get("silent_for_s")
+        alive = live_turn is not None and (
+            heartbeat_s is not None and heartbeat_s <= threshold_s
+        )
+        last = await self._blocks.latest_for_topic(topic_id)
+        silent_for_s = (
+            None
+            if last is None
+            else round((datetime.now(UTC) - _as_utc(last.created_at)).total_seconds())
+        )
+        signal: dict = {
+            "stalled": False,
+            "reason": None,
+            "threshold_s": round(threshold_s),
+            "silent_for_s": silent_for_s,
+            "last_block": _stall_block_summary(last),
+            "live_turn": live_turn,
+            "background_tasks": background_tasks,
+        }
+        if alive or background_tasks > 0:
+            return signal
+        if last is None or silent_for_s is None or silent_for_s <= threshold_s:
+            return signal
+        if not _is_mid_turn_block(last):
+            return signal
+        signal["stalled"] = True
+        # Which of the two ways it died, because they send whoever reads this to
+        # different places: a process that is not running the turn at all versus
+        # one holding a task that stopped producing.
+        signal["reason"] = "no_live_turn" if live_turn is None else "silent_turn"
+        return signal
 
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 

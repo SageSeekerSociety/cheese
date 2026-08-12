@@ -162,6 +162,25 @@ class BlockRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def latest_for_topic(self, topic_id: uuid.UUID) -> Block | None:
+        """The newest block in the topic's timeline, or None for an empty topic.
+
+        Same total order and same exclusions as `list_for_topic`, so "the last
+        thing in the topic" means here exactly what the reader sees at the
+        bottom of the conversation — which is what makes a stall verdict built
+        on it checkable by hand.
+        """
+        stmt = (
+            select(Block)
+            .where(
+                Block.topic_id == topic_id,
+                Block.kind.not_in(self._NON_TIMELINE),
+            )
+            .order_by(Block.created_at.desc(), Block.id.desc())
+            .limit(1)
+        )
+        return (await self._session.scalars(stmt)).first()
+
     async def page_for_topic(
         self,
         topic_id: uuid.UUID,

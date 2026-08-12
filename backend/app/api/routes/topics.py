@@ -250,13 +250,25 @@ async def topic_status(
     ``turn.activity`` (turn 活跃度检测, tmux backend only — None otherwise) is
     the idle-suspect signal: ``suspect_since_s_ago`` set means the turn has been
     idle past the threshold and is being actively re-confirmed alive, not yet
-    treated as dead."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    treated as dead.
+
+    ``stall`` answers the question nothing here could answer before: did a turn
+    die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
+    so it is empty after a restart and says `running` about a turn killed with
+    the process. See ``TopicService.stall_signal``."""
+    topics = TopicService(db)
+    topic = await topics.get_or_404(topic_id)
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(topic.project_id)
     turn = runner.topic_turn(topic_id)
     if turn is not None and turn.get("status") == "running":
         turn["activity"] = chat_service.tmux_activity_status(topic_id)
+    background = awaited_tasks.status_snapshot(topic_id)
+    stall = await topics.stall_signal(
+        topic_id,
+        live_turn=runner.live_turn_for_topic(topic_id),
+        background_tasks=len(background["tasks"]),
+    )
     return ok(
         {
             "topic": {
@@ -266,8 +278,9 @@ async def topic_status(
                 "branch": topic.branch_name,
             },
             "turn": turn,
+            "stall": stall,
             "cards": [_card_snapshot(c) for c in cards],
-            "background": awaited_tasks.status_snapshot(topic_id),
+            "background": background,
             "platform": {
                 "active_turns": runner.active_turns(),
                 "queued_turns": runner.project_queue_depth(topic.project_id),
