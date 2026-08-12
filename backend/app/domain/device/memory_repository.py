@@ -5,8 +5,9 @@ production implementation with the same contract.
 """
 
 import uuid
+from collections.abc import Sequence
 
-from app.domain.device.repository import AuthCode, Device
+from app.domain.device.repository import AuthCode, Device, HostHealth
 
 
 class InMemoryDeviceRepository:
@@ -14,6 +15,7 @@ class InMemoryDeviceRepository:
         self._codes: dict[str, AuthCode] = {}
         self._devices: dict[str, Device] = {}
         self._topic_device: dict[uuid.UUID, str] = {}
+        self._health: dict[str, HostHealth] = {}
 
     async def save_code(self, code: AuthCode) -> None:
         self._codes[code.code] = code
@@ -83,3 +85,24 @@ class InMemoryDeviceRepository:
     async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None:
         # write-once: an existing pin is permanent (affinity never drifts).
         self._topic_device.setdefault(topic_id, device_id)
+
+    async def release_topic_device(self, topic_id: uuid.UUID) -> None:
+        self._topic_device.pop(topic_id, None)
+
+    # -- machine health (#186) ---------------------------------------------
+
+    async def get_host_health(self, device_id: str) -> HostHealth | None:
+        return self._health.get(device_id)
+
+    async def save_host_health(self, health: HostHealth) -> None:
+        self._health[health.device_id] = health
+
+    async def clear_host_health(self, device_id: str) -> None:
+        self._health.pop(device_id, None)
+
+    async def list_host_health(
+        self, device_ids: Sequence[str]
+    ) -> dict[str, HostHealth]:
+        return {
+            d: self._health[d] for d in device_ids if self._health.get(d) is not None
+        }

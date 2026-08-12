@@ -25,7 +25,11 @@ from functools import lru_cache
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
-from app.domain.agent.platform_failures import classify_platform_failure
+from app.domain.agent.host_swap import handle_host_failure, record_host_success
+from app.domain.agent.platform_failures import (
+    HOST_SCOPED_CODES,
+    classify_platform_failure,
+)
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -56,6 +60,30 @@ def _save_inflight(reg: dict) -> None:
         path.write_text(json.dumps(reg))
     except Exception:  # noqa: BLE001 — registry is best-effort
         logger.exception("failed to persist in-flight turn registry")
+
+
+def _continuation_of(turn_id: str, info: dict) -> uuid.UUID:
+    """The continuation an orphaned registry entry should resume under.
+
+    Written by a current backend, the entry carries one. A LEGACY entry (written
+    before the field existed) does not, and its turn id is the right fallback:
+    "the continuation of a first attempt IS its turn id" is the invariant
+    ``_execute`` maintains.
+
+    Anything unparseable gets a fresh id rather than an exception. That means no
+    key from the dead turn will match — the resume degrades to the old
+    duplicate-side-effect risk for that ONE turn — but the alternative is
+    raising out of the orphan sweep, which would strand every OTHER turn the
+    sweep exists to rescue. A narrower failure beats a louder one here."""
+    raw = info.get("continuation_id")
+    for candidate in (raw, turn_id):
+        if isinstance(candidate, str):
+            try:
+                return uuid.UUID(candidate)
+            except ValueError:
+                continue
+    logger.warning("orphan entry %s has no usable continuation id", turn_id)
+    return uuid.uuid4()
 
 
 # Channel = the topic id (str). Frames are the same dicts converse yields.
@@ -178,6 +206,19 @@ class TurnRunner:
         # include tool calls, which persist no Block — so this sees activity the
         # DB cannot, and keeps a long tool-only stretch from looking dead.
         self._last_frame_at: dict[str, float] = {}
+        # Which topic each live turn belongs to. Kept in memory rather than read
+        # back off the on-disk registry because `live_turn_for_topic` answers a
+        # request (`/topics/{id}/status`), and that must not cost a file read.
+        self._live_topics: dict[str, uuid.UUID] = {}
+        # Topics whose last turn died of a host-scoped failure (#186). Clearing the
+        # machine's failure streak costs a DB round-trip, and a turn must not wait
+        # on bookkeeping to be released — `_live` is emptied only after `_execute`
+        # returns, and `live_turn_for_topic` is the heartbeat half of the stall
+        # verdict, so a slow tail here reads as "still running" to every caller.
+        # Remembering who actually failed keeps the happy path free of it entirely;
+        # what this set cannot see (a failure recorded before a restart) is covered
+        # by the staleness rule in `device.health` instead.
+        self._host_failed_topics: set[str] = set()
 
     def recent_turns(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
@@ -212,6 +253,25 @@ class TurnRunner:
             return out
         return None
 
+    def continuation_for(self, topic_id: uuid.UUID) -> uuid.UUID | None:
+        """The logical unit of work this topic's CURRENT turn belongs to, or
+        None when no turn of ours is running.
+
+        This is how an HTTP handler — which is called by the sandbox over a
+        plain request and knows nothing about turns — finds the key namespace to
+        dedup against. None means "not inside an automatic turn": a human
+        clicking a button twice means it twice, so the caller skips the check
+        rather than inventing a namespace."""
+        key = str(topic_id)
+        for rec in reversed(self._recent):
+            if rec["topic_id"] != key:
+                continue
+            if rec["status"] != "running":
+                return None
+            raw = rec.get("continuation_id")
+            return uuid.UUID(raw) if isinstance(raw, str) else None
+        return None
+
     def running_topic_ids(self) -> set[uuid.UUID]:
         """Every topic with a turn currently in flight — for bulk UI signals
         (e.g. the sidebar's "还在说话" indicator) that can't afford one
@@ -227,6 +287,32 @@ class TurnRunner:
             if rec["status"] == "running":
                 running.add(uuid.UUID(key))
         return running
+
+    def live_turn_for_topic(self, topic_id: uuid.UUID) -> dict | None:
+        """The turn THIS process is actually executing for `topic_id`, with how
+        long since it last published a frame — or None if nobody is running one.
+
+        This is the heartbeat half of the stall verdict (see
+        `TopicService.stall_signal`), and deliberately not `topic_turn()`:
+        `_recent` is a ring buffer of what turns *did*, so a turn killed with the
+        process still reads `running` there forever. `_live` is emptied by the
+        turn's own `finally`, which a dying process never gets to run — so a
+        registry entry with no `_live` entry means the executor is gone, no
+        matter what the buffer remembers.
+        """
+        now = time.monotonic()
+        for turn_id, live_topic in self._live_topics.items():
+            if live_topic != topic_id or turn_id not in self._live:
+                continue
+            frame_at = self._last_frame_at.get(turn_id)
+            return {
+                "turn_id": turn_id,
+                # None means the bookkeeping is off (an entry without a frame
+                # stamp); the caller treats an unknown gap as "not proof of
+                # life" rather than inventing a fresh one.
+                "silent_for_s": None if frame_at is None else round(now - frame_at, 1),
+            }
+        return None
 
     def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
         """Turns currently waiting on this project's concurrency semaphore."""
@@ -245,10 +331,16 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
-        submit queues behind the first)."""
+        submit queues behind the first).
+
+        ``continuation_id`` names the logical unit of work. A fresh turn starts
+        one (defaulting to its own turn id); an auto-resume INHERITS the
+        interrupted turn's, which is what lets a side effect the first attempt
+        already performed be recognised as done — see domain.idempotency.keys."""
         turn_id = uuid.uuid4()
         task = asyncio.create_task(
             self._run(
@@ -263,6 +355,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                continuation_id=continuation_id or turn_id,
             )
         )
         self._tasks.add(task)
@@ -294,11 +387,25 @@ class TurnRunner:
         task.add_done_callback(self._tasks.discard)
         return turn_id
 
-    # What the auto-resumed turn asks 芝士 to do. Its progress is intact: the
-    # topic's session pointer was saved on failure (resume, not replay).
+    # What the auto-resumed turn asks 芝士 to do.
+    #
+    # The old wording asserted "你的工作区和已完成的进度都在" unconditionally.
+    # That claim is only true of FILES. Whether the conversation came back
+    # depends on the session pointer having reached the DB before the process
+    # died, and for a pure investigation turn — which produces no files at all —
+    # "进度都在" can be false in every sense (2026-08-11, this topic: a
+    # 132-message turn resumed into a blank session that had to reconstruct the
+    # task from the blocks API). Telling a context-less 芝士 that its progress is
+    # intact is exactly how it redoes work it cannot see.
+    #
+    # So: promise only the part that is always true, and say plainly that the
+    # rest has to be checked rather than assumed.
     RESUME_PROMPT = (
-        "上一轮在中途断了（原因见上一条系统事件）。你的工作区和已完成的进度都在，"
-        "请从断点接着完成原任务；如果其实已经完成了，就直接收尾汇报。"
+        "上一轮在中途断了（原因见上一条系统事件）。工作区里的文件都在，"
+        "但**对话上下文不保证接上了**——如果你对上一轮做过什么没有印象，"
+        "那就是没接上：先核对已经发生的事（jj status 看改动、翻本话题的消息记录"
+        "看已经说过和做过什么），再决定从哪继续，别凭猜重做。"
+        "确认原任务其实已完成的话，直接收尾汇报。"
     )
 
     # Past this age an orphan is not auto-resumed: continuing a conversation
@@ -458,8 +565,14 @@ class TurnRunner:
         if not orphans:
             return 0
         # Keep what we did not claim (live turns, entries too young to judge);
-        # their own completion path removes them.
-        _save_inflight({k: v for k, v in reg.items() if k not in orphans})
+        # their own completion path removes them. Re-read rather than writing
+        # back the snapshot from the top of this method: the activity probe
+        # awaited, and a turn that registered during that window is in the file
+        # but not in `reg`. Writing the stale copy would delete its entry — and
+        # a running turn with no registry entry is invisible to every future
+        # sweep, i.e. the next death is silent again, which is the whole bug.
+        surviving = _load_inflight()
+        _save_inflight({k: v for k, v in surviving.items() if k not in orphans})
         resumed = 0
         for turn_id, info in orphans.items():
             topic_id = uuid.UUID(info["topic_id"])
@@ -516,6 +629,7 @@ class TurnRunner:
                 topic_id,
                 10.0 if turn_id in wedged else 3.0,
                 "上一轮被强制中断，接着跑",
+                continuation_id=_continuation_of(turn_id, info),
             )
             resumed += 1
             logger.info("orphan turn %s scheduled for resume", turn_id)
@@ -542,10 +656,16 @@ class TurnRunner:
         topic_id: uuid.UUID,
         after_s: float,
         reason: str = "从上一轮的断点继续",
+        *,
+        continuation_id: uuid.UUID | None = None,
     ):
         """One bounded auto-resume: wait, then run a system-nudged turn that
         continues the saved session. Resumed turns never schedule another
-        resume (is_resume=True), so a persistent failure stops after one shot."""
+        resume (is_resume=True), so a persistent failure stops after one shot.
+
+        The resume runs under the interrupted turn's ``continuation_id``, so any
+        side effect the first attempt already committed is recognised as done
+        rather than performed twice."""
 
         async def _later() -> None:
             await asyncio.sleep(after_s)
@@ -557,6 +677,7 @@ class TurnRunner:
                 summon=True,
                 is_resume=True,
                 resume_reason=reason,
+                continuation_id=continuation_id,
             )
 
         task = asyncio.create_task(_later())
@@ -700,6 +821,7 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
@@ -739,6 +861,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                continuation_id=continuation_id,
                 frames=frames,
             )
         finally:
@@ -749,6 +872,7 @@ class TurnRunner:
             # on-disk entry deliberately survives — that is what gets it resumed.
             self._live.pop(str(turn_id), None)
             self._last_frame_at.pop(str(turn_id), None)
+            self._live_topics.pop(str(turn_id), None)
             if gate is not None:
                 gate.release()
 
@@ -766,18 +890,25 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
+        continuation_id = continuation_id or turn_id
         resume_after: float | None = None
         resume_why = "上一轮异常中断，接着跑"
+        # Did this turn blame the MACHINE? Decides whether finishing counts as
+        # evidence the machine is healthy (#186) — a turn that ends in a
+        # host-scoped failure must not immediately clear the streak it just added.
+        host_failed = False
         # Correlate: every log line anywhere inside this turn carries these ids.
         bind_context(turn=str(turn_id)[:8], topic=str(topic_id)[:8])
         t0 = time.monotonic()
         rec = {
             "turn_id": str(turn_id),
             "topic_id": str(topic_id),
+            "continuation_id": str(continuation_id),
             "author": author,
             "summon": summon,
             "is_resume": is_resume,
@@ -797,6 +928,10 @@ class TurnRunner:
             "topic_id": str(topic_id),
             "started_at": rec["started_at"],
             "is_resume": is_resume,
+            # Carried across the process death: the orphan sweep must resume
+            # under the SAME continuation, or every key the dead turn claimed
+            # stops matching and its side effects are all repeated.
+            "continuation_id": str(continuation_id),
         }
         _save_inflight(reg)
         # Same instant, no await in between: a sweep can never observe this turn
@@ -805,6 +940,7 @@ class TurnRunner:
         if current is not None:
             self._live[str(turn_id)] = current
         self._last_frame_at[str(turn_id)] = time.monotonic()
+        self._live_topics[str(turn_id)] = topic_id
         logger.info(
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
         )
@@ -841,6 +977,7 @@ class TurnRunner:
                         is_resume=is_resume,
                         resume_reason=resume_reason,
                         nudge_event=nudge_event,
+                        continuation_id=continuation_id,
                     )
                 )
                 async for frame in turn_frames:
@@ -874,10 +1011,26 @@ class TurnRunner:
                     if kind == "error":
                         rec["status"] = "error"
                         rec["detail"] = str(frame.get("message", ""))[:200]
+                        if frame.get("code") in HOST_SCOPED_CODES:
+                            # The chat layer already recorded it against the
+                            # machine and may have moved the topic; don't undo
+                            # that below just because the stream ended cleanly.
+                            host_failed = True
+                            self._host_failed_topics.add(str(topic_id))
                     await self._broker.publish(channel, frame)
             if rec["status"] == "running":
                 rec["status"] = "done"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
+            if not host_failed and str(topic_id) in self._host_failed_topics:
+                self._host_failed_topics.discard(str(topic_id))
+                # Streaming a turn to its end is the machine working. That breaks
+                # the failure streak and lifts any quarantine (#186) — the way a
+                # machine gets back into rotation without anyone clearing it.
+                # Only reached when this process actually saw the machine fail:
+                # there is nothing to clear otherwise, and paying a DB round-trip
+                # on every good turn would delay the turn's release (see
+                # `_host_failed_topics`).
+                await record_host_success(topic_id=topic_id)
             logger.info(
                 "turn done: status=%s tools=%s first_output=%ss duration=%ss",
                 rec["status"],
@@ -885,6 +1038,41 @@ class TurnRunner:
                 rec["first_output_s"],
                 rec["duration_s"],
             )
+        except asyncio.CancelledError:
+            # Killed from outside: `sweep_orphans` tearing down a wedged turn, or
+            # the process shutting down. CancelledError is a BaseException, so
+            # without this clause it escapes every handler below and the record
+            # keeps saying `running` for as long as the process lives — and that
+            # record is what `GET /topics` (`running`) and `/topics/{id}/status`
+            # (`turn`) serve. Killing a turn while still reporting it alive is
+            # the same lie the sweep exists to end, so the teardown has to close
+            # the books here.
+            rec["status"] = "cancelled"
+            rec["duration_s"] = round(time.monotonic() - t0, 1)
+            rec["detail"] = rec.get("detail") or "轮次被强制结束"
+            logger.warning(
+                "turn %s cancelled for topic %s after %ss",
+                turn_id,
+                topic_id,
+                rec["duration_s"],
+            )
+            # An `error` frame is also what drops the broker's replay buffer, so
+            # a client reconnecting after the kill stops being told the dead turn
+            # is still streaming. Publishing never suspends (it is queue writes
+            # only), so it is safe on an already-cancelled task.
+            await self._broker.publish(
+                channel,
+                {
+                    "type": "error",
+                    "message": "⚠️ 芝士这轮被强制结束了（详情见话题里的系统事件）。",
+                    "persisted": False,
+                },
+            )
+            # The on-disk registry entry is deliberately left alone: whoever
+            # cancelled us owns it (the sweep already claimed it; a shutdown
+            # wants startup to find and resume it).
+            clear_context("turn", "topic")
+            raise
         except TimeoutError:
             rec["status"] = "timeout"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
@@ -973,9 +1161,56 @@ class TurnRunner:
             await self._broker.publish(channel, error_frame)
             if not is_resume and platform_failure is None:
                 resume_after = 5.0
+            if platform_failure is not None and platform_failure.host_scoped:
+                # The machine, not the turn, is the suspect (#186). Account for it
+                # and — if it has now failed once too often — move the topic to a
+                # healthy machine. That also restores the auto-resume this branch
+                # otherwise skips: "don't retry" was only ever right while there
+                # was nowhere else to retry.
+                host_failed = True
+                self._host_failed_topics.add(str(topic_id))
+                swap = await handle_host_failure(
+                    topic_id=topic_id, failure=platform_failure
+                )
+                if swap.message:
+                    await self._post_event(
+                        chat_service, topic_id, turn_id, swap.message
+                    )
+                if swap.resume_after_s is not None and not is_resume:
+                    resume_after = swap.resume_after_s
+                    resume_why = swap.resume_reason or resume_why
         if resume_after is not None and not is_resume:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
-            self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
+            self._schedule_resume(
+                chat_service,
+                topic_id,
+                resume_after,
+                resume_why,
+                continuation_id=continuation_id,
+            )
+        else:
+            # 结论卡·阶段一 (机制①): this topic's turn ended and any conclusion
+            # card it was handed is still open → 默认采信. THE place to put this
+            # is here: transport-independent, so SDK/tmux/device backends all
+            # get it. Skipped when a resume is queued — the continuation turn is
+            # the one that will actually read the card. Best-effort: the 30-minute
+            # sweeper is the backstop, and nothing here may break the turn.
+            try:
+                from datetime import UTC, datetime
+
+                from app.domain.conclusion.services import settle_turn_cards
+
+                settled = await settle_turn_cards(
+                    chat_service.session_factory,
+                    topic_id,
+                    turn_started_at=datetime.fromtimestamp(rec["started_at"], UTC),
+                )
+                if settled:
+                    logger.info(
+                        "turn end: auto-accepted %d conclusion card(s)", settled
+                    )
+            except Exception:  # noqa: BLE001 — a turn must never fail on this
+                logger.exception("conclusion settle failed for topic %s", topic_id)
         reg = _load_inflight()
         if reg.pop(str(turn_id), None) is not None:
             _save_inflight(reg)

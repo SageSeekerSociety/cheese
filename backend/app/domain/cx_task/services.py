@@ -19,7 +19,6 @@ from app.domain.cx_task.repositories import (
     TaskRepository,
     TaskTemplateRepository,
 )
-from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import SpaceRepository
 
@@ -125,7 +124,6 @@ class TaskApplicationService:
         self._repo = TaskApplicationRepository(session)
         self._templates = TaskTemplateRepository(session)
         self._tasks = TaskRepository(session)
-        self._projects = ProjectRepository(session)
         self._project_service = ProjectService(session)
         self._notifications = NotificationService(session)
 
@@ -138,7 +136,7 @@ class TaskApplicationService:
             raise NotFoundError("Task template not found")
         if not template.published:
             raise ValidationError("该题目未发布到市场，无法应征")
-        if await self._projects.get(project_id) is None:
+        if await self._project_service.get(project_id) is None:
             raise NotFoundError("Project not found")
         existing = await self._repo.get_for(
             template_id=template_id, project_id=project_id
@@ -176,7 +174,7 @@ class TaskApplicationService:
         template = await self._templates.get(application.template_id)
         if template is None:
             raise NotFoundError("Task template not found")
-        project = await self._projects.get(application.project_id)
+        project = await self._project_service.get(application.project_id)
         if project is None:
             raise NotFoundError("Project not found")
         # The concrete 题目 this team takes on: named after the applying

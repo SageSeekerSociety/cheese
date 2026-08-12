@@ -17,13 +17,28 @@ Two invariants (fusion-design §4):
     device; the caller still authorizes the resolved actor against real permissions.
 """
 
+import logging
 import secrets
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.domain.device.repository import AuthCode, Device, DeviceRepository
+from app.domain.device.health import (
+    DEFAULT_FAILURE_THRESHOLD,
+    DEFAULT_QUARANTINE,
+    Verdict,
+    is_quarantined,
+    judge_failure,
+)
+from app.domain.device.repository import (
+    AuthCode,
+    Device,
+    DeviceRepository,
+    HostHealth,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceStatus:
@@ -228,6 +243,80 @@ class DeviceService:
         pin is never overwritten (affinity is permanent for the topic's lifetime)."""
         await self._repo.bind_topic_device(topic_id, device_id)
 
+    async def release_topic_device(self, topic_id: uuid.UUID, *, reason: str) -> None:
+        """Drop a topic's pin so it can be re-pinned to another machine (#186 换身体).
+
+        This is the ONLY sanctioned way past ``bind_topic_device``'s write-once rule,
+        and it is deliberately a separate, reason-carrying call rather than a
+        loosening of the resolver: a pin that can be overwritten silently is exactly
+        the original drift bug, where a topic woke up on a different machine with an
+        empty work tree and nobody could tell. The caller must also make the move
+        visible in the room — see ``agent.host_swap``."""
+        logger.warning("releasing topic %s device pin: %s", topic_id, reason)
+        await self._repo.release_topic_device(topic_id)
+
+    # -- machine health / quarantine (#186) --------------------------------
+
+    async def host_health(self, device_id: str) -> HostHealth | None:
+        return await self._repo.get_host_health(device_id)
+
+    async def record_host_failure(
+        self,
+        device_id: str,
+        code: str,
+        *,
+        threshold: int = DEFAULT_FAILURE_THRESHOLD,
+        cooldown: timedelta = DEFAULT_QUARANTINE,
+    ) -> Verdict:
+        """Fold one HOST-SCOPED turn failure into the machine's health and return the
+        verdict. Callers must only pass codes from a ``PlatformFailure`` whose
+        ``host_scoped`` is true — a failure that would follow the topic to any machine
+        says nothing about this one."""
+        verdict = judge_failure(
+            await self._repo.get_host_health(device_id),
+            code,
+            self._now(),
+            threshold=threshold,
+            cooldown=cooldown,
+        )
+        await self._repo.save_host_health(
+            HostHealth(
+                device_id=device_id,
+                consecutive_failures=verdict.consecutive_failures,
+                last_failure_code=verdict.last_failure_code,
+                last_failure_at=verdict.last_failure_at,
+                quarantined_until=verdict.quarantined_until,
+            )
+        )
+        if verdict.quarantined:
+            logger.warning(
+                "device %s quarantined until %s after %s consecutive %s failures",
+                device_id,
+                verdict.quarantined_until,
+                verdict.consecutive_failures,
+                code,
+            )
+        return verdict
+
+    async def record_host_success(self, device_id: str) -> None:
+        """A turn got through on this machine — the streak is broken and any
+        quarantine is moot. Deleting the row is the machine's way back into rotation
+        without anyone having to clear it by hand."""
+        await self._repo.clear_host_health(device_id)
+
+    async def healthy_devices_for_project(
+        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
+    ) -> list[Device]:
+        """The project's machines that are online AND not quarantined — the pool a
+        turn may actually be placed on."""
+        devices = await self.list_devices_for_project(project_id)
+        online = [d for d in devices if is_online(d.device_id)]
+        if not online:
+            return []
+        health = await self._repo.list_host_health([d.device_id for d in online])
+        now = self._now()
+        return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
+
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
         if device is None:
@@ -242,3 +331,22 @@ class DeviceService:
         if not clean:
             raise ValidationError("device name must not be empty")
         return clean
+
+
+def device_service_for_session(session) -> DeviceService:
+    """The DB-backed device service, assembled inside its own domain.
+
+    Callers in other domains need a ``DeviceService`` bound to a session they
+    already own, and the obvious way to get one — importing
+    ``SqlDeviceRepository`` and wiring it up themselves — reaches across a domain
+    boundary into another domain's data layer. ``tests/unit/
+    test_domain_import_guard.py`` forbids exactly that, and it is right to: the
+    repository is an implementation detail this domain gets to change. Building it
+    here keeps the seam at the service.
+
+    The repository import is deferred so importing the service module does not
+    drag SQLAlchemy's mapper configuration in behind it.
+    """
+    from app.domain.device.sql_repository import SqlDeviceRepository
+
+    return DeviceService(SqlDeviceRepository(session))

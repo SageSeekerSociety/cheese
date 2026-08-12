@@ -20,6 +20,20 @@ _VCS_PERMS_MARKERS = (
     "failed to determine the secure config",
     "工作区版本库权限异常",
 )
+HOST_UNREACHABLE_CODE = "host_unreachable"
+
+# The platform's OWN wording for "the machine this topic is pinned to is not
+# answering". It lives here, not in the device provider that raises it, because
+# host-unreachable is recognised by matching this exact sentence: a
+# platform-generated marker, not a guess at some provider's copy. Matching
+# free-form connectivity text ("connection refused", "no route to host") would
+# also fire on an unreachable *model gateway*, which is not a property of the
+# machine and must never quarantine it.
+DEVICE_OFFLINE_MESSAGE = (
+    "话题绑定的算力设备已离线，请重新连接该设备再继续本轮"
+    "（不会漂到别的设备，以免工作树/会话错乱）"
+)
+_HOST_UNREACHABLE_MARKER = "话题绑定的算力设备已离线"
 _STORAGE_PATTERNS = (
     re.compile(r"\bno space left on device\b", re.IGNORECASE),
     re.compile(r"\benospc\b", re.IGNORECASE),
@@ -46,6 +60,11 @@ class PlatformFailure:
     content: str
     retryable: bool
     severity: str = "error"
+    # Is this failure a property of THIS TURN, or of THE MACHINE the turn ran on?
+    # Only host-scoped failures count towards "this machine is dead" — retrying a
+    # host-scoped failure on the same box cannot help, and moving a turn off a box
+    # for a failure that would follow it there is the expensive mistake.
+    host_scoped: bool = False
 
     @property
     def meta(self) -> dict:
@@ -66,6 +85,9 @@ STORAGE_EXHAUSTED = PlatformFailure(
         "平台正在清理临时空间，请稍后再 @芝士 继续；若持续出现，请联系管理员。"
     ),
     retryable=True,
+    # The disk belongs to the machine. Another container on the same box hits the
+    # same full filesystem, so only a different machine can help.
+    host_scoped=True,
 )
 
 RUNTIME_IMAGE_MISSING = PlatformFailure(
@@ -76,6 +98,21 @@ RUNTIME_IMAGE_MISSING = PlatformFailure(
         "请稍后再 @芝士 重试；若持续出现，请联系管理员。"
     ),
     retryable=True,
+    # A missing image is a registry/network problem that follows the topic to any
+    # machine — and usually hits every machine at once. Moving the topic would burn
+    # a healthy box for nothing, so this must NOT count towards the machine's health.
+    host_scoped=False,
+)
+
+HOST_UNREACHABLE = PlatformFailure(
+    code=HOST_UNREACHABLE_CODE,
+    title="算力机器连不上",
+    content=(
+        "这轮没能开始——本话题绑定的算力机器连不上，项目文件和已提交的改动都还在。"
+        "请检查该机器是否在线；若它持续联系不上，平台会把本话题换到别的机器上继续。"
+    ),
+    retryable=True,
+    host_scoped=True,
 )
 
 
@@ -90,6 +127,22 @@ WORKSPACE_VCS_PERMS = PlatformFailure(
     ),
     retryable=True,
 )
+
+
+# Every classification this module can return. Keep new failures in this tuple —
+# ``HOST_SCOPED_CODES`` is derived from it, so a failure left out silently opts
+# itself out of the machine-health accounting.
+ALL_FAILURES = (
+    STORAGE_EXHAUSTED,
+    RUNTIME_IMAGE_MISSING,
+    HOST_UNREACHABLE,
+    WORKSPACE_VCS_PERMS,
+)
+
+# Failure codes that indict the MACHINE rather than the turn. The turn layer reads
+# this off the wire (error frames carry only a code) to tell "this box is suspect"
+# from "this run went wrong".
+HOST_SCOPED_CODES = frozenset(f.code for f in ALL_FAILURES if f.host_scoped)
 
 
 def _text_is_workspace_vcs_perms(text: str) -> bool:
@@ -155,6 +208,25 @@ def is_runtime_image_missing(value: BaseException | str) -> bool:
     return False
 
 
+def is_host_unreachable(value: BaseException | str) -> bool:
+    """Identify "the machine this topic is pinned to is not answering".
+
+    Deliberately matches only the platform's own marker sentence
+    (``DEVICE_OFFLINE_MESSAGE``) rather than generic connectivity text — see the
+    comment on that constant for why the loose version is unsafe."""
+    if isinstance(value, str):
+        return _HOST_UNREACHABLE_MARKER in value
+
+    seen: set[int] = set()
+    current: BaseException | None = value
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if _HOST_UNREACHABLE_MARKER in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def classify_platform_failure(
     value: BaseException | str,
 ) -> PlatformFailure | None:
@@ -164,4 +236,6 @@ def classify_platform_failure(
         return RUNTIME_IMAGE_MISSING
     if is_workspace_vcs_perms(value):
         return WORKSPACE_VCS_PERMS
+    if is_host_unreachable(value):
+        return HOST_UNREACHABLE
     return None

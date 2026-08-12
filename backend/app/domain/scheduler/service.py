@@ -197,7 +197,6 @@ class SchedulerService:
         One DB transaction per card so one card's failure can't roll back
         another's progress."""
         from app.api.deps import get_turn_runner
-        from app.domain.review.repositories import AcceptCardRepository
         from app.domain.review.services import AcceptService
 
         runner = get_turn_runner()
@@ -206,9 +205,9 @@ class SchedulerService:
         async with self._sessions() as session:
             # 孤儿卡修复 (2026-08-10): cards on ARCHIVED topics are deliberately
             # NOT in this list — driving them means using the approver's GitHub
-            # token on work nobody tracks any more.
-            cards = await AcceptCardRepository(session).list_pr_open_on_active_topics()
-            card_ids = [c.id for c in cards]
+            # token on work nobody tracks any more. 那条判据留在 review 领域里
+            # （open_pr_card_ids），调度器只管拿 id。
+            card_ids = await AcceptService(session).open_pr_card_ids()
         for card_id in card_ids:
             async with self._sessions() as session:
                 try:
@@ -239,6 +238,28 @@ class SchedulerService:
             )
 
         return await gate_sweep.sweep(self._sessions, nudge=nudge)
+
+    async def sweep_conclusion_cards(self) -> dict:
+        """结论卡·阶段一 (机制①bis): the 30-minute absolute timeout.
+
+        The turn-end hook settles a card the moment the parent's digest turn
+        finishes. This covers the case that hook cannot: the digest turn never
+        ran at all (queued behind a wedged turn, refused on credits, killed by a
+        deploy). 默认采信 must not depend on any turn actually happening.
+        One transaction per sweep — the cards are independent but few.
+        """
+        from app.domain.conclusion.services import ConclusionCardService
+
+        async with self._sessions() as session:
+            try:
+                settled = await ConclusionCardService(session).sweep_expired()
+                if settled:
+                    await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("conclusion card sweep failed")
+                return {"settled": 0, "errors": [str(exc)]}
+        return {"settled": len(settled), "errors": []}
 
 
 class SchedulerRunner:
@@ -447,3 +468,36 @@ class GateSweepRunner:
                     logger.info("gate sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("gate sweep failed")
+
+
+class ConclusionSweepRunner:
+    """结论卡·阶段一: drives SchedulerService.sweep_conclusion_cards() on an
+    interval — same shape as PrPollRunner. Its whole job is making sure 默认采信
+    happens even when no turn ever ends."""
+
+    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
+        self._scheduler = scheduler
+        self._interval = interval_seconds
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+            logger.info("conclusion sweep runner started (every %ss)", self._interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                result = await self._scheduler.sweep_conclusion_cards()
+                if result["settled"] or result["errors"]:
+                    logger.info("conclusion sweep: %s", result)
+            except Exception:  # noqa: BLE001 -- maintenance loop must survive
+                logger.exception("conclusion sweep failed")

@@ -77,20 +77,25 @@ class ProjectService:
         """owner_handle == User.username (fusion A1) → that user's personal team,
         provisioning it if needed. None when the handle isn't a real user."""
         # Local imports: project ↔ team would otherwise be an import cycle.
-        from app.domain.team.repositories import TeamRepository
-        from app.domain.team.services import TeamService
+        from app.domain.team.services import team_service
         from app.domain.user.repositories import UserRepository
 
         user = await UserRepository(session=self._session).get_by_handle(owner_handle)
         if user is None:
             return None
-        team = await TeamService(
-            TeamRepository(session=self._session)
-        ).ensure_personal_team(user.id)
+        team = await team_service(self._session).ensure_personal_team(user.id)
         return team.id
 
+    async def get(self, project_id: uuid.UUID) -> Project | None:
+        """项目本身，不存在返回 None。
+
+        给「项目在不在」这类判断用——调用方要的是分支，不是 404。别的领域想拿项目
+        走这里或 :meth:`get_or_404`，不要直接构造 ``ProjectRepository``。
+        """
+        return await self._repo.get(project_id)
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
-        project = await self._repo.get(project_id)
+        project = await self.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
         return project
@@ -101,11 +106,11 @@ class ProjectService:
     async def list_for_team(self, team_id: int) -> list[Project]:
         """A team's 项目 page. For a personal team this also folds in the owner's
         legacy team-less projects (rows created before 项目归团队), newest first."""
-        from app.domain.team.repositories import TeamRepository
+        from app.domain.team.services import team_service
         from app.domain.user.repositories import UserRepository
 
         projects = await self._repo.list_by_team(team_id)
-        team = await TeamRepository(session=self._session).get_by_id(team_id)
+        team = await team_service(self._session).get_team(team_id)
         if team is not None and team.personal_owner_user_id is not None:
             owner = await UserRepository(session=self._session).get_by_id(
                 team.personal_owner_user_id
