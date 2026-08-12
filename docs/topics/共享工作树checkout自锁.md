@@ -47,7 +47,45 @@
 
 - [x] 核基线：主体修复已在 main
 - [x] 查清脏文件来源
-- [ ] 先写红测试（断言 warning 里点名被丢弃的文件、未跟踪文件不误报），确认改代码前是红的
-- [ ] 加 `git status --porcelain -uno` 日志
-- [ ] `task check` 全绿
-- [ ] 递验收卡给 <@wangchangxin>
+- [x] 先写红测试（断言 warning 里点名被丢弃的文件、未跟踪文件不误报），确认改代码前是红的
+- [x] 加 `git status --porcelain -uno` 日志
+- [x] `task check` 全绿
+- [x] 递验收卡给 <@wangchangxin>
+
+## 验收依据
+
+**基线**：本话题原先的基线落后 main 14 个提交。已把本话题的改动
+`jj rebase -s` 到 `main@upstream`（`fe949e17`，#284），无冲突。那 14 个提交
+没有一个碰过 `backend/app/domain/workspace/`，所以不存在静默覆盖别人改动的风险。
+
+**红→绿是实测的，不是推断的**：临时摘掉 `_sync_shared_checkout` 里那一行调用后，
+`test_discarded_local_modifications_are_named_in_the_log` 失败于
+`assert 'kept.txt' in ''`；恢复后 18/18 通过。
+另一条 `test_a_clean_shared_tree_logs_no_discard_warning` 摘掉调用也照样绿——
+这是**预期**的：它防的是「日志变噪音」，不是用来验证修复本身的。
+
+**静态检查**：`check.sh --no-tests` 6/6 全绿（ruff / pyright / alembic heads /
+repo guards / actions pinned / migration fork）。这正是质量闸门跑的那一份。
+
+**全量后端测试**：4034 passed、23 failed、31 skipped。23 条失败**没有一条**沾本话题：
+
+| 失败 | 条数 | 定性 |
+|---|---|---|
+| `test_machine_service.py` + `test_tmux_control.py` | 22 | CLAUDE.md 已记录的 procps 缺失（沙箱没有 `ps`/`kill` 二进制），非代码缺陷 |
+| `test_cheese_cli.py::test_await_log_lives_outside_the_worktree` | 1 | **不在已记录的名单里**，见下 |
+
+`test_market_api` 那条已知失败这次是绿的——按 CLAUDE.md 的说法带
+`ANTHROPIC_AUTH_TOKEN=dummy-for-test` 跑即可。
+
+## 顺带发现（不在本话题范围，交给人定夺）
+
+`test_cheese_cli.py::test_await_log_lives_outside_the_worktree` 在本沙箱稳定失败，
+且**单独跑也失败**（不是测试间串扰）：它 `monkeypatch.setenv("HOME", tmp_path)` 之后
+期望 `_await_log_path("run-1")` 落在 tmp 下，实际拿到
+`/home/node/.claude/cheese-await/run-1.log`——即真实 HOME。也就是说这条路径没有在调用时
+读 `HOME`。
+
+它和本话题的改动无关（本话题只碰 `workspace/service.py` 与其测试，两者都不导入
+`cheese` CLI）。但它**不在 CLAUDE.md 记录的沙箱缺口名单里**，所以我不敢断言它是
+「已知环境噪音」：也可能是 `cheese await` 的日志真的写到了固定 HOME 下。这一条按
+只报告不修处理。
