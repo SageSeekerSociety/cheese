@@ -46,3 +46,35 @@ export function shouldFollowTail(
 ): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < threshold
 }
+
+/**
+ * How many frames the tail-pin may keep re-pinning while the panel is still
+ * growing. ~30 frames ≈ 500ms at 60fps, and it stops the moment the height
+ * holds steady for one frame — measured, the panel settles in about 120ms.
+ */
+export const SITE_TAIL_PIN_FRAMES = 30
+
+/**
+ * Whether to pin the view to the bottom for another frame.
+ *
+ * A one-shot `scrollTop = scrollHeight` is not enough, and #327 shipped exactly
+ * that. The panel renders its spinner FIRST, so at the moment the scroll runs
+ * the container is one viewport tall with nothing to scroll — the assignment
+ * clamps to 0 — and the real timeline then lays out underneath, leaving the
+ * reader on the oldest entry, which is the bug #327 set out to fix. Measured on
+ * the deployed page afterwards: scrollHeight 500 at +40ms, 2066 at +120ms,
+ * scrollTop 0 the whole way.
+ *
+ * So re-pin while the height is still moving, and stop as soon as it isn't.
+ * Both bounds matter: without the height check this would fight the reader's
+ * own scrolling forever, and without the frame cap a panel that never settles
+ * (a live-streaming turn) would pin for the life of the page.
+ */
+export function shouldKeepPinning(
+  height: number,
+  lastHeight: number,
+  frames: number,
+  maxFrames = SITE_TAIL_PIN_FRAMES
+): boolean {
+  return height !== lastHeight && frames < maxFrames
+}
