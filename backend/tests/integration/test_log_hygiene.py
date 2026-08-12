@@ -68,6 +68,44 @@ def test_other_credential_shapes_are_scrubbed(raw):
     assert "***" in scrub_secrets(raw)
 
 
+# The shapes a TRACEBACK produces, which is a different set from the ones a URL
+# produces — reprs quote their values, `Bearer` carries no key name at all, and a
+# DSN hides the password between a colon and an `@`. Every line below leaked past
+# the query-string-only pattern this filter started as. Asserting on the SECRET's
+# absence, not on `***` being present: a partial match can do both at once.
+@pytest.mark.parametrize(
+    ("raw", "secret"),
+    [
+        ("Settings(anthropic_auth_token='sk-ant-api03-SECRETVALUE')", "SECRETVALUE"),
+        ('ValueError: bad {"token": "ghp_SECRETVALUE"}', "SECRETVALUE"),
+        ("headers={'Authorization': 'Bearer ghp_SECRETVALUE'}", "SECRETVALUE"),
+        ("DSN postgresql://user:SECRETPW@host/db", "SECRETPW"),
+        ("call(token='ghp_SECRETVALUE', x=1)", "SECRETVALUE"),
+        # No key name anywhere — only the value's own shape gives it away. This
+        # is the case that does not depend on us having guessed the field name.
+        ("upstream said sk-ant-api03-SECRETVALUE is invalid", "SECRETVALUE"),
+        ("cookie jar: eyJhbGciOi.eyJzdWIiOi.SECRETSIG", "SECRETSIG"),
+    ],
+)
+def test_credentials_in_a_traceback_are_scrubbed(raw, secret):
+    assert secret not in scrub_secrets(raw)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # `code` matched as a tail would scrub this out of every traceback that
+        # carries one, and the status is often the whole diagnosis.
+        "status_code=500 upstream=timeout",
+        "GET /api/topics/abc/blocks 200",
+        "rows=3 elapsed_ms=12",
+    ],
+)
+def test_ordinary_diagnostics_survive_the_filter(raw):
+    """Over-scrubbing costs the thing these reports exist to provide."""
+    assert scrub_secrets(raw) == raw
+
+
 def test_the_filter_covers_records_from_other_libraries():
     """The leak came from uvicorn's logger — code we never call — so the filter
     has to sit on the handler, not on our own log statements."""

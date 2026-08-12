@@ -15,33 +15,82 @@ from typing import Any
 
 import structlog
 
-# Query-string parameters whose value is a credential. `token` is the one that
-# actually leaked: browsers cannot set an Authorization header on a WebSocket, so
-# every WS carries `?token=<jwt>` — and uvicorn's access log prints the full URL,
-# which put live session tokens in plaintext in `docker logs`. Anyone who could
-# read the logs could impersonate the user.
-_SECRET_PARAMS = (
+# Credential-bearing key names. `token` is the one that actually leaked: browsers
+# cannot set an Authorization header on a WebSocket, so every WS carries
+# `?token=<jwt>` — and uvicorn's access log prints the full URL, which put live
+# session tokens in plaintext in `docker logs`. Anyone who could read the logs
+# could impersonate the user.
+#
+# These match as the TAIL of an identifier (`anthropic_auth_token`, `db_password`)
+# because that is how they appear in a repr. `code` is the exception: it is here
+# only for the OAuth device flow's `?code=`, and matching it as a tail would
+# scrub `status_code=500` out of every traceback that has one.
+_SECRET_KEY_TAILS = (
     "token",
-    "access_token",
-    "refresh_token",
     "secret",
     "password",
+    "passwd",
     "api_key",
     "apikey",
-    "code",
+    "credential",
 )
-_SECRET_RE = re.compile(
-    r"\b(" + "|".join(_SECRET_PARAMS) + r")=([^&\s\"']+)", re.IGNORECASE
+_SECRET_KEY_EXACT = ("code",)
+_SECRET_KEY = (
+    r"(?:[A-Za-z0-9]+_)*(?:"
+    + "|".join(_SECRET_KEY_TAILS)
+    + r")|"
+    + "|".join(_SECRET_KEY_EXACT)
+)
+# `key=value`, `key: value`, and the QUOTED forms a repr produces: `token='x'`,
+# `{"token": "x"}`. The original pattern excluded quotes from the value, which
+# meant it matched the query-string form and nothing else — a repr put the quote
+# right where the value should start, so it matched zero characters and gave up.
+_SECRET_KV_RE = re.compile(
+    # The trailing `\3?` eats the value's own closing quote so the replacement
+    # can put one back — otherwise a repr comes out as `token='***''`.
+    r"\b(" + _SECRET_KEY + r")([\"']?\s*[=:]\s*)([\"']?)[^\"'\s,;&}\])>]+\3?",
+    re.IGNORECASE,
+)
+# `postgresql://user:pw@host` — the shape a DSN takes in the traceback of a
+# database that would not connect, which is exactly when you read one.
+_URL_CRED_RE = re.compile(r"(://[^\s:/@]+:)[^\s@/]+(@)")
+# `Bearer <token>` carries no key name at all, so no key list can reach it.
+_AUTH_SCHEME_RE = re.compile(
+    r"\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE
+)
+# Last line: match the VALUE's shape, no key name involved. This is the only rule
+# that survives a field name nobody predicted — and in a traceback the field
+# names are unpredictable by construction (locals, reprs, third-party kwargs).
+_SECRET_VALUE_RE = re.compile(
+    r"\b(?:"
+    r"sk-[A-Za-z0-9_-]{8,}"  # Anthropic / OpenAI style
+    r"|gh[pousr]_[A-Za-z0-9]{8,}"  # GitHub PAT / OAuth / server / refresh
+    r"|github_pat_[A-Za-z0-9_]{8,}"
+    r"|xox[abprs]-[A-Za-z0-9-]{8,}"  # Slack
+    r"|AKIA[0-9A-Z]{12,}"  # AWS access key id
+    r"|eyJ[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]+){2}"  # JWT
+    r")"
 )
 
 
 def scrub_secrets(value: Any) -> Any:
-    """Public because the log stream is no longer the only place credentials can
+    """Strip credentials out of a string, whatever shape they arrive in.
+
+    Public because the log stream is no longer the only place credentials can
     surface: `domain.backend_log` pushes tracebacks into a room, where everyone
-    can read them. Same filter, so a shape only has to be recognized once."""
-    if isinstance(value, str) and "=" in value:
-        return _SECRET_RE.sub(r"\1=***", value)
-    return value
+    can read them — and unlike `docker logs`, that audience does NOT already
+    hold the keys. Same filter, so a shape only has to be recognized once.
+
+    Four passes, because one pattern cannot see all four shapes. `Bearer` runs
+    before the key/value pass so the latter cannot eat the scheme word and leave
+    the credential behind it exposed.
+    """
+    if not isinstance(value, str):
+        return value
+    out = _AUTH_SCHEME_RE.sub(r"\1\2***", value)
+    out = _SECRET_KV_RE.sub(r"\1\2\3***\3", out)
+    out = _URL_CRED_RE.sub(r"\1***\2", out)
+    return _SECRET_VALUE_RE.sub("***", out)
 
 
 class RedactSecrets(logging.Filter):

@@ -391,6 +391,10 @@ class Settings(BaseSettings):
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 60
+    # 后端报错回房间 (issue #283): how often to close expired burst windows so a
+    # flood that STOPPED still reports how big it was. Only bounds how late that
+    # summary line is — the dedup window decides whether it exists. 0 disables.
+    backend_error_flush_interval_s: int = 60
     # 自动同步上游: how often to pull the upstream's default branch into each
     # linked project's base. Falling behind is what makes accepts unable to push
     # (see SchedulerService.sync_upstreams), so this only has to run often

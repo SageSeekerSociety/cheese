@@ -64,6 +64,60 @@ def test_burst_collapses_into_one_summary_carrying_the_real_count() -> None:
     assert later.count == 800
 
 
+def test_a_burst_that_stopped_still_reports_its_size() -> None:
+    """The case the recurrence-driven summary could never cover: 500 failures in
+    four minutes, then someone fixes it and it never fires again. The count is
+    the severity, so it must not die with the window."""
+    intake = BackendErrorIntake()
+    room = {"sample": _err(), "topic_id": uuid.uuid4(), "project_uuid": uuid.uuid4()}
+    intake.admit("p", "fp", now=1000.0, **room)
+    for i in range(1, 500):
+        intake.admit("p", "fp", now=1000.0 + i * 0.4, **room)
+
+    assert intake.sweep(now=1000.0 + 100) == []  # window still open — say nothing
+
+    bursts = intake.sweep(now=1000.0 + DEDUP_WINDOW_S + 1)
+    assert len(bursts) == 1
+    assert bursts[0].count == 500
+    assert bursts[0].topic_id == room["topic_id"]
+
+
+def test_sweeping_twice_does_not_report_the_burst_twice() -> None:
+    intake = BackendErrorIntake()
+    room = {"sample": _err(), "topic_id": uuid.uuid4(), "project_uuid": uuid.uuid4()}
+    intake.admit("p", "fp", now=1000.0, **room)
+    intake.admit("p", "fp", now=1000.1, **room)
+
+    assert len(intake.sweep(now=1000.0 + DEDUP_WINDOW_S + 1)) == 1
+    assert intake.sweep(now=1000.0 + DEDUP_WINDOW_S + 2) == []
+
+
+def test_a_single_occurrence_gets_no_summary_when_its_window_closes() -> None:
+    """It was already reported in full — 「5 分钟内 1 次」 is noise."""
+    intake = BackendErrorIntake()
+    intake.admit(
+        "p",
+        "fp",
+        now=1000.0,
+        sample=_err(),
+        topic_id=uuid.uuid4(),
+        project_uuid=uuid.uuid4(),
+    )
+    assert intake.sweep(now=1000.0 + DEDUP_WINDOW_S + 1) == []
+
+
+def test_a_swept_burst_still_costs_an_hourly_slot() -> None:
+    """The cap outranks the summary: closing windows must not become a way to
+    put more blocks in the room than the ceiling allows."""
+    intake = BackendErrorIntake()
+    room = {"sample": _err(), "topic_id": uuid.uuid4(), "project_uuid": uuid.uuid4()}
+    for i in range(MAX_BLOCKS_PER_HOUR):
+        intake.admit("p", f"fp{i}", now=1000.0, **room)
+        intake.admit("p", f"fp{i}", now=1000.1, **room)  # make each one a burst
+
+    assert intake.sweep(now=1000.0 + DEDUP_WINDOW_S + 1) == []
+
+
 def test_lone_recurrence_after_the_window_reports_in_full_again() -> None:
     """One error, then quiet, then the same error again: that is not a burst —
     it gets a normal detail line, not a "1 次" summary."""

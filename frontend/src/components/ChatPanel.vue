@@ -28,9 +28,9 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { answerOptions, attachmentRawUrl, chatWsUrl, listBlocks, toggleReaction as apiToggleReaction } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
+import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
-import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { platformErrorPresentation } from '../lib/platformEvents'
 import {
   coalesceSplitFencedCodeBlocks,

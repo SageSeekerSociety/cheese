@@ -7,6 +7,7 @@ Two ways in, one intake:
 Both must land as event blocks a human reads as one line and 芝士 reads whole.
 """
 
+import time
 import uuid
 
 import pytest
@@ -242,6 +243,50 @@ def test_repeated_crashes_of_one_route_still_produce_one_block(
         with pytest.raises(RuntimeError):
             client.get(f"/api/topics/{tid}/__boom_for_test")
 
+    assert len(_backend_events(client, tid)) == 1
+
+
+async def test_a_flood_that_stopped_gets_its_count_when_the_window_closes(
+    in_process_db,
+):
+    """End to end for the case a recurrence-driven summary could never reach:
+    800 failures, then silence because it was fixed. The room must still learn
+    the number — that is what says how bad it was."""
+    client = in_process_db
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    token = mint_scoped_token(project_id=pid, topic_id=tid)
+    err = {"message": "nope", "exc_type": "ValueError"}
+
+    for _ in range(80):
+        _post(client, [err] * 10, token=token)
+    assert len(_backend_events(client, tid)) == 1  # the flood itself stays one line
+
+    # …and then nothing else ever fails. The clock is what closes the window.
+    written = await backend_log.flush_expired(
+        now=time.time() + backend_log.DEDUP_WINDOW_S + 1
+    )
+
+    assert written == 1
+    events = _backend_events(client, tid)
+    assert len(events) == 2
+    summary = next(e for e in events if (e["meta"] or {}).get("summary"))
+    assert summary["meta"]["count"] == 800
+    assert "800" in summary["content"]
+    assert "\n" not in summary["content"]
+
+
+async def test_flushing_with_nothing_expired_writes_nothing(in_process_db):
+    client = in_process_db
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _post(
+        client,
+        [{"message": "x"}],
+        token=mint_scoped_token(project_id=pid, topic_id=tid),
+    )
+
+    assert await backend_log.flush_expired() == 0
     assert len(_backend_events(client, tid)) == 1
 
 

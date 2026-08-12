@@ -26,14 +26,23 @@ once-per-bug rhythm of development:
   window closes — never one block per occurrence.
 - A per-project **hourly hard cap** silently drops everything beyond it.
 
-Deliberate under-reporting: a burst that stops before its window closes never
-gets its summary block (nothing arrives to close the window), and anything past
-the hourly cap is gone. That is the intended trade — 宁可漏报也不能刷屏.
+Deliberate under-reporting: anything past the hourly cap is gone, and a
+fingerprint-storm large enough to hit `_WINDOW_PRUNE_AT` forfeits the summaries
+it drops. That is the intended trade — 宁可漏报也不能刷屏.
+
+What is NOT traded away is the COUNT. A burst used to get its summary only from
+the next occurrence of the same fingerprint, so the commonest case — a bug you
+fixed, which by definition stops recurring — kept the first detail line and
+silently lost "it happened 500 times", usually the number that says how bad it
+was. `BackendErrorFlushRunner` ticks `flush_expired` so a window closes on time
+instead of on the next failure. Late, never absent.
 
 In-memory state matches the platform's single-process reality (same assumption
 as the per-topic chat locks and ``frontend_log``'s intake).
 """
 
+import asyncio
+import contextlib
 import hashlib
 import logging
 import re
@@ -140,6 +149,22 @@ def fingerprint(err: BackendErrorIn) -> str:
 class _Window:
     opened_at: float
     count: int = 1
+    # Enough to render AND route this window's summary line without a request to
+    # read it off. The flusher below closes windows long after the failing call
+    # is gone, so whatever it needs has to be captured here at open time.
+    sample: "BackendErrorIn | None" = None
+    topic_id: uuid.UUID | None = None
+    project_uuid: uuid.UUID | None = None
+
+
+@dataclass(frozen=True)
+class ExpiredBurst:
+    """A window that closed while nobody was looking — its summary is owed."""
+
+    sample: BackendErrorIn
+    count: int
+    project_uuid: uuid.UUID
+    topic_id: uuid.UUID
 
 
 @dataclass(frozen=True)
@@ -169,7 +194,16 @@ class BackendErrorIntake:
     _windows: dict[tuple[str, str], _Window] = field(default_factory=dict)
     _hourly: dict[str, list[float]] = field(default_factory=dict)
 
-    def admit(self, project_id: str, fp: str, now: float | None = None) -> Verdict:
+    def admit(
+        self,
+        project_id: str,
+        fp: str,
+        now: float | None = None,
+        *,
+        sample: BackendErrorIn | None = None,
+        topic_id: uuid.UUID | None = None,
+        project_uuid: uuid.UUID | None = None,
+    ) -> Verdict:
         now = time.time() if now is None else now
         key = (project_id, fp)
         window = self._windows.get(key)
@@ -185,13 +219,50 @@ class BackendErrorIntake:
         # was already reported in full.
         pending = window.count if window is not None else 0
         self._prune(now)
-        self._windows[key] = _Window(now)
+        self._windows[key] = _Window(
+            now, sample=sample, topic_id=topic_id, project_uuid=project_uuid
+        )
 
         if not self._take_slot(project_id, now):
             return DROP
         if pending > 1:
             return Verdict("summary", pending)
         return Verdict("detail", 1)
+
+    def sweep(self, now: float | None = None) -> list[ExpiredBurst]:
+        """Close every expired window, whether or not its error ever came back.
+
+        Without this, a burst's summary was emitted only by the NEXT occurrence
+        of the same fingerprint — and the most common shape of a bug you just
+        fixed is that there is no next occurrence. The room would keep the first
+        detail line and silently lose the fact that it happened 500 times, which
+        is usually the number that tells you how bad it was.
+
+        Reporting late is fine here; reporting never is not.
+        """
+        now = time.time() if now is None else now
+        bursts: list[ExpiredBurst] = []
+        for key, window in list(self._windows.items()):
+            if now - window.opened_at < DEDUP_WINDOW_S:
+                continue
+            del self._windows[key]
+            if window.count <= 1:
+                # It was reported in full when it opened; "1 次" adds nothing.
+                continue
+            if (
+                window.sample is None
+                or window.topic_id is None
+                or window.project_uuid is None
+            ):
+                continue  # opened without a room to write back into
+            if not self._take_slot(key[0], now):
+                continue  # over the hourly cap — the cap outranks the summary
+            bursts.append(
+                ExpiredBurst(
+                    window.sample, window.count, window.project_uuid, window.topic_id
+                )
+            )
+        return bursts
 
     def _take_slot(self, project_id: str, now: float) -> bool:
         """Consume one of the project's hourly block budget. False = over cap."""
@@ -338,7 +409,13 @@ async def record(
     blocks = BlockRepository(db)
     accepted = 0
     for err in errors:
-        verdict = intake.admit(str(topic.project_id), fingerprint(err))
+        verdict = intake.admit(
+            str(topic.project_id),
+            fingerprint(err),
+            sample=err,
+            topic_id=topic.id,
+            project_uuid=topic.project_id,
+        )
         if not verdict:
             continue
         content = (
@@ -357,6 +434,68 @@ async def record(
         )
         accepted += 1
     return {"accepted": accepted, "dropped": len(errors) - accepted}
+
+
+async def flush_expired(now: float | None = None) -> int:
+    """Write the summary line for every burst whose window has closed.
+
+    Returns how many blocks were written. Reads the session factory off the
+    module at call time so a test can point it at its own database.
+    """
+    bursts = intake.sweep(now)
+    if not bursts:
+        return 0
+    async with async_session_factory() as session:
+        blocks = BlockRepository(session)
+        for burst in bursts:
+            await blocks.add(
+                project_id=burst.project_uuid,
+                topic_id=burst.topic_id,
+                author="backend",
+                author_type=AuthorType.system,
+                content=summary_content(burst.sample, burst.count),
+                kind=BlockKind.event,
+                meta=event_meta(burst.sample, Verdict("summary", burst.count)),
+            )
+        await session.commit()
+    return len(bursts)
+
+
+class BackendErrorFlushRunner:
+    """Ticks `flush_expired` so a burst that STOPPED still gets counted.
+
+    Its own loop rather than a step in the project scheduler, for the reason
+    given in `machine/runner.py`: that scheduler spends model budget and is off
+    by default in deployments, and this is plumbing with no judgment in it.
+
+    The interval only bounds how LATE a summary is, never whether it arrives —
+    the window length decides that — so it can be lazy and cheap. A tick with no
+    expired window touches no database at all.
+    """
+
+    def __init__(self, interval_seconds: int) -> None:
+        self._interval = interval_seconds
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+            logger.info("backend error flush started (every %ss)", self._interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                await flush_expired()
+            except Exception:  # noqa: BLE001 — a flush must never kill the loop
+                logger.exception("backend error flush failed")
 
 
 async def report_request_failure(

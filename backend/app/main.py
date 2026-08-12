@@ -154,9 +154,17 @@ async def lifespan(_: FastAPI):
         settings.subscription_ingest_interval_s,
     )
     usage_ingest.start()
+    # 后端报错回房间 (issue #283): closes burst windows on a clock, so a flood
+    # that stopped still reports its size instead of waiting for a recurrence
+    # that a fixed bug never has.
+    error_flush = backend_log.BackendErrorFlushRunner(
+        settings.backend_error_flush_interval_s
+    )
+    error_flush.start()
     try:
         yield
     finally:
+        await error_flush.stop()
         await usage_ingest.stop()
         await machines.stop()
         await orphan_sweep.stop()
