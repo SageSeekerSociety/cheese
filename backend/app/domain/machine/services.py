@@ -17,8 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.device.service import DeviceService
-from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.wiring import sql_device_service
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -61,7 +60,7 @@ class MachineService:
         self._repo = ProjectMachineRepository(session)
         self._projects = ProjectRepository(session)
         self._client = client or MicroCloudClient()
-        self._devices = DeviceService(SqlDeviceRepository(session))
+        self._devices = sql_device_service(session)
 
     @property
     def available(self) -> bool:

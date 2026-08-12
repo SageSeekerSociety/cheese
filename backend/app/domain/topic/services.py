@@ -18,6 +18,8 @@ from app.domain.agent import clone
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conclusion.models import ConclusionCard
+from app.domain.conclusion.services import ConclusionCardService
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.identity.handles import looks_like_agent_handle
@@ -31,6 +33,18 @@ from app.domain.workspace import service as ws
 # deterministically derived from text — see CLAUDE.md. An upgraded block starts
 # untitled and 芝士 names it on its first turn (same as a + new topic).
 PLACEHOLDER_TITLE = "新话题"
+
+
+def _as_utc(when: datetime | None) -> datetime | None:
+    """Read a caller-supplied instant as UTC when it carries no offset.
+
+    Query strings routinely arrive as `2026-08-12T00:00:00` with no zone; the
+    columns it is compared against are TIMESTAMPTZ, so a naive value has to be
+    given one before it reaches the driver.
+    """
+    if when is None or when.tzinfo is not None:
+        return when
+    return when.replace(tzinfo=UTC)
 
 
 def _child_kind(parent: Topic) -> TopicKind:
@@ -84,6 +98,41 @@ def _brief_doc(
         else "（父话题当时还没有活文档）",
     ]
     return "\n\n".join(parts)
+
+
+def _as_utc(moment: datetime) -> datetime:
+    """The column is TIMESTAMPTZ, but some drivers hand back a naive value and a
+    naive one raises rather than merely reading wrong when subtracted."""
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+
+
+def _is_mid_turn_block(block: Block) -> bool:
+    """Is this block the middle of a turn rather than the end of one?
+
+    A tool action by 芝士 — `meta.tool` is stamped by the 现场 event writer, so
+    this asks what the block IS rather than parsing its text. Nothing healthy
+    leaves one as a topic's last word: the turn either keeps working (another
+    action, a message) or fails into a system event.
+    """
+    return (
+        block.kind == BlockKind.event
+        and block.author_type == AuthorType.ai
+        and bool((block.meta or {}).get("tool"))
+    )
+
+
+def _stall_block_summary(block: Block | None) -> dict | None:
+    """What the stall verdict was read off, so a caller can check it by hand
+    instead of trusting the boolean."""
+    if block is None:
+        return None
+    return {
+        "id": str(block.id),
+        "kind": str(block.kind),
+        "author_type": str(block.author_type),
+        "tool": (block.meta or {}).get("tool"),
+        "created_at": _as_utc(block.created_at).isoformat(),
+    }
 
 
 class TopicService:
@@ -196,15 +245,102 @@ class TopicService:
         *,
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
+        active_since: datetime | None = None,
     ) -> tuple[list[Topic], int]:
-        return (
-            await self._repo.list_for_project(project_id, sort=sort, order=order),
-            await self._repo.count_for_project(project_id),
+        topics = await self._repo.list_for_project(
+            project_id,
+            sort=sort,
+            order=order,
+            active_since=_as_utc(active_since),
         )
+        # `total` counts what the caller got: a filtered page whose total still
+        # said "all topics" would tell a paging client to keep asking for rows
+        # that do not exist.
+        total = (
+            len(topics)
+            if active_since is not None
+            else await self._repo.count_for_project(project_id)
+        )
+        return topics, total
+
+    async def last_activity_for_topics(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        return await self._repo.last_activity_for_topics(topic_ids)
 
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
         return await self._repo.list_children(topic_id)
+
+    # ---- 轮次猝死信号 (a turn can die without the process dying) ----------
+
+    async def stall_signal(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        live_turn: dict | None,
+        background_tasks: int = 0,
+        threshold_s: float | None = None,
+    ) -> dict:
+        """Is this topic sitting on a turn that died? A queryable verdict.
+
+        The 8-hour incident (2026-08-11) was not that a turn died — turns die,
+        containers get recreated, children get OOM-killed. It was that nothing
+        on the platform could be ASKED about it: `status` still read `active`,
+        the newest block was an ordinary tool action, and the only way to find
+        out was for a human to notice the silence. The orphan sweep now cleans
+        such turns up, but a sweep is a background actor: it tells you when it
+        acts, not when you ask.
+
+        The verdict rests on two facts that a long-running turn cannot both
+        fail, which is what keeps it from crying wolf over slow work:
+
+        1. **No heartbeat.** `live_turn` is what the runner is really executing
+           for this topic (frames, tool calls included — activity the DB never
+           sees). Present and recently framed ⇒ alive, full stop. Registered
+           background commands (`cheese await`) count the same way: the agent
+           declared it is waiting on something long, so silence is expected.
+        2. **The timeline stops mid-action.** The newest block is a tool action
+           by 芝士 — the shape a turn leaves when it is cut off between doing
+           something and reporting it. A turn that ends properly leaves a
+           message, and every failure path the platform knows about leaves a
+           system event; neither counts as stalled, because in both cases the
+           topic already says what happened.
+        """
+        await self.get_or_404(topic_id)
+        if threshold_s is None:
+            threshold_s = settings.turn_stall_signal_s
+        heartbeat_s = None if live_turn is None else live_turn.get("silent_for_s")
+        alive = live_turn is not None and (
+            heartbeat_s is not None and heartbeat_s <= threshold_s
+        )
+        last = await self._blocks.latest_for_topic(topic_id)
+        silent_for_s = (
+            None
+            if last is None
+            else round((datetime.now(UTC) - _as_utc(last.created_at)).total_seconds())
+        )
+        signal: dict = {
+            "stalled": False,
+            "reason": None,
+            "threshold_s": round(threshold_s),
+            "silent_for_s": silent_for_s,
+            "last_block": _stall_block_summary(last),
+            "live_turn": live_turn,
+            "background_tasks": background_tasks,
+        }
+        if alive or background_tasks > 0:
+            return signal
+        if last is None or silent_for_s is None or silent_for_s <= threshold_s:
+            return signal
+        if not _is_mid_turn_block(last):
+            return signal
+        signal["stalled"] = True
+        # Which of the two ways it died, because they send whoever reads this to
+        # different places: a process that is not running the turn at all versus
+        # one holding a task that stopped producing.
+        signal["reason"] = "no_live_turn" if live_turn is None else "silent_turn"
+        return signal
 
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 
@@ -586,11 +722,16 @@ class TopicService:
 
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str
-    ) -> Block:
+    ) -> tuple[Block, ConclusionCard | None]:
         """结论回流 (spec §6.1 / eval C4): a sub-topic's (分身) conclusion flows
         back to its parent (本体) three ways — a referencing message in the
         conversation, woven into the parent's living doc (so 分身 stay consistent
         via the doc, spec §8.4), and a change-alert so the coordinator is notified.
+
+        结论卡·阶段一 (purely additive): a 4th thing now happens — an ``open``
+        conclusion card is filed for the parent to settle, which is what finally
+        gives 回流 a receipt, a status and idempotency. The three side effects
+        above are UNCHANGED; nothing about the old flow depends on the card.
         """
         sub = await self.get_or_404(subtopic_id)
         if sub.parent_id is None:
@@ -630,4 +771,13 @@ class TopicService:
             body=markdown_preview(conclusion, 200),
             topic_id=sub.parent_id,
         )
-        return block
+
+        # 4) 结论卡: the receipt. Opening it can't fail the 回流 — a parent that
+        # was already archived has no turn left to settle a card, so it gets the
+        # three side effects above and no card.
+        card = None
+        if parent is not None and parent.status != TopicStatus.archived:
+            card = await ConclusionCardService(self._session).open_for_conclusion(
+                sub=sub, parent=parent, conclusion=conclusion
+            )
+        return block, card

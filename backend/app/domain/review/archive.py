@@ -58,7 +58,7 @@ _NOTE_MAX = 2000
 _ARCHIVE_NOTE_PREFIX = "📦"
 
 
-def _prefix(note: str, added: str) -> str:
+def prefix_note(note: str, added: str) -> str:
     """把归档说明放在最前面（它是这张卡最后、也最该被读到的一句），旧 note 保留在后。"""
     old = (note or "").strip()
     return (f"{added}\n{old}" if old else added)[:_NOTE_MAX]
@@ -89,7 +89,7 @@ async def close_cards_for_archived_topic(
         if was == AcceptStatus.pr_open and card.pr_merged_at is not None:
             # 第二阶段：PR 已经进 main 了，这是收尾，不是撤销。
             card.status = AcceptStatus.accepted
-            card.note = _prefix(
+            card.note = prefix_note(
                 card.note,
                 f"{_ARCHIVE_NOTE_PREFIX} 话题归档收尾：PR #{card.pr_number} 已合并，"
                 f"部署结果不再跟踪。",
@@ -97,7 +97,7 @@ async def close_cards_for_archived_topic(
         elif was == AcceptStatus.pr_open:
             # 第一阶段：PR 还开着。停止推进，但不替任何人去关它。
             card.status = AcceptStatus.revoked
-            card.note = _prefix(
+            card.note = prefix_note(
                 card.note,
                 f"{_ARCHIVE_NOTE_PREFIX} 话题归档，平台已停止推进 PR "
                 f"#{card.pr_number}。PR 未合并、仍开在 GitHub 上，需要人工决定"
@@ -106,7 +106,7 @@ async def close_cards_for_archived_topic(
             stranded.append(card)
         else:
             card.status = AcceptStatus.revoked
-            card.note = _prefix(
+            card.note = prefix_note(
                 card.note,
                 f"{_ARCHIVE_NOTE_PREFIX} 话题归档，验收卡随之关闭（原状态：{was}）。",
             )

@@ -33,8 +33,9 @@ from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
+from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
-from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
 
@@ -60,8 +61,11 @@ async def resolve_pinned_device(
       * already pinned → return it **iff online**; if the pinned device is offline,
         raise (queue/retry) — NEVER fall back to another device, which would start
         from an empty tree and corrupt session resume (the original drift bug);
-      * not yet pinned (first turn) → pick an online device serving the project and
-        **pin it** (write-once), so every later turn returns to the same machine.
+      * not yet pinned (first turn) → pick an online, **non-quarantined** device
+        serving the project and **pin it** (write-once), so every later turn returns
+        to the same machine. Quarantined = judged unhealthy by ``device.health``
+        (#186); a topic that is already pinned is only ever moved by the explicit
+        ``agent.host_swap`` flow, never from here.
 
     Returns the device id, or ``None`` when no bound device is online at all (the
     caller turns that into a clean "no online device" turn error)."""
@@ -69,14 +73,18 @@ async def resolve_pinned_device(
     if pinned is not None:
         if is_online(pinned):
             return pinned
-        raise ScreenSetupError(
-            "话题绑定的算力设备已离线，请重新连接该设备再继续本轮"
-            "（不会漂到别的设备，以免工作树/会话错乱）"
-        )
-    for device in await service.list_devices_for_project(project_id):
-        if is_online(device.device_id):
-            await service.bind_topic_device(topic_id, device.device_id)
-            return device.device_id
+        raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
+    # First turn: pick from the machines that are online AND not quarantined. A
+    # quarantined machine just failed two turns in a row for a reason that belongs
+    # to the box (#186), so pinning a fresh topic to it would hand the next person
+    # the failure we already diagnosed. Note this filter applies to the FIRST pin
+    # only — moving an ALREADY-pinned topic never happens here, it goes through the
+    # explicit, room-visible path in ``agent.host_swap``, because a pin that the
+    # resolver can quietly change is the original drift bug.
+    healthy = await service.healthy_devices_for_project(project_id, is_online)
+    for device in healthy:
+        await service.bind_topic_device(topic_id, device.device_id)
+        return device.device_id
     return None
 
 
@@ -177,7 +185,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
             factory = async_session_factory
         async with factory() as session:
-            service = DeviceService(SqlDeviceRepository(session))
+            service = sql_device_service(session)
             device_id = await resolve_pinned_device(
                 service, self._hub.is_online, project_id, topic_id
             )

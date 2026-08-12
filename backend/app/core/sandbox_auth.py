@@ -236,6 +236,12 @@ def project_agent_claims(token: str) -> ProjectAgentClaims | None:
         expires_at=datetime.fromtimestamp(expires, UTC),
     )
 
+def is_global_sandbox_token(token: str) -> bool:
+    """True for the signing secret used directly (dev / trusted-single-host
+    override). It carries NO project scope, so a caller accepting it must get the
+    room from somewhere else — see the note on `is_valid_cheese_token`."""
+    return bool(token) and secrets.compare_digest(token, SANDBOX_TOKEN)
+
 
 def is_valid_cheese_token(
     token: str, *, project_id: str | None = None, topic_id: str | None = None

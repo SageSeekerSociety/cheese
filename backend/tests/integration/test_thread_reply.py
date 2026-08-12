@@ -1,11 +1,13 @@
 """B3: replying to a message threads the reply under it (reply_to)."""
 
+from tests.integration.conftest import chat_ws_url
+
 
 def _topic(client) -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
-        "data"
-    ]
+    t = client.post(
+        "/api/topics", json={"project_id": p["id"], "title": "T", "created_by": "u"}
+    ).json()["data"]
     return t["id"]
 
 
@@ -14,7 +16,6 @@ def _post(ws, content, reply_to=None):
         {
             "type": "message",
             "content": content,
-            "author": "u",
             "summon": False,
             "reply_to": reply_to,
         }
@@ -32,7 +33,7 @@ def _post(ws, content, reply_to=None):
 
 def test_reply_threads_under_parent(client):
     tid = _topic(client)
-    with client.websocket_connect(f"/api/topics/{tid}/chat") as ws:
+    with client.websocket_connect(chat_ws_url(tid, "u")) as ws:
         parent = _post(ws, "根消息")
         child = _post(ws, "这是回复", reply_to=parent["id"])
     assert parent["reply_to"] is None
