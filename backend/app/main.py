@@ -52,6 +52,7 @@ async def lifespan(_: FastAPI):
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import (
         GateSweepRunner,
+        OrphanSweepRunner,
         PrPollRunner,
         SandboxReaperRunner,
         SchedulerRunner,
@@ -147,9 +148,14 @@ async def lifespan(_: FastAPI):
     # does, and an open resolution task is reused rather than duplicated.
     upstream_sync = UpstreamSyncRunner(scheduler, settings.upstream_sync_interval_s)
     upstream_sync.start()
-    # 闸门孤儿卡扫底: the startup sweep above only catches cards orphaned by a
-    # restart; this covers the gate task dying under a process that keeps
-    # running (see review/gate_sweep.py's module docstring).
+    # The startup sweep above only fires when the PROCESS restarts; a turn can
+    # be killed without that (container recreate, OOM, sandbox swap) and then
+    # nothing would ever look again. This is the loop that keeps looking.
+    orphan_sweep = OrphanSweepRunner(scheduler, settings.orphan_sweep_interval_s)
+    orphan_sweep.start()
+    # 闸门孤儿卡扫底: the same blind spot one layer down — a gate task can die
+    # under a process that keeps running, and then the card waits forever (see
+    # review/gate_sweep.py's module docstring).
     gate_sweeper = GateSweepRunner(scheduler, settings.gate_sweep_interval_s)
     gate_sweeper.start()
 
@@ -178,6 +184,7 @@ async def lifespan(_: FastAPI):
         await usage_ingest.stop()
         await machines.stop()
         await gate_sweeper.stop()
+        await orphan_sweep.stop()
         await upstream_sync.stop()
         await pr_poller.stop()
         await reaper.stop()

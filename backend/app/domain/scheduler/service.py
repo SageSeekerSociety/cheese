@@ -53,6 +53,51 @@ class SchedulerService:
 
         return {"projects_inspected": inspected, "errors": errors}
 
+    async def sweep_orphan_turns(self) -> int:
+        """Periodic counterpart to the startup orphan sweep in `lifespan`.
+
+        The startup one only ever runs when the PROCESS restarts, but a turn can
+        die without taking the process with it (container recreate, OOM-killed
+        child, sandbox image swap). Nothing re-read the registry in that case, so
+        the topic stayed `active` forever — see TurnRunner.sweep_orphans."""
+        from app.api.deps import get_turn_runner
+        from app.core.config import settings
+
+        return await get_turn_runner().sweep_orphans(
+            self._chat,
+            last_activity=self.last_block_at,
+            silence_s=settings.turn_silence_timeout_s,
+        )
+
+    async def last_block_at(
+        self, topic_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        """Newest block timestamp per topic — the liveness probe the orphan sweep
+        judges silence on. Lives here rather than in TurnRunner because the runner
+        has no DB binding, and it is the same signal a human reads off the topic
+        (「最后一块是几点」), which is what makes a sweep verdict checkable."""
+        if not topic_ids:
+            return {}
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    select(Block.topic_id, func.max(Block.created_at))
+                    .where(Block.topic_id.in_(topic_ids))
+                    .group_by(Block.topic_id)
+                )
+            ).all()
+        out: dict[uuid.UUID, datetime] = {}
+        for topic_id, last in rows:
+            if last is None:
+                continue
+            # Same normalization as reap_idle_containers: the column is TIMESTAMPTZ
+            # but some drivers hand back a naive value, and a naive one would blow
+            # up the subtraction rather than merely being wrong.
+            out[topic_id] = (
+                last if last.tzinfo is not None else last.replace(tzinfo=UTC)
+            )
+        return out
+
     async def reap_idle_containers(self, idle_hours: float = IDLE_REAP_HOURS) -> int:
         """Remove sandbox containers whose topic has had NO block activity for
         ``idle_hours`` (or whose topic no longer exists). Safe by construction:
@@ -298,6 +343,39 @@ class PrPollRunner:
                     logger.info("pr poll: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("pr poll failed")
+
+
+class OrphanSweepRunner:
+    """Drives SchedulerService.sweep_orphan_turns() on its own interval — same
+    shape as PrPollRunner. Cheap: it reads one small JSON file and does nothing
+    unless it finds a registered turn the process is not running."""
+
+    def __init__(self, scheduler: SchedulerService, interval_seconds: int):
+        self._scheduler = scheduler
+        self._interval = interval_seconds
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop())
+            logger.info("orphan sweep runner started (every %ss)", self._interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                resumed = await self._scheduler.sweep_orphan_turns()
+                if resumed:
+                    logger.info("orphan sweep: %s turn(s) resumed", resumed)
+            except Exception:  # noqa: BLE001 -- maintenance loop must survive
+                logger.exception("orphan sweep failed")
 
 
 class UpstreamSyncRunner:
