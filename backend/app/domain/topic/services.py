@@ -608,7 +608,7 @@ class TopicService:
         if source.id == target.id:
             raise ValidationError("不能把话题克隆到它自己")
         if source.project_id != target.project_id:
-            # Session dirs + the /work slug are keyed per project; a cross-project
+            # Session dirs + workdir slugs are keyed per project; a cross-project
             # clone would point the transcript at a different repo. Keep in-project.
             raise ValidationError("只能在同一项目内克隆会话")
         source_sid = source.session_id
@@ -621,6 +621,9 @@ class TopicService:
                 source_session_id=source_sid,
                 target_session_dir=ws.session_dir(target.project_id, target.id),
                 new_session_id=new_sid,
+                # Claude resolves --resume under the slug of the cwd it runs
+                # with, so the fork must land under the TARGET topic's workdir.
+                target_cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(target.id)),
             )
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc

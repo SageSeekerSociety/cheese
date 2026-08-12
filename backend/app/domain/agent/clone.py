@@ -29,23 +29,25 @@ down. (The reference needed exec RPC only because its agents live on remote
 import uuid
 from pathlib import Path
 
-# The tmux/device containers always run the agent with cwd ``/work`` (see
-# TmuxHooksProvider._create_container: ``-w /work``). Claude keys the transcript
-# directory by the slug of this cwd, so the clone must land under the same slug.
-CONTAINER_CWD = "/work"
+# The cwd the tmux container ran the agent with was ``/work`` before the
+# project-tree mount (now it is the topic's real path under /topics — see
+# ws.sandbox_topic_workdir). Transcripts written back then still sit under this
+# cwd's slug, which is why reads go through find_transcript below.
+LEGACY_CONTAINER_CWD = "/work"
 
 
 def slug_for(cwd: str) -> str:
-    """Claude's per-project directory name: the absolute cwd with every ``/`` and
-    ``.`` replaced by ``-`` (e.g. ``/home/u/repo/App`` → ``-home-u-repo-App``).
-    ``--resume`` resolves the transcript by this slug, so a clone must be written
-    under the TARGET cwd's slug. Copied from the reference clone.py."""
-    return "".join("-" if c in "/." else c for c in cwd)
+    """Claude's per-project directory name: the absolute cwd with every character
+    that is not a letter or digit replaced by ``-`` (e.g. ``/topics/topic_ab12``
+    → ``-topics-topic-ab12``). Underscores are replaced too — verified against
+    live ``~/.claude/projects`` entries; the reference clone.py's narrower
+    ``/`` + ``.`` rule only agreed with Claude by accident of ``/work`` containing
+    neither. ``--resume`` resolves the transcript by this slug, so a clone must
+    be written under the slug of the TARGET topic's cwd."""
+    return "".join(c if c.isalnum() else "-" for c in cwd)
 
 
-def transcript_file(
-    session_dir: Path, session_id: str, *, cwd: str = CONTAINER_CWD
-) -> Path:
+def transcript_file(session_dir: Path, session_id: str, *, cwd: str) -> Path:
     """Host path of a session's transcript inside a topic's ``~/.claude`` mount.
 
     ``session_dir`` is the host dir bind-mounted at the container's ``$HOME/.claude``
@@ -53,6 +55,18 @@ def transcript_file(
     ``<HOME>/.claude/projects/<slug(cwd)>/<sessionId>.jsonl``, so on the host that
     is ``<session_dir>/projects/<slug(cwd)>/<sessionId>.jsonl``."""
     return session_dir / "projects" / slug_for(cwd) / f"{session_id}.jsonl"
+
+
+def find_transcript(session_dir: Path, session_id: str) -> Path | None:
+    """Locate a session's transcript under ANY project slug, or None.
+
+    Session ids are UUIDs, so the filename alone identifies the session — the
+    slug directory only matters when WRITING (Claude looks a ``--resume`` up
+    under its current cwd's slug). Reading by glob makes every consumer immune
+    to cwd changes: transcripts written under the legacy ``/work`` slug and
+    under per-topic workdirs are all found the same way."""
+    matches = sorted(session_dir.glob(f"projects/*/{session_id}.jsonl"))
+    return matches[0] if matches else None
 
 
 def fork_transcript(data: bytes, old_session_id: str, new_session_id: str) -> bytes:
@@ -72,21 +86,27 @@ def clone_transcript_files(
     source_session_id: str,
     target_session_dir: Path,
     new_session_id: str,
-    cwd: str = CONTAINER_CWD,
+    target_cwd: str,
 ) -> None:
     """Copy + fork the transcript file from one topic's session mount to another.
 
-    Reads the source transcript, rewrites its session id, and writes it under the
-    target mount's slug (creating the ``projects/<slug>`` dirs, world-writable so
-    the container's non-root ``node`` user can keep appending to it). Raises
-    ``FileNotFoundError`` when the source transcript is missing or empty (the
-    source agent has not produced a session yet)."""
-    src = transcript_file(source_session_dir, source_session_id, cwd=cwd)
-    data = src.read_bytes() if src.is_file() else b""
+    Reads the source transcript (found under whatever slug it was written with —
+    see find_transcript), rewrites its session id, and writes it under the slug
+    of ``target_cwd`` — the cwd the TARGET topic's container will run with,
+    because that is where Claude's ``--resume`` will look (creating the
+    ``projects/<slug>`` dirs, world-writable so the container's non-root ``node``
+    user can keep appending to it). Raises ``FileNotFoundError`` when the source
+    transcript is missing or empty (the source agent has not produced a session
+    yet)."""
+    src = find_transcript(source_session_dir, source_session_id)
+    data = src.read_bytes() if src is not None and src.is_file() else b""
     if not data:
-        raise FileNotFoundError(f"source transcript missing or empty: {src}")
+        raise FileNotFoundError(
+            f"source transcript missing or empty: {source_session_id} "
+            f"under {source_session_dir}"
+        )
     forked = fork_transcript(data, source_session_id, new_session_id)
-    dst = transcript_file(target_session_dir, new_session_id, cwd=cwd)
+    dst = transcript_file(target_session_dir, new_session_id, cwd=target_cwd)
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_bytes(forked)
     # World-writable so the container's `node` user can append to the resumed
