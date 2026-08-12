@@ -1,4 +1,4 @@
-## 状态：**已实现，全量套件跑完，PR #301 的迁移链冲突已修**（本地 main `b4a8a9bfed4f`）
+## 状态：**已实现；PR #301 前两轮 CI 红都已修**（已把 main `c31b21f8` 合入本卡，工作树 = CI 的 merge ref）
 
 对应 [#186](https://github.com/SageSeekerSociety/cheese/issues/186) 第一节「身体能不能用」。第二节（agent 待在哪）维持现状 A，不在本卡范围；第三节归 #187。
 
