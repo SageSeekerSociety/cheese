@@ -148,7 +148,9 @@ async def test_a_sandbox_token_never_asks_for_write(rsa_key_pem):
     [mint] = mints
     asked = mint["body"]["permissions"]
     assert set(asked.values()) == {"read"}, asked
-    # The two that would let an agent rewrite the repo or its CI, specifically.
+    # Named individually because these two are not merely write-level: they
+    # would let an agent rewrite the CI that gates its own work, and change the
+    # repo's settings. Neither belongs in the sandbox set at any level.
     assert "workflows" not in asked
     assert "administration" not in asked
 
