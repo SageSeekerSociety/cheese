@@ -21,7 +21,7 @@ revision: str = "a1c9e7b30d42"
 # .claude/rules/migrations.md). The lesson is about TIMING, not about picking the
 # right parent once: the fork appears between filing and merging, so the chain
 # has to be re-pointed at whatever head main actually has at merge time.
-down_revision: str | Sequence[str] | None = "c8b1f4a70d29"
+down_revision: str | Sequence[str] | None = "b7e3c19d4f80"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
