@@ -110,6 +110,27 @@ subscription traffic behind a backend-governed endpoint" is therefore a
 **prerequisite for parity**, not a parallel track — or the flip must be an
 explicit accepted decision for the migrated set.
 
+**Resolved direction (2026-08-13):** rather than build a general model-supply
+unification first, a **co-located** device uses the **subscription path** —
+the same one the local tmux container already uses — and GLM/`/llm` is kept
+only for **remote** devices, where the subscription credential genuinely
+cannot leave the backend. This matches the trust split already coded at
+`device_provider.py:280` (co-located == the backend's own host and trust
+boundary; remote == an untrusted machine that must get a scoped `/llm` route,
+never the credential). For the dogfooding case (dev box == co-located) this
+gives real Claude, same AI as local, and drops GLM.
+
+*One implementation wrinkle to resolve in Phase 0:* the container reaches the
+metering proxy via docker `--add-host` redirect-by-name of
+`api.anthropic.com` (`provider_env.py:71` + the `--add-host` args in
+`tmux_provider`). A co-located device screen is a **bare `bash -lc` tmux
+session**, not a container, so `--add-host` does not apply — the name
+redirect must come from another hook (host `/etc/hosts` entry, or the proxy
+growing a real reachable vhost). `subscription_provider`'s env
+(fake credential + CA trust + scoped session token, **no `ANTHROPIC_BASE_URL`**)
+carries over unchanged; only the SNI-redirect transport differs. Small but
+non-zero — exactly what the Phase-0 scratch run should exercise.
+
 **G3. Turn ceiling and liveness.** Device turns run under a single flat 900 s
 deadline — `idle_suspect_s == hard_ceiling_s` reduces the two-layer check to
 the old static deadline, flagged as an open TODO in the constructor
@@ -234,12 +255,19 @@ impact on live topics — device stays opt-in per topic. Fix
    variant on devices whose visibility says so — per-topic container, resource
    quotas, worktree bind-mount; the existing tmux image is the starting recipe.
    `host` visibility remains for the explicit "要这台机器本身" rooms (#282 §四).
-5. Await logs (D7) and CLI refresh (D11) as small follow-ups.
+5. Model parity (G2): point the co-located device screen at the **subscription**
+   the same way the tmux container does (`subscription_provider` env), leaving
+   `/llm` only for remote devices. This is a **blocking parity gap, not a
+   follow-up** — until it lands, a device turn silently runs GLM instead of the
+   Claude a local turn gets. The one open piece is the SNI-redirect transport
+   for a bare (non-docker) co-located process; see G2 above.
+6. Await logs (D7) and CLI refresh (D11) as small follow-ups.
 
-Gate: G2 is resolved by decision, not necessarily by code — either #218's
-subscription passthrough behind the backend endpoint lands first (preferred;
-it is the same choke point `/llm` already is), or we accept that migrated dev
-topics run the gateway pool and record that as the deliberate supply choice.
+Gate resolved by decision (2026-08-13): co-located → subscription (drop GLM),
+remote → keep `/llm`. See G2. No general model-supply unification is required
+first; the subscription path already exists for the local container and is
+reused. The Phase-0 scratch run must confirm the bare-process proxy redirect
+before Phase 2.
 
 **Phase 2 — new topics default to device on dev.**
 Flip the dogfood team's default compute to `device`
