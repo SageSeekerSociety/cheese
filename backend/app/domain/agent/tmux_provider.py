@@ -36,7 +36,7 @@ from app.domain.agent.hooks_substrate import (
     ScreenSetupError,
     hooks_settings,
 )
-from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.identity.handles import topic_agent_handle
@@ -299,16 +299,34 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # this mount exists to prevent. Recheck it like the model route.
             cli_mount_stale = await self._cli_mount_stale(name, env["SBX_SESSION"])
             token_dead = await self._hook_token_dead(name)
-        if image_switched or env_drifted or cli_mount_stale or token_dead:
-            await _docker("rm", "-f", name)  # image, model route, CLI mount, token
+        # First match wins, so the room is told the most specific thing that is
+        # true. None means "nothing was torn down" — either the box is fine, or
+        # this is its first creation.
+        cause = next(
+            (
+                c
+                for c, hit in (
+                    ("image", image_switched),
+                    ("env", env_drifted),
+                    ("cli_mount", cli_mount_stale),
+                    ("token", token_dead),
+                )
+                if hit
+            ),
+            None,
+        )
+        if cause is not None:
+            await _docker("rm", "-f", name)
             exists = False
         if not exists:
             await self._create_container(name, env)
-            if image_switched or env_drifted or cli_mount_stale:
+            if cause is not None:
                 # The old box (and anything running in it — the interactive
                 # session, background processes) is gone with no other
                 # warning; tell the topic (best-effort, never blocks the turn).
-                await warn_image_switch_rebuild(topic_id)
+                # `cause` is None only on a FIRST creation, where nothing was
+                # destroyed and there is nothing to announce.
+                await warn_container_rebuilt(topic_id, cause)
             return name
         rc, running, _ = await _docker("inspect", "-f", "{{.State.Running}}", name)
         if running.strip() != "true":
