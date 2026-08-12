@@ -14,9 +14,11 @@ from app.auth.core import (
     SystemRole,
 )
 from app.common.auth import get_optional_user_id
-from app.core.errors import AccessDeniedError
+from app.core.config import settings
+from app.core.errors import AccessDeniedError, ForbiddenError
 from app.core.obs import bind_context
 from app.db.session import get_db
+from app.domain.user.repositories import UserRepository
 
 DomainRoleProvider = Callable[[AsyncSession, int, str, int], Awaitable[set[Role]]]
 
@@ -147,6 +149,39 @@ async def require_auth_user(
         from app.core.errors import AuthenticationRequiredError
 
         raise AuthenticationRequiredError("Login required")
+    return auth_user
+
+
+async def require_admin_user(
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db: AsyncSession = Depends(get_db),
+) -> AuthUserInfo:
+    """Like require_auth_user but additionally requires platform-admin rights.
+
+    Admin-ness is NOT carried on the token: ``get_auth_user`` stamps every
+    authenticated request ``{SystemRole.USER}`` and nothing anywhere promotes a
+    user beyond that, so a bare ``has_system_role(ADMIN)`` check would reject
+    literally everyone. The roster therefore comes from configuration —
+    ``settings.admin_handles``, a list of handles (== ``User.username``) — and
+    this dependency does the handle↔id mapping once, here, rather than making
+    every admin route repeat the lookup.
+
+    Fail closed on purpose: an unconfigured (empty) roster means nobody is an
+    admin and every route behind this dependency 403s. Treating "empty" as
+    "allow everyone" would leave the hole open while looking like a fix.
+    """
+    handles = {h.strip() for h in settings.admin_handles if h and h.strip()}
+    denied = ForbiddenError("Admin privileges required.")
+    if not handles:
+        raise denied
+
+    user = await UserRepository(db).get_by_id(auth_user.user_id)
+    if user is None or user.username not in handles:
+        raise denied
+
+    # Make the request's own view of the actor honest — the roster said ADMIN,
+    # so anything downstream reading system_roles sees it too.
+    auth_user.system_roles.add(SystemRole.ADMIN)
     return auth_user
 
 

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.checker import require_auth_user
+from app.auth.checker import require_admin_user, require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
     create_access_token,
@@ -1189,6 +1189,101 @@ async def get_current_user(
             "user": user_dto,
         },
     }
+
+
+# ── Invite Code Management ──────────────────────────────────────────────
+#
+# Admin-only, and enforced — these three used to say "(admin)" in the summary
+# while accepting any logged-in user, which let anyone read every code in
+# plaintext, mint unlimited ones, or deactivate someone else's. The roster lives
+# in ``settings.admin_handles``; see require_admin_user for why it is config and
+# not a system role.
+#
+# **Keep this block above ``GET /{userId}``.** Routes match in declaration order,
+# and ``/invite-codes`` is a single path segment, so declared after ``/{userId}``
+# it never matches: the listing endpoint answered 400 "userId must be an integer"
+# to everyone, admin or not. The other single-segment statics (``/me``,
+# ``/registration-config``) are above it for the same reason.
+
+
+@router.get(
+    "/invite-codes",
+    summary="List invite codes (admin only)",
+)
+async def list_invite_codes(
+    auth_user: AuthUserInfo = Depends(require_admin_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain.invite.services import InviteCodeService
+
+    service = InviteCodeService(session)
+    codes = await service.list_codes()
+    return {
+        "code": 200,
+        "message": "Success",
+        "data": {
+            "codes": [
+                {
+                    "id": c.id,
+                    "code": c.code,
+                    "maxUses": c.max_uses,
+                    "useCount": c.use_count,
+                    "isActive": c.is_active,
+                    "createdBy": c.created_by,
+                    "note": c.note,
+                    "createdAt": c.created_at.isoformat() if c.created_at else None,
+                    "expiresAt": c.expires_at.isoformat() if c.expires_at else None,
+                }
+                for c in codes
+            ]
+        },
+    }
+
+
+@router.post(
+    "/invite-codes",
+    summary="Create invite code (admin only)",
+)
+async def create_invite_code(
+    payload: CreateInviteCodeRequest,
+    auth_user: AuthUserInfo = Depends(require_admin_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain.invite.services import InviteCodeService
+
+    service = InviteCodeService(session)
+    invite = await service.create_code(
+        max_uses=payload.max_uses,
+        created_by=auth_user.user_id,
+        note=payload.note,
+    )
+    await session.commit()
+    return {
+        "code": 201,
+        "message": "Invite code created.",
+        "data": {
+            "code": invite.code,
+            "id": invite.id,
+            "maxUses": invite.max_uses,
+        },
+    }
+
+
+@router.delete(
+    "/invite-codes/{code_id}",
+    summary="Deactivate invite code (admin only)",
+)
+async def deactivate_invite_code(
+    code_id: int,
+    auth_user: AuthUserInfo = Depends(require_admin_user),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.domain.invite.services import InviteCodeService
+
+    service = InviteCodeService(session)
+    await service.deactivate_code(code_id)
+    await session.commit()
+    return {"code": 200, "message": "Invite code deactivated.", "data": None}
 
 
 @router.get(
@@ -3800,89 +3895,6 @@ async def link_oauth_account(
         "message": "OAuth account linked successfully.",
         "data": {"connection": connection},
     }
-
-
-# ── Invite Code Management ──────────────────────────────────────────────
-
-
-@router.get(
-    "/invite-codes",
-    summary="List invite codes (admin)",
-)
-async def list_invite_codes(
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    from app.domain.invite.services import InviteCodeService
-
-    service = InviteCodeService(session)
-    codes = await service.list_codes()
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {
-            "codes": [
-                {
-                    "id": c.id,
-                    "code": c.code,
-                    "maxUses": c.max_uses,
-                    "useCount": c.use_count,
-                    "isActive": c.is_active,
-                    "createdBy": c.created_by,
-                    "note": c.note,
-                    "createdAt": c.created_at.isoformat() if c.created_at else None,
-                    "expiresAt": c.expires_at.isoformat() if c.expires_at else None,
-                }
-                for c in codes
-            ]
-        },
-    }
-
-
-@router.post(
-    "/invite-codes",
-    summary="Create invite code (admin)",
-)
-async def create_invite_code(
-    payload: CreateInviteCodeRequest,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    from app.domain.invite.services import InviteCodeService
-
-    service = InviteCodeService(session)
-    invite = await service.create_code(
-        max_uses=payload.max_uses,
-        created_by=auth_user.user_id,
-        note=payload.note,
-    )
-    await session.commit()
-    return {
-        "code": 201,
-        "message": "Invite code created.",
-        "data": {
-            "code": invite.code,
-            "id": invite.id,
-            "maxUses": invite.max_uses,
-        },
-    }
-
-
-@router.delete(
-    "/invite-codes/{code_id}",
-    summary="Deactivate invite code (admin)",
-)
-async def deactivate_invite_code(
-    code_id: int,
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    session: AsyncSession = Depends(get_db),
-) -> dict:
-    from app.domain.invite.services import InviteCodeService
-
-    service = InviteCodeService(session)
-    await service.deactivate_code(code_id)
-    await session.commit()
-    return {"code": 200, "message": "Invite code deactivated.", "data": None}
 
 
 @router.get(

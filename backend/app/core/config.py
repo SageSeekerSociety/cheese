@@ -1,9 +1,11 @@
 """Application configuration loaded from environment / .env."""
 
+import json
 from functools import lru_cache
+from typing import Annotated
 
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -504,6 +506,35 @@ class Settings(BaseSettings):
     # silently downgrading a failed credential to "anonymous" is what let a whole
     # batch of messages land under 匿名者 while the sender saw no error at all.
     chat_ws_allow_anonymous: bool = False
+    # The platform's admin roster, by handle (== ``User.username``). This is the
+    # ONLY source of admin rights: nothing hands out ``SystemRole.ADMIN``, the
+    # ``user`` table has no role column, and adding one would need a migration —
+    # so an explicit list here is what ``require_admin_user`` reads. Same shape as
+    # ``dogfood_owner_handles``, except this one actually accepts the
+    # comma-separated form that field's comment claims: a bare ``list[str]`` is
+    # JSON-decoded by pydantic-settings, so ``ADMIN_HANDLES=alice,bob`` raises
+    # SettingsError and the backend never boots. ``NoDecode`` + the splitter
+    # below takes either ``alice,bob`` or ``["alice","bob"]``.
+    #
+    # **Empty = nobody is an admin**, and every admin-only route 403s. That is
+    # deliberate: an empty roster must never mean "allow everyone", which is the
+    # exact hole this closes (the invite-code endpoints said "(admin)" in their
+    # summary while accepting any logged-in user).
+    admin_handles: Annotated[list[str], NoDecode] = []
+
+    @field_validator("admin_handles", mode="before")
+    @classmethod
+    def _split_admin_handles(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        text = value.strip()
+        if text.startswith("["):
+            # Someone copied the JSON style the other list fields need.
+            try:
+                return json.loads(text)
+            except ValueError:
+                pass
+        return [h.strip() for h in text.split(",") if h.strip()]
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
     # (task AI advice, rank checks, email/notifications, meilisearch, real-name
