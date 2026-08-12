@@ -6,7 +6,6 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
 """
 
-import asyncio
 import contextlib
 import logging
 import os
@@ -19,6 +18,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+from app.core.background import spawn
 from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
@@ -1516,12 +1516,14 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         hook_started = True
         # Report the eventual result back into the topic timeline without
         # making this call wait for it (accept() must return immediately).
-        try:
-            asyncio.get_running_loop().create_task(
-                watch_dogfood_push(topic_id, proc, log, log_offset, branch)
-            )
-        except RuntimeError:
-            pass  # no running loop (e.g. sync tests/scripts) — nothing to schedule onto
+        # `spawn` holds a strong reference (asyncio keeps only a weak one) and
+        # is a no-op with no running loop, e.g. sync tests/scripts. This watcher
+        # outlives a whole subprocess, so it is precisely the shape that can be
+        # collected mid-await, taking the topic's push result with it.
+        spawn(
+            watch_dogfood_push(topic_id, proc, log, log_offset, branch),
+            name=f"dogfood push watch topic={topic_id}",
+        )
     return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
 
 
