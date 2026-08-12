@@ -215,6 +215,13 @@ class TopicService:
             raise NotFoundError("Project not found")
         return await self._repo.unread_counts(project_id, user_handle)
 
+    async def private_unread_counts(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[str, int]:
+        if await self._projects.get(project_id) is None:
+            raise NotFoundError("Project not found")
+        return await self._repo.private_unread_counts(project_id, user_handle)
+
     async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
         await self.get_or_404(topic_id)
         await self._repo.mark_read(topic_id, user_handle)

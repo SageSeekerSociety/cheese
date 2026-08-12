@@ -1010,6 +1010,20 @@ async def project_topic_unread(
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 
+@project_router.get("/{project_id}/private-unread")
+async def project_private_unread(
+    project_id: uuid.UUID, handle: str, db: DbSession
+) -> dict:
+    """私聊未读数: {peer_handle: unread_count} for one user, one query.
+
+    Keyed by the other party's handle rather than by topic id — private chats
+    are not in the topic tree, so the sidebar renders their rows from the member
+    roster and has no topic id to look one up with. `cheese` is the 芝士 DM.
+    Peers with zero unread are omitted."""
+    counts = await TopicService(db).private_unread_counts(project_id, handle)
+    return ok(counts)
+
+
 # Block upgrade lives here (it produces a topic). Separate router prefix.
 block_router = APIRouter(prefix="/api/blocks", tags=["topics"])
 

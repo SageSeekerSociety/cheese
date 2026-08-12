@@ -33,6 +33,9 @@ const props = defineProps<{
   width?: number
   // 话题级未读 (Feishu-style): {topicId: count}; missing key = no unread.
   unreadMap?: Record<string, number>
+  // 私聊未读: {peerHandle: count}, `cheese` = the 芝士 DM. Separate from
+  // unreadMap because DM rows are built from the roster and have no topic id.
+  privateUnreadMap?: Record<string, number>
   // 话题列表排序: the backend field/direction currently applied — the sort
   // menu just reflects and changes this, the actual ordering comes back
   // from the server in `topics` (so tree/sibling order stays consistent).
@@ -240,6 +243,10 @@ function countLabel(n: number): string {
 }
 function unreadLabel(id: string): string {
   return countLabel(unreadOf(id))
+}
+// 私聊 badges are addressed by peer handle ('cheese' = the 芝士 DM).
+function privateUnreadOf(handle: string): number {
+  return props.privateUnreadMap?.[handle] ?? 0
 }
 // Unread hiding inside the collapsed archived group still deserves a hint.
 const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
@@ -661,6 +668,11 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                 </span>
               </template>
               <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)"> 芝士 </v-list-item-title>
+              <template #append>
+                <span v-if="privateUnreadOf('cheese') > 0" class="unread-badge">
+                  {{ countLabel(privateUnreadOf('cheese')) }}
+                </span>
+              </template>
             </v-list-item>
 
             <!-- Person-to-person DMs: one row per OTHER project member. -->
@@ -683,6 +695,11 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
                 {{ dm.name }}
               </v-list-item-title>
+              <template #append>
+                <span v-if="privateUnreadOf(dm.handle) > 0" class="unread-badge">
+                  {{ countLabel(privateUnreadOf(dm.handle)) }}
+                </span>
+              </template>
             </v-list-item>
           </v-list>
         </template>
