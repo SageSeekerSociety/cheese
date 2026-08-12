@@ -218,11 +218,31 @@ def _violations(
     return sorted({(src, dst) for src, dst, _ in _scan(root)} - exempt)
 
 
+def _module_exists(root: Path, module: str) -> bool:
+    """``app.domain.x.y`` 在这棵树里有没有对应的文件（模块或包）。"""
+    base = root.joinpath(*module.split(".")[2:])
+    return base.with_suffix(".py").exists() or (base / "__init__.py").exists()
+
+
 def _stale_exemptions(
     root: Path = DOMAIN_ROOT, exempt: frozenset[tuple[str, str]] = _EXEMPT
 ) -> list[tuple[str, str]]:
-    """白名单里已经没有对应违规的行。"""
-    return sorted(exempt - {(src, dst) for src, dst, _ in _scan(root)})
+    """白名单里已经没有对应违规的行。
+
+    **发起方模块在这棵树里根本不存在的，不算陈行。** 棘轮这一半主张的是「债还完
+    了，把行删掉」；文件都不在这个 checkout 里，这个主张就无从谈起——本仓的工作区
+    经常落后于 main（见 CLAUDE.md），照 CI 在更新的 main 上报的违规入账时，那条
+    豁免在旧 base 上必然找不到对应文件。不加这层判断，棘轮就会把「你的 checkout
+    落后」误报成「这笔债还完了」，而正确的动作恰恰相反。
+
+    代价说清楚：一个领域**真被整个删掉**时，它的豁免会留在白名单里没人提醒。
+    换来的是不会把落后的 checkout 误判成还清了债——后者会诱导人删掉仍然有效的
+    豁免，那是会让守卫漏判的方向，比多留几行严重。
+    """
+    actual = {(src, dst) for src, dst, _ in _scan(root)}
+    return sorted(
+        (src, dst) for src, dst in exempt - actual if _module_exists(root, src)
+    )
 
 
 def test_no_cross_domain_repository_imports() -> None:
@@ -314,6 +334,24 @@ def test_self_test_whitelist_actually_suppresses(tmp_path: Path) -> None:
     pair = ("app.domain.alpha.services", "app.domain.beta.repositories")
     assert _violations(root, frozenset()) == [pair]
     assert _violations(root, frozenset({pair})) == []
+
+
+def test_self_test_ratchet_ignores_exemptions_for_absent_modules(
+    tmp_path: Path,
+) -> None:
+    """发起方文件不在这棵树里 → 不算陈行；在、但 import 没了 → 算。
+
+    两条一起测才有意义：只测前者会掩盖「这层判断把棘轮整个关掉了」。
+    """
+    root = _fake_tree(
+        tmp_path, {"alpha/services.py": "from app.domain.beta.services import S\n"}
+    )
+    absent = ("app.domain.nosuch.services", "app.domain.beta.repositories")
+    present = ("app.domain.alpha.services", "app.domain.beta.repositories")
+    # checkout 落后：模块压根不存在，说明不了债还没还完
+    assert _stale_exemptions(root, frozenset({absent})) == []
+    # 真还完了：文件在，import 没了
+    assert _stale_exemptions(root, frozenset({present})) == [present]
 
 
 def test_self_test_ratchet_catches_a_stale_exemption(tmp_path: Path) -> None:
