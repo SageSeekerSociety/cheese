@@ -414,8 +414,15 @@ function cancelRetry() {
   }
 }
 
+// An auth refusal is not an outage: the backend closes the socket after one
+// error frame, so retrying just reopens and gets refused again — silently, at
+// 1s→15s forever, with the banner saying 正在自动重连. The message the user
+// needs (登录已失效) would be overwritten by the next retry's banner. So we
+// latch it: stop retrying and keep the reason on screen until they act.
+const authRefused = ref(false)
+
 function scheduleReconnect(topicId: string) {
-  if (retryTimer) return
+  if (retryTimer || authRefused.value) return
   const delay = retryDelayMs
   retryDelayMs = Math.min(retryDelayMs * 2, 15000)
   retryTimer = setTimeout(() => {
@@ -459,7 +466,7 @@ function openSocket(topicId: string) {
   }
   ws.onerror = () => {
     // The close handler owns retry; the banner just explains the grey dot.
-    errorMsg.value = '连接断开，正在自动重连…'
+    if (!authRefused.value) errorMsg.value = '连接断开，正在自动重连…'
   }
   ws.onmessage = (ev: MessageEvent) => {
     // Guard against frames from a stale socket after topic switch.
@@ -524,6 +531,14 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
+      // The socket could not authenticate — the backend closes right after this
+      // frame, so latch the reason and stop the reconnect loop from burying it.
+      if (frame.code === 'auth_expired' || frame.code === 'auth_required') {
+        authRefused.value = true
+        errorMsg.value = frame.message
+        awaitingReply.value = false
+        return
+      }
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
@@ -549,6 +564,7 @@ function handleFrame(frame: WsServerFrame) {
 
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
+  authRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
   todoItems.value = []
   reactionPickerFor.value = null
@@ -641,7 +657,6 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   const msg: WsClientMessage = {
     type: 'message',
     content: trimmed,
-    author: AUTHOR,
     summon,
     reply_to: replyTarget.value?.id ?? undefined,
     attachments: atts,

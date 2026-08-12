@@ -669,11 +669,35 @@ KICKOFF_PROMPT = (
 )
 
 
-def conclusion_digest_prompt(conclusion_message: str) -> str:
+def conclusion_digest_prompt(
+    conclusion_message: str,
+    *,
+    card_id: str | None = None,
+    deadline: datetime | None = None,
+) -> str:
     """The parent's wake-up instruction when a sub-topic returns its conclusion
     (结论回流唤醒父话题 — the return leg of the subagent loop: in Claude Code
     the parent resumes when the Task tool result arrives). Prompt-only; the
-    conclusion text is copied verbatim, nothing is derived from it."""
+    conclusion text is copied verbatim, nothing is derived from it.
+
+    结论卡·阶段一: when a card was filed, the parent is told how to settle it —
+    and, more importantly, that doing NOTHING is 采信. The prompt is only half
+    the mechanism; the platform accepts the card when this turn ends whatever
+    the model does (see conclusion.services.settle_turn_cards)."""
+    card_note = ""
+    if card_id is not None:
+        by = f"（{deadline:%H:%M} UTC 前）" if deadline is not None else ""
+        card_note = (
+            "\n\n---\n"
+            f"这条结论挂着一张结论卡 `{card_id}`。**默认采信**：你这一轮结束时"
+            f"它就自动采信、子话题随之归档{by}，你不需要做任何事。\n"
+            "只有两种情况才动它：\n"
+            "- 缺一条关键证据、而子话题的上下文还热着 → "
+            f'`cheese conclusion need-evidence {card_id} "要补什么"`'
+            "（每张卡只能打回一次）；\n"
+            "- 这个结论要以某个人的名义做出去 → "
+            f'`cheese conclusion escalate {card_id} "要谁拍什么板"`。'
+        )
     return (
         "一个子话题刚回流了结论（原文如下，也已织进本话题活文档末尾）。"
         "请消化它：\n"
@@ -682,7 +706,7 @@ def conclusion_digest_prompt(conclusion_message: str) -> str:
         "2. 判断下一步：这个结论解锁了什么？需要继续拆活就拆（split 带 --brief），"
         "需要人拍板/验收就发通知或验收卡，整件事收尾了就说明结论。\n"
         "3. 在对话里用一两句话向大家报信（结论已在文档里，别复述全文）。\n\n"
-        f"---\n{conclusion_message}"
+        f"---\n{conclusion_message}{card_note}"
     )
 
 

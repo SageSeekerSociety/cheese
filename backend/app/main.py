@@ -51,6 +51,7 @@ async def lifespan(_: FastAPI):
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import (
+        ConclusionSweepRunner,
         GateSweepRunner,
         OrphanSweepRunner,
         PrPollRunner,
@@ -158,6 +159,13 @@ async def lifespan(_: FastAPI):
     # review/gate_sweep.py's module docstring).
     gate_sweeper = GateSweepRunner(scheduler, settings.gate_sweep_interval_s)
     gate_sweeper.start()
+    # 结论卡·阶段一: 默认采信 must happen even when the parent's digest turn never
+    # runs (queued behind a wedged turn, refused on credits, killed by a deploy).
+    # This sweeps cards past their 30-minute absolute deadline.
+    conclusion_sweeper = ConclusionSweepRunner(
+        scheduler, settings.conclusion_sweep_interval_s
+    )
+    conclusion_sweeper.start()
 
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
@@ -186,6 +194,7 @@ async def lifespan(_: FastAPI):
         await gate_sweeper.stop()
         await orphan_sweep.stop()
         await upstream_sync.stop()
+        await conclusion_sweeper.stop()
         await pr_poller.stop()
         await reaper.stop()
         await runner.stop()
@@ -231,7 +240,36 @@ def _discover_routers(application: FastAPI) -> list[str]:
     return loaded
 
 
-app = FastAPI(title="CheeseX", version="0.1.0", lifespan=lifespan)
+# Where this app hangs off the origin a caller can actually reach. The frontend
+# image's nginx owns the public origin and forwards the API with
+# `location /api/ { proxy_pass http://backend:8081/; }` — the trailing slash makes
+# it strip exactly this one segment — so a route's own path is never a URL anybody
+# can send. Publishing it as an OpenAPI server is what makes the schema
+# self-addressing: server + path is the URL, and the 2.0 routers' own `/api`
+# prefix visibly becomes the `/api/api/...` that callers have to send.
+#
+# Left unset, the schema advertised bare backend paths, and a caller who followed
+# them got no error worth the name: of the 128 routes under the 2.0 prefix, 122
+# answered 404 and 6 reached a DIFFERENT 1.0 route that answered 200 from the
+# wrong domain. Same convention as `settings.connector_public_base`, which already
+# has to end in `/api` for the same reason. See docs/api-conventions.md.
+API_GATEWAY_MOUNT = "/api"
+
+app = FastAPI(
+    title="CheeseX",
+    version="0.1.0",
+    lifespan=lifespan,
+    servers=[
+        {
+            "url": API_GATEWAY_MOUNT,
+            "description": "Through the app origin — browsers and external callers",
+        },
+        {
+            "url": "/",
+            "description": "Straight at the backend port, with no gateway in front",
+        },
+    ],
+)
 
 app.add_middleware(LogRefusedWebSockets)
 
@@ -272,6 +310,15 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/accept-card$")),
+    # 结论卡: settled by the PARENT during its own turn, so the scoping id in
+    # the URL is the receiver, not the sub-topic that produced the card.
+    (
+        "POST",
+        re.compile(
+            r"^/api/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
+            r"(accept|need-evidence|escalate)$"
+        ),
+    ),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/notifications$")),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/milestones$")),

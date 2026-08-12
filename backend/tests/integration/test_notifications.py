@@ -119,14 +119,15 @@ def test_list_newest_first_and_filters(client):
         target_handle="alice",
     )
 
+    # A caller who names no recipient is not "everyone" — they get the
+    # broadcasts and nothing addressed to a person.
     r = client.get(f"/api/projects/{pid}/notifications")
     body = r.json()["data"]
-    assert body["total"] == 3
-    # Newest first.
-    assert [n["title"] for n in body["data"]] == ["第三条", "第二条", "第一条"]
+    assert body["total"] == 1
+    assert [n["title"] for n in body["data"]] == ["第一条"]
 
     # Filter by target_handle: alice sees her own AND broadcasts (第一条 has no
-    # target_handle), but not bob's (第二条).
+    # target_handle), but not bob's (第二条). Newest first.
     r = client.get(
         f"/api/projects/{pid}/notifications", params={"target_handle": "alice"}
     )
@@ -193,17 +194,21 @@ def test_inbox_only_unread_decision_and_accept(client):
         target_handle="bob",
     )
 
-    r = client.get(f"/api/projects/{pid}/inbox")
-    body = r.json()["data"]
-    assert body["total"] == 2
-    kinds = {n["kind"] for n in body["data"]}
-    assert kinds == {"decision_request", "accept_request"}
-
-    # Filter inbox by target_handle.
-    r = client.get(f"/api/projects/{pid}/inbox", params={"target_handle": "alice"})
-    body = r.json()["data"]
-    assert body["total"] == 1
-    assert body["data"][0]["title"] == "拍板"
+    # Kind is what decides the inbox, not who it is for: the alert and the
+    # heartbeat are broadcasts, so they reach both recipients' lists — yet
+    # neither inbox carries them.
+    alice = client.get(
+        f"/api/projects/{pid}/inbox", params={"target_handle": "alice"}
+    ).json()["data"]
+    bob = client.get(
+        f"/api/projects/{pid}/inbox", params={"target_handle": "bob"}
+    ).json()["data"]
+    assert [n["title"] for n in alice["data"]] == ["拍板"]
+    assert [n["title"] for n in bob["data"]] == ["验收"]
+    assert {n["kind"] for n in alice["data"] + bob["data"]} == {
+        "decision_request",
+        "accept_request",
+    }
 
     # A decision request stays in the inbox after merely being read — it leaves
     # only once 拍板 (resolved).

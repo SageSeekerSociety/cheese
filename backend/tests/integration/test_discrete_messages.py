@@ -14,6 +14,7 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from tests.conftest import StubAgent
+from tests.integration.conftest import chat_ws_url
 
 
 class MultiMessageAgent(StubAgent):
@@ -54,17 +55,11 @@ def stub_agent() -> MultiMessageAgent:
 def _run_turn(client) -> tuple[str, list[dict]]:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "话题"}
+        "/api/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": "alice"},
     ).json()["data"]
-    with client.websocket_connect(f"/api/topics/{t['id']}/chat") as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "帮我看看",
-                "author": "alice",
-                "summon": True,
-            }
-        )
+    with client.websocket_connect(chat_ws_url(t["id"], "alice")) as ws:
+        ws.send_json({"type": "message", "content": "帮我看看", "summon": True})
         frames = []
         while True:
             frames.append(ws.receive_json())

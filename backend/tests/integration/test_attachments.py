@@ -6,6 +6,8 @@ attachment block, and the agent prompt points 芝士 at the file (its sandbox
 Read tool is image-capable).
 """
 
+from tests.integration.conftest import chat_ws_url
+
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
 PNG_1PX = bytes.fromhex(
     "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
@@ -17,7 +19,8 @@ def _create_project_and_topic(client) -> tuple[str, str]:
     pr = client.post("/api/projects", json={"name": "Demo"})
     project_id = pr.json()["data"]["id"]
     tr = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "图片话题"}
+        "/api/topics",
+        json={"project_id": project_id, "title": "图片话题", "created_by": "user-1"},
     )
     return project_id, tr.json()["data"]["id"]
 
@@ -77,12 +80,11 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ag
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
 
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json(
             {
                 "type": "message",
                 "content": "看看这张截图",
-                "author": "user-1",
                 "summon": True,
                 "attachments": [att],
             }
@@ -114,12 +116,11 @@ def test_image_only_message_allowed(client, stub_agent):
     _, topic_id = _create_project_and_topic(client)
     att = _upload(client, topic_id)
 
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json(
             {
                 "type": "message",
                 "content": "",
-                "author": "user-1",
                 "summon": True,
                 "attachments": [att],
             }
