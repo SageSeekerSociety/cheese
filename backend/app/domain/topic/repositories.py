@@ -6,20 +6,50 @@ from typing import Literal
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.elements import UnaryExpression
+from sqlalchemy.sql.elements import (
+    ColumnElement,
+    SQLColumnExpression,
+    UnaryExpression,
+)
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.topic.models import Topic, TopicKind, TopicReadState
 
-TopicSortField = Literal["updated_at", "title"]
+TopicSortField = Literal["updated_at", "title", "last_activity_at"]
 SortOrder = Literal["asc", "desc"]
 
 
+def _last_activity() -> ColumnElement[datetime]:
+    """When something last HAPPENED in a topic — the newest block it holds.
+
+    Derived per query instead of stored on the row, because `updated_at` cannot
+    answer this: it is the topics ROW's mtime (Timestamps.onupdate), and adding
+    a block writes the blocks table only, so a topic that has been talked in all
+    day still reports the moment its title or session id last changed. Deriving
+    it also means no backfill for the topics that already drifted, and no drift
+    when blocks are deleted.
+
+    A topic with no blocks yet falls back to its own creation — "nothing has
+    happened since it was made" is the truth for a room nobody has spoken in,
+    and it keeps the value non-null so sorting and filtering stay total.
+    """
+    newest_block = (
+        select(func.max(Block.created_at))
+        .where(Block.topic_id == Topic.id)
+        .correlate(Topic)
+        .scalar_subquery()
+    )
+    return func.coalesce(newest_block, Topic.created_at)
+
+
 def _order_by(sort: TopicSortField | None, order: SortOrder) -> UnaryExpression:
+    column: SQLColumnExpression[object]
     if sort == "title":
         column = Topic.title
     elif sort == "updated_at":
         column = Topic.updated_at
+    elif sort == "last_activity_at":
+        column = _last_activity()
     else:
         column = Topic.created_at
     return column.desc() if order == "desc" else column.asc()
@@ -61,14 +91,39 @@ class TopicRepository:
         *,
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
+        active_since: datetime | None = None,
     ) -> list[Topic]:
+        """The project's topic tree, flat.
+
+        ``active_since`` keeps only topics whose last activity (see
+        ``_last_activity``) is at or after that instant — "最近活跃的话题". It
+        filters the flat list, so a kept topic's parent may be filtered out;
+        callers that rebuild the tree should not combine it with the filter.
+        """
         # Private chats are not part of the topic tree.
-        stmt = (
-            select(Topic)
-            .where(Topic.project_id == project_id, Topic.is_private.is_(False))
-            .order_by(_order_by(sort, order))
+        stmt = select(Topic).where(
+            Topic.project_id == project_id, Topic.is_private.is_(False)
         )
+        if active_since is not None:
+            stmt = stmt.where(_last_activity() >= active_since)
+        stmt = stmt.order_by(_order_by(sort, order))
         return list((await self._session.scalars(stmt)).all())
+
+    async def last_activity_for_topics(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        """{topic_id: last activity} for a batch of topics, in ONE query.
+
+        Kept off ``list_for_project`` so its return type stays ``list[Topic]``
+        for the callers that only want the rows (mentions, the agent's context
+        builders, the dashboard); the list endpoint joins the two by id, the
+        same way it joins the unread counts.
+        """
+        if not topic_ids:
+            return {}
+        stmt = select(Topic.id, _last_activity()).where(Topic.id.in_(topic_ids))
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: last for topic_id, last in rows}
 
     async def get_or_create_private(
         self,

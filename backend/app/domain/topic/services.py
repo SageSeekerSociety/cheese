@@ -33,6 +33,18 @@ from app.domain.workspace import service as ws
 PLACEHOLDER_TITLE = "新话题"
 
 
+def _as_utc(when: datetime | None) -> datetime | None:
+    """Read a caller-supplied instant as UTC when it carries no offset.
+
+    Query strings routinely arrive as `2026-08-12T00:00:00` with no zone; the
+    columns it is compared against are TIMESTAMPTZ, so a naive value has to be
+    given one before it reaches the driver.
+    """
+    if when is None or when.tzinfo is not None:
+        return when
+    return when.replace(tzinfo=UTC)
+
+
 def _child_kind(parent: Topic) -> TopicKind:
     """A child of the root is a room; anything below a room is a piece of work.
 
@@ -196,11 +208,28 @@ class TopicService:
         *,
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
+        active_since: datetime | None = None,
     ) -> tuple[list[Topic], int]:
-        return (
-            await self._repo.list_for_project(project_id, sort=sort, order=order),
-            await self._repo.count_for_project(project_id),
+        topics = await self._repo.list_for_project(
+            project_id,
+            sort=sort,
+            order=order,
+            active_since=_as_utc(active_since),
         )
+        # `total` counts what the caller got: a filtered page whose total still
+        # said "all topics" would tell a paging client to keep asking for rows
+        # that do not exist.
+        total = (
+            len(topics)
+            if active_since is not None
+            else await self._repo.count_for_project(project_id)
+        )
+        return topics, total
+
+    async def last_activity_for_topics(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        return await self._repo.last_activity_for_topics(topic_ids)
 
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)

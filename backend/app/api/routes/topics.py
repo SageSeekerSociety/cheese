@@ -3,6 +3,7 @@
 import shutil
 import uuid
 from dataclasses import asdict
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, UploadFile
@@ -81,11 +82,21 @@ async def create_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
-def _topic_out(topic: Topic, running_ids: set[uuid.UUID]) -> dict:
-    """TopicOut plus the in-memory turn-running signal (separate from
-    `status`/归档 — see TopicOut.running): a topic can be active-and-idle or
-    active-and-mid-turn, and only this tells them apart."""
-    data = TopicOut.model_validate(topic).model_dump(mode="json")
+def _topic_out(
+    topic: Topic,
+    running_ids: set[uuid.UUID],
+    last_activity: dict[uuid.UUID, datetime],
+) -> dict:
+    """TopicOut plus the two signals the ORM row cannot carry: the in-memory
+    turn-running flag (separate from `status`/归档 — see TopicOut.running: a
+    topic can be active-and-idle or active-and-mid-turn, and only this tells
+    them apart) and 最后活动时间, which is derived from the topic's blocks."""
+    out = TopicOut.model_validate(topic)
+    # Assign before dumping so the instant is serialized by the same schema as
+    # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
+    # where every other timestamp in the payload says "Z".
+    out.last_activity_at = last_activity.get(topic.id)
+    data = out.model_dump(mode="json")
     data["running"] = topic.id in running_ids
     return data
 
@@ -97,12 +108,22 @@ async def list_topics(
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
+    active_since: datetime | None = None,
 ) -> dict:
-    topics, total = await TopicService(db).list_for_project(
-        project_id, sort=sort, order=order
+    """The project's topics.
+
+    `sort=last_activity_at` orders by when something last HAPPENED in each topic
+    (its newest block), and `active_since=<ISO instant>` keeps only the topics
+    active at or after it — "最近活跃的话题". Neither reads `updated_at`, which
+    only moves when the topic's own fields change.
+    """
+    service = TopicService(db)
+    topics, total = await service.list_for_project(
+        project_id, sort=sort, order=order, active_since=active_since
     )
     running_ids = runner.running_topic_ids()
-    items = [_topic_out(t, running_ids) for t in topics]
+    last_activity = await service.last_activity_for_topics([t.id for t in topics])
+    items = [_topic_out(t, running_ids, last_activity) for t in topics]
     return ok(page(items, total))
 
 
@@ -112,8 +133,10 @@ async def get_topic(
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
 ) -> dict:
-    topic = await TopicService(db).get_or_404(topic_id)
-    return ok(_topic_out(topic, runner.running_topic_ids()))
+    service = TopicService(db)
+    topic = await service.get_or_404(topic_id)
+    last_activity = await service.last_activity_for_topics([topic.id])
+    return ok(_topic_out(topic, runner.running_topic_ids(), last_activity))
 
 
 @router.get("/{topic_id}/blocks")

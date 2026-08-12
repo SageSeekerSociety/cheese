@@ -20,6 +20,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -78,6 +79,11 @@ def consumed_turn(block: "Block") -> str | None:
 
 class Block(UuidPk, Timestamps, Base):
     __tablename__ = "blocks"
+    # (topic_id, created_at) serves every "this topic's blocks, newest first"
+    # question: the timeline pages, and the MAX(created_at) behind a topic's
+    # 最后活动时间 — which the sidebar sorts on, so it runs once per listed topic
+    # and must not degrade into reading the whole topic's history.
+    __table_args__ = (Index("ix_blocks_topic_id_created_at", "topic_id", "created_at"),)
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
