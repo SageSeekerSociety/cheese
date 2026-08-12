@@ -16,6 +16,7 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from tests.conftest import StubAgent
+from tests.integration.conftest import chat_ws_url
 
 
 class ChecklistAgent(StubAgent):
@@ -78,9 +79,12 @@ def stub_agent() -> ChecklistAgent:
 
 
 def _topic(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post(
+        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
+    ).json()["data"]
     t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "话题"}
+        "/api/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]
     return t["id"]
 
@@ -88,10 +92,10 @@ def _topic(client) -> str:
 def _chat(client, topic_id: str) -> list[dict]:
     """Run one turn, returning every frame it produced."""
     frames: list[dict] = []
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hi", "author": "user-1", "summon": True}
-        )
+    # The chat socket requires a session token; take the same path the browser
+    # does via the shared helper (see .claude/rules/backend-tests.md).
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
         while True:
             frame = ws.receive_json()
             frames.append(frame)
