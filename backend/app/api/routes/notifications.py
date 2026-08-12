@@ -51,8 +51,16 @@ async def _acting_recipient(resolver: ActorResolver, notification: Notification)
 
 @router.post("/api/projects/{project_id}/notifications")
 async def create_notification(
-    project_id: uuid.UUID, body: NotificationCreate, db: DbSession
+    project_id: uuid.UUID,
+    body: NotificationCreate,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
+    """Post into the project's notification stream — agents (scoped token),
+    the dev override, or a signed-in human; never an anonymous drive-by. The
+    route checks the credential itself rather than leaning on the middleware
+    gate alone (see ``require_verified_caller``)."""
+    await resolver.require_verified_caller(project_id=project_id)
     notification = await NotificationService(db).create(
         project_id=project_id,
         level=body.level,

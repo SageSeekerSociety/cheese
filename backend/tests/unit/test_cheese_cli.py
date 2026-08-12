@@ -5,6 +5,7 @@ bare executable), so it's loaded by path.
 """
 
 import importlib.util
+import json
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
@@ -441,6 +442,71 @@ def test_await_log_falls_back_when_there_is_no_session_mount(monkeypatch, tmp_pa
     monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     assert Path(cli._await_log_path("r")).parent == tmp_path / ".cheese" / "await"
+
+
+class _FakeHTTPResponse:
+    """Just enough of an http response for `json.load(r)` inside a `with`."""
+
+    def __init__(self, payload: dict) -> None:
+        self._body = json.dumps(payload).encode()
+
+    def read(self, *_args) -> bytes:
+        return self._body
+
+    def __enter__(self) -> "_FakeHTTPResponse":
+        return self
+
+    def __exit__(self, *_exc) -> bool:
+        return False
+
+
+def _run_gh_token(cli, monkeypatch, permissions: str) -> None:
+    monkeypatch.setattr(
+        cli.urllib.request,
+        "urlopen",
+        lambda _req, timeout=None: _FakeHTTPResponse(
+            {
+                "data": {
+                    "token": "ghs_x",
+                    "repo": "acme/widgets",
+                    "expires_at": "2026-08-12T10:00:00Z",
+                    "permissions": permissions,
+                }
+            }
+        ),
+    )
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "gh-token"])
+    cli.main()
+
+
+def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsys):
+    """The whole point of widening the token: the agent has to LEARN it can
+    read an issue, or it goes on asking a human to paste the body in."""
+    cli = _load()
+    _run_gh_token(
+        cli,
+        monkeypatch,
+        "read-only: actions, checks, contents, issues, metadata, pull_requests",
+    )
+
+    out, err = capsys.readouterr()
+    assert out.strip() == "ghs_x"  # stdout stays token-only for $(...)
+    assert "repos/acme/widgets/issues/<n>" in err
+    assert "repos/acme/widgets/pulls/<n>" in err
+    assert "repos/acme/widgets/contents/<path>" in err
+
+
+def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):
+    """An advertised recipe that 403s is worse than no recipe — it burns a turn
+    and teaches the agent the wrong lesson about what it may read."""
+    cli = _load()
+    _run_gh_token(cli, monkeypatch, "read-only: actions, checks, metadata")
+
+    _out, err = capsys.readouterr()
+    assert "issues/<n>" not in err
+    assert "pulls/<n>" not in err
+    assert "check-runs" in err  # what it CAN do is still spelled out
+    assert "read-only: actions, checks, metadata" in err
 
 
 def _is_subparsers(action):

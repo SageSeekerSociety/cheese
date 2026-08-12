@@ -44,6 +44,11 @@ from app.domain.workspace import service as ws
 
 _SESSION = "cheese"  # tmux session name inside the container
 _TTYD_PORT = 7681  # in-container ttyd port (published for 施工现场; not wired yet)
+# The platform's system prompt travels as a FILE in the ~/.claude session mount
+# (host: session_dir/cheese-system-prompt.md), not inline on the command line:
+# it is multi-KB free text, and the tmux launch string goes through sh -c.
+_SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
+_SYSTEM_PROMPT_PATH = f"/home/node/.claude/{_SYSTEM_PROMPT_FILE}"
 _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
@@ -394,6 +399,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         *,
         resume_session_id: str | None = None,
         session_dir: str | None = None,
+        system_prompt: str = "",
     ) -> None:
         """Ensure the interactive `claude` tmux session exists (lazy, reused).
 
@@ -408,6 +414,11 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         if rc == 0:
             return
         claude_cmd = CLAUDE_BASE_CMD
+        # The platform's system prompt, written into the session mount by
+        # _ensure_ready. Only a FRESH claude reads it — an already-running
+        # session keeps the prompt it launched with (same as settings.json).
+        if system_prompt:
+            claude_cmd += f" --append-system-prompt-file {_SYSTEM_PROMPT_PATH}"
         if (
             resume_session_id
             and session_dir
@@ -697,6 +708,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        system_prompt: str,
         precheck: object,
     ) -> str:
         """Bring up (or reuse) the topic's tmux `claude` and wait for the `❯`
@@ -721,11 +733,16 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # Seed hooks + skip-disclaimer settings before the session starts
             # (only read at session creation), then bring the session up.
             self._write_session_settings(session_dir)
+            # Always (re)write the system prompt, even when the session already
+            # exists: a running claude keeps the prompt it launched with, and
+            # this write is what the NEXT fresh session picks up.
+            self._write_system_prompt(session_dir, system_prompt)
             await self._ensure_session(
                 name,
                 model,
                 resume_session_id=resume_session_id,
                 session_dir=session_dir,
+                system_prompt=system_prompt,
             )
             # _wait_ready inside the wrap too: its docker exec can itself fail
             # (docker binary vanishing mid-turn) — that must surface as a clean
@@ -752,6 +769,15 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         # subscription_provider), NOT a .credentials.json — the file gets the
         # local validation the env var skips, and rejected the placeholder as
         # "Not logged in". So nothing credential-shaped is planted here.
+
+    def _write_system_prompt(self, session_dir: str, system_prompt: str) -> None:
+        """Write the platform's system prompt into the session mount, where the
+        launch line's ``--append-system-prompt-file`` points. An empty prompt
+        still writes (an empty file), so a topic whose prompt was withdrawn does
+        not keep serving a stale one to its next fresh session."""
+        target = Path(session_dir) / _SYSTEM_PROMPT_FILE
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _rewrite(target, system_prompt, mode=0o644)
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history

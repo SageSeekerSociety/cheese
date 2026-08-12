@@ -342,10 +342,16 @@ class HooksTurnProvider[ScreenT]:
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        system_prompt: str,
         precheck: object,
     ) -> ScreenT:
         """Bring the topic's screen to a prompt-ready state; raise
-        ``ScreenSetupError`` if it can't be. Transport-specific (subclass)."""
+        ``ScreenSetupError`` if it can't be. Transport-specific (subclass).
+
+        ``system_prompt`` is the platform's assembled system prompt and MUST be
+        delivered to the `claude` this screen hosts (``--append-system-prompt``
+        at launch). It is a launch-time input, not a per-prompt one: a screen
+        that is merely reused keeps the prompt it was started with."""
         raise NotImplementedError
 
     async def _send_prompt(self, screen: ScreenT, prompt: str) -> None:
@@ -435,6 +441,7 @@ class HooksTurnProvider[ScreenT]:
                     owner=owner,
                     turn_id=turn_id,
                     resume_session_id=resume_session_id,
+                    system_prompt=system_prompt,
                     precheck=precheck,
                 )
                 # Nothing has been sent to `claude` yet, so anything already

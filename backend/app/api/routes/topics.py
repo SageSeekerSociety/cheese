@@ -745,12 +745,20 @@ async def set_title(
 
 
 @router.post("/{topic_id}/read")
-async def mark_topic_read(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """话题级已读位: bump the user's read cursor (opening a topic clears its
-    unread badge, Feishu-style)."""
-    handle = (body.get("handle") or "").strip()
-    if not handle:
-        raise ValidationError("handle 不能为空")
+async def mark_topic_read(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """话题级已读位: bump the caller's read cursor (opening a topic clears its
+    unread badge, Feishu-style).
+
+    The cursor is per person, so whose it is comes from the verified
+    credential — ``handle`` in the body is only an assertion checked against
+    it (it used to BE the identity, letting anyone move anyone's cursor)."""
+    handle = await resolver.resolve_recipient(
+        requested=(body.get("handle") or "").strip() or None,
+        project_id=await resolver.project_of_topic(topic_id),
+        allow_anonymous=False,
+    )
     await TopicService(db).mark_read(topic_id, handle)
     return ok({"topic_id": str(topic_id), "handle": handle})
 

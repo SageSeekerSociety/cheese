@@ -93,6 +93,14 @@ class ProjectRepository:
         project.summary = summary
         await self._session.flush()
 
+    async def set_settings(self, project: Project, settings: dict[str, object]) -> None:
+        """Replace the free-form settings blob. Callers merge — assigning a NEW
+        dict is what makes SQLAlchemy see the change (the column is plain JSON,
+        so an in-place mutation is invisible to the unit of work and silently
+        never persists)."""
+        project.settings = settings
+        await self._session.flush()
+
     async def link_task(
         self, *, project_id: uuid.UUID, task_id: uuid.UUID
     ) -> ProjectTaskLink:
