@@ -242,6 +242,19 @@ UPDATE device SET supply='cloud'
 
 > 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
 
+**第三轮：CI (#318) 抓到三条本地看不见的**。全是同一类——`approve()` 加了必填 `supply` 之后，**沙箱里跑不起来的那些测试**没跟着改。已修，并按 `.claude/rules/backend-tests.md` 那条「按符号 grep 全仓」做了一次彻底扫描：`\.approve(`、`delete_owned`、`delete_platform_provisioned`、`.supply` 三组调用点现已全部覆盖，无遗漏。
+
+| CI 报的 | 真因 | 修法 |
+|---|---|---|
+| `test_domain_service_seams.py` `approve() missing supply` | #299 新增的接缝测试，是第三个 `approve` 调用点 | 补 `self_hosted`（人拿 connector 注册自己的机器） |
+| `test_machine_service.py` 两条 `SimpleNamespace has no attribute 'supply'` | `forget()` 现在读 `device.supply`，而 fake 设备是裸 `SimpleNamespace` | 两处补 `supply=Supply.cloud`；`FakeDevices` 补 `delete_platform_provisioned`，**并在 fake 里也实施同一条不变量**，免得假的比真的宽松 |
+
+顺手补了一条这条路径**本来就该有**的测试：`test_forgetting_never_destroys_a_machine_the_platform_did_not_open` —— `forget` 从 `list_for_project`（一条 GET）触发，所以遇到 `self_hosted` 必须**大声拒绝但不抛**（抛出去会因为一行坏数据卡死整个项目的机器列表），机器行照收、人的机器留下。
+
+**为什么本地没抓到，以及已经解决**：这 22 个 `test_machine_service.py` 用例在沙箱里全部死在 `provision()` → `generate_keypair()` 的 `FileNotFoundError: 'ssh-keygen'` 上，**在到达我改的 `forget()` 之前**就炸了，所以两条真失败被环境失败盖住了。已用 `cryptography`（本来就是后端依赖）写了个 15 行的 `ssh-keygen` 垫片放在沙箱 PATH 上——**不入仓**，纯本地——22 个用例随即可跑，两条真失败当场暴露。**CLAUDE.md 里「no-procps 导致 test_machine_service 失败」那条记述是错的，根因是缺 `openssh-client`**；垫片这个办法也值得记进去（等你点头再改那个共享文件）。
+
+**全量复跑**（垫片 + 临时把基线的迁移链拉直，跑完已还原，`jj diff` 确认没留痕）：**4224 passed / 13 failed**。13 条里 3 条是已知环境缺口（`test_market_api` 缺 provider 凭据、`test_tmux_control` 缺 `kill`、`test_cheese_cli` 被沙箱自身的 `CHEESE_AWAIT_LOGS` 顶掉），**另外 10 条是这个陈旧基线自带的**：<&backend/app/domain/topic/services.py> 里 `_as_utc` 被定义了两次，后一个（`moment: datetime`）遮住前一个（`when: datetime | None`），`None` 撞上 `.tzinfo`。这就是 pyright 剩下那 2 个报错的同一处，**不在本改动的 diff 里**，而且 CI 在真正的 main 上是 4285 passed——说明上游早已修掉，只有我这个盒子的基线还带着它。
+
 **一条本地拦住的事，不是本改动引起的**：这个沙箱同步到的 `main@upstream`（`08c58dba` = 采纳 issue 186 #301）**自身就是分叉的**——`alembic heads` 在**完全移除本改动的迁移文件**之后仍然是两个头（`b7e3c19d4f80` 来自 #301，`c1f7a3b90d24` 来自 #289），DB 类测试因此在建库那一步就 `Multiple head revisions are present` 报错。也就是说 #307 的修复还没同步进来。后果有两条：(a) 本轮**跑不了任何 DB 类测试**（integration / contract / 一部分 unit），只有纯 unit 可跑；(b) `c4a71e5d9b30` 的 `down_revision` 该挂谁，**在这个盒子里看不出来**——现按指示挂在 `c1f7a3b90d24` 上，但若 #307 是一条合并迁移，真正的链尾是那条合并的 revision，需要它的 id 才能挂对。
 
 > 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
