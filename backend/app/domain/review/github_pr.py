@@ -97,6 +97,42 @@ class MergeResult:
     blocked_reason: str | None = None
 
 
+@dataclass
+class WorkflowRun:
+    """One run of a workflow file, as the deploy gate needs to judge it.
+
+    `conclusion` is GitHub's own word and is deliberately kept raw: only the
+    literal `"success"` means the deploy actually succeeded. A run that merely
+    *finished* (`status == "completed"`) can carry `cancelled` / `failure` /
+    `skipped`, and `conclusion` is None while it is still running."""
+
+    head_sha: str
+    status: str  # "queued" | "in_progress" | "completed"
+    conclusion: str | None
+    created_at: datetime | None
+    url: str
+    branch: str = ""
+    #: Actions run id — the handle for `workflow_run_jobs`. A run's conclusion
+    #: alone cannot say whether it DID anything (see `WorkflowJob`).
+    id: int = 0
+
+
+@dataclass
+class WorkflowJob:
+    """One job inside a run, with its steps' conclusions.
+
+    Exists because `conclusion == "success"` on a deploy run does NOT mean the
+    deploy happened: `deploy-dev.yml`'s deploy job skips its own login+deploy
+    steps for a docs-only commit and still reports success. A skipped step in
+    an otherwise green job is the workflow saying "I deliberately did nothing",
+    and the archive gate has to be able to see that."""
+
+    name: str
+    conclusion: str | None
+    #: (step name, conclusion) in the workflow's own order.
+    steps: list[tuple[str, str]]
+
+
 class GitHubPrError(RuntimeError):
     """A GitHub API call failed outright (bad token, repo gone, rate limit,
     GitHub outage, ...). The caller treats this as "mechanism unavailable"
@@ -238,6 +274,37 @@ class GitHubPrClient(Protocol):
         """Same tri-state as check_state, for the named workflow file's most
         recent run against `head_sha` (the merge commit). No matching run yet
         (workflow hasn't been picked up by the runner) → pending, not failure."""
+        ...
+
+    async def recent_workflow_runs(
+        self, *, owner: str, repo: str, workflow_file: str, token: str, limit: int = 30
+    ) -> list[WorkflowRun]:
+        """The workflow file's most recent runs across ALL commits (NOT filtered
+        by `head_sha`), newest first — GitHub's own ordering.
+
+        `workflow_run_state` answers "how did MY commit's deploy end"; this one
+        exists for the follow-up question the 被顶替 check asks: "did some LATER
+        deploy already ship my commit anyway". Implementations must return the
+        raw `conclusion` per run and never collapse runs into one verdict."""
+        ...
+
+    async def workflow_run_jobs(
+        self, *, owner: str, repo: str, run_id: int, token: str
+    ) -> list[WorkflowJob]:
+        """Every job of one run, with per-step conclusions — the only place
+        GitHub says whether a green run actually DID its work. See
+        `WorkflowJob` for why the run-level conclusion is not enough."""
+        ...
+
+    async def compare_status(
+        self, *, owner: str, repo: str, base: str, head: str, token: str
+    ) -> str | None:
+        """GitHub's `status` for `base...head`: `identical`, `ahead`, `behind`
+        or `diverged` — None when GitHub answers in an unexpected shape.
+
+        Same endpoint as `compare_files`, different field: this one is about
+        ancestry, not the file list. With `base` = another commit and `head` =
+        ours, `behind`/`identical` means that other commit CONTAINS ours."""
         ...
 
 
@@ -759,6 +826,97 @@ class HttpxGitHubPrClient:
             return "success", f"部署 workflow 完成：{conclusion}"
         run_url = run.get("html_url", "")
         return "failure", f"部署 workflow 失败：{conclusion}（{run_url}）"
+
+    async def recent_workflow_runs(
+        self, *, owner: str, repo: str, workflow_file: str, token: str, limit: int = 30
+    ) -> list[WorkflowRun]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/actions/workflows/"
+                f"{workflow_file}/runs",
+                headers=self._headers(token),
+                params={"per_page": max(1, min(limit, 100))},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝列出部署 workflow 的运行记录"
+                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        runs = resp.json().get("workflow_runs", [])
+        out: list[WorkflowRun] = []
+        for run in runs:
+            if not isinstance(run, dict):
+                continue
+            sha = run.get("head_sha")
+            if not isinstance(sha, str) or not sha:
+                continue
+            conclusion = run.get("conclusion")
+            run_id = run.get("id")
+            out.append(
+                WorkflowRun(
+                    head_sha=sha,
+                    status=str(run.get("status") or ""),
+                    conclusion=conclusion if isinstance(conclusion, str) else None,
+                    created_at=_parse_github_time(run.get("created_at")),
+                    url=str(run.get("html_url") or ""),
+                    branch=str(run.get("head_branch") or ""),
+                    id=run_id if isinstance(run_id, int) else 0,
+                )
+            )
+        return out
+
+    async def workflow_run_jobs(
+        self, *, owner: str, repo: str, run_id: int, token: str
+    ) -> list[WorkflowJob]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/actions/runs/{run_id}/jobs",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝查部署运行的 job 列表"
+                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        out: list[WorkflowJob] = []
+        for job in resp.json().get("jobs", []):
+            if not isinstance(job, dict):
+                continue
+            steps: list[tuple[str, str]] = []
+            for step in job.get("steps") or []:
+                if isinstance(step, dict):
+                    steps.append(
+                        (str(step.get("name") or ""), str(step.get("conclusion") or ""))
+                    )
+            conclusion = job.get("conclusion")
+            out.append(
+                WorkflowJob(
+                    name=str(job.get("name") or ""),
+                    conclusion=conclusion if isinstance(conclusion, str) else None,
+                    steps=steps,
+                )
+            )
+        return out
+
+    async def compare_status(
+        self, *, owner: str, repo: str, base: str, head: str, token: str
+    ) -> str | None:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/compare/{base}...{head}",
+                headers=self._headers(token),
+                # The file list is dead weight here — only `status` is read, and
+                # a 300-file compare would otherwise ship megabytes per poll.
+                params={"per_page": 1},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝比较两个 commit 的先后关系"
+                f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+            )
+        status = resp.json().get("status")
+        return status if isinstance(status, str) else None
 
 
 def _summarize_runs(runs: list[dict]) -> tuple[CheckState, str]:
