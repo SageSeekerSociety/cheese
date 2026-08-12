@@ -41,6 +41,11 @@ DOMAIN_ROOT = Path(__file__).resolve().parents[2] / "app" / "domain"
 # ---------------------------------------------------------------------------
 _EXEMPT: frozenset[tuple[str, str]] = frozenset(
     {
+        # --- agent_credential --- (plain get + the epoch lives in
+        # project.settings; no project/topic *service* exposes those reads
+        # without dragging their full DI graph into credential minting)
+        ("app.domain.agent_credential.services", "app.domain.project.repositories"),
+        ("app.domain.agent_credential.services", "app.domain.topic.repositories"),
         # --- agent ---
         ("app.domain.agent.roles", "app.domain.expert_role.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
