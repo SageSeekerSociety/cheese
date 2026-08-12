@@ -62,6 +62,30 @@ def _save_inflight(reg: dict) -> None:
         logger.exception("failed to persist in-flight turn registry")
 
 
+def _continuation_of(turn_id: str, info: dict) -> uuid.UUID:
+    """The continuation an orphaned registry entry should resume under.
+
+    Written by a current backend, the entry carries one. A LEGACY entry (written
+    before the field existed) does not, and its turn id is the right fallback:
+    "the continuation of a first attempt IS its turn id" is the invariant
+    ``_execute`` maintains.
+
+    Anything unparseable gets a fresh id rather than an exception. That means no
+    key from the dead turn will match — the resume degrades to the old
+    duplicate-side-effect risk for that ONE turn — but the alternative is
+    raising out of the orphan sweep, which would strand every OTHER turn the
+    sweep exists to rescue. A narrower failure beats a louder one here."""
+    raw = info.get("continuation_id")
+    for candidate in (raw, turn_id):
+        if isinstance(candidate, str):
+            try:
+                return uuid.UUID(candidate)
+            except ValueError:
+                continue
+    logger.warning("orphan entry %s has no usable continuation id", turn_id)
+    return uuid.uuid4()
+
+
 # Channel = the topic id (str). Frames are the same dicts converse yields.
 Frame = dict
 
@@ -229,6 +253,25 @@ class TurnRunner:
             return out
         return None
 
+    def continuation_for(self, topic_id: uuid.UUID) -> uuid.UUID | None:
+        """The logical unit of work this topic's CURRENT turn belongs to, or
+        None when no turn of ours is running.
+
+        This is how an HTTP handler — which is called by the sandbox over a
+        plain request and knows nothing about turns — finds the key namespace to
+        dedup against. None means "not inside an automatic turn": a human
+        clicking a button twice means it twice, so the caller skips the check
+        rather than inventing a namespace."""
+        key = str(topic_id)
+        for rec in reversed(self._recent):
+            if rec["topic_id"] != key:
+                continue
+            if rec["status"] != "running":
+                return None
+            raw = rec.get("continuation_id")
+            return uuid.UUID(raw) if isinstance(raw, str) else None
+        return None
+
     def running_topic_ids(self) -> set[uuid.UUID]:
         """Every topic with a turn currently in flight — for bulk UI signals
         (e.g. the sidebar's "还在说话" indicator) that can't afford one
@@ -288,10 +331,16 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
-        submit queues behind the first)."""
+        submit queues behind the first).
+
+        ``continuation_id`` names the logical unit of work. A fresh turn starts
+        one (defaulting to its own turn id); an auto-resume INHERITS the
+        interrupted turn's, which is what lets a side effect the first attempt
+        already performed be recognised as done — see domain.idempotency.keys."""
         turn_id = uuid.uuid4()
         task = asyncio.create_task(
             self._run(
@@ -306,6 +355,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                continuation_id=continuation_id or turn_id,
             )
         )
         self._tasks.add(task)
@@ -337,11 +387,25 @@ class TurnRunner:
         task.add_done_callback(self._tasks.discard)
         return turn_id
 
-    # What the auto-resumed turn asks 芝士 to do. Its progress is intact: the
-    # topic's session pointer was saved on failure (resume, not replay).
+    # What the auto-resumed turn asks 芝士 to do.
+    #
+    # The old wording asserted "你的工作区和已完成的进度都在" unconditionally.
+    # That claim is only true of FILES. Whether the conversation came back
+    # depends on the session pointer having reached the DB before the process
+    # died, and for a pure investigation turn — which produces no files at all —
+    # "进度都在" can be false in every sense (2026-08-11, this topic: a
+    # 132-message turn resumed into a blank session that had to reconstruct the
+    # task from the blocks API). Telling a context-less 芝士 that its progress is
+    # intact is exactly how it redoes work it cannot see.
+    #
+    # So: promise only the part that is always true, and say plainly that the
+    # rest has to be checked rather than assumed.
     RESUME_PROMPT = (
-        "上一轮在中途断了（原因见上一条系统事件）。你的工作区和已完成的进度都在，"
-        "请从断点接着完成原任务；如果其实已经完成了，就直接收尾汇报。"
+        "上一轮在中途断了（原因见上一条系统事件）。工作区里的文件都在，"
+        "但**对话上下文不保证接上了**——如果你对上一轮做过什么没有印象，"
+        "那就是没接上：先核对已经发生的事（jj status 看改动、翻本话题的消息记录"
+        "看已经说过和做过什么），再决定从哪继续，别凭猜重做。"
+        "确认原任务其实已完成的话，直接收尾汇报。"
     )
 
     # Past this age an orphan is not auto-resumed: continuing a conversation
@@ -565,6 +629,7 @@ class TurnRunner:
                 topic_id,
                 10.0 if turn_id in wedged else 3.0,
                 "上一轮被强制中断，接着跑",
+                continuation_id=_continuation_of(turn_id, info),
             )
             resumed += 1
             logger.info("orphan turn %s scheduled for resume", turn_id)
@@ -591,10 +656,16 @@ class TurnRunner:
         topic_id: uuid.UUID,
         after_s: float,
         reason: str = "从上一轮的断点继续",
+        *,
+        continuation_id: uuid.UUID | None = None,
     ):
         """One bounded auto-resume: wait, then run a system-nudged turn that
         continues the saved session. Resumed turns never schedule another
-        resume (is_resume=True), so a persistent failure stops after one shot."""
+        resume (is_resume=True), so a persistent failure stops after one shot.
+
+        The resume runs under the interrupted turn's ``continuation_id``, so any
+        side effect the first attempt already committed is recognised as done
+        rather than performed twice."""
 
         async def _later() -> None:
             await asyncio.sleep(after_s)
@@ -606,6 +677,7 @@ class TurnRunner:
                 summon=True,
                 is_resume=True,
                 resume_reason=reason,
+                continuation_id=continuation_id,
             )
 
         task = asyncio.create_task(_later())
@@ -749,6 +821,7 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
@@ -788,6 +861,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                continuation_id=continuation_id,
                 frames=frames,
             )
         finally:
@@ -816,10 +890,12 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
+        continuation_id = continuation_id or turn_id
         resume_after: float | None = None
         resume_why = "上一轮异常中断，接着跑"
         # Did this turn blame the MACHINE? Decides whether finishing counts as
@@ -832,6 +908,7 @@ class TurnRunner:
         rec = {
             "turn_id": str(turn_id),
             "topic_id": str(topic_id),
+            "continuation_id": str(continuation_id),
             "author": author,
             "summon": summon,
             "is_resume": is_resume,
@@ -851,6 +928,10 @@ class TurnRunner:
             "topic_id": str(topic_id),
             "started_at": rec["started_at"],
             "is_resume": is_resume,
+            # Carried across the process death: the orphan sweep must resume
+            # under the SAME continuation, or every key the dead turn claimed
+            # stops matching and its side effects are all repeated.
+            "continuation_id": str(continuation_id),
         }
         _save_inflight(reg)
         # Same instant, no await in between: a sweep can never observe this turn
@@ -896,6 +977,7 @@ class TurnRunner:
                         is_resume=is_resume,
                         resume_reason=resume_reason,
                         nudge_event=nudge_event,
+                        continuation_id=continuation_id,
                     )
                 )
                 async for frame in turn_frames:
@@ -1099,7 +1181,13 @@ class TurnRunner:
                     resume_why = swap.resume_reason or resume_why
         if resume_after is not None and not is_resume:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
-            self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
+            self._schedule_resume(
+                chat_service,
+                topic_id,
+                resume_after,
+                resume_why,
+                continuation_id=continuation_id,
+            )
         else:
             # 结论卡·阶段一 (机制①): this topic's turn ended and any conclusion
             # card it was handed is still open → 默认采信. THE place to put this
