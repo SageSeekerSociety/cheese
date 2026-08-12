@@ -6,7 +6,7 @@ import uuid
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import DbMemoryStore
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
@@ -30,8 +30,16 @@ def test_health(client):
 
 
 def test_create_and_list_project(client):
-    client.post("/api/projects", json={"name": "P1"})
-    r = client.get("/api/projects")
+    # Both calls are authenticated, and that is the point of the test rather
+    # than a formality: without `team_id` this listing means "the caller's OWN
+    # projects", so an anonymous GET now answers empty (see
+    # test_project_visibility.py — an unidentifiable caller used to get every
+    # project on the platform, which is what a logged-in user saw whenever
+    # their token lapsed). Creating anonymously would leave the project with no
+    # owner and no roster, so nobody would have a claim on it either.
+    headers = session_auth_headers("alice")
+    client.post("/api/projects", json={"name": "P1"}, headers=headers)
+    r = client.get("/api/projects", headers=headers)
     body = r.json()
     assert body["code"] == 200
     assert body["data"]["total"] == 1

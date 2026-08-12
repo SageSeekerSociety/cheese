@@ -1,6 +1,12 @@
 import type { Project } from '@/cx_types'
 
-const CACHE_PREFIX = 'cheesex.projects.v1:'
+// v2 (2026-08-12): v1 entries cannot be trusted. While the listing answered an
+// unidentifiable caller with EVERY project, a request sent on a lapsed token
+// came back with other people's projects — and this cache wrote them under the
+// user's own handle, so the sidebar kept showing them long after the token was
+// fine again. Bumping the prefix drops those entries instead of waiting out
+// MAX_AGE_MS on a cache we know is wrong.
+const CACHE_PREFIX = 'cheesex.projects.v2:'
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
 
 interface CachedProjects {
