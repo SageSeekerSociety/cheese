@@ -1,6 +1,6 @@
 """@all / @here notify the whole topic roster (群播, fusion-design §3)."""
 
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _project_topic(client, created_by: str = "alice") -> tuple[str, str]:
@@ -33,7 +33,8 @@ def _post(ws, content: str) -> None:
 
 def _notifs(client, pid: str, handle: str) -> list[dict]:
     return client.get(
-        f"/api/projects/{pid}/notifications?target_handle={handle}"
+        f"/api/projects/{pid}/notifications",
+        headers=session_auth_headers(handle),
     ).json()["data"]["data"]
 
 

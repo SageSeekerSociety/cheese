@@ -8,6 +8,7 @@ from app.domain.authz.policy import (
     authorize_topic_access,
     can_manage_project_members,
     can_manage_roster,
+    refuse_unauthenticated_chat,
 )
 from app.domain.identity.actor import Actor
 from app.domain.project.models import ProjectRole
@@ -74,6 +75,49 @@ async def test_token_on_rosterless_legacy_topic_allowed():
     assert (
         await _access(_actor("token"), role=None, roster=False, project_member=False)
         is True
+    )
+
+
+# ---- refuse_unauthenticated_chat: who gets onto a chat socket at all ----
+# Not covered by the integration suite alone: the "presented but unverifiable"
+# vs "presented nothing" split is the whole point of the function, and only a
+# table like this shows that `allow_anonymous` moves exactly one of the four
+# cells. The chat route maps a returned code straight onto the wire, so these
+# strings are the frontend's contract, not an implementation detail.
+
+
+def _refusal(*, authenticated: bool, token_presented: bool, allow_anonymous: bool):
+    return refuse_unauthenticated_chat(
+        _actor("token" if authenticated else "handle"),
+        token_presented=token_presented,
+        allow_anonymous=allow_anonymous,
+    )
+
+
+async def test_authenticated_socket_is_admitted():
+    for allow in (False, True):
+        assert (
+            _refusal(authenticated=True, token_presented=True, allow_anonymous=allow)
+            is None
+        )
+
+
+async def test_unverifiable_token_is_refused_even_for_a_harness():
+    # The incident's shape: treating a rejected credential as "no credential".
+    # `allow_anonymous` must not be able to switch that downgrade back on.
+    for allow in (False, True):
+        assert _refusal(
+            authenticated=False, token_presented=True, allow_anonymous=allow
+        ) == ("auth_expired", "登录状态已失效，请重新登录后再发言")
+
+
+async def test_tokenless_socket_is_refused_unless_the_harness_switch_is_on():
+    assert _refusal(
+        authenticated=False, token_presented=False, allow_anonymous=False
+    ) == ("auth_required", "请先登录再进入话题")
+    assert (
+        _refusal(authenticated=False, token_presented=False, allow_anonymous=True)
+        is None
     )
 
 

@@ -14,7 +14,7 @@ from sqlalchemy.pool import NullPool
 
 from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import TEST_DATABASE_URL
-from tests.integration.conftest import chat_ws_url
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _own_agent(topic_id: str) -> str:
@@ -211,7 +211,8 @@ def _post_without_summon(client, topic_id: str, content: str, author: str) -> No
 
 def _notifs(client, project_id: str, handle: str) -> list[dict]:
     return client.get(
-        f"/api/projects/{project_id}/notifications?target_handle={handle}"
+        f"/api/projects/{project_id}/notifications",
+        headers=session_auth_headers(handle),
     ).json()["data"]["data"]
 
 

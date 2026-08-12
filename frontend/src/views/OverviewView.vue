@@ -124,12 +124,14 @@ async function load() {
   try {
     const [ov, ib, contrib, cred] = await Promise.all([
       getOverview(props.projectId),
-      getInbox(props.projectId, ME),
+      // A 401/403 here (signed out, or a stale cached handle after switching
+      // accounts) must not blank the whole overview — degrade to an empty inbox.
+      getInbox(props.projectId, ME).catch(() => null),
       getContributions(props.projectId).catch(() => null),
       getProjectCredits(props.projectId).catch(() => null),
     ])
     overview.value = ov
-    inbox.value = ib.data
+    inbox.value = ib?.data ?? []
     contributions.value = contrib
     credits.value = cred
     // The overview extends the project card; if it didn't carry summary, fetch

@@ -104,9 +104,10 @@ def _rewrite(path: Path, content: str, *, mode: int) -> None:
 def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
     """True when a resumable transcript for ``resume_session_id`` is present in
     this topic's ~/.claude mount (i.e. a cloned/forked conversation was written
-    there). Pure so it can be unit-tested without a container. Guards the
-    `--resume` path so an ordinary fresh topic (no transcript) never resumes."""
-    return clone.transcript_file(Path(session_dir), resume_session_id).is_file()
+    there), under whatever slug it was written with. Pure so it can be
+    unit-tested without a container. Guards the `--resume` path so an ordinary
+    fresh topic (no transcript) never resumes."""
+    return clone.find_transcript(Path(session_dir), resume_session_id) is not None
 
 
 # Container label carrying the routing-env stamp (see _ensure_container).
@@ -325,13 +326,15 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     async def _create_container(self, name: str, env: dict[str, str]) -> None:
         # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
         mounts = {"SBX_WORKTREE", "SBX_SESSION"}
-        # The worktree is a jj workspace pointing at the project's shared main
-        # repo store via a host-relative path (see ws.sandbox_vcs_mounts) —
-        # without also mounting the main repo's .jj/.git, that pointer walks
-        # off the container's shallow root and jj/git are unusable in here.
-        vcs_mounts = ws.sandbox_vcs_mounts(
-            uuid.UUID(env["CHEESE_PROJECT"]),
-            ws.branch_for_topic(uuid.UUID(env["CHEESE_TOPIC"])),
+        # One mount of the project's whole `.worktrees` tree (this topic's
+        # worktree, its siblings, and the shared pnpm/uv stores) plus the main
+        # repo's .jj/.git remap — see ws.sandbox_project_mounts for why a single
+        # mount is load-bearing (hardlinks cannot cross bind mounts) and what
+        # it means for same-project isolation. The workdir is the topic's REAL
+        # path under that mount, not a /work remap, for the same reason.
+        branch = ws.branch_for_topic(uuid.UUID(env["CHEESE_TOPIC"]))
+        project_mounts = ws.sandbox_project_mounts(
+            uuid.UUID(env["CHEESE_PROJECT"]), branch
         )
         args = [
             "run",
@@ -349,11 +352,9 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "-v",
             f"{env['SBX_SESSION']}:/home/node/.claude",
             *_subscription_args(),
-            "-v",
-            f"{env['SBX_WORKTREE']}:/work",
-            *vcs_mounts,
+            *project_mounts,
             "-w",
-            "/work",
+            ws.sandbox_topic_workdir(branch),
         ]
         args += _cheese_cli_mount(env["SBX_SESSION"])
         args += [
@@ -365,6 +366,10 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "2",
             "--pids-limit",
             "512",
+            # A crashing node/vite process must not dump its address space into
+            # the worktree (1-2GB core files were a top disk consumer on dev).
+            "--ulimit",
+            "core=0",
             "--label",
             "cheesex-sandbox=1",
             "--label",
