@@ -271,20 +271,59 @@
 
 后三个数才是关键——它们决定「便宜」是不是真的便宜（见 §7.1.1）。
 
-#### 附带必须解决的问题：当前三档是塌陷的
+#### 三档别名是接入要求，不是省钱设计
 
-`config.py:48-56` 现值：
+`ANTHROPIC_DEFAULT_{HAIKU,SONNET,OPUS}_MODEL` 这三档**必须全部映射**，原因不是分层省钱，而是 Claude Code CLI 自己会去要这些别名（分身的默认模型等）。`profiles.py:64-66`：
 
 ```python
-agent_model: str = "glm-5.2"
-agent_haiku_model:  str | None = "glm-4.5-air"
-agent_sonnet_model: str | None = "glm-5.2"
-agent_opus_model:   str | None = "glm-5.2"
+# Map ALL alias tiers: a newer claude CLI reaches for sonnet/opus
+# aliases (subagent defaults etc.) — an unmapped alias hits the GLM
+# gateway as a claude-* name and 400s the whole turn ([1211]).
 ```
 
-**sonnet 与 opus 指向同一个模型**，只有 haiku 档真正分了出来。§7.3 的「模型分层路由省 50–70%」在当前配置下拿不到，因为中高档没有区分。
+**漏映射不是「少省点钱」，是整轮 400 挂掉**——已踩过，编号 [1211]。
 
-因此选型不是选一个模型，是**选一组**，把三档填满：轻量档（读文件、跑测试、格式化）/ 中档（常规编码）/ 高档（复杂推理）。三档可以跨厂商组合，前提是各自都通过阶段一。
+#### 已知冲突：分层路由 vs 分身供应商一致性
+
+紧接上面的代码，sonnet 档被**刻意覆盖**回主模型：
+
+```python
+# Subagents resolve via the sonnet/opus aliases — pin them to this
+# profile's model so 分身 never silently run a different provider.
+env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = self.model
+```
+
+所以当前「sonnet 与 opus 同值」有一半是故意的，不是纯粹的配置疏漏。这里存在**真实的设计冲突**：§7.3 的分层路由要各档跑不同模型才能省钱，而这行代码要求分身必须与主模型同供应商。**不是把三个格子填满就行，这个矛盾要单独定。**
+
+#### 这套设计里实际有几个模型
+
+学生路径上，四个配置项、去重后 **3 个模型**（当前全是智谱）：
+
+| 用途 | 配置项 | 当前值 | 协议 |
+|---|---|---|---|
+| Agent 主模型（= opus 档；sonnet 档被钉死于此） | `agent_model` | `glm-5.2` | Anthropic |
+| Agent 轻量档 | `agent_haiku_model` | `glm-4.5-air` | Anthropic |
+| 记忆系统 OpenViking 的 LLM | `openviking_llm_model` | `glm-4.5-air`（同轻量档） | OpenAI |
+| 记忆系统 embedding | `openviking_embedding_model` | `embedding-3` | OpenAI |
+
+**因此选型要选的是：2 个 Agent 模型 + 1 个 embedding 模型。** embedding 容易被忘，且它走 OpenAI 协议（checklist 第 8 项），不走 Anthropic。
+
+不在学生路径上的：`claude_model` / `fable_model` 属 `testing` tier，仅团队 dogfooding。
+
+#### 遗留问题：第二条 OpenAI 链路仍指向 gpt-4o-mini / o1-mini
+
+`openai_default_model = "gpt-4o-mini"`、`openai_reasoning_model = "o1-mini"`，**是活代码**，挂在两组真实功能上：
+
+- `LLMClient`（`domain/llm/llm_client.py`）→ `task_ai_advice_service`（任务 AI 建议，含流式）、`task_pdf_draft_service`（PDF 草稿）、`routes/tasks.py:3154`
+- `AIChatService`（`domain/llm/chat_service.py`）→ `routes/ai.py`，对外暴露 `/ai/chat`、`/ai/conversations`、`/ai/models`、`/ai/quota`；`main.py:147-150` 自动挂载所有 APIRouter，故这组端点**确实可访问**
+
+缓解事实：客户端仅在 `openai_api_key` 非空时构造（`llm_client.py:79-82`），否则 `is_configured` 为 `False`，全部走 `_placeholder_response()` 返回 `[LLM not configured - placeholder response]`。而 `deploy/` 未配置 `OPENAI_API_KEY`。
+
+**即现状是：这些功能没跑在 OpenAI 上，但也没在正常工作——在返回占位符。** 这比死代码更麻烦：端点是通的、前端可能在调，用户拿到的是假响应。
+
+好消息是 `openai_base_url` 可配置（默认 `https://api.openai.com/v1`），智谱提供 OpenAI 兼容端点，**改配置即可指向国产模型**，与 OpenViking 同理。
+
+**待定**：这两组功能是保留（则纳入选型，补第 4 个模型）还是下线（则删代码与端点）。在定之前，「全部使用国产模型」这个决定尚未落实完。
 
 > `deploy/.env.prod.example:89` 的 `AGENT_MODEL=glm-5.2` 是注释掉的、`ANTHROPIC_BASE_URL` 为空，所以线上跑的就是代码默认值。选型定了之后，换型号是改部署配置，不动代码（走 `deploy/deploy-docker.sh`）。
 
@@ -367,12 +406,14 @@ agent_opus_model:   str | None = "glm-5.2"
 
 ## 十一、待拍板
 
-1. **国产模型选型（最关键）**：走向已定（用国产模型），待定的是**用哪一组**（三档要填满，当前 sonnet/opus 塌陷成同一个）。执行路径见 §7.1.2 两阶段：先过协议 checklist，再对幸存者做能力与真实成本实测。定了它，§7.2「credits 作为高端档配额」这套设计才知道成不成立。
-2. **¥70 万的周期（一学期 / 一学年）与拟覆盖的课程数**
-3. 学生能否自费超额充值（现状是学生已全员自费，涉及教育公平争议，学院可能明确禁止）
-4. 按课程采购还是学院整体采购（影响冗余系数与跨课程调剂）
-5. 面值 0.04 是否需要重定（官方 API 口径 vs 中转站口径 vs GLM 口径）
-6. **优先级**：§5 的过程可审计性可能比整个额度体系更值钱，是否应该前置？
+1. **国产模型选型（最关键）**：走向已定（用国产模型），待定的是**用哪一组**——2 个 Agent 模型 + 1 个 embedding 模型。执行路径见 §7.1.2 两阶段：先过协议 checklist，再对幸存者做能力与真实成本实测。定了它，§7.2「credits 作为高端档配额」这套设计才知道成不成立。
+2. **分层路由 vs 分身供应商一致性的冲突**（§7.1.2）：sonnet 档当前被刻意钉死于主模型以防分身跨供应商，这与分层省钱直接矛盾，需要定取舍。
+3. **`/ai/*` 与任务 AI 建议 / PDF 草稿这条 OpenAI 链路：保留还是下线**（§7.1.2）。现状是端点可访问但返回占位符。保留则纳入选型并补第 4 个模型，下线则删代码与端点。在此之前「全部用国产模型」未落实完。
+4. **¥70 万的周期（一学期 / 一学年）与拟覆盖的课程数**
+5. 学生能否自费超额充值（现状是学生已全员自费，涉及教育公平争议，学院可能明确禁止）
+6. 按课程采购还是学院整体采购（影响冗余系数与跨课程调剂）
+7. 面值 0.04 是否需要重定（官方 API 口径 vs 中转站口径 vs GLM 口径）
+8. **优先级**：§5 的过程可审计性可能比整个额度体系更值钱，是否应该前置？
 
 ## 十二、需要埋的数据
 
