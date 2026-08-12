@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -607,18 +608,21 @@ class AcceptService:
         the notice lands even when the accept itself is about to be rolled
         back by a raised ValidationError.
 
-        Fire-and-forget (asyncio.create_task, mirroring workspace/service.py's
-        watch_dogfood_push): post_with_retries can sleep up to 35s across its
-        retries, and the accepter's HTTP response must not wait on a room
+        Fire-and-forget, but through `spawn`, which holds a strong reference:
+        asyncio keeps only a weak one, and this coroutine sleeps up to 35s across
+        its retries — a wide window in which an unreferenced task can be
+        collected mid-await. Losing it means the room never learns the accept's
+        outcome at all. The accepter's HTTP response still doesn't wait on the
         notification succeeding — only on the merge itself."""
-        asyncio.get_running_loop().create_task(
+        spawn(
             webhook_service.post_with_retries(
                 async_session_factory,
                 project_id=topic.project_id,
                 topic_id=topic.id,
                 content=content,
                 source="accept",
-            )
+            ),
+            name=f"accept notice topic={topic.id}",
         )
 
     async def accept(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:
