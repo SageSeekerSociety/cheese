@@ -110,24 +110,31 @@ subscription traffic behind a backend-governed endpoint" is therefore a
 **prerequisite for parity**, not a parallel track — or the flip must be an
 explicit accepted decision for the migrated set.
 
-**Resolved direction (2026-08-13):** rather than build a general model-supply
-unification first, a **co-located** device uses the **subscription path** —
-the same one the local tmux container already uses — and GLM/`/llm` is kept
-only for **remote** devices, where the subscription credential genuinely
-cannot leave the backend. This matches the trust split already coded at
-`device_provider.py:280` (co-located == the backend's own host and trust
-boundary; remote == an untrusted machine that must get a scoped `/llm` route,
-never the credential). For the dogfooding case (dev box == co-located) this
-gives real Claude, same AI as local, and drops GLM.
+**Resolved direction (2026-08-13):** **all** device turns — co-located and
+remote alike — go through the **subscription**, the same path the local tmux
+container already uses. GLM/`/llm` is dropped for device entirely; there is no
+split. The earlier worry that a remote machine "can't hold the subscription
+credential" does not apply: by design the machine never holds a real
+credential. `subscription_provider` ships a fake one and the real token is
+injected by the **metering proxy** on the backend; the machine only carries a
+per-session scoped cheese token (HMAC over {project, topic, exp}) that
+authenticates "bill this project", and the proxy docstring
+(`provider_env.py:71`) explicitly contemplates the proxy being **exposed on a
+machine network** and authenticating remote callers by that scoped token. So
+the credential stays on the backend for every case; `/llm`→LiteLLM was never
+the "safe for remote" route, just a different model pool. Everyone gets the
+same Claude a local turn gets.
 
-*One implementation wrinkle to resolve in Phase 0:* the container reaches the
-metering proxy via docker `--add-host` redirect-by-name of
-`api.anthropic.com` (`provider_env.py:71` + the `--add-host` args in
-`tmux_provider`). A co-located device screen is a **bare `bash -lc` tmux
-session**, not a container, so `--add-host` does not apply — the name
-redirect must come from another hook (host `/etc/hosts` entry, or the proxy
-growing a real reachable vhost). `subscription_provider`'s env
-(fake credential + CA trust + scoped session token, **no `ANTHROPIC_BASE_URL`**)
+*One implementation wrinkle to resolve in Phase 0 (applies to every device,
+co-located and remote):* the container reaches the metering proxy via docker
+`--add-host` redirect-by-name of `api.anthropic.com` (`provider_env.py:71` +
+the `--add-host` args in `tmux_provider`). A device screen is a **bare
+`bash -lc` tmux session**, not a container, so `--add-host` does not apply —
+the name redirect must come from another hook (host `/etc/hosts` entry, or the
+proxy growing a real reachable vhost), and for a remote device the proxy must
+be reachable at a real address (the scoped-token auth the docstring already
+describes is what makes that safe). `subscription_provider`'s env (fake
+credential + CA trust + scoped session token, **no `ANTHROPIC_BASE_URL`**)
 carries over unchanged; only the SNI-redirect transport differs. Small but
 non-zero — exactly what the Phase-0 scratch run should exercise.
 
@@ -255,19 +262,21 @@ impact on live topics — device stays opt-in per topic. Fix
    variant on devices whose visibility says so — per-topic container, resource
    quotas, worktree bind-mount; the existing tmux image is the starting recipe.
    `host` visibility remains for the explicit "要这台机器本身" rooms (#282 §四).
-5. Model parity (G2): point the co-located device screen at the **subscription**
-   the same way the tmux container does (`subscription_provider` env), leaving
-   `/llm` only for remote devices. This is a **blocking parity gap, not a
+5. Model parity (G2): point **every** device screen at the **subscription**
+   the same way the tmux container does (`subscription_provider` env); drop
+   `/llm` for device entirely. This is a **blocking parity gap, not a
    follow-up** — until it lands, a device turn silently runs GLM instead of the
    Claude a local turn gets. The one open piece is the SNI-redirect transport
-   for a bare (non-docker) co-located process; see G2 above.
+   for a bare (non-docker) process, plus exposing the metering proxy at a
+   reachable address for remote devices (safe under the scoped-token auth the
+   proxy already describes); see G2 above.
 6. Await logs (D7) and CLI refresh (D11) as small follow-ups.
 
-Gate resolved by decision (2026-08-13): co-located → subscription (drop GLM),
-remote → keep `/llm`. See G2. No general model-supply unification is required
-first; the subscription path already exists for the local container and is
-reused. The Phase-0 scratch run must confirm the bare-process proxy redirect
-before Phase 2.
+Gate resolved by decision (2026-08-13): **all** device turns go through the
+subscription (drop GLM); no split, no general model-supply unification needed
+first — the subscription path already exists for the local container and is
+reused verbatim. The Phase-0 scratch run must confirm the bare-process proxy
+redirect before Phase 2.
 
 **Phase 2 — new topics default to device on dev.**
 Flip the dogfood team's default compute to `device`
