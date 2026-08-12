@@ -883,6 +883,27 @@ def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     return _git(repo, "diff", f"{base}...{branch}")
 
 
+def topic_added_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
+    """Paths a topic's branch ADDS relative to the base — not modifies.
+
+    Additions specifically, because the caller asking is looking for two
+    branches that each introduce a NEW alembic revision (#314). Two branches
+    editing the same existing file is ordinary; two branches each creating a
+    migration is a fork of the chain waiting to happen, and it is the added-file
+    list that tells them apart.
+
+    Empty (never an exception) when the branch doesn't exist yet: a topic that
+    has not written anything cannot collide with anything.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_topic(topic_id)
+    if not _branch_exists(repo, branch):
+        return []
+    base = _base_branch(repo)
+    out = _git(repo, "diff", "--name-only", "--diff-filter=A", f"{base}...{branch}")
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
 def _merge_worktree_path(project_id: uuid.UUID) -> Path:
     """Root for throwaway merge worktrees — sibling to (never colliding with)
     the topic worktrees under `.worktrees/{project}/`, which are all named

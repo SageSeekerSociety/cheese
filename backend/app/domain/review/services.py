@@ -229,6 +229,10 @@ _BLOCKED_BY_CARD_MESSAGES = {
 }
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
+#: Where an alembic revision lives. Two live cards each ADDING a file under
+#: here is the one overlap a machine can judge on its own (#314).
+_ALEMBIC_VERSIONS_DIR = "alembic/versions/"
+
 
 # ---- 人类授权动作前移 (2026-08-10) -----------------------------------------
 #
@@ -379,11 +383,69 @@ class AcceptService:
             if check_command_of(project)
             else AcceptStatus.pending
         )
-        return await self._repo.add(
+        card = await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
             status=status,
+        )
+        await self._warn_about_a_second_pending_migration(topic)
+        return card
+
+    async def _warn_about_a_second_pending_migration(self, topic: Topic) -> None:
+        """两张未决卡各带一个新迁移 → 在房间里说一声 (#314).
+
+        The narrow, clean half of "two rooms doing the same work". Two branches
+        editing the same existing file is ordinary — parent and child legitimately
+        touch one file each. Two branches each CREATING an alembic revision is
+        not: at best it forks the chain the moment both land (#312), at worst the
+        two are the same feature implemented twice, which is what happened on
+        2026-08-11 — `topics.progress` (a column) and `topic_progress` (a table),
+        two incompatible data models, each with a green card.
+
+        Deliberately a notice, not a block. The judgement "these two are the same
+        work" needs a human; what a machine can contribute is making sure the
+        human is looking at the moment there is something to look at. Both cards
+        being individually green is exactly the state that hides this.
+
+        Best-effort throughout: a git read that fails, or a room that won't take
+        the message, must never stop someone filing a card.
+        """
+        from app.domain.workspace import service as ws
+
+        def migrations(topic_id: uuid.UUID) -> list[str]:
+            try:
+                added = ws.topic_added_files(topic.project_id, topic_id)
+            except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
+                return []
+            return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
+
+        mine = migrations(topic.id)
+        if not mine:
+            return
+        others = await self._repo.list_live_in_project(
+            topic.project_id, statuses=_CARD_BLOCKS_NEW_CARD
+        )
+        collisions = [
+            other
+            for other in others
+            if other.topic_id != topic.id and migrations(other.topic_id)
+        ]
+        if not collisions:
+            return
+        rooms = []
+        for other in collisions:
+            sibling = await self._topics.get(other.topic_id)
+            rooms.append(f"「{sibling.title}」" if sibling else str(other.topic_id))
+        self._notify_merge_result(
+            topic,
+            "⚠️ **另一张未决的验收卡也新建了迁移**："
+            + "、".join(rooms)
+            + "。两张卡各带一个 alembic revision，合到一起会把迁移链分叉"
+            + "（#312），而且往往说明同一件事被做了两遍（#314 那次是 "
+            + "`topics.progress` 列和 `topic_progress` 表）。"
+            + "\n\n这里不拦，只是提醒验收的人**先比一下两张卡的改动**："
+            + "如果确实是两件事，照常采纳，先合的那张合完后另一张要 rebase。",
         )
 
     async def gate_plan(self, topic_id: uuid.UUID) -> tuple[uuid.UUID, str | None]:
