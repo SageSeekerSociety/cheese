@@ -27,7 +27,7 @@ triggering is too late for both.
 | `Is a git repository: false` in your environment block | "this checkout has no version control" | It has jj. Only the `.git` probe fails. |
 | `git status` / `gh pr list` → `fatal: not a git repository` | broken checkout | Same. `gh` needs an explicit `-R <owner>/<repo>`; it cannot infer the remote without `.git`. |
 | `jj git fetch` → `Git does not recognize required option: porcelain` | the fetch is broken, retry it | The sandbox ships git 2.39 and jj wants ≥ 2.41. **No `jj git` remote traffic works from inside the box** — the platform syncs `main@upstream` for you on the host. Read that ref, don't repair git. |
-| `gh api repos/<o>/<r>/pulls/<n>` → 403, but `repos/<o>/<r>` → 200 | the token expired, or the PR doesn't exist | The token is scoped to repo metadata + actions/checks. **PRs and refs are 403.** Measured 2026-08-11. |
+| `gh api repos/<o>/<r>/pulls/<n>` → 403, but `repos/<o>/<r>` → 200 | the token expired, or the PR doesn't exist | A permission the token doesn't carry. **`cheese gh-token` prints the list on stderr — read it instead of guessing.** It is not a fixed set: it's whatever the platform's GitHub App was granted, narrowed to read. |
 | `jj rebase -d main@upstream` → `Commit ... is immutable` | you lack permission | You aimed at shared history. Rebase *your own* change only: `jj rebase -s <your-change-id> -d main@upstream`. |
 
 **You cannot observe the remote, so never report on it.** Fetch fails and the
@@ -75,7 +75,7 @@ The dangerous ones are the tools that **fail silently or report success**.
 
 | Need | The supported path |
 |---|---|
-| Read CI logs / check runs / workflow runs | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it |
+| Read anything on GitHub — CI logs, check runs, issue bodies, PR review comments, files outside your workspace | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it. It prints on stderr exactly what this token may read, plus copy-paste commands for each — **read those lines before concluding you can't** |
 | Run the DB-backed test suite without docker | `.claude/scripts/dev-db.sh` (see Testing) |
 | Long-running commands | `cheese await` — the platform wakes the topic with the exit code, instead of you blocking |
 
@@ -86,9 +86,16 @@ The dangerous ones are the tools that **fail silently or report success**.
   `Error: Git does not recognize required option: porcelain`.
   **You cannot sync with upstream from inside the sandbox.** Do not plan around
   "I'll rebase onto latest main first" — you can't see latest main.
-- **The `gh` token is actions/checks scoped only.** `gh api repos/{owner}/{repo}/commits`,
-  PR file lists, and PR conflict data all return **403 Resource not accessible by
-  integration**. You can read what CI *did*; you cannot read what the repo *contains*.
+- **The `gh` token is read-only, and its exact scope is not a constant.** It is
+  whatever the platform's GitHub App holds, narrowed to `read` — so a permission
+  an org admin has not granted comes back as **403 Resource not accessible by
+  integration**, and one they granted this morning starts working without a
+  deploy. `cheese gh-token` prints the current list; **that print is the source
+  of truth, not this file and not your memory of last week.** What is fixed is
+  the ceiling: nothing a sandbox is handed can ever write.
+  If you hit a 403 on something you genuinely need to read, say so in your
+  report — the fix is an App permission an admin can add, not a workaround, and
+  not a human pasting the content in for you.
 
 ### Failures that look like success
 

@@ -13,7 +13,15 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Enum,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+    Uuid,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -137,6 +145,38 @@ class TopicReadState(UuidPk, Timestamps, Base):
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TopicProgress(Timestamps, Base):
+    """进度层: what this topic's work has gotten through, so far (#187).
+
+    芝士's checklist (the Task tools' working log) used to live only in the
+    turn's WS stream — it died with the turn, and with the machine. That made
+    "换了机器不知道自己做到哪" structurally unavoidable: the room could show the
+    code, the decisions and the doc, but never the半成品 in between.
+
+    This row is that missing layer, and it is deliberately NOT memory: memory is
+    stable facts injected into every prompt, and a running checklist would both
+    bloat it and go stale. One row per topic, overwritten in place — the current
+    state of the work, not its history (the timeline already keeps history).
+
+    ``items`` is the checklist as the UI renders it: ``[{"id", "subject",
+    "status"}]``, status ∈ pending/in_progress/completed. Written the moment a
+    Task tool call streams in, exactly like 现场 events (chat.py) — a turn that
+    dies mid-flight must not take the progress with it, which is the whole point.
+    """
+
+    __tablename__ = "topic_progress"
+
+    # PK, not a UuidPk surrogate: exactly one progress row per topic, and the
+    # upsert path wants the topic id to BE the conflict target.
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True
+    )
+    items: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    # The turn that last wrote this, for telling "left over from a turn that
+    # died" apart from "this turn is still going" without joining the timeline.
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
 
 
 class TopicMembership(UuidPk, Timestamps, Base):

@@ -93,14 +93,19 @@ class DashboardService:
             ),
         }
 
-    async def project_overview(self, project_id: uuid.UUID) -> dict:
-        """事维度总览 (eval G2): milestones, topics×status, 等你处理的事."""
+    async def project_overview(self, project_id: uuid.UUID, *, viewer: str) -> dict:
+        """事维度总览 (eval G2): milestones, topics×status, 等你处理的事.
+
+        ``viewer`` is the verified caller: 等你处理的事 is their slice (their
+        items + broadcasts under 未分派), not a cross-member board — one
+        person's pending decisions are not another member's business.
+        """
         card = await self._project_card(project_id)
         if card is None:
             raise NotFoundError("Project not found")
         members = await self._members.list_for_project(project_id)
         # 等你处理的事: decision/accept requests still unread, grouped by person.
-        inbox = await self._notifs.list_inbox(project_id, target_handle=None)
+        inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
         todo_by_person: dict[str, list[dict]] = {}
         for n in inbox:
             handle = n.target_handle or "未分派"

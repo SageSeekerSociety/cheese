@@ -91,7 +91,7 @@ class NotificationService:
         return await self._repo.save(notification)
 
     async def resolve(
-        self, notification_id: uuid.UUID, *, chosen: str, decided_by: str = "user-1"
+        self, notification_id: uuid.UUID, *, chosen: str, decided_by: str
     ) -> Notification:
         """拍板 (spec G2): record the chosen option on a decision request and drop
         the decision into the topic so 芝士 picks it up on its next turn."""

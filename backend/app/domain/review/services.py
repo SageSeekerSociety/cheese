@@ -25,7 +25,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
 from app.domain.topic.models import Topic, TopicStatus
@@ -337,8 +337,10 @@ class AcceptService:
         # merge `conflict` did not block a second card. The frontend only ever
         # renders the NEWEST card, so the older one — and the PR it was
         # driving — vanished from the UI while the poller kept advancing it.
-        # Every non-terminal status blocks now; `gate_failed` deliberately does
-        # not (a red gate voids the card, and re-递卡 after fixing IS the flow).
+        # Every non-terminal status blocks now; `gate_failed` and `gate_blocked`
+        # deliberately do not (a red gate voids the card, and re-递卡 after fixing
+        # IS the flow — same for a gate that never ran: 芝士 fixes the check
+        # environment and re-files. Adding either here locks 芝士 out for good).
         existing = await self._repo.list_for_topic(topic_id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
@@ -383,17 +385,20 @@ class AcceptService:
         return card
 
     async def finish_gate(
-        self, *, card_id: uuid.UUID, passed: bool, output_tail: str
+        self, *, card_id: uuid.UUID, outcome: GateOutcome, output_tail: str
     ) -> AcceptCard:
-        """Settle a pending_gate card: green → pending (卡片这才递到验收人手上),
-        red → gate_failed (卡片作废，芝士被 nudge 去修)."""
+        """Settle a pending_gate card: 绿 → pending (卡片这才递到验收人手上),
+        红 → gate_failed (卡片作废，芝士被 nudge 去修), 没跑成 → gate_blocked
+        (同样不递出去，但检查对代码没有结论，别说成"未通过")."""
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending_gate:
             raise ValidationError("只有等待检查的验收卡能记录检查结果")
         card.gate_output = output_tail
-        if passed:
+        if outcome == GateOutcome.passed:
             card.status = AcceptStatus.pending
             card.gate_passed_at = datetime.now(UTC)
+        elif outcome == GateOutcome.blocked:
+            card.status = AcceptStatus.gate_blocked
         else:
             card.status = AcceptStatus.gate_failed
         await self._session.flush()
@@ -539,6 +544,8 @@ class AcceptService:
             raise ValidationError("平台检查还在进行中，检查通过后才能采纳")
         if card.status == AcceptStatus.gate_failed:
             raise ValidationError("平台检查未通过，等芝士修复后重新递卡")
+        if card.status == AcceptStatus.gate_blocked:
+            raise ValidationError("平台检查没能跑起来（对代码没有结论），等重新递卡")
         # pending → first attempt; conflict → retry after 芝士 resolved.
         if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
             raise ValidationError("验收卡已处理，不能重复验收")
