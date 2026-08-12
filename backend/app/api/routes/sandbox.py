@@ -82,6 +82,20 @@ async def receive_hook(
     active turn. Responds fast (the container's hook call blocks on this): an
     empty 200 body = "no decision", so a PreToolUse hook proceeds normally."""
     if not is_valid_cheese_token(x_cheese_token, topic_id=topic_id):
+        # Say so. A rejected hook used to vanish here with no trace at all, and
+        # that silence is the whole reason a deaf sandbox took days to find: the
+        # turn observes nothing, reports `first_output_s: null` / `tools: 0`, and
+        # runs to its ceiling, which is indistinguishable from a model that never
+        # spoke. The common cause is a box baked with a token signed by a
+        # PREVIOUS backend process (`SANDBOX_TOKEN` unpinned → a fresh random
+        # secret per restart), so the hook it just sent is not malicious traffic
+        # to drop quietly — it is our own agent, locked out.
+        logger.warning(
+            "sandbox hook rejected: token does not verify for topic %s "
+            "(box likely baked before a backend restart — see tmux_provider."
+            "_hook_token_dead)",
+            topic_id,
+        )
         return JSONResponse(
             {"code": 401, "message": "invalid sandbox token", "data": None},
             status_code=401,
