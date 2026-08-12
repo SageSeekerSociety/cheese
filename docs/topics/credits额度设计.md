@@ -263,7 +263,7 @@
 |---|---|---|---|---|---|
 | **GLM（智谱）** | `open.bigmodel.cn/api/anthropic` | 文档称支持 Tool Use / Computer Use / MCP | **待实测**（文档只说「某些场景下仍存在差异」） | ✅ `embedding-3` | 唯一同时提供 OpenAI / Anthropic / 原生三套协议；官方默认映射 opus·sonnet→GLM-4.7、haiku→GLM-4.5-Air |
 | **DeepSeek** | `api.deepseek.com/anthropic` | ✅ `tools`/`tool_choice`、`stream`、`system` 全支持 | ❌ **明确标为 Ignored** | ❌ **官方无 embeddings 端点** | claude-opus→v4-pro、claude-haiku·sonnet→v4-flash；另不支持 image / document / mcp_servers / top_k / anthropic-beta |
-| **Qwen（阿里百炼）** | `dashscope.aliyuncs.com/apps/anthropic`；Coding Plan 另有 `coding.dashscope.aliyuncs.com/apps/anthropic` | 待实测 | 待实测 | ✅ text-embedding 系列 | Coding Plan 的 key 与标准计费 key **不通用**，不能混用 |
+| **阿里百炼（Qwen 及聚合）** | `{WorkspaceId}.{region}.maas.aliyuncs.com/apps/anthropic`（多区域）；Coding Plan 另有 `coding.dashscope.aliyuncs.com/apps/anthropic` | ✅ 文档明列 tools / tool_use / tool_result | ✅ **文档明确支持**，含显式与隐式两种 | ✅ text-embedding 系列 | 文档最完整的一家；见下方「重要发现」 |
 | **Kimi（月之暗面）** | `api.kimi.com/coding/`（旧 `api.moonshot.cn/anthropic` 已废弃） | ✅ 支持 tool_use / tool_result / thinking / image / web_search；不支持 document | 待实测 | 待查 | **模型 ID 固定 `kimi-for-coding`，只有单一模型**，与我们要填的两档结构冲突；key 前缀 `sk-kimi-`，与开放平台 key 不通用 |
 
 **两条已可下的判断：**
@@ -271,7 +271,46 @@
 1. **DeepSeek 有两处硬伤。** `cache_control` 被忽略 → §7.3 那个「跨学生前缀缓存」的教育场景红利直接拿不到，而这正是本场景成本压缩的最大结构性杠杆；且官方无 embedding 模型 → OpenViking 必须另配一家厂商。（注意：网上有「deepseek-embedding-v2」的说法，官方文档中不存在，GitHub issue 显示用户仍在提该需求，属 SEO 内容农场的编造。）
 2. **Kimi 的 coding 端点是单一模型**，无法同时承担主模型与轻量档，若要用需与其他厂商混搭。
 
-**GLM 目前仍是唯一「三套协议齐全 + 自带 embedding」的候选**，也是现状，切换成本为零。但它恰恰是文档最含糊的一家——`cache_control` 和 `usage` 四类 token 是否分列，全部悬空，而这两项直接决定 §1 的按真实 spend 折算能不能准。**这是实测第一优先。**
+**GLM 是唯一「已确认」满足全部结构要求的候选**，也是现状，切换成本为零。但它恰恰是文档最含糊的一家——`cache_control` 和 `usage` 四类 token 是否分列，全部悬空，而这两项直接决定 §1 的按真实 spend 折算能不能准。
+
+> ⚠️ **选型偏差警告**：GLM 恰好是当前配置。若最后只实测 GLM 一家，做的就不是选型，而是给现状背书——与 §7.1 那次「把部署配置当结论」是同一类错误。至少要有第二家对比。
+
+#### 重要发现：阿里百炼是聚合网关，不只是 Qwen
+
+百炼的 Anthropic 兼容端点**同时供应多家模型**——文档列出的可用模型含 `qwen3.8-max` / `qwen3.7-plus` / `qwen3-coder-next`、`deepseek-v4-pro`、`kimi-k2.7-code`、**`glm-5.2`**、`MiniMax-M2.5`。即：我们当前在用的 `glm-5.2` 也能从百炼调。
+
+这带来三个直接后果：
+
+1. **可能一次解决 §7.1.2 的档位冲突**。分层路由要各档跑不同模型，分身供应商一致性要求同源——走同一个端点、同一套凭据、同一份 usage 口径，两个要求就不再打架。
+2. **计量口径统一**。usage 文档明确返回 `input_tokens` / `output_tokens` / `cache_creation_input_tokens` / `cache_read_input_tokens` **四个字段齐全**，这正是 §1 按真实 spend 折算 credit 的地基。（注意流式差异：`message_start` 只带前两个，完整四字段在 `message_delta` 里。）
+3. **保留换模型的自由**。选百炼是选网关不是选模型，日后换档不必重验协议。
+
+代价与约束：
+
+- **不映射 `claude-*` 模型名**（文档未列任何 claude 模型）→ checklist 第 7 项判定为**不通过**，即 [1211] 的失败形态在这里是真实存在的：三档别名必须全部显式映射，漏一个就 400
+- 只提供 `/v1/messages`，**无 `/v1/models`** 模型发现接口
+- base_url 需要 WorkspaceId，且分区域
+- `temperature` 值域为 `[0, 2)`，与 Anthropic 的 `[0.0, 1.0]` 不同
+
+#### 缓存的真实经济性（百炼文档口径）
+
+§7.3 原先写「cache read 比 input 便宜约 10 倍」，现在有确切数字了，且**必须区分两种缓存**：
+
+| | 显式缓存（`cache_control`） | 隐式缓存 |
+|---|---|---|
+| 开启方式 | 手动打标记 | **默认开启且无法关闭** |
+| 缓存读计费 | **输入单价的 10%** | 约 **20%** |
+| 缓存写 | **125% 溢价** | 无 |
+| 有效期 | **仅 5 分钟**（命中后重置） | 不定，系统定期清理长期未用的 |
+| 最少 token | 1,024 | 256 |
+| 其他限制 | 每请求最多 4 个标记，回看 20 个 content block | — |
+
+**两条关键结论：**
+
+1. **缓存按账号隔离，不跨账号共享**（文档原文：「数据都在账号级别隔离，不会共享」）。这对我们是**好消息**——全班学生都跑在平台的同一套凭据下，属同一账号，所以「100 人共享同一份题面与 starter code」的前缀缓存**成立**。但它同时划死了一条路：若走 BYOK（§7.5）让学生各用各的 key，这份红利立刻归零。
+2. **显式缓存 5 分钟 TTL，推翻了「全班一周共用一份缓存」的设想**。真正跨天生效的是隐式缓存（20% 而非 10%）。不过——**§9 坑 1 说的「DDL 前 48 小时用量是平时 20 倍」在这里反而是利好**：用量越集中，5 分钟窗口内的命中率越高。原本纯粹的容量风险，在缓存上是收益。
+
+显式缓存的盈亏平衡点很低：`1.25 + 0.1(n-1) < n` → **n > 1.28**，即同一前缀只要被复用 2 次就已经划算。
 
 #### 阶段一工具：`backend/scripts/probe_provider.py`
 
@@ -373,7 +412,7 @@ env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = self.model
 ### 7.3 成本压缩杠杆
 
 1. **模型分层路由**：读文件、跑测试、格式化、简单修复走轻量档，复杂推理才上高端档。通常省 **50–70%**。
-2. **跨学生前缀缓存（教育场景独有的结构性红利）**：一个班 100 个学生做**同一个作业**，题目描述、starter code、参考文档、评分标准完全相同。cache read 比 input 便宜约 10 倍。**这是通用编程 Agent 场景拿不到的优势，值得优先投入。**
+2. **跨学生前缀缓存（教育场景独有的结构性红利）**：一个班 100 个学生做**同一个作业**，题目描述、starter code、参考文档、评分标准完全相同。**这是通用编程 Agent 场景拿不到的优势，值得优先投入。** 具体折扣、TTL、账号隔离规则与盈亏平衡点见 §7.1.2《缓存的真实经济性》——结论是红利成立（同一平台账号即同一缓存域），但显式缓存 5 分钟 TTL 使收益集中在用量密集时段，而非均匀摊开。
 3. **cap 截断尾部**：见 §2.1。
 
 ### 7.4 共用订阅 plan：不做
@@ -387,6 +426,8 @@ env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = self.model
 ### 7.5 BYOK：可选的覆盖扩展项
 
 学院池覆盖基础用量、学生自有订阅承接溢出，可让预算覆盖更多人。代价是重新引入教育公平问题（自费者占优），需要保底池对冲。前置条件是逐厂商核实订阅条款——多数厂商限制额度只能在官方客户端使用。
+
+**新增一条反对理由**：缓存按账号隔离（§7.1.2）。学生各用各的 key 意味着每人一个缓存域，跨学生前缀缓存红利**直接归零**——而那是本场景最大的结构性成本杠杆。BYOK 省下的钱，可能还不够抵消丢掉的缓存收益。
 
 ---
 
