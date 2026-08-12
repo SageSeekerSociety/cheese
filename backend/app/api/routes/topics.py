@@ -1085,11 +1085,21 @@ project_router = APIRouter(prefix="/api/projects", tags=["topics"])
 
 @project_router.get("/{project_id}/topic-unread")
 async def project_topic_unread(
-    project_id: uuid.UUID, handle: str, db: DbSession
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    handle: str | None = None,
 ) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for one
-    user, one query. Topics with zero unread are omitted."""
-    counts = await TopicService(db).unread_counts(project_id, handle)
+    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
+    calling user, one query. Topics with zero unread are omitted.
+
+    Read-state is per-person, so the recipient comes from the verified
+    credential (``handle`` is only checked against it) — a caller without one
+    used to read anybody's badge map by naming them here."""
+    recipient = await resolver.resolve_recipient(
+        requested=handle, project_id=project_id, allow_anonymous=False
+    )
+    counts = await TopicService(db).unread_counts(project_id, recipient)
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 
