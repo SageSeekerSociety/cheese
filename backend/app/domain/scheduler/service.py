@@ -197,7 +197,6 @@ class SchedulerService:
         One DB transaction per card so one card's failure can't roll back
         another's progress."""
         from app.api.deps import get_turn_runner
-        from app.domain.review.repositories import AcceptCardRepository
         from app.domain.review.services import AcceptService
 
         runner = get_turn_runner()
@@ -206,9 +205,9 @@ class SchedulerService:
         async with self._sessions() as session:
             # 孤儿卡修复 (2026-08-10): cards on ARCHIVED topics are deliberately
             # NOT in this list — driving them means using the approver's GitHub
-            # token on work nobody tracks any more.
-            cards = await AcceptCardRepository(session).list_pr_open_on_active_topics()
-            card_ids = [c.id for c in cards]
+            # token on work nobody tracks any more. 那条判据留在 review 领域里
+            # （open_pr_card_ids），调度器只管拿 id。
+            card_ids = await AcceptService(session).open_pr_card_ids()
         for card_id in card_ids:
             async with self._sessions() as session:
                 try:

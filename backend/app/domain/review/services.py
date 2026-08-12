@@ -404,6 +404,19 @@ class AcceptService:
         cards = await self._repo.list_for_topic(topic_id)
         return cards, len(cards)
 
+    async def open_pr_card_ids(self) -> list[uuid.UUID]:
+        """还开着 PR、等着被推进状态机的验收卡 id —— 调度器每轮的输入。
+
+        只回 id 不回对象：调度器一张卡一个事务，跨事务复用 ORM 对象拿到的是过期状态。
+        「哪个状态算开着」是本领域的知识，所以判断留在这里，而不是让调度器自己去查
+        ``AcceptCardRepository``。
+
+        孤儿卡修复 (2026-08-10) 的那条判据也在这里面：已归档话题上的卡不算开着——
+        推进它们等于拿批准人的 GitHub token 去动没人跟的活儿。
+        """
+        cards = await self._repo.list_pr_open_on_active_topics()
+        return [c.id for c in cards]
+
     async def describe(self, card: AcceptCard) -> dict:
         """AcceptCardOut payload enriched with the vote state (approvals live in
         their own table; the requirement is a project setting)."""

@@ -1,6 +1,8 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import (
     BadRequestError,
     ConflictError,
@@ -36,6 +38,17 @@ async def check_team_locking_status(session, team_id: int) -> None:
             f"participating in locked task(s): {', '.join(task_names)}"
         )
         raise ForbiddenError(msg)
+
+
+def team_service(session: AsyncSession) -> "TeamService":
+    """接在这个 session 上的 ``TeamService`` —— 本领域的标准接线。
+
+    ``TeamService`` 收的是 repository 不是 session（路由那边靠 ``Depends`` 注入），
+    于是别的领域为了接线得去 import ``team.repositories``，把「repository 是领域内部
+    的东西」这条捅穿了。要团队能力的外部调用方走这里。
+    （守卫见 ``tests/unit/test_domain_import_guard.py``。）
+    """
+    return TeamService(TeamRepository(session=session))
 
 
 class TeamService:
