@@ -269,10 +269,12 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         token: str,
         model: str | None,
         env: dict[str, str] | None,
+        system_prompt: str = "",
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
-        and wires the hook forwarder)."""
+        and wires the hook forwarder). A reused screen keeps the system prompt it
+        launched with — the launcher only reads it at screen creation."""
         existing = self._existing_screen(device_id, topic_id)
         if existing is not None:
             return existing
@@ -319,6 +321,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 else f"{self._public_base}/api/projects/{project_id}/git"
             ),
             git_branch=ws.branch_for_topic(topic_id),
+            system_prompt=system_prompt,
         )
         return await self._hub.open_screen(
             device_id,
@@ -360,6 +363,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        system_prompt: str,
         precheck: object,
     ) -> HubScreen:
         """Reuse/open the topic's screen running `claude` with our hooks on the
@@ -377,6 +381,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 token=token,
                 model=model,
                 env=env,
+                system_prompt=system_prompt,
             )
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
