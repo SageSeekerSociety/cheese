@@ -19,6 +19,8 @@ from app.core.db import get_db
 from app.core.errors import ForbiddenError
 from app.core.obs import get_logger
 from app.core.sandbox_auth import (
+    looks_like_project_agent_credential,
+    project_agent_claims,
     scoped_token_claims,
     token_agent_handle,
     verify_scoped_token,
@@ -26,6 +28,7 @@ from app.core.sandbox_auth import (
 from app.core.tokens import verify_session_token
 from app.domain.agent.device_attribution import resolve_screen_actor
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
 from app.domain.identity.services import CHEESE_HANDLE, IdentityService
@@ -83,6 +86,7 @@ class ActorResolver:
         # agent-user (device agent-as-user, P3), not the platform 芝士 — see resolve().
         self._screen_token = screen_token
         self._identity = IdentityService(session)
+        self._credentials = ProjectAgentCredentialService(session)
 
     async def resolve(
         self,
@@ -104,6 +108,18 @@ class ActorResolver:
         # into a child topic, recorded as ``anonymous``.
         self._reject_out_of_scope_token(topic_id=topic_id, project_id=project_id)
 
+        # A project agent credential names a project and reaches every topic in
+        # it, so the project this request acts on is what it must be judged
+        # against — via the topic when the route named only that. Resolved once,
+        # and only when such a credential is actually presented, so ordinary
+        # traffic pays for neither the parse nor the extra read.
+        credential_project: uuid.UUID | None = None
+        if looks_like_project_agent_credential(self._cheese_token):
+            credential_project = project_id or (
+                await self.project_of_topic(topic_id) if topic_id else None
+            )
+            self._reject_out_of_scope_credential(credential_project)
+
         async def cheese_valid() -> bool:
             # Only a SCOPED per-turn token identifies "the agent is acting" and
             # binds it to this project/topic. The bare global SANDBOX_TOKEN is a
@@ -112,6 +128,17 @@ class ActorResolver:
             # here (cheese-gated routes set author="cheese" themselves).
             if not self._cheese_token:
                 return False
+            # A project agent credential is the same claim widened: 芝士 acting,
+            # bound to a project instead of to one turn's topic. It authenticates
+            # wherever the request's project matches it, and nowhere else — a
+            # request with no project context (credential_project is None) fails
+            # closed rather than falling back to a broader grant.
+            if looks_like_project_agent_credential(self._cheese_token):
+                if credential_project is None:
+                    return False
+                return await self._credentials.authenticate(
+                    self._cheese_token, project_id=credential_project
+                )
             return verify_scoped_token(
                 self._cheese_token,
                 project_id=str(project_id) if project_id else None,
@@ -187,6 +214,24 @@ class ActorResolver:
         ):
             _log.info("token_scope_violation", kind="topic", got=claimed_topic)
             raise ForbiddenError("这个 token 属于别的话题，不能在这里操作")
+
+    def _reject_out_of_scope_credential(self, target: uuid.UUID | None) -> None:
+        """403 when a valid project agent credential names a DIFFERENT project.
+
+        Same reasoning as ``_reject_out_of_scope_token``: silently failing to
+        authenticate would drop the caller into the Phase-0 handle fallback,
+        which policy.py reads as unauthenticated and lets through — so a
+        credential for another project would beat presenting none at all. It
+        fires only on a well-formed, correctly-signed, unexpired credential; a
+        revoked or malformed one is simply not a credential (and a revoked one
+        must not be told apart from a forged one here).
+        """
+        claims = project_agent_claims(self._cheese_token)
+        if claims is None or target is None:
+            return
+        if claims.project_id != str(target):
+            _log.info("credential_scope_violation", got=claims.project_id)
+            raise ForbiddenError("这个凭证属于别的项目，不能在这里操作")
 
     async def _recover_numeric_handle(self, actor: Actor) -> Actor:
         """Repair a token actor whose handle degraded into the int User PK.
