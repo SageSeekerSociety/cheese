@@ -25,7 +25,14 @@ class TopicOut(BaseModel):
     kind: TopicKind
     status: TopicStatus
     created_at: datetime
+    # The topics ROW's mtime: it moves when the topic's own fields change
+    # (title, status, session id), NOT when a block lands in it. For "was there
+    # activity here", read `last_activity_at`.
     updated_at: datetime
+    # 最后活动时间: the newest block in the topic, falling back to its creation.
+    # Derived per query, so — like `running` — only the endpoints that ask for
+    # it (list_topics/get_topic) fill it in; elsewhere it stays None.
+    last_activity_at: datetime | None = None
     # Lifecycle markers (spec §6.3): who accepted, when archived, and — for an
     # upgraded topic — which block it grew from (for the 活引用 back-link).
     accepted_by: str | None = None
