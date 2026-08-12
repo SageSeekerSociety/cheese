@@ -28,7 +28,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.domain.agent import provider_env
+from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import build_screen_launch
 from app.domain.agent.hook_events import HookRouter
@@ -388,6 +388,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         """A CO-LOCATED device edited the backend's REAL worktree this turn, so
         snapshot it into version history exactly like the local path (else 采纳/diff
         wouldn't see the edits). A REMOTE device owns its own tree → still a no-op
-        (it pushes its own work back over git instead)."""
+        (it pushes its own work back over git instead). Held while a `cheese await`
+        command is still writing that tree, same as the local path."""
         if self._co_located_at.get((project_id, topic_id)):
-            ws.snapshot_worktree(project_id, topic_id)
+            awaited_tasks.checkpoint_worktree(project_id, topic_id)

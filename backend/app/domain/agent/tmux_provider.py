@@ -28,7 +28,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import clone, provider_env
+from app.domain.agent import awaited_tasks, clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     ActivityTracker,
@@ -655,6 +655,13 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 # reconciles it via ws.spool_dir. Inside the ~/.claude session mount
                 # (→ host session_dir/cheese-spool), so the backend can read it.
                 "CHEESE_HOOK_SPOOL": "/home/node/.claude/cheese-spool",
+                # `cheese await`'s output logs, in the same session mount and for
+                # the same reason: await is FOR commands that run long enough to
+                # be caught by a container rebuild, and a rebuild used to take the
+                # whole log with it (→ host session_dir/cheese-await, readable by
+                # the backend via ws.await_log_dir). Not the worktree — a build log
+                # has no business in a commit.
+                "CHEESE_AWAIT_LOGS": "/home/node/.claude/cheese-await",
             }
         )
         if memory_scope:
@@ -743,10 +750,8 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history
-        (same contract as LocalDockerProvider). Best-effort — never fail a turn."""
+        (same contract as LocalDockerProvider). Best-effort — never fail a turn.
+        Held while a `cheese await` command is still writing the worktree."""
         if not self.available():
             return
-        try:
-            ws.snapshot_worktree(project_id, topic_id)
-        except Exception:  # noqa: BLE001 — git snapshot is best-effort
-            pass
+        awaited_tasks.checkpoint_worktree(project_id, topic_id)

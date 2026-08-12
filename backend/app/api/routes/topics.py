@@ -267,6 +267,7 @@ async def topic_status(
             },
             "turn": turn,
             "cards": [_card_snapshot(c) for c in cards],
+            "background": awaited_tasks.status_snapshot(topic_id),
             "platform": {
                 "active_turns": runner.active_turns(),
                 "queued_turns": runner.project_queue_depth(topic.project_id),

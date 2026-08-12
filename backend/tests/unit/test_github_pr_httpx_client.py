@@ -591,3 +591,133 @@ async def test_compare_files_http_failure_raises_github_pr_error():
         await _client(handler).compare_files(
             owner="acme", repo="widgets", base="main", head="deadbeef", token="t"
         )
+
+
+@pytest.mark.anyio
+async def test_recent_workflow_runs_keeps_each_runs_own_conclusion_and_time():
+    """被顶替判定 (2026-08-11) 要的是**每次运行**的原始 conclusion 和时间，不是
+    一个汇总结论：只有字面 success 算部署成功（cancelled 也是 completed），而
+    「更晚」只能靠 created_at 判断。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/actions/workflows/deploy-dev.yml/runs")
+        return httpx.Response(
+            200,
+            json={
+                "workflow_runs": [
+                    {
+                        "head_sha": "8470ac05",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "created_at": "2026-08-11T09:30:00Z",
+                        "html_url": "https://github.com/acme/widgets/actions/runs/2",
+                        "head_branch": "main",
+                    },
+                    {
+                        "head_sha": "0c194f38",
+                        "status": "completed",
+                        "conclusion": "cancelled",
+                        "created_at": "2026-08-11T09:00:00Z",
+                        "html_url": "https://github.com/acme/widgets/actions/runs/1",
+                        "head_branch": "main",
+                    },
+                    {"status": "queued", "conclusion": None},  # 没 head_sha，跳过
+                ]
+            },
+        )
+
+    runs = await _client(handler).recent_workflow_runs(
+        owner="acme", repo="widgets", workflow_file="deploy-dev.yml", token="t"
+    )
+
+    assert [(r.head_sha, r.conclusion) for r in runs] == [
+        ("8470ac05", "success"),
+        ("0c194f38", "cancelled"),
+    ]
+    assert runs[0].created_at is not None
+    assert runs[0].created_at > runs[1].created_at
+    assert runs[0].created_at.tzinfo is not None
+
+
+@pytest.mark.anyio
+async def test_compare_status_reports_ancestry_from_the_same_compare_endpoint():
+    """base = 那次成功部署的 commit, head = 我们的合并提交 → `behind` 意味着它
+    包含我们。读的是 `status` 字段，跟 compare_files 读 `files` 是同一个接口。"""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"status": "behind", "behind_by": 3})
+
+    status = await _client(handler).compare_status(
+        owner="acme", repo="widgets", base="8470ac05", head="0c194f38", token="t"
+    )
+
+    assert seen["path"].endswith("/compare/8470ac05...0c194f38")
+    assert status == "behind"
+
+
+@pytest.mark.anyio
+async def test_workflow_runs_and_compare_status_http_failures_raise():
+    """GitHub 挂了 = 机制不可用。调用方据此维持现状（保持 active、告诉人），
+    绝不能被当成"没有更晚的成功部署"以外的任何结论。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    with pytest.raises(GitHubPrError):
+        await _client(handler).recent_workflow_runs(
+            owner="acme", repo="widgets", workflow_file="deploy-dev.yml", token="t"
+        )
+    with pytest.raises(GitHubPrError):
+        await _client(handler).compare_status(
+            owner="acme", repo="widgets", base="a", head="b", token="t"
+        )
+
+
+@pytest.mark.anyio
+async def test_workflow_run_jobs_keeps_step_conclusions():
+    """归档闸门要靠**步骤**级的结论分辨「真的部署了」和「绿灯但跳过了部署」
+    （deploy-dev.yml 对 docs-only 提交就是后者），所以每一步的 conclusion 都
+    不能在这层被丢掉。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/actions/runs/801/jobs")
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "name": "deploy",
+                        "conclusion": "success",
+                        "steps": [
+                            {
+                                "name": "Check out the built commit",
+                                "conclusion": "success",
+                            },
+                            {"name": "Log in to ghcr", "conclusion": "skipped"},
+                            {
+                                "name": "Docker deploy this commit",
+                                "conclusion": "skipped",
+                            },
+                        ],
+                    },
+                    {
+                        "name": "build-did-not-produce-images",
+                        "conclusion": "failure",
+                        "steps": None,
+                    },
+                ]
+            },
+        )
+
+    jobs = await _client(handler).workflow_run_jobs(
+        owner="acme", repo="widgets", run_id=801, token="t"
+    )
+
+    assert [(j.name, j.conclusion) for j in jobs] == [
+        ("deploy", "success"),
+        ("build-did-not-produce-images", "failure"),
+    ]
+    assert [c for _, c in jobs[0].steps] == ["success", "skipped", "skipped"]
+    assert jobs[1].steps == []
