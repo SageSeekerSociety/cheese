@@ -411,6 +411,11 @@ class Settings(BaseSettings):
     # (see SchedulerService.sync_upstreams), so this only has to run often
     # enough that the gap stays small — not on every commit. 0 disables it.
     upstream_sync_interval_s: int = 1800
+    # --- 结论卡 (2026-08-11) ---
+    # How often open conclusion cards past their absolute deadline are swept and
+    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
+    # the parent's digest turn ever running. 0 disables the loop (tests).
+    conclusion_sweep_interval_s: int = 60
     # Workflow file (under .github/workflows/) that deploys after a merge to
     # the base branch — must reach completed+success before a pr_open card's
     # topic is finally archived (2026-08-09 拍板: merge alone is not enough).
