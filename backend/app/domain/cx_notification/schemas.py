@@ -23,8 +23,9 @@ class FeedbackIn(BaseModel):
 
 
 class ResolveIn(BaseModel):
+    # NB: no ``decided_by`` — the decider is the verified caller (ActorResolver),
+    # never a body field. A client still sending it is silently ignored.
     chosen: str
-    decided_by: str = "user-1"
 
 
 class NotificationOut(BaseModel):

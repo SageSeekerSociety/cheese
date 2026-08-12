@@ -5,6 +5,7 @@ import asyncio
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from tests.conftest import wait_turns_idle
+from tests.integration.conftest import session_auth_headers
 
 
 def _create_project_and_topic(client, title: str = "话题A") -> tuple[str, str]:
@@ -35,8 +36,11 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
 
 
 def _unread(client, project_id: str, handle: str) -> dict:
+    # The badge map is per-person: authenticate as the handle being asked for.
     r = client.get(
-        f"/api/projects/{project_id}/topic-unread", params={"handle": handle}
+        f"/api/projects/{project_id}/topic-unread",
+        params={"handle": handle},
+        headers=session_auth_headers(handle),
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -98,27 +102,27 @@ def test_notifications_unread_count_and_read_all(client):
 
     r = client.get(
         f"/api/projects/{project_id}/notifications/unread-count",
-        params={"target_handle": "user-1"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["unread"] == 2
 
     # 全部标记已读 marks everything visible to user-1 (incl. the silent one).
     r = client.post(
         f"/api/projects/{project_id}/notifications/read-all",
-        params={"target_handle": "user-1"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["marked"] == 3
 
     r = client.get(
         f"/api/projects/{project_id}/notifications/unread-count",
-        params={"target_handle": "user-1"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["unread"] == 0
 
     # someone-else's notification is untouched.
     r = client.get(
         f"/api/projects/{project_id}/notifications/unread-count",
-        params={"target_handle": "someone-else"},
+        headers=session_auth_headers("someone-else"),
     )
     assert r.json()["data"]["unread"] == 1
 

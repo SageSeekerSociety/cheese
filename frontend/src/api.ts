@@ -1052,3 +1052,15 @@ export function chatWsUrl(topicId: string): string {
   // 「连接断开，正在自动重连」 and read like a flaky network.
   return `${proto}://${window.location.host}${BASE}/topics/${encodeURIComponent(topicId)}/chat${q}`
 }
+
+// Dev-only observability hook, same purpose as `window.__blockCache`: the probe
+// scripts under scripts/ open real sockets and issue real fetches from inside
+// the page, and the prefix they need is the one BASE exists to spell ONCE. Four
+// of them had it hand-written instead, and every copy was a copy that could be
+// wrong — which is what a doubled prefix nobody remembers reliably produces.
+declare global {
+  interface Window {
+    __cxApi?: { base: string }
+  }
+}
+if (import.meta.env.DEV) window.__cxApi = { base: BASE }

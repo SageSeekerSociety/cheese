@@ -10,6 +10,11 @@ possible, and both are asserted here against real HTTP/WS + real blocks:
    an anonymous actor, instead of failing the connection;
 2. an unauthenticated socket took `author` from the message body, so any client
    could post as any handle.
+
+The connect check has exactly three exits — `auth_required`, `auth_expired`,
+`forbidden` — and every one of them is pinned below, because the client latches
+on the code: one the frontend does not recognise is indistinguishable from a
+dropped connection, so it reconnects forever and buries the reason.
 """
 
 import pytest
@@ -70,6 +75,27 @@ def test_tokenless_socket_cannot_post_as_anyone(client):
             ws.send_json(
                 {"type": "message", "content": "我是 alice", "author": "alice"}
             )
+            ws.receive_json()
+
+    assert _blocks(client, tid) == []
+
+
+def test_authenticated_non_member_is_refused_as_forbidden(client):
+    """The third exit: a real login, but not this room's member.
+
+    Distinct from the two auth codes on purpose — 重新登录 is useless advice
+    here, and the frontend keys the banner off the code. Nothing may be posted
+    either: an outsider who is merely told "no" but still writes is the same
+    defect wearing a different message.
+    """
+    _, tid = _project_topic(client, owner="alice")
+
+    with client.websocket_connect(chat_ws_url(tid, "mallory")) as ws:
+        frame = ws.receive_json()
+        assert frame["type"] == "error"
+        assert frame["code"] == "forbidden"
+        with pytest.raises(Exception):  # noqa: B017 - any close/receive failure
+            ws.send_json({"type": "message", "content": "我也来说两句"})
             ws.receive_json()
 
     assert _blocks(client, tid) == []
