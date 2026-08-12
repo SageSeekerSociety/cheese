@@ -4,6 +4,7 @@ custom-shadows-builtin resolution — all through real HTTP/WS behavior."""
 import asyncio
 
 from app.domain.agent.roles import builtin_roles, resolve_role_description
+from tests.integration.conftest import chat_ws_url
 
 
 def _list_roles(client) -> list[dict]:
@@ -116,13 +117,14 @@ def test_custom_role_injected_into_chat_system_prompt(client, stub_agent):
     )
     assert r.json()["data"]["current"] == "academic-research"
 
-    tr = client.post("/api/topics", json={"project_id": project_id, "title": "t"})
+    tr = client.post(
+        "/api/topics",
+        json={"project_id": project_id, "title": "t", "created_by": "u"},
+    )
     topic_id = tr.json()["data"]["id"]
 
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "你好", "author": "u", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "u")) as ws:
+        ws.send_json({"type": "message", "content": "你好", "summon": True})
         while True:
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):

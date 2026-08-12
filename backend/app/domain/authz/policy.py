@@ -24,6 +24,10 @@ Discipline:
    ``anonymous``. Closed upstream for that path (``ActorResolver.
    _reject_out_of_scope_token`` 403s an out-of-scope scoped token), but the
    ``if not actor.authenticated: return True`` branch itself is still here.
+   The chat WebSocket no longer reaches that branch at all: it refuses a socket
+   it cannot identify (``refuse_unauthenticated_chat``), the same "close the
+   entrance, leave the branch for 阶段三" move as ``_reject_out_of_scope_token``.
+   Every REST route still takes it.
 2. The "no roster yet → legacy topic" escape below is NOT self-converging. 私聊
    topics are created by ``TopicRepository.get_or_create_private`` which never
    seeds a roster, so they land in that escape **by design, permanently** — it is
@@ -81,6 +85,33 @@ async def authorize_topic_access(
     # this branch forever rather than aging out of it — this line is what lets any
     # authenticated caller read a private topic they were never part of.
     return not await roster_exists(topic_id)
+
+
+def refuse_unauthenticated_chat(
+    actor: Actor, *, token_presented: bool, allow_anonymous: bool
+) -> tuple[str, str] | None:
+    """``(code, message)`` refusing a chat WebSocket, or ``None`` to admit it.
+
+    A WebSocket authenticates ONCE, at connect; the protocol carries no
+    per-message credential. So admitting a socket we could not identify means
+    every message it later sends is authored by a string the client chose —
+    which is how a batch of messages landed under 匿名者 after one user's token
+    quietly expired, with the sending side seeing nothing but success frames.
+
+    ``token_presented`` splits the two cases apart, because they are not the
+    same failure. A socket that presented a token we could not verify tried to
+    authenticate and failed: it is refused unconditionally, since treating a
+    rejected credential as "no credential" is precisely the silent downgrade
+    above. A socket that presented none is the pre-token Phase-0 caller, and
+    ``allow_anonymous`` keeps that path open for local harnesses only.
+    """
+    if actor.authenticated:
+        return None
+    if token_presented:
+        return ("auth_expired", "登录状态已失效，请重新登录后再发言")
+    if allow_anonymous:
+        return None
+    return ("auth_required", "请先登录再进入话题")
 
 
 async def can_manage_project_members(

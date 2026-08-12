@@ -3,22 +3,22 @@
 import uuid
 
 from app.core.sandbox_auth import SANDBOX_TOKEN
+from tests.integration.conftest import chat_ws_url
 
 
 def _topic(client) -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
-        "data"
-    ]
+    t = client.post(
+        "/api/topics",
+        json={"project_id": p["id"], "title": "T", "created_by": "user-1"},
+    ).json()["data"]
     return t["id"]
 
 
 def test_turn_blocks_share_one_turn_id(client):
     tid = _topic(client)
-    with client.websocket_connect(f"/api/topics/{tid}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hi", "author": "user-1", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
         while True:
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):
