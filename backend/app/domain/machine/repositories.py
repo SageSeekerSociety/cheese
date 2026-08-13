@@ -181,14 +181,8 @@ class ProjectMachineRepository:
         )
         return list(result.scalars())
 
-    async def is_provisioned_device(self, device_id: str) -> bool:
-        """Whether this device is a machine cheese provisioned from MicroCloud.
-
-        Such a machine is on its OWN host by definition — it can never share this
-        backend's filesystem, whatever the deployment-wide co-location setting
-        says.
-        """
-        result = await self._session.execute(
-            select(ProjectMachine.id).where(ProjectMachine.device_id == device_id)
-        )
-        return result.first() is not None
+    # `is_provisioned_device` lived here until #282 决定 2. It answered "was this
+    # device provisioned by the platform" by asking whether any row in THIS table
+    # pointed at it — the reverse lookup #282 is about. The fact now lives on
+    # `device.supply`, where it is read; `check-repo-rules.sh` fails the build if
+    # a new caller reintroduces the join.

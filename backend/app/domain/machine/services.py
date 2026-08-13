@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
@@ -356,7 +357,14 @@ class MachineService:
 
         code = await self._devices.start(f"{machine.hostname} (MicroCloud)")
         device = await self._devices.approve(
-            code, owner_user_id=machine.owner_user_id, name=machine.hostname
+            code,
+            owner_user_id=machine.owner_user_id,
+            # 入口决定待遇 (#282 决定 2): the platform asked MicroCloud for this
+            # machine, so the platform may reclaim it. A CONSTANT, never derived
+            # from what the machine looks like — the identical VM enrolled by a
+            # human through the connector is `self_hosted` and untouchable.
+            supply=Supply.cloud,
+            name=machine.hostname,
         )
         project = await self._projects.get(machine.project_id)
         if project is None:
@@ -429,10 +437,26 @@ class MachineService:
         """Drop a vanished machine and the connector device enrolled for it."""
         if machine.device_id is not None and machine.owner_user_id is not None:
             device = await self._devices.get_device(machine.device_id)
-            if device is not None and device.owner_user_id == machine.owner_user_id:
+            if device is not None and device.supply is not Supply.cloud:
+                # Structurally impossible — a row in this table was provisioned by
+                # `enroll`, which writes supply=cloud. Handled like the owner
+                # mismatch below (loud, and the machine row still gets reaped)
+                # rather than by letting `delete_platform_provisioned` raise:
+                # `forget` runs from `list_for_project`, a GET path, so an
+                # exception here would wedge machine listing for the whole project
+                # over one bad row. Refusing to delete is the safe direction; the
+                # raise stays where it protects NEW reclaim paths.
+                logger.error(
+                    "not deleting device %s for machine %s: supply=%s, not cloud "
+                    "— the platform does not destroy machines it did not open",
+                    machine.device_id,
+                    machine.hostname,
+                    device.supply,
+                )
+            elif device is not None and device.owner_user_id == machine.owner_user_id:
                 # Device deletion also removes project/team/topic bindings. Do
                 # this before the machine row so a failure remains retryable.
-                await self._devices.delete_owned(
+                await self._devices.delete_platform_provisioned(
                     machine.device_id, actor_user_id=machine.owner_user_id
                 )
             elif device is not None:

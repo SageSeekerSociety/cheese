@@ -117,11 +117,47 @@ check_duplicate_topic_docs() {
     "keep the fuller/later note, delete the other — one topic, one file" "$hits"
 }
 
+# Rule 5 — #282 决定 2: a device's SUPPLY FORM (platform-provisioned vs
+# human-enrolled) decides whether the platform may destroy that machine, so it is
+# stored on `device.supply` and read from there. It must never be re-derived by
+# asking whether some row in `project_machines` happens to point at the device.
+#
+# This is not hypothetical tidiness: that reverse lookup was real, load-bearing
+# code (`ProjectMachineRepository.is_provisioned_device`, read by the device
+# provider to decide co-location) right up to the commit that added this rule.
+# The failure mode it invites is silent — a `cloud` device created by some future
+# provisioning path that writes no `project_machines` row reads as self-hosted,
+# and the platform then treats a machine it opened as untouchable (or, on the
+# co-location path, opens a turn in an empty directory).
+#
+# Scoped to where the answer is CONSUMED — the device + agent layers. The machine
+# layer legitimately owns `project_machines` rows and joins them freely.
+check_supply_reverse_lookup() {
+  local hits=""
+  local dirs="$ROOT/backend/app/domain/device $ROOT/backend/app/domain/agent"
+  # (a) the device/agent layers must not reach into the machine table at all.
+  hits="$(grep -rn --include='*.py' \
+    -e 'ProjectMachineRepository' -e 'from app.domain.machine' \
+    $dirs 2>/dev/null || true)"
+  # (b) and nowhere in app/ may a function be DEFINED that infers the answer.
+  hits="$hits
+$(grep -rnE --include='*.py' \
+    'def (is_(platform_provisioned|cloud_machine|provisioned_device|self_hosted_device)|(infer|derive|guess)_supply)' \
+    "$ROOT/backend/app" 2>/dev/null || true)"
+  hits="$(printf '%s\n' "$hits" | grep -v '^[[:space:]]*$' || true)"
+  [ -z "$hits" ] && return 0
+  echo "FAIL: supply form derived by reverse lookup instead of read from device.supply"
+  report "supply form must be stored, not inferred (#282)" \
+    "read device.supply (app/domain/device/repository.py Supply); set it at the enrolment entry point" \
+    "$hits"
+}
+
 run_all() {
   check_naive_datetime
   check_builtin_shadowing
   check_raw_http_exception
   check_duplicate_topic_docs
+  check_supply_reverse_lookup
 }
 
 # --- self-test -------------------------------------------------------------
@@ -180,7 +216,29 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "different topics sharing a heading must pass"
   rm -rf "$tmp/docs"
 
-  echo "PASS: check-repo-rules self-test (4 rules, scoping and opt-out verified)"
+  # Rule 5. The fixture is the code that actually existed before #282 决定 2.
+  mkdir -p "$tmp/backend/app/domain/device" "$tmp/backend/app/domain/machine"
+  printf 'from app.domain.machine.repositories import ProjectMachineRepository\n' \
+    > "$tmp/backend/app/domain/device/bad_lookup.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "reaching into the machine table from the device layer must fail"
+  # Scoped: the machine layer owns those rows and joins them freely.
+  mv "$tmp/backend/app/domain/device/bad_lookup.py" \
+     "$tmp/backend/app/domain/machine/ok_lookup.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "the machine layer's own use must pass"
+  rm "$tmp/backend/app/domain/machine/ok_lookup.py"
+  # An inference function is forbidden wherever it is defined — renaming the
+  # reverse lookup into another layer must not launder it.
+  printf 'def is_platform_provisioned(device_id):\n    return True\n' \
+    > "$tmp/backend/app/core/bad_infer.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "an inference function must fail wherever it lives"
+  rm "$tmp/backend/app/core/bad_infer.py"
+  # Reading the stored field is the whole point — it must pass.
+  printf 'if device.supply is Supply.cloud:\n    pass\n' \
+    > "$tmp/backend/app/domain/device/ok_read.py"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "reading device.supply must pass"
+  rm "$tmp/backend/app/domain/device/ok_read.py"
+
+  echo "PASS: check-repo-rules self-test (5 rules, scoping and opt-out verified)"
   exit 0
 fi
 
@@ -190,4 +248,4 @@ if [ "$FAILED" = 1 ]; then
   echo "These rules are stated as absolute in CLAUDE.md; this script only enforces them."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException, duplicate topic notes)"
+echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException, duplicate topic notes, supply reverse lookup)"

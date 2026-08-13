@@ -11,6 +11,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Protocol
 
+# #282 四轴的两根词汇。定义搬去了 `device.supply`（跨领域要读它，而跨领域不许
+# import 别人的 repository 模块——见 tests/unit/test_domain_import_guard.py）；
+# 这里 re-export，域内调用点照旧。
+from app.domain.device.supply import Supply, Visibility
+
 
 @dataclass
 class Device:
@@ -28,6 +33,13 @@ class Device:
     # Teams this device is bound to (为团队注册设备, v4): every project of these
     # teams may run on it. Empty = personal (usable only via explicit project assign).
     team_ids: list[int] = field(default_factory=list)
+    # #282 四轴. The defaults are the SAFE ones, not the common ones: a record we
+    # somehow failed to classify must read as "someone else's machine, visible to
+    # everything" — the reading under which the platform destroys nothing and the
+    # room is treated as dangerous. `DeviceService.approve` takes `supply` with no
+    # default so neither enrolment entry point can fall into it by omission.
+    supply: Supply = Supply.self_hosted
+    visibility: Visibility = Visibility.host
 
 
 @dataclass

@@ -30,11 +30,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.config import settings
 from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
-from app.domain.agent.device_launch import build_screen_launch
+from app.domain.agent.device_launch import DEVICE_ALIVE_PROBE, build_screen_launch
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
@@ -108,6 +109,13 @@ def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) ->
         )
 
 
+# How long the idle-suspect liveness probe (DEVICE_ALIVE_PROBE over the link
+# `exec`) may take. Short by design — well under hooks_substrate's CONFIRM_POLL_S
+# (15s) so a suspected-wedged turn re-probes on cadence — and a timeout/hiccup is
+# read as alive, never as death (see `_confirm_alive`).
+_ALIVE_PROBE_TIMEOUT_S = 8.0
+
+
 class DeviceProvider(HooksTurnProvider[HubScreen]):
     """The REMOTE hooks backend: runs interactive `claude` on a user's enrolled
     machine over the frozen link.Msg channel (DeviceHub), streaming AgentEvents
@@ -127,18 +135,23 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         device_resolver: DeviceResolver | None = None,
         router: HookRouter | None = None,
         public_base: str | None = None,
-        turn_timeout_s: float = 900.0,
+        idle_suspect_s: float = 300.0,
+        hard_ceiling_s: float = 10800.0,
     ) -> None:
-        # TODO(turn 活跃度检测): the local tmux backend got a two-layer idle-suspect
-        # + hard-ceiling timeout (capture-pane polling + pane_dead probe); the
-        # remote device backend explicitly did NOT — the design doc flagged "what's
-        # an equivalent lightweight activity/liveness probe for a device screen"
-        # as still-open (device_hub's per-screen bytes aren't wired for this yet).
-        # Passing the same value for both layers reduces run_hooks_turn's two-layer
-        # check back to the old single static deadline, so behaviour here is
-        # UNCHANGED until that follow-up lands.
+        # Two-layer turn timeout, symmetric with the local tmux backend (turn 活跃度
+        # 检测). Below `idle_suspect_s` of no hook AND no liveness evidence a turn is
+        # normal; past it it is only SUSPECTED wedged and `_confirm_alive` (the
+        # process-tree probe below) is polled until it confirms the screen is
+        # actually dead; `hard_ceiling_s` is the unconditional backstop. The old
+        # single value collapsed both layers into one 900s deadline that killed a
+        # long-but-silent foreground command (a 20-minute pytest emits no interim
+        # hook) at minute 15. Defaults mirror the tmux backend
+        # (settings.agent_idle_suspect_s / agent_turn_hard_ceiling_s), so the local
+        # and remote hooks backends share ONE timeout policy.
         super().__init__(
-            router=router, idle_suspect_s=turn_timeout_s, hard_ceiling_s=turn_timeout_s
+            router=router,
+            idle_suspect_s=idle_suspect_s,
+            hard_ceiling_s=hard_ceiling_s,
         )
         self._hub = hub or device_hub
         self._session_factory = session_factory
@@ -211,25 +224,31 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
         ``device_shared_workspace_host_root`` is deployment-wide, but a deployment
         can host BOTH kinds of device at once: the box cheese itself runs on, and
-        machines it provisioned from MicroCloud. A provisioned machine is on its
-        own host and shares nothing — and getting this wrong fails SILENTLY: the
-        launcher `mkdir -p`s whatever path it is given, so the agent would open a
-        turn in an empty directory instead of the topic's worktree.
+        machines it provisioned from MicroCloud. A platform-provisioned machine is
+        on its own host and shares nothing — and getting this wrong fails SILENTLY:
+        the launcher `mkdir -p`s whatever path it is given, so the agent would open
+        a turn in an empty directory instead of the topic's worktree.
+
+        Reads ``device.supply`` (#282 决定 2). This used to ask the machine table
+        「有没有一行指向这个 device」 — the reverse lookup #282 is about. Same
+        answer, but now the fact is stored where it is used, so a `cloud` device
+        that never got a ``project_machines`` row (a future provisioning path)
+        cannot silently read as co-located and open a turn in an empty directory.
+
+        An unknown device keeps the previous reading (co-located when the shared
+        root is set): the same behaviour this had for any device with no machine
+        row, and the deployments that set that root are single-box ones.
         """
         if not settings.device_shared_workspace_host_root.strip():
             return False
-        from app.domain.machine.repositories import ProjectMachineRepository
-
         factory = self._session_factory
         if factory is None:
             from app.core.db import async_session_factory
 
             factory = async_session_factory
         async with factory() as session:
-            provisioned = await ProjectMachineRepository(session).is_provisioned_device(
-                device_id
-            )
-        return not provisioned
+            device = await sql_device_service(session).get_device(device_id)
+        return device is None or device.supply is not Supply.cloud
 
     def _work_dir(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, *, co_located: bool
@@ -396,6 +415,41 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             await self._hub.await_call(screen.device_id, call_id, timeout=60)
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
             raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
+
+    async def _confirm_alive(self, screen: HubScreen) -> bool:
+        """Idle-suspect liveness probe for a device screen (turn 活跃度检测, the
+        device half). Once a turn crosses `idle_suspect_s`, the hooks substrate
+        calls this to tell a `claude` that is silently working — a long FOREGROUND
+        command (pytest, a build) emits NO interim hook, so a hook-silent window is
+        indistinguishable from a wedge on hooks alone — from one whose process
+        actually died.
+
+        Asks the device directly over the hub's `exec` (DEVICE_ALIVE_PROBE): is a
+        live `claude` still running for THIS topic on the box? The process-tree
+        signal is the one that stays valid through a hook-silent window; there is no
+        cheap screen-byte signal on a headless device (the hub relays raw bytes only
+        to a live browser viewer). The same call serves a co-located device and a
+        remote one — it is NOT gated on co-location.
+
+        Conservative, mirroring TmuxHooksProvider._confirm_alive: only an explicit
+        `dead` reading ends the turn; any exec failure/timeout, a non-zero exit, or
+        an `unknown`/empty result is read as alive, so a link hiccup or a hardened
+        /proc never false-kills a turn that is really still working."""
+        topic_id = screen.topic_id
+        if topic_id is None:
+            return True
+        try:
+            result = await self._hub.exec(
+                screen.device_id,
+                ["sh", "-c", DEVICE_ALIVE_PROBE],
+                env={"CHEESE_ALIVE_TOPIC": str(topic_id)},
+                timeout=_ALIVE_PROBE_TIMEOUT_S,
+            )
+        except Exception:  # noqa: BLE001 — a probe failure is not proof of death
+            return True
+        if result.get("exit") != 0:
+            return True
+        return (result.get("stdout") or "").strip() != "dead"
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """A CO-LOCATED device edited the backend's REAL worktree this turn, so

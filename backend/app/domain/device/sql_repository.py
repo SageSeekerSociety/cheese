@@ -67,6 +67,8 @@ class SqlDeviceRepository:
         row.name = device.name
         row.token = device.token
         row.owner_user_id = device.owner_user_id
+        row.supply = device.supply
+        row.visibility = device.visibility
         await self._session.flush()
 
     async def _to_device(self, row: DeviceRow) -> Device:
@@ -96,6 +98,8 @@ class SqlDeviceRepository:
             created_at=_aware(row.created_at),
             project_ids=project_ids,
             team_ids=team_ids,
+            supply=row.supply,
+            visibility=row.visibility,
         )
 
     async def get_device(self, device_id: str) -> Device | None:

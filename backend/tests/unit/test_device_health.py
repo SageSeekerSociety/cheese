@@ -19,6 +19,7 @@ from app.domain.agent.platform_failures import (
 from app.domain.device.health import DEFAULT_QUARANTINE
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
+from app.domain.device.supply import Supply
 
 OWNER = 1
 T0 = datetime(2026, 8, 12, 9, 0, tzinfo=UTC)
@@ -45,7 +46,10 @@ async def _device_on_project(
     service: DeviceService, project_id: uuid.UUID, name: str
 ) -> str:
     code = await service.start(name)
-    device = await service.approve(code, owner_user_id=OWNER)
+    # `supply` is required with no default (#282 决定 2): every enrolment site
+    # states its own answer. These tests enrol a box nobody provisioned, and
+    # nothing in health/quarantine reads the field — it is stated, not asserted.
+    device = await service.approve(code, owner_user_id=OWNER, supply=Supply.self_hosted)
     await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
     return device.device_id
 

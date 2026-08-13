@@ -43,6 +43,7 @@ from app.domain.agent.device_hub import HubScreen, ViewerTransport, device_hub
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.supply import Supply
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
@@ -142,6 +143,11 @@ async def device_connect(
     device = await service.approve(
         body.device_code,
         owner_user_id=actor.user_id,
+        # 入口决定待遇 (#282 决定 2): a human ran the connector on a machine they
+        # already keep running, so the platform may never stop or destroy it —
+        # only stop using it. A CONSTANT here, the mirror of the MicroCloud
+        # enrolment sweep's `Supply.cloud`.
+        supply=Supply.self_hosted,
         name=body.device_name,
     )
     if body.project_id is not None:

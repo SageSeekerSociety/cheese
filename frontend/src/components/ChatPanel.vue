@@ -603,8 +603,14 @@ async function loadTopic(topic: Topic) {
   void getProgress(topic.id)
     .then((p) => {
       if (props.topic?.id !== topic.id || todoItems.value.length) return
-      todoItems.value = p.items
-      todoRestored.value = p.items.length > 0
+      // `?? []` 不是防御性洁癖：这个 ref 只要被写成 undefined，模板里的
+      // `todoItems.length` 就抛，整个 ChatPanel 渲染失败——房间变成白板。而下面
+      // 那句 `.catch(() => {})` 只吞掉报错，撤不回已经写进去的 undefined，所以
+      // 屏幕上不会有任何东西说明发生了什么。今天的后端始终带 items，够不到这里；
+      // 前后端版本错开一次就够得到，代价是整个房间。
+      const items = p.items ?? []
+      todoItems.value = items
+      todoRestored.value = items.length > 0
     })
     .catch(() => {})
   reactionPickerFor.value = null
@@ -780,6 +786,14 @@ const prState = computed(() => {
 // ---- Self-contained composer (only when showComposer) ----
 const draft = ref('')
 const summon = ref(props.defaultSummon)
+const composerInput = ref<{ focus?: () => void } | null>(null)
+
+// 同 WorkspaceView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
+// 按的那次 Enter 打在 chip 上，把刚点亮的 @芝士 又静默关掉且不发送。
+function toggleSummon() {
+  summon.value = !summon.value
+  void nextTick(() => composerInput.value?.focus?.())
+}
 
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
@@ -1264,7 +1278,7 @@ onBeforeUnmount(() => {
               class="summon-chip"
               :class="{ 'summon-chip--on': summon }"
               title="@芝士 — 让芝士回复"
-              @click="summon = !summon"
+              @click="toggleSummon"
             >
               <v-icon v-if="summon" size="13">mdi-creation</v-icon>
               @芝士
@@ -1308,6 +1322,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
+              ref="composerInput"
               v-model="draft"
               variant="plain"
               rows="1"

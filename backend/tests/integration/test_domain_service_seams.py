@@ -20,6 +20,7 @@ import pytest
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.cx_task.services import TaskApplicationService, TaskTemplateService
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.project.services import ProjectService
 from app.domain.review.models import AcceptStatus
@@ -268,7 +269,11 @@ async def test_sql_device_service_persists_the_flow_in_the_database(client):
         assert (await sql_device_service(session).poll(code))["status"] == "pending"
 
     async with client.test_factory() as session:
-        device = await sql_device_service(session).approve(code, owner_user_id=owner_id)
+        # `supply` 无默认值（#282 决定 2）：每个入口自己表态。这里是人拿
+        # connector 注册自己那台常驻机器，所以是 self_hosted。
+        device = await sql_device_service(session).approve(
+            code, owner_user_id=owner_id, supply=Supply.self_hosted
+        )
         await session.commit()
         device_id, token = device.device_id, device.token
 

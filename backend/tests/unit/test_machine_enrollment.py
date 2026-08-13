@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.core.errors import ValidationError
+from app.domain.device.supply import Supply
 from app.domain.machine import enrollment
 from app.domain.machine.models import MAX_ENROLL_ATTEMPTS, AiStatus, MachineStatus
 
@@ -24,14 +25,21 @@ class FakeDevices:
         self.assigned: list[tuple[str, uuid.UUID]] = []
         self.team_assigned: list[tuple[str, int]] = []
         self.started: list[str] = []
+        self.approved_supply: list[Supply] = []
 
     async def start(self, name):
         self.started.append(name)
         return "code-1"
 
-    async def approve(self, code, *, owner_user_id, name=None):
+    async def approve(self, code, *, owner_user_id, supply, name=None):
+        # `supply` is required on the real service (#282 决定 2) — mirrored here so
+        # this double cannot go on accepting a call the production one rejects.
+        self.approved_supply.append(supply)
         return SimpleNamespace(
-            device_id="dev123", token="SECRET-TOKEN", owner_user_id=owner_user_id
+            device_id="dev123",
+            token="SECRET-TOKEN",
+            owner_user_id=owner_user_id,
+            supply=supply,
         )
 
     async def assign_to_project(self, device_id, project_id, *, actor_user_id):
@@ -136,6 +144,18 @@ async def test_enrollment_writes_the_credential_the_device_flow_would_have(
     assert "link connect" in script
     assert machine.device_id == "dev123"
     assert service._devices.assigned == [("dev123", machine.project_id)]
+
+
+async def test_a_machine_the_platform_opened_is_enrolled_as_cloud_supply(monkeypatch):
+    """入口决定待遇 (#282 决定 2): this door is the platform asking MicroCloud for a
+    machine, so what it enrols is disposable — a CONSTANT at the call site, never
+    derived from the machine. The connector door writes `self_hosted` for the very
+    same hardware."""
+    service, _ = build_service(monkeypatch)
+
+    await service.enroll(make_machine())
+
+    assert service._devices.approved_supply == [Supply.cloud]
 
 
 async def test_team_machine_enrolls_into_the_team_pool(monkeypatch):
