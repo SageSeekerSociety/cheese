@@ -198,3 +198,47 @@ async def test_screens_for_topic_spans_devices_online_or_not():
     found = {s.sid for s in hub.screens_for_topic(topic)}
     assert found == {a.sid, b.sid}
     assert other.sid not in found  # a different topic is not swept in
+
+
+async def test_reassert_screen_resends_adopt_create_under_same_identity():
+    """Re-asserting an existing screen re-sends session.create with `adopt` and the
+    SAME sid + screen token (the cli's re-provision path): a live device session
+    hot-reloads the cheeselet; one lost to a connector restart — or to a create that
+    was never delivered — is respawned without changing the screen's identity."""
+    hub = DeviceHub()
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+
+    await hub.reassert_screen(
+        screen, command=["claude", "--new"], cheeselet_source="//js2", env={"K": "V"}
+    )
+    create = t.sent[-1]
+    assert create["t"] == "session.create" and create["adopt"] is True
+    assert create["sid"] == screen.sid and create["screen"] == screen.token
+    assert create["command"] == ["claude", "--new"] and create["source"] == "//js2"
+    assert create["env"] == {"K": "V"}
+    # The registry still resolves the screen by the same sid and token.
+    assert hub.screen(screen.sid) is screen
+    assert hub.screen_by_token(screen.token) is screen
+    assert screen.command == ["claude", "--new"]
+
+
+async def test_session_error_is_logged_with_its_reason(caplog):
+    """The one frame that says WHY a screen failed to start must not vanish: it is
+    kept in the log (there is no pending future to fail — the turn surfaces the loss
+    as a prompt timeout)."""
+    import logging
+
+    hub = DeviceHub()
+    await hub.attach_device("dev1", FakeDeviceTransport())
+    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    with caplog.at_level(logging.WARNING, logger="app.domain.agent.device_hub"):
+        await hub.on_device_message(
+            "dev1",
+            {"t": "session.error", "sid": screen.sid, "error": "terminal: spawn boom"},
+        )
+    assert any(
+        screen.sid in r.getMessage() and "terminal: spawn boom" in r.getMessage()
+        for r in caplog.records
+    )
