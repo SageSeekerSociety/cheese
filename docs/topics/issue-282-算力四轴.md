@@ -255,7 +255,20 @@ UPDATE device SET supply='cloud'
 
 **全量复跑**（垫片 + 临时把基线的迁移链拉直，跑完已还原，`jj diff` 确认没留痕）：**4224 passed / 13 failed**。13 条里 3 条是已知环境缺口（`test_market_api` 缺 provider 凭据、`test_tmux_control` 缺 `kill`、`test_cheese_cli` 被沙箱自身的 `CHEESE_AWAIT_LOGS` 顶掉），**另外 10 条是这个陈旧基线自带的**：<&backend/app/domain/topic/services.py> 里 `_as_utc` 被定义了两次，后一个（`moment: datetime`）遮住前一个（`when: datetime | None`），`None` 撞上 `.tzinfo`。这就是 pyright 剩下那 2 个报错的同一处，**不在本改动的 diff 里**，而且 CI 在真正的 main 上是 4285 passed——说明上游早已修掉，只有我这个盒子的基线还带着它。
 
-**一条本地拦住的事，不是本改动引起的**：这个沙箱同步到的 `main@upstream`（`08c58dba` = 采纳 issue 186 #301）**自身就是分叉的**——`alembic heads` 在**完全移除本改动的迁移文件**之后仍然是两个头（`b7e3c19d4f80` 来自 #301，`c1f7a3b90d24` 来自 #289），DB 类测试因此在建库那一步就 `Multiple head revisions are present` 报错。也就是说 #307 的修复还没同步进来。后果有两条：(a) 本轮**跑不了任何 DB 类测试**（integration / contract / 一部分 unit），只有纯 unit 可跑；(b) `c4a71e5d9b30` 的 `down_revision` 该挂谁，**在这个盒子里看不出来**——现按指示挂在 `c1f7a3b90d24` 上，但若 #307 是一条合并迁移，真正的链尾是那条合并的 revision，需要它的 id 才能挂对。
+**第四轮：迁移链的病根不是「挂错了父节点」，是基线太旧**（2026-08-13）。前三轮我一直在**症状层**改 `down_revision`，每次 CI 都在同一处再红一次——因为工作区停在 `08c58dba`（#301），落后主线 14 个提交，缺 `a1c9e7b30d42`（idempotency_keys）和 `c4a17b93d2e8`（topic_progress）两个迁移文件。链在本地断了，我就把**主线上已经合并的** `c1f7a3b90d24` 的 `down_revision` 从 `a1c9e7b30d42` 改成 `b8e1d4c70a92` 把它接上——**那是改共享历史**，症状消失、病因没动，还多欠一个新病（`b8e1d4c70a92` 在主线上已经有子节点 `e7f3a90c15d2`）。
+
+正确的修法是把 main 合进来，而不是自己接链。已做（`jj new <topic-head> main@upstream`，零冲突）：
+
+| | |
+|---|---|
+| 两个缺的迁移文件 | 自己回来了 |
+| `c1f7a3b90d24.down_revision` | 合并**自动**还原成主线的 `a1c9e7b30d42`，不需要手工改回 |
+| `c4a71e5d9b30.down_revision` | 挂到主线当前唯一 head `c4a17b93d2e8`（注意这两个 id 中间四位是 `a17b` / `a71e`，极易写串） |
+| `backend/alembic/HEAD` 哨兵 | 主线新加的机制，本改动漏了——已 `echo c4a71e5d9b30 >`。它存在的意义正是让两个并发迁移 PR **在 git 层冲突**（同一行）而不是静默分叉，正好治这四轮的病 |
+
+`uv run alembic heads` → 单头 `c4a71e5d9b30`。
+
+**另**：`main@upstream` 现已同步到 `e5db2c633bd1`（#344），上一轮记的「基线自身两个头 / `_as_utc` 重复定义」这些陈旧基线症状随合并一起消失。
 
 > 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
 
