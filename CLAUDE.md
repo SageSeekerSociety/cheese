@@ -219,12 +219,15 @@ curl -sSL https://github.com/jj-vcs/jj/releases/download/v0.43.0/jj-v0.43.0-x86_
   | tar -xz -C /tmp/jj-dl && mv /tmp/jj-dl/jj ~/.local/bin/jj && jj --version
 ```
 
-Two sandbox gaps are left, and both are **missing host setup, not code defects**.
+Three sandbox gaps are left, and all are **missing host setup, not code defects**.
 Don't spend time re-diagnosing them:
 
 - **No procps** (`ps`/`pgrep`/`kill` binaries absent; bash's `kill` is a builtin
-  only) → 22 failures in `test_machine_service.py`, `test_tmux_control.py` with
+  only) → failures in `test_machine_service.py`, `test_tmux_control.py` with
   `FileNotFoundError: 'kill'`.
+- **No openssh-client** (`ssh-keygen` absent) → 21 failures in
+  `test_machine_service.py` with `FileNotFoundError: 'ssh-keygen'`. Same file as
+  the procps gap, so the two look like one 22-failure blob; they are not.
 - **No provider credentials** → 1 failure,
   `test_market_api.py::test_market_lists_ai_and_compute_pools`. A profile's
   `available` is `bool(auth_token or oauth_token)` (`app/domain/agent/profiles.py`),

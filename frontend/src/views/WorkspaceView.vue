@@ -16,6 +16,7 @@ import {
   getAcceptCards,
   getPrChecks,
   getPrivateChat,
+  getPrivateUnread,
   getTopic,
   getTopicUnread,
   listProjectMembers,
@@ -159,6 +160,9 @@ async function openPrivate(peer?: string) {
     const topic = await getPrivateChat(pid, AUTHOR, peer)
     if (selectedProjectId.value === pid && mode.value === 'private' && privatePeer.value === (peer ?? null)) {
       privateTopic.value = topic
+      // Opening a DM = reading it — the same cursor topic rows already bump.
+      // Without this a 私聊 badge would light up and never clear.
+      markPrivateRead(topic.id, peer ?? 'cheese')
     }
   } catch (e) {
     if (mode.value === 'private') {
@@ -692,10 +696,14 @@ async function onRejectCard() {
 
 // ---- 话题级未读 (Feishu-style badges, spec 前端体验优化 A) ----
 const unreadMap = ref<Record<string, number>>({})
+// 私聊未读, keyed by peer handle ('cheese' = the 芝士 DM). A separate map
+// because DM rows are rendered from the roster and carry no topic id.
+const privateUnreadMap = ref<Record<string, number>>({})
 
 async function refreshUnread() {
   const pid = selectedProjectId.value
   if (!pid || !AUTHOR) return
+  void refreshPrivateUnread(pid)
   try {
     const map = await getTopicUnread(pid, AUTHOR)
     if (selectedProjectId.value !== pid) return
@@ -713,6 +721,19 @@ async function refreshUnread() {
   }
 }
 
+async function refreshPrivateUnread(pid: string) {
+  if (!AUTHOR) return
+  try {
+    const map = await getPrivateUnread(pid, AUTHOR)
+    if (selectedProjectId.value !== pid) return
+    // The DM being read right now never shows a badge on itself.
+    if (mode.value === 'private') delete map[privatePeer.value ?? 'cheese']
+    privateUnreadMap.value = map
+  } catch {
+    // Best-effort; badges just stay as they were.
+  }
+}
+
 // Opening a topic = reading it: bump the server-side cursor and clear the
 // badge locally (optimistic — the next refresh agrees).
 function markSelectedRead(id: string) {
@@ -723,6 +744,17 @@ function markSelectedRead(id: string) {
     unreadMap.value = next
   }
   markTopicRead(id, AUTHOR).catch(() => {})
+}
+
+// Same, for a 私聊 — its badge is keyed by peer handle, not topic id.
+function markPrivateRead(topicId: string, peerKey: string) {
+  if (!AUTHOR) return
+  if (privateUnreadMap.value[peerKey] !== undefined) {
+    const next = { ...privateUnreadMap.value }
+    delete next[peerKey]
+    privateUnreadMap.value = next
+  }
+  markTopicRead(topicId, AUTHOR).catch(() => {})
 }
 
 async function handleRenameTopic(payload: { id: string; title: string }) {
@@ -1007,6 +1039,7 @@ onUnmounted(() => {
       :active-peer="mode === 'private' ? privatePeer : null"
       :active-docs="mode === 'docs' ? docKind : null"
       :unread-map="unreadMap"
+      :private-unread-map="privateUnreadMap"
       :topic-sort="topicSort"
       :topic-order="topicOrder"
       @update:width="onRailWidth"

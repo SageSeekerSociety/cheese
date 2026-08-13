@@ -1152,6 +1152,31 @@ async def project_topic_unread(
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 
+@project_router.get("/{project_id}/private-unread")
+async def project_private_unread(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    handle: str | None = None,
+) -> dict:
+    """私聊未读数: {peer_handle: unread_count} for the calling user, one query.
+
+    Keyed by the other party's handle rather than by topic id — private chats
+    are not in the topic tree, so the sidebar renders their rows from the member
+    roster and has no topic id to look one up with. `cheese` is the 芝士 DM.
+    Peers with zero unread are omitted.
+
+    Same rule as ``topic-unread``: the recipient comes from the verified
+    credential, never from the query string. It matters more here — this map
+    names who a person is talking to privately, so honouring a caller-supplied
+    handle would leak the shape of everyone's DMs."""
+    recipient = await resolver.resolve_recipient(
+        requested=handle, project_id=project_id, allow_anonymous=False
+    )
+    counts = await TopicService(db).private_unread_counts(project_id, recipient)
+    return ok(counts)
+
+
 # Block upgrade lives here (it produces a topic). Separate router prefix.
 block_router = APIRouter(prefix="/api/blocks", tags=["topics"])
 

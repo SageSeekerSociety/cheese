@@ -13,6 +13,7 @@ from sqlalchemy.sql.elements import (
 )
 
 from app.domain.block.models import Block, BlockKind
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.topic.models import Topic, TopicKind, TopicProgress, TopicReadState
 
 TopicSortField = Literal["updated_at", "title", "last_activity_at"]
@@ -233,6 +234,55 @@ class TopicRepository:
         )
         rows = (await self._session.execute(stmt)).all()
         return {topic_id: int(count) for topic_id, count in rows}
+
+    async def private_unread_counts(
+        self, project_id: uuid.UUID, user_handle: str
+    ) -> dict[str, int]:
+        """Unread count per 私聊, keyed by the OTHER party's handle.
+
+        Same definition of "unread" as :meth:`unread_counts` — the two differ
+        only in how the caller addresses a row. Private chats are not in the
+        topic tree, so the sidebar renders one DM row per project member from
+        the roster and never learns the conversation's topic id; a map keyed by
+        topic id is therefore unusable there. The member's 1:1 with 芝士 (a
+        private topic with no peer) is keyed by ``CHEESE_HANDLE``.
+        """
+        stmt = (
+            select(Topic.private_owner, Topic.private_peer, func.count())
+            .select_from(Topic)
+            .join(Block, Block.topic_id == Topic.id)
+            .outerjoin(
+                TopicReadState,
+                and_(
+                    TopicReadState.topic_id == Topic.id,
+                    TopicReadState.user_handle == user_handle,
+                ),
+            )
+            .where(
+                Topic.project_id == project_id,
+                Topic.is_private.is_(True),
+                or_(
+                    Topic.private_owner == user_handle,
+                    Topic.private_peer == user_handle,
+                ),
+                Block.kind == BlockKind.message,
+                Block.author != user_handle,
+                or_(
+                    TopicReadState.last_read_at.is_(None),
+                    Block.created_at > TopicReadState.last_read_at,
+                ),
+            )
+            .group_by(Topic.id, Topic.private_owner, Topic.private_peer)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        counts: dict[str, int] = {}
+        for owner, peer, count in rows:
+            if peer is None:
+                key = CHEESE_HANDLE
+            else:
+                key = peer if owner == user_handle else owner
+            counts[key] = counts.get(key, 0) + int(count)
+        return counts
 
     async def mark_read(self, topic_id: uuid.UUID, user_handle: str) -> None:
         """Bump the user's read cursor on a topic to now (upsert)."""

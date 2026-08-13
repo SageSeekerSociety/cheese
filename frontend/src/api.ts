@@ -485,6 +485,15 @@ export function getTopicUnread(projectId: string, handle: string): Promise<Recor
   )
 }
 
+// {peer_handle: unread_count} for one user's 私聊; `cheese` is the 芝士 DM.
+// Keyed by peer, not topic id: DM rows come from the member roster, which
+// carries no topic id, so getTopicUnread's map cannot address them.
+export function getPrivateUnread(projectId: string, handle: string): Promise<Record<string, number>> {
+  return request<Record<string, number>>(
+    `/projects/${encodeURIComponent(projectId)}/private-unread?handle=${encodeURIComponent(handle)}`
+  )
+}
+
 // Opening a topic bumps the user's read cursor (clears its badge).
 export function markTopicRead(topicId: string, handle: string): Promise<Record<string, string>> {
   return request<Record<string, string>>(`/topics/${encodeURIComponent(topicId)}/read`, {
