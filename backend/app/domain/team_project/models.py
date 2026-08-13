@@ -2,7 +2,12 @@
 
 Distinct from the cheesex Project (uuid, git-repo workspace, table
 ``projects``): these are the product-side projects a TEAM runs, int-keyed,
-nested one level via parent_id, served at the root ``/projects`` routes.
+nested one level via parent_id, served at the root ``/team-projects`` routes.
+
+The tables carry the ``team_`` prefix for the same reason the route does (#370):
+telling two unrelated resources apart by singular-vs-plural (``project`` here,
+``projects`` there) is the most fragile distinction in this fused schema, and it
+reads as a typo to everyone who meets it.
 """
 
 from datetime import datetime
@@ -26,11 +31,11 @@ class ProjectMemberRole:
 
 
 class Project(Base):
-    __tablename__ = "project"
+    __tablename__ = "team_project"
     __table_args__ = (
-        Index("ix_project_team_id", "team_id"),
-        Index("ix_project_leader_id", "leader_id"),
-        Index("ix_project_parent_id", "parent_id"),
+        Index("ix_team_project_team_id", "team_id"),
+        Index("ix_team_project_leader_id", "leader_id"),
+        Index("ix_team_project_parent_id", "parent_id"),
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
@@ -61,12 +66,12 @@ class Project(Base):
 
 
 class ProjectMembership(Base):
-    __tablename__ = "project_membership"
+    __tablename__ = "team_project_membership"
     __table_args__ = (
-        Index("ix_project_membership_project_id", "project_id"),
-        Index("ix_project_membership_user_id", "user_id"),
+        Index("ix_team_project_membership_project_id", "project_id"),
+        Index("ix_team_project_membership_user_id", "user_id"),
         Index(
-            "uq_project_membership_project_user",
+            "uq_team_project_membership_project_user",
             "project_id",
             "user_id",
             unique=True,

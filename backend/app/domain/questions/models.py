@@ -46,12 +46,12 @@ class QuestionFollowerRelation(Base):
     )
 
 
-class QuestionTopicRelation(Base):
-    __tablename__ = "question_topic_relation"
+class QuestionTagRelation(Base):
+    __tablename__ = "question_tag_relation"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     question_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    topic_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    tag_id: Mapped[int] = mapped_column(Integer, nullable=False)
     created_by_id: Mapped[int] = mapped_column(Integer, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

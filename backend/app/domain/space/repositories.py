@@ -9,12 +9,12 @@ from app.domain.space.models import (
     SpaceAdminRelation,
     SpaceAdminRole,
     SpaceCategory,
-    SpaceClassificationTopicsRelation,
+    SpaceClassificationTagRelation,
     SpaceDomainGroup,
     SpaceDomainGroupDomain,
     SpaceUserRank,
 )
-from app.domain.topics.models import Topic
+from app.domain.tag.models import Tag
 
 
 class SpaceRepository:
@@ -297,41 +297,41 @@ class SpaceClassificationTopicsRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_topics_for_space(self, space_id: int) -> list[Topic]:
+    async def list_topics_for_space(self, space_id: int) -> list[Tag]:
         stmt = (
-            select(Topic)
+            select(Tag)
             .join(
-                SpaceClassificationTopicsRelation,
-                SpaceClassificationTopicsRelation.topic_id == Topic.id,
+                SpaceClassificationTagRelation,
+                SpaceClassificationTagRelation.tag_id == Tag.id,
             )
             .where(
-                SpaceClassificationTopicsRelation.space_id == space_id,
-                SpaceClassificationTopicsRelation.deleted_at.is_(None),
-                Topic.deleted_at.is_(None),
+                SpaceClassificationTagRelation.space_id == space_id,
+                SpaceClassificationTagRelation.deleted_at.is_(None),
+                Tag.deleted_at.is_(None),
             )
-            .order_by(Topic.id.asc())
+            .order_by(Tag.id.asc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
     async def list_topics_for_spaces(
         self, space_ids: Sequence[int]
-    ) -> dict[int, list[Topic]]:
+    ) -> dict[int, list[Tag]]:
         """Bulk variant. Returns {space_id: [Topic, ...]}."""
         if not space_ids:
             return {}
         stmt = (
-            select(SpaceClassificationTopicsRelation.space_id, Topic)
-            .join(Topic, Topic.id == SpaceClassificationTopicsRelation.topic_id)
+            select(SpaceClassificationTagRelation.space_id, Tag)
+            .join(Tag, Tag.id == SpaceClassificationTagRelation.tag_id)
             .where(
-                SpaceClassificationTopicsRelation.space_id.in_(list(space_ids)),
-                SpaceClassificationTopicsRelation.deleted_at.is_(None),
-                Topic.deleted_at.is_(None),
+                SpaceClassificationTagRelation.space_id.in_(list(space_ids)),
+                SpaceClassificationTagRelation.deleted_at.is_(None),
+                Tag.deleted_at.is_(None),
             )
-            .order_by(Topic.id.asc())
+            .order_by(Tag.id.asc())
         )
         result = await self._session.execute(stmt)
-        mapping: dict[int, list[Topic]] = {}
+        mapping: dict[int, list[Tag]] = {}
         for sid, topic in result.all():
             mapping.setdefault(sid, []).append(topic)
         return mapping
@@ -341,11 +341,11 @@ class SpaceClassificationTopicsRepository:
     ) -> None:
         """Soft-delete existing links then insert the given ones in order."""
         now = datetime.now(UTC)
-        existing_stmt: Select[tuple[SpaceClassificationTopicsRelation]] = select(
-            SpaceClassificationTopicsRelation
+        existing_stmt: Select[tuple[SpaceClassificationTagRelation]] = select(
+            SpaceClassificationTagRelation
         ).where(
-            SpaceClassificationTopicsRelation.space_id == space_id,
-            SpaceClassificationTopicsRelation.deleted_at.is_(None),
+            SpaceClassificationTagRelation.space_id == space_id,
+            SpaceClassificationTagRelation.deleted_at.is_(None),
         )
         existing = (await self._session.execute(existing_stmt)).scalars().all()
         for relation in existing:
@@ -353,9 +353,9 @@ class SpaceClassificationTopicsRepository:
             relation.updated_at = now
         for topic_id in topic_ids:
             self._session.add(
-                SpaceClassificationTopicsRelation(
+                SpaceClassificationTagRelation(
                     space_id=space_id,
-                    topic_id=topic_id,
+                    tag_id=topic_id,
                     created_at=now,
                     updated_at=now,
                     deleted_at=None,

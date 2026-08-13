@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,22 @@ class Settings(BaseSettings):
     # TEST_PG_BASE), so running the suite never disturbs your dev data.
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cheese"
     db_echo: bool = False
+
+    # --- Migration timeouts (#356) ---
+    # Bound how long a migration waits on a lock / runs, applied by alembic's
+    # env.py to the single connection every `upgrade head` uses. A migration
+    # whose ALTER cannot grab its ACCESS EXCLUSIVE lock within this window fails
+    # fast — the deploy goes red and retries — instead of blocking behind a live
+    # backend's open transaction until the deploy's 30-minute budget is spent,
+    # which starved cheese-dev's only runner slot and browned out the whole box
+    # in #356. lock_timeout is the actual fix; keep it short (a few seconds).
+    # PostgreSQL syntax: "10s", "500ms", or a bare integer (milliseconds).
+    migration_lock_timeout: str = "10s"
+    # Total per-statement ceiling, INCLUDING lock wait. Deliberately "0" (no
+    # limit) by default so a legitimately long table rewrite is never killed
+    # mid-migration; lock_timeout already caps the pathological case (waiting on
+    # a lock we will never get). Ops can tighten it per deployment if wanted.
+    migration_statement_timeout: str = "0"
 
     # --- 主仓产品配置并入 (fusion merge I3-config): fields main's product
     # domains (avatars/materials/storage/auth) read from settings. Superset so
@@ -298,6 +314,16 @@ class Settings(BaseSettings):
     compute_provider: str = "local"
     cheesed_url: str = "http://localhost:8100"
     cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
+    # Whether the built-in "local-docker" compute pool may be picked for a NEW
+    # topic/project (#22 收敛 to self-hosted device compute; #218 model-supply, #358
+    # device visibility). Turning this OFF retires local-docker from selection ONLY:
+    # `compute_selectable` stops offering it, so no new topic can pin to it — while
+    # it stays in `compute_listings` (a topic already frozen on it keeps a readable
+    # label), stays registered in the ComputePool (execution never consults this
+    # flag, so existing pins still run), and remains the always-on runtime fallback
+    # (`compute_default_name`). Default True preserves today's behavior; a deployment
+    # whose projects all run on enrolled devices (dogfood) flips it to converge.
+    compute_local_docker_selectable: bool = True
     sandbox_image: str = "cheesex-agent-sandbox:latest"
     # Machine quality gates use a disposable sibling container and never the
     # backend process. Keep this explicit so operators can ship a test-toolchain
@@ -454,20 +480,6 @@ class Settings(BaseSettings):
     # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
     # the parent's digest turn ever running. 0 disables the loop (tests).
     conclusion_sweep_interval_s: int = 60
-    # Workflow file (under .github/workflows/) that deploys after a merge to
-    # the base branch — must reach completed+success before a pr_open card's
-    # topic is finally archived (2026-08-09 拍板: merge alone is not enough).
-    accept_deploy_workflow_file: str = "deploy-dev.yml"
-    # 部署 run 迟迟不成功多久之后，卡片开始反过来问「代码是不是已经被别的部署带
-    # 上线了」(2026-08-11)。这个宽限期存在的唯一理由是省 API 调用：合并之后要先
-    # 等 build 跑完，deploy 的 run 才会被创建，那段时间「还没有成功的部署」完全
-    # 正常。过了它，`_landed_without_its_own_run` 才每轮去问一次。
-    #
-    # 实测过的最坏情况：`deploy-dev.yml` 有时**根本不会为某个合并提交创建 run**
-    # （2026-08-11: fa7d08653 / 482ca022e / 611e43f02 三个 main 上真实存在的合并
-    # 提交，按 head_sha 查 100 条 run 全是 0 条）。那种卡不是「还在等」，是死等
-    # ——等的那个 run 永远不会存在。所以这个宽限期不能设成"无限"。
-    accept_deploy_stale_after_minutes: int = 45
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having
@@ -614,6 +626,54 @@ class Settings(BaseSettings):
     # confirm at a glance which build they're on. Off by default (prod); the
     # dev/test box's .env sets it true. The frontend reads it from /api/version.
     show_version_badge: bool = False
+
+    @model_validator(mode="after")
+    def _require_real_jwt_secret_on_deployment(self) -> "Settings":
+        """Fail the boot when a deployment left JWT_SECRET at its insecure default.
+
+        ``jwt_secret`` signs AND verifies every session token. Its field default
+        ``"dev-secret"`` exists only so local dev and the test suite need zero
+        config. On a real deployment that default is a live hazard on two counts:
+
+        - Anyone can forge a valid token, because the signing key is a constant
+          sitting in the source tree.
+        - The #342 failure: if the pinned real secret fails to load for one
+          process (an env-not-applied deploy window like #356), the process
+          silently boots on ``dev-secret``. The moment the real secret comes
+          back, every token signed with ``dev-secret`` in between fails
+          verification and every logged-in user is signed out — with no error
+          logged anywhere (24/24 401 in #342), recovering only as tokens expire.
+
+        So a deployment MUST provide a real secret; there is no deployment where
+        the default is acceptable. "Deployment" is the same line the rest of the
+        app already draws — ``environment`` outside dev/test (secure cookies, the
+        X-User-Id gate). Local dev and the test suite keep the default and never
+        trip this, which is why fail-closed does not take the suite down.
+
+        Mirrors #338's treatment of SANDBOX_TOKEN — make the empty/default case a
+        loud, boot-time event rather than a silent runtime one — but crashes the
+        boot instead of only warning: an unpinned SANDBOX_TOKEN is benign on an
+        app-only box, whereas an insecure JWT_SECRET is wrong on every deployment.
+        """
+        if self.environment in ("development", "test"):
+            return self
+        if not self.jwt_secret.strip() or self.jwt_secret == "dev-secret":
+            # RuntimeError, not ValueError: a ValueError here is wrapped by
+            # pydantic into a ValidationError whose repr dumps the whole input
+            # dict — which on a real deployment carries the DB password, API
+            # tokens and other live secrets straight into the crash log. A plain
+            # RuntimeError propagates unwrapped, so the boot dies on this one
+            # message and nothing else. (#338: keys never go into logs.)
+            raise RuntimeError(
+                "JWT_SECRET must be set to a real secret when ENVIRONMENT is "
+                f"'{self.environment}' (i.e. not development/test); it is "
+                "currently missing, empty, or the built-in 'dev-secret' default. "
+                "Booting on the default silently invalidates every session on the "
+                "next restart that loads the real secret — every user is logged "
+                "out with no error (#342). Generate one with: "
+                'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        return self
 
 
 @lru_cache

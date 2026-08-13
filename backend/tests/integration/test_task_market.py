@@ -183,7 +183,7 @@ def test_accept_creates_task_link_and_notification(client):
     assert links["data"][0]["task_id"] == task_id
 
     # The project got a notification carrying the structured payload.
-    notes = client.get(f"/api/projects/{project_id}/notifications").json()["data"]
+    notes = client.get(f"/api/projects/{project_id}/alerts").json()["data"]
     matching = [
         n for n in notes["data"] if n["payload"].get("application_id") == application_id
     ]
@@ -201,7 +201,7 @@ def test_accept_creates_task_link_and_notification(client):
         client.get(f"/api/templates/{template_id}/tasks").json()["data"]["total"] == 1
     )
     assert client.get(f"/api/projects/{project_id}/tasks").json()["data"]["total"] == 1
-    notes2 = client.get(f"/api/projects/{project_id}/notifications").json()["data"]
+    notes2 = client.get(f"/api/projects/{project_id}/alerts").json()["data"]
     assert (
         len(
             [
@@ -250,7 +250,7 @@ def test_decline_and_terminal_states(client):
         client.get(f"/api/templates/{template_id}/tasks").json()["data"]["total"] == 0
     )
     assert client.get(f"/api/projects/{project_id}/tasks").json()["data"]["total"] == 0
-    notes = client.get(f"/api/projects/{project_id}/notifications").json()["data"]
+    notes = client.get(f"/api/projects/{project_id}/alerts").json()["data"]
     assert any(
         n["payload"].get("application_id") == application_id for n in notes["data"]
     )

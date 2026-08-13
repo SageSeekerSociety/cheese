@@ -197,7 +197,7 @@ const navItems = computed<NavGenericItem[]>(() => [
     key: `cx-${p.id}`,
     type: 'item' as const,
     title: p.name,
-    to: `/project/${p.id}`,
+    to: `/projects/${p.id}`,
     img: projectAvatar(p.name),
     shortcut: i + 2, // ⌘1 = 首页, then projects
   })),
@@ -236,7 +236,7 @@ async function confirmNewProject() {
     const project = await createProject(name, myHandle())
     await loadCxProjects()
     newProjectDialog.value = false
-    router.push(`/project/${project.id}`)
+    router.push(`/projects/${project.id}`)
   } catch (e) {
     // Inline error inside the dialog — not a native alert() chrome.
     newProjectError.value = e instanceof Error ? e.message : '创建项目失败'

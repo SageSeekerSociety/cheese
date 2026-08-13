@@ -29,53 +29,53 @@ export namespace ProjectsApi {
 
   export const create = (data: CreateProjectRequestData) =>
     NewApiInstance.request<{ project: Project }>({
-      url: '/projects',
+      url: '/team-projects',
       method: 'POST',
       data,
     })
 
   export const list = (params: GetProjectsRequestParams) =>
     NewApiInstance.request<{ projects: Project[] }>({
-      url: '/projects',
+      url: '/team-projects',
       method: 'GET',
       params,
     })
 
   export const detail = (projectId: number) =>
     NewApiInstance.request<{ project: Project }>({
-      url: `/projects/${projectId}`,
+      url: `/team-projects/${projectId}`,
       method: 'GET',
     })
 
   export const update = (projectId: number, data: Partial<CreateProjectRequestData> & { archived?: boolean }) =>
     NewApiInstance.request<{ project: Project }>({
-      url: `/projects/${projectId}`,
+      url: `/team-projects/${projectId}`,
       method: 'PATCH',
       data,
     })
 
   export const del = (projectId: number) =>
     NewApiInstance.request({
-      url: `/projects/${projectId}`,
+      url: `/team-projects/${projectId}`,
       method: 'DELETE',
     })
 
   export const addMember = (projectId: number, userId: number, role?: string) =>
     NewApiInstance.request<{ project: Project }>({
-      url: `/projects/${projectId}/members`,
+      url: `/team-projects/${projectId}/members`,
       method: 'POST',
       data: { userId, role },
     })
 
   export const removeMember = (projectId: number, userId: number) =>
     NewApiInstance.request({
-      url: `/projects/${projectId}/members/${userId}`,
+      url: `/team-projects/${projectId}/members/${userId}`,
       method: 'DELETE',
     })
 
   export const getMembers = (projectId: number) =>
     NewApiInstance.request<{ members: ProjectMember[] }>({
-      url: `/projects/${projectId}/members`,
+      url: `/team-projects/${projectId}/members`,
       method: 'GET',
     })
 }
