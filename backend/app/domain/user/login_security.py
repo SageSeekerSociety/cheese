@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 
 LOGIN_ATTEMPTS_PREFIX = "cheese:login_attempts:"
 LOGIN_LOCKOUT_PREFIX = "cheese:login_lockout:"
+# The SECOND login step gets its own budget, keyed by user id rather than
+# username (#357): by the time a 2fa_pending token is presented there is no
+# username in the request, and — more importantly — a *successful* password
+# step clears the username counter, so sharing it would hand an attacker who
+# already holds the password an unlimited supply of 2FA guesses.
+TWO_FACTOR_ATTEMPTS_PREFIX = "cheese:2fa_attempts:"
+TWO_FACTOR_LOCKOUT_PREFIX = "cheese:2fa_lockout:"
+# Backup codes are one-shot high-entropy credentials; counting them together
+# with TOTP would let ordinary TOTP typos spend their budget and vice versa.
+BACKUP_CODE_ATTEMPTS_PREFIX = "cheese:2fa_backup_attempts:"
+BACKUP_CODE_LOCKOUT_PREFIX = "cheese:2fa_backup_lockout:"
 TOTP_SECRET_PREFIX = "cheese:totp_secret:"
 TOTP_BACKUP_PREFIX = "cheese:totp_backup:"
 TOTP_ALWAYS_PREFIX = "cheese:totp_always:"
@@ -26,47 +37,128 @@ USER_SESSIONS_PREFIX = "cheese:user_sessions:"
 PASSWORD_RESET_PREFIX = "cheese:password_reset:"
 
 MAX_LOGIN_ATTEMPTS = 5
+MAX_TWO_FACTOR_ATTEMPTS = 5
+# Tighter than the shared 2FA budget: a backup code is read off a saved list,
+# not typed from a phone under time pressure, so three misses is already
+# generous — and it is the credential worth guarding hardest, being the one
+# that needs no device.
+MAX_BACKUP_CODE_ATTEMPTS = 3
 LOCKOUT_DURATION_SECONDS = 15 * 60
 PASSWORD_RESET_TTL = 30 * 60
 SESSION_TTL = 30 * 24 * 60 * 60
 
 
 class LoginRateLimiter:
+    """Failed-attempt budget for one credential step, keyed by ``subject``.
+
+    ``subject`` is a username here and a user id in the 2FA subclasses below —
+    which key a step uses is part of what makes it a *separate* budget, so it
+    is deliberately the caller's choice rather than something inferred.
+    """
+
+    _attempts_prefix = LOGIN_ATTEMPTS_PREFIX
+    _lockout_prefix = LOGIN_LOCKOUT_PREFIX
+    _max_attempts = MAX_LOGIN_ATTEMPTS
+    _what = "login"
+
     def __init__(self, redis: Redis) -> None:
         self._redis = redis
 
-    async def is_locked_out(self, username: str) -> bool:
-        key = f"{LOGIN_LOCKOUT_PREFIX}{username}"
+    async def is_locked_out(self, subject: str) -> bool:
+        key = f"{self._lockout_prefix}{subject}"
         return await self._redis.exists(key) > 0
 
-    async def get_remaining_lockout_seconds(self, username: str) -> int:
-        key = f"{LOGIN_LOCKOUT_PREFIX}{username}"
+    async def get_remaining_lockout_seconds(self, subject: str) -> int:
+        key = f"{self._lockout_prefix}{subject}"
         ttl = await self._redis.ttl(key)
         return max(0, ttl)
 
-    async def record_failed_attempt(self, username: str) -> int:
-        attempts_key = f"{LOGIN_ATTEMPTS_PREFIX}{username}"
+    async def record_failed_attempt(self, subject: str) -> int:
+        attempts_key = f"{self._attempts_prefix}{subject}"
         attempts = await self._redis.incr(attempts_key)
         await self._redis.expire(attempts_key, LOCKOUT_DURATION_SECONDS)
 
-        if attempts >= MAX_LOGIN_ATTEMPTS:
-            lockout_key = f"{LOGIN_LOCKOUT_PREFIX}{username}"
+        if attempts >= self._max_attempts:
+            lockout_key = f"{self._lockout_prefix}{subject}"
             await self._redis.setex(lockout_key, LOCKOUT_DURATION_SECONDS, "1")
             logger.warning(
-                "User %s locked out after %d failed attempts", username, attempts
+                "%s locked out for %s after %d failed attempts",
+                subject,
+                self._what,
+                attempts,
             )
 
         return attempts
 
-    async def clear_attempts(self, username: str) -> None:
-        attempts_key = f"{LOGIN_ATTEMPTS_PREFIX}{username}"
-        lockout_key = f"{LOGIN_LOCKOUT_PREFIX}{username}"
+    async def consume_attempt(self, subject: str) -> int | None:
+        """Take one attempt from the budget *before* the credential is checked.
+
+        Returns how many attempts remain after this one, or ``None`` if the
+        budget was already spent and this request must be refused.
+
+        Checking a counter and only writing it after a failure is a
+        check-then-act race: a thousand requests fired at once all read the
+        counter before any of them writes, so all thousand get through a
+        5-attempt budget. Spending the slot up front closes that, because
+        ``INCR`` is atomic — each request in the burst gets a distinct number
+        and only the first few are under the cap. Callers clear the counter on
+        success, so a legitimate login leaves nothing behind.
+        """
+        attempts_key = f"{self._attempts_prefix}{subject}"
+        attempts = await self._redis.incr(attempts_key)
+        await self._redis.expire(attempts_key, LOCKOUT_DURATION_SECONDS)
+
+        if attempts >= self._max_attempts:
+            lockout_key = f"{self._lockout_prefix}{subject}"
+            await self._redis.setex(lockout_key, LOCKOUT_DURATION_SECONDS, "1")
+            logger.warning(
+                "%s locked out for %s after %d attempts",
+                subject,
+                self._what,
+                attempts,
+            )
+
+        if attempts > self._max_attempts:
+            return None
+        return self._max_attempts - attempts
+
+    async def clear_attempts(self, subject: str) -> None:
+        attempts_key = f"{self._attempts_prefix}{subject}"
+        lockout_key = f"{self._lockout_prefix}{subject}"
         await self._redis.delete(attempts_key, lockout_key)
 
-    async def get_attempt_count(self, username: str) -> int:
-        key = f"{LOGIN_ATTEMPTS_PREFIX}{username}"
+    async def get_attempt_count(self, subject: str) -> int:
+        key = f"{self._attempts_prefix}{subject}"
         val = await self._redis.get(key)
         return int(val) if val else 0
+
+
+class TwoFactorRateLimiter(LoginRateLimiter):
+    """Budget for the second login step, keyed by ``str(user_id)`` (#357).
+
+    Before this existed the step had no counter at all: password-correct +
+    wrong TOTP moved nothing, so whoever held a leaked password could grind
+    3-in-10^6 (``valid_window=1``) until it hit — against the one control
+    whose entire job is to survive a leaked password.
+    """
+
+    _attempts_prefix = TWO_FACTOR_ATTEMPTS_PREFIX
+    _lockout_prefix = TWO_FACTOR_LOCKOUT_PREFIX
+    _max_attempts = MAX_TWO_FACTOR_ATTEMPTS
+    _what = "2fa"
+
+
+class BackupCodeRateLimiter(LoginRateLimiter):
+    """Budget for backup-code guesses only, keyed by ``str(user_id)``.
+
+    Stacked *under* TwoFactorRateLimiter, not instead of it: a backup-code
+    attempt spends both budgets, a TOTP attempt spends only the 2FA one.
+    """
+
+    _attempts_prefix = BACKUP_CODE_ATTEMPTS_PREFIX
+    _lockout_prefix = BACKUP_CODE_LOCKOUT_PREFIX
+    _max_attempts = MAX_BACKUP_CODE_ATTEMPTS
+    _what = "2fa backup code"
 
 
 class TOTPService:

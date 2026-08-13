@@ -1,5 +1,6 @@
+import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, NamedTuple
 
 import jwt
 from fastapi import Header
@@ -37,16 +38,70 @@ def create_access_token(user_id: int, handle: str | None = None) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
-def create_2fa_pending_token(user_id: int) -> str:
-    """Create a short-lived token that can ONLY be used for 2FA verification, not API access."""  # noqa: E501
+# Exported so the single-use reservation that retires a pending token expires
+# with the token itself, instead of being kept in step by hand in two files.
+PENDING_2FA_TTL_S = 300
+
+
+class Minted2faPendingToken(NamedTuple):
+    token: str
+    # This ticket's one-shot identity. The signature only says the platform
+    # minted it; only a live reservation says nobody has spent it yet — see
+    # app.core.single_use_state and #222.
+    jti: str
+
+
+def mint_2fa_pending_token(
+    user_id: int, *, ttl_s: int = PENDING_2FA_TTL_S
+) -> Minted2faPendingToken:
+    """A token that can ONLY complete 2FA verification, never access the API.
+
+    Returns the ``jti`` alongside it, which the caller must reserve before
+    handing the token out — kept out of here so this module stays pure JWT
+    with no I/O, and so a caller cannot accidentally issue a ticket whose
+    reservation failed (a ticket that can never be redeemed).
+    """
     now = _utcnow()
+    jti = uuid.uuid4().hex
     payload = {
         "sub": str(user_id),
         "type": "2fa_pending",
+        "jti": jti,
         "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=300)).timestamp()),
+        "exp": int((now + timedelta(seconds=ttl_s)).timestamp()),
     }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+    return Minted2faPendingToken(
+        token=jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), jti=jti
+    )
+
+
+class Pending2faClaims(NamedTuple):
+    user_id: int
+    jti: str
+
+
+def verify_2fa_pending_token(token: str) -> Pending2faClaims | None:
+    """The claims a valid, unexpired 2FA ticket carries, else None.
+
+    A ticket with no ``jti`` cannot be spent exactly once, so it is not a
+    valid ticket — that includes any minted by the previous build. They are
+    gone within the 300s TTL, and the login page already tells the user to
+    sign in again.
+    """
+    try:
+        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError:  # type: ignore[attr-defined]
+        return None
+    if decoded.get("type") != "2fa_pending":
+        return None
+    jti = decoded.get("jti")
+    if not isinstance(jti, str) or not jti:
+        return None
+    try:
+        user_id = int(decoded.get("sub") or "")
+    except (TypeError, ValueError):
+        return None
+    return Pending2faClaims(user_id=user_id, jti=jti)
 
 
 def create_refresh_token(user_id: int) -> str:
