@@ -413,11 +413,14 @@ def test_a_card_addressed_to_another_parent_is_not_settleable_here(client):
 
 def test_archiving_settles_descendant_cards_instead_of_freezing_them(client):
     """孙子的卡收方是儿子；直接归档儿子会把那张卡冻住（归档后活文档定格，再没人
-    能结算）。规则是先结算再归档。"""
+    能结算）。规则是先结算再归档。
+
+    三层只有一种合法形状：本体 → 房间 → 事。事是叶子，从事上再拆只会得到它在
+    房间里的兄弟（TopicService._placement），所以这里的"父"必须是房间。"""
     p = _project(client)
-    grandparent = _topic(client, p["id"], "祖")
-    parent = _split(client, grandparent["id"], "父")
-    sub = _split(client, parent["id"], "子")
+    parent = _topic(client, p["id"], "父")  # 房间，自动挂在本体下
+    grandparent = {"id": parent["parent_id"]}  # 本体
+    sub = _split(client, parent["id"], "子")  # 事
 
     grandchild_card = _file_card(client, sub["id"], "孙子的结论")
     parent_card = _file_card(client, parent["id"], "儿子的结论")
@@ -440,9 +443,8 @@ def test_archiving_settles_descendant_cards_instead_of_freezing_them(client):
 def test_no_open_card_survives_an_archive_cascade(client):
     """同一件事的另一面：级联归档后，整棵子树不该剩下任何未结算的卡。"""
     p = _project(client)
-    grandparent = _topic(client, p["id"], "祖")
-    parent = _split(client, grandparent["id"], "父")
-    sub = _split(client, parent["id"], "子")
+    parent = _topic(client, p["id"], "父")  # 房间；事不嵌套，见上一个测试
+    sub = _split(client, parent["id"], "子")  # 事
     _file_card(client, sub["id"], "孙子的结论")
 
     async def _archive_parent_the_way_accept_does() -> None:

@@ -14,7 +14,6 @@ two methods by relocating execution to a cheesed node and relaying the event
 stream + git refs back.
 """
 
-import asyncio
 import json
 import subprocess
 import uuid
@@ -24,10 +23,11 @@ from typing import Protocol
 
 import httpx
 
+from app.core.background import spawn
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
-from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.service import (
     AgentEvent,
     AgentService,
@@ -130,10 +130,13 @@ class LocalDockerProvider:
         )
         if result.returncode != 0 or result.stdout.strip() == resolved_image:
             return
-        try:
-            asyncio.get_running_loop().create_task(warn_image_switch_rebuild(topic_id))
-        except RuntimeError:
-            pass  # no running loop — nothing to schedule onto
+        # Strong reference + no-op without a loop; see app/core/background.
+        # This one tells the topic its box (and everything running in it) was
+        # rebuilt — a notice that silently doesn't arrive is worse than none.
+        spawn(
+            warn_container_rebuilt(topic_id, "image"),
+            name=f"image switch notice topic={topic_id}",
+        )
 
     def _sandbox_config(
         self,

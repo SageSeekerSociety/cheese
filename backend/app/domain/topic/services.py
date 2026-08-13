@@ -8,6 +8,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 import difflib
 import uuid
 from datetime import UTC, datetime
+from typing import overload
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,9 +24,16 @@ from app.domain.conclusion.services import ConclusionCardService
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.membership.services import MemberService
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
-from app.domain.topic.repositories import SortOrder, TopicRepository, TopicSortField
+from app.domain.topic.repositories import (
+    SortOrder,
+    TopicProgressRepository,
+    TopicRepository,
+    TopicSortField,
+)
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 
@@ -35,12 +43,18 @@ from app.domain.workspace import service as ws
 PLACEHOLDER_TITLE = "新话题"
 
 
+@overload
+def _as_utc(when: datetime) -> datetime: ...
+@overload
+def _as_utc(when: None) -> None: ...
 def _as_utc(when: datetime | None) -> datetime | None:
-    """Read a caller-supplied instant as UTC when it carries no offset.
+    """Read an offset-less instant as UTC, passing None through.
 
-    Query strings routinely arrive as `2026-08-12T00:00:00` with no zone; the
-    columns it is compared against are TIMESTAMPTZ, so a naive value has to be
-    given one before it reaches the driver.
+    Two callers need this and used to carry one copy each (which shadowed each
+    other — the stricter copy won at runtime and crashed on None): query strings
+    routinely arrive as `2026-08-12T00:00:00` with no zone, and some drivers
+    hand a TIMESTAMPTZ back naive, which raises rather than merely reading
+    wrong when subtracted.
     """
     if when is None or when.tzinfo is not None:
         return when
@@ -98,12 +112,6 @@ def _brief_doc(
         else "（父话题当时还没有活文档）",
     ]
     return "\n\n".join(parts)
-
-
-def _as_utc(moment: datetime) -> datetime:
-    """The column is TIMESTAMPTZ, but some drivers hand back a naive value and a
-    naive one raises rather than merely reading wrong when subtracted."""
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 def _is_mid_turn_block(block: Block) -> bool:
@@ -182,7 +190,10 @@ class TopicService:
         await self._members.seed(
             topic.id,
             owner_handle=await self._resolve_owner(
-                created_by, parent_id=parent_id, project_owner=project.owner_handle
+                created_by,
+                project_id=project_id,
+                parent_id=parent_id,
+                project_owner=project.owner_handle,
             ),
         )
         return topic
@@ -191,12 +202,23 @@ class TopicService:
         self,
         created_by: str | None,
         *,
+        project_id: uuid.UUID,
         parent_id: uuid.UUID | None,
         project_owner: str | None,
     ) -> str | None:
         """Who owns a newborn topic: the real human who created it, else the
-        parent room's owner, else the project's owner. Returns None only when
-        the whole chain is ownerless (a legacy project) — the caller still
+        parent room's owner, else the project's owner, else the project's 组长.
+
+        That last rung is not decoration. Measured on the dogfooding project
+        2026-08-12, answering 「新话题的拥有者为什么有的有，有的是空的」: the
+        project's ``owner_handle`` is NULL and its root topic is ownerless too,
+        so every topic 芝士 opened under the root fell through all three rungs
+        and came out blank — five active rooms with no one able to manage the
+        roster. The ladder was right; its bottom had nothing to stand on. The
+        roster did: that project has a ``lead``, which is exactly "who is in
+        charge here" already recorded, not a new policy invented to fill a hole.
+
+        Returns None only when even the roster has no lead — the caller still
         seeds 芝士, and the room stays manageable by any project member.
 
         "Is the creator 芝士" spans the whole agent handle namespace, not the bare
@@ -213,7 +235,21 @@ class TopicService:
             )
             if parent_owner:
                 return parent_owner
-        return project_owner
+        return project_owner or await self._project_lead(project_id)
+
+    async def _project_lead(self, project_id: uuid.UUID) -> str | None:
+        """The project's 组长, as the last rung of the ownership ladder.
+
+        Read lazily — only when the rungs above came up empty — so an ordinary
+        topic-create still costs no extra query. Through the roster's *service*,
+        not its repository: `test_domain_import_guard` forbids the shortcut, and
+        the service is also where "who counts as a member" is decided.
+        """
+        members, _ = await MemberService(self._session).list_for_project(project_id)
+        return next(
+            (m.user_handle for m in members if m.role == ProjectRole.lead),
+            None,
+        )
 
     async def get_or_create_private(
         self,
@@ -607,7 +643,7 @@ class TopicService:
         if source.id == target.id:
             raise ValidationError("不能把话题克隆到它自己")
         if source.project_id != target.project_id:
-            # Session dirs + the /work slug are keyed per project; a cross-project
+            # Session dirs + workdir slugs are keyed per project; a cross-project
             # clone would point the transcript at a different repo. Keep in-project.
             raise ValidationError("只能在同一项目内克隆会话")
         source_sid = source.session_id
@@ -620,6 +656,9 @@ class TopicService:
                 source_session_id=source_sid,
                 target_session_dir=ws.session_dir(target.project_id, target.id),
                 new_session_id=new_sid,
+                # Claude resolves --resume under the slug of the cwd it runs
+                # with, so the fork must land under the TARGET topic's workdir.
+                target_cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(target.id)),
             )
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
@@ -630,6 +669,21 @@ class TopicService:
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
         await self.get_or_404(topic_id)
         return await self._blocks.doc_root(topic_id)
+
+    async def get_progress(
+        self, topic_id: uuid.UUID
+    ) -> tuple[list[dict], datetime | None]:
+        """进度层 (#187): the checklist this topic's work left behind.
+
+        Returns ``([], None)`` for a topic that never had one — an empty
+        checklist and no checklist are the same thing to a reader, and making
+        the caller handle a null row buys nothing.
+        """
+        await self.get_or_404(topic_id)
+        row = await TopicProgressRepository(self._session).get(topic_id)
+        if row is None:
+            return [], None
+        return [dict(item) for item in row.items], row.updated_at
 
     async def edit_doc(
         self, *, topic_id: uuid.UUID, content: str, author: str

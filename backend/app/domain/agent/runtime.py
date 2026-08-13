@@ -62,6 +62,30 @@ def _save_inflight(reg: dict) -> None:
         logger.exception("failed to persist in-flight turn registry")
 
 
+def _continuation_of(turn_id: str, info: dict) -> uuid.UUID:
+    """The continuation an orphaned registry entry should resume under.
+
+    Written by a current backend, the entry carries one. A LEGACY entry (written
+    before the field existed) does not, and its turn id is the right fallback:
+    "the continuation of a first attempt IS its turn id" is the invariant
+    ``_execute`` maintains.
+
+    Anything unparseable gets a fresh id rather than an exception. That means no
+    key from the dead turn will match — the resume degrades to the old
+    duplicate-side-effect risk for that ONE turn — but the alternative is
+    raising out of the orphan sweep, which would strand every OTHER turn the
+    sweep exists to rescue. A narrower failure beats a louder one here."""
+    raw = info.get("continuation_id")
+    for candidate in (raw, turn_id):
+        if isinstance(candidate, str):
+            try:
+                return uuid.UUID(candidate)
+            except ValueError:
+                continue
+    logger.warning("orphan entry %s has no usable continuation id", turn_id)
+    return uuid.uuid4()
+
+
 # Channel = the topic id (str). Frames are the same dicts converse yields.
 Frame = dict
 
@@ -153,10 +177,19 @@ class TurnRunner:
     keeps it resolved through FastAPI's dependency overrides (e.g. tests)."""
 
     def __init__(
-        self, broker: InProcessBroker, *, turn_timeout_s: float = 900.0
+        self,
+        broker: InProcessBroker,
+        *,
+        turn_timeout_s: float = 900.0,
+        first_output_timeout_s: float = 300.0,
     ) -> None:
         self._broker = broker
         self._timeout = turn_timeout_s
+        # 冷启动看门狗: how long a turn may produce NOTHING before it is called
+        # dead. Separate from `turn_timeout_s` because it answers a different
+        # question — that one asks "is this turn taking too long?", this one asks
+        # "did this turn ever start?". 0 disables it. See `_execute`.
+        self._first_output_timeout_s = first_output_timeout_s
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
@@ -229,6 +262,25 @@ class TurnRunner:
             return out
         return None
 
+    def continuation_for(self, topic_id: uuid.UUID) -> uuid.UUID | None:
+        """The logical unit of work this topic's CURRENT turn belongs to, or
+        None when no turn of ours is running.
+
+        This is how an HTTP handler — which is called by the sandbox over a
+        plain request and knows nothing about turns — finds the key namespace to
+        dedup against. None means "not inside an automatic turn": a human
+        clicking a button twice means it twice, so the caller skips the check
+        rather than inventing a namespace."""
+        key = str(topic_id)
+        for rec in reversed(self._recent):
+            if rec["topic_id"] != key:
+                continue
+            if rec["status"] != "running":
+                return None
+            raw = rec.get("continuation_id")
+            return uuid.UUID(raw) if isinstance(raw, str) else None
+        return None
+
     def running_topic_ids(self) -> set[uuid.UUID]:
         """Every topic with a turn currently in flight — for bulk UI signals
         (e.g. the sidebar's "还在说话" indicator) that can't afford one
@@ -288,10 +340,16 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
-        submit queues behind the first)."""
+        submit queues behind the first).
+
+        ``continuation_id`` names the logical unit of work. A fresh turn starts
+        one (defaulting to its own turn id); an auto-resume INHERITS the
+        interrupted turn's, which is what lets a side effect the first attempt
+        already performed be recognised as done — see domain.idempotency.keys."""
         turn_id = uuid.uuid4()
         task = asyncio.create_task(
             self._run(
@@ -306,6 +364,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                continuation_id=continuation_id or turn_id,
             )
         )
         self._tasks.add(task)
@@ -337,11 +396,25 @@ class TurnRunner:
         task.add_done_callback(self._tasks.discard)
         return turn_id
 
-    # What the auto-resumed turn asks 芝士 to do. Its progress is intact: the
-    # topic's session pointer was saved on failure (resume, not replay).
+    # What the auto-resumed turn asks 芝士 to do.
+    #
+    # The old wording asserted "你的工作区和已完成的进度都在" unconditionally.
+    # That claim is only true of FILES. Whether the conversation came back
+    # depends on the session pointer having reached the DB before the process
+    # died, and for a pure investigation turn — which produces no files at all —
+    # "进度都在" can be false in every sense (2026-08-11, this topic: a
+    # 132-message turn resumed into a blank session that had to reconstruct the
+    # task from the blocks API). Telling a context-less 芝士 that its progress is
+    # intact is exactly how it redoes work it cannot see.
+    #
+    # So: promise only the part that is always true, and say plainly that the
+    # rest has to be checked rather than assumed.
     RESUME_PROMPT = (
-        "上一轮在中途断了（原因见上一条系统事件）。你的工作区和已完成的进度都在，"
-        "请从断点接着完成原任务；如果其实已经完成了，就直接收尾汇报。"
+        "上一轮在中途断了（原因见上一条系统事件）。工作区里的文件都在，"
+        "但**对话上下文不保证接上了**——如果你对上一轮做过什么没有印象，"
+        "那就是没接上：先核对已经发生的事（jj status 看改动、翻本话题的消息记录"
+        "看已经说过和做过什么），再决定从哪继续，别凭猜重做。"
+        "确认原任务其实已完成的话，直接收尾汇报。"
     )
 
     # Past this age an orphan is not auto-resumed: continuing a conversation
@@ -474,6 +547,24 @@ class TurnRunner:
         "still alive" is deliberate: resuming a live turn is worse than noticing
         a dead one late.
 
+        The two kinds of corpse get OPPOSITE treatment (#316):
+
+        - WEDGED (in `_live`, silent): the thing the task drove — the sandbox
+          container, the provider stream — is what died, taking its claude with
+          it. Cancel + auto-resume stays right here: a `--resume`d session still
+          holds the conversation, so 接着跑 means something.
+        - RESTART ORPHAN (not in `_live`): the backend restarting killed only
+          the WAITER. The claude out in the execution environment survived it
+          and is still working the task. Re-prompting it is how one deploy
+          became five stacked zombie turns on one topic — so the default is to
+          ATTACH, not to speak: mark the turn platform-interrupted and let the
+          spool/parked-hook reconcile land whatever claude sends back (its Stop
+          included). A new prompt goes out ONLY when there is proof the task
+          never arrived — zero hook evidence for the turn AND a clean spool —
+          and then it is the ORIGINAL text (the pending-message mechanism
+          re-hands it verbatim), never a "接着干" nudge a task-less claude
+          cannot act on. One re-send per topic at most; the rest are folded in.
+
         Every branch below ends in a system event. A turn we do not resume is a
         turn someone has to pick up by hand, and they can only do that if the
         topic says so — silence is the failure mode, not the loud recovery."""
@@ -510,7 +601,13 @@ class TurnRunner:
         surviving = _load_inflight()
         _save_inflight({k: v for k, v in surviving.items() if k not in orphans})
         resumed = 0
+        # --- wedged turns: cancel + (maybe) resume, the pre-#316 treatment.
+        # Their claude died WITH whatever they were driving, so a resumed
+        # session — which still holds the conversation — is the right remedy.
+        wedged_topics: set[str] = set()
         for turn_id, info in orphans.items():
+            if turn_id not in wedged:
+                continue
             topic_id = uuid.UUID(info["topic_id"])
             age_s = now - float(info.get("started_at", 0))
             stale = age_s > self.ORPHAN_STALE_S
@@ -518,24 +615,20 @@ class TurnRunner:
             # A wedged turn still owns the topic lock. Cancelling is not tidiness
             # — a resume would queue behind it forever, and even a turn we refuse
             # to resume must let the next human message through.
-            if turn_id in wedged:
-                self._cancel_wedged(turn_id, topic_id)
-            # Same verdict either way, but say which one actually happened —
-            # "it was killed" and "it sat there producing nothing" send whoever
-            # reads this to different places.
-            how = (
-                f"卡死了：{round(age_s / 60)} 分钟里一个字都没输出，已强制结束"
-                if turn_id in wedged
-                else "被强制中断了（进程或沙箱被杀，没有走到收尾）"
-            )
-            if stale or chained:
-                # The two "we are NOT resuming this" branches. They used to be a
-                # bare `continue`, which is what let a dead topic look identical
-                # to a working one for 173 minutes.
+            self._cancel_wedged(turn_id, topic_id)
+            how = f"卡死了：{round(age_s / 60)} 分钟里一个字都没输出，已强制结束"
+            # One remedy per topic: a queued turn parked behind a wedged one
+            # looks wedged too, and resuming both would stack prompts — the
+            # exact pile-up this sweep is being fixed to stop.
+            if stale or chained or info["topic_id"] in wedged_topics:
                 why = (
                     f"已经中断 {round(age_s / 60)} 分钟了，太久，不自动接着跑"
                     if stale
-                    else "这轮本身就是一次自动续跑，不再连着自动续跑"
+                    else (
+                        "这轮本身就是一次自动续跑，不再连着自动续跑"
+                        if chained
+                        else "同话题已经安排了一次续跑，这轮并入它"
+                    )
                 )
                 await self._post_orphan_event(
                     chat_service,
@@ -552,23 +645,186 @@ class TurnRunner:
                     round(age_s),
                 )
                 continue
+            wedged_topics.add(info["topic_id"])
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
                 f"⚠️ 上一轮{how}。已完成的进度都在；马上自动接着跑。",
             )
-            # A cancelled turn needs a moment to unwind before it lets go of the
-            # topic lock; a dead process holds no lock at all. The resume would
-            # queue rather than fail either way — this just avoids the queue.
+            # A cancelled turn needs a moment to unwind before it lets go of
+            # the topic lock — the resume would queue rather than fail either
+            # way, this just avoids the queue.
             self._schedule_resume(
                 chat_service,
                 topic_id,
-                10.0 if turn_id in wedged else 3.0,
+                10.0,
                 "上一轮被强制中断，接着跑",
+                continuation_id=_continuation_of(turn_id, info),
             )
             resumed += 1
             logger.info("orphan turn %s scheduled for resume", turn_id)
+        # --- restart orphans: a dead process generation left them behind, so
+        # the executing claude probably did NOT die (#316). Decide per TOPIC —
+        # attach by default, re-send only on proof of non-delivery.
+        by_topic: dict[str, list[tuple[str, dict]]] = {}
+        for turn_id, info in orphans.items():
+            if turn_id in wedged:
+                continue
+            by_topic.setdefault(str(info.get("topic_id")), []).append((turn_id, info))
+        for topic_key, entries in by_topic.items():
+            try:
+                topic_id = uuid.UUID(topic_key)
+            except ValueError:
+                logger.warning(
+                    "orphan entries %s dropped: unusable topic id %r",
+                    [tid for tid, _ in entries],
+                    topic_key,
+                )
+                continue
+            resumed += await self._settle_restart_orphans(
+                chat_service,
+                topic_id,
+                entries,
+                now,
+                # A topic the wedged branch already remedied gets no second
+                # action — its restart orphans are folded in, loudly.
+                allow_actions=topic_key not in wedged_topics,
+            )
         return resumed
+
+    async def _settle_restart_orphans(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        entries: list[tuple[str, dict]],
+        now: float,
+        *,
+        allow_actions: bool = True,
+    ) -> int:
+        """One topic's remedy for turns a dead process generation left behind.
+        Returns how many remedial prompts were scheduled (0 or 1).
+
+        The default is to ATTACH — post the verdict, then let the spool
+        reconcile land whatever the surviving claude sends back (see
+        `ChatService.settle_spool`). Evidence that claude received the task:
+
+        - an AI-authored block bearing the turn's id (the live hook/stream path
+          persisted it — claude acted, so it heard), or
+        - anything in the topic's durable spool beyond SessionStart (hooks that
+          arrived with nobody listening; they cannot be pinned to one turn, so
+          they veto every re-send on the topic).
+
+        A re-send happens only for a topic with NO such trace, and then only
+        for the newest human-authored orphan: the pending-message mechanism
+        re-hands its ORIGINAL text (an interrupted turn never stamps its inputs
+        consumed), the rest are folded into the same prompt. A probe failure
+        counts as evidence — when we cannot know, speaking is the riskier
+        side."""
+        turn_uuids: list[uuid.UUID] = []
+        for tid, _info in entries:
+            try:
+                turn_uuids.append(uuid.UUID(tid))
+            except ValueError:
+                continue
+        delivered: set[str] = set()
+        spool_trace = False
+        probe_ok = False
+        try:
+            evidence = await chat_service.orphan_turn_evidence(topic_id, turn_uuids)
+            delivered = {str(t) for t in evidence.get("delivered", ())}
+            spool_trace = bool(evidence.get("spool"))
+            probe_ok = True
+        except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
+            logger.exception("orphan evidence probe failed for %s", topic_id)
+        attach = bool(delivered) or spool_trace or not probe_ok
+
+        resend: tuple[str, dict] | None = None
+        if allow_actions and probe_ok and not spool_trace:
+            candidates = [
+                (tid, info)
+                for tid, info in entries
+                if tid not in delivered
+                and not info.get("is_resume")
+                # Only a HUMAN prompt is worth repeating; entries from before
+                # the author field existed stay on the ask-a-human path.
+                and str(info.get("author") or "system") != "system"
+                and now - float(info.get("started_at", 0)) <= self.ORPHAN_STALE_S
+            ]
+            if candidates:
+                resend = max(candidates, key=lambda e: float(e[1].get("started_at", 0)))
+
+        others = len(entries) - len(delivered) - (1 if resend else 0)
+        if not allow_actions:
+            # This topic's remedy was already taken by the wedged branch — its
+            # coming resume turn picks any pending message up; just say so.
+            text = (
+                f"⚠️ 同一次中断还波及了本话题的另外 {len(entries)} 轮；"
+                "它们的消息和进展会并入接下来的轮次。"
+            )
+        elif attach and resend is not None:
+            text = (
+                "⚠️ 平台部署中断了本话题的几个轮次：已送达的任务现场还在继续干，"
+                "进展和收尾会自动落回这里；没送到的消息马上原样重发一次"
+                "（排队中的消息会一并带上）。"
+            )
+        elif attach:
+            text = (
+                "⚠️ 上一轮被平台部署中断了。芝士在中断前已经收到任务，"
+                "现场大概率还在干活：它送回的进展和收尾会继续自动落回这里；"
+                "要是迟迟没动静，再 @ 芝士 接手。"
+            )
+            if others > 0:
+                text += (
+                    f"（另有 {others} 轮排队中的消息会在下一轮开始时一并交给芝士。）"
+                )
+        elif resend is not None:
+            text = (
+                "⚠️ 上一轮被平台部署中断，消息还没送到芝士那边；马上原样自动重发一次。"
+            )
+            if others > 0:
+                text += f"（同批被中断的另外 {others} 轮消息也会一并带上。）"
+        else:
+            newest = max(entries, key=lambda e: float(e[1].get("started_at", 0)))
+            age_s = now - float(newest[1].get("started_at", 0))
+            why = (
+                f"已经中断 {round(age_s / 60)} 分钟，太久，不自动重发"
+                if age_s > self.ORPHAN_STALE_S
+                else "这些轮次都是平台自动发起的，不再自动连跑"
+            )
+            text = (
+                f"⚠️ 上一轮被平台部署中断，且没有迹象表明消息送到了芝士那边，{why}。"
+                "需要继续的话 @ 芝士，之前的消息会一并带上。"
+            )
+        await self._post_orphan_event(chat_service, topic_id, text)
+        if not allow_actions:
+            return 0
+        if attach:
+            # Collect whatever the surviving claude already parked (a Stop
+            # included) — and whatever it sends next lands the same way via the
+            # hooks endpoint's own settle trigger.
+            try:
+                chat_service.schedule_spool_settle(topic_id)
+            except Exception:  # noqa: BLE001 — best-effort, the event already told the room
+                logger.exception("spool settle scheduling failed for %s", topic_id)
+            logger.info(
+                "orphan turn(s) %s attached on topic %s (delivered=%d spool=%s)",
+                [tid for tid, _ in entries],
+                topic_id,
+                len(delivered),
+                spool_trace,
+            )
+        if resend is not None:
+            tid, info = resend
+            self._schedule_resend(
+                chat_service,
+                topic_id,
+                3.0,
+                str(info.get("content") or ""),
+                continuation_id=_continuation_of(tid, info),
+            )
+            logger.info("orphan turn %s scheduled for re-send", tid)
+            return 1
+        return 0
 
     async def _post_orphan_event(
         self, chat_service, topic_id: uuid.UUID, text: str
@@ -591,10 +847,16 @@ class TurnRunner:
         topic_id: uuid.UUID,
         after_s: float,
         reason: str = "从上一轮的断点继续",
+        *,
+        continuation_id: uuid.UUID | None = None,
     ):
         """One bounded auto-resume: wait, then run a system-nudged turn that
         continues the saved session. Resumed turns never schedule another
-        resume (is_resume=True), so a persistent failure stops after one shot."""
+        resume (is_resume=True), so a persistent failure stops after one shot.
+
+        The resume runs under the interrupted turn's ``continuation_id``, so any
+        side effect the first attempt already committed is recognised as done
+        rather than performed twice."""
 
         async def _later() -> None:
             await asyncio.sleep(after_s)
@@ -606,12 +868,56 @@ class TurnRunner:
                 summon=True,
                 is_resume=True,
                 resume_reason=reason,
+                continuation_id=continuation_id,
             )
 
         task = asyncio.create_task(_later())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         logger.info("scheduled auto-resume for topic %s in %.0fs", topic_id, after_s)
+
+    # The re-send opener's wording (#316): name the platform as the cause —
+    # "被部署中断" — never "AI 服务返回错误" for a failure the deploy made.
+    RESEND_REASON = "上一轮被平台部署中断，消息没送到芝士那边，原样重发一次"
+
+    def _schedule_resend(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        after_s: float,
+        content: str,
+        *,
+        continuation_id: uuid.UUID | None = None,
+    ):
+        """One bounded re-delivery of a prompt with NO evidence of arrival.
+
+        Not `_schedule_resume`: RESUME_PROMPT tells the agent to pick up where
+        it left off, which is meaningless to a claude that never heard the task.
+        The prompt this turn actually runs with is the ORIGINAL text — an
+        interrupted turn never stamps its inputs consumed, so the pending-
+        message mechanism re-hands them verbatim; ``content`` is only the
+        fallback for the rare topic with nothing pending. `is_resume=True`
+        keeps it from ever chaining further automatic turns, and the inherited
+        continuation keeps any side effect that somehow DID land from being
+        repeated."""
+
+        async def _later() -> None:
+            await asyncio.sleep(after_s)
+            self.submit(
+                chat_service,
+                topic_id,
+                author="system",
+                content=content,
+                summon=True,
+                is_resume=True,
+                resume_reason=self.RESEND_REASON,
+                continuation_id=continuation_id,
+            )
+
+        task = asyncio.create_task(_later())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        logger.info("scheduled orphan re-send for topic %s in %.0fs", topic_id, after_s)
 
     # Platform copy for the queue event — structured, never 芝士's own words.
     @staticmethod
@@ -749,6 +1055,7 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
@@ -788,6 +1095,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                continuation_id=continuation_id,
                 frames=frames,
             )
         finally:
@@ -816,10 +1124,12 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
+        continuation_id = continuation_id or turn_id
         resume_after: float | None = None
         resume_why = "上一轮异常中断，接着跑"
         # Did this turn blame the MACHINE? Decides whether finishing counts as
@@ -832,6 +1142,7 @@ class TurnRunner:
         rec = {
             "turn_id": str(turn_id),
             "topic_id": str(topic_id),
+            "continuation_id": str(continuation_id),
             "author": author,
             "summon": summon,
             "is_resume": is_resume,
@@ -851,6 +1162,15 @@ class TurnRunner:
             "topic_id": str(topic_id),
             "started_at": rec["started_at"],
             "is_resume": is_resume,
+            # Carried across the process death: the orphan sweep must resume
+            # under the SAME continuation, or every key the dead turn claimed
+            # stops matching and its side effects are all repeated.
+            "continuation_id": str(continuation_id),
+            # Who started the turn and with what — the sweep's re-send path
+            # (#316) may only re-deliver a HUMAN prompt, and when nothing is
+            # pending in the topic the stored text is the only copy of it.
+            "author": author,
+            "content": content,
         }
         _save_inflight(reg)
         # Same instant, no await in between: a sweep can never observe this turn
@@ -881,7 +1201,37 @@ class TurnRunner:
             # Every other backend never emits this frame, so their behaviour here
             # is byte-for-byte unchanged.
             loop_start = asyncio.get_running_loop().time()
+            # 冷启动看门狗: until the model has said ANYTHING, the wrap runs on a
+            # much shorter fuse than the turn ceiling.
+            #
+            # A turn whose substrate never comes up is indistinguishable, from
+            # out here, from one thinking hard — both are silence. So the ceiling
+            # (900s for tmux) was what ended them, and for 900 seconds the topic
+            # reported 进行中 while nothing existed to make progress. On
+            # 2026-08-12 that took the whole dev platform down for 30 minutes:
+            # every topic's turn started in the same second, ran with `tools=0`
+            # and `first_output_s=None`, and each one occupied its full ceiling
+            # before failing. The information needed to call it was there from
+            # second one.
+            #
+            # The fuse only covers the gap BEFORE first output; once a `tool` or
+            # `assistant_block` arrives the deadline is pushed out to the real
+            # ceiling and this layer is gone for the rest of the turn. So a slow
+            # turn is never cut short — only a turn that never started.
+            #
+            # `turn_ceiling` deliberately does NOT lift the fuse: chat.py emits it
+            # up front, before the container is touched, so it proves a backend
+            # was selected and nothing more. It is remembered and applied at first
+            # output instead.
+            first_output_fuse_s = self._first_output_timeout_s
+            ceiling_s = self._timeout
+            if first_output_fuse_s:
+                fuse_deadline = loop_start + min(first_output_fuse_s, self._timeout)
+            else:
+                fuse_deadline = None
             async with asyncio.timeout(self._timeout) as turn_deadline:
+                if fuse_deadline is not None:
+                    turn_deadline.reschedule(fuse_deadline)
                 turn_frames = (
                     frames
                     if frames is not None
@@ -896,6 +1246,7 @@ class TurnRunner:
                         is_resume=is_resume,
                         resume_reason=resume_reason,
                         nudge_event=nudge_event,
+                        continuation_id=continuation_id,
                     )
                 )
                 async for frame in turn_frames:
@@ -907,10 +1258,24 @@ class TurnRunner:
                     self._last_frame_at[str(turn_id)] = time.monotonic()
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
-                        turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
                         # `topic_turn()` reads this so `cheese status` reports the
                         # backend's REAL ceiling, not the generic outer default.
                         rec["ceiling_s"] = ceiling_s
+                        if fuse_deadline is None:
+                            turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
+                        else:
+                            # Still silent, so the fuse keeps its say: the deadline
+                            # is whichever of the two comes FIRST. A backend that
+                            # declares a ceiling shorter than the fuse still gets
+                            # cut at its own ceiling; one that declares 900s does
+                            # not thereby buy 900 seconds of silence — that is
+                            # exactly the failure the fuse exists to cut short,
+                            # and this frame is emitted before the container is
+                            # touched, so it cannot vouch for anything being up.
+                            fuse_deadline = loop_start + max(
+                                0.0, min(ceiling_s, first_output_fuse_s)
+                            )
+                            turn_deadline.reschedule(fuse_deadline)
                         continue
                     if kind == "resume_hint":
                         # Internal: chat layer says this failure is worth an
@@ -924,6 +1289,11 @@ class TurnRunner:
                         and rec["first_output_s"] is None
                     ):
                         rec["first_output_s"] = round(time.monotonic() - t0, 2)
+                        # The model spoke: the substrate is up, so hand the turn
+                        # its real ceiling and retire the cold-start fuse.
+                        if fuse_deadline is not None:
+                            fuse_deadline = None
+                            turn_deadline.reschedule(loop_start + max(0.0, ceiling_s))
                     if kind == "tool":
                         rec["tools"] += 1
                     if kind == "error":
@@ -1001,18 +1371,46 @@ class TurnRunner:
             # `self._timeout`, so logging the base default here would be
             # misleading about what actually elapsed before the cut.
             effective_ceiling_s = round(rec.get("ceiling_s") or self._timeout)
-            logger.warning(
-                "turn %s timed out (>%ss, elapsed %ss) for topic %s; interrupted",
-                turn_id,
-                effective_ceiling_s,
-                rec["duration_s"],
-                topic_id,
+            # Two different failures share this handler, and telling them apart is
+            # the whole point of the cold-start fuse. "Ran a long time and wedged"
+            # is a turn problem — resuming it is reasonable. "Never produced a
+            # token" is an ENVIRONMENT problem (no container, no disk, no model
+            # connection): resuming just spends another fuse on the same wall, and
+            # saying 已完成的改动都在 is a lie, because nothing ran.
+            never_started = bool(
+                rec["first_output_s"] is None and self._first_output_timeout_s
             )
-            text = (
-                f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限，"
-                f"实际跑了约{rec['duration_s']}秒，可能卡在某步）。"
-                "已完成的改动都在；马上自动接着跑一次。"
-            )
+            if never_started:
+                logger.error(
+                    "turn %s produced no output within %ss for topic %s; "
+                    "treating as a substrate failure (tools=%s)",
+                    turn_id,
+                    round(self._first_output_timeout_s),
+                    topic_id,
+                    rec["tools"],
+                )
+                rec["detail"] = "no first output"
+                text = (
+                    f"⚠️ 芝士这轮**一个字都没输出**"
+                    f"（{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
+                    "也没有任何工具调用），按运行环境没起来处理。"
+                    "常见原因是沙箱容器建不起来、磁盘满了、或者模型侧连不上"
+                    "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
+                    "会自动再试一次；再失败就先去看平台状态，反复 @ 它没有用。"
+                )
+            else:
+                logger.warning(
+                    "turn %s timed out (>%ss, elapsed %ss) for topic %s; interrupted",
+                    turn_id,
+                    effective_ceiling_s,
+                    rec["duration_s"],
+                    topic_id,
+                )
+                text = (
+                    f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限，"
+                    f"实际跑了约{rec['duration_s']}秒，可能卡在某步）。"
+                    "已完成的改动都在；马上自动接着跑一次。"
+                )
             block = None
             try:
                 block = await chat_service.post_system_event(topic_id, text, turn_id)
@@ -1099,7 +1497,13 @@ class TurnRunner:
                     resume_why = swap.resume_reason or resume_why
         if resume_after is not None and not is_resume:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
-            self._schedule_resume(chat_service, topic_id, resume_after, resume_why)
+            self._schedule_resume(
+                chat_service,
+                topic_id,
+                resume_after,
+                resume_why,
+                continuation_id=continuation_id,
+            )
         else:
             # 结论卡·阶段一 (机制①): this topic's turn ended and any conclusion
             # card it was handed is still open → 默认采信. THE place to put this

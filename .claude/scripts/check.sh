@@ -1,32 +1,129 @@
 #!/usr/bin/env bash
 # check.sh — ruff + pyright + pytest (parallel + incremental)
-# Usage: bash .claude/scripts/check.sh [--full] [--no-tests]
+# Usage: bash .claude/scripts/check.sh [--full] [--no-tests] [--strict] [--self-test]
 #   Default:     incremental (--testmon, only affected tests, ~5s)
 #   --full:      run entire suite (no testmon, ~25s)
 #   --no-tests:  skip pytest entirely (also via SKIP_TESTS=1) — for hosts with
 #                no usable Postgres (e.g. the quality gate), where pytest can't
 #                tell PASS from a broken environment either way.
-# Output: concise pass/fail summary. Non-zero exit on any FAIL (SKIP doesn't count).
+#   --strict:    (also via CHECK_STRICT=1) a check that couldn't RUN is not a
+#                pass — see the three outcomes below. The platform quality gate
+#                sets this; local runs don't.
+#   --self-test: exercise the pass/fail/blocked accounting itself and exit.
+#                Runs no checks and needs no toolchain (same convention as the
+#                sibling guards in this directory).
+#
+# Three outcomes per check, deliberately distinct:
+#   PASS/FAIL  the check ran and had an opinion about the code.
+#   BLOCKED    the check could NOT run here (toolchain missing/unreachable).
+#              Not a code verdict — but not a pass either.
+#   SKIP       we asked for it to be skipped (--no-tests). Intentional.
+#
+# Exit: 1 on any FAIL. 2 when --strict and anything is BLOCKED (= "the check
+# never ran", which a gate must not paint green). 0 otherwise — so a plain local
+# run on a machine without the toolchain still gets out of a developer's way.
 set -euo pipefail
 
 # Resolve the repo root from this script's own path, not `git rev-parse` — this
 # repo's VCS is jj, and the quality-gate execution environment has no .git, so a
 # git-based lookup fails fatally before any check even runs.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$REPO_ROOT/backend"
 
 SKIP_TESTS="${SKIP_TESTS:-0}"
+STRICT="${CHECK_STRICT:-0}"
 FULL=0
+SELF_TEST=0
 for arg in "$@"; do
     case "$arg" in
         --full) FULL=1 ;;
         --no-tests) SKIP_TESTS=1 ;;
+        --strict) STRICT=1 ;;
+        --self-test) SELF_TEST=1 ;;
     esac
 done
 
 PASS=0
 FAIL=0
 SKIP=0
+BLOCKED=0
+
+# The entire bug this script was fixed for lives in these four counters and how
+# they become an exit code, so that translation is a pure function: no I/O, no
+# globals, testable on a host with no toolchain at all (`--self-test`).
+#
+# BLOCKED is in the denominator: a check that never ran is not a check that
+# passed, and the old "$PASS/$((PASS+FAIL))" line reported an environment where
+# only ruff could start as a flawless `1/1 passed` — which is exactly how the
+# platform gate came to paint a card green on the strength of one lint run.
+# Explicit skips stay out of it: we asked for those.
+verdict() {
+    local pass="$1" fail="$2" blocked="$3" skip="$4" strict="$5"
+    local summary="Result: $pass/$((pass + fail + blocked)) passed"
+    if [ "$blocked" -gt 0 ]; then summary="$summary, $blocked blocked"; fi
+    if [ "$skip" -gt 0 ]; then summary="$summary, $skip skipped"; fi
+    echo "$summary"
+
+    if [ "$fail" -gt 0 ]; then return 1; fi
+    # Exit 2, distinct from a red check on purpose: nothing here says the code is
+    # bad — it says the check never happened, so the caller (the platform gate)
+    # must report "没跑成", not "通过" and not "未通过".
+    if [ "$strict" = "1" ] && [ "$blocked" -gt 0 ]; then
+        echo "STRICT: $blocked 项检查没能跑起来，这次检查没有真正跑完 —— 不判绿（exit 2）。"
+        return 2
+    fi
+    # Backstop against "nothing ran, so nothing was wrong". Every path above
+    # routes an un-runnable check to BLOCKED, so this should be unreachable
+    # today — but a future --skip-<x> that lands in SKIP would sail straight
+    # through, and `Result: 0/0 passed` is the shape the gate already shipped
+    # once (card 14a2f2d3: four checks skipped, exit 0, card queued for
+    # acceptance). Same guard check-action-pins.sh puts on an empty scan.
+    if [ "$strict" = "1" ] && [ "$((pass + fail))" = "0" ]; then
+        echo "STRICT: 一项检查都没有真正跑过，这次检查对代码没有任何结论 —— 不判绿（exit 2）。"
+        return 2
+    fi
+    return 0
+}
+
+if [ "$SELF_TEST" = "1" ]; then
+    # pass fail blocked skip strict | expected rc | expected summary
+    SELF_TEST_CASES=(
+        "1 0 0 1 1|0|Result: 1/1 passed, 1 skipped"
+        "6 0 0 1 1|0|Result: 6/6 passed, 1 skipped"
+        "3 0 3 1 1|2|Result: 3/6 passed, 3 blocked, 1 skipped"
+        "3 0 3 1 0|0|Result: 3/6 passed, 3 blocked, 1 skipped"
+        "1 0 3 0 1|2|Result: 1/4 passed, 3 blocked"
+        "0 0 0 4 1|2|Result: 0/0 passed, 4 skipped"
+        "0 0 0 4 0|0|Result: 0/0 passed, 4 skipped"
+        "5 1 0 1 1|1|Result: 5/6 passed, 1 skipped"
+        "0 1 3 0 1|1|Result: 0/4 passed, 3 blocked"
+    )
+    ST_FAIL=0
+    for case in "${SELF_TEST_CASES[@]}"; do
+        IFS='|' read -r counts want_rc want_summary <<<"$case"
+        # shellcheck disable=SC2086
+        got_out="$(verdict $counts)" && got_rc=0 || got_rc=$?
+        got_summary="$(printf '%s\n' "$got_out" | head -1)"
+        if [ "$got_rc" = "$want_rc" ] && [ "$got_summary" = "$want_summary" ]; then
+            echo "  ok: [$counts] -> $want_rc, $want_summary"
+        else
+            echo "  BAD: [$counts] -> rc=$got_rc \"$got_summary\""
+            echo "       expected rc=$want_rc \"$want_summary\""
+            ST_FAIL=1
+        fi
+    done
+    [ "$ST_FAIL" = 0 ] && echo "self-test: ok" || echo "self-test: FAILED"
+    exit "$ST_FAIL"
+fi
+
+cd "$REPO_ROOT/backend"
+
+# A check that couldn't run at all. Locally that's an environment limitation and
+# must not block a developer (exit code unaffected); under --strict it means the
+# gate didn't actually run, which is not a pass — see the summary at the bottom.
+blocked() {
+    echo "  BLOCKED: $1 (couldn't run here — environment limitation, not a code verdict)"
+    ((++BLOCKED))
+}
 
 # Same cross-environment sharing problem as the .venv one below, but for tool
 # caches: a previous run's .ruff_cache/.pytest_cache under backend/ can be
@@ -43,6 +140,7 @@ PYTEST_CACHE_DIR="$(mktemp -d)/pytest-cache"
 # intermittently. The full parallel run is fast enough to not need testmon.
 PYTEST_ARGS="-n 4"
 [[ "$FULL" == "1" ]] && echo "Mode: FULL suite (parallel)" || echo "Mode: full suite (parallel)"
+[[ "$STRICT" == "1" ]] && echo "Mode: STRICT (a check that can't run does not count as passed)" || true
 
 # This workspace is shared between environments that don't agree on anything
 # below the mount point (interactive session vs. gate host): different uid,
@@ -104,8 +202,7 @@ elif run_ruff check . 2>&1 | tail -20 && run_ruff format --check . 2>&1 | tail -
     echo "  PASS: ruff"
     ((++PASS))
 else
-    echo "  SKIP: ruff (scratch-venv sync couldn't get it running in time — environment limitation, not a code issue)"
-    ((++SKIP))
+    blocked "ruff (scratch-venv sync couldn't get it running in time)"
 fi
 
 # --- pyright ---
@@ -128,69 +225,105 @@ elif timeout 120 "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
     echo "  PASS: pyright"
     ((++PASS))
 else
-    echo "  SKIP: pyright (scratch-venv sync couldn't get it running in time — environment limitation, not a code issue)"
-    ((++SKIP))
+    blocked "pyright (scratch-venv sync couldn't get it running in time)"
 fi
 
 # --- alembic single head ---
 # Parallel migrations fork the chain; `upgrade head` then refuses and the
 # deploy aborts (four times on 2026-08-09/10). Mirror of CI's migration-heads
 # job so the fork is caught before push. Reads the migration graph only — no
-# DB. SKIP (not FAIL) when the venv can't import the app: environment, not code.
+# DB. BLOCKED (not FAIL) when the venv can't import the app: environment, not code.
 echo "==> alembic heads"
 if HEADS_OUT="$(timeout 60 "${UV_RUN[@]}" alembic heads 2>/dev/null)"; then
     HEADS_N="$(printf '%s\n' "$HEADS_OUT" | grep -c '(head)')"
     if [ "$HEADS_N" = "1" ]; then
-        echo "  PASS: exactly one migration head"
-        ((++PASS))
+        # The HEAD sentinel must name the tip — it is what turns a concurrent
+        # migration PR into a git conflict instead of a silent alembic fork.
+        TIP="$(printf '%s\n' "$HEADS_OUT" | awk '/\(head\)/ {print $1; exit}')"
+        # Test for the file rather than redirecting from it and hoping: a failed
+        # `<` redirection is the SHELL's error, not the command's, so bash prints
+        # `alembic/HEAD: No such file or directory` regardless of the `2>/dev/null`
+        # on `tr`. That raw line lands above the written-for-humans FAIL below and
+        # reads as "check.sh is broken" rather than "move one line".
+        SENTINEL=""
+        if [ -f alembic/HEAD ]; then
+            SENTINEL="$(tr -d '[:space:]' < alembic/HEAD)"
+        fi
+        if [ "$SENTINEL" = "$TIP" ]; then
+            echo "  PASS: exactly one migration head, HEAD sentinel matches ($TIP)"
+            ((++PASS))
+        else
+            echo "  FAIL: backend/alembic/HEAD says '${SENTINEL:-<missing>}' but the tip is $TIP"
+            echo "        every migration moves this one-line file: echo $TIP > backend/alembic/HEAD"
+            ((++FAIL))
+        fi
     else
         printf '%s\n' "$HEADS_OUT" | sed 's/^/    /'
         echo "  FAIL: $HEADS_N migration heads — rechain your migration onto the current head (see .claude/rules/migrations.md)"
         ((++FAIL))
     fi
 else
-    echo "  SKIP: alembic heads (couldn't run alembic in this environment)"
-    ((++SKIP))
+    blocked "alembic heads (couldn't run alembic in this environment)"
 fi
 
 # --- repo rules + migration fork ---
-# Mirrors CI's repo-guards.yml job. Both are pure bash/python3 stdlib — no venv,
-# no DB, no network — so unlike everything above they cannot degrade to SKIP for
-# environment reasons; if they cannot run, that is a real failure.
+# Mirrors CI's repo-guards.yml job. These are pure bash/python3 stdlib — no
+# venv, no DB, no network — so unlike everything above they don't degrade to
+# BLOCKED just because the toolchain is thin: a violation they report IS a code
+# verdict and must be a FAIL.
+#
+# The one exception is exit 127, "the guard itself isn't here" (script missing
+# from the worktree, no python3 at all). That is not a verdict about the code,
+# and reporting it as FAIL sends 芝士 off to hunt a code problem that doesn't
+# exist — the exact confusion the BLOCKED state was introduced to end. So 127
+# is BLOCKED, which under --strict still refuses to paint the gate green.
+#
+# Each guard runs ONCE, captured. The previous shape ran it a second time inside
+# the `else` branch to show its output; under `set -euo pipefail` that second
+# run's non-zero status aborted check.sh on the spot, so a repo-rules violation
+# killed the script before it printed "FAIL: repo rules", before the migration
+# fork and pytest checks ran, and before the summary line — exiting with the
+# guard's own code instead of 1.
 #
 # The fork check compares against origin/main, which the alembic-heads check
 # above CANNOT see: that one only proves THIS tree has one head, and two
 # branches each adding a migration on the same parent both pass it. Cheap
 # (reads the revision graph) so it runs every time.
-echo "==> repo guards"
-if bash "$REPO_ROOT/.claude/scripts/check-repo-rules.sh" >/dev/null 2>&1; then
-    echo "  PASS: repo rules"
-    ((++PASS))
-else
-    bash "$REPO_ROOT/.claude/scripts/check-repo-rules.sh" 2>&1 | sed 's/^/    /'
-    echo "  FAIL: repo rules"
-    ((++FAIL))
-fi
+run_guard() {
+    local pass_label="$1" fail_label="$2"
+    shift 2
+    local out rc=0
+    out="$("$@" 2>&1)" || rc=$?
+    if [ "$rc" != 0 ] && [ -n "$out" ]; then
+        printf '%s\n' "$out" | sed 's/^/    /'
+    fi
+    if [ "$rc" = 0 ]; then
+        echo "  PASS: $pass_label"
+        ((++PASS))
+    elif [ "$rc" = 127 ]; then
+        blocked "$fail_label (the guard script itself could not run here)"
+    else
+        echo "  FAIL: $fail_label"
+        ((++FAIL))
+    fi
+}
 
-if bash "$REPO_ROOT/.claude/scripts/check-action-pins.sh" >/dev/null 2>&1; then
-    echo "  PASS: actions pinned to a commit SHA"
-    ((++PASS))
-else
-    bash "$REPO_ROOT/.claude/scripts/check-action-pins.sh" 2>&1 | sed 's/^/    /'
-    echo "  FAIL: unpinned GitHub Action"
-    ((++FAIL))
-fi
+migration_fork_guard() {
+    # A missing script must look like a missing guard (127), not like the
+    # violation python3 reports with exit 2 when it can't open the file.
+    [ -f "$REPO_ROOT/.claude/scripts/check-migration-fork.py" ] || return 127
+    (cd "$REPO_ROOT" && python3 .claude/scripts/check-migration-fork.py)
+}
+
+echo "==> repo guards"
+run_guard "repo rules" "repo rules" \
+    bash "$REPO_ROOT/.claude/scripts/check-repo-rules.sh"
+run_guard "actions pinned to a commit SHA" "unpinned GitHub Action" \
+    bash "$REPO_ROOT/.claude/scripts/check-action-pins.sh"
 
 echo "==> migration fork (vs origin/main)"
-FORK_OUT="$(cd "$REPO_ROOT" && python3 .claude/scripts/check-migration-fork.py 2>&1)" && FORK_RC=0 || FORK_RC=$?
-if [ "$FORK_RC" = 0 ]; then
-    echo "  PASS: merging would not fork the alembic chain"
-    ((++PASS))
-else
-    printf '%s\n' "$FORK_OUT" | sed 's/^/    /'
-    echo "  FAIL: migration fork"
-    ((++FAIL))
-fi
+run_guard "merging would not fork the alembic chain" "migration fork" \
+    migration_fork_guard
 
 # --- pytest ---
 echo "==> pytest"
@@ -202,7 +335,7 @@ if [ "$SKIP_TESTS" = "1" ]; then
 # --reruns 2 --reruns-delay 3 each one pays a ~6s retry tax before giving up —
 # across ~3000 tests that blows well past any reasonable CI/gate timeout
 # instead of reporting a clear, fast "no DB" failure.
-elif ! "${UV_RUN[@]}" python -c "
+elif ! DB_PROBE_OUT="$("${UV_RUN[@]}" python -c "
 import socket, sys
 from urllib.parse import urlparse
 from app.core.config import settings
@@ -215,9 +348,18 @@ try:
 except OSError as e:
     print(f'database unreachable at {u.hostname}:{u.port}: {e}', file=sys.stderr)
     sys.exit(1)
-" 2>&1; then
-    echo "  FAIL: pytest (no DB — skipped the run instead of paying the rerun-delay tax across ~3000 tests)"
-    ((++FAIL))
+" 2>&1)"; then
+    printf '%s\n' "$DB_PROBE_OUT" | sed 's/^/    /'
+    # The probe answers two different questions with one exit code: "there is no
+    # DB here" (a real pytest failure) vs "I couldn't even ask" (no interpreter,
+    # unimportable app — same environment limitation as the checks above). Only
+    # the first one is a verdict about the code, so only it may be a FAIL.
+    if printf '%s' "$DB_PROBE_OUT" | grep -q "database unreachable"; then
+        echo "  FAIL: pytest (no DB — skipped the run instead of paying the rerun-delay tax across ~3000 tests)"
+        ((++FAIL))
+    else
+        blocked "pytest (couldn't even run the DB probe in this environment)"
+    fi
 elif [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
     if "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q -o "cache_dir=$PYTEST_CACHE_DIR" 2>&1 | tail -20; then
         echo "  PASS: pytest"
@@ -230,11 +372,11 @@ elif timeout 120 "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-d
     echo "  PASS: pytest"
     ((++PASS))
 else
-    echo "  SKIP: pytest (scratch-venv sync couldn't get it running in time — environment limitation, not a code issue)"
-    ((++SKIP))
+    blocked "pytest (scratch-venv sync couldn't get it running in time)"
 fi
 
 # --- summary ---
 echo ""
-echo "Result: $PASS/$((PASS+FAIL)) passed$([ "$SKIP" -gt 0 ] && echo ", $SKIP skipped")"
-if [ "$FAIL" -gt 0 ]; then exit 1; fi
+RC=0
+verdict "$PASS" "$FAIL" "$BLOCKED" "$SKIP" "$STRICT" || RC=$?
+exit "$RC"

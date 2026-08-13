@@ -16,8 +16,12 @@ Protocol (unchanged frontend contract):
 (No token streaming: 芝士 speaks in discrete assistant_block messages — one per
 completed SDK AssistantMessage — Slack-style.)
 
-The `?token=` is not optional and a socket that fails to authenticate is closed
-(1008) after one `error` frame carrying `code: auth_expired | auth_required`.
+The `?token=` is not optional and a socket the connect check refuses is closed
+(1008) after one `error` frame carrying `code: auth_required` (no token),
+`auth_expired` (a token we could not verify) or `forbidden` (verified, but not a
+member of this topic). Those three are the WHOLE refusal set — a client that
+recognises only some of them treats the rest as a dropped connection and retries
+into a wall, which is the bug the codes exist to prevent.
 A legacy `author` field is accepted and IGNORED — the author is the connection's
 verified handle. Both halves are the same lesson: this socket used to admit
 anyone and take their word for who they were, so an expired token turned a

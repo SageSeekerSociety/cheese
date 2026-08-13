@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     # its effective timeout — see agent_idle_suspect_s / agent_turn_hard_ceiling_s
     # below (turn 活跃度检测, 2026-08-09).
     agent_turn_timeout_s: float = 900.0
+    # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
+    # call within this many seconds is declared dead, whatever its ceiling says.
+    # It answers "did this turn ever start?", which `agent_turn_timeout_s` cannot
+    # — silence and hard thinking look identical from the runner, so a turn whose
+    # sandbox never came up used to hold 进行中 for the full 900s (dev, 2026-08-12:
+    # every topic at once, `tools=0`, 30 minutes of platform-wide silence).
+    # Generous on purpose: this must never cut a slow-but-live turn, only one
+    # that never started. 0 disables it.
+    agent_first_output_timeout_s: float = 300.0
     # Two-layer safety net for the hooks-driven LOCAL tmux backend only. Below
     # this much idle time (no hook, no tmux pane output change) a turn is normal;
     # past it the turn is only SUSPECTED wedged and gets one lightweight liveness
@@ -547,6 +556,9 @@ class Settings(BaseSettings):
     )
     notification_email_queue_key: str = Field(
         default="cheese:notifications:email", alias="NOTIFICATION_EMAIL_QUEUE_KEY"
+    )
+    notification_email_max_retries: int = Field(
+        default=3, alias="NOTIFICATION_EMAIL_MAX_RETRIES"
     )
 
     meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")

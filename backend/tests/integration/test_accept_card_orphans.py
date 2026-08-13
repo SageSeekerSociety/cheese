@@ -145,7 +145,7 @@ def test_archiving_a_stage_one_card_revokes_it_and_leaves_the_pr_open(
         def _titles(handle: str) -> list[str]:
             notifs = client.get(
                 f"/api/projects/{pid}/notifications",
-                params={"target_handle": handle},
+                headers=session_auth_headers(handle),
             ).json()["data"]["data"]
             return [n["title"] for n in notifs]
 

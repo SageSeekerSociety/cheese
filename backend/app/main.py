@@ -26,12 +26,17 @@ from fastapi.responses import JSONResponse
 
 import app.api.routes as routes_pkg
 from app.core.config import settings
+from app.core.db import get_db
 from app.core.errors import register_exception_handlers
 from app.core.obs import bind_context, clear_context, configure_logging, get_logger
-from app.core.sandbox_auth import is_valid_cheese_token
+from app.core.sandbox_auth import (
+    is_valid_cheese_token,
+    looks_like_project_agent_credential,
+)
 from app.core.turn_context import current_turn_id, parse_turn_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.agent_credential.services import ProjectAgentCredentialService
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
 # every request/turn correlated. See app/core/obs.py.
@@ -50,6 +55,21 @@ async def lifespan(_: FastAPI):
     # changed. (reap_sandbox_containers stays available as an ops tool.)
     # Orphan sweep: resume turns the previous process died with (see
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
+    # ...and that reuse is exactly why the hook credential must survive a
+    # restart. `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per
+    # PROCESS when unset, which silently invalidates the token baked into every
+    # existing box — every topic goes deaf at once, with the turn reporting no
+    # output at all rather than an error. `_hook_token_dead` now rebuilds such a
+    # box, but that costs the topic its tmux session, so say plainly that this
+    # deployment is choosing to pay it on every restart.
+    if settings.agent_sandbox_enabled and not settings.sandbox_token:
+        get_logger("cheesex.runtime").warning(
+            "SANDBOX_TOKEN is not set: the scoped-token signing secret is "
+            "regenerated on every restart, so every existing sandbox's hook "
+            "token stops verifying and its box has to be rebuilt (losing that "
+            "topic's session). Pin SANDBOX_TOKEN in the deployment env."
+        )
+
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import (
         ConclusionSweepRunner,
@@ -258,10 +278,14 @@ def _discover_routers(application: FastAPI) -> list[str]:
 # prefix visibly becomes the `/api/api/...` that callers have to send.
 #
 # Left unset, the schema advertised bare backend paths, and a caller who followed
-# them got no error worth the name: of the 128 routes under the 2.0 prefix, 122
-# answered 404 and 6 reached a DIFFERENT 1.0 route that answered 200 from the
-# wrong domain. Same convention as `settings.connector_public_base`, which already
-# has to end in `/api` for the same reason. See docs/api-conventions.md.
+# them got no error worth the name: measured 2026-08-12, of the 135 paths under
+# the 2.0 prefix, 128 answered 404 and 7 reached a DIFFERENT 1.0 route that
+# answered as if the call were its own — 10 endpoints at method+path granularity.
+# The exact collision set is recomputed and pinned by
+# tests/contract/test_api_addressing_contract.py, so read the failure there, not
+# these numbers, when the surface moves. Same convention as
+# `settings.connector_public_base`, which already has to end in `/api` for the
+# same reason. See docs/api-conventions.md.
 API_GATEWAY_MOUNT = "/api"
 
 app = FastAPI(
@@ -329,7 +353,9 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/notifications$")),
+    # Notification creation is NOT here: humans post there too (Bearer), which
+    # this gate cannot see. The route enforces its own credential check via
+    # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/milestones$")),
 ]
 
@@ -388,6 +414,33 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
     return response
 
 
+async def _credential_opens_gate(
+    token: str, *, project_id: str | None, topic_id: str | None
+) -> bool:
+    """Whether a project agent credential opens the cheese write-surface here.
+
+    The gate is the ONLY authorization several of these routes have (``decision``
+    writes a block with no resolver behind it), so the project match and the
+    revocation check have to happen here — which means a database read, before
+    the router and therefore before ``Depends(get_db)`` exists. Going through
+    ``dependency_overrides`` instead of importing the session factory keeps ONE
+    source of sessions: the test harness binds its own database by overriding
+    ``get_db``, and a gate reading past that override would gate requests against
+    a different database than the one they land in.
+    """
+    provider = app.dependency_overrides.get(get_db, get_db)
+    sessions = provider()
+    session = await anext(sessions)
+    try:
+        return await ProjectAgentCredentialService(session).opens_gate(
+            token, project_id=project_id, topic_id=topic_id
+        )
+    finally:
+        # Read-only: closing without draining skips the provider's commit, which
+        # is what we want — the gate must not commit anything on the way past.
+        await sessions.aclose()
+
+
 @app.middleware("http")
 async def cheese_token_gate(request: Request, call_next: Callable):  # type: ignore[type-arg]
     method, path = request.method, request.url.path
@@ -399,9 +452,17 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
             continue
         ids = match.groupdict()
         token = request.headers.get("x-cheese-token") or ""
-        if not is_valid_cheese_token(
+        opened = is_valid_cheese_token(
             token, project_id=ids.get("project"), topic_id=ids.get("topic")
-        ):
+        )
+        # A project agent credential reaches every topic of its project, so it
+        # can't be matched against the URL by string compare the way a per-turn
+        # token is — a topic path names its project only through the topic.
+        if not opened and looks_like_project_agent_credential(token):
+            opened = await _credential_opens_gate(
+                token, project_id=ids.get("project"), topic_id=ids.get("topic")
+            )
+        if not opened:
             return JSONResponse(
                 {"code": 401, "message": "invalid sandbox token", "data": None},
                 status_code=401,

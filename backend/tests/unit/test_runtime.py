@@ -255,6 +255,11 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
 
         async def converse(self, **_):
             yield {"type": "user_block"}
+            # 说过话之后才卡住。这一帧是必需的，不是装饰：它把这一轮明确地放进
+            # 「跑起来了然后卡住」那一类，而不是「压根没起来」那一类
+            # （见 test_cold_start_watchdog.py）。两类共用这个 except 分支、
+            # 报的话术不同，而这条测试要钉的是前者那句。
+            yield {"type": "assistant_block", "text": "在看了"}
             await asyncio.sleep(10)  # wedge, well past the 1s ceiling
             yield {"type": "done"}  # pragma: no cover
 
@@ -291,6 +296,10 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 2.0}
+            # 同上：`turn_ceiling` 只说明选中了哪个后端，不说明它起来了。要让这一轮
+            # 真的按「后端自己的上限」跑完再超时，它得先开口——否则冷启动保险丝
+            # 会先把它按「运行环境没起来」砍掉，报的就是另一句话。
+            yield {"type": "assistant_block", "text": "在看了"}
             await asyncio.sleep(10)  # wedge, well past the rescheduled 2s
             yield {"type": "done"}  # pragma: no cover
 
@@ -503,8 +512,10 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
 @pytest.mark.anyio
 async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     """A turn that was RUNNING when the process died must be swept up on the
-    next startup: ⚠️ event posted + an auto-resume scheduled — never silently
-    vanish (the deploy-kills-a-turn hole)."""
+    next startup: ⚠️ event posted + (for an undelivered human prompt) a re-send
+    of the original message — never silently vanish (the deploy-kills-a-turn
+    hole). Delivered turns take the attach path instead — see
+    test_orphan_sweep_attach.py."""
     import time as _time
 
     from app.domain.agent import runtime as rt
@@ -517,29 +528,36 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
                 "topic_id": str(topic),
                 "started_at": _time.time() - 60,
                 "is_resume": False,
+                "author": "u",
+                "content": "修一下登录页",
             },
-            # a resume must never chain another resume, even across restarts
+            # a resume must never chain another automatic turn, even across
+            # restarts
             "t2": {
                 "topic_id": str(uuid.uuid4()),
                 "started_at": _time.time() - 60,
                 "is_resume": True,
+                "author": "system",
+                "content": "续跑",
             },
             # stale (>2h) entries are dropped, not resurrected
             "t3": {
                 "topic_id": str(uuid.uuid4()),
                 "started_at": _time.time() - 7300,
                 "is_resume": False,
+                "author": "u",
+                "content": "旧任务",
             },
         }
     )
 
     broker = InProcessBroker()
     runner = TurnRunner(broker)
-    scheduled: list[tuple[uuid.UUID, float, str]] = []
+    scheduled: list[tuple[uuid.UUID, str]] = []
     monkeypatch.setattr(
         runner,
-        "_schedule_resume",
-        lambda _chat, tid, after, why: scheduled.append((tid, after, why)),
+        "_schedule_resend",
+        lambda _chat, tid, after, content, **_kw: scheduled.append((tid, content)),
     )
 
     class _Chat:
@@ -550,12 +568,20 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
             self.events.append((topic_id, text))
             return {"id": "b1", "content": text}
 
+        async def orphan_turn_evidence(self, topic_id, turn_ids):
+            return {"delivered": set(), "spool": False}
+
+        def schedule_spool_settle(self, topic_id, delay_s=2.0):
+            raise AssertionError("no evidence → nothing to attach to")
+
     chat = _Chat()
     n = await runner.resume_orphans(chat)
     assert n == 1
-    assert [s[0] for s in scheduled] == [topic]
-    # 宁可吵，不可静默: all three get an event — the resumed one AND the two we
-    # refuse to resume. A dropped turn that says nothing is what made a dead
+    # The undelivered human turn is re-sent with its ORIGINAL text — never a
+    # "接着干" nudge a claude that heard nothing could act on.
+    assert scheduled == [(topic, "修一下登录页")]
+    # 宁可吵，不可静默: all three get an event — the re-sent one AND the two we
+    # refuse to touch. A dropped turn that says nothing is what made a dead
     # topic look exactly like a working one.
     assert len(chat.events) == 3
     dropped = [text for tid, text in chat.events if tid != topic]
@@ -586,11 +612,15 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
                 "topic_id": str(dead_topic),
                 "started_at": _time.time() - 600,
                 "is_resume": False,
+                "author": "u",
+                "content": "查一下日志",
             },
             "live": {
                 "topic_id": str(live_topic),
                 "started_at": _time.time() - 600,
                 "is_resume": False,
+                "author": "u",
+                "content": "别动我",
             },
         }
     )
@@ -602,13 +632,16 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
     scheduled: list[uuid.UUID] = []
     monkeypatch.setattr(
         runner,
-        "_schedule_resume",
-        lambda _chat, tid, after, why: scheduled.append(tid),
+        "_schedule_resend",
+        lambda _chat, tid, after, content, **_kw: scheduled.append(tid),
     )
 
     class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None):
             return {"id": "b1", "content": text}
+
+        async def orphan_turn_evidence(self, topic_id, turn_ids):
+            return {"delivered": set(), "spool": False}
 
     assert await runner.sweep_orphans(_Chat()) == 1
     assert scheduled == [dead_topic]
@@ -663,6 +696,8 @@ async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
                 "topic_id": str(topic),
                 "started_at": _time.time() - 10380,  # 173 min, the real incident
                 "is_resume": False,
+                "author": "u",
+                "content": "老任务",
             }
         }
     )
@@ -682,6 +717,9 @@ async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
         async def post_system_event(self, topic_id, text, turn_id=None):
             self.texts.append(text)
             return {"id": "b1", "content": text}
+
+        async def orphan_turn_evidence(self, topic_id, turn_ids):
+            return {"delivered": set(), "spool": False}
 
     chat = _Chat()
     assert await runner.sweep_orphans(chat) == 0  # not resumed...
@@ -881,7 +919,7 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
     monkeypatch.setattr(
         runner,
         "_schedule_resume",
-        lambda _chat, tid, after, why: scheduled.append((tid, after)),
+        lambda _chat, tid, after, why, **_kw: scheduled.append((tid, after)),
     )
 
     async def _last_block(topic_ids):

@@ -276,10 +276,12 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         token: str,
         model: str | None,
         env: dict[str, str] | None,
+        system_prompt: str = "",
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
-        and wires the hook forwarder)."""
+        and wires the hook forwarder). A reused screen keeps the system prompt it
+        launched with — the launcher only reads it at screen creation."""
         existing = self._existing_screen(device_id, topic_id)
         if existing is not None:
             return existing
@@ -326,6 +328,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 else f"{self._public_base}/api/projects/{project_id}/git"
             ),
             git_branch=ws.branch_for_topic(topic_id),
+            system_prompt=system_prompt,
         )
         return await self._hub.open_screen(
             device_id,
@@ -367,6 +370,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        system_prompt: str,
         precheck: object,
     ) -> HubScreen:
         """Reuse/open the topic's screen running `claude` with our hooks on the
@@ -384,6 +388,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 token=token,
                 model=model,
                 env=env,
+                system_prompt=system_prompt,
             )
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
@@ -407,3 +412,82 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         command is still writing that tree, same as the local path."""
         if self._co_located_at.get((project_id, topic_id)):
             awaited_tasks.checkpoint_worktree(project_id, topic_id)
+
+    # --- teardown ----------------------------------------------------------
+
+    async def release_topic(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        """Free a done topic's screen — the device backend's teardown, symmetric to
+        the local backend's ``ws.stop_topic_container`` and to this provider's own
+        ``checkpoint``. Called when a topic is accepted/archived or reaped for being
+        idle; without it the screen (and the ``claude`` process + tmux session behind
+        it) leaks on the machine forever, since the reaper only ever knew how to free
+        Docker containers.
+
+        A CO-LOCATED device edited the backend's REAL worktree, so ONLY its screen is
+        closed — the tree belongs to the backend and must never be deleted here. A
+        REMOTE device owns its clone under a per-topic scratch dir, so that dir is
+        removed too (the per-project home dir is shared across a project's topics →
+        never touched).
+
+        Best-effort and idempotent: no screen (device offline / already gone) is a
+        successful no-op, and every failure is swallowed so one topic can never break
+        a reap loop. The screen is forgotten even when its device is offline, so an
+        archived topic leaves no stale registry entry behind."""
+        for screen in self._hub.screens_for_topic(topic_id):
+            device_id = screen.device_id
+            try:
+                # Close first so the device's claude process stops holding the tree,
+                # THEN remove the (now idle) remote clone. close_screen forgets the
+                # screen even for an offline device (its session_close is a no-op),
+                # so our registry never leaks an archived topic.
+                await self._hub.close_screen(device_id, screen.sid)
+                await self._remove_remote_work_dir(device_id, project_id, topic_id)
+            except Exception:  # noqa: BLE001 — one screen must not stop the rest
+                logger.warning(
+                    "release_topic: failed freeing screen %s on device %s (topic %s)",
+                    screen.sid,
+                    device_id,
+                    topic_id,
+                    exc_info=True,
+                )
+
+    async def _remove_remote_work_dir(
+        self, device_id: str, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> None:
+        """Remove a REMOTE device's per-topic work dir on the box. A co-located device
+        is skipped entirely — its work dir IS the backend's real worktree, deleting it
+        would destroy the topic's branch. Only runs while the device is online (an
+        offline box is unreachable — nothing to remove now). The delete target is
+        always the scratch path ``_work_dir(co_located=False)`` returns, never the
+        co-located worktree translation, so even a mis-classification cannot reach the
+        backend's tree."""
+        if not self._hub.is_online(device_id):
+            return
+        if await self._is_co_located(device_id):
+            return
+        work_dir = self._work_dir(project_id, topic_id, co_located=False)
+        # `$HOME` in the scratch path is expanded by the device's shell; project and
+        # topic are UUIDs (no shell metacharacters), so the argv stays a fixed
+        # boundary with nothing to inject.
+        await self._hub.exec(
+            device_id,
+            ["sh", "-lc", f'rm -rf -- "{work_dir}"'],
+            timeout=30,
+        )
+
+
+async def release_topic_screen(
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    hub: DeviceHub | None = None,
+    session_factory: async_sessionmaker | None = None,
+) -> None:
+    """Free a topic's device screen from a caller that holds no ``DeviceProvider`` —
+    the accept/archive path and the idle reaper both reach compute through ws-level
+    helpers, not the compute pool. Thin wrapper over ``DeviceProvider.release_topic``
+    bound to the shared ``device_hub`` singleton (``hub=None``). Best-effort and
+    idempotent, so it is safe to call for EVERY archived/idle topic regardless of
+    backend: a topic that never ran on a device simply has no screen to free."""
+    provider = DeviceProvider(hub=hub, session_factory=session_factory)
+    await provider.release_topic(project_id, topic_id)

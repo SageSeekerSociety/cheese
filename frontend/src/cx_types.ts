@@ -114,12 +114,21 @@ export interface ListPayload<T> {
   total: number
 }
 
-// A live working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a
-// real-time checklist in the in-progress message — process, not state).
+// A working-log task item (芝士's TaskCreate/TaskUpdate, rendered as a checklist
+// in the in-progress message). Live during a turn; persisted between turns as
+// the topic's 进度层 (#187) so a new machine — and the room — can still see how
+// far the work got.
 export interface TodoItem {
   id: string
   subject: string
   status: 'pending' | 'in_progress' | 'completed'
+}
+
+// 进度层 (#187): the stored checklist for a topic. `updated_at` is null when the
+// topic has never had one (items is then []).
+export interface TopicProgress {
+  items: TodoItem[]
+  updated_at: string | null
 }
 
 // WebSocket server -> client frames. No token streaming: 芝士 speaks in
@@ -129,7 +138,9 @@ export type WsServerFrame =
   // A block's reactions changed (someone toggled / 芝士's ✅ receipt landed).
   | { type: 'reaction'; block_id: string; reactions: ReactionAgg[] }
   | { type: 'tool'; name: string; input: Record<string, unknown> }
-  | { type: 'todo'; items: TodoItem[] }
+  // `restored` = this is the checklist a PREVIOUS turn left behind, replayed at
+  // turn start; without the flag the UI cannot tell it from live progress.
+  | { type: 'todo'; items: TodoItem[]; restored?: boolean }
   | { type: 'state'; resource: string }
   | { type: 'event_block'; block: Block }
   | { type: 'assistant_block'; block: Block }
@@ -387,6 +398,8 @@ export type AcceptStatus =
   // 机器闸门 (eval C2): the project's check_command is running / failed.
   | 'pending_gate'
   | 'gate_failed'
+  // 闸门没跑成：检查没能在门禁环境里跑起来，对代码没有结论（不是「未通过」）。
+  | 'gate_blocked'
   // 两阶段采纳 (PR迭代式, 2026-08-09): the human already accepted; the PR is
   // open and the machine stretch (CI → merge → deploy) is still running.
   | 'pr_open'
