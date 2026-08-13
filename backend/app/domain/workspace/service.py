@@ -512,6 +512,19 @@ def sandbox_topic_workdir(branch: str) -> str:
     return f"{SANDBOX_TOPICS_ROOT}/{branch.replace('/', '_')}"
 
 
+def gate_workdir_for(worktree: Path) -> str:
+    """Where a gate container must mount ``worktree`` so its venv still works.
+
+    Not a free choice: it has to be the SAME absolute path the agent's own
+    sandbox used, because that is the path baked into every console script the
+    agent's `uv sync` created. `_worktree_path` names the directory
+    ``branch.replace("/", "_")`` and `sandbox_topic_workdir` builds the
+    container path from exactly that, so the host directory's own name is
+    enough — a gate needs no branch argument to agree with the sandbox.
+    """
+    return f"{SANDBOX_TOPICS_ROOT}/{worktree.name}"
+
+
 def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
     """`docker run` args mounting the project's `.worktrees` tree (topics +
     shared stores, one mount — see SANDBOX_TOPICS_ROOT) plus the jj/git store
@@ -2179,13 +2192,24 @@ def run_check_command(
     environment/secrets, and no network. Failure to start Docker fails the gate
     closed -- there is intentionally no host-execution fallback.
 
-    The worktree is mounted at the SAME path the agent's own sandbox uses
-    (``/work``, see SANDBOX_WORKDIR / tmux_provider). This is not cosmetic: uv/pip
-    console scripts (pyright, pytest, alembic) bake the absolute path of their
-    venv into their shebang, so a worktree built by the agent under /work and
-    then mounted at some other path has a .venv whose tools cannot execute. With
-    no network in here, nothing can be reinstalled to repair that -- which is
-    exactly how the gate ended up running lint only and reporting a green card.
+    The worktree is mounted at the SAME path the agent's own sandbox uses --
+    ``gate_workdir_for(cwd)``, which reproduces ``sandbox_topic_workdir``. This
+    is not cosmetic: uv/pip console scripts (pyright, pytest, alembic) bake the
+    absolute path of their venv into their shebang, so a worktree the agent
+    built at one path and the gate mounts at another has a .venv whose tools
+    cannot execute. With no network in here, nothing can be reinstalled to
+    repair that -- which is exactly how the gate ended up running lint only and
+    reporting a green card.
+
+    This used to say ``/work`` and mount there, and that was true right up
+    until the sandbox moved to the topic's REAL path under the ``/topics``
+    mount (tmux_provider: "not a /work remap" -- hardlinks cannot cross bind
+    mounts). Nothing failed loudly at that moment: the gate kept starting, ruff
+    kept passing (a native binary, no shebang), and every other check went
+    BLOCKED, so under CHECK_STRICT every card came back "检查没能跑起来" with a
+    DNS error from check.sh trying to `uv sync` a replacement venv it could
+    never download. `test_gate_workdir.py` pins the two paths together so the
+    next move of either side is a red test rather than a dead gate.
 
     ``CHECK_STRICT=1`` tells a check command that this is a gate and not a
     developer's laptop: a check that can't run must not be reported as passed
@@ -2196,6 +2220,7 @@ def run_check_command(
     from datetime import UTC, datetime
 
     resolved_cwd = cwd.resolve(strict=True)
+    gate_workdir = gate_workdir_for(resolved_cwd)
     container_name = f"cheesex-gate-{uuid.uuid4().hex[:12]}"
     temporary_log = log_path is None
     if temporary_log:
@@ -2244,9 +2269,9 @@ def run_check_command(
         "--env",
         "CHECK_STRICT=1",
         "--mount",
-        f"type=bind,source={resolved_cwd},target={SANDBOX_WORKDIR}",
+        f"type=bind,source={resolved_cwd},target={gate_workdir}",
         "--workdir",
-        SANDBOX_WORKDIR,
+        gate_workdir,
         settings.quality_gate_image,
         "sh",
         "-lc",
