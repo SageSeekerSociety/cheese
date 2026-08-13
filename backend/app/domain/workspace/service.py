@@ -1597,6 +1597,14 @@ def pr_base_branch(project_id: uuid.UUID) -> str:
     return _base_branch(ensure_repo(project_id))
 
 
+def topic_branch_exists(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
+    """Does this topic have a branch a PR could carry? Discussion-only topics
+    never grow one — for them the PR path is NOT APPLICABLE (accept merges
+    nothing and archives), which callers must distinguish from a push/API
+    FAILURE (where accept must stop rather than silently direct-merge)."""
+    return _branch_exists(ensure_repo(project_id), branch_for_topic(topic_id))
+
+
 def _github_push_url(owner: str, repo: str) -> str:
     """The clone URL a topic's PR branch is pushed to. A seam, not indirection
     for its own sake: the sync-and-retry below has to fetch from the SAME repo
