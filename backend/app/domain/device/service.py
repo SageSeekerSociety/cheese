@@ -37,6 +37,7 @@ from app.domain.device.repository import (
     DeviceRepository,
     HostHealth,
     Supply,
+    Visibility,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class DeviceService:
         *,
         owner_user_id: int,
         supply: Supply,
+        visibility: Visibility,
         name: str | None = None,
     ) -> Device:
         """Approve a pending flow on behalf of the logged-in ``owner_user_id``, binding
@@ -105,12 +107,20 @@ class DeviceService:
         keeps the name the cli proposed at start (avoids an "unnamed" node).
         Idempotent: approving an already-approved code returns the same device.
 
-        ``supply`` has NO default on purpose (#282 决定 2). This is the one place a
-        device is minted, so both enrolment entry points must name their answer here
-        as a constant — the human device flow says ``self_hosted``, the MicroCloud
-        enrolment sweep says ``cloud``. 入口决定待遇: a third entry point that forgets
-        is a pyright error, not a machine someone deletes by surprise a year later.
-        Never derive it from what the machine looks like."""
+        ``supply`` and ``visibility`` have NO default on purpose (#282 决定 2 /
+        #358). This is the one place a device is minted, so both enrolment entry
+        points must name their answer here as a constant:
+          * supply — the human device flow says ``self_hosted``, the MicroCloud
+            sweep says ``cloud`` (入口决定待遇: never derived from what the machine
+            looks like).
+          * visibility — the human connector defaults to ``isolated`` unless the
+            approver ticks 「让它看到整台机器」, because a person's own persistent box
+            must not become whole-machine-visible by omission; MicroCloud says
+            ``host`` (a fresh disposable VM is its own empty box — #358: Cloud
+            collapses the visibility axis).
+        A third entry point that forgets either is a pyright error, not a machine
+        someone deletes by surprise a year later nor one silently exposed to the
+        room."""
         entry = await self._live_code(code_value)
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)
@@ -124,6 +134,7 @@ class DeviceService:
             owner_user_id=owner_user_id,
             created_at=self._now(),
             supply=supply,
+            visibility=visibility,
         )
         await self._repo.save_device(device)
         entry.status = DeviceStatus.APPROVED

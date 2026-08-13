@@ -43,7 +43,7 @@ from app.domain.agent.device_hub import HubScreen, ViewerTransport, device_hub
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
-from app.domain.device.supply import Supply
+from app.domain.device.supply import Supply, Visibility
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
@@ -81,6 +81,13 @@ class ConnectRequest(BaseModel):
     # cli proposed at device-flow start, avoiding an "unnamed" node).
     device_name: str | None = None
     project_id: uuid.UUID | None = None
+    # #282 §四 / #358 · the honest UI line 「让它看到整台机器（能操作这台机器上的服务
+    # 和其他房间）」. Whole-machine (visibility=host) is 申请制: OFF by default, so a
+    # human enrolling their own persistent box never grants it whole-machine access
+    # by omission. The approval page ticks this only when the approver deliberately
+    # wants the agent to operate the whole host. Left False → isolated (the boxed
+    # default; its per-room-container transport lands in #358 step 2).
+    whole_machine: bool = False
 
 
 # --- device flow ---------------------------------------------------------------
@@ -148,6 +155,11 @@ async def device_connect(
         # only stop using it. A CONSTANT here, the mirror of the MicroCloud
         # enrolment sweep's `Supply.cloud`.
         supply=Supply.self_hosted,
+        # #358: whole-machine visibility is an explicit opt-in, never the default.
+        # Only when the approver ticked 「让它看到整台机器」 does this box become
+        # host-visible (bare-on-host, sees every room + the host's services);
+        # otherwise it enrols as the boxed default (isolated).
+        visibility=Visibility.host if body.whole_machine else Visibility.isolated,
         name=body.device_name,
     )
     if body.project_id is not None:

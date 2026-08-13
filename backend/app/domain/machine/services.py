@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.device.supply import Supply
+from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
@@ -364,6 +364,13 @@ class MachineService:
             # from what the machine looks like — the identical VM enrolled by a
             # human through the connector is `self_hosted` and untouchable.
             supply=Supply.cloud,
+            # #358: a fresh, disposable, one-per-topic VM IS its own empty box —
+            # "see the whole machine" adds no capability there, so the visibility
+            # axis collapses and `host` is both correct and safe (there are no
+            # other rooms or pre-existing services to reach). The gate that refuses
+            # `isolated` (no transport yet) must never fire for cloud compute, so
+            # this is `host`, not the connector's isolated default.
+            visibility=Visibility.host,
             name=machine.hostname,
         )
         project = await self._projects.get(machine.project_id)

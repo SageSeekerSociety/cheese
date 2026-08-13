@@ -493,7 +493,7 @@ export interface Contributions {
 
 // A pool listing in the 市场 catalog / a project's settings selector.
 export interface PoolListing {
-  kind: 'ai' | 'compute'
+  kind: 'ai' | 'compute' | 'visibility'
   id: string
   label: string
   tier: string
@@ -644,6 +644,19 @@ export interface ProjectMachineCreate {
   diskGb: number
 }
 
+// #282 §四 / #358 · whether a topic's turn can see the whole machine it runs on.
+// `effective` is the visibility of the device the topic is pinned to ('host' |
+// 'isolated' | null when on platform compute / not yet pinned); `machine_access`
+// is the one flag the room's Hosted Machine badge keys on; `notice` is the honest
+// #282 UI line, used as the badge's tooltip. `options` carries the two 档 with
+// their capability copy (isolated = boxed default, host = whole-machine, 申请制).
+export interface TopicComputeVisibility {
+  options: PoolListing[]
+  effective: 'host' | 'isolated' | null
+  machine_access: boolean
+  notice: string
+}
+
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
 // `current` is effective (topic → project sticky → team default → platform);
 // `locked` freezes the picker once the topic has run (session started);
@@ -655,6 +668,7 @@ export interface TopicComputeProfile {
   inherited: boolean
   sticky: string
   profiles: PoolListing[]
+  visibility: TopicComputeVisibility
 }
 
 // GET /projects/{id}/sandbox-image (spec §9.1 environment): which image runs the
