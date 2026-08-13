@@ -6,6 +6,7 @@ from sqlalchemy import Select, and_, delete, exists, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.llm.models import AIConversation, AIMessage
+from app.domain.tag.models import Tag
 from app.domain.task.models import (
     Task,
     TaskAccessDomain,
@@ -16,11 +17,10 @@ from app.domain.task.models import (
     TaskSubmissionEntry,
     TaskSubmissionReview,
     TaskSubmissionSchemaEntry,
-    TaskTopicsRelation,
+    TaskTagRelation,
 )
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import TeamUserRelation
-from app.domain.topics.models import Topic
 
 
 class TaskRepository:
@@ -87,9 +87,9 @@ class TaskRepository:
         if topics:
             stmt = stmt.where(
                 exists().where(
-                    TaskTopicsRelation.task_id == Task.id,
-                    TaskTopicsRelation.deleted_at.is_(None),
-                    TaskTopicsRelation.topic_id.in_(list(topics)),
+                    TaskTagRelation.task_id == Task.id,
+                    TaskTagRelation.deleted_at.is_(None),
+                    TaskTagRelation.tag_id.in_(list(topics)),
                 )
             )
 
@@ -208,9 +208,9 @@ class TaskRepository:
         if topics:
             stmt = stmt.where(
                 exists().where(
-                    TaskTopicsRelation.task_id == Task.id,
-                    TaskTopicsRelation.deleted_at.is_(None),
-                    TaskTopicsRelation.topic_id.in_(list(topics)),
+                    TaskTagRelation.task_id == Task.id,
+                    TaskTagRelation.deleted_at.is_(None),
+                    TaskTagRelation.tag_id.in_(list(topics)),
                 )
             )
 
@@ -1135,16 +1135,16 @@ class TopicRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_by_task_id(self, task_id: int) -> Sequence[Topic]:
-        stmt: Select[tuple[Topic]] = (
-            select(Topic)
-            .join(TaskTopicsRelation, TaskTopicsRelation.topic_id == Topic.id)
+    async def list_by_task_id(self, task_id: int) -> Sequence[Tag]:
+        stmt: Select[tuple[Tag]] = (
+            select(Tag)
+            .join(TaskTagRelation, TaskTagRelation.tag_id == Tag.id)
             .where(
-                TaskTopicsRelation.task_id == task_id,
-                TaskTopicsRelation.deleted_at.is_(None),
-                Topic.deleted_at.is_(None),
+                TaskTagRelation.task_id == task_id,
+                TaskTagRelation.deleted_at.is_(None),
+                Tag.deleted_at.is_(None),
             )
-            .order_by(Topic.id.asc())
+            .order_by(Tag.id.asc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())

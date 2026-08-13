@@ -26,7 +26,8 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
-from app.domain.task.models import Task, TaskMembership, TaskTopicsRelation
+from app.domain.tag.repositories import TagRepository
+from app.domain.task.models import Task, TaskMembership, TaskTagRelation
 from app.domain.task.repositories import (
     AIConversationRepository,
     AIMessageRepository,
@@ -52,7 +53,6 @@ from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
-from app.domain.topics.repositories import TopicRepository as GlobalTopicRepository
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRealNameRepository,
@@ -1073,9 +1073,9 @@ async def _create_task_entity(
     if topics:
         now = datetime.now(UTC)
         for topic_id in topics:
-            relation = TaskTopicsRelation(
+            relation = TaskTagRelation(
                 task_id=task.id,
-                topic_id=topic_id,
+                tag_id=topic_id,
                 created_at=now,
                 updated_at=now,
                 deleted_at=None,
@@ -1166,7 +1166,7 @@ async def preview_task_from_pdf(
                 break
 
     default_topic_ids: list[int] = []
-    global_topic_repo = GlobalTopicRepository(session=db)
+    global_topic_repo = TagRepository(session=db)
     default_topic = await global_topic_repo.get_by_name("计算机系统")
     if default_topic is not None:
         default_topic_ids.append(default_topic.id)
@@ -1959,9 +1959,9 @@ async def patch_task(
 
         # 软删除旧关系
         now = datetime.now(UTC)
-        rel_stmt = select(TaskTopicsRelation).where(
-            TaskTopicsRelation.task_id == task.id,
-            TaskTopicsRelation.deleted_at.is_(None),
+        rel_stmt = select(TaskTagRelation).where(
+            TaskTagRelation.task_id == task.id,
+            TaskTagRelation.deleted_at.is_(None),
         )
         result = await db.execute(rel_stmt)
         existing = list(result.scalars().all())
@@ -1970,9 +1970,9 @@ async def patch_task(
 
         # 插入新的
         for topic_id in topics:
-            rel = TaskTopicsRelation(
+            rel = TaskTagRelation(
                 task_id=task.id,
-                topic_id=topic_id,
+                tag_id=topic_id,
                 created_at=now,
                 updated_at=now,
                 deleted_at=None,

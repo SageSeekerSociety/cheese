@@ -11,14 +11,14 @@ from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.topics.models import Topic
+from app.domain.tag.models import Tag
 from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
 
 def create_topic_in_db(
     db_session: AsyncSession, portal: BlockingPortal, name: str, user_id: int
 ) -> int:
-    topic = Topic(name=name, created_by_id=user_id, created_at=datetime.now(UTC))
+    topic = Tag(name=name, created_by_id=user_id, created_at=datetime.now(UTC))
 
     async def _do() -> int:
         db_session.add(topic)

@@ -68,16 +68,16 @@ _HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH"}
 # not 404 — it answers, convincingly, from the wrong generation.
 # Shrinks as #370's renames land: each collision here exists because a 1.0 route
 # squats on a word the 2.0 generation also uses, and renaming the 1.0 route
-# retires the entry for good. The six `/api/projects*` rows left when the 知是
-# team project moved to `/team-projects`. What remains is `topics` (1.0 = the
-# question TAG, renaming to `/tags`) and `tasks` (the one pair that is genuinely
-# the same resource, so it merges rather than renames — separate project).
-# When this set is empty, the 2.0 `/api` prefix has no reason left to exist.
+# retires the entry for good. Six `/api/projects*` rows left when the 知是 team
+# project moved to `/team-projects`; three `/api/topics*` rows left when the 1.0
+# question tag moved to `/tags`.
+#
+# One pair is left, and it will not leave by renaming: 1.0 `/tasks` and 2.0
+# `/api/tasks` are the SAME resource written twice (#370 — 机构发题, 队伍领题),
+# so they merge, which is its own project. When this set is empty the 2.0 `/api`
+# prefix has no reason left to exist and step 2 can flatten it.
 _CROSS_WIRED_TODAY = {
     ("/api/tasks/{task_id}", "GET"),
-    ("/api/topics", "GET"),
-    ("/api/topics", "POST"),
-    ("/api/topics/{topic_id}", "GET"),
 }
 
 
