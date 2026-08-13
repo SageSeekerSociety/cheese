@@ -241,6 +241,17 @@ const commentIntent = ref<{ anchorId: string | null; quote: string } | null>(nul
 const commentSending = ref(false)
 const composerInput = ref<{ focus?: () => void } | null>(null)
 
+// 切换后把焦点还给输入框。不还的话 chip 自己一直握着焦点，用户接下来按的那次
+// Enter 就打在 chip 上——把刚点亮的 @芝士 又静默关掉，而且那次 Enter 也不发送。
+// 「先打字、再点 @芝士、再按 Enter」是很自然的顺序，走这条路的人得到的是：消息
+// 正常发出、芝士不来、页面上没有任何东西说明为什么。和「忘了 @」长得一模一样。
+// 2026-08-13 在 dev 上复现确认：点亮 → Enter → class 从 summon-chip--on 掉回
+// summon-chip，随后那条消息的 turn 记录里 summon=false、0.1 秒空转结束。
+function toggleSummon() {
+  summon.value = !summon.value
+  void nextTick(() => composerInput.value?.focus?.())
+}
+
 function onCommentIntent(payload: { anchorId: string | null; quote: string }) {
   commentIntent.value = payload
   void nextTick(() => composerInput.value?.focus?.())
@@ -1484,7 +1495,7 @@ onUnmounted(() => {
               class="summon-chip"
               :class="{ 'summon-chip--on': summon }"
               title="@芝士 — 让芝士回复（默认不 @）"
-              @click="summon = !summon"
+              @click="toggleSummon"
             >
               <v-icon v-if="summon" size="13">mdi-creation</v-icon>
               @芝士
