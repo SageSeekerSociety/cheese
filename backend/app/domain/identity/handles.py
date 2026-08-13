@@ -41,3 +41,45 @@ def looks_like_agent_handle(handle: str) -> bool:
     NEVER use it: ``IdentityService.is_agent`` (the binding) is the truth.
     """
     return handle == CHEESE_HANDLE or handle.startswith(TOPIC_AGENT_PREFIX)
+
+
+# What a caller with NO credential resolves to (``app.api.auth``). A literal, not
+# None — so it is a string a human could otherwise have registered, which is the
+# whole reason the next function exists.
+ANONYMOUS_HANDLE = "anonymous"
+
+# The author handle the platform posts its own notices under (deploy warnings,
+# gate verdicts, auto-resume lines). Same hazard as the sentinel: a human wearing
+# this name would read as the platform speaking.
+SYSTEM_HANDLE = "system"
+
+
+def is_reserved_username(username: str) -> bool:
+    """Whether a *human* is forbidden from registering under this name (#345).
+
+    The platform already uses these strings to mean something other than "a
+    person": ``anonymous`` means "I don't know who you are", ``system`` prefixes
+    the platform's own notices, and ``cheese``/``cheese-<topic>`` are 芝士 and
+    her per-topic 分身. If a real account could hold one, then every unattributed
+    log line, every ``author='anonymous'`` message and every system notice starts
+    reading like that person said it — and authz code that special-cases the
+    string would be deciding about a real user.
+
+    This is the narrow half of #345: stop new collisions. It deliberately does
+    NOT try to replace the sentinel with ``None`` (the broad half — a dozen call
+    sites in authz and authorship read the literal), and it deliberately does not
+    apply to 芝士's own rows: ``IdentityService._create_agent_user`` goes through
+    the repository, not through registration, and must keep being able to create
+    ``cheese`` and ``cheese-<topic>``.
+
+    Case-folded on purpose. ``Anonymous`` would not collide with the sentinel in
+    code, but it collides in the only place that matters for the second half of
+    the harm — a human reading the room and deciding who said what.
+    """
+    folded = username.strip().casefold()
+    return (
+        folded in {ANONYMOUS_HANDLE, SYSTEM_HANDLE}
+        # `looks_like_agent_handle` is the same house rule used for display, so
+        # the two cannot drift apart into "reserved but renderable as a person".
+        or looks_like_agent_handle(folded)
+    )

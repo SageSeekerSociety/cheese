@@ -45,6 +45,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
+from app.domain.identity.handles import is_reserved_username
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
@@ -1070,6 +1071,13 @@ async def register_user(
     username_pattern = r"^[a-zA-Z0-9_-]+$"
     if not re.match(username_pattern, username):
         raise UnprocessableEntityError("Invalid username format")
+    # Next to the format check, not down in the service (#345): the service
+    # runs after email-code verification, so a reserved name would only be
+    # refused once the user had already gone and fetched a code for a name they
+    # were never allowed to have. The service keeps its own check as a backstop
+    # for callers that don't come through here.
+    if is_reserved_username(username):
+        raise UnprocessableEntityError("该用户名是平台保留字，请换一个")
 
     nickname_pattern = r"^[^\s]+$"
     if not re.match(nickname_pattern, nickname):
@@ -1122,6 +1130,11 @@ async def register_user(
         msg = str(exc)
         if msg == "USERNAME_TAKEN":
             raise UnprocessableEntityError("Username already registered") from exc
+        if msg == "USERNAME_RESERVED":
+            # Deliberately says WHY rather than reusing "already registered":
+            # nobody holds this name, and telling the user it is taken would be
+            # a lie they cannot act on (#345).
+            raise UnprocessableEntityError("该用户名是平台保留字，请换一个") from exc
         if msg == "EMAIL_TAKEN":
             raise UnprocessableEntityError("Email already registered") from exc
         raise
@@ -3255,7 +3268,12 @@ async def _suggest_oauth_identity(auth_service, user_info: dict) -> tuple[str, s
     )
     base = "".join(ch for ch in str(base_raw) if ch.isalnum() or ch in "_-") or "user"
     username = base
-    while await auth_service.is_username_taken(username):
+    # A reserved name is suggested exactly as readily as a taken one — the
+    # provider's `preferredUsername` could be "system" — so treat it the same
+    # way here instead of letting the user hit the wall on submit (#345).
+    while await auth_service.is_username_taken(username) or is_reserved_username(
+        username
+    ):
         username = f"{base}_{_secrets.token_hex(3)}"
     nickname = _clean_nickname(
         str(user_info.get("name") or user_info.get("preferredUsername") or username)
@@ -3589,6 +3607,12 @@ async def oauth_create_user(
         return _oauth_error_redirect(
             "INVALID_SRP_CREDENTIALS", "Missing SRP credentials"
         )
+    if is_reserved_username(username):
+        # Ahead of the try/except below on purpose: that block catches
+        # Exception broadly and answers with a generic "creation failed" plus an
+        # exception log, which is the wrong shape for a name the user can simply
+        # change (#345).
+        return _oauth_error_redirect("USERNAME_RESERVED", "Username is reserved")
     if await auth_service.is_username_taken(username):
         return _oauth_error_redirect("USERNAME_TAKEN", "Username already taken")
 
