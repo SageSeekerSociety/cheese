@@ -263,6 +263,10 @@ def test_await_log_lives_outside_the_worktree(monkeypatch, tmp_path):
     """These logs must never be committed with the topic's work."""
     cli = _load()
     monkeypatch.setenv("HOME", str(tmp_path))
+    # A real sandbox exports this (it is how the platform points logs at the
+    # session mount); without clearing it the test asserts against the host's
+    # path instead of its own tmp_path and fails everywhere but CI.
+    monkeypatch.delenv("CHEESE_AWAIT_LOGS", raising=False)
     path = cli._await_log_path("run-1")
     assert path.startswith(str(tmp_path))
     assert path.endswith("run-1.log")
