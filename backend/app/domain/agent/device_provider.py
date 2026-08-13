@@ -34,7 +34,11 @@ from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import DEVICE_ALIVE_PROBE, build_screen_launch
 from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
+from app.domain.agent.hooks_substrate import (
+    SESSION_TOKEN_TTL_S,
+    HooksTurnProvider,
+    ScreenSetupError,
+)
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility
@@ -470,8 +474,18 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             # CLAUDE_MODEL=deepseek-chat while users thought they were talking
             # to Claude).
             ca_pem = _read_proxy_ca()
+            # Session-length TTL, not the 1h default. This token is baked into the
+            # bare process's HTTPS_PROXY (CONNECT credential) and
+            # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
+            # hot-refreshed; the screen is reused across turns (a reassert only
+            # hot-reloads the cheeselet, it does not relaunch claude). A 1h token
+            # thus expires under a still-running process, and every turn after the
+            # first hour is rejected by the metering proxy (407) — the agent looks
+            # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
             session_token = mint_scoped_token(
-                project_id=str(project_id), topic_id=str(topic_id)
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                ttl_s=SESSION_TOKEN_TTL_S,
             )
             proxy_host = (
                 settings.subscription_device_proxy_host.strip()
