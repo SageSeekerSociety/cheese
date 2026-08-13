@@ -421,12 +421,18 @@ class OAuthService:
         access_token: str | None,
         refresh_token: str | None,
         token_expires: datetime | None,
+        raw_profile: dict | None = None,
     ) -> None:
+        """``raw_profile=None`` (the default) leaves the stored profile as is —
+        a token refresher has no profile to offer. A flow that DID just fetch
+        the provider's user endpoint should pass it, so re-linking repairs a
+        profile that was stored incomplete."""
         await self._repo.update_tokens(
             connection_id,
             encrypt_text(access_token) if access_token else None,
             encrypt_text(refresh_token) if refresh_token else None,
             token_expires,
+            raw_profile=raw_profile,
         )
 
     def _decrypt_stored_token(self, stored: str, *, user_id: int) -> str | None:

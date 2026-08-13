@@ -1033,7 +1033,12 @@ class TestUpdateConnectionTokens:
             connection_id=7, access_token=None, refresh_token=None, token_expires=None
         )
 
-        repo.update_tokens.assert_awaited_once_with(7, None, None, None)
+        # `raw_profile=None` 是默认值，含义是「别动已存的 profile」。这里钉住它：
+        # 刷 token 的调用方根本没跟 provider 要过用户信息，要是顺手把 profile 覆盖
+        # 成空，设置页上那行「已连接 <名字>」就会莫名其妙退回一串数字 id。
+        repo.update_tokens.assert_awaited_once_with(
+            7, None, None, None, raw_profile=None
+        )
 
 
 # ---------------------------------------------------------------------------

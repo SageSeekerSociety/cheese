@@ -146,6 +146,17 @@ async def github_account_link_callback(
     )
     refresh_token = token_data.get("refresh_token")
 
+    # `login` is what a person recognises; `id` is a number only GitHub means
+    # anything by. The connections serializer reads the login out of here
+    # (`raw_profile["login"]`), and this flow used to store only email+name —
+    # so the settings page fell back to the bare numeric id for EVERY user
+    # ever linked (observed on dev: 「已连接 222958366」).
+    profile = {
+        "login": user_info.username,
+        "email": user_info.email,
+        "name": user_info.name,
+    }
+
     existing = await oauth_service.get_connection_by_provider(
         provider_id=_PROVIDER_ID, provider_user_id=user_info.id
     )
@@ -160,11 +171,20 @@ async def github_account_link_callback(
             claims.return_project_id, github_account="error", reason="already_linked"
         )
     if existing:
+        # Re-link refreshes the profile too. Without this the fix above would
+        # do nothing for anyone who is ALREADY linked — which is everyone —
+        # because 重新连接 took this branch and only ever touched tokens. With
+        # it, one click repairs the display; no backfill migration needed, and
+        # none is possible anyway (the login has to come from GitHub).
         await oauth_service.update_connection_tokens(
             connection_id=existing["id"],
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
+            # 只有真拿到 login 才覆盖已存的 profile。某次交换没带 login 就照写，
+            # 会把一个已经好了的名字降级回 None——正是这个 PR 要修的毛病反着来
+            # 一遍，而且是在用户主动点「重新连接」想修好它的时候发生。
+            raw_profile=profile if user_info.username else None,
         )
         logger.info(
             "github account link: updated uid=%s github_id=%s",
@@ -176,7 +196,7 @@ async def github_account_link_callback(
             user_id=claims.user_id,
             provider_id=_PROVIDER_ID,
             provider_user_id=user_info.id,
-            raw_profile={"email": user_info.email, "name": user_info.name},
+            raw_profile=profile,
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
