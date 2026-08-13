@@ -77,7 +77,7 @@ def test_callback_setup_action_request_is_pending_not_an_error(client):
         follow_redirects=False,
     )
     assert r.status_code == 302
-    assert f"/project/{pid}/settings" in r.headers["location"]
+    assert f"/projects/{pid}/settings" in r.headers["location"]
     assert "github_install=pending" in r.headers["location"]
     # Nothing got connected — this is just "an admin still has to approve".
     assert not client.get(f"/api/projects/{pid}/github/connection").json()["data"][
@@ -108,7 +108,7 @@ def test_callback_success_connects_the_repo(client, monkeypatch):
     )
     assert r.status_code == 302
     location = r.headers["location"]
-    assert f"/project/{pid}/settings" in location
+    assert f"/projects/{pid}/settings" in location
     assert "github_install=success" in location
 
     conn = client.get(f"/api/projects/{pid}/github/connection").json()["data"]
@@ -182,7 +182,7 @@ def test_callback_installation_conflict_with_another_project(client, monkeypatch
         },
         follow_redirects=False,
     )
-    assert f"/project/{pid_b}/settings" in r_b.headers["location"]
+    assert f"/projects/{pid_b}/settings" in r_b.headers["location"]
     assert "reason=installation_conflict" in r_b.headers["location"]
 
     # Project A's connection is untouched by B's rejected attempt.

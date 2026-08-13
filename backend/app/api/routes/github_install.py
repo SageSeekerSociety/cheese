@@ -47,8 +47,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["github"])
 
-# frontend/src/router/index.ts: project-settings is /project/:projectId/settings
-_SETTINGS_ROUTE = "/project/{project_id}/settings"
+# frontend/src/router/index.ts: project-settings is /projects/:projectId/settings
+_SETTINGS_ROUTE = "/projects/{project_id}/settings"
 
 
 def _settings_redirect(project_id: uuid.UUID | None, **query: str) -> RedirectResponse:

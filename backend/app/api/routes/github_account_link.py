@@ -54,7 +54,7 @@ async def _oauth_service(db: AsyncSession = Depends(get_db)) -> OAuthService:
 def _link_redirect(
     return_project_id: uuid.UUID | None, **query: str
 ) -> RedirectResponse:
-    path = f"/project/{return_project_id}/settings" if return_project_id else "/"
+    path = f"/projects/{return_project_id}/settings" if return_project_id else "/"
     url = f"{settings.frontend_url}{path}"
     if query:
         url = f"{url}?{urlencode(query)}"
