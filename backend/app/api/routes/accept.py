@@ -16,7 +16,7 @@ from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.runtime import TurnRunner
-from app.domain.review import gate, pr_publish
+from app.domain.review import pr_publish
 from app.domain.review.github_pr import (
     GitHubPRClient,
     GitHubPRError,
@@ -46,7 +46,6 @@ async def create_accept_card(
     body: AcceptCardCreate,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
 ) -> dict:
     svc = AcceptService(db)
     card = await svc.create_card(
@@ -54,26 +53,14 @@ async def create_accept_card(
         reviewer_handle=body.reviewer_handle,
         routing_reason=body.routing_reason,
     )
-    if card.status == AcceptStatus.pending_gate:
-        # 机器闸门 (eval C2): run the project's check_command in the topic's
-        # workspace in the background — green promotes the card to pending,
-        # red fails it and nudges 芝士. The POST itself must not block on a
-        # possibly-minutes-long check.
-        project_id, command = await svc.gate_plan(topic_id)
-        gate.dispatch(
-            chat.session_factory,
-            chat,
-            runner,
-            card_id=card.id,
-            topic_id=topic_id,
-            project_id=project_id,
-            command=command or "",
-        )
-    elif card.status == AcceptStatus.pending and pr_publish.enabled():
-        # PR-based accept (#188 §5.1): a card born pending (no gate) gets its
-        # PR opened right away. Gated cards get theirs when the gate turns
-        # green — see gate._run.
-        project_id, _ = await svc.gate_plan(topic_id)
+    # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the
+    # platform's view of a PR, so filing it opens that PR right away with the
+    # App's installation token — no human's personal token, and no platform
+    # gate. Fire-and-forget; the POST must not block on the push/open. The old
+    # machine-gate dispatch is retired (cards are never born `pending_gate`
+    # any more — see AcceptService.create_card).
+    if pr_publish.enabled():
+        project_id = await svc.project_id_for_topic(topic_id)
         pr_publish.dispatch(
             chat.session_factory,
             card_id=card.id,

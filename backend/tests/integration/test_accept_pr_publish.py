@@ -313,6 +313,81 @@ def test_pr_already_merged_on_github_is_respected(client, pr_world):
     assert len(pr_world["syncs"]) == 1
 
 
+def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
+    """采纳即合并 (#296) deliverable 2: the card's green comes from the FORGE,
+    not a platform gate. `/pr-checks` reads the PR's live state + check-run
+    conclusions for the card's PR via the App's checks:read token, at the PR's
+    real head sha."""
+    from app.api.routes import accept as accept_routes
+    from app.domain.workspace import service as ws
+
+    class _Tokens:
+        async def readonly_token(self) -> tuple[str, str]:
+            return "ghs_read", "2099-01-01T00:00:00+00:00"
+
+        async def write_token(self) -> tuple[str, str]:
+            return "ghs_write", "2099-01-01T00:00:00+00:00"
+
+    class _Client:
+        checked_ref: str | None = None
+
+        def __init__(self, owner: str, repo: str, tokens, **_):
+            pass
+
+        async def pr_view(self, number: int) -> dict:
+            return {
+                "merged": False,
+                "state": "open",
+                "mergeable": True,
+                "head": {"sha": "abc123"},
+            }
+
+        async def check_runs(self, ref: str) -> list[dict]:
+            type(self).checked_ref = ref
+            return [
+                {
+                    "name": "test",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "url": "https://github.com/acme/widgets/runs/1",
+                }
+            ]
+
+    async def _tokens_for_project(_project_id, _session):
+        return _Tokens()
+
+    monkeypatch.setattr(
+        accept_routes, "github_app_tokens_for_project", _tokens_for_project
+    )
+    monkeypatch.setattr(accept_routes, "GitHubPRClient", _Client)
+    monkeypatch.setattr(
+        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
+    )
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=7)
+
+    r = client.get(f"/api/topics/{tid}/pr-checks")
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["available"] is True
+    assert data["pr_number"] == 7
+    assert data["state"] == "open"
+    assert data["mergeable"] is True
+    assert data["checks"] == [
+        {
+            "name": "test",
+            "status": "completed",
+            "conclusion": "success",
+            "url": "https://github.com/acme/widgets/runs/1",
+        }
+    ]
+    # The checks were read at the PR's real head, not the branch name.
+    assert _Client.checked_ref == "abc123"
+
+
 def test_prless_card_never_touches_github(client, pr_world):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
