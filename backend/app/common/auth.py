@@ -52,7 +52,7 @@ class Minted2faPendingToken(NamedTuple):
 
 
 def mint_2fa_pending_token(
-    user_id: int, *, ttl_s: int = PENDING_2FA_TTL_S
+    user_id: int, *, expires_at: int | None = None
 ) -> Minted2faPendingToken:
     """A token that can ONLY complete 2FA verification, never access the API.
 
@@ -60,15 +60,22 @@ def mint_2fa_pending_token(
     handing the token out — kept out of here so this module stays pure JWT
     with no I/O, and so a caller cannot accidentally issue a ticket whose
     reservation failed (a ticket that can never be redeemed).
+
+    ``expires_at`` (unix seconds) pins the new ticket to a deadline that
+    already exists instead of starting a fresh 300s. Re-issuing after a wrong
+    code passes the *original* ticket's ``exp`` here: otherwise a user — or
+    an attacker — could keep the half-authenticated "password accepted, 2FA
+    not yet" window alive forever just by continuing to guess wrong. The 2FA
+    ceremony gets one deadline, however many codes are typed inside it.
     """
-    now = _utcnow()
+    now = int(_utcnow().timestamp())
     jti = uuid.uuid4().hex
     payload = {
         "sub": str(user_id),
         "type": "2fa_pending",
         "jti": jti,
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(seconds=ttl_s)).timestamp()),
+        "iat": now,
+        "exp": expires_at if expires_at is not None else now + PENDING_2FA_TTL_S,
     }
     return Minted2faPendingToken(
         token=jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), jti=jti
@@ -78,6 +85,9 @@ def mint_2fa_pending_token(
 class Pending2faClaims(NamedTuple):
     user_id: int
     jti: str
+    # The deadline of the whole 2FA ceremony, carried so a re-issued ticket
+    # can inherit it rather than restart it.
+    expires_at: int
 
 
 def verify_2fa_pending_token(token: str) -> Pending2faClaims | None:
@@ -99,9 +109,10 @@ def verify_2fa_pending_token(token: str) -> Pending2faClaims | None:
         return None
     try:
         user_id = int(decoded.get("sub") or "")
-    except (TypeError, ValueError):
+        expires_at = int(decoded["exp"])
+    except (KeyError, TypeError, ValueError):
         return None
-    return Pending2faClaims(user_id=user_id, jti=jti)
+    return Pending2faClaims(user_id=user_id, jti=jti, expires_at=expires_at)
 
 
 def create_refresh_token(user_id: int) -> str:

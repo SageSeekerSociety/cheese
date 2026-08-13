@@ -219,16 +219,115 @@ class TestTwoFactorIntegration:
         replay = self._verify(ticket, pyotp.TOTP(secret).now())
         assert replay.status_code == 401
 
-    def test_a_wrong_code_burns_the_ticket(self):
-        """The bound is per ticket, not per success: a spent ticket is spent."""
+    def test_a_wrong_code_burns_the_ticket_and_hands_back_a_new_one(self):
+        """The bound is per ticket, not per success: a spent ticket is spent.
+
+        But the rejection carries a replacement, because making a typo cost a
+        whole password round trip would spend the *password* budget — five
+        misses and a legitimate user has locked themselves out of their own
+        account, while the attacker (who has the password) shrugs."""
         secret, _codes = self._enable_2fa()
         ticket = self._temp_token()
 
-        assert self._verify(ticket, self._wrong_totp(secret)).status_code == 401
+        bad = self._verify(ticket, self._wrong_totp(secret))
+        assert bad.status_code == 401
+        replacement = bad.json()["error"]["data"]
+        assert replacement["reason"] == "invalid_code"
+        assert replacement["tempToken"]
 
+        # The burnt one stays burnt, right code or not.
         retry = self._verify(ticket, pyotp.TOTP(secret).now())
         assert retry.status_code == 401
-        assert "session token" in retry.json()["message"].lower()
+        assert retry.json()["error"]["data"]["reason"] == "session_expired"
+
+        # The replacement works, and only once.
+        good = self._verify(replacement["tempToken"], pyotp.TOTP(secret).now())
+        assert good.status_code == 200, good.text
+
+    def test_a_re_issued_ticket_does_not_reset_the_attempt_budget(self):
+        """The load-bearing test for re-issue. Ride the replacement chain —
+        never a fresh password login — and the budget must still run out. If
+        handing back a ticket ever cleared the counter, the fix would be gone
+        and everything would still look like it worked."""
+        from app.domain.user.login_security import MAX_TWO_FACTOR_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+        wrong = self._wrong_totp(secret)
+        ticket = self._temp_token()
+
+        for attempt in range(MAX_TWO_FACTOR_ATTEMPTS - 1):
+            resp = self._verify(ticket, wrong)
+            assert resp.status_code == 401, f"attempt {attempt + 1}: {resp.text}"
+            data = resp.json()["error"]["data"]
+            assert data["reason"] == "invalid_code"
+            assert data["attemptsRemaining"] == MAX_TWO_FACTOR_ATTEMPTS - attempt - 1
+            ticket = data["tempToken"]
+
+        # The last one empties the budget, and hands nothing back.
+        last = self._verify(ticket, wrong)
+        assert last.status_code == 403, last.text
+        assert last.json()["error"]["data"]["reason"] == "too_many_attempts"
+
+        # N+1, with the CORRECT code and a ticket from a brand-new password
+        # login: refused on the budget, not on the code or the ticket.
+        blocked = self._verify(self._temp_token(), pyotp.TOTP(secret).now())
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["error"]["data"]["reason"] == "too_many_attempts"
+
+    def test_a_re_issued_ticket_inherits_the_original_deadline(self):
+        """Otherwise guessing wrong forever keeps the half-authenticated
+        window — password accepted, 2FA not yet — alive forever.
+
+        The wait is load-bearing, not politeness. Both tickets carry a
+        300-second window, so if they are minted inside the same second a
+        *fresh* deadline is indistinguishable from an inherited one and this
+        test passes while asserting nothing. Letting the clock tick past a
+        second is what gives the two outcomes different numbers — verified by
+        reverting the inheritance and watching this go red."""
+        import time
+
+        import jwt
+
+        from app.common.auth import PENDING_2FA_TTL_S
+        from app.core.config import settings
+
+        secret, _codes = self._enable_2fa()
+        ticket = self._temp_token()
+        time.sleep(1.1)
+
+        bad = self._verify(ticket, self._wrong_totp(secret))
+        replacement = bad.json()["error"]["data"]["tempToken"]
+
+        def claims(token: str) -> dict:
+            return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+
+        assert claims(replacement)["exp"] == claims(ticket)["exp"]
+        # Said the other way round, in case the deadline ever stops being an
+        # `exp`: the replacement's own lifetime is SHORTER than a full window.
+        fresh = claims(replacement)
+        assert fresh["exp"] - fresh["iat"] < PENDING_2FA_TTL_S
+
+    def test_the_three_refusals_are_told_apart(self):
+        """Retry here / sign in again / wait fifteen minutes each need a
+        different move from the user, so a client must be able to tell them
+        apart without parsing prose."""
+        from app.domain.user.login_security import MAX_TWO_FACTOR_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+
+        def reason_of(resp) -> str:
+            return resp.json()["error"]["data"]["reason"]
+
+        assert reason_of(
+            self._verify(self._temp_token(), self._wrong_totp(secret))
+        ) == ("invalid_code")
+        assert reason_of(self._verify("not-even-a-jwt", "000000")) == "session_expired"
+
+        for _ in range(MAX_TWO_FACTOR_ATTEMPTS):
+            self._verify(self._temp_token(), self._wrong_totp(secret))
+        locked = self._verify(self._temp_token(), pyotp.TOTP(secret).now())
+        assert reason_of(locked) == "too_many_attempts"
+        assert locked.json()["error"]["data"]["retryAfterSeconds"] > 0
 
     def test_verify_2fa_locks_out_after_the_attempt_budget(self):
         """A fresh ticket per guess — the loop an attacker with the password

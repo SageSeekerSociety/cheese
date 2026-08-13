@@ -33,7 +33,7 @@
                     : '请输入8位字母数字组合的备用验证码'
                 }}
               </p>
-              <p class="text-body-2 mt-1" style="color: #9e9e9e">每次登录只有一次验证机会，输错需要重新登录。</p>
+              <p class="text-body-2 mt-1" style="color: #9e9e9e">连续输错 5 次会锁定 15 分钟。</p>
             </div>
 
             <!-- OTP 输入区域 -->
@@ -157,10 +157,30 @@ const handleVerify = async () => {
       router.replace('/')
     }
   } catch (error: any) {
-    // 这张验证票是一次性的：验对验错都已作废（#357），留在本页重试只会撞上
-    // “无效的验证会话”，看起来像是系统坏了。把人送回登录页，并把后端给出的
-    // 真实原因（验证码错误 / 尝试次数过多）带过去。
-    toast.error(error.message || '验证失败，请重新登录')
+    // 验证票是一次性的（#357），所以每次失败后端都会连同拒绝理由回一张新票。
+    // 三种拒绝要三种处置：留在本页重试 / 回去重新登录 / 等一刻钟——压成同一句
+    // 提示的话，用户会一直重试一个根本不可能成功的操作。
+    const detail = error?.error?.data ?? {}
+    totpCode.value = ''
+    backupCode.value = ''
+
+    if (detail.reason === 'invalid_code' && detail.tempToken) {
+      // 换上新票继续留在本页。旧票已经作废，不换的话下一次必然撞上
+      // “验证会话已失效”，看起来像是系统坏了。
+      router.replace({ name: 'Verify2FA', query: { token: detail.tempToken } })
+      errorMessage.value =
+        typeof detail.attemptsRemaining === 'number'
+          ? `验证码不正确，还可以再试 ${detail.attemptsRemaining} 次`
+          : '验证码不正确，请重试'
+      return
+    }
+
+    if (detail.reason === 'too_many_attempts') {
+      const minutes = Math.max(1, Math.ceil((detail.retryAfterSeconds ?? 900) / 60))
+      toast.error(`验证码尝试次数过多，请 ${minutes} 分钟后再试`)
+    } else {
+      toast.error('验证会话已失效，请重新登录')
+    }
     router.replace({ name: 'SignIn' })
   } finally {
     loading.value = false

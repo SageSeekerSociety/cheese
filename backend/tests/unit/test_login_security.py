@@ -82,9 +82,7 @@ class TestTwoFactorBudgets:
         assert not key.startswith(LOGIN_ATTEMPTS_PREFIX)
 
     @pytest.mark.anyio
-    async def test_backup_codes_count_under_keys_of_their_own(
-        self, mock_redis
-    ) -> None:
+    async def test_backup_codes_count_under_keys_of_their_own(self, mock_redis) -> None:
         from app.domain.user.login_security import (
             BACKUP_CODE_ATTEMPTS_PREFIX,
             BackupCodeRateLimiter,
@@ -145,6 +143,23 @@ class TestPending2faTicket:
         assert claims is not None
         assert claims.user_id == 7
         assert claims.jti == minted.jti
+
+    def test_a_pinned_deadline_is_used_verbatim(self) -> None:
+        """Re-issuing after a wrong code passes the original ticket's `exp`
+        here, so a run of wrong guesses cannot extend the window. Asserted on
+        an arbitrary value rather than a computed one — a fresh 300s window
+        can coincide with an inherited one, which is exactly how a broken
+        implementation sneaks past a same-second comparison."""
+        import jwt
+
+        from app.common.auth import mint_2fa_pending_token
+        from app.core.config import settings
+
+        pinned = 2000000000
+        minted = mint_2fa_pending_token(7, expires_at=pinned)
+        decoded = jwt.decode(minted.token, settings.jwt_secret, algorithms=["HS256"])
+
+        assert decoded["exp"] == pinned
 
     def test_every_ticket_gets_a_distinct_jti(self) -> None:
         from app.common.auth import mint_2fa_pending_token
