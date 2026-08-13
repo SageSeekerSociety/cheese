@@ -162,7 +162,14 @@ async def terminal_proxy_ws(
     negotiate it on both legs and pump frames transparently (binary pane output
     upstream→browser, control/resize JSON browser→upstream). Read-only pane, so
     browser input is inert, but we still forward it (harmless ttyd control)."""
-    if not await proxy.may_view_topic(db, topic_id, websocket, COOKIE_NAME):
+    allowed = await proxy.may_view_topic(db, topic_id, websocket, COOKIE_NAME)
+    # Release the authz read-transaction before the (long-lived) pump. A get_db
+    # session injected into a WebSocket route is only finalized when the socket
+    # closes, so leaving it open parks it `idle in transaction` for the whole
+    # terminal session — the #356 footgun: an idle-in-txn read lock blocked
+    # device/topic-table migrations (ACCESS EXCLUSIVE) until they timed out.
+    await db.commit()
+    if not allowed:
         await websocket.close(code=1008)
         return
     endpoint = _live_endpoint(topic_id)
