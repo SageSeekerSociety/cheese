@@ -23,12 +23,15 @@ Our adaptations vs the reference:
 """
 
 import asyncio
+import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from app.domain.agent import device_link
+
+logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = device_link.PROTOCOL_VERSION
 
@@ -179,6 +182,40 @@ class DeviceHub:
             )
         )
         return screen
+
+    async def reassert_screen(
+        self,
+        screen: HubScreen,
+        *,
+        command: list[str],
+        cheeselet_source: str,
+        env: dict[str, str] | None = None,
+        cols: int = 120,
+        rows: int = 32,
+    ) -> None:
+        """Re-send an existing screen's ``session.create`` with ``adopt`` set — the
+        frozen cli's designed re-provision path. The registry alone never proves the
+        device still runs a screen: the connector process may have restarted (its
+        private tmux dies with it), or the original create may not have been
+        delivered at all (``open_screen`` registers before an unacknowledged send).
+        The cli silently drops ``rpc.call`` for a sid it does not know, so prompting
+        a lost screen strands the turn in a bare timeout. An adopt-create is
+        idempotent on the device: a live session hot-reloads the cheeselet and keeps
+        running; a lost one is respawned under the SAME sid + screen token, so
+        viewers and attribution stay intact."""
+        screen.command = command
+        await self._device(screen.device_id).send(
+            device_link.session_create(
+                sid=screen.sid,
+                command=command,
+                screen_token=screen.token,
+                cols=cols,
+                rows=rows,
+                source=cheeselet_source,
+                env=env,
+                adopt=True,
+            )
+        )
 
     def adopt_screen(
         self,
@@ -380,7 +417,19 @@ class DeviceHub:
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
             return
-        if msg.t in ("heartbeat", "session.ready", "session.error"):
+        if msg.t == "session.error":
+            # The device could not start (or attach) this screen. There is no
+            # pending future to fail — the turn discovers the loss when its prompt
+            # times out — but dropping the one frame that says WHY turns that
+            # timeout into a blank error, so at least keep the reason in the log.
+            logger.warning(
+                "device %s screen %s reported session.error: %s",
+                device_id,
+                msg.sid,
+                msg.error,
+            )
+            return
+        if msg.t in ("heartbeat", "session.ready"):
             return
         if msg.t == "exec.result":
             fut = device.exec_pending.get(msg.id)

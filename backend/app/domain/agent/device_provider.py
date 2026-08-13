@@ -313,6 +313,35 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # hook_router), so the device path adds no second hook surface.
         return f"{self._public_base}/sandbox/hooks/{topic_id}"
 
+    async def _ship_launcher(
+        self, device_id: str, topic_id: uuid.UUID, command: list[str]
+    ) -> list[str]:
+        """Write the launch script to a FILE on the device (over the link's one-shot
+        ``exec``, script on stdin) and return a short command that runs it.
+
+        The launcher cannot ride in argv: the frozen cli hands the command to
+        ``tmux new-session``, and tmux's client→server imsg buffer caps the whole
+        packed command around 16KB — beyond it new-session dies with ``command too
+        long``. Since #308 embedded the assembled system prompt in the script, every
+        real launch is tens of KB, so argv delivery broke every device spawn (and
+        the failure was invisible: session.error is fire-and-forget and the prompt
+        just timed out). The file path is per-topic and rewritten before every
+        create/re-assert, so a respawn always runs the current turn's script."""
+        assert command[:2] == ["bash", "-lc"] and len(command) == 3
+        script = command[2]
+        path = f"$HOME/.cheese/launch/{topic_id}.sh"
+        result = await self._hub.exec(
+            device_id,
+            ["sh", "-c", f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}"'],
+            stdin=script,
+            timeout=30,
+        )
+        if result.get("exit") != 0:
+            raise ScreenSetupError(
+                f"无法把启动脚本写到设备上：{result.get('stderr') or result}"
+            )
+        return ["bash", "-lc", f'exec bash "{path}"']
+
     async def _ensure_screen(
         self,
         *,
@@ -328,11 +357,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
-        and wires the hook forwarder). A reused screen keeps the system prompt it
-        launched with — the launcher only reads it at screen creation."""
+        and wires the hook forwarder). A reused screen is RE-ASSERTED, not trusted:
+        the hub's registry survives things the device's sessions do not (a connector
+        restart kills its private tmux; a create sent on a dying transport was never
+        delivered at all), and the frozen cli silently drops ``rpc.call`` for a sid
+        it does not know — so a turn that trusted the registry alone died in a blank
+        3×60s prompt timeout whenever the two had diverged. The adopt-create is
+        idempotent on the device: a live session hot-reloads the cheeselet and keeps
+        the system prompt it launched with (the launcher only reads it at screen
+        creation); a lost one is respawned under the same sid + screen token."""
         existing = self._existing_screen(device_id, topic_id)
-        if existing is not None:
-            return existing
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         home_dir = f"$HOME/.cheese/home/{project_id}"
@@ -378,6 +412,12 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             git_branch=ws.branch_for_topic(topic_id),
             system_prompt=system_prompt,
         )
+        command = await self._ship_launcher(device_id, topic_id, command)
+        if existing is not None:
+            await self._hub.reassert_screen(
+                existing, command=command, cheeselet_source=cheeselet, env=screen_env
+            )
+            return existing
         return await self._hub.open_screen(
             device_id,
             command,
@@ -439,7 +479,13 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 system_prompt=system_prompt,
             )
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
-            raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
+            # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
+            # reach the room as 「device 后端启动失败：」 with nothing after the
+            # colon. Fall back to the exception type so the message always says
+            # *something* about what went wrong.
+            raise ScreenSetupError(
+                f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
+            ) from exc
 
     async def _send_prompt(self, screen: HubScreen, prompt: str) -> None:
         """Deliver the prompt via the minimal cheeselet's `prompt` (it gates on the
@@ -450,7 +496,9 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             )
             await self._hub.await_call(screen.device_id, call_id, timeout=60)
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
-            raise ScreenSetupError(f"device 后端启动失败：{exc}") from exc
+            raise ScreenSetupError(
+                f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
+            ) from exc
 
     async def _confirm_alive(self, screen: HubScreen) -> bool:
         """Idle-suspect liveness probe for a device screen (turn 活跃度检测, the
