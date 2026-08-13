@@ -15,6 +15,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     DateTime,
+    Enum,
     ForeignKey,
     Integer,
     String,
@@ -25,6 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps
+from app.domain.device.supply import Supply, Visibility
 
 
 class DeviceRow(Base):
@@ -46,6 +48,24 @@ class DeviceRow(Base):
     # screen), independent of which machine hosts it.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+
+    # #282 四轴 · 供给形式 / 可见性. Stored, never inferred: the same fact is
+    # reverse-look-up-able through `project_machines.device_id`, and that reverse
+    # lookup IS the bug — see `repository.Supply`. Both server_defaults are the
+    # conservative reading, so rows written by an older revision (and the backfill's
+    # misses) mean "do not touch this machine", never "safe to destroy".
+    supply: Mapped[Supply] = mapped_column(
+        Enum(Supply, native_enum=False, length=16),
+        default=Supply.self_hosted,
+        server_default=Supply.self_hosted.value,
+        nullable=False,
+    )
+    visibility: Mapped[Visibility] = mapped_column(
+        Enum(Visibility, native_enum=False, length=16),
+        default=Visibility.host,
+        server_default=Visibility.host.value,
+        nullable=False,
     )
 
 

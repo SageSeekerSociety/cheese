@@ -2,6 +2,7 @@
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -9,6 +10,8 @@ from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceProvider
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
+from app.domain.device.repository import Device
+from app.domain.device.supply import Supply
 
 
 class FakeHub:
@@ -201,12 +204,30 @@ async def test_a_provisioned_machine_is_never_treated_as_co_located(monkeypatch)
         "/home/box/cheese-workspaces",
     )
 
-    class Repo:
-        def __init__(self, session):
-            self._provisioned = session
+    # Reads `device.supply` (#282 决定 2). This used to fake
+    # `ProjectMachineRepository.is_provisioned_device` — 「machine 表里有没有一行
+    # 指向这个 device」— which is precisely the reverse lookup #282 replaced.
+    def _device(device_id: str, supply: Supply) -> Device:
+        return Device(
+            device_id=device_id,
+            name=device_id,
+            token="t",
+            owner_user_id=1,
+            created_at=datetime(2026, 8, 12, tzinfo=UTC),
+            supply=supply,
+        )
 
-        async def is_provisioned_device(self, device_id):
-            return device_id == "microcloud-machine"
+    known = {
+        "microcloud-machine": _device("microcloud-machine", Supply.cloud),
+        "the-box-itself": _device("the-box-itself", Supply.self_hosted),
+    }
+
+    class Service:
+        def __init__(self, session):
+            self._session = session
+
+        async def get_device(self, device_id):
+            return known.get(device_id)
 
     class Session:
         async def __aenter__(self):
@@ -215,13 +236,17 @@ async def test_a_provisioned_machine_is_never_treated_as_co_located(monkeypatch)
         async def __aexit__(self, *exc):
             return False
 
-    monkeypatch.setattr(
-        "app.domain.machine.repositories.ProjectMachineRepository", Repo
-    )
+    # Goes through `device.wiring` — the sanctioned seam. Reaching into
+    # `device.sql_repository` from the agent domain is what
+    # tests/unit/test_domain_import_guard.py exists to stop.
+    monkeypatch.setattr("app.domain.agent.device_provider.sql_device_service", Service)
     provider = DeviceProvider(session_factory=Session)
 
     assert await provider._is_co_located("microcloud-machine") is False
     assert await provider._is_co_located("the-box-itself") is True
+    # A device nobody has a row for keeps the old reading rather than silently
+    # flipping: the deployments that set a shared root are single-box ones.
+    assert await provider._is_co_located("never-seen") is True
 
 
 @pytest.mark.anyio

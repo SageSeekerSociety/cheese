@@ -36,6 +36,7 @@ from app.domain.device.repository import (
     Device,
     DeviceRepository,
     HostHealth,
+    Supply,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ class DeviceService:
         code_value: str,
         *,
         owner_user_id: int,
+        supply: Supply,
         name: str | None = None,
     ) -> Device:
         """Approve a pending flow on behalf of the logged-in ``owner_user_id``, binding
@@ -101,7 +103,14 @@ class DeviceService:
 
         ``name`` is the human-chosen compute-node name from the approval page; blank
         keeps the name the cli proposed at start (avoids an "unnamed" node).
-        Idempotent: approving an already-approved code returns the same device."""
+        Idempotent: approving an already-approved code returns the same device.
+
+        ``supply`` has NO default on purpose (#282 决定 2). This is the one place a
+        device is minted, so both enrolment entry points must name their answer here
+        as a constant — the human device flow says ``self_hosted``, the MicroCloud
+        enrolment sweep says ``cloud``. 入口决定待遇: a third entry point that forgets
+        is a pyright error, not a machine someone deletes by surprise a year later.
+        Never derive it from what the machine looks like."""
         entry = await self._live_code(code_value)
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)
@@ -114,6 +123,7 @@ class DeviceService:
             token=secrets.token_urlsafe(24),
             owner_user_id=owner_user_id,
             created_at=self._now(),
+            supply=supply,
         )
         await self._repo.save_device(device)
         entry.status = DeviceStatus.APPROVED
@@ -157,8 +167,33 @@ class DeviceService:
         return await self._repo.list_devices_by_owner(owner_user_id)
 
     async def delete_owned(self, device_id: str, *, actor_user_id: int) -> None:
+        """The HUMAN's door: an owner removing their own machine. Always allowed
+        whatever the supply — 「我不想再把这台机器借给平台了」 is not a reclaim."""
         await self._require_owned(device_id, actor_user_id)
         await self._repo.delete_device(device_id)
+
+    async def delete_platform_provisioned(
+        self, device_id: str, *, actor_user_id: int
+    ) -> None:
+        """The PLATFORM's door: disposing of a machine cheese opened itself
+        (#282 决定 2 的不变量).
+
+        Every path where the platform destroys/reclaims compute on its own
+        initiative must come through here, and it RAISES on a self-hosted device
+        rather than skipping. The raise is the point: a reclaim path added later
+        that forgets to ask about supply would otherwise delete a machine the
+        platform never owned, and it would do so silently — the one failure mode
+        #282 exists to prevent. A loud stop is recoverable; a deleted enrolment
+        someone else was running work on is not."""
+        device = await self._repo.get_device(device_id)
+        if device is None:
+            raise NotFoundError("device not found")
+        if device.supply is not Supply.cloud:
+            raise ForbiddenError(
+                f"device {device_id} 的供给形式是 {device.supply}，"
+                "平台不销毁不是自己开的机器（#282 供给形式不变量）"
+            )
+        await self.delete_owned(device_id, actor_user_id=actor_user_id)
 
     async def rename_owned(
         self, device_id: str, name: str, *, actor_user_id: int
