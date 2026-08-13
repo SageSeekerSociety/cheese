@@ -171,6 +171,24 @@ else:
     # of the official one through the proxy.
     for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "NO_PROXY", "no_proxy"):
         env.pop(key, None)
+    # OUR subscription (the platform's metering proxy, marked by the injected
+    # CLAUDE_CODE_OAUTH_TOKEN): the image's own proxy/CA entries would win over
+    # the process environment key by key and send the session through the
+    # image's supply route instead of the meter — so ours are asserted INTO the
+    # file, not merely exported. Absent that marker the image's entries are its
+    # own supply route and stay untouched, as before.
+    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        for key in (
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "HTTPS_PROXY",
+            "NO_PROXY",
+            "no_proxy",
+            "NODE_EXTRA_CA_CERTS",
+        ):
+            val = os.environ.get(key)
+            if val is not None:
+                env[key] = val
+        env.pop("HTTP_PROXY", None)
 
 with open(path, "w") as fh:
     json.dump(data, fh)
@@ -277,7 +295,9 @@ done
 """
 
 
-def build_launch_script(sync_on_stop: bool = False, system_prompt: str = "") -> str:
+def build_launch_script(
+    sync_on_stop: bool = False, system_prompt: str = "", ca_pem: str = ""
+) -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
     ``CHEESE_WORK`` (cwd), plus the hook wiring (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``)
@@ -287,11 +307,25 @@ def build_launch_script(sync_on_stop: bool = False, system_prompt: str = "") -> 
     script itself — written to ``$HOME/.claude/cheese-system-prompt.md`` on the
     device and handed to `claude` via ``--append-system-prompt-file``. Embedding
     beats an env var here: the connector's env transport is not guaranteed to
-    survive multi-KB values with newlines, while a quoted heredoc is."""
+    survive multi-KB values with newlines, while a quoted heredoc is.
+
+    ``ca_pem`` (the metering proxy's CA, subscription turns only) rides the same
+    way for the same reason, written to ``$HOME/.claude/proxy-ca.pem`` with
+    ``NODE_EXTRA_CA_CERTS`` exported over whatever placeholder the screen env
+    carried — the server cannot know the device user's home, so only the script
+    can name the real absolute path (an untrusted CA fails as an opaque TLS
+    error far from its cause)."""
     # The heredoc delimiter must sit on its own line, so the content always ends
     # with exactly one newline (empty stays empty → the [ -s ] launch guard skips
     # the flag and claude runs with its stock prompt).
     system_prompt = system_prompt.rstrip("\n") + "\n" if system_prompt else ""
+    ca_block = ""
+    if ca_pem:
+        ca_pem = ca_pem.rstrip("\n") + "\n"
+        ca_block = f"""cat > "$HOME/.claude/proxy-ca.pem" <<'CHEESECA'
+{ca_pem}CHEESECA
+export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
+"""
     usage_script = CHEESE_USAGE_SCRIPT
     usage_reader = CHEESE_USAGE_READER
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
@@ -339,6 +373,7 @@ if [ -n "${{CHEESE_GIT_REMOTE:-}}" ] && [ ! -d "$CHEESE_WORK/.git" ]; then
   fi
 fi
 mkdir -p "$HOME/.claude"
+{ca_block}
 # Written by the shell, not node: a machine whose `claude` is the native binary
 # has no node at all (MicroCloud's Debian image is exactly that), and under
 # `set -e` a missing node aborted the whole launch — the screen opened, claude
@@ -517,6 +552,7 @@ def build_screen_launch(
     git_remote: str | None = None,
     git_branch: str | None = None,
     system_prompt: str = "",
+    ca_pem: str = "",
 ) -> tuple[list[str], dict[str, str], str]:
     """Assemble ``(command, env, cheeselet_source)`` for ``DeviceHub.open_screen``.
 
@@ -527,7 +563,7 @@ def build_screen_launch(
     ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
     script = build_launch_script(
-        sync_on_stop=bool(git_remote), system_prompt=system_prompt
+        sync_on_stop=bool(git_remote), system_prompt=system_prompt, ca_pem=ca_pem
     )
     command = ["bash", "-lc", script]
     env: dict[str, str] = {

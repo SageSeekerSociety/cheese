@@ -30,8 +30,15 @@ services:
       # matches the mount below. Subscription turns are metered at the proxy;
       # the backend tails this file into resource_usage + credits (issue #218).
       SUBSCRIPTION_USAGE_LOG: /var/log/cheese-proxy/usage.jsonl
+      # Where the proxy's CA appears INSIDE this container — matches the mount
+      # below. Device screens (#325 G2) get the CA embedded in their launch
+      # script, so the backend has to be able to READ it; the container path
+      # only ever mounted it into sandboxes by host path.
+      SUBSCRIPTION_CA_BACKEND_PATH: /etc/cheese/metering-proxy-ca.pem
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}:${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}
       # The proxy's log dir, read-only: the one place subscription spend exists.
       - ${SUBSCRIPTION_PROXY_LOG_HOST:-/home/nictheboy/cheese-proxy/logs}:/var/log/cheese-proxy:ro
+      # The proxy's CA cert, read-only (same identity the sandboxes trust).
+      - ${SUBSCRIPTION_PROXY_CA_HOST:-/home/nictheboy/cheese-proxy/certs/mitmproxy-ca-cert.pem}:/etc/cheese/metering-proxy-ca.pem:ro

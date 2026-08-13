@@ -57,6 +57,34 @@ def test_wrong_secret_expired_and_garbage_are_all_rejected():
     assert core.verify_scoped_token(f"{body}.{forged_sig}", SECRET) is None
 
 
+def test_proxy_basic_password_extracts_the_connect_credential():
+    """The CONNECT listener authenticates a device by the scoped token its
+    HTTPS_PROXY URL carries as the password — Claude Code sends it as Basic
+    (measured on 2.1.229). Everything malformed yields "" on attacker bytes."""
+    header = "Basic " + base64.b64encode(b"cheese:scoped.tok").decode()
+    assert core.proxy_basic_password(header) == "scoped.tok"
+    # A password containing ':' survives (only the first colon splits).
+    header = "Basic " + base64.b64encode(b"cheese:a:b").decode()
+    assert core.proxy_basic_password(header) == "a:b"
+    assert core.proxy_basic_password("") == ""
+    assert core.proxy_basic_password("Bearer xyz") == ""
+    assert core.proxy_basic_password("Basic not-base64!!") == ""
+    assert (
+        core.proxy_basic_password("Basic " + base64.b64encode(b"nocolon").decode())
+        == ""
+    )
+
+
+def test_the_served_hosts_are_exactly_the_anthropic_names():
+    """The proxy injects the REAL credential per request, so the allowlist is
+    what keeps an attacker-chosen SNI from receiving the subscription token."""
+    assert core.ANTHROPIC_HOSTS == {
+        "api.anthropic.com",
+        "console.anthropic.com",
+        "platform.claude.com",
+    }
+
+
 def test_sse_usage_merges_start_and_delta():
     """input tokens ride message_start, output rides message_delta — neither
     alone is the turn's cost."""
