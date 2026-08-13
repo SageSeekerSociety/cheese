@@ -190,6 +190,7 @@ class _WebSocketDeviceTransport:
 async def agent_socket(
     websocket: WebSocket,
     service: DeviceServiceDep,
+    db: DbSession,
     x_cheese_session: str | None = Header(default=None, alias="X-Cheese-Session"),
     token: str | None = Query(default=None),
 ) -> None:
@@ -197,6 +198,17 @@ async def agent_socket(
     token (header, or ``?token=`` for browsers), then dispatches every inbound
     ``link.Msg`` to the shared ``DeviceHub`` (which drives outbound messages)."""
     device = await service.verify_token(x_cheese_session or token or "")
+    # End the auth read-transaction NOW, before the (device-lifetime) receive loop.
+    # A ``Depends(get_db)`` session injected into a WebSocket route is only finalized
+    # when the socket CLOSES — so without this commit, ``verify_token``'s transaction
+    # sits `idle in transaction` for the machine's entire uptime (observed: 2.8h),
+    # holding an AccessShareLock on ``device_team`` that made an ALTER TABLE (ACCESS
+    # EXCLUSIVE) on the device tables queue behind it until it timed out → site-wide
+    # brownout (#356). Committing returns the connection to the pool (lock released)
+    # for the life of the connection; ``db`` is the same session ``service`` used
+    # (FastAPI caches ``get_db`` across both), and the resolved ``device`` is a plain
+    # dataclass, so nothing lazy-loads after the commit.
+    await db.commit()
     if device is None:
         # A token is necessary here (never sufficient; screen-scoped calls are
         # authorized per-actor). Reject with policy-violation.
@@ -296,7 +308,15 @@ async def viewer_socket(
     Unknown-screen and not-authorized close identically (1008) so a screen id
     can't be enumerated."""
     screen = device_hub.screen(sid)
-    if screen is None or not await _may_view_screen(db, screen, token):
+    authorized = screen is not None and await _may_view_screen(db, screen, token)
+    # Release the authz read-transaction before the viewer's (long-lived) relay loop.
+    # A WS-injected ``get_db`` session lives until the socket closes, so leaving the
+    # transaction open would park it `idle in transaction` for the whole view — the
+    # same #356 footgun the device control channel hit (an idle-in-txn read lock
+    # blocking device/topic-table migrations). Unknown-screen and not-authorized still
+    # close identically (1008) so a screen id can't be enumerated.
+    await db.commit()
+    if screen is None or not authorized:
         await websocket.close(code=1008, reason="cannot view this screen")
         return
 
