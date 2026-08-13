@@ -182,7 +182,24 @@ jobs:
   # same option would be a negative on the persistent pool machines.
   lint:
     needs: scope
-    if: needs.scope.outputs.run_heavy == 'true'
+    # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
+    # it answers "did this exact commit already pass CI on its PR, so can the
+    # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
+    # `== 'true'` it did: when `scope` failed, its output was empty, the
+    # condition was false, and the heavy jobs were SKIPPED — the workflow
+    # reported nothing ran and looked green-ish, having tested nothing.
+    #
+    # That is not hypothetical. On 2026-08-13 the org's Actions billing lapsed;
+    # every ubuntu-latest job was refused before it started ("The job was not
+    # started because recent account payments have failed"), 0 steps, 2 seconds.
+    # `scope` is hosted (deliberately — it is two `gh api` calls and queued
+    # behind the box otherwise), so it died, and with it the self-hosted `test`
+    # job on machines that were sitting idle and perfectly able to run.
+    #
+    # Now: skip only on an explicit `false` from a `scope` that actually ran.
+    # Any other outcome — failed, cancelled, never started — means we do not
+    # know, and not knowing means run the tests.
+    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -212,7 +229,9 @@ jobs:
 
   test:
     needs: scope
-    if: needs.scope.outputs.run_heavy == 'true'
+    # See the note on the job above: `scope` is an optimisation and must
+    # not veto. Skip only on an explicit `false` from a run that happened.
+    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
     runs-on: [self-hosted, cheese-ci]
     # Measured median 5.1m; 20m covers a cold uv/docker cache without letting
     # a wedged run sit on the box's single runner for hours.
