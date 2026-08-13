@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.text import markdown_preview
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conclusion.models import (
@@ -31,8 +33,6 @@ from app.domain.conclusion.models import (
     ConclusionStatus,
 )
 from app.domain.conclusion.repositories import ConclusionCardRepository
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 
@@ -189,10 +189,10 @@ class ConclusionCardService:
             announce=True,
         )
         sub = await self._topics.get(card.topic_id)
-        await NotificationService(self._session).create(
+        await AlertService(self._session).create(
             project_id=card.project_id,
-            level=NotifLevel.strong,
-            kind=NotifKind.decision_request,
+            level=AlertLevel.strong,
+            kind=AlertKind.decision_request,
             title=f"子话题「{sub.title if sub else '?'}」的结论需要人拍板",
             body=markdown_preview(reason, 200),
             topic_id=card.receiver_topic_id,

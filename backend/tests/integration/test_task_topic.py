@@ -5,7 +5,7 @@ from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.topics.models import Topic
+from app.domain.tag.models import Tag
 from tests.integration.conftest import UserCreator, unique_int
 
 
@@ -16,7 +16,7 @@ def create_topics_in_db(
     created_by: int,
 ) -> list[int]:
     topics = [
-        Topic(name=name, created_by_id=created_by, created_at=datetime.now(UTC))
+        Tag(name=name, created_by_id=created_by, created_at=datetime.now(UTC))
         for name in topic_names
     ]
 

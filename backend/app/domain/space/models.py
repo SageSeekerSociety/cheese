@@ -176,16 +176,16 @@ class SpaceDomainGroupDomain(Base):
     )
 
 
-class SpaceClassificationTopicsRelation(Base):
+class SpaceClassificationTagRelation(Base):
     """Mirrors NT's `space_classification_topics_relation`. Many-to-many between
     Space and Topic, used by the frontend's `Space.classificationTopics` field.
     """
 
-    __tablename__ = "space_classification_topics_relation"
+    __tablename__ = "space_classification_tag_relation"
 
     id: Mapped[int] = mapped_column(BigInteger, autoincrement=True, primary_key=True)
     space_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    topic_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    tag_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

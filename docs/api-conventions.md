@@ -4,6 +4,15 @@ The URL you have to send is not the path you will find in the route file. This
 page is the authority on the difference. If you are writing a client — a skill, an
 agent, a script, another service — read the first section and you are done.
 
+> **This describes a state being dismantled, not a convention to build on** (#370).
+> The doubled `/api/api` exists only because the two generations owned the same
+> resource words; each rename that frees a word retires part of it, and when the
+> last one is free the 2.0 prefix goes and every URL becomes `/api/<resource>`.
+> Landed so far: `project` (1.0 → `/team-projects`), `topic` (1.0 → `/tags`),
+> `notification` (2.0 → `/alerts`). Left: `tasks`, which merges rather than
+> renames. Read this page to address the API **today**; do not read it as a
+> reason to keep the seam.
+
 ## The rule
 
 **The backend is mounted at `/api` on the app's own origin. Append the backend
@@ -71,64 +80,70 @@ Neither breaks the rule above: those routes are also reachable the ordinary way
 (`/api/api/topics/<id>/terminal`, `/api/connector/…`), because the generic `/api/`
 block still matches. The exceptions add addresses; they remove none.
 
-## Why the double prefix is not being flattened
+## Why the double prefix is still here
 
-It looks like something to tidy up. It is load-bearing.
+It looks like something to tidy up, and it will be — but not by deleting it.
+While any resource word is owned twice, the prefix is the only thing keeping the
+two owners apart.
 
-The two generations both own resources named `topics`, `projects` and `tasks`.
-Collapsing them into a single external `/api/` namespace makes those names
+The two generations both owned resources named `topics`, `projects` and `tasks`.
+Collapsing them into a single external `/api/` namespace makes such a name
 ambiguous, and FastAPI resolves the ambiguity silently — first router registered
-wins, the other's endpoints simply stop existing. Measured on `main` 2026-08-12:
-of the 135 paths under the 2.0 prefix, dropping one `/api` layer sends 128 to a
-404 and 7 onto a live 1.0 route — ten endpoints at method+path granularity:
+wins, the other's endpoints simply stop existing. Measured on `main` 2026-08-12,
+before the renames: of the 135 paths under the 2.0 prefix, dropping one `/api`
+layer sent 128 to a 404 and 7 onto a live 1.0 route — ten endpoints at
+method+path granularity, spread over all three words.
+
+#370 is retiring that list one word at a time. What is left today:
 
 | 2.0 endpoint | Single-prefixed, it reaches |
 |---|---|
-| `GET /api/topics` | 1.0 `GET /topics` |
-| `POST /api/topics` | 1.0 `POST /topics` |
-| `GET /api/topics/{id}` | 1.0 `GET /topics/{id}` |
-| `GET /api/projects` | 1.0 `GET /projects` |
-| `POST /api/projects` | 1.0 `POST /projects` |
-| `GET /api/projects/{id}` | 1.0 `GET /projects/{id}` |
-| `GET /api/projects/{id}/members` | 1.0 `GET /projects/{id}/members` |
-| `POST /api/projects/{id}/members` | 1.0 `POST /projects/{id}/members` |
-| `DELETE /api/projects/{id}/members/{handle}` | 1.0 `DELETE /projects/{id}/members/{userId}` |
 | `GET /api/tasks/{id}` | 1.0 `GET /tasks/{id}` |
 
-These numbers rot as routes are added; the table's exact set does not get to —
-`tests/contract/test_api_addressing_contract.py` recomputes the collision set on
-every run and pins it, so a drift between this table and reality fails a test
-instead of misleading the next reader.
+`topics` and `projects` are gone from it: 1.0's tag moved to `/tags` and its team
+project to `/team-projects`, so their bare forms now 404 rather than answering.
+`tasks` will not leave by renaming — the two are the same resource written twice
+and have to merge.
+
+The table is not maintained by hand. `tests/contract/test_api_addressing_contract.py`
+recomputes the set on every run and pins it, in both directions: a NEW collision
+fails, and so does a pinned one that quietly disappears — because "the 1.0 route
+was renamed" and "a 2.0 prefix was flattened" look identical from here, and only
+one of them is good news.
 
 This is not a thought experiment — it is the outage that produced the current
 shape. `frontend/src/api.ts` records it: with a single `/api`, creating a project
 answered 400, the project list 400'd, and `/api/topics` returned **200 from 1.0's
 question tags**. A wrong answer with a success code is worse than a 404, and it is
-what a flattening would reintroduce for those ten.
+what flattening too early would reintroduce.
 
-So the seam stays where it is until the 1.0 surface is retired, and it is spelled
-in exactly two places — `BASE` in `frontend/src/api.ts` for the browser, and the
-`servers` entry in `backend/app/main.py` for everyone else.
+So the order is fixed: free the words first, drop the prefix second. Until then
+the seam is spelled in exactly two places — `BASE` in `frontend/src/api.ts` for
+the browser, and the `servers` entry in `backend/app/main.py` for everyone else,
+which is also the whole of what step 2 has to change.
 
-### A trailing slash re-opens the same trap (open hole)
+### A trailing slash used to re-open the same trap (closed)
 
-The strip happens once per pass through nginx — and a trailing slash buys a
-second pass. Send `GET <origin>/api/api/topics/` (one stray `/` at the end) and
-the chain is, verified live:
+The strip happens once per pass through nginx — and a trailing slash used to buy
+a second pass. Sending `GET <origin>/api/api/tasks/7/` (one stray `/`) went, as
+verified live:
 
-1. nginx strips one segment → the backend receives `/api/topics/`.
-2. No route matches `/api/topics/`; Starlette's slash-redirect answers **307**
-   with `Location: <origin>/api/topics` — an origin-absolute URL that has
-   already spent its strip.
-3. The client follows, nginx strips again, the backend receives `/topics` —
-   and a **1.0** route answers (401 unauthenticated; real 1.0 data with a
-   ticket).
+1. nginx strips one segment → the backend receives `/api/tasks/7/`.
+2. No route matches; Starlette's slash-redirect answers **307** with
+   `Location: <origin>/api/tasks/7` — an origin-absolute URL that has already
+   spent its strip.
+3. The client follows, nginx strips again, the backend receives `/tasks/7` —
+   and a **1.0** route answers.
 
-So for the colliding endpoints above, one trailing slash converts a correct 2.0
-URL into a wrong-generation answer with a success code — the exact failure mode
-this page exists to prevent, still reachable today. Until the redirect is fixed
-or the 1.0 surface retires: **never send a trailing slash**, and treat a 307 on
-an `/api/api/...` URL as a bug in the caller, not something to follow.
+One character turned a correct 2.0 URL into a wrong-generation answer with a
+success code. The backend cannot repair the `Location`, because it cannot know
+how many prefixes the proxy ahead of it will strip — so the redirect itself had
+to go: `app.main` now builds the app with `redirect_slashes=False`, and a
+trailing slash is a plain 404. `test_a_trailing_slash_never_reaches_the_other_generation`
+pins it, and fails if the behaviour is ever turned back on.
+
+Still: **never send a trailing slash.** It is now an honest error instead of a
+silent one.
 
 ## Notes for client authors
 

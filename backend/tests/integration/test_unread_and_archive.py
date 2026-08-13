@@ -100,7 +100,7 @@ def test_notifications_unread_count_and_read_all(client):
 
     def _notify(level: str, target: str | None = None) -> None:
         r = client.post(
-            f"/api/projects/{project_id}/notifications",
+            f"/api/projects/{project_id}/alerts",
             json={
                 "level": level,
                 "kind": "change_alert",
@@ -116,27 +116,27 @@ def test_notifications_unread_count_and_read_all(client):
     _notify("light", target="someone-else")  # not visible to user-1
 
     r = client.get(
-        f"/api/projects/{project_id}/notifications/unread-count",
+        f"/api/projects/{project_id}/alerts/unread-count",
         headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["unread"] == 2
 
     # 全部标记已读 marks everything visible to user-1 (incl. the silent one).
     r = client.post(
-        f"/api/projects/{project_id}/notifications/read-all",
+        f"/api/projects/{project_id}/alerts/read-all",
         headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["marked"] == 3
 
     r = client.get(
-        f"/api/projects/{project_id}/notifications/unread-count",
+        f"/api/projects/{project_id}/alerts/unread-count",
         headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["unread"] == 0
 
     # someone-else's notification is untouched.
     r = client.get(
-        f"/api/projects/{project_id}/notifications/unread-count",
+        f"/api/projects/{project_id}/alerts/unread-count",
         headers=session_auth_headers("someone-else"),
     )
     assert r.json()["data"]["unread"] == 1

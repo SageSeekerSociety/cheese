@@ -3,8 +3,8 @@
 import asyncio
 import uuid
 
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.repositories import NotificationRepository
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.repositories import AlertRepository
 from tests.integration.conftest import session_auth_headers
 
 NIL_UUID = "00000000-0000-0000-0000-000000000000"
@@ -17,7 +17,7 @@ def _create_project(client, name: str = "Demo") -> str:
 
 
 def _post_notif(client, project_id: str, **body) -> dict:
-    r = client.post(f"/api/projects/{project_id}/notifications", json=body)
+    r = client.post(f"/api/projects/{project_id}/alerts", json=body)
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -32,30 +32,30 @@ def test_notification_quota_per_topic(client):
 
     async def run():
         async with client.test_factory() as s:
-            repo = NotificationRepository(s)
+            repo = AlertRepository(s)
 
             async def add(level):
                 await repo.add(
                     project_id=p,
                     level=level,
-                    kind=NotifKind.heartbeat,
+                    kind=AlertKind.heartbeat,
                     title="x",
                     topic_id=t,
                 )
                 await s.commit()
 
-            assert await repo.over_quota(t, NotifLevel.light) is False
-            await add(NotifLevel.light)
-            await add(NotifLevel.light)
-            assert await repo.over_quota(t, NotifLevel.light) is True
+            assert await repo.over_quota(t, AlertLevel.light) is False
+            await add(AlertLevel.light)
+            await add(AlertLevel.light)
+            assert await repo.over_quota(t, AlertLevel.light) is True
 
-            assert await repo.over_quota(t, NotifLevel.strong) is False
-            await add(NotifLevel.strong)
-            assert await repo.over_quota(t, NotifLevel.strong) is True
+            assert await repo.over_quota(t, AlertLevel.strong) is False
+            await add(AlertLevel.strong)
+            assert await repo.over_quota(t, AlertLevel.strong) is True
 
             # silent and non-topic notifications are never throttled.
-            assert await repo.over_quota(t, NotifLevel.silent) is False
-            assert await repo.over_quota(None, NotifLevel.light) is False
+            assert await repo.over_quota(t, AlertLevel.silent) is False
+            assert await repo.over_quota(None, AlertLevel.light) is False
 
     asyncio.run(run())
 
@@ -83,7 +83,7 @@ def test_create_notification(client):
 
 def test_create_notification_missing_project_404(client):
     r = client.post(
-        f"/api/projects/{NIL_UUID}/notifications",
+        f"/api/projects/{NIL_UUID}/alerts",
         json={"level": "silent", "kind": "heartbeat", "title": "x"},
     )
     assert r.status_code == 404
@@ -92,7 +92,7 @@ def test_create_notification_missing_project_404(client):
 def test_create_notification_invalid_level_rejected(client):
     pid = _create_project(client)
     r = client.post(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         json={"level": "loud", "kind": "heartbeat", "title": "x"},
     )
     # The merged app maps request-validation errors to 400 (知是 convention),
@@ -122,16 +122,14 @@ def test_list_newest_first_and_filters(client):
 
     # A caller who names no recipient is not "everyone" — they get the
     # broadcasts and nothing addressed to a person.
-    r = client.get(f"/api/projects/{pid}/notifications")
+    r = client.get(f"/api/projects/{pid}/alerts")
     body = r.json()["data"]
     assert body["total"] == 1
     assert [n["title"] for n in body["data"]] == ["第一条"]
 
     # A signed-in alice sees her own AND broadcasts (第一条 has no
     # target_handle), but not bob's (第二条). Newest first.
-    r = client.get(
-        f"/api/projects/{pid}/notifications", headers=session_auth_headers("alice")
-    )
+    r = client.get(f"/api/projects/{pid}/alerts", headers=session_auth_headers("alice"))
     body = r.json()["data"]
     assert body["total"] == 2
     assert [n["title"] for n in body["data"]] == ["第三条", "第一条"]
@@ -149,9 +147,7 @@ def test_broadcast_visible_to_everyone(client):
         title="给bob",
         target_handle="bob",
     )
-    r = client.get(
-        f"/api/projects/{pid}/notifications", headers=session_auth_headers("alice")
-    )
+    r = client.get(f"/api/projects/{pid}/alerts", headers=session_auth_headers("alice"))
     titles = [n["title"] for n in r.json()["data"]["data"]]
     assert "全体注意" in titles  # broadcast reaches alice
     assert "给bob" not in titles  # bob's private one does not
@@ -164,11 +160,11 @@ def test_list_unread_only(client):
 
     # Mark one read (a broadcast: any signed-in caller may act on it).
     rr = client.post(
-        f"/api/notifications/{a['id']}/read", headers=session_auth_headers("user-1")
+        f"/api/alerts/{a['id']}/read", headers=session_auth_headers("user-1")
     )
     assert rr.status_code == 200
 
-    r = client.get(f"/api/projects/{pid}/notifications", params={"unread_only": "true"})
+    r = client.get(f"/api/projects/{pid}/alerts", params={"unread_only": "true"})
     body = r.json()["data"]
     assert body["total"] == 1
     assert body["data"][0]["title"] == "B"
@@ -216,14 +212,14 @@ def test_inbox_only_unread_decision_and_accept(client):
     # A decision request stays in the inbox after merely being read — it leaves
     # only once 拍板 (resolved).
     client.post(
-        f"/api/notifications/{decision['id']}/read",
+        f"/api/alerts/{decision['id']}/read",
         headers=session_auth_headers("alice"),
     )
     r = client.get(f"/api/projects/{pid}/inbox", headers=session_auth_headers("alice"))
     assert r.json()["data"]["total"] == 1
 
     client.post(
-        f"/api/notifications/{decision['id']}/resolve",
+        f"/api/alerts/{decision['id']}/resolve",
         json={"chosen": "随便"},
         headers=session_auth_headers("alice"),
     )
@@ -248,7 +244,7 @@ def test_resolve_records_choice_and_posts_block(client):
         payload={"options": ["按时间切分", "随机切分"]},
     )
     r = client.post(
-        f"/api/notifications/{n['id']}/resolve",
+        f"/api/alerts/{n['id']}/resolve",
         json={"chosen": "按时间切分"},
         headers=session_auth_headers("user-1"),
     )
@@ -271,7 +267,7 @@ def test_resolve_records_choice_and_posts_block(client):
         payload={"options": ["A", "B"]},
     )
     bad = client.post(
-        f"/api/notifications/{n2['id']}/resolve",
+        f"/api/alerts/{n2['id']}/resolve",
         json={"chosen": "C"},
         headers=session_auth_headers("user-1"),
     )
@@ -284,14 +280,14 @@ def test_mark_read_sets_timestamp(client):
     assert n["read_at"] is None
 
     r = client.post(
-        f"/api/notifications/{n['id']}/read", headers=session_auth_headers("user-1")
+        f"/api/alerts/{n['id']}/read", headers=session_auth_headers("user-1")
     )
     assert r.status_code == 200
     assert r.json()["data"]["read_at"] is not None
 
 
 def test_mark_read_missing_404(client):
-    r = client.post(f"/api/notifications/{NIL_UUID}/read")
+    r = client.post(f"/api/alerts/{NIL_UUID}/read")
     assert r.status_code == 404
 
 
@@ -301,7 +297,7 @@ def test_feedback_up_and_down(client):
     headers = session_auth_headers("user-1")
 
     r = client.post(
-        f"/api/notifications/{n['id']}/feedback",
+        f"/api/alerts/{n['id']}/feedback",
         json={"feedback": "up"},
         headers=headers,
     )
@@ -309,7 +305,7 @@ def test_feedback_up_and_down(client):
     assert r.json()["data"]["feedback"] == "up"
 
     r = client.post(
-        f"/api/notifications/{n['id']}/feedback",
+        f"/api/alerts/{n['id']}/feedback",
         json={"feedback": "down"},
         headers=headers,
     )
@@ -321,7 +317,7 @@ def test_feedback_invalid_422(client):
     pid = _create_project(client)
     n = _post_notif(client, pid, level="light", kind="change_alert", title="X")
     r = client.post(
-        f"/api/notifications/{n['id']}/feedback",
+        f"/api/alerts/{n['id']}/feedback",
         json={"feedback": "meh"},
         headers=session_auth_headers("user-1"),
     )
@@ -329,5 +325,5 @@ def test_feedback_invalid_422(client):
 
 
 def test_feedback_missing_404(client):
-    r = client.post(f"/api/notifications/{NIL_UUID}/feedback", json={"feedback": "up"})
+    r = client.post(f"/api/alerts/{NIL_UUID}/feedback", json={"feedback": "up"})
     assert r.status_code == 404

@@ -360,7 +360,7 @@ def test_split_and_return_conclusion(client):
     assert doc is not None and "数据清洗完成" in doc["content"]
     assert "子话题结论" in doc["content"]
     # … and the coordinator (本体) is notified.
-    notifs = client.get(f"/api/projects/{p['id']}/notifications").json()["data"]["data"]
+    notifs = client.get(f"/api/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any("实现数据清洗" in n["title"] for n in notifs)
 
 
