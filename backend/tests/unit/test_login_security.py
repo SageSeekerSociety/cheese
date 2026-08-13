@@ -57,6 +57,136 @@ class TestLoginRateLimiter:
         assert count == 0
 
 
+class TestTwoFactorBudgets:
+    """The primitives behind #357's per-user 2FA budget."""
+
+    @pytest.fixture
+    def mock_redis(self):
+        return AsyncMock()
+
+    @pytest.mark.anyio
+    async def test_the_second_step_counts_under_its_own_keys(self, mock_redis) -> None:
+        """Not the username keys: a successful password step clears those, so
+        sharing them would reset the 2FA budget on every login attempt."""
+        from app.domain.user.login_security import (
+            LOGIN_ATTEMPTS_PREFIX,
+            TWO_FACTOR_ATTEMPTS_PREFIX,
+            TwoFactorRateLimiter,
+        )
+
+        mock_redis.incr.return_value = 1
+        await TwoFactorRateLimiter(mock_redis).consume_attempt("42")
+
+        key = mock_redis.incr.call_args.args[0]
+        assert key == f"{TWO_FACTOR_ATTEMPTS_PREFIX}42"
+        assert not key.startswith(LOGIN_ATTEMPTS_PREFIX)
+
+    @pytest.mark.anyio
+    async def test_backup_codes_count_under_keys_of_their_own(self, mock_redis) -> None:
+        from app.domain.user.login_security import (
+            BACKUP_CODE_ATTEMPTS_PREFIX,
+            BackupCodeRateLimiter,
+            TwoFactorRateLimiter,
+        )
+
+        mock_redis.incr.return_value = 1
+        await BackupCodeRateLimiter(mock_redis).consume_attempt("42")
+
+        key = mock_redis.incr.call_args.args[0]
+        assert key == f"{BACKUP_CODE_ATTEMPTS_PREFIX}42"
+        assert key != f"{TwoFactorRateLimiter._attempts_prefix}42"
+
+    @pytest.mark.anyio
+    async def test_the_slot_is_spent_before_the_code_is_checked(
+        self, mock_redis
+    ) -> None:
+        """consume_attempt writes on the way in, unconditionally — that is
+        what makes a simultaneous burst hit the cap instead of sailing past a
+        counter none of them has written yet."""
+        from app.domain.user.login_security import TwoFactorRateLimiter
+
+        mock_redis.incr.return_value = 1
+        await TwoFactorRateLimiter(mock_redis).consume_attempt("42")
+
+        mock_redis.incr.assert_called_once()
+        mock_redis.expire.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_budget_counts_down_and_then_refuses(self, mock_redis) -> None:
+        from app.domain.user.login_security import (
+            MAX_TWO_FACTOR_ATTEMPTS,
+            TwoFactorRateLimiter,
+        )
+
+        limiter = TwoFactorRateLimiter(mock_redis)
+
+        mock_redis.incr.return_value = 1
+        assert await limiter.consume_attempt("42") == MAX_TWO_FACTOR_ATTEMPTS - 1
+
+        # The last permitted attempt arms the lockout ...
+        mock_redis.incr.return_value = MAX_TWO_FACTOR_ATTEMPTS
+        assert await limiter.consume_attempt("42") == 0
+        mock_redis.setex.assert_called_once()
+
+        # ... and anything past it is refused outright.
+        mock_redis.incr.return_value = MAX_TWO_FACTOR_ATTEMPTS + 1
+        assert await limiter.consume_attempt("42") is None
+
+
+class TestPending2faTicket:
+    def test_mint_returns_a_jti_that_the_token_carries(self) -> None:
+        from app.common.auth import mint_2fa_pending_token, verify_2fa_pending_token
+
+        minted = mint_2fa_pending_token(7)
+        claims = verify_2fa_pending_token(minted.token)
+
+        assert claims is not None
+        assert claims.user_id == 7
+        assert claims.jti == minted.jti
+
+    def test_a_pinned_deadline_is_used_verbatim(self) -> None:
+        """Re-issuing after a wrong code passes the original ticket's `exp`
+        here, so a run of wrong guesses cannot extend the window. Asserted on
+        an arbitrary value rather than a computed one — a fresh 300s window
+        can coincide with an inherited one, which is exactly how a broken
+        implementation sneaks past a same-second comparison."""
+        import jwt
+
+        from app.common.auth import mint_2fa_pending_token
+        from app.core.config import settings
+
+        pinned = 2000000000
+        minted = mint_2fa_pending_token(7, expires_at=pinned)
+        decoded = jwt.decode(minted.token, settings.jwt_secret, algorithms=["HS256"])
+
+        assert decoded["exp"] == pinned
+
+    def test_every_ticket_gets_a_distinct_jti(self) -> None:
+        from app.common.auth import mint_2fa_pending_token
+
+        assert mint_2fa_pending_token(7).jti != mint_2fa_pending_token(7).jti
+
+    def test_a_ticket_without_a_jti_is_not_a_ticket(self) -> None:
+        """Including the ones the previous build minted: with no jti there is
+        nothing to reserve, so 'has it been spent?' has no answer."""
+        import jwt
+
+        from app.common.auth import verify_2fa_pending_token
+        from app.core.config import settings
+
+        legacy = jwt.encode(
+            {"sub": "7", "type": "2fa_pending", "exp": 9999999999},
+            settings.jwt_secret,
+            algorithm="HS256",
+        )
+        assert verify_2fa_pending_token(legacy) is None
+
+    def test_an_access_token_is_not_a_ticket(self) -> None:
+        from app.common.auth import create_access_token, verify_2fa_pending_token
+
+        assert verify_2fa_pending_token(create_access_token(7)) is None
+
+
 class TestTOTPService:
     @pytest.fixture
     def mock_redis(self):

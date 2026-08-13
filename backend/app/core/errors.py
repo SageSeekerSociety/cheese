@@ -67,8 +67,10 @@ class ForbiddenError(BaseError):
 
 
 class AuthenticationRequiredError(BaseError):
-    def __init__(self, message: str = "Authentication required") -> None:
-        super().__init__(HTTP_401_UNAUTHORIZED, message, None)
+    def __init__(
+        self, message: str = "Authentication required", data: Any | None = None
+    ) -> None:
+        super().__init__(HTTP_401_UNAUTHORIZED, message, data)
 
 
 class ConflictError(BaseError):
