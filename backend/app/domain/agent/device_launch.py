@@ -194,6 +194,46 @@ else:
 """
 
 
+# Liveness probe for a device screen (turn 活跃度检测 — the device half of the
+# two-layer idle-suspect / hard-ceiling check). Run over the hub's `exec` once a
+# turn crosses the idle-suspect threshold, to tell a `claude` that is silently
+# working — a long FOREGROUND command (pytest, a build) emits NO interim hook, yet
+# its process is alive — from one whose process actually died.
+#
+# There is no cheap screen-byte signal on a HEADLESS device (the hub relays raw
+# screen bytes only to a live browser viewer, and only while one is subscribed), so
+# the probe asks the box directly: the process-tree signal, the one that stays
+# valid through a hook-silent window where transcript mtime / statusline / OTel do
+# not. It keys on the `claude` process's own CHEESE_TOPIC env, so it is per-topic
+# precise even with several screens on one machine, and is identical for a
+# co-located device (the backend's own host) and a remote one (both reached over
+# the same link `exec`).
+#
+# Prints exactly one of `alive` / `dead` / `unknown`. The caller treats ONLY an
+# explicit `dead` as fatal; `unknown` (no /proc, an unreadable environ) and any
+# exec error are read conservatively as alive, so a probe hiccup never false-kills.
+DEVICE_ALIVE_PROBE = r"""topic="${CHEESE_ALIVE_TOPIC:-}"
+[ -n "$topic" ] || { echo unknown; exit 0; }
+# Linux: match the topic on each process's own environ → per-topic precise. The
+# connector (same user as the screen it spawned) can read that same-uid /proc entry.
+if [ -d /proc ] && [ -r /proc/self/environ ]; then
+  for c in /proc/[0-9]*/cmdline; do
+    [ -r "$c" ] || continue
+    case "$(tr '\0' ' ' < "$c" 2>/dev/null)" in *claude*) ;; *) continue ;; esac
+    d="${c%/cmdline}"
+    if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qx "CHEESE_TOPIC=$topic"; then
+      echo alive; exit 0
+    fi
+  done
+  # /proc was readable but no live `claude` carries this topic → its process is gone.
+  echo dead; exit 0
+fi
+# No /proc (non-Linux) or an unreadable environ: no per-topic view, so never assert
+# death — report unknown and let the caller keep the turn alive to the hard ceiling.
+echo unknown
+"""
+
+
 def build_launch_script(sync_on_stop: bool = False, system_prompt: str = "") -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),

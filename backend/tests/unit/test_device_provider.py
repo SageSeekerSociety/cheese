@@ -59,7 +59,7 @@ def _provider(hub: FakeHub, router: HookRouter, agent_id: uuid.UUID) -> DevicePr
         device_resolver=resolver,
         router=router,
         public_base="http://test",
-        turn_timeout_s=5,
+        hard_ceiling_s=5,
     )
 
 
@@ -134,7 +134,7 @@ async def test_no_online_device_is_a_clean_error():
         hub=hub,  # type: ignore[arg-type]
         device_resolver=resolver,
         router=HookRouter(),
-        turn_timeout_s=5,
+        hard_ceiling_s=5,
     )
     events = [
         e
@@ -582,3 +582,176 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
     # base already maps 1:1 onto the backend root — see routes/llm_proxy.py.
     assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
     assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-token-for-this-topic"
+
+
+# --- turn 活跃度检测 (the device half): two-layer timeout + liveness probe -------
+# The shared two-layer loop (`run_hooks_turn` idle-suspect / hard-ceiling +
+# `confirm_alive`) is exercised in test_hooks_substrate.py; these cover what is
+# device-SPECIFIC: the two layers are no longer collapsed into one deadline, the
+# device's own `_confirm_alive` maps a process-tree probe to a liveness verdict,
+# and run_turn actually wires that probe in with the split thresholds.
+
+
+class ProbingHub(FakeHub):
+    """FakeHub that also answers the liveness `exec` with a fixed verdict, so a
+    device turn can be driven through the idle-suspect probe path in-process."""
+
+    def __init__(self, verdict: str = "alive") -> None:
+        super().__init__()
+        self.verdict = verdict
+        self.probe_calls = 0
+        self.probe_topics: set[str] = set()
+        self.probe_devices: set[str] = set()
+
+    async def exec(self, device_id, argv, *, env=None, timeout=30, **kw):
+        self.probe_calls += 1
+        self.probe_devices.add(device_id)
+        if env and "CHEESE_ALIVE_TOPIC" in env:
+            self.probe_topics.add(env["CHEESE_ALIVE_TOPIC"])
+        return {"exit": 0, "stdout": self.verdict, "stderr": "", "truncated": False}
+
+
+def test_device_splits_the_two_timeout_layers_instead_of_collapsing_them():
+    """The bug: one 900s value fed BOTH layers, so the only thing that ever fired
+    was 'kill unconditionally at 900s' — a long-but-silent foreground command (a
+    20-minute pytest emits no interim hook) died at minute 15. The layers must now
+    be distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
+    the value TurnRunner reschedules its outer wall-clock wrap to."""
+    prov = DeviceProvider(hub=FakeHub())
+    assert prov._idle_suspect_s == 300.0
+    assert prov._hard_ceiling_s == 10800.0
+    assert prov._idle_suspect_s != prov._hard_ceiling_s
+    assert prov.hard_ceiling_s == 10800.0  # what the outer wrap is told
+
+
+async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
+    """`_confirm_alive` asks the box (over the hub's `exec`) whether a live `claude`
+    still carries THIS topic. ONLY an explicit `dead` ends the turn; alive, unknown,
+    a non-zero exit, or an exec that raised are all read as alive, so a link hiccup
+    never false-kills a turn that is really still working. The probe is per-topic
+    and targets the screen's own device — the SAME path for a co-located device and
+    a remote one (it never branches on co-location)."""
+    topic = uuid.uuid4()
+    screen = HubScreen(
+        sid="s1",
+        device_id="dev-remote",
+        command=[],
+        token="t",
+        agent_user_id=1,
+        agent_handle="a",
+        topic_id=topic,
+    )
+
+    class Hub:
+        def __init__(self, result=None, boom=False) -> None:
+            self.result = result
+            self.boom = boom
+            self.calls: list = []
+
+        async def exec(self, device_id, argv, *, env=None, timeout=30, **kw):
+            self.calls.append((device_id, env))
+            if self.boom:
+                raise RuntimeError("link down")
+            return self.result
+
+    async def confirm(result=None, boom=False):
+        hub = Hub(result=result, boom=boom)
+        prov = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+        return await prov._confirm_alive(screen), hub
+
+    alive, hub = await confirm({"exit": 0, "stdout": "alive\n"})
+    assert alive is True
+    assert hub.calls[0][0] == "dev-remote"  # targets the screen's device
+    assert hub.calls[0][1] == {"CHEESE_ALIVE_TOPIC": str(topic)}  # per-topic
+
+    assert (await confirm({"exit": 0, "stdout": "dead\n"}))[0] is False
+    assert (await confirm({"exit": 0, "stdout": "unknown\n"}))[0] is True
+    # A non-zero exit is inconclusive, not death.
+    assert (await confirm({"exit": 3, "stdout": "dead\n"}))[0] is True
+    # An exec that raised (link hiccup / timeout) is not proof of death.
+    assert (await confirm(boom=True))[0] is True
+
+
+async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop():
+    """The core regression: a long foreground command emits only a first and a last
+    hook, silent in between. Past idle-suspect the turn is re-probed; while the
+    probe says the screen is alive the turn must NOT be killed — it runs to the
+    Stop hook and ends normally."""
+    hub = ProbingHub(verdict="alive")
+    router = HookRouter()
+    tid = uuid.uuid4()
+
+    async def resolver(_p, _t):
+        return ("dev1", 1, "agent-x")
+
+    provider = DeviceProvider(
+        hub=hub,  # type: ignore[arg-type]
+        device_resolver=resolver,
+        router=router,
+        public_base="http://test",
+        idle_suspect_s=0.05,
+        hard_ceiling_s=5,
+    )
+    events, task = await _run(
+        provider,
+        project_id=uuid.uuid4(),
+        topic_id=tid,
+        prompt="run the tests",
+        system_prompt="",
+        resume_session_id=None,
+    )
+    await asyncio.sleep(0.05)  # resolve + open screen + send prompt + reach drain
+    key = str(tid)
+    # First hook = the prompt receipt / start of a long foreground command; then
+    # the hooks go SILENT for the run — the window this fix has to survive.
+    router.push(key, {"hook_event_name": "UserPromptSubmit", "prompt": "run the tests"})
+    await asyncio.sleep(0.2)  # cross idle-suspect; the alive probe keeps it running
+    assert hub.probe_calls >= 1, "idle-suspect must have re-probed liveness"
+    assert not any(isinstance(e, AgentResult) and e.is_error for e in events)
+    # The command finishes: the reply and the Stop hook arrive, ending the turn.
+    router.push(key, {"hook_event_name": "MessageDisplay", "delta": "tests pass"})
+    router.push(
+        key, {"hook_event_name": "Stop", "last_assistant_message": "tests pass"}
+    )
+    await asyncio.wait_for(task, timeout=3)
+
+    assert isinstance(events[-1], AgentResult) and not events[-1].is_error
+    assert events[-1].text == "tests pass"
+    assert hub.probe_topics == {key}  # the probe was keyed on this topic
+
+
+async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
+    """A genuinely dead screen must be caught by the idle-suspect probe and end the
+    turn promptly — not left running until the (many-hours) hard ceiling. The huge
+    hard ceiling here would hang the test if idle-suspect + `_confirm_alive` didn't
+    fire."""
+    hub = ProbingHub(verdict="dead")
+    router = HookRouter()
+    tid = uuid.uuid4()
+
+    async def resolver(_p, _t):
+        return ("dev1", 1, "agent-x")
+
+    provider = DeviceProvider(
+        hub=hub,  # type: ignore[arg-type]
+        device_resolver=resolver,
+        router=router,
+        public_base="http://test",
+        idle_suspect_s=0.05,
+        hard_ceiling_s=100,  # would time the test out if idle-suspect didn't fire
+    )
+    events, task = await _run(
+        provider,
+        project_id=uuid.uuid4(),
+        topic_id=tid,
+        prompt="hi",
+        system_prompt="",
+        resume_session_id=None,
+    )
+    await asyncio.sleep(0.05)
+    router.push(str(tid), {"hook_event_name": "UserPromptSubmit", "prompt": "hi"})
+    await asyncio.wait_for(task, timeout=3)  # ends via the probe, NOT the 100s ceiling
+
+    assert isinstance(events[-1], AgentResult) and events[-1].is_error
+    assert events[-1].text == provider._timeout_message
+    assert hub.probe_calls >= 1

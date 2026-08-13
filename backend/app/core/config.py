@@ -107,10 +107,12 @@ class Settings(BaseSettings):
     # releases the lock and tears down the in-container claude process.
     #
     # Still governs: TurnRunner's outer transport-independent wrap for the SDK
-    # backend (no activity signal exists there) and the remote device backend's
-    # own inner deadline. The LOCAL tmux backend no longer uses this value for
-    # its effective timeout — see agent_idle_suspect_s / agent_turn_hard_ceiling_s
-    # below (turn 活跃度检测, 2026-08-09).
+    # backend (no activity signal exists there), plus the generic outer default
+    # any backend keeps until it signals its own ceiling. The hooks-driven
+    # backends — LOCAL tmux AND remote device — no longer use this for their
+    # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
+    # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
+    # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
     agent_turn_timeout_s: float = 900.0
     # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
     # call within this many seconds is declared dead, whatever its ceiling says.
@@ -121,13 +123,15 @@ class Settings(BaseSettings):
     # Generous on purpose: this must never cut a slow-but-live turn, only one
     # that never started. 0 disables it.
     agent_first_output_timeout_s: float = 300.0
-    # Two-layer safety net for the hooks-driven LOCAL tmux backend only. Below
-    # this much idle time (no hook, no tmux pane output change) a turn is normal;
-    # past it the turn is only SUSPECTED wedged and gets one lightweight liveness
-    # probe (pane_dead) rather than being killed outright — a long tool call with
-    # no interim hook must not look identical to a dead pane.
+    # Two-layer safety net for the hooks-driven backends — LOCAL tmux AND remote
+    # device (they share one policy). Below this much idle time (no hook, and no
+    # backend-specific activity signal) a turn is normal; past it the turn is only
+    # SUSPECTED wedged and gets one lightweight liveness probe (tmux: pane_dead;
+    # device: a process-tree probe over the link) rather than being killed outright
+    # — a long foreground command with no interim hook must not look identical to a
+    # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Unconditional backstop for the tmux backend regardless of activity — guards
+    # Unconditional backstop for both hooks backends regardless of activity — guards
     # against a pathological "looks active but never converges" turn (a tool
     # retrying forever, a genuine infinite loop that keeps printing).
     agent_turn_hard_ceiling_s: float = 10800.0
@@ -221,8 +225,6 @@ class Settings(BaseSettings):
     # Empty (default) → behaviour unchanged. Ported from design/cheese-agent-layer
     # (CONNECTOR_WS_OVERRIDES, commits ce30e62 + 6327c7e).
     connector_ws_overrides: dict[str, str] = {}
-    # Per-turn wall-clock ceiling for a device turn (mirrors agent_turn_timeout_s).
-    device_turn_timeout_s: float = 900.0
 
     # --- MicroCloud: cloud nodes for the team's compute pool ---
     # A project remains the billing/audit unit for each machine, but enrollment
