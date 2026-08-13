@@ -409,6 +409,12 @@ export type AcceptStatus =
   | string
 
 // GET /topics/{id}/accept-card (list, newest first).
+export interface DeliveryStep {
+  key: string
+  label: string
+  state: 'done' | 'active' | 'todo'
+}
+
 export interface AcceptCard {
   id: string
   topic_id: string
@@ -429,9 +435,13 @@ export interface AcceptCard {
   // platform opened one (flag-gated, best-effort).
   pr_number: number | null
   pr_url: string | null
-  // 两阶段采纳 (PR迭代式) only: which repo the PR lives in, the commit CI is
-  // being queried against, and — see lib/deliveryStage.ts — the one value the
-  // backend uses to tell 「等 CI」 from 「等部署」 inside `pr_open`.
+  // 交付进度: the steps THIS project has, sent by the backend. Whether a
+  // project has external checks is a property of its forge, which the browser
+  // cannot see — so the chain is no longer derived here. Empty whenever there
+  // is no machine work in flight, which is most of the time.
+  stages: DeliveryStep[]
+  // 两阶段采纳 (PR迭代式) only: which repo the PR lives in and the commit CI is
+  // being queried against.
   pr_repo: string | null
   pr_head_sha: string | null
   pr_merged_at: string | null

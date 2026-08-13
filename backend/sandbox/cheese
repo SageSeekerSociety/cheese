@@ -833,7 +833,7 @@ def main() -> None:
             "level": a.level, "kind": a.kind, "title": a.title, "body": a.body,
             "target_handle": a.to, "topic_id": TOPIC or None, "payload": payload,
         }
-        _call("POST", f"/projects/{proj}/notifications", body)
+        _call("POST", f"/projects/{proj}/alerts", body)
         print(f"已发送通知给 {a.to or '所有人'}。")
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)

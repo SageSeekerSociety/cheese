@@ -146,7 +146,14 @@ async def app_proxy_ws(
 ) -> None:
     """Reverse-proxy a WebSocket to the topic's app — dev servers push HMR over
     one, and without it the page reloads forever trying to reconnect."""
-    if not await proxy.may_view_topic(db, topic_id, websocket, COOKIE_NAME):
+    allowed = await proxy.may_view_topic(db, topic_id, websocket, COOKIE_NAME)
+    # Release the authz read-transaction before the (long-lived) pump. A get_db
+    # session injected into a WebSocket route is only finalized when the socket
+    # closes, so leaving it open parks it `idle in transaction` for the whole
+    # app-preview session — the #356 footgun: an idle-in-txn read lock blocked
+    # device/topic-table migrations (ACCESS EXCLUSIVE) until they timed out.
+    await db.commit()
+    if not allowed:
         await websocket.close(code=1008)
         return
     endpoint = ws.app_endpoint(topic_id)

@@ -95,6 +95,10 @@ jobs:
   deploy:
     needs: gate
     if: ${{ needs.gate.result == 'success' }}
+    # See deploy-dev.yml: records a deployment so the target is queryable. The
+    # `production` environment already exists (deploy.yml uses it) and carries
+    # no protection rules, so the human gate stays where it is — in `gate`.
+    environment: production
     runs-on: [self-hosted, cheese-prod]
     timeout-minutes: 30
     steps:

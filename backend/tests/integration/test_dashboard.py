@@ -80,7 +80,7 @@ def test_project_overview(client, bearer):
     )
     # A decision request addressed to user-1 → should appear in 等你处理的事.
     client.post(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         json={
             "level": "light",
             "kind": "decision_request",

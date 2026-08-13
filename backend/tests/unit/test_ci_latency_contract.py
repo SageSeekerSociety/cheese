@@ -28,19 +28,45 @@ def test_squash_merge_does_not_repeat_pr_backend_and_e2e_suites():
         assert "--jq" in decision["run"]
         assert scope["permissions"]["actions"] == "read"
         assert heavy["needs"] == "scope"
-        assert "needs.scope.outputs.run_heavy == 'true'" in heavy["if"]
+        # The saving this test exists for: a commit that already passed CI on
+        # its PR must not re-run the suites after the squash merge. That is the
+        # `!= 'false'` — an explicit `false` from scope still skips.
+        assert "needs.scope.outputs.run_heavy != 'false'" in heavy["if"]
+        # …but the gate must not be the veto form it used to be. Written as
+        # `== 'true'`, an EMPTY output (scope failed, was cancelled, or never
+        # started) also skipped the heavy job, so "we could not decide" and "we
+        # decided to skip" were the same condition. On 2026-08-13 the org's
+        # Actions billing lapsed, every hosted job was refused before its first
+        # step, and `scope` — hosted on purpose, it is two `gh api` calls — took
+        # the self-hosted test suite down with it on machines that were idle.
+        # The workflow then reported nothing failed, having tested nothing.
+        assert "run_heavy == 'true'" not in heavy["if"], (
+            "the gate is back to its veto form: an optimisation that cannot "
+            "decide must run the tests, not skip them"
+        )
+        # And it must still stop for a superseding push — `always()` here would
+        # trade one wasted-CI bug for another, since PRs use cancel-in-progress.
+        assert "cancelled()" in heavy["if"]
 
 
 def test_backend_lint_is_a_separate_hosted_job():
-    """Inverted from the single-runner era (#166), where a separate lint job
-    could only queue serially behind test on the one slot, so lint HAD to
-    reuse the test environment. The CI plan's P3 schedules the split for when
-    real runners exist; the cheese-ci pool (#212) is that moment. Lint now
-    reds in ~2 minutes on a hosted runner without occupying a pool slot, and
-    the pool's test job must NOT duplicate it."""
+    """Lint is its own job, kept out of `test` (which must not re-run
+    ruff/pyright). It used to run on GitHub-hosted `ubuntu-latest` (#166) to
+    stay fast and off the self-hosted pool — until 2026-08-13, when the org's
+    Actions billing lapsed and every hosted job was refused before its first
+    step. The whole merge gate now runs on the self-hosted `cheese-ci` pool
+    (#383) so CI no longer depends on GitHub's paid minutes; the ~1min
+    pool-queue latency is the deliberate price. What this test still guards is
+    the split itself — a separate lint job, never duplicated inside `test`."""
     workflow = load_workflow("test.yml")
     lint = workflow["jobs"]["lint"]
-    assert lint["runs-on"] == "ubuntu-latest"
+    assert lint["runs-on"] == ["self-hosted", "cheese-ci"]
+    # Gated by `scope` like the heavy job, and by the same non-veto rule: a
+    # scope that could not decide must let lint run, not silently skip it. The
+    # test above pins this for `test`; without it here, lint could be reverted
+    # to the veto form on its own and nothing would say so.
+    assert "run_heavy == 'true'" not in lint["if"]
+    assert "needs.scope.outputs.run_heavy != 'false'" in lint["if"]
 
     lint_commands = "\n".join(s.get("run", "") for s in lint["steps"])
     assert "ruff format --check ." in lint_commands

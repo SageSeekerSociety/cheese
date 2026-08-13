@@ -1,11 +1,13 @@
 name: Backend Test
 
-# The heavy jobs below run on the dev box's own runner, not a GitHub-hosted
-# one: this is a private repo, so hosted minutes are billed per-minute, and
-# these jobs need service containers plus native amd64 Docker with no
-# emulation — the box already has both for free. (Hosted runners themselves
-# work fine; billing was never actually exhausted long-term — see the scope
-# job below, which is cheap enough to run there.)
+# Every job below runs on a self-hosted runner (the cheese-ci pool), not a
+# GitHub-hosted one: this is a private repo, so hosted minutes are billed
+# per-minute, and the org's Actions billing lapsed on 2026-08-13 — every
+# ubuntu-latest job is now refused before it starts ("recent account payments
+# have failed"). The heavy jobs (test, migration-heads) needed the pool anyway
+# for service containers and native amd64 Docker; the cheap coordinator jobs
+# (scope, lint) followed so the whole workflow stops depending on hosted
+# minutes at all.
 on:
   push:
     branches: [main]
@@ -53,12 +55,13 @@ jobs:
   # image publishing and deploy without testing new code. Direct pushes to main
   # have no merged PR association and therefore still run the full gate.
   scope:
-    # Hosted, not the box: this job is nothing but `gh api` calls (no
-    # checkout, no box-local network/files), and it sits in `test`'s `needs`
-    # chain — on the box it queued behind whatever else the single runner was
-    # doing (~1.3m measured), which is pure serial overhead on the critical
-    # path. Hosted picks it up in ~2s instead.
-    runs-on: ubuntu-latest
+    # On the cheese-ci pool, not a hosted runner: the org's Actions billing
+    # lapsed on 2026-08-13, so every ubuntu-latest job is refused before it
+    # starts. This job is only `gh api` calls, so its sole cost on the pool is
+    # the ~1.3m it can queue behind other pool work — an owner-accepted trade
+    # (not depending on billing beats shaving the critical path). The pool has
+    # no `gh`, so a step below installs it into a per-machine dir.
+    runs-on: [self-hosted, cheese-ci]
     # Measured median 0.2m (a couple of gh api calls); wide margin still small
     # next to the jobs it gates.
     timeout-minutes: 5
@@ -69,6 +72,25 @@ jobs:
     outputs:
       run_heavy: ${{ steps.decide.outputs.run_heavy }}
     steps:
+      # The cheese-ci pool machines don't ship `gh` (hosted runners do).
+      # Install it once per machine into a dir that survives actions/checkout's
+      # workspace reset, then prepend it to PATH — the same persistence trick
+      # the heavy jobs use for their Cargo cache. No checkout runs here, so this
+      # step runs from the workspace root, not the `backend` default (which does
+      # not exist without a checkout).
+      - name: Ensure gh CLI
+        working-directory: ${{ github.workspace }}
+        run: |
+          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
+          if [ ! -x "$gh_dir/bin/gh" ]; then
+            gh_version=2.63.2
+            mkdir -p "$gh_dir"
+            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
+              | tar -xz -C "$gh_dir" --strip-components=1
+          fi
+          echo "$gh_dir/bin" >> "$GITHUB_PATH"
+          "$gh_dir/bin/gh" --version
+
       - name: Decide whether this commit already passed PR CI
         id: decide
         working-directory: ${{ github.workspace }}
@@ -174,26 +196,54 @@ jobs:
             exit 1
           fi
 
-  # ruff + pyright pulled OUT of the test job onto a hosted runner: the most
-  # common failure class (format/lint/type) now reds in ~2 minutes without
-  # occupying a pool slot, and the pool's test job sheds the ~25s it spent on
-  # them. Hosted is the right home per the CI plan's budget math (~1.2m/run);
-  # enable-cache is correct HERE because hosted runners are ephemeral — the
-  # same option would be a negative on the persistent pool machines.
+  # ruff + pyright pulled OUT of the test job into their own job: the most
+  # common failure class (format/lint/type) reds on its own without dragging
+  # the heavier test job with it, and the test job sheds the ~25s it spent on
+  # them. This ran on a hosted runner until the org's Actions billing lapsed
+  # (2026-08-13); it now runs on the cheese-ci pool like the other jobs, using
+  # the persistent Cargo/venv trick below instead of setup-uv's enable-cache
+  # (which helps only ephemeral hosted runners — see migration-heads).
   lint:
     needs: scope
-    if: needs.scope.outputs.run_heavy == 'true'
-    runs-on: ubuntu-latest
+    # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
+    # it answers "did this exact commit already pass CI on its PR, so can the
+    # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
+    # `== 'true'` it did: when `scope` failed, its output was empty, the
+    # condition was false, and the heavy jobs were SKIPPED — the workflow
+    # reported nothing ran and looked green-ish, having tested nothing.
+    #
+    # That is not hypothetical. On 2026-08-13 the org's Actions billing lapsed;
+    # every ubuntu-latest job was refused before it started ("The job was not
+    # started because recent account payments have failed"), 0 steps, 2 seconds.
+    # `scope` was hosted at the time, so it died, and with it the self-hosted
+    # `test` job on machines that were sitting idle and perfectly able to run.
+    # That lapse is also why `scope` itself has since moved onto the pool — but
+    # the rule below stays regardless: an optimisation must never veto the tests.
+    #
+    # Now: skip only on an explicit `false` from a `scope` that actually ran.
+    # Any other outcome — failed, cancelled, never started — means we do not
+    # know, and not knowing means run the tests.
+    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Persist backend/srp_rs's Cargo build cache and the uv venv outside the
+      # checkout, keyed to this job — same reasoning as migration-heads/test
+      # (checkout wipes an in-workspace target/ and .venv every run). No
+      # setup-uv enable-cache: it helps only ephemeral hosted runners; on a
+      # persistent pool machine these dirs are the cache.
+      - name: Point Cargo at the persistent target dir
+        run: echo "CARGO_TARGET_DIR=$(dirname "$RUNNER_TEMP")/cargo-target/lint" >> "$GITHUB_ENV"
+
+      - name: Point uv at a persistent venv
+        run: echo "UV_PROJECT_ENVIRONMENT=$(dirname "$RUNNER_TEMP")/uv-venv/lint" >> "$GITHUB_ENV"
 
       - name: Install uv
         uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
         with:
           version: "0.12.1"
-          enable-cache: true
-          cache-dependency-glob: "backend/uv.lock"
 
       - name: Set up Python
         run: uv python install 3.13
@@ -212,7 +262,9 @@ jobs:
 
   test:
     needs: scope
-    if: needs.scope.outputs.run_heavy == 'true'
+    # See the note on the job above: `scope` is an optimisation and must
+    # not veto. Skip only on an explicit `false` from a run that happened.
+    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
     runs-on: [self-hosted, cheese-ci]
     # Measured median 5.1m; 20m covers a cold uv/docker cache without letting
     # a wedged run sit on the box's single runner for hours.

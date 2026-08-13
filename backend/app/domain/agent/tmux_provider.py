@@ -31,6 +31,7 @@ from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
 from app.domain.agent import awaited_tasks, clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
+    SESSION_TOKEN_TTL_S,
     ActivityTracker,
     HooksTurnProvider,
     ScreenSetupError,
@@ -699,8 +700,17 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 ca_path="/etc/cheese/proxy-ca.pem",
                 project_id=str(project_id),
                 topic_id=str(topic_id),
+                # Session-length TTL, not the 1h default: this token is the
+                # container's CLAUDE_CODE_OAUTH_TOKEN, read ONCE at claude start
+                # and never hot-refreshed (see ContainerSubscription — env is
+                # read at process start; the tmux session is reused across turns).
+                # A 1h token expires under the still-running process and the
+                # metering proxy then 407s every later turn. Same lifetime as the
+                # CHEESE_TOKEN minted for the same session.
                 session_token=mint_scoped_token(
-                    project_id=str(project_id), topic_id=str(topic_id)
+                    project_id=str(project_id),
+                    topic_id=str(topic_id),
+                    ttl_s=SESSION_TOKEN_TTL_S,
                 ),
             ).env
             merged = {**(env or {})}

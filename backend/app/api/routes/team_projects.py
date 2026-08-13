@@ -1,6 +1,24 @@
-"""知是 team projects — flat int-keyed routes at /projects (reference:
-cheese-backend-nt ProjectController). The cheesex agent workspace lives at
-/api/projects (uuid) and is unrelated."""
+"""知是 team projects — flat int-keyed routes at /team-projects (reference:
+cheese-backend-nt ProjectController).
+
+These used to sit on the bare name ``/projects``, which the 2.0 agent workspace
+(``/api/projects``, uuid) also wants. One resource name, two unrelated things:
+a team's 创研项目 with a leader, dates and sub-projects here, a git repo with a
+topic tree and 芝士 there. #370 settles it by making THIS one say it is the
+team's — 2.0 is the trunk, and the 1.0 domain has been called ``team_project``
+in the code all along; only the route claimed the generic word.
+
+The old bare paths are simply gone — deliberately NOT kept as a 410/redirect
+shim, though #370 asks for one in general. A shim on ``/projects`` would have to
+answer for ``/projects/{id}`` and everything under it, and that is precisely the
+namespace the rename exists to hand back: measured while writing this, a
+catch-all shim re-created 65 cross-generation collisions
+(``test_flattening_one_api_layer_cross_wires_exactly_the_known_set``), and would
+shadow the whole 2.0 project surface the moment the ``/api`` prefix is flattened
+in step 2. It is affordable because there is no caller to protect: the only
+consumer of these paths was ``frontend/src/network/api/projects``, updated in
+the same commit (the sandbox ``cheese`` CLI's ``/projects/...`` calls reach the
+2.0 resource — its base URL already ends in ``/api``)."""
 
 from typing import Annotated
 
@@ -13,7 +31,7 @@ from app.auth.core import AuthUserInfo
 from app.db.session import get_db
 from app.domain.team_project.services import TeamProjectService
 
-router = APIRouter(prefix="/projects", tags=["TeamProjects"])
+router = APIRouter(prefix="/team-projects", tags=["TeamProjects"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
