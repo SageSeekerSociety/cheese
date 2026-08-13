@@ -50,7 +50,7 @@ import {
 } from '../lib/docEditState'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import { relTime } from '../lib/relTime'
-import { countLines, isLongSiteEntry, shouldFollowTail, SITE_CLAMP_LINES } from '../lib/siteLog'
+import { countLines, isLongSiteEntry, shouldFollowTail, shouldKeepPinning, SITE_CLAMP_LINES } from '../lib/siteLog'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
 import { costLabel, costNote, fmtNum } from '../lib/usageFormat'
 import { myHandle } from '../me'
@@ -499,11 +499,27 @@ function toggleSiteEntry(id: string): void {
   expandedSite.value = next
 }
 
+// A single `scrollTop = scrollHeight` at nextTick does NOT work here, which is
+// how this shipped broken the first time: the panel renders its spinner first,
+// so the container is one viewport tall with nothing to scroll, the assignment
+// clamps to 0, and the timeline lays out underneath — leaving the reader on the
+// oldest entry, the exact bug this exists to fix. Measured on the deployed page:
+// scrollHeight 500 at +40ms, 2066 at +120ms, scrollTop 0 throughout.
+// So keep re-pinning while the height is still moving (see shouldKeepPinning).
 function scrollSiteToTail(): void {
-  nextTick(() => {
+  let lastHeight = -1
+  let frames = 0
+  const pin = (): void => {
     const el = toolContentRef.value
-    if (el) el.scrollTop = el.scrollHeight
-  })
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    if (shouldKeepPinning(el.scrollHeight, lastHeight, frames)) {
+      lastHeight = el.scrollHeight
+      frames += 1
+      requestAnimationFrame(pin)
+    }
+  }
+  nextTick(() => requestAnimationFrame(pin))
 }
 
 // 本轮实时动作 appends to the bottom of the same list while a turn runs, so it
