@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -614,6 +614,54 @@ class Settings(BaseSettings):
     # confirm at a glance which build they're on. Off by default (prod); the
     # dev/test box's .env sets it true. The frontend reads it from /api/version.
     show_version_badge: bool = False
+
+    @model_validator(mode="after")
+    def _require_real_jwt_secret_on_deployment(self) -> "Settings":
+        """Fail the boot when a deployment left JWT_SECRET at its insecure default.
+
+        ``jwt_secret`` signs AND verifies every session token. Its field default
+        ``"dev-secret"`` exists only so local dev and the test suite need zero
+        config. On a real deployment that default is a live hazard on two counts:
+
+        - Anyone can forge a valid token, because the signing key is a constant
+          sitting in the source tree.
+        - The #342 failure: if the pinned real secret fails to load for one
+          process (an env-not-applied deploy window like #356), the process
+          silently boots on ``dev-secret``. The moment the real secret comes
+          back, every token signed with ``dev-secret`` in between fails
+          verification and every logged-in user is signed out — with no error
+          logged anywhere (24/24 401 in #342), recovering only as tokens expire.
+
+        So a deployment MUST provide a real secret; there is no deployment where
+        the default is acceptable. "Deployment" is the same line the rest of the
+        app already draws — ``environment`` outside dev/test (secure cookies, the
+        X-User-Id gate). Local dev and the test suite keep the default and never
+        trip this, which is why fail-closed does not take the suite down.
+
+        Mirrors #338's treatment of SANDBOX_TOKEN — make the empty/default case a
+        loud, boot-time event rather than a silent runtime one — but crashes the
+        boot instead of only warning: an unpinned SANDBOX_TOKEN is benign on an
+        app-only box, whereas an insecure JWT_SECRET is wrong on every deployment.
+        """
+        if self.environment in ("development", "test"):
+            return self
+        if not self.jwt_secret.strip() or self.jwt_secret == "dev-secret":
+            # RuntimeError, not ValueError: a ValueError here is wrapped by
+            # pydantic into a ValidationError whose repr dumps the whole input
+            # dict — which on a real deployment carries the DB password, API
+            # tokens and other live secrets straight into the crash log. A plain
+            # RuntimeError propagates unwrapped, so the boot dies on this one
+            # message and nothing else. (#338: keys never go into logs.)
+            raise RuntimeError(
+                "JWT_SECRET must be set to a real secret when ENVIRONMENT is "
+                f"'{self.environment}' (i.e. not development/test); it is "
+                "currently missing, empty, or the built-in 'dev-secret' default. "
+                "Booting on the default silently invalidates every session on the "
+                "next restart that loads the real secret — every user is logged "
+                "out with no error (#342). Generate one with: "
+                'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        return self
 
 
 @lru_cache
