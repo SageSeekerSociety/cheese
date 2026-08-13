@@ -3,6 +3,7 @@
 import shutil
 import uuid
 from dataclasses import asdict
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, UploadFile
@@ -33,6 +34,8 @@ from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.idempotency import store as idem
+from app.domain.idempotency.keys import action_key
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
@@ -81,11 +84,21 @@ async def create_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
-def _topic_out(topic: Topic, running_ids: set[uuid.UUID]) -> dict:
-    """TopicOut plus the in-memory turn-running signal (separate from
-    `status`/归档 — see TopicOut.running): a topic can be active-and-idle or
-    active-and-mid-turn, and only this tells them apart."""
-    data = TopicOut.model_validate(topic).model_dump(mode="json")
+def _topic_out(
+    topic: Topic,
+    running_ids: set[uuid.UUID],
+    last_activity: dict[uuid.UUID, datetime],
+) -> dict:
+    """TopicOut plus the two signals the ORM row cannot carry: the in-memory
+    turn-running flag (separate from `status`/归档 — see TopicOut.running: a
+    topic can be active-and-idle or active-and-mid-turn, and only this tells
+    them apart) and 最后活动时间, which is derived from the topic's blocks."""
+    out = TopicOut.model_validate(topic)
+    # Assign before dumping so the instant is serialized by the same schema as
+    # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
+    # where every other timestamp in the payload says "Z".
+    out.last_activity_at = last_activity.get(topic.id)
+    data = out.model_dump(mode="json")
     data["running"] = topic.id in running_ids
     return data
 
@@ -97,12 +110,22 @@ async def list_topics(
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
+    active_since: datetime | None = None,
 ) -> dict:
-    topics, total = await TopicService(db).list_for_project(
-        project_id, sort=sort, order=order
+    """The project's topics.
+
+    `sort=last_activity_at` orders by when something last HAPPENED in each topic
+    (its newest block), and `active_since=<ISO instant>` keeps only the topics
+    active at or after it — "最近活跃的话题". Neither reads `updated_at`, which
+    only moves when the topic's own fields change.
+    """
+    service = TopicService(db)
+    topics, total = await service.list_for_project(
+        project_id, sort=sort, order=order, active_since=active_since
     )
     running_ids = runner.running_topic_ids()
-    items = [_topic_out(t, running_ids) for t in topics]
+    last_activity = await service.last_activity_for_topics([t.id for t in topics])
+    items = [_topic_out(t, running_ids, last_activity) for t in topics]
     return ok(page(items, total))
 
 
@@ -111,19 +134,41 @@ async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    resolver: ActorResolverDep,
 ) -> dict:
-    topic = await TopicService(db).get_or_404(topic_id)
-    return ok(_topic_out(topic, runner.running_topic_ids()))
+    """One topic's header.
+
+    Authorized like the routes beside it (`/comments`, `/doc`). It was not, and
+    the sibling routes' having been is what made that a gap rather than a
+    policy: a logged-in caller from another project could read any topic's title
+    just by holding its id. Measured, not inferred.
+    """
+    service = TopicService(db)
+    topic = await service.get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    last_activity = await service.last_activity_for_topics([topic.id])
+    return ok(_topic_out(topic, runner.running_topic_ids(), last_activity))
 
 
 @router.get("/{topic_id}/blocks")
 async def list_topic_blocks(
     topic_id: uuid.UUID,
     db: DbSession,
+    resolver: ActorResolverDep,
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     before: uuid.UUID | None = None,
 ) -> dict:
     """The topic's conversation timeline, oldest-first.
+
+    Authorized, like `/comments` and `/doc` beside it. This one carries the
+    conversation ITSELF, and it was the only unguarded route of the three that
+    did: measured on a test server, a logged-in caller belonging to no part of
+    the project read another team's messages verbatim by holding a topic id.
 
     Paging is OPT-IN: with no `limit` this returns the whole timeline, exactly
     as it always has. That default is deliberate — agents read this endpoint to
@@ -134,6 +179,13 @@ async def list_topic_blocks(
     - `?limit=N`                  → the newest N blocks (chat is bottom-anchored)
     - `?limit=N&before=<block_id>` → the N blocks immediately older than that one
     """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     await TopicService(db).get_or_404(topic_id)
     repo = BlockRepository(db)
     cursor: Block | None = None
@@ -250,13 +302,25 @@ async def topic_status(
     ``turn.activity`` (turn 活跃度检测, tmux backend only — None otherwise) is
     the idle-suspect signal: ``suspect_since_s_ago`` set means the turn has been
     idle past the threshold and is being actively re-confirmed alive, not yet
-    treated as dead."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    treated as dead.
+
+    ``stall`` answers the question nothing here could answer before: did a turn
+    die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
+    so it is empty after a restart and says `running` about a turn killed with
+    the process. See ``TopicService.stall_signal``."""
+    topics = TopicService(db)
+    topic = await topics.get_or_404(topic_id)
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(topic.project_id)
     turn = runner.topic_turn(topic_id)
     if turn is not None and turn.get("status") == "running":
         turn["activity"] = chat_service.tmux_activity_status(topic_id)
+    background = awaited_tasks.status_snapshot(topic_id)
+    stall = await topics.stall_signal(
+        topic_id,
+        live_turn=runner.live_turn_for_topic(topic_id),
+        background_tasks=len(background["tasks"]),
+    )
     return ok(
         {
             "topic": {
@@ -266,8 +330,9 @@ async def topic_status(
                 "branch": topic.branch_name,
             },
             "turn": turn,
+            "stall": stall,
             "cards": [_card_snapshot(c) for c in cards],
-            "background": awaited_tasks.status_snapshot(topic_id),
+            "background": background,
             "platform": {
                 "active_turns": runner.active_turns(),
                 "queued_turns": runner.project_queue_depth(topic.project_id),
@@ -372,6 +437,20 @@ async def add_comment(
         nudge_event=f"💬 {author} 在文档上留了评论，芝士来处理",
     )
     return ok(payload)
+
+
+@router.get("/{topic_id}/progress")
+async def get_topic_progress(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
+    touch it. Read on topic open — between turns there is no WS stream to carry
+    it, and "做到哪了" has to be visible without summoning anyone."""
+    items, updated_at = await TopicService(db).get_progress(topic_id)
+    return ok(
+        {
+            "items": items,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+        }
+    )
 
 
 @router.get("/{topic_id}/doc")
@@ -645,6 +724,17 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
     decision = await canonicalize_refs(
         db, topic.project_id, decision, exclude_topic_id=topic_id
     )
+    # 自动续跑幂等 (④): inside an automatic turn, the same decision text is the
+    # same decision — a resumed 芝士 re-recording it must not stack a second
+    # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
+    # and no dedup: pressing the button twice means it twice.
+    continuation = get_turn_runner().continuation_for(topic_id)
+    key = action_key(continuation, "decision", decision) if continuation else None
+    if key is not None and not await idem.claim(
+        db, key, action="decision", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
     block = await BlockRepository(db).add(
         project_id=topic.project_id,
         topic_id=topic_id,
@@ -654,7 +744,10 @@ async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dic
         kind=BlockKind.decision,
         refs=[str(topic_id)],
     )
-    return ok(BlockOut.model_validate(block).model_dump(mode="json"))
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    if key is not None:
+        await idem.record_result(db, key, out)
+    return ok(out)
 
 
 @router.post("/{topic_id}/title")
@@ -679,12 +772,20 @@ async def set_title(
 
 
 @router.post("/{topic_id}/read")
-async def mark_topic_read(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """话题级已读位: bump the user's read cursor (opening a topic clears its
-    unread badge, Feishu-style)."""
-    handle = (body.get("handle") or "").strip()
-    if not handle:
-        raise ValidationError("handle 不能为空")
+async def mark_topic_read(
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """话题级已读位: bump the caller's read cursor (opening a topic clears its
+    unread badge, Feishu-style).
+
+    The cursor is per person, so whose it is comes from the verified
+    credential — ``handle`` in the body is only an assertion checked against
+    it (it used to BE the identity, letting anyone move anyone's cursor)."""
+    handle = await resolver.resolve_recipient(
+        requested=(body.get("handle") or "").strip() or None,
+        project_id=await resolver.project_of_topic(topic_id),
+        allow_anonymous=False,
+    )
     await TopicService(db).mark_read(topic_id, handle)
     return ok({"topic_id": str(topic_id), "handle": handle})
 
@@ -732,6 +833,22 @@ async def split_topic(
     await resolver.authorize_topic(
         actor, project_id=parent.project_id, topic_id=topic_id
     )
+    # 自动续跑幂等 (④) — the costliest of the five to repeat: a duplicate split
+    # does not just write a row, it spawns a second 分身 that starts working.
+    # `split 是唯一会生出另一个 agent 的动作` (cheese CLI help), so a resumed
+    # turn re-splitting doubles the agents on the same brief.
+    runner = get_turn_runner()
+    continuation = runner.continuation_for(topic_id)
+    key = (
+        action_key(continuation, "split", topic_id, body.title)
+        if continuation
+        else None
+    )
+    if key is not None and not await idem.claim(
+        db, key, action="split", scope_id=str(topic_id)
+    ):
+        prior = await idem.stored_result(db, key)
+        return ok(prior or {"skipped": True})
     topic = await service.split_to_subtopic(
         parent_topic_id=topic_id,
         title=body.title,
@@ -739,10 +856,14 @@ async def split_topic(
         brief=body.brief,
     )
     out = TopicOut.model_validate(topic).model_dump(mode="json")
+    if key is not None:
+        await idem.record_result(db, key, out)
     # Commit BEFORE kicking off: the 分身's first turn runs in the background
-    # with its own session and must see the sub-topic + its brief doc.
+    # with its own session and must see the sub-topic + its brief doc. The
+    # idempotency key commits in this same transaction, so a crash between the
+    # commit and the kickoff cannot produce a SECOND child on resume.
     await db.commit()
-    get_turn_runner().submit_kickoff(chat, topic.id)
+    runner.submit_kickoff(chat, topic.id)
     return ok(out)
 
 
@@ -809,10 +930,17 @@ async def return_conclusion(
     conclusion = await canonicalize_refs(
         db, topic.project_id, body.conclusion, exclude_topic_id=topic_id
     )
-    block = await service.return_conclusion(subtopic_id=topic_id, conclusion=conclusion)
+    block, card = await service.return_conclusion(
+        subtopic_id=topic_id, conclusion=conclusion
+    )
     parent = await service.get_or_404(block.topic_id)
     out = BlockOut.model_validate(block).model_dump(mode="json")
     wake = parent.status != TopicStatus.archived
+    # 结论卡·阶段一: the card id has to reach the digest turn, otherwise the
+    # parent has a card it cannot address — read it BEFORE the commit expires
+    # the instance.
+    card_id = str(card.id) if card is not None else None
+    card_deadline = card.digest_deadline_at if card is not None else None
     # Commit BEFORE waking: the parent's turn runs on its own session.
     await db.commit()
     await get_broker().publish(
@@ -820,7 +948,11 @@ async def return_conclusion(
     )
     if wake:
         get_turn_runner().submit_kickoff(
-            chat, parent.id, prompt=conclusion_digest_prompt(block.content)
+            chat,
+            parent.id,
+            prompt=conclusion_digest_prompt(
+                block.content, card_id=card_id, deadline=card_deadline
+            ),
         )
     return ok(out)
 
@@ -1002,25 +1134,46 @@ project_router = APIRouter(prefix="/api/projects", tags=["topics"])
 
 @project_router.get("/{project_id}/topic-unread")
 async def project_topic_unread(
-    project_id: uuid.UUID, handle: str, db: DbSession
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    handle: str | None = None,
 ) -> dict:
-    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for one
-    user, one query. Topics with zero unread are omitted."""
-    counts = await TopicService(db).unread_counts(project_id, handle)
+    """话题级未读数 (Feishu-style badges): {topic_id: unread_count} for the
+    calling user, one query. Topics with zero unread are omitted.
+
+    Read-state is per-person, so the recipient comes from the verified
+    credential (``handle`` is only checked against it) — a caller without one
+    used to read anybody's badge map by naming them here."""
+    recipient = await resolver.resolve_recipient(
+        requested=handle, project_id=project_id, allow_anonymous=False
+    )
+    counts = await TopicService(db).unread_counts(project_id, recipient)
     return ok({str(topic_id): count for topic_id, count in counts.items()})
 
 
 @project_router.get("/{project_id}/private-unread")
 async def project_private_unread(
-    project_id: uuid.UUID, handle: str, db: DbSession
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    handle: str | None = None,
 ) -> dict:
-    """私聊未读数: {peer_handle: unread_count} for one user, one query.
+    """私聊未读数: {peer_handle: unread_count} for the calling user, one query.
 
     Keyed by the other party's handle rather than by topic id — private chats
     are not in the topic tree, so the sidebar renders their rows from the member
     roster and has no topic id to look one up with. `cheese` is the 芝士 DM.
-    Peers with zero unread are omitted."""
-    counts = await TopicService(db).private_unread_counts(project_id, handle)
+    Peers with zero unread are omitted.
+
+    Same rule as ``topic-unread``: the recipient comes from the verified
+    credential, never from the query string. It matters more here — this map
+    names who a person is talking to privately, so honouring a caller-supplied
+    handle would leak the shape of everyone's DMs."""
+    recipient = await resolver.resolve_recipient(
+        requested=handle, project_id=project_id, allow_anonymous=False
+    )
+    counts = await TopicService(db).private_unread_counts(project_id, recipient)
     return ok(counts)
 
 

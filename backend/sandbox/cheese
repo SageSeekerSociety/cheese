@@ -635,6 +635,27 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pc.add_argument("conclusion", help="结论摘要,给父话题看的")
 
+    pcc = sub.add_parser(
+        "conclusion",
+        help="结算子话题回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
+        description=(
+            "结算子话题回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
+            "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
+            "只有你要改变默认结果时才用它: need-evidence 让子话题补一条证据"
+            "(要付一整轮,且每张卡最多打回 1 次), escalate 是要人拍板。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pcc.add_argument(
+        "action",
+        choices=["accept", "need-evidence", "escalate"],
+        help="accept=采信(可不做,默认就会采信) / need-evidence=让子话题补一条证据 / escalate=要人拍板",
+    )
+    pcc.add_argument("card", help="结论卡 id（消化提示里带着）")
+    pcc.add_argument(
+        "reason", nargs="?", default="", help="need-evidence/escalate 必填：要补什么/要谁拍什么板"
+    )
+
     pm = sub.add_parser(
         "milestone",
         help="钉里程碑",
@@ -654,15 +675,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "gh-token",
-        help="铸一个只读 GitHub token(约1小时过期); stderr 会带上仓库名和"
-             "看 Actions run/job/日志的具体命令",
+        help="铸一个只读 GitHub token(约1小时过期); stderr 会带上仓库名、"
+             "这个 token 到底能读什么,以及对应的具体命令",
         description=(
-            "铸一个只读 token 查 CI/CD:`GH_TOKEN=$(cheese gh-token) gh run list -R <owner/repo>`\n"
+            "铸一个只读 token 读这个仓库:`GH_TOKEN=$(cheese gh-token) gh api "
+            "repos/<owner/repo>/issues/187`\n"
+            "\n"
+            "**先看 stderr 那几行再动手**。token 能读什么不是固定的——它是平台 GitHub App\n"
+            "被授予的权限收窄成只读的结果,所以能力清单由铸出来的那一刻的 stderr 说了算,\n"
+            "不要凭印象假设「只能查 CI」而去找人贴 issue 正文。stderr 会按当前实际权限\n"
+            "打出可以直接抄的命令(check-runs / job 日志 / issue / PR / 仓库文件)。\n"
             "\n"
             "本仓库的版本控制是 jj 不是 git,工作区里没有 .git,所以 `gh` 自己推断不出仓库,"
-            "会报 `not a git repository`——**必须显式带 -R owner/repo**。"
-            "仓库名不用自己猜:token 铸好后 stderr 会打出仓库名,以及查 check-runs "
-            "和拉 Actions job 完整日志的具体命令。"
+            "会报 `not a git repository`——**必须显式带 -R owner/repo**(或用 "
+            "`gh api repos/<owner>/<repo>/...` 的全路径写法)。仓库名和过期时间不用自己猜,"
+            "stderr 里就有;stdout 只有 token 本身,所以 `GH_TOKEN=$(cheese gh-token)` "
+            "照常能用。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -816,6 +844,24 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})
         print("已把结论回流父话题。")
+    elif a.cmd == "conclusion":
+        # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
+        # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if a.action in ("need-evidence", "escalate") and not a.reason.strip():
+            print(f"[cheese] {a.action} 必须写理由", file=sys.stderr)
+            sys.exit(2)
+        body = {"decided_by": AUTHOR}
+        if a.reason:
+            body["reason"] = a.reason
+        _call("POST", f"/topics/{topic}/conclusion-cards/{a.card}/{a.action}", body)
+        print(
+            {
+                "accept": "已采信该结论，子话题归档。",
+                "need-evidence": "已让子话题补证据（它会被叫醒一轮）。",
+                "escalate": "已升级，等人拍板。",
+            }[a.action]
+        )
     elif a.cmd == "milestone":
         proj = _need("CHEESE_PROJECT", PROJECT)
         body = {"title": a.title}
@@ -843,15 +889,37 @@ def main() -> None:
         # `gh api repos/:owner/:repo/...` needs a name the workspace (not a
         # checkout of the repo) can't supply.
         repo = data.get("repo") or "<owner>/<repo>"
-        print(
-            f"[cheese] 只读(actions/checks/metadata), 仓库 {repo}, "
-            f"过期 {data.get('expires_at', '?')}\n"
-            "[cheese] 看 CI: export GH_TOKEN=$(cheese gh-token) 然后\n"
-            f"[cheese]   gh api repos/{repo}/commits/<sha>/check-runs  # 哪些检查挂了\n"
-            f"[cheese]   gh api repos/{repo}/actions/jobs/<job_id>/logs  # 完整日志\n"
+        # The permission line comes from the payload, never from a literal
+        # here: what the token carries depends on what the GitHub App was
+        # granted, and a hardcoded list went stale the moment that changed —
+        # which is how agents ended up believing they couldn't read an issue
+        # that the token could in fact read.
+        perms = data.get("permissions") or "read-only"
+        lines = [
+            f"[cheese] {perms}, 仓库 {repo}, 过期 {data.get('expires_at', '?')}",
+            "[cheese] 看 CI: export GH_TOKEN=$(cheese gh-token) 然后",
+            f"[cheese]   gh api repos/{repo}/commits/<sha>/check-runs  # 哪些检查挂了",
+            f"[cheese]   gh api repos/{repo}/actions/jobs/<job_id>/logs  # 完整日志",
             "[cheese]   (<job_id> = check-run 的 html_url 里 /job/ 后面那串数字)",
-            file=sys.stderr,
-        )
+        ]
+        # Only advertise what this token can actually do. Printing the issue
+        # recipe when `issues` was not granted just buys a 403 and a wasted turn.
+        if "issues" in perms:
+            lines.append(
+                "[cheese] 读 issue 正文/评论(不用找人贴): "
+                f"gh api repos/{repo}/issues/<n>  和  .../issues/<n>/comments"
+            )
+        if "pull_requests" in perms:
+            lines.append(
+                f"[cheese] 读 PR 正文/评审意见: gh api repos/{repo}/pulls/<n>  和  "
+                f".../pulls/<n>/comments"
+            )
+        if "contents" in perms:
+            lines.append(
+                "[cheese] 读工作区以外的仓库文件: "
+                f"gh api repos/{repo}/contents/<path>?ref=<branch>"
+            )
+        print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":
         proj = _need("CHEESE_PROJECT", PROJECT)
         d = _call("GET", f"/projects/{proj}/members").get("data", {})

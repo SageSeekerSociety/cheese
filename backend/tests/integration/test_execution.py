@@ -1,19 +1,20 @@
 """施工现场 transcript + 资源用量 (spec §7.1/§9.1)."""
 
+from tests.integration.conftest import chat_ws_url
+
 
 def _topic(client) -> tuple[str, str]:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "话题"}
+        "/api/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]
     return p["id"], t["id"]
 
 
 def _chat(client, topic_id: str) -> None:
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hi", "author": "user-1", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 

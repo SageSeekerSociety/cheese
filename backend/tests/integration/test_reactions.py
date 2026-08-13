@@ -10,22 +10,22 @@ import pytest
 from app.domain.agent.chat import ChatService
 from app.domain.identity.handles import topic_agent_handle
 from tests.conftest import StubAgent
+from tests.integration.conftest import chat_ws_url
 
 
-def _create_topic(client) -> str:
+def _create_topic(client, owner: str = "alice") -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "话题"}
+        "/api/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": owner},
     ).json()["data"]
     return t["id"]
 
 
 def _post_message(client, topic_id: str, content: str, author: str) -> str:
-    """Post a plain (unsummoned) message; returns the new block's id."""
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": content, "author": author, "summon": False}
-        )
+    """Post a plain (unsummoned) message as `author`; returns the new block's id."""
+    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+        ws.send_json({"type": "message", "content": content, "summon": False})
         block_id = ""
         while True:
             frame = ws.receive_json()
@@ -84,7 +84,7 @@ def test_reaction_broadcasts_live_ws_frame(client):
     topic_id = _create_topic(client)
     block_id = _post_message(client, topic_id, "看这条", "alice")
 
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         out = _toggle(client, block_id, "👀", "bob")
         frame = ws.receive_json()
     assert frame == {
@@ -106,15 +106,8 @@ def test_summon_gets_cheese_check_receipt(client):
     """芝士 collega-style ack: the summoning message gets a ✅ by "cheese" the
     moment the turn starts — broadcast live and persisted on the block."""
     topic_id = _create_topic(client)
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "芝士帮我看看",
-                "author": "alice",
-                "summon": True,
-            }
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "芝士帮我看看", "summon": True})
         frames = []
         while True:
             frames.append(ws.receive_json())

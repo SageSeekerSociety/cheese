@@ -16,7 +16,7 @@ from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.runtime import TurnRunner
-from app.domain.review import gate, pr_publish
+from app.domain.review import pr_publish
 from app.domain.review.github_pr import (
     GitHubPRClient,
     GitHubPRError,
@@ -28,6 +28,7 @@ from app.domain.review.schemas import (
     AcceptDecision,
     ApprovalCreate,
     RejectDecision,
+    VoidDecision,
 )
 from app.domain.review.services import AcceptService
 from app.domain.workspace import service as ws
@@ -45,7 +46,6 @@ async def create_accept_card(
     body: AcceptCardCreate,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
 ) -> dict:
     svc = AcceptService(db)
     card = await svc.create_card(
@@ -53,26 +53,14 @@ async def create_accept_card(
         reviewer_handle=body.reviewer_handle,
         routing_reason=body.routing_reason,
     )
-    if card.status == AcceptStatus.pending_gate:
-        # 机器闸门 (eval C2): run the project's check_command in the topic's
-        # workspace in the background — green promotes the card to pending,
-        # red fails it and nudges 芝士. The POST itself must not block on a
-        # possibly-minutes-long check.
-        project_id, command = await svc.gate_plan(topic_id)
-        gate.dispatch(
-            chat.session_factory,
-            chat,
-            runner,
-            card_id=card.id,
-            topic_id=topic_id,
-            project_id=project_id,
-            command=command or "",
-        )
-    elif card.status == AcceptStatus.pending and pr_publish.enabled():
-        # PR-based accept (#188 §5.1): a card born pending (no gate) gets its
-        # PR opened right away. Gated cards get theirs when the gate turns
-        # green — see gate._run.
-        project_id, _ = await svc.gate_plan(topic_id)
+    # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the
+    # platform's view of a PR, so filing it opens that PR right away with the
+    # App's installation token — no human's personal token, and no platform
+    # gate. Fire-and-forget; the POST must not block on the push/open. The old
+    # machine-gate dispatch is retired (cards are never born `pending_gate`
+    # any more — see AcceptService.create_card).
+    if pr_publish.enabled():
+        project_id = await svc.project_id_for_topic(topic_id)
         pr_publish.dispatch(
             chat.session_factory,
             card_id=card.id,
@@ -213,6 +201,33 @@ async def reject_card(
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
+    return ok(await svc.describe(card))
+
+
+@router.post("/accept-cards/{card_id}/void")
+async def void_card(
+    card_id: uuid.UUID, body: VoidDecision, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
+
+    这是 `pending_gate` / `conflict` / `pr_open` 唯一的人工出口——那三个状态被
+    accept / reject / revoke / reassign 四条路由全部拒绝，而 `create_card` 又因为
+    它们拒绝再建新卡，于是整个话题递不出卡。作废把卡置为终态解开这个死锁。
+
+    **它不是"放行"**：卡进的是终态，不是 `pending`。放行等于让绿勾替一段没被检查
+    过的代码背书；作废 + 重递效果一样且安全。
+
+    路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS` 里——这是授权类动作，
+    给人不给芝士。但"不加白名单"本身拦不住任何东西（没列进去的写路由压根不过那个
+    中间件，症状是静默放行而不是 401），真正拦住芝士的是 `AcceptService.void` 里
+    的 `_forbid_ai`，见 tests/integration/test_accept_gate_orphan.py 的
+    `test_void_requires_a_logged_in_human`。
+    """
+    actor = await resolver.resolve(fallback_handle=None)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能作废验收卡")
+    svc = AcceptService(db)
+    card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
     return ok(await svc.describe(card))
 
 

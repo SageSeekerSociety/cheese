@@ -1,6 +1,7 @@
 """Project routes."""
 
 import asyncio
+import logging
 import re
 import uuid
 from dataclasses import asdict
@@ -34,6 +35,7 @@ from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.memory.models import MemoryScope
 from app.domain.project.models import ProjectRole
@@ -51,6 +53,25 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 from app.domain.workspace import upstream_conflict
 
+logger = logging.getLogger("cheesex.projects")
+
+
+def _is_a_real_person(handle: str | None) -> bool:
+    """Could this handle ever match a human account?
+
+    `anonymous` is what an unidentified caller resolves to and 芝士's handles
+    are agents; neither can hold owner authority, so neither counts as an owner
+    even though both are non-empty strings.
+
+    Advisory only — this decides whether to LOG, never whether to allow. That
+    is why `looks_like_agent_handle` is fair game here despite its docstring
+    forbidding it in authorization: nothing downstream branches on the answer.
+    """
+    return (
+        bool(handle) and handle != "anonymous" and not looks_like_agent_handle(handle)
+    )
+
+
 router = APIRouter(prefix="/api/projects", tags=["projects"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
@@ -67,9 +88,34 @@ async def create_project(
     # the listing — now scoped to the caller — would hide a project from the very
     # person who just made it.
     who = await resolver.resolve(fallback_handle=body.owner_handle)
+    # An unidentified caller resolves to the literal `anonymous` (auth.py), and
+    # storing that as the owner is worse than storing nothing: it reads like a
+    # person everywhere downstream, and it blocks the ownerless-room escape
+    # hatch, which opens only on an ABSENT owner and deliberately refuses to
+    # judge a handle by its name. NULL is the honest value for "we do not know".
+    owner_handle = body.owner_handle or (
+        who.handle if who.authenticated and who.handle else None
+    )
+    if not _is_a_real_person(owner_handle):
+        # Silence is how this got expensive (#315). A project whose owner is not
+        # a real person can be repaired — PUT /{id}/owner exists now — but
+        # nothing else in the system will ever mention it: all seven readers of
+        # the field fall back to `lead` without erroring, so the gap surfaces
+        # only as "why can only one person do anything here", six days later.
+        #
+        # The check is "a real person", not "not empty", because the empty case
+        # is no longer the one that happens. `resolve()` hands back the literal
+        # handle `anonymous` rather than nothing, so an unidentified creator now
+        # produces a *populated* owner column that still matches no user — the
+        # same collapse onto `lead`, wearing a value.
+        logger.warning(
+            "project created without a real owner name=%r owner=%r",
+            body.name,
+            owner_handle,
+        )
     project = await ProjectService(db).create(
         name=body.name,
-        owner_handle=body.owner_handle or (who.handle if who.handle else None),
+        owner_handle=owner_handle,
         ai_mode=body.ai_mode,
         expert_role=body.expert_role,
         team_id=body.team_id,
@@ -101,14 +147,32 @@ async def list_projects(
             )
             total = len(projects)
         else:
-            # The unauthenticated surface is left exactly as it was. Every 2.0
-            # route on this deployment is reachable without a credential
-            # (handle-fallback, Phase 0), so making THIS one the exception would
-            # not protect anything — a caller could simply not authenticate.
-            # Tightening that surface is a decision about all of them, not a
-            # side effect of scoping a sidebar. Real users are logged in, and
-            # they are who this scoping is for.
-            projects, total = await service.list_all()
+            # 认不出人 ≠ 认识所有人。This used to return `service.list_all()`,
+            # on the argument that every 2.0 route is reachable without a
+            # credential anyway, so tightening one of them protects nothing.
+            # That argument is wrong here, and measurably so: the failure mode
+            # is not "an anonymous stranger browses", it is "a LOGGED-IN user's
+            # token lapsed". Measured on dev 2026-08-12 — same browser, same
+            # second: a valid token returns 1 project, `Bearer not.a.jwt`
+            # returns 12, including four other people's. The 2.0 access token
+            # lives about three minutes and this fetch layer has no refresh
+            # (it is raw `fetch`, so the axios 401 interceptor never sees it),
+            # so every user crosses that boundary constantly — which is exactly
+            # what「有时候左边栏冒出一堆不是我的项目」was.
+            #
+            # Whatever else is open, THIS route's meaning without `team_id` is
+            # "the caller's OWN projects" — with no caller, the honest answer is
+            # none, not all.
+            #
+            # But "none" is only honest for a caller who presented nothing. The
+            # user this bug was actually about DID present a token; it just
+            # failed. Answering them 200-with-nothing swaps one undetectable
+            # wrong answer for another — measured on dev 2026-08-12: a bearer
+            # with a bad signature got `200 n=0` here while the same token got
+            # 401 from `topic-unread`. So the sidebar sat empty until some other
+            # route happened to 401 and trip the refresh. Say it here instead.
+            resolver.reject_failed_credential(who)
+            projects, total = [], 0
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))
 
@@ -456,17 +520,20 @@ async def set_sandbox_image(project_id: uuid.UUID, body: dict, db: DbSession) ->
     return ok({"current": current})
 
 
-# --- Quality gate (spec §4.4/§9, eval C2): 平台硬门 configuration -------------
+# --- Project stewardship: who answers for a project ---------------------------
 
 
-async def require_quality_gate_admin(
+async def require_project_steward(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> None:
-    """Only a verified human project owner/lead may configure executable policy.
+) -> str:
+    """The verified human owner/lead of a project, or a 404 that hides it.
 
-    A sandbox-scoped agent token is deliberately not accepted here: allowing an
-    agent to choose the command that judges its own work is both a review bypass
-    and, before gate isolation, a host-command primitive.
+    A sandbox-scoped agent token is deliberately not accepted: an agent that
+    could configure the command judging its own work has a review bypass (and,
+    before gate isolation, a host-command primitive), and an agent that could
+    reassign ``owner_handle`` could hand itself the project.
+
+    Returns the caller's handle so a route can record who acted.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     if not actor.authenticated or actor.via != "token" or actor.is_agent:
@@ -476,19 +543,84 @@ async def require_quality_gate_admin(
     if project is None:
         raise NotFoundError("Project not found")
     if project.owner_handle == handle:
-        return
+        return handle
     member = await MemberRepository(db).get(project_id=project_id, user_handle=handle)
     if member is not None and member.role == ProjectRole.lead:
-        return
+        return handle
     # Conceal project existence from anonymous callers and outsiders.
     raise NotFoundError("Project not found")
 
 
+@router.put("/{project_id}/owner")
+async def set_project_owner(
+    project_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    steward: Annotated[str, Depends(require_project_steward)],
+) -> dict:
+    """Hand the project to someone else — or claim it when nobody holds it.
+
+    ``owner_handle`` had seven readers and exactly one writer: ``POST /projects``.
+    A project created without one could therefore never acquire one, and on the
+    dogfood project it never did (#315): the field sat NULL for six days while
+    every one of those seven readers quietly fell back to ``lead``, collapsing
+    every owner-level decision onto one person and reporting no error anywhere.
+
+    The new owner must already be on the project roster. Not ceremony — the
+    roster is what ``authorize_topic_access`` reads, so handing the project to
+    someone outside it produces an owner who cannot open the project's topics,
+    which is a worse state than the NULL this route exists to escape.
+    """
+    handle = str(body.get("owner_handle") or "").strip()
+    if not handle:
+        raise ValidationError("owner_handle 不能为空")
+    project = await ProjectRepository(db).get(project_id)
+    if project is None:
+        raise NotFoundError("Project not found")
+    if handle != project.owner_handle:
+        member = await MemberRepository(db).get(
+            project_id=project_id, user_handle=handle
+        )
+        if member is None:
+            raise ValidationError(
+                f"{handle} 不是这个项目的成员——请先把 TA 加进项目成员，再转交"
+            )
+    previous = project.owner_handle
+    project.owner_handle = handle
+    await db.flush()
+    # Ownership moves are rare, consequential, and (per #315) previously
+    # impossible — worth a permanent record of who moved it and from what.
+    logger.info(
+        "project owner set project=%s from=%s to=%s by=%s",
+        project_id,
+        previous,
+        handle,
+        steward,
+    )
+    return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
+
+
+# --- Quality gate (spec §4.4/§9, eval C2): 平台硬门 configuration -------------
+
+
+async def require_quality_gate_admin(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> None:
+    """Only a verified human project owner/lead may configure executable policy."""
+    await require_project_steward(project_id, db, resolver)
+
+
 @router.get("/{project_id}/quality-gate")
 async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The project's 硬门 settings: `check_command` (run in the topic workspace
-    before an accept card reaches the reviewer; empty = no gate) and
-    `approvals_required` (distinct approvals an accept needs; default 1)."""
+    """The project's 硬门 settings: `check_command` and `approvals_required`
+    (distinct approvals an accept needs; default 1).
+
+    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): `check_command`
+    is RETIRED. It used to run in the topic workspace before a card reached the
+    reviewer; that mechanism is gone — a card is the view of a PR and real CI on
+    that PR decides. The value is still stored and returned (round-trip stays
+    working, a later stage clears it) but nothing runs it any more.
+    `approvals_required` is unaffected."""
     from app.domain.review.services import approvals_required_of, check_command_of
 
     project = await ProjectRepository(db).get(project_id)

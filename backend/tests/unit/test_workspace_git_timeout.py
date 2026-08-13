@@ -203,6 +203,50 @@ class TestSyncSharedCheckout:
         assert (repo / "f.txt").read_text() == "one\n"
         assert _rev_parse(repo, "HEAD") == main_sha
 
+    def test_discarded_local_modifications_are_named_in_the_log(self, tmp_path, caplog):
+        """Discarding is the point — but the shared tree is writable
+        (`write_file`/`exec_in_sandbox` with topic_id=None both land here and
+        nothing ever commits them), so a discard can destroy something a human
+        typed. The forced checkout must therefore say what it threw away:
+        trading "permanently fails" for "silently loses data" would be a net
+        loss, since the second is the harder one to diagnose."""
+        repo = self._repo(tmp_path)
+        (repo / "kept.txt").write_text("v1\n")
+        (repo / "also-kept.txt").write_text("v1\n")
+        _git_in(repo, "add", "kept.txt", "also-kept.txt")
+        _git_in(repo, "commit", "-q", "-m", "one")
+        sha = _rev_parse(repo, "HEAD")
+        (repo / "kept.txt").write_text("someone's unsaved work\n")
+        (repo / "also-kept.txt").write_text("and more\n")
+        # Untracked files survive both the forced checkout and the reset, so
+        # naming one here would be a false alarm.
+        (repo / "untracked.txt").write_text("survives\n")
+
+        with caplog.at_level("WARNING", logger=ws.logger.name):
+            ws._sync_shared_checkout(repo, "main", sha)
+
+        warnings = "\n".join(
+            r.getMessage() for r in caplog.records if r.levelname == "WARNING"
+        )
+        assert "kept.txt" in warnings
+        assert "also-kept.txt" in warnings
+        assert "untracked.txt" not in warnings
+        assert (repo / "untracked.txt").exists()
+
+    def test_a_clean_shared_tree_logs_no_discard_warning(self, tmp_path, caplog):
+        """The warning must mean something when it appears — a sync that threw
+        nothing away has to stay silent, or the log is noise."""
+        repo = self._repo(tmp_path)
+        (repo / "f.txt").write_text("v1\n")
+        _git_in(repo, "add", "f.txt")
+        _git_in(repo, "commit", "-q", "-m", "one")
+        sha = _rev_parse(repo, "HEAD")
+
+        with caplog.at_level("WARNING", logger=ws.logger.name):
+            ws._sync_shared_checkout(repo, "main", sha)
+
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
     def test_stale_lock_is_cleared_and_checkout_proceeds(self, tmp_path):
         repo = self._repo(tmp_path)
         sha = subprocess.run(  # noqa: S607

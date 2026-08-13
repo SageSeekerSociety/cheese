@@ -105,6 +105,33 @@ for _f in $COMPOSE_OVERLAYS; do
   log "overlay: $_f"
 done
 
+# An unpinned SANDBOX_TOKEN makes every restart deafen every sandbox.
+#
+# `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per PROCESS when the
+# env does not pin it. That secret signs the scoped hook tokens, and a box bakes
+# its token in at CREATION — so a restart re-signs with a new secret and every
+# existing container's hook is 401'd at once. The turn then runs to its ceiling
+# producing NOTHING: no output, no tools, indistinguishable from a model that
+# never spoke, which is exactly why this cost a full day to find (#316).
+#
+# The backend now rebuilds such a box and says so at boot, but the box loses its
+# tmux session to do it — so this is still worth catching one layer earlier,
+# where someone is actually watching. Warn, never fail: a deploy that refuses to
+# proceed over a config preference is a worse outage than the one it prevents.
+#
+# Only greps for the key's presence — the value is a secret and never printed.
+# Not applicable to app-only boxes (prod), which run no sibling containers.
+if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
+  _envf="${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}"
+  if [ -r "$_envf" ] && ! grep -Eq '^[[:space:]]*SANDBOX_TOKEN=.+' "$_envf"; then
+    log "WARNING: SANDBOX_TOKEN is not pinned in $_envf — the scoped-token"
+    log "         signing secret is regenerated on every restart, so every"
+    log "         existing sandbox's hook token stops verifying and its box"
+    log "         must be rebuilt (losing that topic's tmux session). Pin it"
+    log "         (and keep the metering proxy's CHEESE_SCOPED_SECRET equal)."
+  fi
+fi
+
 case "$PULL_ATTEMPTS" in
   ''|*[!0-9]*|0) fail "DEPLOY_PULL_ATTEMPTS must be a positive integer (got: '$PULL_ATTEMPTS')" ;;
 esac

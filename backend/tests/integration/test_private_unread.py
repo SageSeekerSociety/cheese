@@ -12,6 +12,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from tests.integration.conftest import session_auth_headers
 
 
 def _project(client) -> str:
@@ -44,11 +45,33 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
 
 
 def _private_unread(client, project_id: str, handle: str) -> dict:
+    # Per-person, like the topic badge map: authenticate as the handle asked for.
     r = client.get(
-        f"/api/projects/{project_id}/private-unread", params={"handle": handle}
+        f"/api/projects/{project_id}/private-unread",
+        params={"handle": handle},
+        headers=session_auth_headers(handle),
     )
     assert r.status_code == 200
     return r.json()["data"]
+
+
+def test_one_person_cannot_read_anothers_dm_badges(client):
+    """Who you are DMing is private — naming someone else must not read it."""
+    project_id = _project(client)
+    dm = _dm(client, project_id, "mentor-1", "mentor-2")
+    _seed_message(client, project_id, dm, "mentor-2")
+
+    r = client.get(
+        f"/api/projects/{project_id}/private-unread",
+        params={"handle": "mentor-1"},
+        headers=session_auth_headers("user-1"),
+    )
+    assert r.status_code == 403
+    # ...and with no credential at all.
+    r = client.get(
+        f"/api/projects/{project_id}/private-unread", params={"handle": "mentor-1"}
+    )
+    assert r.status_code == 401
 
 
 def test_peer_dm_unread_is_keyed_by_the_other_party(client):
@@ -78,7 +101,11 @@ def test_opening_the_dm_clears_it_and_new_messages_light_it_again(client):
     assert _private_unread(client, project_id, "user-1") == {"mentor-1": 1}
 
     # Opening a DM bumps the same read cursor a topic uses.
-    r = client.post(f"/api/topics/{dm}/read", json={"handle": "user-1"})
+    r = client.post(
+        f"/api/topics/{dm}/read",
+        json={"handle": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
     assert r.status_code == 200
     assert _private_unread(client, project_id, "user-1") == {}
     # The peer's own badge is untouched by my reading.
@@ -113,6 +140,8 @@ def test_group_topics_never_appear_in_the_private_map(client):
     assert _private_unread(client, project_id, "user-1") == {}
     # ...while the topic-keyed map still reports it, unchanged.
     r = client.get(
-        f"/api/projects/{project_id}/topic-unread", params={"handle": "user-1"}
+        f"/api/projects/{project_id}/topic-unread",
+        params={"handle": "user-1"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"].get(topic_id) == 1

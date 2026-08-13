@@ -6,7 +6,6 @@ Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照
 话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
 """
 
-import asyncio
 import contextlib
 import logging
 import os
@@ -19,6 +18,7 @@ import uuid
 from collections.abc import Iterator
 from pathlib import Path
 
+from app.core.background import spawn
 from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
@@ -483,6 +483,82 @@ def sandbox_vcs_mounts(
     ]
 
 
+# Container mount point of a project's whole `.worktrees/<project>` tree in the
+# long-lived tmux sandbox. One mount covering every topic's worktree AND the
+# shared dependency stores below, because hardlinks cannot cross bind mounts
+# (link(2) → EXDEV even on the same filesystem): pnpm/uv only dedup against a
+# store that lives on the SAME mount as the tree they install into. Verified
+# live on the dev box — a cross-mount ln inside a sandbox fails with "Invalid
+# cross-device link", and pnpm/uv then silently fall back to full copies, which
+# is how one project's 220 worktrees came to hold 236GB.
+SANDBOX_TOPICS_ROOT = "/topics"
+
+# Shared per-project dependency stores, as (host dirname, container env var).
+# Dot-named so they can never collide with a topic worktree dir (`topic_<hex>`)
+# or the merge-worktree root (`_merge`). pnpm reads npm_config_store_dir (its
+# documented env form of store-dir); uv reads UV_CACHE_DIR. Both install by
+# hardlinking out of their store when it is on the same filesystem/mount, so
+# every topic's node_modules/.venv shares one physical copy per file.
+_SANDBOX_STORES = (
+    (".pnpm-store", "npm_config_store_dir"),
+    (".uv-cache", "UV_CACHE_DIR"),
+)
+
+
+def sandbox_topic_workdir(branch: str) -> str:
+    """A topic's worktree path inside the tmux sandbox — its REAL path under the
+    project-tree mount (not a per-topic remap), so hardlinks to the shared
+    stores on the same mount work."""
+    return f"{SANDBOX_TOPICS_ROOT}/{branch.replace('/', '_')}"
+
+
+def gate_workdir_for(worktree: Path) -> str:
+    """Where a gate container must mount ``worktree`` so its venv still works.
+
+    Not a free choice: it has to be the SAME absolute path the agent's own
+    sandbox used, because that is the path baked into every console script the
+    agent's `uv sync` created. `_worktree_path` names the directory
+    ``branch.replace("/", "_")`` and `sandbox_topic_workdir` builds the
+    container path from exactly that, so the host directory's own name is
+    enough — a gate needs no branch argument to agree with the sandbox.
+    """
+    return f"{SANDBOX_TOPICS_ROOT}/{worktree.name}"
+
+
+def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
+    """`docker run` args mounting the project's `.worktrees` tree (topics +
+    shared stores, one mount — see SANDBOX_TOPICS_ROOT) plus the jj/git store
+    mounts anchored to the topic's in-container workdir, plus the store env.
+
+    Ensures the store dirs exist host-side, writable by the sandbox's non-root
+    `node` user (the backend may run as a different uid; the stores are filled
+    from inside containers).
+
+    Isolation note: every topic sandbox of a project sees (and can write) its
+    sibling topics' worktrees. That is not a new trust boundary — the same
+    containers already share the project's writable `.jj`/`.git` stores, so
+    same-project topics were never isolated from each other; cross-project
+    isolation is unchanged."""
+    root = _worktree_path(project_id, branch).parent
+    root.mkdir(parents=True, exist_ok=True)
+    env_args: list[str] = []
+    for dirname, env_var in _SANDBOX_STORES:
+        store = root / dirname
+        store.mkdir(exist_ok=True)
+        try:  # the sandbox's non-root `node` user fills the store
+            os.chmod(store, 0o777)
+        except OSError:
+            pass
+        env_args += ["-e", f"{env_var}={SANDBOX_TOPICS_ROOT}/{dirname}"]
+    workdir = sandbox_topic_workdir(branch)
+    return [
+        "-v",
+        f"{root}:{SANDBOX_TOPICS_ROOT}",
+        *env_args,
+        *sandbox_vcs_mounts(project_id, branch, container_workdir=workdir),
+    ]
+
+
 def audit_workspace_ownership() -> list[str]:
     """Boot-time check that this process can actually use the workspace it was
     handed — one problem string per finding, empty when healthy.
@@ -820,6 +896,27 @@ def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     return _git(repo, "diff", f"{base}...{branch}")
 
 
+def topic_added_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
+    """Paths a topic's branch ADDS relative to the base — not modifies.
+
+    Additions specifically, because the caller asking is looking for two
+    branches that each introduce a NEW alembic revision (#314). Two branches
+    editing the same existing file is ordinary; two branches each creating a
+    migration is a fork of the chain waiting to happen, and it is the added-file
+    list that tells them apart.
+
+    Empty (never an exception) when the branch doesn't exist yet: a topic that
+    has not written anything cannot collide with anything.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_topic(topic_id)
+    if not _branch_exists(repo, branch):
+        return []
+    base = _base_branch(repo)
+    out = _git(repo, "diff", "--name-only", "--diff-filter=A", f"{base}...{branch}")
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
 def _merge_worktree_path(project_id: uuid.UUID) -> Path:
     """Root for throwaway merge worktrees — sibling to (never colliding with)
     the topic worktrees under `.worktrees/{project}/`, which are all named
@@ -950,6 +1047,43 @@ _SHARED_CHECKOUT_ATTEMPTS = 5
 _SHARED_CHECKOUT_RETRY_DELAY_S = 0.2
 
 
+def _warn_about_discarded_changes(repo: Path) -> None:
+    """Name whatever the shared-tree sync is about to throw away.
+
+    Discarding is the sync's whole point — the shared directory mirrors the
+    base tip and is not where work is kept. But it is not read-only either:
+    `write_file` and `exec_in_sandbox` both write straight into it when called
+    with `topic_id=None`, and nothing ever commits those writes (the only
+    snapshot path, `snapshot_worktree`, requires a topic and runs in that
+    topic's own jj worktree). So a discard here can silently destroy something
+    a human typed in the 文件 panel. Failing loudly was at least visible;
+    deleting silently would be a net loss, since it is the harder of the two
+    to diagnose after the fact.
+
+    Best-effort by construction: a status that fails must never become the
+    thing that wedges the sync, so every error is swallowed. Tracked
+    modifications only (`-uno`) — untracked files survive both the forced
+    checkout and the `reset --hard`, so naming them would be a false alarm.
+    `--no-optional-locks` keeps this from taking `index.lock` itself, which
+    the retry loop right below exists to wait out.
+    """
+    try:
+        dirty = _git(
+            repo, "--no-optional-locks", "status", "--porcelain", "-uno", timeout=10
+        ).strip()
+    except (ValidationError, OSError):
+        return
+    if dirty:
+        logger.warning(
+            "shared checkout sync in %s is discarding uncommitted local "
+            "changes to tracked files (the shared tree is a mirror of the "
+            "base tip, not storage — but write_file/exec_in_sandbox with "
+            "topic_id=None can write here):\n%s",
+            repo,
+            dirty,
+        )
+
+
 def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     """The ONE piece of a merge that must still touch the shared repo
     directory: point its own working tree at the new base tip, since
@@ -972,6 +1106,7 @@ def _sync_shared_checkout(repo: Path, base: str, sha: str) -> None:
     any process on the host — and only then cleared, with a retry loop for
     the (much more likely) case of two accepts landing here within
     milliseconds of each other, which needs a brief wait, not a lock clear."""
+    _warn_about_discarded_changes(repo)
     last_exc: ValidationError | None = None
     for attempt in range(_SHARED_CHECKOUT_ATTEMPTS):
         lock = repo / ".git" / "index.lock"
@@ -1394,12 +1529,14 @@ def push_back(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         hook_started = True
         # Report the eventual result back into the topic timeline without
         # making this call wait for it (accept() must return immediately).
-        try:
-            asyncio.get_running_loop().create_task(
-                watch_dogfood_push(topic_id, proc, log, log_offset, branch)
-            )
-        except RuntimeError:
-            pass  # no running loop (e.g. sync tests/scripts) — nothing to schedule onto
+        # `spawn` holds a strong reference (asyncio keeps only a weak one) and
+        # is a no-op with no running loop, e.g. sync tests/scripts. This watcher
+        # outlives a whole subprocess, so it is precisely the shape that can be
+        # collected mid-await, taking the topic's push result with it.
+        spawn(
+            watch_dogfood_push(topic_id, proc, log, log_offset, branch),
+            name=f"dogfood push watch topic={topic_id}",
+        )
     return {"pushed": True, "mode": "branch", "branch": branch, "hook": hook_started}
 
 
@@ -1904,6 +2041,10 @@ def exec_in_sandbox(
                 "1",
                 "--pids-limit",
                 "256",
+                # A crashing process must not dump its whole address space into
+                # the bind-mounted worktree (frontend cores were 1-2GB each).
+                "--ulimit",
+                "core=0",
                 "-v",
                 f"{tree}:/work",
                 *vcs_mounts,
@@ -2051,11 +2192,35 @@ def run_check_command(
     environment/secrets, and no network. Failure to start Docker fails the gate
     closed -- there is intentionally no host-execution fallback.
 
+    The worktree is mounted at the SAME path the agent's own sandbox uses --
+    ``gate_workdir_for(cwd)``, which reproduces ``sandbox_topic_workdir``. This
+    is not cosmetic: uv/pip console scripts (pyright, pytest, alembic) bake the
+    absolute path of their venv into their shebang, so a worktree the agent
+    built at one path and the gate mounts at another has a .venv whose tools
+    cannot execute. With no network in here, nothing can be reinstalled to
+    repair that -- which is exactly how the gate ended up running lint only and
+    reporting a green card.
+
+    This used to say ``/work`` and mount there, and that was true right up
+    until the sandbox moved to the topic's REAL path under the ``/topics``
+    mount (tmux_provider: "not a /work remap" -- hardlinks cannot cross bind
+    mounts). Nothing failed loudly at that moment: the gate kept starting, ruff
+    kept passing (a native binary, no shebang), and every other check went
+    BLOCKED, so under CHECK_STRICT every card came back "检查没能跑起来" with a
+    DNS error from check.sh trying to `uv sync` a replacement venv it could
+    never download. `test_gate_workdir.py` pins the two paths together so the
+    next move of either side is a red test rather than a dead gate.
+
+    ``CHECK_STRICT=1`` tells a check command that this is a gate and not a
+    developer's laptop: a check that can't run must not be reported as passed
+    (.claude/scripts/check.sh turns that into exit code 2 -> gate_blocked).
+
     Full output goes to ``log_path`` while the returned tail remains bounded.
     """
     from datetime import UTC, datetime
 
     resolved_cwd = cwd.resolve(strict=True)
+    gate_workdir = gate_workdir_for(resolved_cwd)
     container_name = f"cheesex-gate-{uuid.uuid4().hex[:12]}"
     temporary_log = log_path is None
     if temporary_log:
@@ -2084,6 +2249,9 @@ def run_check_command(
         "no-new-privileges",
         "--pids-limit",
         str(settings.quality_gate_pids_limit),
+        # No GB-scale core files into the bind-mounted workspace on a crash.
+        "--ulimit",
+        "core=0",
         "--memory",
         f"{settings.quality_gate_memory_mb}m",
         "--cpus",
@@ -2098,10 +2266,12 @@ def run_check_command(
         "TMPDIR=/tmp",
         "--env",
         "PYTHONDONTWRITEBYTECODE=1",
+        "--env",
+        "CHECK_STRICT=1",
         "--mount",
-        f"type=bind,source={resolved_cwd},target=/workspace",
+        f"type=bind,source={resolved_cwd},target={gate_workdir}",
         "--workdir",
-        "/workspace",
+        gate_workdir,
         settings.quality_gate_image,
         "sh",
         "-lc",

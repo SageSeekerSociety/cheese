@@ -2,17 +2,16 @@
 
 The platform's GitHub credential is the cheesex-app private key. It stays on
 the backend and is NEVER handed to a sandbox. A sandbox that wants to look at
-CI/CD calls ``/sandbox/github-token`` with its scoped cheese token; the
-backend mints an **installation access token narrowed to read-only**
-(actions / checks / metadata) and returns that instead. GitHub expires it
-after an hour; minting is cached until shortly before expiry, so a burst of
-calls costs one upstream mint.
+the repo it works on calls ``/sandbox/github-token`` with its scoped cheese
+token; the backend mints an **installation access token narrowed to read-only**
+and returns that instead. GitHub expires it after an hour; minting is cached
+until shortly before expiry, so a burst of calls costs one upstream mint.
 
 Same containment shape as the LLM gateway path (``llm_proxy``): the sandbox
 only ever holds a credential that is short-lived, scoped, and centrally
-revocable. The App's write permissions (contents / pull_requests, reserved
-for PR-based accept, #188 §5.1) are NOT reachable through this module — the
-narrowing happens at mint time, server-side.
+revocable. The App's write permissions (contents / pull_requests / workflows,
+reserved for PR-based accept, #188 §5.1) are NOT reachable through this
+module — the narrowing happens at mint time, server-side.
 
 Which *installation* to mint from is resolved per-project (#192): the App
 id and private key are one platform-wide credential, but each connected repo
@@ -22,6 +21,7 @@ has its own installation_id, looked up from ``project_git_installations``.
 import asyncio
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,8 +32,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.project.repositories import ProjectGitInstallationRepository
 
-# What a sandbox may do with GitHub: look, not touch.
-_READONLY_PERMISSIONS = {"actions": "read", "checks": "read", "metadata": "read"}
+# What a sandbox may do with GitHub: look, never touch. Every level here is
+# "read", and a test pins that — it is the one line standing between an agent
+# and the App's contents/pull_requests/workflows write grants.
+#
+# `issues`, `contents` and `pull_requests` are on this list because an agent
+# that cannot read the issue it was asked to fix, a file outside its own
+# worktree, or the review comments on its own PR has to ask a human to paste
+# them in. That cost was paid for real: teammates hand-copying issue bodies
+# into the chat because "cheese 没有权限看".
+_SANDBOX_PERMISSIONS = {
+    "actions": "read",
+    "checks": "read",
+    "contents": "read",
+    "issues": "read",
+    "metadata": "read",
+    "pull_requests": "read",
+}
 # What the BACKEND ITSELF may do for PR-based accept (#188 §5.1): push the topic
 # branch, open and merge the PR. Never exposed through any sandbox-facing route.
 _WRITE_PERMISSIONS = {"contents": "write", "metadata": "read", "pull_requests": "write"}
@@ -41,6 +56,26 @@ _WRITE_PERMISSIONS = {"contents": "write", "metadata": "read", "pull_requests": 
 _JWT_TTL_S = 540
 # Re-mint when the cached token has less life left than a long agent turn.
 _REFRESH_MARGIN_S = 20 * 60
+# GitHub rejects the WHOLE mint with 422 when any requested permission was
+# never granted to the installation, so the sandbox set is intersected with
+# what the App actually holds instead of being sent blind. Asking for a lower
+# level than granted is fine (contents: write installed → contents: read
+# minted), asking for an absent one is not. The payoff: the day an org admin
+# adds "Issues: Read" to cheesex-app, sandboxes pick it up on the next mint —
+# no deploy, no code change.
+_PERMISSION_LEVELS = {"read": 1, "write": 2, "admin": 3}
+# How long a fetched grant map is trusted. Grants only change when a human
+# edits the App, so this is really "how fast that edit reaches sandboxes".
+_GRANTS_TTL_S = 10 * 60
+
+
+def _narrow(wanted: dict[str, str], granted: dict[str, str]) -> dict[str, str]:
+    """`wanted`, minus every permission the installation does not hold."""
+    return {
+        name: level
+        for name, level in wanted.items()
+        if _PERMISSION_LEVELS.get(granted.get(name, ""), 0) >= _PERMISSION_LEVELS[level]
+    }
 
 
 class GitHubAppError(RuntimeError):
@@ -68,6 +103,10 @@ class GitHubAppTokens:
         # One cache slot per permission set: {slot: (token, expires_epoch)}.
         self._cached: dict[str, tuple[str, float]] = {}
         self._lock = asyncio.Lock()
+        # What GitHub says this installation was granted, and when we asked.
+        self._grants: dict[str, str] | None = None
+        self._grants_at = 0.0
+        self._grants_lock = asyncio.Lock()
 
     @property
     def api_base(self) -> str:
@@ -88,7 +127,7 @@ class GitHubAppTokens:
 
     async def readonly_token(self) -> tuple[str, str]:
         """A read-only installation token and its ISO expiry (sandbox-facing)."""
-        return await self._mint("readonly", _READONLY_PERMISSIONS)
+        return await self._mint("readonly", self.sandbox_permissions)
 
     async def write_token(self) -> tuple[str, str]:
         """A contents+pull_requests write token — BACKEND-INTERNAL ONLY.
@@ -96,10 +135,76 @@ class GitHubAppTokens:
         Used by PR-based accept to push the topic branch and open/merge the PR.
         No route may ever return this to a caller.
         """
-        return await self._mint("write", _WRITE_PERMISSIONS)
+        return await self._mint("write", self._write_permissions)
 
-    async def _mint(self, slot: str, permissions: dict[str, str]) -> tuple[str, str]:
+    async def sandbox_permissions(self) -> dict[str, str]:
+        """What a sandbox token actually carries on this installation.
+
+        `_SANDBOX_PERMISSIONS` is what we ask for; this is what survives the
+        intersection with the installation's grants. The sandbox-facing route
+        reports it verbatim so an agent learns what it may read from the
+        payload instead of from a 403 halfway through a turn.
+        """
+        return _narrow(_SANDBOX_PERMISSIONS, await self._granted_permissions())
+
+    async def _write_permissions(self) -> dict[str, str]:
+        """The backend-internal write set, sent to GitHub unnarrowed.
+
+        Deliberately not intersected like the sandbox set: if an admin revoked
+        `contents: write`, narrowing would hand back a token that dies later at
+        `git push` with an unexplained 403, while sending it as-is makes GitHub
+        say "not granted" at the mint, where the message is readable.
+        """
+        return _WRITE_PERMISSIONS
+
+    async def _granted_permissions(self) -> dict[str, str]:
+        """Permissions this installation holds, cached for `_GRANTS_TTL_S`.
+
+        Guarded by its own lock, never `self._lock` (which `_mint` holds while
+        calling this) — two locks, one order, no deadlock.
+        """
+        async with self._grants_lock:
+            fresh = time.time() - self._grants_at < _GRANTS_TTL_S
+            if self._grants is not None and fresh:
+                return self._grants
+            try:
+                grants = await self._fetch_granted_permissions()
+            except GitHubAppError:
+                # A transient blip must not silently shrink a sandbox's token:
+                # keep serving the last known map. With nothing cached there is
+                # no honest answer, so the error travels.
+                if self._grants is None:
+                    raise
+                return self._grants
+            self._grants = grants
+            self._grants_at = time.time()
+            return grants
+
+    async def _fetch_granted_permissions(self) -> dict[str, str]:
+        """Ask GitHub what this installation was granted, via the App JWT."""
+        async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/app/installations/{self._installation_id}",
+                headers={
+                    "Authorization": f"Bearer {self._app_jwt()}",
+                    "Accept": "application/vnd.github+json",
+                },
+            )
+        if resp.status_code != 200:
+            raise GitHubAppError(
+                f"GitHub refused to describe the installation "
+                f"(HTTP {resp.status_code}): {resp.text[:200]}"
+            )
+        granted = resp.json().get("permissions") or {}
+        return {k: v for k, v in granted.items() if isinstance(v, str)}
+
+    async def _mint(
+        self, slot: str, resolve: Callable[[], Awaitable[dict[str, str]]]
+    ) -> tuple[str, str]:
         """Mint (or reuse) the installation token for one permission set.
+
+        The set is resolved lazily, inside the cache check, so a burst of calls
+        that all hit a warm token costs nothing upstream at all.
 
         Serialized under a lock so concurrent turns share one mint instead of
         racing GitHub for identical tokens.
@@ -109,6 +214,7 @@ class GitHubAppTokens:
             if cached and cached[1] - time.time() > _REFRESH_MARGIN_S:
                 token, exp = cached
                 return token, _iso(exp)
+            permissions = await resolve()
             async with httpx.AsyncClient(
                 transport=self._transport, timeout=20.0
             ) as client:

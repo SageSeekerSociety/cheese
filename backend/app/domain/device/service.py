@@ -17,13 +17,29 @@ Two invariants (fusion-design §4):
     device; the caller still authorizes the resolved actor against real permissions.
 """
 
+import logging
 import secrets
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
-from app.domain.device.repository import AuthCode, Device, DeviceRepository
+from app.domain.device.health import (
+    DEFAULT_FAILURE_THRESHOLD,
+    DEFAULT_QUARANTINE,
+    Verdict,
+    is_quarantined,
+    judge_failure,
+)
+from app.domain.device.repository import (
+    AuthCode,
+    Device,
+    DeviceRepository,
+    HostHealth,
+    Supply,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class DeviceStatus:
@@ -77,6 +93,7 @@ class DeviceService:
         code_value: str,
         *,
         owner_user_id: int,
+        supply: Supply,
         name: str | None = None,
     ) -> Device:
         """Approve a pending flow on behalf of the logged-in ``owner_user_id``, binding
@@ -86,7 +103,14 @@ class DeviceService:
 
         ``name`` is the human-chosen compute-node name from the approval page; blank
         keeps the name the cli proposed at start (avoids an "unnamed" node).
-        Idempotent: approving an already-approved code returns the same device."""
+        Idempotent: approving an already-approved code returns the same device.
+
+        ``supply`` has NO default on purpose (#282 决定 2). This is the one place a
+        device is minted, so both enrolment entry points must name their answer here
+        as a constant — the human device flow says ``self_hosted``, the MicroCloud
+        enrolment sweep says ``cloud``. 入口决定待遇: a third entry point that forgets
+        is a pyright error, not a machine someone deletes by surprise a year later.
+        Never derive it from what the machine looks like."""
         entry = await self._live_code(code_value)
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)
@@ -99,6 +123,7 @@ class DeviceService:
             token=secrets.token_urlsafe(24),
             owner_user_id=owner_user_id,
             created_at=self._now(),
+            supply=supply,
         )
         await self._repo.save_device(device)
         entry.status = DeviceStatus.APPROVED
@@ -142,8 +167,33 @@ class DeviceService:
         return await self._repo.list_devices_by_owner(owner_user_id)
 
     async def delete_owned(self, device_id: str, *, actor_user_id: int) -> None:
+        """The HUMAN's door: an owner removing their own machine. Always allowed
+        whatever the supply — 「我不想再把这台机器借给平台了」 is not a reclaim."""
         await self._require_owned(device_id, actor_user_id)
         await self._repo.delete_device(device_id)
+
+    async def delete_platform_provisioned(
+        self, device_id: str, *, actor_user_id: int
+    ) -> None:
+        """The PLATFORM's door: disposing of a machine cheese opened itself
+        (#282 决定 2 的不变量).
+
+        Every path where the platform destroys/reclaims compute on its own
+        initiative must come through here, and it RAISES on a self-hosted device
+        rather than skipping. The raise is the point: a reclaim path added later
+        that forgets to ask about supply would otherwise delete a machine the
+        platform never owned, and it would do so silently — the one failure mode
+        #282 exists to prevent. A loud stop is recoverable; a deleted enrolment
+        someone else was running work on is not."""
+        device = await self._repo.get_device(device_id)
+        if device is None:
+            raise NotFoundError("device not found")
+        if device.supply is not Supply.cloud:
+            raise ForbiddenError(
+                f"device {device_id} 的供给形式是 {device.supply}，"
+                "平台不销毁不是自己开的机器（#282 供给形式不变量）"
+            )
+        await self.delete_owned(device_id, actor_user_id=actor_user_id)
 
     async def rename_owned(
         self, device_id: str, name: str, *, actor_user_id: int
@@ -228,6 +278,80 @@ class DeviceService:
         pin is never overwritten (affinity is permanent for the topic's lifetime)."""
         await self._repo.bind_topic_device(topic_id, device_id)
 
+    async def release_topic_device(self, topic_id: uuid.UUID, *, reason: str) -> None:
+        """Drop a topic's pin so it can be re-pinned to another machine (#186 换身体).
+
+        This is the ONLY sanctioned way past ``bind_topic_device``'s write-once rule,
+        and it is deliberately a separate, reason-carrying call rather than a
+        loosening of the resolver: a pin that can be overwritten silently is exactly
+        the original drift bug, where a topic woke up on a different machine with an
+        empty work tree and nobody could tell. The caller must also make the move
+        visible in the room — see ``agent.host_swap``."""
+        logger.warning("releasing topic %s device pin: %s", topic_id, reason)
+        await self._repo.release_topic_device(topic_id)
+
+    # -- machine health / quarantine (#186) --------------------------------
+
+    async def host_health(self, device_id: str) -> HostHealth | None:
+        return await self._repo.get_host_health(device_id)
+
+    async def record_host_failure(
+        self,
+        device_id: str,
+        code: str,
+        *,
+        threshold: int = DEFAULT_FAILURE_THRESHOLD,
+        cooldown: timedelta = DEFAULT_QUARANTINE,
+    ) -> Verdict:
+        """Fold one HOST-SCOPED turn failure into the machine's health and return the
+        verdict. Callers must only pass codes from a ``PlatformFailure`` whose
+        ``host_scoped`` is true — a failure that would follow the topic to any machine
+        says nothing about this one."""
+        verdict = judge_failure(
+            await self._repo.get_host_health(device_id),
+            code,
+            self._now(),
+            threshold=threshold,
+            cooldown=cooldown,
+        )
+        await self._repo.save_host_health(
+            HostHealth(
+                device_id=device_id,
+                consecutive_failures=verdict.consecutive_failures,
+                last_failure_code=verdict.last_failure_code,
+                last_failure_at=verdict.last_failure_at,
+                quarantined_until=verdict.quarantined_until,
+            )
+        )
+        if verdict.quarantined:
+            logger.warning(
+                "device %s quarantined until %s after %s consecutive %s failures",
+                device_id,
+                verdict.quarantined_until,
+                verdict.consecutive_failures,
+                code,
+            )
+        return verdict
+
+    async def record_host_success(self, device_id: str) -> None:
+        """A turn got through on this machine — the streak is broken and any
+        quarantine is moot. Deleting the row is the machine's way back into rotation
+        without anyone having to clear it by hand."""
+        await self._repo.clear_host_health(device_id)
+
+    async def healthy_devices_for_project(
+        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
+    ) -> list[Device]:
+        """The project's machines that are online AND not quarantined — the pool a
+        turn may actually be placed on."""
+        devices = await self.list_devices_for_project(project_id)
+        online = [d for d in devices if is_online(d.device_id)]
+        if not online:
+            return []
+        health = await self._repo.list_host_health([d.device_id for d in online])
+        now = self._now()
+        return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
+
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
         if device is None:
@@ -242,3 +366,22 @@ class DeviceService:
         if not clean:
             raise ValidationError("device name must not be empty")
         return clean
+
+
+def device_service_for_session(session) -> DeviceService:
+    """The DB-backed device service, assembled inside its own domain.
+
+    Callers in other domains need a ``DeviceService`` bound to a session they
+    already own, and the obvious way to get one — importing
+    ``SqlDeviceRepository`` and wiring it up themselves — reaches across a domain
+    boundary into another domain's data layer. ``tests/unit/
+    test_domain_import_guard.py`` forbids exactly that, and it is right to: the
+    repository is an implementation detail this domain gets to change. Building it
+    here keeps the seam at the service.
+
+    The repository import is deferred so importing the service module does not
+    drag SQLAlchemy's mapper configuration in behind it.
+    """
+    from app.domain.device.sql_repository import SqlDeviceRepository
+
+    return DeviceService(SqlDeviceRepository(session))

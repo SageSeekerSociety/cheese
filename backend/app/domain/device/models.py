@@ -4,7 +4,8 @@ Tables mirror the storage-agnostic dataclasses in ``repository.py``:
 ``device`` (enrolled compute machines + durable token), ``device_auth_code``
 (short-lived device-flow codes), ``device_project`` (device↔project assignments),
 ``device_team`` (device↔team bindings — compute belongs to the team, v4) and
-``device_topic`` (a topic's pinned device — affinity, v4). ``SqlDeviceRepository``
+``device_topic`` (a topic's pinned device — affinity, v4) and ``device_health``
+(a machine's rolling failure streak / quarantine — #186). ``SqlDeviceRepository``
 converts between these rows and the dataclasses; the service never sees them.
 """
 
@@ -14,6 +15,7 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     DateTime,
+    Enum,
     ForeignKey,
     Integer,
     String,
@@ -24,6 +26,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps
+from app.domain.device.supply import Supply, Visibility
 
 
 class DeviceRow(Base):
@@ -45,6 +48,24 @@ class DeviceRow(Base):
     # screen), independent of which machine hosts it.
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+
+    # #282 四轴 · 供给形式 / 可见性. Stored, never inferred: the same fact is
+    # reverse-look-up-able through `project_machines.device_id`, and that reverse
+    # lookup IS the bug — see `repository.Supply`. Both server_defaults are the
+    # conservative reading, so rows written by an older revision (and the backfill's
+    # misses) mean "do not touch this machine", never "safe to destroy".
+    supply: Mapped[Supply] = mapped_column(
+        Enum(Supply, native_enum=False, length=16),
+        default=Supply.self_hosted,
+        server_default=Supply.self_hosted.value,
+        nullable=False,
+    )
+    visibility: Mapped[Visibility] = mapped_column(
+        Enum(Visibility, native_enum=False, length=16),
+        default=Visibility.host,
+        server_default=Visibility.host.value,
+        nullable=False,
     )
 
 
@@ -108,4 +129,34 @@ class DeviceTopicRow(Base):
     topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     device_id: Mapped[str] = mapped_column(
         ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+
+class DeviceHealthRow(Base):
+    """Rolling health of one compute machine — the basis for "this body is dead".
+
+    One row per device, written only when something goes wrong: a turn that fails
+    with a HOST-SCOPED platform failure (disk full, machine unreachable) bumps
+    ``consecutive_failures``; any turn that gets through deletes the row. When the
+    streak reaches the threshold the device is QUARANTINED (``quarantined_until``)
+    rather than destroyed — a full disk heals on its own once other topics finish,
+    and destroying a machine to fix a ten-minute problem is the expensive way to be
+    wrong. ``last_failure_code`` makes the streak per-cause: two different failures
+    in a row are two accidents, not a dying machine.
+    """
+
+    __tablename__ = "device_health"
+
+    device_id: Mapped[str] = mapped_column(
+        ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
+    )
+    consecutive_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    last_failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    quarantined_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

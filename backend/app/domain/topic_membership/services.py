@@ -67,8 +67,27 @@ class TopicMemberService:
         )
 
     async def _is_project_steward(self, topic_id: uuid.UUID, actor: str) -> bool:
-        """The project's owner or a project lead — who answer for the whole
-        project, and so for a room inside it that has lost its owner."""
+        """Who may step into a room that has lost its owner.
+
+        Normally the project's owner or a lead — they answer for the whole
+        project, and so for a room inside it.
+
+        But that alone leaves a project with NEITHER a dead end, and such a
+        project is reachable: ``ProjectService.create`` accepts
+        ``owner_handle=None`` and seeds no member rows, so the row can have a
+        NULL owner and no lead at all. Its ownerless topics then have no way out
+        of the product in either direction — only a topic manager may appoint
+        one and there is none, only a steward may step in and there is none, and
+        appointing a project owner needs a steward too. Measured on dev
+        (2026-08-13): 5 of 18 active topics in `cheese 自建` sit with no owner
+        while the project's own ``owner_handle`` is NULL; that project happens to
+        have a lead, which is the only reason it is recoverable.
+
+        So when a project has nobody in charge at all, any of its members may.
+        The widening is deliberately the narrowest one that removes the dead
+        end: it opens only while BOTH the room and the project have no manager,
+        so a project with a lead never has its authority diluted.
+        """
         from app.domain.membership.repositories import MemberRepository
         from app.domain.project.models import ProjectRole
         from app.domain.project.repositories import ProjectRepository
@@ -79,10 +98,24 @@ class TopicMemberService:
         project = await ProjectRepository(self._session).get(topic.project_id)
         if project is not None and project.owner_handle == actor:
             return True
-        membership = await MemberRepository(self._session).get(
-            project_id=topic.project_id, user_handle=actor
+        members = await MemberRepository(self._session).list_for_project(
+            topic.project_id
         )
-        return membership is not None and membership.role == ProjectRole.lead
+        if any(m.role == ProjectRole.lead for m in members if m.user_handle == actor):
+            return True
+        # Last resort: nobody is in charge of this project either.
+        #
+        # "Nobody" is strictly an ABSENT owner — NULL or empty. Not `anonymous`,
+        # even though that is what an unidentified caller resolves to and what
+        # `projects.py::_is_a_real_person` (advisorily) discounts: nothing
+        # reserves that username, so a real account could hold it, and dissolving
+        # a real owner's authority on a name is not a trade this may make. Same
+        # reason the agent-handle SHAPE heuristic stays out of here.
+        if project is None or project.owner_handle:
+            return False
+        if any(m.role == ProjectRole.lead for m in members):
+            return False
+        return any(m.user_handle == actor for m in members)
 
     async def seed(self, topic_id: uuid.UUID, *, owner_handle: str | None) -> None:
         """Seed a newborn topic's roster: the creator becomes owner and 芝士

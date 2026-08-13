@@ -83,4 +83,8 @@ def get_scheduler_service(
 
 @lru_cache
 def get_turn_runner() -> TurnRunner:
-    return TurnRunner(get_broker(), turn_timeout_s=settings.agent_turn_timeout_s)
+    return TurnRunner(
+        get_broker(),
+        turn_timeout_s=settings.agent_turn_timeout_s,
+        first_output_timeout_s=settings.agent_first_output_timeout_s,
+    )

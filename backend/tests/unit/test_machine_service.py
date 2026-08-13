@@ -11,7 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.device.supply import Supply
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import AiStatus, MachineStatus
 from app.domain.machine.services import MachineService, customer_ref, derive_hostname
@@ -174,6 +175,15 @@ class FakeDevices:
         assert device.owner_user_id == actor_user_id
         self.deleted.append(device_id)
         del self.devices[device_id]
+
+    async def delete_platform_provisioned(self, device_id, *, actor_user_id):
+        # Mirrors the real service (#282 决定 2): the platform's reclaim door
+        # refuses anything it did not open. Enforced in the fake too, so a
+        # future caller cannot pass here and fail against real storage.
+        device = self.devices[device_id]
+        if device.supply is not Supply.cloud:
+            raise ForbiddenError(f"{device_id} 的供给形式是 {device.supply}")
+        await self.delete_owned(device_id, actor_user_id=actor_user_id)
 
 
 _UNSET = object()
@@ -507,7 +517,9 @@ async def test_forgetting_an_enrolled_machine_removes_its_device():
         project_id=project_id, requested_by="andy", owner_user_id=42
     )
     machine.device_id = "cloud-device"
-    service._devices.devices[machine.device_id] = SimpleNamespace(owner_user_id=42)
+    service._devices.devices[machine.device_id] = SimpleNamespace(
+        owner_user_id=42, supply=Supply.cloud
+    )
 
     client.machines.clear()
     await service.list_for_project(project_id)
@@ -524,13 +536,43 @@ async def test_forgetting_never_deletes_a_device_owned_by_somebody_else():
         project_id=project_id, requested_by="andy", owner_user_id=42
     )
     machine.device_id = "reassigned-device"
-    service._devices.devices[machine.device_id] = SimpleNamespace(owner_user_id=99)
+    service._devices.devices[machine.device_id] = SimpleNamespace(
+        owner_user_id=99, supply=Supply.cloud
+    )
 
     client.machines.clear()
     await service.list_for_project(project_id)
 
     assert service._devices.deleted == []
     assert "reassigned-device" in service._devices.devices
+
+
+async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(caplog):
+    """#282 供给形式不变量, at the reclaim path that actually runs today.
+
+    `forget` fires from `list_for_project` — a GET. So a `self_hosted` device
+    found here must be refused LOUDLY and the listing must still work: raising
+    would wedge machine listing for the whole project over one bad row. The
+    machine row is still reaped; only the human's box survives.
+    """
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=project_id, requested_by="andy", owner_user_id=42
+    )
+    machine.device_id = "someones-own-box"
+    service._devices.devices[machine.device_id] = SimpleNamespace(
+        owner_user_id=42, supply=Supply.self_hosted
+    )
+
+    client.machines.clear()
+    await service.list_for_project(project_id)
+
+    assert service._devices.deleted == []
+    assert "someones-own-box" in service._devices.devices
+    assert machine not in await service._repo.list_for_project(project_id)
+    assert any("supply=self_hosted" in r.getMessage() for r in caplog.records)
 
 
 # ---- built-in AI channel (→ccproxy, operator guidance) -----------------------

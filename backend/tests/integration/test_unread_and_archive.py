@@ -5,6 +5,7 @@ import asyncio
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from tests.conftest import wait_turns_idle
+from tests.integration.conftest import session_auth_headers
 
 
 def _create_project_and_topic(client, title: str = "话题A") -> tuple[str, str]:
@@ -35,8 +36,11 @@ def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
 
 
 def _unread(client, project_id: str, handle: str) -> dict:
+    # The badge map is per-person: authenticate as the handle being asked for.
     r = client.get(
-        f"/api/projects/{project_id}/topic-unread", params={"handle": handle}
+        f"/api/projects/{project_id}/topic-unread",
+        params={"handle": handle},
+        headers=session_auth_headers(handle),
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -59,8 +63,13 @@ def test_topic_unread_counts_and_read_cursor(client):
     # ...but they do for the other side.
     assert _unread(client, project_id, "mentor-1").get(topic_id) == 2
 
-    # Opening the topic (mark read) clears the badge for that user only.
-    r = client.post(f"/api/topics/{topic_id}/read", json={"handle": "user-1"})
+    # Opening the topic (mark read) clears the badge for that user only. The
+    # cursor belongs to the verified caller; the body handle is just an assertion.
+    r = client.post(
+        f"/api/topics/{topic_id}/read",
+        json={"handle": "user-1"},
+        headers=session_auth_headers("user-1"),
+    )
     assert r.status_code == 200
     assert topic_id not in _unread(client, project_id, "user-1")
     assert _unread(client, project_id, "mentor-1").get(topic_id) == 2
@@ -70,10 +79,20 @@ def test_topic_unread_counts_and_read_cursor(client):
     assert _unread(client, project_id, "user-1").get(topic_id) == 1
 
 
-def test_mark_read_requires_handle(client):
+def test_mark_read_requires_a_verified_caller(client):
+    # The handle used to be required in the body BECAUSE it was the identity;
+    # now identity comes from the credential, so the missing piece is a login.
     _, topic_id = _create_project_and_topic(client)
     r = client.post(f"/api/topics/{topic_id}/read", json={})
-    assert r.status_code == 422
+    assert r.status_code == 401
+    # A signed-in caller needs no body handle at all — the cursor is theirs.
+    r = client.post(
+        f"/api/topics/{topic_id}/read",
+        json={},
+        headers=session_auth_headers("user-1"),
+    )
+    assert r.status_code == 200
+    assert r.json()["data"]["handle"] == "user-1"
 
 
 def test_notifications_unread_count_and_read_all(client):
@@ -98,27 +117,27 @@ def test_notifications_unread_count_and_read_all(client):
 
     r = client.get(
         f"/api/projects/{project_id}/notifications/unread-count",
-        params={"target_handle": "user-1"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["unread"] == 2
 
     # 全部标记已读 marks everything visible to user-1 (incl. the silent one).
     r = client.post(
         f"/api/projects/{project_id}/notifications/read-all",
-        params={"target_handle": "user-1"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["marked"] == 3
 
     r = client.get(
         f"/api/projects/{project_id}/notifications/unread-count",
-        params={"target_handle": "user-1"},
+        headers=session_auth_headers("user-1"),
     )
     assert r.json()["data"]["unread"] == 0
 
     # someone-else's notification is untouched.
     r = client.get(
         f"/api/projects/{project_id}/notifications/unread-count",
-        params={"target_handle": "someone-else"},
+        headers=session_auth_headers("someone-else"),
     )
     assert r.json()["data"]["unread"] == 1
 

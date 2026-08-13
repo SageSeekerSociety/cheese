@@ -105,7 +105,14 @@ class OAuthConnectionRepository:
         access_token: str | None,
         refresh_token: str | None,
         token_expires: datetime | None,
+        raw_profile: dict | None = None,
     ) -> None:
+        """``raw_profile=None`` leaves the stored profile alone.
+
+        That default matters: most callers here are silent token refreshers
+        that never talked to the provider's user endpoint, and overwriting the
+        profile with what they don't have would erase it.
+        """
         stmt = select(UserOAuthConnection).where(
             UserOAuthConnection.id == connection_id
         )
@@ -115,5 +122,7 @@ class OAuthConnectionRepository:
             entity.access_token = access_token
             entity.refresh_token = refresh_token
             entity.token_expires = token_expires
+            if raw_profile is not None:
+                entity.raw_profile = raw_profile
             entity.updated_at = datetime.now(UTC)
             await self._session.flush()

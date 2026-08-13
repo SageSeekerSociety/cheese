@@ -15,7 +15,12 @@ from sqlalchemy import select
 from app.common.auth import decode_token
 from app.core.config import settings
 from app.core.crypto import decrypt_text, encrypt_text
-from app.core.github_install_state import mint_account_link_state
+from app.core.github_install_state import (
+    ACCOUNT_LINK_TTL_S,
+    mint_account_link_state,
+)
+from app.core.redis import get_redis_client
+from app.core.single_use_state import reserve
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.oauth.services import GitHubProvider, OAuthProviderConfig, OAuthUserInfo
 from tests.conftest import seed_user
@@ -23,6 +28,30 @@ from tests.conftest import seed_user
 
 def _bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+# Namespace copied from the route rather than imported, so that renaming the
+# route's scope shows up here as a red test instead of a silent pass.
+_LINK_SCOPE = "github_account_link"
+
+
+def _link_state(user_id: int, return_project_id: uuid.UUID | None = None) -> str:
+    """A state the callback will actually accept — minted AND reserved.
+
+    Minting alone stopped being enough at #222: the state is single-use now, so
+    a `jti` the server never reserved takes the "already spent" exit. Without
+    this helper every callback below would quietly redirect to invalid_state
+    and these tests would pass while testing nothing.
+
+    `cache_clear` because `get_redis_client` is `@lru_cache`d and its client is
+    bound to whichever loop asked first — here that would be this throwaway
+    `asyncio.run` loop, which the app's own request would then inherit.
+    """
+    minted = mint_account_link_state(user_id, return_project_id=return_project_id)
+    get_redis_client.cache_clear()
+    asyncio.run(reserve(_LINK_SCOPE, minted.jti, ttl_s=ACCOUNT_LINK_TTL_S))
+    get_redis_client.cache_clear()
+    return minted.state
 
 
 def test_authorize_url_requires_login(client):
@@ -52,7 +81,7 @@ def test_callback_garbage_state_redirects_to_root(client):
 
 def test_callback_returns_to_the_originating_project(client):
     pid = uuid.uuid4()
-    state = mint_account_link_state(1, return_project_id=pid)
+    state = _link_state(1, return_project_id=pid)
     # No oauth provider configured → the exchange itself fails, but the
     # redirect must still land on the project that asked, not the root.
     r = client.get(
@@ -113,7 +142,7 @@ class TestAccountLinkTokenPersistence:
 
         token = seed_user(client, "bob_ghlink")
         user_id = int(decode_token(token)["sub"])
-        state = mint_account_link_state(user_id, return_project_id=None)
+        state = _link_state(user_id)
 
         r = client.get(
             "/api/users/me/github-account/callback",
@@ -161,7 +190,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "x",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -188,7 +217,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "x",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -204,7 +233,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "y",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -230,7 +259,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "bad",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -274,7 +303,7 @@ class TestAccountLinkTokenPersistence:
                 "/api/users/me/github-account/callback",
                 params={
                     "code": "x",
-                    "state": mint_account_link_state(owner_id, return_project_id=None),
+                    "state": _link_state(owner_id),
                 },
                 follow_redirects=False,
             )
@@ -284,7 +313,7 @@ class TestAccountLinkTokenPersistence:
                 "/api/users/me/github-account/callback",
                 params={
                     "code": "y",
-                    "state": mint_account_link_state(victim_id, return_project_id=None),
+                    "state": _link_state(victim_id),
                 },
                 follow_redirects=False,
             )
@@ -502,3 +531,113 @@ class TestAccountLinkTokenPersistence:
                 assert await get_github_user_token_for_handle(session, handle) is None
 
         asyncio.run(_scenario())
+
+
+class TestTheConnectionShowsAName:
+    """设置页上那行「已连接 …」要给人看，不是给 GitHub 看。
+
+    dev 上实测显示的是「已连接 222958366」——一串 GitHub 数字 id。前端本来就写了
+    `login ?? providerUserId` 的降级，所以病根在后端：连接的序列化从
+    `raw_profile["login"]` 取名字，而这条绑定流程存 profile 时只挑了 email 和
+    name，把 GitHub 的 `login` 扔了。于是所有人、所有时候，都落到那个数字上。
+    """
+
+    def _link(self, client, monkeypatch, *, handle: str, login: str | None):
+        _enable_github_app_provider(monkeypatch)
+
+        async def fake_exchange_code(self, code):
+            return {"access_token": "t-" + handle}
+
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(
+                id="gh-" + handle, email=None, name="N", username=login
+            )
+
+        monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+        token = seed_user(client, handle)
+        user_id = int(decode_token(token)["sub"])
+        r = client.get(
+            "/api/users/me/github-account/callback",
+            params={"code": "x", "state": _link_state(user_id)},
+            follow_redirects=False,
+        )
+        assert "github_account=success" in r.headers["location"], r.headers["location"]
+        return user_id, token
+
+    def test_linking_stores_the_github_login(self, client, monkeypatch):
+        user_id, _ = self._link(
+            client, monkeypatch, handle="ghname_new", login="octocat"
+        )
+
+        assert _fetch_connection(client, user_id).raw_profile["login"] == "octocat"
+
+    def test_the_connections_endpoint_hands_the_login_to_the_page(
+        self, client, monkeypatch
+    ):
+        """前端读的是这个字段——存了但没送出去，页面照样显示数字。"""
+        user_id, token = self._link(
+            client, monkeypatch, handle="ghname_api", login="octocat"
+        )
+
+        # 1.0 路由自带 `/users` 前缀，网关那一层的 `/api` 在测试里不存在
+        # （docs/api-conventions.md）。
+        r = client.get(f"/users/{user_id}/oauth/connections", headers=_bearer(token))
+
+        assert r.status_code == 200, r.text
+        rows = r.json()["data"]["connections"]
+        gh = next(c for c in rows if c["providerId"] == "github_app")
+        assert gh["login"] == "octocat"
+
+    def test_relinking_repairs_a_connection_that_has_no_login(
+        self, client, monkeypatch
+    ):
+        """这条是整个修复能不能落到真实用户身上的那一条。
+
+        所有人都已经绑过了，所以新建路径修好对他们没有任何影响——他们走的是
+        「重新连接」，而那条分支以前只换 token、根本不碰 profile。不修这半，线上
+        每个人的设置页会一直显示那串数字，而且没有任何自助的修法（login 只能从
+        GitHub 拿，写不出补数据的迁移）。
+        """
+        user_id, _ = self._link(client, monkeypatch, handle="ghname_old", login=None)
+        assert _fetch_connection(client, user_id).raw_profile.get("login") is None
+
+        # 用户点「重新连接」，这次 GitHub 把 login 给了。
+        self._relink(
+            client, monkeypatch, user_id=user_id, handle="ghname_old", login="octocat"
+        )
+
+        assert _fetch_connection(client, user_id).raw_profile["login"] == "octocat"
+
+    def test_relinking_without_a_login_keeps_the_one_we_had(self, client, monkeypatch):
+        """重新连接不能把已经好了的名字降级回去。
+
+        这条是本 PR 自己的反向风险：既然重新连接现在会覆盖 profile，那么某次
+        交换没带回 login 时照写，就会把 octocat 抹成 None、页面退回数字 id——
+        而且恰好发生在用户点「重新连接」想修好它的时候。
+        """
+        user_id, _ = self._link(
+            client, monkeypatch, handle="ghname_keep", login="octocat"
+        )
+
+        self._relink(
+            client, monkeypatch, user_id=user_id, handle="ghname_keep", login=None
+        )
+
+        assert _fetch_connection(client, user_id).raw_profile["login"] == "octocat"
+
+    def _relink(
+        self, client, monkeypatch, *, user_id: int, handle: str, login: str | None
+    ):
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(
+                id="gh-" + handle, email=None, name="N", username=login
+            )
+
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+        r = client.get(
+            "/api/users/me/github-account/callback",
+            params={"code": "x", "state": _link_state(user_id)},
+            follow_redirects=False,
+        )
+        assert "github_account=success" in r.headers["location"], r.headers["location"]

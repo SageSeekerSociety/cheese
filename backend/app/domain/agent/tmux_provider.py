@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
 from app.domain.agent import awaited_tasks, clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
@@ -36,7 +36,7 @@ from app.domain.agent.hooks_substrate import (
     ScreenSetupError,
     hooks_settings,
 )
-from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.identity.handles import topic_agent_handle
@@ -44,6 +44,11 @@ from app.domain.workspace import service as ws
 
 _SESSION = "cheese"  # tmux session name inside the container
 _TTYD_PORT = 7681  # in-container ttyd port (published for 施工现场; not wired yet)
+# The platform's system prompt travels as a FILE in the ~/.claude session mount
+# (host: session_dir/cheese-system-prompt.md), not inline on the command line:
+# it is multi-KB free text, and the tmux launch string goes through sh -c.
+_SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
+_SYSTEM_PROMPT_PATH = f"/home/node/.claude/{_SYSTEM_PROMPT_FILE}"
 _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
@@ -104,9 +109,10 @@ def _rewrite(path: Path, content: str, *, mode: int) -> None:
 def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
     """True when a resumable transcript for ``resume_session_id`` is present in
     this topic's ~/.claude mount (i.e. a cloned/forked conversation was written
-    there). Pure so it can be unit-tested without a container. Guards the
-    `--resume` path so an ordinary fresh topic (no transcript) never resumes."""
-    return clone.transcript_file(Path(session_dir), resume_session_id).is_file()
+    there), under whatever slug it was written with. Pure so it can be
+    unit-tested without a container. Guards the `--resume` path so an ordinary
+    fresh topic (no transcript) never resumes."""
+    return clone.find_transcript(Path(session_dir), resume_session_id) is not None
 
 
 # Container label carrying the routing-env stamp (see _ensure_container).
@@ -281,6 +287,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         image_switched = exists and cur_image.strip() != self._image
         env_drifted = False
         cli_mount_stale = False
+        token_dead = False
         if exists and not image_switched:
             _, cur_stamp, _ = await _docker(
                 "inspect", "-f", f'{{{{index .Config.Labels "{_ENV_LABEL}"}}}}', name
@@ -291,21 +298,90 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # image's baked copy) for the life of the topic — the very staleness
             # this mount exists to prevent. Recheck it like the model route.
             cli_mount_stale = await self._cli_mount_stale(name, env["SBX_SESSION"])
-        if image_switched or env_drifted or cli_mount_stale:
-            await _docker("rm", "-f", name)  # image, model route, or CLI mount
+            token_dead = await self._hook_token_dead(name)
+        # First match wins, so the room is told the most specific thing that is
+        # true. None means "nothing was torn down" — either the box is fine, or
+        # this is its first creation.
+        cause = next(
+            (
+                c
+                for c, hit in (
+                    ("image", image_switched),
+                    ("env", env_drifted),
+                    ("cli_mount", cli_mount_stale),
+                    ("token", token_dead),
+                )
+                if hit
+            ),
+            None,
+        )
+        if cause is not None:
+            await _docker("rm", "-f", name)
             exists = False
         if not exists:
             await self._create_container(name, env)
-            if image_switched or env_drifted or cli_mount_stale:
+            if cause is not None:
                 # The old box (and anything running in it — the interactive
                 # session, background processes) is gone with no other
                 # warning; tell the topic (best-effort, never blocks the turn).
-                await warn_image_switch_rebuild(topic_id)
+                # `cause` is None only on a FIRST creation, where nothing was
+                # destroyed and there is nothing to announce.
+                await warn_container_rebuilt(topic_id, cause)
             return name
         rc, running, _ = await _docker("inspect", "-f", "{{.State.Running}}", name)
         if running.strip() != "true":
             await _docker("start", name)
         return name
+
+    @staticmethod
+    async def _hook_token_dead(name: str) -> bool:
+        """True when the box's baked ``CHEESE_TOKEN`` no longer verifies.
+
+        This is the box going DEAF, and until it was checked here nothing ever
+        noticed. The hook forwarder sends that token on every event; the
+        endpoint 401s a token it cannot verify and returns — no log, no spool,
+        no listener. The turn then runs to its ceiling having observed nothing:
+        `first_output_s: null`, `tools: 0`, while `claude` inside the box is
+        working perfectly.
+
+        A live token is baked in at CREATION and never refreshed (see
+        `_ensure_container`'s docstring — env is fixed then, and the box outlives
+        many turns). Its 30-day TTL is not the problem. The signing secret is:
+        `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per PROCESS
+        when `SANDBOX_TOKEN` is not pinned in the deployment, so **every backend
+        restart invalidates every existing box's token at once**. On a
+        deploy-on-merge setup that is many times a day (#316), and nothing
+        rebuilds those boxes: the image tag only changes when a merge changes it,
+        so a restart alone leaves every topic permanently unable to reply.
+
+        Rebuilding costs the tmux session (the topic's conversational
+        continuity), which is why it is not done lightly — but a deaf box has
+        already lost more than that, since it can never answer again.
+        """
+        rc, out, _ = await _docker(
+            "inspect",
+            "-f",
+            "{{range .Config.Env}}{{println .}}{{end}}",
+            name,
+        )
+        if rc != 0:
+            return False  # can't tell — never destroy a box on a failed inspect
+        baked = ""
+        project = ""
+        topic = ""
+        for line in out.splitlines():
+            key, _, value = line.partition("=")
+            if key == "CHEESE_TOKEN":
+                baked = value
+            elif key == "CHEESE_PROJECT":
+                project = value
+            elif key == "CHEESE_TOPIC":
+                topic = value
+        if not baked or not project or not topic:
+            # A box predating scoped hook tokens. Unknown is not evidence of
+            # death — same rule as the env stamp, and for the same reason.
+            return False
+        return not verify_scoped_token(baked, project_id=project, topic_id=topic)
 
     @staticmethod
     async def _cli_mount_stale(name: str, session_host: str) -> bool:
@@ -325,13 +401,15 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
     async def _create_container(self, name: str, env: dict[str, str]) -> None:
         # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
         mounts = {"SBX_WORKTREE", "SBX_SESSION"}
-        # The worktree is a jj workspace pointing at the project's shared main
-        # repo store via a host-relative path (see ws.sandbox_vcs_mounts) —
-        # without also mounting the main repo's .jj/.git, that pointer walks
-        # off the container's shallow root and jj/git are unusable in here.
-        vcs_mounts = ws.sandbox_vcs_mounts(
-            uuid.UUID(env["CHEESE_PROJECT"]),
-            ws.branch_for_topic(uuid.UUID(env["CHEESE_TOPIC"])),
+        # One mount of the project's whole `.worktrees` tree (this topic's
+        # worktree, its siblings, and the shared pnpm/uv stores) plus the main
+        # repo's .jj/.git remap — see ws.sandbox_project_mounts for why a single
+        # mount is load-bearing (hardlinks cannot cross bind mounts) and what
+        # it means for same-project isolation. The workdir is the topic's REAL
+        # path under that mount, not a /work remap, for the same reason.
+        branch = ws.branch_for_topic(uuid.UUID(env["CHEESE_TOPIC"]))
+        project_mounts = ws.sandbox_project_mounts(
+            uuid.UUID(env["CHEESE_PROJECT"]), branch
         )
         args = [
             "run",
@@ -349,11 +427,9 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "-v",
             f"{env['SBX_SESSION']}:/home/node/.claude",
             *_subscription_args(),
-            "-v",
-            f"{env['SBX_WORKTREE']}:/work",
-            *vcs_mounts,
+            *project_mounts,
             "-w",
-            "/work",
+            ws.sandbox_topic_workdir(branch),
         ]
         args += _cheese_cli_mount(env["SBX_SESSION"])
         args += [
@@ -365,6 +441,10 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             "2",
             "--pids-limit",
             "512",
+            # A crashing node/vite process must not dump its address space into
+            # the worktree (1-2GB core files were a top disk consumer on dev).
+            "--ulimit",
+            "core=0",
             "--label",
             "cheesex-sandbox=1",
             "--label",
@@ -389,6 +469,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         *,
         resume_session_id: str | None = None,
         session_dir: str | None = None,
+        system_prompt: str = "",
     ) -> None:
         """Ensure the interactive `claude` tmux session exists (lazy, reused).
 
@@ -403,6 +484,11 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         if rc == 0:
             return
         claude_cmd = CLAUDE_BASE_CMD
+        # The platform's system prompt, written into the session mount by
+        # _ensure_ready. Only a FRESH claude reads it — an already-running
+        # session keeps the prompt it launched with (same as settings.json).
+        if system_prompt:
+            claude_cmd += f" --append-system-prompt-file {_SYSTEM_PROMPT_PATH}"
         if (
             resume_session_id
             and session_dir
@@ -692,6 +778,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         owner: str | None,
         turn_id: uuid.UUID | None,
         resume_session_id: str | None,
+        system_prompt: str,
         precheck: object,
     ) -> str:
         """Bring up (or reuse) the topic's tmux `claude` and wait for the `❯`
@@ -716,11 +803,16 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # Seed hooks + skip-disclaimer settings before the session starts
             # (only read at session creation), then bring the session up.
             self._write_session_settings(session_dir)
+            # Always (re)write the system prompt, even when the session already
+            # exists: a running claude keeps the prompt it launched with, and
+            # this write is what the NEXT fresh session picks up.
+            self._write_system_prompt(session_dir, system_prompt)
             await self._ensure_session(
                 name,
                 model,
                 resume_session_id=resume_session_id,
                 session_dir=session_dir,
+                system_prompt=system_prompt,
             )
             # _wait_ready inside the wrap too: its docker exec can itself fail
             # (docker binary vanishing mid-turn) — that must surface as a clean
@@ -747,6 +839,15 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         # subscription_provider), NOT a .credentials.json — the file gets the
         # local validation the env var skips, and rejected the placeholder as
         # "Not logged in". So nothing credential-shaped is planted here.
+
+    def _write_system_prompt(self, session_dir: str, system_prompt: str) -> None:
+        """Write the platform's system prompt into the session mount, where the
+        launch line's ``--append-system-prompt-file`` points. An empty prompt
+        still writes (an empty file), so a topic whose prompt was withdrawn does
+        not keep serving a stale one to its next fresh session."""
+        target = Path(session_dir) / _SYSTEM_PROMPT_FILE
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _rewrite(target, system_prompt, mode=0o644)
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history

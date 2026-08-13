@@ -10,6 +10,7 @@ refused with the platform's structured event; unlinked projects are unlimited.
 import pytest
 
 from tests.conftest import seed_space, wait_turns_idle
+from tests.integration.conftest import chat_ws_url
 
 # The stub agent reports usage of 10 input + 5 output tokens per turn; at the
 # default rate (1 credit = 10k tokens) one turn costs 0.0015 credits.
@@ -43,7 +44,10 @@ def _credits(client, project_id: str) -> dict:
 
 
 def _mk_topic(client, project_id: str) -> str:
-    r = client.post("/api/topics", json={"project_id": project_id, "title": "聊聊"})
+    r = client.post(
+        "/api/topics",
+        json={"project_id": project_id, "title": "聊聊", "created_by": "u1"},
+    )
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -51,10 +55,8 @@ def _mk_topic(client, project_id: str) -> str:
 def _run_turn(client, topic_id: str) -> list[dict]:
     """One summoned turn over the WS; returns all frames up to done/error."""
     frames: list[dict] = []
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "你好", "author": "u1", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "u1")) as ws:
+        ws.send_json({"type": "message", "content": "你好", "summon": True})
         while True:
             frame = ws.receive_json()
             frames.append(frame)

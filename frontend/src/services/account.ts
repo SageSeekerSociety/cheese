@@ -85,6 +85,10 @@ export class AccountService {
     this._accessToken = null
     localStorage.removeItem('accessToken')
     localStorage.removeItem('user')
+    // Drop the cheesex identity mirror too: main.ts only rebuilds it when it's
+    // missing, so leaving it here makes the NEXT login keep the previous
+    // account's handle — requests then carry new token + old handle and 403.
+    localStorage.removeItem('cheesex.me')
   }
 }
 

@@ -1,5 +1,7 @@
 """@all / @here notify the whole topic roster (群播, fusion-design §3)."""
 
+from tests.integration.conftest import chat_ws_url, session_auth_headers
+
 
 def _project_topic(client, created_by: str = "alice") -> tuple[str, str]:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
@@ -18,12 +20,11 @@ def _add(client, tid: str, handle: str, actor: str = "alice") -> None:
     assert r.status_code == 200
 
 
-def _post(ws, content: str, author: str) -> None:
+def _post(ws, content: str) -> None:
     # human-only post (summon False): the @all notifications fire on the human
-    # block persist, before any agent turn.
-    ws.send_json(
-        {"type": "message", "content": content, "author": author, "summon": False}
-    )
+    # block persist, before any agent turn. The sender is the socket's token,
+    # not a body field.
+    ws.send_json({"type": "message", "content": content, "summon": False})
     while True:
         f = ws.receive_json()
         if f["type"] in ("done", "error"):
@@ -32,7 +33,8 @@ def _post(ws, content: str, author: str) -> None:
 
 def _notifs(client, pid: str, handle: str) -> list[dict]:
     return client.get(
-        f"/api/projects/{pid}/notifications?target_handle={handle}"
+        f"/api/projects/{pid}/notifications",
+        headers=session_auth_headers(handle),
     ).json()["data"]["data"]
 
 
@@ -40,8 +42,8 @@ def test_at_all_notifies_every_member_except_sender_and_cheese(client):
     pid, tid = _project_topic(client, created_by="alice")
     _add(client, tid, "bob")
     _add(client, tid, "carol")
-    with client.websocket_connect(f"/api/topics/{tid}/chat") as ws:
-        _post(ws, "<@all> 大家看一下", author="alice")
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        _post(ws, "<@all> 大家看一下")
 
     assert len(_notifs(client, pid, "bob")) == 1
     assert len(_notifs(client, pid, "carol")) == 1
@@ -54,6 +56,6 @@ def test_at_all_notifies_every_member_except_sender_and_cheese(client):
 def test_at_here_equals_all_for_now(client):
     pid, tid = _project_topic(client, created_by="alice")
     _add(client, tid, "bob")
-    with client.websocket_connect(f"/api/topics/{tid}/chat") as ws:
-        _post(ws, "<@here> 在的人", author="alice")
+    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+        _post(ws, "<@here> 在的人")
     assert len(_notifs(client, pid, "bob")) == 1

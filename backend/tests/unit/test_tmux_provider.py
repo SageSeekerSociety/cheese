@@ -36,7 +36,8 @@ def test_resume_ready_only_when_transcript_present(tmp_path):
     # No transcript yet → do NOT resume (ordinary fresh topic stays fresh).
     assert tp._resume_ready(str(tmp_path), sid) is False
     # Write the forked transcript where the mount would hold it → resume.
-    f = clone.transcript_file(tmp_path, sid)
+    # (Any slug counts — reads key off the session id, not the cwd.)
+    f = clone.transcript_file(tmp_path, sid, cwd="/topics/topic_ab12cd34")
     f.parent.mkdir(parents=True)
     f.write_text("{}", encoding="utf-8")
     assert tp._resume_ready(str(tmp_path), sid) is True
@@ -95,8 +96,9 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
     new_session = next(c for c in calls if "new-session" in c)
     assert "--resume" not in " ".join(new_session)
 
-    # Write the cloned transcript → next session creation resumes it.
-    f = clone.transcript_file(tmp_path, sid)
+    # Write the cloned transcript → next session creation resumes it. A legacy
+    # /work-slug transcript must count too (pre-project-mount sessions).
+    f = clone.transcript_file(tmp_path, sid, cwd=clone.LEGACY_CONTAINER_CWD)
     f.parent.mkdir(parents=True)
     f.write_text("{}", encoding="utf-8")
     calls.clear()

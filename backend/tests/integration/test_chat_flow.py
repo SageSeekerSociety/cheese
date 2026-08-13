@@ -6,15 +6,17 @@ import uuid
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import DbMemoryStore
+from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
-def _create_project_and_topic(client) -> tuple[str, str]:
-    pr = client.post("/api/projects", json={"name": "Demo"})
+def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
+    pr = client.post("/api/projects", json={"name": "Demo", "owner_handle": owner})
     assert pr.status_code == 200
     project_id = pr.json()["data"]["id"]
 
     tr = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "第一个话题"}
+        "/api/topics",
+        json={"project_id": project_id, "title": "第一个话题", "created_by": owner},
     )
     assert tr.status_code == 200
     topic_id = tr.json()["data"]["id"]
@@ -28,8 +30,16 @@ def test_health(client):
 
 
 def test_create_and_list_project(client):
-    client.post("/api/projects", json={"name": "P1"})
-    r = client.get("/api/projects")
+    # Both calls are authenticated, and that is the point of the test rather
+    # than a formality: without `team_id` this listing means "the caller's OWN
+    # projects", so an anonymous GET now answers empty (see
+    # test_project_visibility.py — an unidentifiable caller used to get every
+    # project on the platform, which is what a logged-in user saw whenever
+    # their token lapsed). Creating anonymously would leave the project with no
+    # owner and no roster, so nobody would have a claim on it either.
+    headers = session_auth_headers("alice")
+    client.post("/api/projects", json={"name": "P1"}, headers=headers)
+    r = client.get("/api/projects", headers=headers)
     body = r.json()
     assert body["code"] == 200
     assert body["data"]["total"] == 1
@@ -53,15 +63,8 @@ def test_blocks_empty_then_populated_after_chat(client):
     r = client.get(f"/api/topics/{topic_id}/blocks")
     assert r.json()["data"]["total"] == 0
 
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "你好芝士",
-                "author": "user-1",
-                "summon": True,
-            }
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "你好芝士", "summon": True})
         frames = _drain_until_done(ws)
 
     types = [f["type"] for f in frames]
@@ -90,17 +93,13 @@ def test_blocks_empty_then_populated_after_chat(client):
 
 def test_session_id_persisted_for_resume(client):
     _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hi", "author": "user-1", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
         _drain_until_done(ws)
 
     # Second turn should resume with the captured session id.
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "again", "author": "user-1", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "again", "summon": True})
         _drain_until_done(ws)
 
 
@@ -117,15 +116,8 @@ def test_memory_injected_into_system_prompt(client, stub_agent):
 
     asyncio.run(_seed())
 
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "技术栈是什么",
-                "author": "u",
-                "summon": True,
-            }
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "技术栈是什么", "summon": True})
         _drain_until_done(ws)
 
     assert stub_agent.last_system_prompt is not None
@@ -134,8 +126,8 @@ def test_memory_injected_into_system_prompt(client, stub_agent):
 
 def test_empty_content_rejected(client):
     _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json({"type": "message", "content": "   ", "author": "u"})
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "   "})
         frame = ws.receive_json()
         assert frame["type"] == "error"
 
@@ -143,10 +135,8 @@ def test_empty_content_rejected(client):
 def test_message_without_summon_does_not_invoke_cheese(client):
     """Default human-to-human: posting without @芝士 stays quiet (spec C3)."""
     _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "队友我们今晚开会", "author": "user-1"}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "队友我们今晚开会"})
         frames = _drain_until_done(ws)
 
     types = [f["type"] for f in frames]
@@ -159,32 +149,24 @@ def test_message_without_summon_does_not_invoke_cheese(client):
 def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
     # spec §7.1: messages posted without @芝士 are still seen on the next summon,
     # each tagged with who said it (§8.4 multi-person disambiguation).
-    _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "先随便说一句",
-                "author": "alice",
-                "summon": False,
-            }
-        )
+    # Two speakers means two sockets: authorship is pinned to the connection's
+    # token, so one socket can only ever speak as one person.
+    _, topic_id = _create_project_and_topic(client, owner="alice")
+    client.post(
+        f"/api/topics/{topic_id}/members",
+        json={"handle": "bob", "role": "member", "actor": "alice"},
+    )
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "先随便说一句", "summon": False})
         quiet = _drain_until_done(ws)
         assert [f["type"] for f in quiet] == ["user_block", "done"]  # 芝士 quiet
 
-        ws.send_json(
-            {"type": "message", "content": "再补一句", "author": "bob", "summon": False}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "bob")) as ws:
+        ws.send_json({"type": "message", "content": "再补一句", "summon": False})
         _drain_until_done(ws)
 
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "芝士看看",
-                "author": "alice",
-                "summon": True,
-            }
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        ws.send_json({"type": "message", "content": "芝士看看", "summon": True})
         _drain_until_done(ws)
 
     prompt = stub_agent.last_prompt or ""
@@ -207,10 +189,8 @@ def test_debug_turns_records_lifecycle(client):
     """可 debug: /debug/turns exposes each turn's lifecycle summary (status,
     timings, tool counts) without grepping logs."""
     _, topic_id = _create_project_and_topic(client)
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "你好", "author": "u", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "你好", "summon": True})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 
