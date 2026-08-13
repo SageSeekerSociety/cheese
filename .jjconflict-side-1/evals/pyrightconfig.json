@@ -1,0 +1,8 @@
+{
+  "extraPaths": ["..", "../backend"],
+  "venvPath": "../backend",
+  "venv": ".venv",
+  "typeCheckingMode": "basic",
+  "pythonVersion": "3.13",
+  "exclude": ["results", "**/__pycache__"]
+}

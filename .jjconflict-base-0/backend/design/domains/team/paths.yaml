@@ -1,0 +1,263 @@
+# Team Domain Paths
+
+/teams:
+  get:
+    summary: List teams
+    operationId: listTeams
+    tags: [Teams]
+    parameters:
+      - name: q
+        in: query
+        description: Search keyword
+        schema:
+          type: string
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Teams list
+  post:
+    summary: Create team
+    operationId: createTeam
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/CreateTeamRequest'
+    responses:
+      '201':
+        description: Team created
+
+/teams/my-teams:
+  get:
+    summary: List my teams
+    operationId: listMyTeams
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: My teams list
+
+/teams/{teamId}:
+  get:
+    summary: Get team details
+    operationId: getTeam
+    tags: [Teams]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+    responses:
+      '200':
+        description: Team details
+  put:
+    summary: Update team
+    operationId: updateTeam
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            $ref: './schemas.yaml#/UpdateTeamRequest'
+    responses:
+      '200':
+        description: Team updated
+  delete:
+    summary: Delete team
+    operationId: deleteTeam
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+    responses:
+      '204':
+        description: Team deleted
+
+/teams/{teamId}/members:
+  get:
+    summary: List team members
+    operationId: listTeamMembers
+    tags: [Teams]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Members list
+
+/teams/{teamId}/members/{userId}:
+  put:
+    summary: Update member role
+    operationId: updateTeamMemberRole
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - $ref: '../../common/parameters.yaml#/UserId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              role:
+                $ref: './schemas.yaml#/TeamRole'
+    responses:
+      '200':
+        description: Role updated
+  delete:
+    summary: Remove member from team
+    operationId: removeTeamMember
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - $ref: '../../common/parameters.yaml#/UserId'
+    responses:
+      '204':
+        description: Member removed
+
+/teams/{teamId}/requests:
+  get:
+    summary: List join requests
+    operationId: listTeamJoinRequests
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - name: status
+        in: query
+        schema:
+          $ref: './schemas.yaml#/ApplicationStatus'
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Join requests list
+  post:
+    summary: Submit join request
+    operationId: submitJoinRequest
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+    responses:
+      '201':
+        description: Request submitted
+
+/teams/{teamId}/requests/{requestId}/approve:
+  post:
+    summary: Approve join request
+    operationId: approveJoinRequest
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Request approved
+
+/teams/{teamId}/requests/{requestId}/reject:
+  post:
+    summary: Reject join request
+    operationId: rejectJoinRequest
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '200':
+        description: Request rejected
+
+/teams/{teamId}/invitations:
+  get:
+    summary: List team invitations
+    operationId: listTeamInvitations
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - $ref: '../../common/parameters.yaml#/PageStart'
+      - $ref: '../../common/parameters.yaml#/PageSize'
+    responses:
+      '200':
+        description: Invitations list
+  post:
+    summary: Send invitation
+    operationId: sendTeamInvitation
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+    requestBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              userId:
+                type: integer
+                format: int64
+            required:
+              - userId
+    responses:
+      '201':
+        description: Invitation sent
+
+/teams/{teamId}/invitations/{invitationId}:
+  delete:
+    summary: Cancel invitation
+    operationId: cancelTeamInvitation
+    tags: [Teams]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/TeamId'
+      - name: invitationId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    responses:
+      '204':
+        description: Invitation cancelled

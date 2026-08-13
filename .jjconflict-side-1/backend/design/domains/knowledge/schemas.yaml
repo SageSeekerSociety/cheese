@@ -1,0 +1,75 @@
+# Knowledge Domain Schemas
+
+Knowledge:
+  type: object
+  description: Knowledge item
+  properties:
+    id:
+      type: integer
+      format: int64
+    title:
+      type: string
+    content:
+      type: string
+    author:
+      $ref: '../user/schemas.yaml#/User'
+    labels:
+      type: array
+      items:
+        $ref: '#/KnowledgeLabel'
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    upvote_count:
+      type: integer
+      format: int64
+    view_count:
+      type: integer
+      format: int64
+    is_upvoted:
+      type: boolean
+      description: Whether current user upvoted
+
+KnowledgeLabel:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    name:
+      type: string
+    color:
+      type: string
+      description: Hex color code
+
+CreateKnowledgeRequest:
+  type: object
+  properties:
+    title:
+      type: string
+    content:
+      type: string
+    labelIds:
+      type: array
+      items:
+        type: integer
+        format: int64
+  required:
+    - title
+    - content
+
+UpdateKnowledgeRequest:
+  type: object
+  properties:
+    title:
+      type: string
+    content:
+      type: string
+    labelIds:
+      type: array
+      items:
+        type: integer
+        format: int64

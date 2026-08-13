@@ -1,0 +1,53 @@
+# Health Check Paths
+
+/healthz:
+  get:
+    summary: Basic health check
+    operationId: healthz
+    tags: [Health]
+    responses:
+      '200':
+        description: Service is healthy
+        content:
+          application/json:
+            schema:
+              $ref: './schemas.yaml#/HealthStatus'
+
+/readyz:
+  get:
+    summary: Readiness check
+    operationId: readyz
+    tags: [Health]
+    responses:
+      '200':
+        description: Service is ready to accept traffic
+        content:
+          application/json:
+            schema:
+              $ref: './schemas.yaml#/HealthStatus'
+
+/health/detailed:
+  get:
+    summary: Detailed health check
+    operationId: healthDetailed
+    tags: [Health]
+    responses:
+      '200':
+        description: Detailed health status of all dependencies
+        content:
+          application/json:
+            schema:
+              $ref: './schemas.yaml#/DetailedHealthStatus'
+
+/metrics:
+  get:
+    summary: Prometheus metrics
+    operationId: metrics
+    tags: [Health]
+    responses:
+      '200':
+        description: Prometheus format metrics
+        content:
+          text/plain:
+            schema:
+              type: string
