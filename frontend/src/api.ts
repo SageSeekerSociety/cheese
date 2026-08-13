@@ -146,6 +146,25 @@ export function tokenExpiresWithin(token: string, ms: number): boolean {
 export async function ensureFreshToken(): Promise<void> {
   const token = authToken()
   if (!token || !tokenExpiresWithin(token, TOKEN_REFRESH_LEEWAY_MS)) return
+  await refreshNow()
+}
+
+/**
+ * Refresh regardless of what the token's own `exp` claims.
+ *
+ * `ensureFreshToken` trusts `exp`, and `exp` is not the only way a token dies.
+ * Measured on dev: a token minted 443s earlier, with 457s of its 900s life
+ * left, was rejected 24 times out of 24 by BOTH api layers, while one minted
+ * seconds later worked — and `decode_token` does pure JWT verification with no
+ * revocation store, so the signing secret must have changed under us (a backend
+ * restart). Trusting `exp` alone means a signed-in user then 401s on every
+ * request for up to 14 minutes, until the token nears the expiry that would
+ * finally trigger a refresh. That is the 「通知铃铛必 401」 shape.
+ *
+ * Shares `refreshInFlight` with `ensureFreshToken`, so a burst of 401s costs one
+ * refresh, not one each.
+ */
+export async function refreshNow(): Promise<void> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
@@ -172,6 +191,12 @@ export async function ensureFreshToken(): Promise<void> {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
   await ensureFreshToken()
+  // A 401 is retried once, for ANY method, after forcing a refresh — see
+  // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
+  // the door, so nothing happened that a retry could duplicate. Only retried
+  // when the refresh actually produced a different token, or a server that 401s
+  // for some other reason would make every call fire twice.
+  let authRetried = false
   for (let attempt = 0; ; attempt += 1) {
     let res: Response
     try {
@@ -191,6 +216,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       continue
     }
     if (!res.ok) {
+      if (res.status === 401 && !authRetried) {
+        authRetried = true
+        const before = authToken()
+        await refreshNow()
+        // `attempt` is deliberately not advanced: this retry is not one of the
+        // transport's backoff attempts, and spending one here would cost a real
+        // 502 its retry budget.
+        if (authToken() !== before) {
+          attempt -= 1
+          continue
+        }
+      }
       if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
