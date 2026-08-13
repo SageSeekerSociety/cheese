@@ -155,6 +155,82 @@ async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry
     assert hub.prompts == [["turn 0"], ["turn 1"]]
 
 
+class DeadClaudeHub(FakeHub):
+    """A device whose `claude` DIED while the connector kept running: the hub's
+    registry still holds the screen, but the liveness probe (DEVICE_ALIVE_PROBE
+    over `exec`) answers `dead`. Records `close_screen` and hands out distinct
+    sids so a reopen is distinguishable from a reassert."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed: list[str] = []
+        self._sid_seq = 0
+
+    async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
+        self._sid_seq += 1
+        screen = HubScreen(
+            sid=f"s{self._sid_seq}",
+            device_id=device_id,
+            command=command,
+            token="tok",
+            agent_user_id=kw["agent_user_id"],
+            agent_handle=kw["agent_handle"],
+            project_id=kw["project_id"],
+            topic_id=kw["topic_id"],
+            hook_key=kw.get("hook_key", ""),
+        )
+        self.opened.append(screen)
+        return screen
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        self.execs.append((argv, stdin))
+        # Only the liveness probe (no stdin) reports death; the launcher-ship exec
+        # (script on stdin) must still succeed or the turn never reaches a screen.
+        out = "dead" if stdin is None else ""
+        return {"stdout": out, "stderr": "", "exit": 0, "truncated": False}
+
+    async def close_screen(self, device_id, sid) -> bool:
+        self.closed.append(sid)
+        self.opened = [s for s in self.opened if s.sid != sid]  # hub forgets it
+        return True
+
+
+async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
+    """The registry holding a screen is NOT proof its `claude` still runs: an orphan
+    sweep or `tmux kill-server` can end the device session while the connector lives
+    on. Reasserting (adopt-create) would only hot-reload the cheeselet into the dead
+    pane — the frozen connector re-Spawns solely for a sid it forgot (i.e. after IT
+    restarted), so a screen whose process died under a live connector is never
+    respawned and the turn dies in the delivery timeout with no model reached. So a
+    reused screen is probed first; a `dead` one is CLOSED (which makes the connector
+    forget the sid too) and reopened under a fresh sid the connector must Spawn."""
+    hub = DeadClaudeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    key = str(topic_id)
+
+    for turn in range(2):
+        _events, task = await _run(
+            provider,
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt=f"turn {turn}",
+            system_prompt="",
+            resume_session_id=None,
+        )
+        await asyncio.sleep(0.05)
+        router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
+        await asyncio.wait_for(task, timeout=5)
+
+    assert hub.reasserted == []  # NEVER reasserted into the corpse …
+    assert hub.closed == ["s1"]  # … the stale screen was dropped …
+    assert [s.sid for s in hub.opened] == ["s2"]  # … and a fresh screen Spawned
+    assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+
+
 async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     """The frozen cli hands the screen command to `tmux new-session`, whose packed
     command tops out around 16KB — a launcher carrying the assembled system prompt
