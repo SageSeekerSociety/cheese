@@ -44,10 +44,12 @@ import {
   renderMarkdown as renderMarkdownWith,
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
+import { placeSplitMarkers } from '../lib/splitMarkers'
 import { myHandle } from '../me'
 import { avatarColor } from '../utils/avatar'
 
 import CheeseAvatar from './CheeseAvatar.vue'
+import DispatchedMarker from './DispatchedMarker.vue'
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
@@ -750,6 +752,17 @@ const visible = computed<Block[]>(() => {
   return out
 })
 
+// 「已派出」标记 (issue #314): 本房间拆出去的子话题，在时间线上它被拆出去的那个
+// 时刻标一行，点进去就是那边。库里没有这行 —— split 不往父话题写任何 block，所以
+// 位置只能由子话题的 parent_id + created_at 现算（lib/splitMarkers.ts 说明了它能
+// 标什么、标不了什么）。topicList 是本项目的全部话题，子话题已经在里面了。
+const splitMarkers = computed(() =>
+  placeSplitMarkers(props.topic?.id, props.topicList, {
+    blocks: visible.value,
+    hasMore: hasMore.value,
+  })
+)
+
 // ---- Feishu group-chat helpers (Fix 2) ----
 function displayName(m: Block): string {
   return m.author_type === 'ai' ? '芝士' : m.author
@@ -769,6 +782,9 @@ function isRunStart(i: number): boolean {
   const prev = visible.value[i - 1]
   const cur = visible.value[i]
   if (prev.kind === 'event' || cur.kind === 'event') return true
+  // 一条「已派出」标记横在中间时，下面这条必须重新带头像和名字 —— 否则它看上去
+  // 像是挂在标记上的续话。同 event 的道理：中间隔了东西，run 就断了。
+  if (splitMarkers.value.before.has(cur.id)) return true
   return prev.author !== cur.author || prev.author_type !== cur.author_type
 }
 
@@ -1033,6 +1049,15 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-for="(m, i) in visible" :key="m.id">
+            <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
+               这一行是按子话题的 parent_id + created_at 现算出来的，插在它被拆出
+               去的那个时刻上。它不是消息，但会像 event 一样把消息分组打断。 -->
+            <DispatchedMarker
+              v-for="marker in splitMarkers.before.get(m.id) ?? []"
+              :key="marker.topicId"
+              :marker="marker"
+              @open="emit('open-topic', $event)"
+            />
             <!-- Infrastructure incidents are facts in the conversation, but they
                are neither 芝士 messages nor faint activity lines. Structured
                metadata selects this persistent, accessible recovery card. -->
@@ -1210,6 +1235,15 @@ onBeforeUnmount(() => {
               </div>
             </div>
           </template>
+
+          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚拆出去、之后房间里还
+             没人说过话的那些子话题。 -->
+          <DispatchedMarker
+            v-for="marker in splitMarkers.tail"
+            :key="marker.topicId"
+            :marker="marker"
+            @open="emit('open-topic', $event)"
+          />
 
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until the turn's FIRST message lands; the live
