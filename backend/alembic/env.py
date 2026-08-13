@@ -21,7 +21,7 @@ if config.config_file_name is not None:
 # autogenerate would see an empty metadata and drop all tables.
 import app.models  # noqa: E402, F401
 from app.core.config import settings  # noqa: E402
-from app.core.db import Base  # noqa: E402
+from app.core.db import Base, apply_migration_timeouts  # noqa: E402
 
 # Inject the runtime database URL instead of hardcoding it in alembic.ini.
 config.set_main_option("sqlalchemy.url", settings.database_url)
@@ -56,6 +56,13 @@ def run_migrations_offline() -> None:
     )
 
     with context.begin_transaction():
+        # Emit the same guard into the generated SQL script. Offline never
+        # touches a live DB, so this is documentation of intent more than
+        # protection; the online path is the one that matters for #356.
+        context.execute(f"SET lock_timeout = '{settings.migration_lock_timeout}'")
+        context.execute(
+            f"SET statement_timeout = '{settings.migration_statement_timeout}'"
+        )
         context.run_migrations()
 
 
@@ -63,6 +70,7 @@ def do_run_migrations(connection: Connection) -> None:
     context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():
+        apply_migration_timeouts(connection)
         context.run_migrations()
 
 

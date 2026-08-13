@@ -7,15 +7,19 @@ show — a field that never survives a write is the same bug as not storing it, 
 it is the failure the whole decision is meant to end.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError
+from app.domain.device.models import DeviceRow
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
+from app.domain.user.models import User
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
@@ -63,5 +67,71 @@ def test_both_supplies_round_trip_and_only_cloud_is_reclaimable(
         with pytest.raises(ForbiddenError):
             await service.delete_platform_provisioned(mine.device_id, actor_user_id=1)
         assert await service.get_device(mine.device_id) is not None
+
+    _portal.call(_run)
+
+
+def test_visibility_defaults_to_isolated_when_omitted(
+    db_session: AsyncSession, _portal: "BlockingPortal"
+):
+    """A device written WITHOUT a visibility value lands on `isolated`, not `host`
+    — the access-safe reading (#358 #364). Locks both inner defaults #361 missed:
+    the ORM `default=` (an ORM insert that omits the field) and the DDL
+    `server_default` (any raw INSERT that bypasses the ORM entirely). `host` is
+    whole-machine access and 申请制; it must never be reached by omission, and this
+    is the test that reddens if either inner default drifts back."""
+
+    async def _run() -> None:
+        owner = User(
+            username="grace",
+            email="grace@example.io",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db_session.add(owner)
+        await db_session.flush()
+
+        # ORM path: the model's `default=` fills the omitted field before INSERT.
+        db_session.add(
+            DeviceRow(
+                device_id="devdefault01",
+                name="omit-via-orm",
+                token="tok-devdefault01",
+                owner_user_id=owner.id,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await db_session.flush()
+        db_session.expunge_all()  # force a real read, not the identity map
+        reloaded = await db_session.get(DeviceRow, "devdefault01")
+        assert reloaded is not None
+        assert reloaded.visibility is Visibility.isolated
+        # The supply axis is untouched: its safe reading is self_hosted.
+        assert reloaded.supply is Supply.self_hosted
+
+        # DDL path: a raw INSERT naming neither column relies purely on the DB
+        # server_default set by the migration — the layer that catches an INSERT
+        # that never goes through the repository or the ORM.
+        await db_session.execute(
+            text(
+                "INSERT INTO device (device_id, name, token, owner_user_id, "
+                "created_at) VALUES (:id, :name, :token, :owner, :ts)"
+            ),
+            {
+                "id": "devdefault02",
+                "name": "omit-via-raw-sql",
+                "token": "tok-devdefault02",
+                "owner": owner.id,
+                "ts": datetime.now(UTC),
+            },
+        )
+        row = (
+            await db_session.execute(
+                text("SELECT visibility, supply FROM device WHERE device_id = :id"),
+                {"id": "devdefault02"},
+            )
+        ).one()
+        assert row.visibility == "isolated"
+        assert row.supply == "self_hosted"
 
     _portal.call(_run)

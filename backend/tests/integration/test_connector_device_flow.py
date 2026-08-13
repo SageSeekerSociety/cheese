@@ -209,3 +209,65 @@ def test_agent_ws_rejects_unknown_token(client):
     with contextlib.suppress(WebSocketDisconnect):
         with client.websocket_connect("/connector/agent?token=bogus") as ws:
             ws.receive_text()  # should not get here; the server closes 1008
+
+
+def test_agent_ws_does_not_park_a_session_idle_in_transaction(client):
+    """#356 regression, against a real Postgres.
+
+    The device control channel stays connected for the machine's whole uptime, and
+    its token check (``verify_token`` → the ``device_team`` read) runs on a
+    ``Depends(get_db)`` session. A get_db session injected into a WebSocket route is
+    finalized only when the socket CLOSES — so unless the handler ends that read
+    transaction before parking in its receive loop, the connection sits
+    ``idle in transaction`` for hours, holding an AccessShareLock on ``device_team``.
+    That lock made an ``ALTER TABLE`` (ACCESS EXCLUSIVE) on the device tables queue
+    behind it until it timed out → site-wide brownout. Here we enrol a real device,
+    open the control channel, and assert no such parked transaction exists while it
+    is connected."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    # Enrol a device the human-flow way so the durable token is real and its lookup
+    # runs the exact device_team read the leak parked.
+    owner = _login(client, "dave")
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "daves-box"}
+    ).json()["device_code"]
+    connect = client.post(
+        "/connector/connect", json={"device_code": code}, headers=_bearer(owner)
+    )
+    assert connect.status_code == 200, connect.text
+    poll = client.post("/connector/auth/device/poll", json={"device_code": code}).json()
+    device_token = poll["token"]
+    assert device_token
+
+    async def _parked_on_device_team() -> int:
+        # Superuser test role → pg_stat_activity exposes other backends' query text,
+        # so this counts sessions frozen mid-`device_team` read (the leak's fingerprint,
+        # matching the 2.8h idle-in-transaction found on dev).
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            n = await session.scalar(
+                text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE datname = current_database() "
+                    "AND state = 'idle in transaction' "
+                    "AND query ILIKE '%device_team%'"
+                )
+            )
+            return int(n or 0)
+
+    # Baseline: nothing parked before the socket exists.
+    assert asyncio.run(_parked_on_device_team()) == 0
+
+    with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
+        # The handshake has completed → the handler ran verify_token and is parked in
+        # its receive loop. With the fix its auth transaction is already committed;
+        # without it the connection is idle-in-transaction on the device_team read.
+        parked = asyncio.run(_parked_on_device_team())
+        ws.close()
+
+    assert parked == 0, (
+        f"the device control channel left {parked} session(s) idle-in-transaction on "
+        "the device_team read — the #356 leak that blocks device-table migrations"
+    )
