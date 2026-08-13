@@ -374,6 +374,69 @@ def test_no_two_routes_claim_the_same_path_and_method() -> None:
     )
 
 
+def test_no_two_routes_want_the_same_url_from_a_caller() -> None:
+    """Two routes may never be reachable at the SAME external URL (#370 step 3).
+
+    The test above bans duplicate BACKEND paths. This one asks the question a
+    caller asks: given the published mount, what do I type? A 1.0 `/x` is typed
+    `/api/x` and a 2.0 `/api/x` is typed `/api/api/x`, so today they differ — and
+    that difference is the only thing keeping the two generations apart while
+    they still share resource words.
+
+    It matters most for what comes next: #370 step 2 drops the 2.0 prefix, at
+    which point external URL and backend path become the same string and any
+    surviving shared word becomes a real duplicate. This assertion holds before
+    and after that change, so it is what makes the flattening checkable rather
+    than hopeful.
+    """
+    claims: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for module, routes in _module_routers().items():
+        for path, methods in routes:
+            external = _GATEWAY_PREFIX + re.sub(r"\{[^}]+\}", "{}", path)
+            for method in methods:
+                claims[(external, method)].append(module)
+
+    dupes = {key: mods for key, mods in claims.items() if len(mods) > 1}
+    assert not dupes, (
+        "two routes answer the same URL a caller would send; one of them is "
+        f"unreachable and nothing said so: {dict(sorted(dupes.items()))}"
+    )
+
+
+def test_a_trailing_slash_never_reaches_the_other_generation(
+    lenient_client: TestClient,
+) -> None:
+    """One stray `/` used to convert a correct 2.0 URL into a 1.0 answer.
+
+    The chain, verified live before it was closed: nginx strips one `/api`, the
+    backend finds no route for `/api/tasks/7/` and redirects to an
+    ORIGIN-ABSOLUTE `/api/tasks/7`, the client follows, nginx strips AGAIN, and
+    1.0's 赛题 answers. A success code, from the wrong generation, for a URL that
+    was right apart from its last character.
+
+    The backend cannot emit a correct `Location` here — it cannot know how many
+    prefixes the proxy ahead of it will strip — so `redirect_slashes=False` is
+    the fix rather than a workaround, and this pins it. A 404 is the point: the
+    caller learns immediately instead of being handed someone else's data.
+    """
+    schema = _published_schema(lenient_client)
+    two_oh = [p for p in schema["paths"] if p == "/api" or p.startswith("/api/")]
+    assert two_oh, "the 2.0 generation vanished from the schema entirely"
+
+    redirected = []
+    for path in two_oh:
+        response = lenient_client.request(
+            "GET", _concrete(path) + "/", follow_redirects=False
+        )
+        if response.is_redirect:
+            redirected.append((path, response.headers.get("location", "")))
+
+    assert not redirected, (
+        "these answer a trailing slash with a redirect, which spends an /api the "
+        f"caller already paid and lands one generation over: {redirected}"
+    )
+
+
 @pytest.mark.skipif(
     not _NGINX_CONF.exists(), reason="frontend image config not in this checkout"
 )
