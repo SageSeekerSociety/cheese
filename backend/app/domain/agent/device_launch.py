@@ -502,6 +502,30 @@ if command -v tmux >/dev/null 2>&1; then
   # the work dir gives per-topic isolation AND retires a stale session whenever
   # the resolved work dir changes.
   SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
+  # A surviving inner session runs the `claude` it was BORN with, and claude
+  # reads its model credential (CLAUDE_CODE_OAUTH_TOKEN / the HTTPS_PROXY
+  # password) ONCE at startup — it never re-reads it. So the fresh scoped token
+  # THIS launch just minted never reaches an adopted process: once the baked
+  # token expires the metering proxy answers 407 on every turn, and no relaunch,
+  # backend redeploy, or re-mint fixes it because the long-lived process keeps
+  # the dead credential. That reuse is the second layer under #385 — extending
+  # the TTL from 1h to a session only delays the day the baked token dies under a
+  # still-running claude. So before adopting, retire a session whose recorded
+  # token expiry (written in the create branch below) is past, seconds from
+  # expiring, or missing; the create branch then replaces it with a claude
+  # carrying THIS launch's live token. A session whose token is still good is
+  # adopted unchanged — no churn, and an in-flight turn is never interrupted. The
+  # margin is deliberately small: it only rejects an already-dead-or-dying token,
+  # never a healthy one, so a short-lived credential (the gateway path's hour) is
+  # re-minted at most once an hour rather than on every turn.
+  EXPFILE="$HOME/.claude/$SESSION.tokexp"
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
+    case "$TOKEXP" in ''|*[!0-9]*) TOKEXP=0 ;; esac
+    if [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ]; then
+      tmux kill-session -t "$SESSION" 2>/dev/null || true
+    fi
+  fi
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     # Adopt: claude (and normally the drainer sharing its pane, started below)
     # is already running — never start a second drainer. But a session CAN
@@ -521,7 +545,44 @@ if command -v tmux >/dev/null 2>&1; then
     # The drainer is backgrounded INSIDE the session command, then the shell
     # execs claude in the same pane: the whole delivery chain lives and dies
     # with the tmux session, not with the connector that spawned this launcher.
-    tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
+    # Stamp the token expiry this claude is BORN with so the gate above can later
+    # tell a stale-credential session from a good one and retire only the stale.
+    printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
+    # Hand THIS launch's credential / routing / attribution env to the new session
+    # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from
+    # the tmux SERVER's GLOBAL env — frozen when that server first started — for
+    # every var outside `update-environment` (which lists only DISPLAY / SSH_*).
+    # CLAUDE_CODE_OAUTH_TOKEN, the HTTPS_PROXY password and the CHEESE_* wiring are
+    # none of them, so on a box whose default tmux server is already up (it hosts
+    # another topic, or a login shell) a brand-new claude would silently boot with
+    # the token frozen into that server weeks ago — a stale, wrong-topic credential
+    # — instead of the one this turn minted. That is the 407 that outlives a
+    # re-mint, a backend redeploy AND killing the old session: the dead token lives
+    # in the server's global env, not the process, so recreating the session alone
+    # inherits it again. -e writes the session env before claude execs, per key, so
+    # each topic's claude runs on its OWN live credential.
+    set -- new-session -d -s "$SESSION" -c "$CHEESE_WORK"
+    for _kv in \\
+      "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN" \\
+      "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN" \\
+      "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL" \\
+      "HTTPS_PROXY=$HTTPS_PROXY" "HTTP_PROXY=$HTTP_PROXY" \\
+      "NO_PROXY=$NO_PROXY" "no_proxy=$no_proxy" \\
+      "NODE_EXTRA_CA_CERTS=$NODE_EXTRA_CA_CERTS" \\
+      "ANTHROPIC_CUSTOM_HEADERS=$ANTHROPIC_CUSTOM_HEADERS" \\
+      "CLAUDE_MODEL=$CLAUDE_MODEL" \\
+      "CHEESE_TOKEN=$CHEESE_TOKEN" "CHEESE_HOOK_URL=$CHEESE_HOOK_URL" \\
+      "CHEESE_API=$CHEESE_API" "CHEESE_PROJECT=$CHEESE_PROJECT" \\
+      "CHEESE_TOPIC=$CHEESE_TOPIC" "CHEESE_AUTHOR=$CHEESE_AUTHOR" \\
+      "CHEESE_CLI_URL=$CHEESE_CLI_URL"; do
+      # An empty value = a var this launch didn't set; skip it (a same-mode box's
+      # frozen-global copy already matches, and forcing empty could flip modes).
+      case "$_kv" in *=) ;; *) set -- "$@" -e "$_kv" ;; esac
+    done
+    set -- "$@" "sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
+    # Fall back to a plain create if this tmux predates -e (< 3.0): the screen
+    # still launches (with the old inheritance behaviour) rather than not at all.
+    tmux "$@" || tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
       "sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
   fi
   exec tmux attach -t "$SESSION"
