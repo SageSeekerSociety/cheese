@@ -134,18 +134,23 @@ def test_a_missing_project_is_a_404_not_a_500(client):
 def test_creating_a_project_without_a_real_owner_says_so(client, caplog):
     """#315's third recommendation, corrected against the code as it stands.
 
-    The issue said the owner could "silently become None". It can't any more —
-    `resolve()` hands back the literal handle `anonymous`. That is not an
-    improvement, it is the same hole wearing a value: `anonymous` matches no
-    user account, so all seven readers still collapse onto `lead`, and now the
-    column *looks* populated. So the warning fires on "not a real person", not
-    on "empty".
+    The issue said the owner could "silently become None". When #332 was written
+    it couldn't — `resolve()` hands back the literal handle `anonymous`, which is
+    the same hole wearing a value: it matches no user account, so all seven
+    readers still collapse onto `lead`, while the column *looks* populated. So
+    the warning fires on "not a real person", not on "empty".
+
+    The stored value has since gone back to NULL, deliberately. `anonymous` in
+    that column also jams the ownerless-room escape hatch, which opens only on an
+    ABSENT owner and refuses to judge a handle by its name (nothing reserves that
+    username, so an account could hold it). NULL is the honest value for "we do
+    not know", and the warning below is what keeps it from being silent.
     """
     with caplog.at_level("WARNING", logger="cheesex.projects"):
         r = client.post("/api/projects", json={"name": "无主项目"})
 
     assert r.status_code == 200
-    assert r.json()["data"]["owner_handle"] == "anonymous"  # not None — see above
+    assert r.json()["data"]["owner_handle"] is None
     assert [rec for rec in caplog.records if "without a real owner" in rec.message]
 
 
