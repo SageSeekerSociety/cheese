@@ -380,13 +380,19 @@ class ComputePool:
         return cls([provider], provider.name)
 
     @classmethod
-    def device(cls, *, turn_timeout_s: float) -> "ComputePool":
+    def device(cls, *, idle_suspect_s: float, hard_ceiling_s: float) -> "ComputePool":
         """Self-hosted / BYO backend (AGENT_BACKEND=device, P3): runs the turn on a
         user's own enrolled machine via the frozen link.Msg channel, streaming events
-        from Claude Code hooks — same contract, execution relocated to the device."""
+        from Claude Code hooks — same contract, execution relocated to the device.
+
+        The two-layer timeout is the SAME policy the local tmux backend runs
+        (turn 活跃度检测): `idle_suspect_s` then a `_confirm_alive` process-tree
+        probe, `hard_ceiling_s` as the backstop."""
         from app.domain.agent.device_provider import DeviceProvider
 
-        provider = DeviceProvider(turn_timeout_s=turn_timeout_s)
+        provider = DeviceProvider(
+            idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
+        )
         return cls([provider], provider.name)
 
     def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
@@ -463,7 +469,16 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
     # market listing), so this stays opt-in.
     from app.domain.agent.device_provider import DeviceProvider
 
-    providers.append(DeviceProvider(turn_timeout_s=settings.device_turn_timeout_s))
+    # Same two-layer timeout policy as the local tmux backend (turn 活跃度检测),
+    # from the SAME settings — the local and remote hooks backends share one knob
+    # pair, they don't drift. Replaces the old single `device_turn_timeout_s` that
+    # collapsed both layers into one 900s deadline and killed long-but-silent turns.
+    providers.append(
+        DeviceProvider(
+            idle_suspect_s=settings.agent_idle_suspect_s,
+            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+        )
+    )
     if settings.cheesed_url:
         providers.append(
             RemoteCheesedProvider(

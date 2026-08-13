@@ -1986,13 +1986,17 @@ class ChatService:
                 await _team_compute_profile(session, project),
             )
             provider = self._compute.select(provider_id=compute_id)
-            # turn 活跃度检测: only the tmux backend has a real activity signal
-            # (hooks_substrate's idle-suspect + hard-ceiling loop) — SDK/device
-            # emit nothing here and TurnRunner's outer wall-clock wrap (runtime.py)
-            # keeps its unchanged `agent_turn_timeout_s` default for them.
-            from app.domain.agent.tmux_provider import TmuxHooksProvider
+            # turn 活跃度检测: the hooks-driven backends (LOCAL tmux + remote
+            # device) run hooks_substrate's two-layer idle-suspect + hard-ceiling
+            # loop and manage their own inner ceiling (which can be hours), so the
+            # outer wall-clock wrap (runtime.py) must be told their REAL ceiling via
+            # a `turn_ceiling` frame instead of killing them at the generic
+            # `agent_turn_timeout_s`. The SDK / remote-cheesed backends have no such
+            # signal and keep the generic default. Without this the device's own
+            # two-layer fix is dead on arrival — the outer guard still kills at 900s.
+            from app.domain.agent.hooks_substrate import HooksTurnProvider
 
-            is_activity_aware_backend = isinstance(provider, TmuxHooksProvider)
+            is_activity_aware_backend = isinstance(provider, HooksTurnProvider)
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later team-default/sticky change must

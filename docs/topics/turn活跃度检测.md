@@ -17,16 +17,19 @@ wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b3
 - `backend/app/domain/agent/tmux_provider.py`：`TmuxHooksProvider` 实现 seam——
   后台任务每 12s `capture-pane` 一次、输出哈希变了记一次活跃；疑似卡死时调用
   `pane_dead()` 探活；`activity_status(topic_id)` 给 `cheese status` 读。
-- `backend/app/domain/agent/device_provider.py`：seam 用默认空实现，
+- `backend/app/domain/agent/device_provider.py`：（本增量）seam 用默认空实现，
   `idle_suspect_s == hard_ceiling_s == device_turn_timeout_s`，等价于旧的单层
-  固定超时，行为不变；留 TODO 注释标注远程活跃度检测是后续单独一张卡。
+  固定超时，行为不变；远程活跃度检测留作后续一张卡。**已被文末「后续：device
+  侧补齐」取代——device 现在也走两层 + 进程树探活，不再是单层固定超时。**
 - **原简报没提到、自行判断补上的部分**：`runtime.py` 的 `TurnRunner` 还有一层
   transport 无关的外层 `asyncio.timeout` 硬墙（同一个 `agent_turn_timeout_s`，
   对 SDK/tmux/device 三个后端一视同仁）——只改 `run_hooks_turn` 内层不够，这道
   墙不动 tmux turn 照样在 900s 被无差别强杀。做法：`chat_service.converse()`
   选定 tmux provider 后发一个 `turn_ceiling` 元帧（不落广播，`_execute` 内部
   消费），`TurnRunner` 用 `asyncio.Timeout.reschedule()` 只把这一个 turn 的外层
-  墙放宽到 10800s；SDK/device 完全没有这个信号，外层墙原样不变。
+  墙放宽到 10800s；SDK/device 完全没有这个信号，外层墙原样不变。**（device 这半
+  已被文末「后续：device 侧补齐」改写：device 现在也发 `turn_ceiling`，外层墙同样
+  放宽到 10800s；只剩 SDK/remote-cheesed 没有这个信号。）**
 - `cheese status`：`TurnRunner.topic_turn()` 去掉 `budget_left_s` 实时倒计时，
   改成 `ceiling_s`/`near_ceiling`；`/topics/{id}/status` 路由新增
   `turn.activity`（读 `ChatService.tmux_activity_status`）；
@@ -62,3 +65,36 @@ wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b3
 
 递验收卡给 wangchangxin，routing_reason 注明这是核心运行时改动、影响面覆盖
 全平台本地 tmux turn。
+
+## 后续：device 侧补齐（把上面留的 TODO 落地）
+
+上面那版本地 tmux 落两层、远程 device 明确不动——于是 device 的
+`idle_suspect_s == hard_ceiling_s == 900`，两层塌成一根 900 秒死线，唯一生效的
+是「到 900 秒无条件杀」。一个正常跑 20 分钟的前台命令（pytest 等，这 20 分钟
+hook 全静默：PreToolUse 开头响一次、PostToolUse 结束才响、中间零 hook）会在第 15
+分钟被误杀。本次把 device 侧补齐，和本地同一套策略：
+
+- `device_provider.py`：`DeviceProvider` 改成分别接 `idle_suspect_s` /
+  `hard_ceiling_s`（默认 300 / 10800，与本地同值），删掉 `turn_timeout_s` 单值
+  塌缩与那段 TODO。
+- `device_provider.py` + `device_launch.py`：给 device 一个真的 `_confirm_alive`
+  ——**进程树探活**。静默期最可靠的存活信号是进程还在不在（transcript mtime /
+  statusline / OTel 在静默期都无效；headless 设备也没有现成的屏幕字节流——hub 只
+  在有浏览器 viewer 订阅时才回传 `screen.data`）。`DEVICE_ALIVE_PROBE` 经 hub 的
+  `exec` 在设备上跑一段 `sh`：按 claude 进程自己的 `CHEESE_TOPIC` 环境变量在
+  `/proc` 里精确匹配本话题的 claude 是否还活着，打印 `alive`/`dead`/`unknown`。
+  只有明确 `dead` 才判死；`unknown`（非 Linux / environ 不可读）、exec 报错、非零
+  退出一律保守判活，探测抖动绝不误杀。co-located（后端本机）与 remote 都走同一条
+  `exec`，不按 co-location 分叉。
+- `compute.py` / `config.py`：device 直接复用 `settings.agent_idle_suspect_s` /
+  `settings.agent_turn_hard_ceiling_s`（与本地 tmux 同源，共一套旋钮）；删掉
+  `device_turn_timeout_s`。
+- `chat.py`：`is_activity_aware_backend` 从「只认 `TmuxHooksProvider`」放宽成
+  「认 `HooksTurnProvider`」——**这条是让内层修复真正生效的关键**：只改内层两层
+  不够，`runtime.py` 外层墙不发 `turn_ceiling` 就仍在 900s 无差别杀 device turn。
+  现在 device 也发 `turn_ceiling`（= 其 `hard_ceiling_s` 10800），外层墙同样放宽。
+  `_turn_meta_lines(activity_aware=True)` 的「无固定倒计时」提示对 device 也已属实。
+
+未做（另开卡）：PreToolUse 预读命令自带的 `tool_input.timeout` 动态放宽窗口——是
+优化不是正确性修复。`sweep_orphans` 的 30 分钟静默兜底（`SILENT_TURN_S=1800`）对
+两个 hooks 后端一视同仁、本次不动：20 分钟的静默前台命令在其之下，不受影响。
