@@ -418,8 +418,36 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         3×60s prompt timeout whenever the two had diverged. The adopt-create is
         idempotent on the device: a live session hot-reloads the cheeselet and keeps
         the system prompt it launched with (the launcher only reads it at screen
-        creation); a lost one is respawned under the same sid + screen token."""
+        creation); a lost one is respawned under the same sid + screen token.
+
+        But adopt-create only respawns a screen the CONNECTOR forgot (it restarted);
+        it cannot respawn one whose `claude` died while the connector kept running,
+        because the connector still holds the sid and merely hot-reloads into the
+        dead pane. So a reused screen is first probed for a live `claude`
+        (``_confirm_alive``); an explicitly dead one is closed and reopened under a
+        fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
+        if existing is not None and not await self._confirm_alive(existing):
+            # The hub still has a screen for this topic, but the `claude` behind it
+            # is GONE — its tmux session was killed out from under a STILL-RUNNING
+            # connector (an orphan sweep, a `tmux kill-server`, a crash). Reasserting
+            # (adopt-create, #369) does NOT bring it back: the frozen connector,
+            # finding the sid still in its own in-memory session map, only
+            # hot-reloads the cheeselet and returns — it re-Spawns the launcher ONLY
+            # for a sid it has forgotten, i.e. after IT restarted (cli host.go
+            # createSession). #369 rebuilds a screen a CONNECTOR restart lost; it
+            # cannot rebuild one whose `claude` died while the connector lived. The
+            # turn would then prompt a dead pane and die in the 25s
+            # "会话没有任何反应" delivery timeout, reaching no model — which on a
+            # subscription deployment is a co-located device that silently never
+            # bills a turn (#325 G2). Drop the stale screen (session.close makes the
+            # connector forget the sid too) so the code below OPENS a fresh one under
+            # a NEW sid the connector cannot short-circuit and must Spawn: the
+            # launcher runs, `claude` restarts, hooks flow. Only an explicit `dead`
+            # reading forces this (see `_confirm_alive`) — an alive, `unknown`, or
+            # probe-hiccup screen is still reasserted, exactly as before.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         home_dir = f"$HOME/.cheese/home/{project_id}"
