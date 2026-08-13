@@ -1,5 +1,10 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
+import os
+import re
+import subprocess
+import time
+
 from app.domain.agent import device_launch
 
 
@@ -88,6 +93,145 @@ def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
     assert 'cat > "$HOME/.claude.json"' in script
     assert '"bypassPermissionsModeAccepted":true' in script
     assert '"$CHEESE_WORK"' in script
+
+
+# --- the spool drainer's lifecycle (it must live and die with claude) --------
+
+
+def _drain_body() -> str:
+    """The cheese-drain script exactly as the launcher writes it to the device."""
+    script = device_launch.build_launch_script()
+    return script.split("<<'DRAIN'\n", 1)[1].split("\nDRAIN\n", 1)[0] + "\n"
+
+
+def test_drainer_lives_inside_the_claude_tmux_session():
+    """The drainer used to be backgrounded in the OUTER launcher tree — the
+    connector's process tree. A connector restart killed it while claude
+    survived inside tmux: hooks kept spooling with no sender (84 piled up on a
+    dev box while the platform read the turn as unresponsive). It must start
+    inside the tmux session command itself, sharing claude's pane and fate."""
+    script = device_launch.build_launch_script()
+    # No drainer loop in the launcher's own tree on the tmux path.
+    assert "( while true" not in script
+    # The session command backgrounds the drainer, then execs claude — one
+    # pane, one fate: the session dying takes both, the connector dying takes
+    # neither.
+    m = re.search(
+        r'tmux new-session -d -s "\$SESSION" -c "\$CHEESE_WORK" \\\n\s+"(.+)"\n',
+        script,
+    )
+    assert m, "new-session lost its command string"
+    wrapper = m.group(1)
+    assert "cheese-drain" in wrapper
+    assert wrapper.endswith("& exec $CLAUDE")
+    proc = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_adopt_rerun_revives_a_dead_drainer_but_never_doubles_a_live_one():
+    """Re-running the launcher against a live session (the #369 adopt/reassert
+    path) must be idempotent: a live drainer (its recorded pid answers) is left
+    alone; a missing one (pre-fix session, crashed loop) is revived INSIDE the
+    session, tethered to the claude pane so it cannot outlive claude and hold
+    the session open."""
+    script = device_launch.build_launch_script()
+    assert 'cat "$HOME/.claude/cheese-drain.pid"' in script
+    assert 'kill -0 "$DRAIN_PID"' in script
+    assert 'tmux new-window -d -t "$SESSION" -n cheese-drain' in script
+    assert "CHEESE_DRAIN_TETHER=$TETHER" in script
+    # The loop honors the tether, so the revived window closes when claude goes.
+    assert 'kill -0 "$CHEESE_DRAIN_TETHER"' in _drain_body()
+
+
+def test_drainer_config_is_rewritten_each_launch_and_read_each_pass():
+    """An adopted drainer outlives the turn that started it, so it must deliver
+    with the CURRENT turn's token/URL: the launcher rewrites the config file
+    atomically on every run, and the loop re-sources it on every pass."""
+    script = device_launch.build_launch_script()
+    tmp = '"$HOME/.claude/cheese-drain.env.tmp"'
+    assert f"cat > {tmp}" in script, "config must be staged to a tmp file"
+    assert f"mv {tmp}" in script, "and moved into place atomically"
+    for line in (
+        'CHEESE_HOOK_SPOOL="$CHEESE_HOOK_SPOOL"',
+        'CHEESE_HOOK_URL="$CHEESE_HOOK_URL"',
+        'CHEESE_TOKEN="$CHEESE_TOKEN"',
+    ):
+        assert line in script
+    body = _drain_body()
+    assert '. "$0.env"' in body
+    assert body.index("while true") < body.index('. "$0.env"'), (
+        "the config must be sourced inside the loop, not once at startup"
+    )
+
+
+def test_no_tmux_branch_keeps_the_drainer_in_claudes_own_tree():
+    """Without tmux, claude stays in the launcher's process tree — a drainer
+    backgrounded there genuinely shares its fate, so that shape stays."""
+    script = device_launch.build_launch_script()
+    no_tmux = script.split("\nelse\n", 1)[1]  # outer else only (inner is indented)
+    assert 'sh "$HOME/.claude/cheese-drain"' in no_tmux
+    assert 'eval "exec $CLAUDE"' in no_tmux
+
+
+def _write_drainer(tmp_path, *, curl_response: str) -> tuple:
+    """Materialize the generated drain script + its config + a stub curl."""
+    drain = tmp_path / "cheese-drain"
+    drain.write_text(_drain_body())
+    spool = tmp_path / "spool"
+    spool.mkdir()
+    (tmp_path / "cheese-drain.env").write_text(
+        f'CHEESE_HOOK_SPOOL="{spool}"\n'
+        'CHEESE_HOOK_URL="http://backend.test/hooks"\n'
+        'CHEESE_TOKEN="tok"\n'
+    )
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    (bindir / "curl").write_text(f"#!/bin/sh\necho '{curl_response}'\n")
+    (bindir / "curl").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}"}
+    return drain, spool, env
+
+
+def test_drainer_delivers_the_spool_and_deletes_only_on_code_200(tmp_path):
+    """Run the REAL generated script: a spooled event is posted and removed on
+    a durable ack, and the pid file (the relaunch idempotence handle) appears."""
+    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":200}')
+    event = spool / "1700000000.ev1"
+    event.write_text('{"hook_event_name":"Stop"}')
+    proc = subprocess.Popen(["sh", str(drain)], env=env)
+    try:
+        deadline = time.monotonic() + 10
+        while event.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not event.exists(), "the drainer never delivered the spooled event"
+        assert (tmp_path / "cheese-drain.pid").exists()
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_drainer_keeps_an_unacknowledged_event(tmp_path):
+    drain, spool, env = _write_drainer(tmp_path, curl_response='{"code":500}')
+    event = spool / "1700000000.ev1"
+    event.write_text('{"hook_event_name":"Stop"}')
+    proc = subprocess.Popen(["sh", str(drain)], env=env)
+    try:
+        time.sleep(1.0)  # a couple of passes
+        assert event.exists(), "an unacknowledged event must stay spooled"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_a_revived_drainer_exits_when_its_tether_dies(tmp_path):
+    """The revival path runs the drainer in its own tmux window; the tether is
+    what stops that window from keeping the session alive after claude exits."""
+    drain, _spool, env = _write_drainer(tmp_path, curl_response='{"code":200}')
+    corpse = subprocess.Popen(["sh", "-c", "exit 0"])
+    corpse.wait()
+    env["CHEESE_DRAIN_TETHER"] = str(corpse.pid)
+    proc = subprocess.Popen(["sh", str(drain)], env=env)
+    assert proc.wait(timeout=5) == 0
 
 
 def test_the_gates_written_are_valid_json():
