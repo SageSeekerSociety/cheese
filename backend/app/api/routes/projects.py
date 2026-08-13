@@ -612,9 +612,15 @@ async def require_quality_gate_admin(
 
 @router.get("/{project_id}/quality-gate")
 async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
-    """The project's 硬门 settings: `check_command` (run in the topic workspace
-    before an accept card reaches the reviewer; empty = no gate) and
-    `approvals_required` (distinct approvals an accept needs; default 1)."""
+    """The project's 硬门 settings: `check_command` and `approvals_required`
+    (distinct approvals an accept needs; default 1).
+
+    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): `check_command`
+    is RETIRED. It used to run in the topic workspace before a card reached the
+    reviewer; that mechanism is gone — a card is the view of a PR and real CI on
+    that PR decides. The value is still stored and returned (round-trip stays
+    working, a later stage clears it) but nothing runs it any more.
+    `approvals_required` is unaffected."""
     from app.domain.review.services import approvals_required_of, check_command_of
 
     project = await ProjectRepository(db).get(project_id)

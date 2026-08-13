@@ -397,11 +397,14 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
-    # PR-based accept (#188 §5.1, docs/plans/2026-08-09-pr-based-accept-design.md):
-    # submitting an accept card pushes the topic branch and opens a real PR;
-    # 采纳 merges that PR via the API. Submission-side only — accept dispatches
-    # on the card's stored pr_number, so flipping this never strands a card.
-    accept_via_pr: bool = False
+    # 采纳即合并 (docs/accept-is-merge.md #296, staged rollout): submitting an
+    # accept card opens a real PR with the App's installation token; 采纳 merges
+    # that PR via the API. On by default as of stage 1 — the App owns PR
+    # creation, so the accept path never opens a competing PR while this is on
+    # (see AcceptService.accept). Submission-side only — accept dispatches on the
+    # card's stored pr_number, so flipping this never strands a card, and a
+    # deployment can still switch it off via .env (dev override) if needed.
+    accept_via_pr: bool = True
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the

@@ -1,74 +1,28 @@
-"""Integration tests for the machine quality gate (spec §4.4/§9, eval C2).
+"""The machine quality gate is RETIRED (docs/accept-is-merge.md #296, stage 1).
 
-When a project configures `check_command`, filing an accept card runs that
-command in the topic's workspace BEFORE the card reaches a reviewer:
-green → card becomes pending (gate_passed_at + output recorded);
-red → card becomes gate_failed and 芝士 gets a system nudge to fix it.
-No check_command configured → the card is born pending (现行为, backward compat).
+Filing an accept card used to run a project's `check_command` in the topic
+workspace BEFORE the card reached a reviewer (born `pending_gate`, green →
+`pending`, red → `gate_failed`). That whole mechanism is gone: a card is the
+platform's view of a PR, and real CI on that PR — not a private platform check —
+is what decides whether a change is good.
+
+These tests pin the retirement as observable behaviour: a project WITH a
+`check_command` still configured files a card that is born `pending` (never
+`pending_gate`), no platform check runs, and the card is immediately usable —
+plus the settings endpoint that stores `check_command` / `approvals_required`
+still round-trips (a later stage clears `check_command`; this one only stops
+consuming it).
 """
 
-import time
-import uuid
-
-import pytest
-
-from app.domain.review import gate
-from tests.conftest import wait_turns_idle
 from tests.integration.conftest import session_auth_headers
 
 
-@pytest.fixture(autouse=True)
-def _gate_logs(tmp_path, monkeypatch):
-    """Keep gate logs out of the repo's logs/ during tests."""
-    monkeypatch.setattr(gate, "LOG_DIR", tmp_path / "gate-logs")
-    worktree = tmp_path / "gate-worktree"
-    worktree.mkdir()
-    monkeypatch.setattr(gate.ws, "topic_worktree", lambda *_: worktree)
-    monkeypatch.setattr(gate.ws, "merge_topic", lambda *_: {"merged": True})
-
-    def deterministic_gate_runner(_cwd, command, *, timeout, log_path):
-        del timeout
-        if command.startswith("sleep 2"):
-            time.sleep(2)
-        # "docker itself refused" — the gate never produced a result at all.
-        if "raise-boom" in command:
-            raise RuntimeError("docker daemon unreachable")
-        marker = next(
-            (
-                value
-                for value in (
-                    "all-good",
-                    "boom-details",
-                    "cant-run",
-                    "fixed-now",
-                    "ok",
-                )
-                if value in command
-            ),
-            command,
-        )
-        # exit 2 = check.sh --strict's "I could not run" (see BLOCKED_EXIT_CODE).
-        exit_code = 3 if "exit 3" in command else (2 if "exit 2" in command else 0)
-        output = f"{marker}\n"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(output, encoding="utf-8")
-        return {"exit_code": exit_code, "tail": output}
-
-    # Gate orchestration is what these integration tests cover. Docker argv and
-    # timeout cleanup are covered at the workspace process boundary unit tests.
-    monkeypatch.setattr(gate.ws, "run_check_command", deterministic_gate_runner)
-
-
-@pytest.fixture(autouse=True)
-def _authenticated_project_owner(client):
+def _authed(client):
     client.headers.update(session_auth_headers("alice"))
-    yield
-    client.headers.pop("Authorization", None)
 
 
 def _make_project(client) -> str:
-    # No owner_handle: the autouse fixture above authenticates every request as
-    # alice, so the project (and the roster writes below) belong to her.
+    _authed(client)
     r = client.post("/api/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -105,25 +59,81 @@ def _latest_card(client, topic_id: str) -> dict:
     return cards[0]
 
 
-def _wait_gate_settled(client, topic_id: str, timeout: float = 20.0) -> dict:
-    """Poll until the background gate finishes (card leaves pending_gate)."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        card = _latest_card(client, topic_id)
-        if card["status"] != "pending_gate":
-            return card
-        time.sleep(0.05)
-    raise AssertionError("gate never settled (card stuck in pending_gate)")
+# --------------------------------------------------------------------------
+# The gate is unreachable — a configured check_command no longer gates
+# --------------------------------------------------------------------------
 
 
 def test_no_check_command_card_born_pending(client):
-    # Backward compat: an unconfigured project keeps the old behavior exactly.
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     card = _file_card(client, tid)
     assert card["status"] == "pending"
     assert card["gate_passed_at"] is None
     assert card["gate_output"] == ""
+
+
+def test_a_configured_check_command_no_longer_produces_a_pending_gate_card(client):
+    """The retirement guard (like #302's parked-bypass guard): a project can
+    still have a `check_command` stored, but filing a card must NOT reach
+    `pending_gate` any more — the card is born `pending` and no platform check
+    runs against it."""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    # A command that WOULD have failed the old gate (exit 3): proof the platform
+    # is not running it — if it did, the card would not be `pending`.
+    _set_gate(client, pid, "echo boom-details >&2; exit 3")
+
+    card = _file_card(client, tid)
+    assert card["status"] == "pending"
+    assert card["status"] != "pending_gate"
+    assert card["gate_passed_at"] is None
+    assert card["gate_output"] == ""
+
+    # The card is directly usable — no gate to wait on, no green to earn from
+    # the platform.
+    assert _latest_card(client, tid)["status"] == "pending"
+
+
+def test_a_pending_card_with_a_check_command_is_acceptable_immediately(client):
+    """No gate stands between filing and accepting: a card on a project that
+    still carries a `check_command` accepts straight away (local merge, since no
+    GitHub App is configured in the test env)."""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _set_gate(client, pid, "echo all-good")
+
+    card = _file_card(client, tid)
+    assert card["status"] == "pending"
+
+    r = client.post(
+        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "accepted"
+
+
+def test_second_card_still_blocked_while_first_is_pending(client):
+    """One live card per topic — unchanged. (Used to also cover pending_gate;
+    that state is no longer reachable, so a plain pending card carries it.)"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _set_gate(client, pid, "echo all-good")
+
+    first = _file_card(client, tid)
+    assert first["status"] == "pending"
+
+    r = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "bob", "routing_reason": "x"},
+    )
+    assert r.status_code == 422
+    assert "改验收人" in r.json()["message"]
+
+
+# --------------------------------------------------------------------------
+# The quality-gate settings endpoint still stores/round-trips its values
+# --------------------------------------------------------------------------
 
 
 def test_quality_gate_settings_roundtrip(client):
@@ -137,7 +147,7 @@ def test_quality_gate_settings_roundtrip(client):
     r = client.get(f"/api/projects/{pid}/quality-gate")
     assert r.json()["data"] == {"check_command": "echo hi", "approvals_required": 3}
 
-    # Clearing the command removes the gate; approvals stay.
+    # Clearing the command removes it; approvals stay.
     r = client.put(f"/api/projects/{pid}/quality-gate", json={"check_command": ""})
     assert r.status_code == 200
     r = client.get(f"/api/projects/{pid}/quality-gate")
@@ -153,8 +163,6 @@ def test_quality_gate_rejects_bad_approvals(client):
 def test_quality_gate_update_requires_human_project_admin(client):
     pid = _make_project(client)
 
-    # The global test sandbox token is still present, proving an agent token is
-    # insufficient when no verified human session accompanies it.
     client.headers.pop("Authorization")
     r = client.put(
         f"/api/projects/{pid}/quality-gate", json={"check_command": "echo bad"}
@@ -170,8 +178,6 @@ def test_quality_gate_update_requires_human_project_admin(client):
 
 def test_quality_gate_update_allows_project_lead_not_ordinary_member(client):
     pid = _make_project(client)
-    # Still alice's token from the autouse fixture — she owns the project, which
-    # is what writing the roster now requires.
     for handle, role in (("lead-user", "lead"), ("member-user", "member")):
         r = client.post(
             f"/api/projects/{pid}/members",
@@ -204,184 +210,23 @@ def test_quality_gate_rejects_oversized_or_nul_command(client):
     assert r.status_code == 422
 
 
-def test_gate_green_promotes_card_to_pending(client):
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    _set_gate(client, pid, "echo all-good")
-
-    card = _file_card(client, tid)
-    assert card["status"] == "pending_gate"
-
-    settled = _wait_gate_settled(client, tid)
-    assert settled["status"] == "pending"
-    assert settled["gate_passed_at"] is not None
-    assert "all-good" in settled["gate_output"]
-
-    # Full output landed in the gate log file.
-    topic8 = uuid.UUID(tid).hex[:8]
-    log = gate.LOG_DIR / f"gate-{topic8}.log"
-    assert log.is_file()
-    assert "all-good" in log.read_text(encoding="utf-8")
-
-    # A green-gated card is acceptable as usual.
-    r = client.post(
-        f"/api/accept-cards/{settled['id']}/accept", json={"decided_by": "alice"}
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["status"] == "accepted"
-
-
-def test_gate_red_fails_card_and_nudges_cheese(client):
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    _set_gate(client, pid, "echo boom-details >&2; exit 3")
-
-    card = _file_card(client, tid)
-    assert card["status"] == "pending_gate"
-
-    settled = _wait_gate_settled(client, tid)
-    assert settled["status"] == "gate_failed"
-    assert settled["gate_passed_at"] is None
-    assert "boom-details" in settled["gate_output"]
-
-    # A failed card cannot be accepted…
-    r = client.post(
-        f"/api/accept-cards/{settled['id']}/accept", json={"decided_by": "alice"}
-    )
-    assert r.status_code == 422
-    # …and cannot be rejected either (it never reached the reviewer).
-    r = client.post(
-        f"/api/accept-cards/{settled['id']}/reject", json={"decided_by": "alice"}
-    )
-    assert r.status_code == 422
-
-    # 芝士 got a system nudge to go fix the failure. The nudge turn is
-    # submitted right after the card settles — poll for it, then drain.
-    contents = ""
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
-        if "boom-details" in contents:
-            break
-        time.sleep(0.05)
-    assert "检查" in contents
-    assert "boom-details" in contents
-
-    # gate_failed is not in-flight: 芝士 can file a fresh card after fixing.
-    _set_gate(client, pid, "echo fixed-now")
-    fresh = _file_card(client, tid, "bob")
-    assert fresh["status"] == "pending_gate"
-    assert _wait_gate_settled(client, tid)["status"] == "pending"
-
-
-def test_gate_that_could_not_run_is_not_green_and_is_not_called_a_failure(client):
-    # 门禁没跑成 (2026-08-11): exit 2 means the check never ran, so it has no
-    # opinion about the code. The card must not go to the reviewer (that was the
-    # bug: a container where only lint could start reported "1/1 passed" and the
-    # card went green), and must not be reported as "检查未通过" either.
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    _set_gate(client, pid, "echo cant-run; exit 2")
-
-    card = _file_card(client, tid)
-    assert card["status"] == "pending_gate"
-
-    settled = _wait_gate_settled(client, tid)
-    assert settled["status"] == "gate_blocked"
-    assert settled["gate_passed_at"] is None
-    assert "cant-run" in settled["gate_output"]
-
-    # It never reached the reviewer, so it can be neither accepted nor rejected.
-    r = client.post(
-        f"/api/accept-cards/{settled['id']}/accept", json={"decided_by": "alice"}
-    )
-    assert r.status_code == 422
-    r = client.post(
-        f"/api/accept-cards/{settled['id']}/reject", json={"decided_by": "alice"}
-    )
-    assert r.status_code == 422
-
-    # 芝士 is told the check did not run — not that its code is broken, which
-    # would send it hunting for a bug that no check ever reported.
-    contents = ""
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
-        if "cant-run" in contents:
-            break
-        time.sleep(0.05)
-    assert "没能跑起来" in contents
-    assert "未通过" not in contents
-
-    # Like gate_failed, a blocked card is not in-flight: once the environment is
-    # fixed 芝士 files a fresh one.
-    _set_gate(client, pid, "echo fixed-now")
-    fresh = _file_card(client, tid, "bob")
-    assert fresh["status"] == "pending_gate"
-    assert _wait_gate_settled(client, tid)["status"] == "pending"
-
-
-def test_gate_that_crashed_before_running_blocks_rather_than_fails(client):
-    # Docker down / worktree gone: same fact as exit 2, established one layer
-    # out. Whatever happens, it is never a verdict about the code.
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    _set_gate(client, pid, "echo raise-boom")
-
-    _file_card(client, tid)
-    settled = _wait_gate_settled(client, tid)
-
-    assert settled["status"] == "gate_blocked"
-    assert "检查无法执行" in settled["gate_output"]
-
-
 def test_an_accepted_card_still_cannot_be_rejected(client):
     # Widening reject must not turn it into a way around the terminal states.
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     _set_gate(client, pid, "echo all-good")
 
-    _file_card(client, tid)
-    settled = _wait_gate_settled(client, tid)
-    assert settled["status"] == "pending"
+    card = _file_card(client, tid)
+    assert card["status"] == "pending"
 
     r = client.post(
-        f"/api/accept-cards/{settled['id']}/accept", json={"decided_by": "alice"}
+        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
     )
     assert r.status_code == 200, r.text
 
     r = client.post(
-        f"/api/accept-cards/{settled['id']}/reject",
+        f"/api/accept-cards/{card['id']}/reject",
         json={"decided_by": "alice", "note": "x"},
     )
     assert r.status_code == 422
     assert "已处理" in r.text
-
-
-def test_pending_gate_blocks_accept_and_second_card(client):
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    # Slow enough that the assertions below run while the gate is in flight.
-    _set_gate(client, pid, "sleep 2; echo ok")
-
-    card = _file_card(client, tid)
-    assert card["status"] == "pending_gate"
-
-    # Can't accept while the platform is still checking.
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
-    )
-    assert r.status_code == 422
-
-    # One in-flight card per topic: a second one is rejected.
-    r = client.post(
-        f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "bob", "routing_reason": "x"},
-    )
-    assert r.status_code == 422
-
-    assert _wait_gate_settled(client, tid)["status"] == "pending"

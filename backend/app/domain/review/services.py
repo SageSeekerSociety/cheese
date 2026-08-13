@@ -25,7 +25,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review import archive
+from app.domain.review import archive, pr_publish
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
@@ -43,6 +43,13 @@ logger = logging.getLogger("cheesex.review")
 # 表情去粗判 (2026-08-10 修的就是这个: 用 "⚠️" 粗判会让"轮询暂停"冒充"重推
 # 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
 _REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
+#: 本地话题分支与 PR 分支分叉 (采纳即合并 #296, 2026-08-12). `push_topic_branch_
+#: for_github_pr` 是**非强制**推送，一旦本地分支被 jj rewind / rebase 挪到了 PR
+#: 分支的祖先或旁支上（bookmark set --allow-backwards 允许回退），plain push 就会
+#: 被 GitHub 以 non-fast-forward 拒绝——而轮询每 60 秒无脑重试这条注定失败的推送，
+#: 就是 card 946bf5de 每 ~70 秒失败一次的死循环。检测到不能快进就**不推**，留一条
+#: 具名 note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
+_REPUSH_DIVERGED_PREFIX = "🌿 本地分支与 PR 分支已分叉"
 _POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
 #: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
 #: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
@@ -297,7 +304,16 @@ def approvals_required_of(project: Project | None) -> int:
 
 
 def check_command_of(project: Project | None) -> str | None:
-    """机器闸门 (eval C2): the project's configured check command, or None."""
+    """The project's stored `check_command`, or None.
+
+    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): this setting no
+    longer gates anything. The platform used to run it in the topic workspace
+    before a card reached the reviewer; that whole mechanism is retired — a
+    repository declares its checks in `.github/workflows`, the forge runs them,
+    and the card mirrors the forge's result. The value is still stored and read
+    back (the settings endpoint round-trips it, and a later stage clears it)
+    but nothing consumes it to produce a green card any more.
+    """
     if project is None:
         return None
     cmd = str((project.settings or {}).get("check_command") or "").strip()
@@ -374,21 +390,19 @@ class AcceptService:
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
-        # 机器闸门 (spec §4.4/§9, eval C2): with a check_command configured the
-        # card is born pending_gate; the platform runs the check in the topic's
-        # workspace and only a green result promotes it to pending. The check
-        # runs in the background (it can take minutes) — see review/gate.py.
-        project = await self._projects.get(topic.project_id)
-        status = (
-            AcceptStatus.pending_gate
-            if check_command_of(project)
-            else AcceptStatus.pending
-        )
+        # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is always
+        # born `pending`. The old machine gate (`check_command` → born
+        # `pending_gate`, platform runs the check, only green promotes to
+        # pending) is retired: a card is the platform's view of a PR, and real
+        # CI on that PR — not a private platform check — is what decides whether
+        # a change is good. `pending_gate`/`gate_failed`/`gate_blocked` are no
+        # longer entered; existing rows keep their historical values and their
+        # exits (review/gate_sweep.py, AcceptService.void) stay in place.
         card = await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
-            status=status,
+            status=AcceptStatus.pending,
         )
         await self._warn_about_a_second_pending_migration(topic)
         return card
@@ -449,11 +463,11 @@ class AcceptService:
             + "如果确实是两件事，照常采纳，先合的那张合完后另一张要 rebase。",
         )
 
-    async def gate_plan(self, topic_id: uuid.UUID) -> tuple[uuid.UUID, str | None]:
-        """(project_id, check_command) for a topic — what the gate should run."""
+    async def project_id_for_topic(self, topic_id: uuid.UUID) -> uuid.UUID:
+        """The topic's project id — what the PR-publish dispatch needs to resolve
+        the App installation and upstream (采纳即合并 #296)."""
         topic = await self._topic_or_404(topic_id)
-        project = await self._projects.get(topic.project_id)
-        return topic.project_id, check_command_of(project)
+        return topic.project_id
 
     async def mark_gate_started(self, *, card_id: uuid.UUID) -> AcceptCard:
         """闸门开跑打点 (孤儿卡, 2026-08-11). Idempotent-ish and deliberately
@@ -666,13 +680,12 @@ class AcceptService:
                 f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
             )
 
-        # PR-based accept (#188 §5.1): a card that ALREADY rides a real PR
-        # (published fire-and-forget by pr_publish.py when the card turned
-        # pending, behind settings.accept_via_pr — off by default) is accepted
-        # by merging THAT PR via the API, never by opening a second one. Falls
-        # through to the local path when GitHub is unreachable (availability
-        # must never regress) — the merge commit landing on main closes the
-        # PR anyway.
+        # 采纳即合并 (#296): a card that ALREADY rides a real PR — the App opened
+        # it fire-and-forget when the card was filed (pr_publish.py, now on by
+        # default via settings.accept_via_pr) — is accepted by merging THAT PR
+        # via the API, never by opening a second one. Falls through to the local
+        # path when GitHub is unreachable (availability must never regress) —
+        # the merge commit landing on main closes the PR anyway.
         pr_degrade_reason = ""
         if card.pr_number is not None:
             settled, existing_pr_degrade_reason = await self._accept_via_pr(
@@ -690,55 +703,70 @@ class AcceptService:
         # prerequisites themselves must degrade the same way: a DB hiccup here
         # is exactly as "mechanism unavailable" as a missing token.
         #
+        # 采纳即合并 (#296) coexistence guard: when the App owns PR creation
+        # (`pr_publish.enabled()`), this personal-token path is SKIPPED. A
+        # PR-less card at this point means the App PR has not landed yet (the
+        # fire-and-forget publish is still in flight) or genuinely could not be
+        # opened (non-GitHub upstream, GitHub down at filing) — either way,
+        # opening a competing personal-token PR here is exactly the "run both
+        # mechanisms at once" the design warns against, so the card degrades to
+        # the local merge instead. The two-phase path stays live only where the
+        # App mechanism is off (a project without the App, or the .env override).
+        #
         # `pr_degrade_reason` makes WHY visible (this card's whole reason for
         # existing): every path below that falls through to the local-merge
         # branch sets it to a human-readable, secret-free explanation, and it
         # gets prefixed onto card.note further down so "looks like account
         # not connected" and "账号连了但密文坏了" are no longer
         # indistinguishable in the UI.
-        try:
-            pr_prereqs, two_phase_degrade_reason = await self._resolve_pr_prerequisites(
-                topic, decided_by
-            )
-        except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
-            logger.warning(
-                "could not resolve PR prerequisites for topic=%s, degrading to "
-                "direct merge: %s",
-                topic.id,
-                exc,
-            )
-            pr_prereqs = None
-            two_phase_degrade_reason = f"检查 PR 前提条件时出错（{type(exc).__name__}）"
-        if pr_prereqs is not None:
-            token, pr_owner, pr_repo = pr_prereqs
+        two_phase_degrade_reason = ""
+        if not pr_publish.enabled():
             try:
-                return await self._open_pr_for_accept(
-                    card=card,
-                    topic=topic,
-                    decided_by=decided_by,
-                    token=token,
-                    owner=pr_owner,
-                    repo=pr_repo,
-                )
+                (
+                    pr_prereqs,
+                    two_phase_degrade_reason,
+                ) = await self._resolve_pr_prerequisites(topic, decided_by)
             except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
                 logger.warning(
-                    "PR-based accept unavailable for topic=%s, degrading to "
+                    "could not resolve PR prerequisites for topic=%s, degrading to "
                     "direct merge: %s",
                     topic.id,
                     exc,
                 )
-                if _is_known_workflow_scope_degrade(exc):
-                    # Known limitation, not a failure — say so plainly and drop
-                    # the raw git rejection entirely (see the sentinel above).
-                    two_phase_degrade_reason = _WORKFLOW_SCOPE_DEGRADE_REASON
-                else:
-                    # exc is either GitHubPrError (GitHub's own response body,
-                    # capped at 300 chars) or a ValidationError from a git push
-                    # failure (the token travels via an env-var credential
-                    # helper, never argv/URL — see _token_push_env — so git's
-                    # stderr can't contain it either); safe to surface verbatim,
-                    # same as the existing push_back() failure note below.
-                    two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
+                pr_prereqs = None
+                two_phase_degrade_reason = (
+                    f"检查 PR 前提条件时出错（{type(exc).__name__}）"
+                )
+            if pr_prereqs is not None:
+                token, pr_owner, pr_repo = pr_prereqs
+                try:
+                    return await self._open_pr_for_accept(
+                        card=card,
+                        topic=topic,
+                        decided_by=decided_by,
+                        token=token,
+                        owner=pr_owner,
+                        repo=pr_repo,
+                    )
+                except Exception as exc:  # noqa: BLE001 — degrade, don't fail accept
+                    logger.warning(
+                        "PR-based accept unavailable for topic=%s, degrading to "
+                        "direct merge: %s",
+                        topic.id,
+                        exc,
+                    )
+                    if _is_known_workflow_scope_degrade(exc):
+                        # Known limitation, not a failure — say so plainly and
+                        # drop the raw git rejection (see the sentinel above).
+                        two_phase_degrade_reason = _WORKFLOW_SCOPE_DEGRADE_REASON
+                    else:
+                        # exc is either GitHubPrError (GitHub's own response body,
+                        # capped at 300 chars) or a ValidationError from a git
+                        # push failure (the token travels via an env-var
+                        # credential helper, never argv/URL — see _token_push_env
+                        # — so git's stderr can't contain it either); safe to
+                        # surface verbatim, same as the push_back() note below.
+                        two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
         # Combine rather than overwrite: an existing-PR degrade (closed
         # unmerged / merge-call failure, see `_accept_via_pr`) must not be
         # silently dropped just because the two-phase attempt that follows it
@@ -890,8 +918,53 @@ class AcceptService:
             return None
         return result.stdout.strip()
 
+    def _remote_head_ff_from_local(
+        self, project_id: uuid.UUID, remote_head: str, local_head: str
+    ) -> bool:
+        """Would a plain (non-force) push of `local_head` fast-forward the PR
+        branch that is currently at `remote_head`? True only when `remote_head`
+        is an ancestor of `local_head` in the platform's own repo.
+
+        采纳即合并 (#296): `push_topic_branch_for_github_pr` pushes WITHOUT
+        --force, so a local head that is behind or diverged from the remote PR
+        branch (a jj rewind moved the bookmark backwards) can never land — GitHub
+        rejects it non-fast-forward. Re-attempting that push every poll tick is
+        the loop this guards. Fails CLOSED: if the remote commit isn't even
+        present locally to compare (git errors, exit ≠ 0/1), treat it as "cannot
+        fast-forward" and skip — never a blind push that would just be rejected
+        again. `git merge-base --is-ancestor` is reflexive, so an identical head
+        also returns True, but the caller has already excluded that case."""
+        import subprocess
+
+        from app.domain.workspace import service as ws
+
+        if not remote_head or not local_head:
+            return False
+        repo_path = ws.ensure_repo(project_id)
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_path),
+                "merge-base",
+                "--is-ancestor",
+                remote_head,
+                local_head,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
     async def _repush_if_local_head_moved(
-        self, *, card: AcceptCard, topic: Topic, owner: str, repo: str, token: str
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        token: str,
+        remote_head: str,
     ) -> bool:
         """两阶段采纳: the platform side of the iterate loop — if 芝士 committed a
         fix since the last push, push it to the PR branch ourselves (芝士's
@@ -906,6 +979,14 @@ class AcceptService:
 
         Returns True only when a push actually landed (so the caller knows the
         PR head it read a moment ago may be stale).
+
+        采纳即合并 (#296): before pushing, confirm the push CAN fast-forward the
+        PR branch (`remote_head`, the head the caller just read live). A plain
+        push of a local head that is behind / diverged from the remote branch is
+        rejected non-fast-forward, and re-attempting it every 60s poll lands
+        nothing forever (card 946bf5de). When it cannot fast-forward, the
+        platform declines to push — it does not force-push over commits already
+        on the PR — and says so once so 芝士 reconciles in its workspace.
 
         红鲱鱼警告 (2026-08-10): cards #210/#211 wore the note
         `⚠️ 平台自动重推失败（refusing to allow ... without workflows
@@ -924,7 +1005,37 @@ class AcceptService:
         local_head = await asyncio.to_thread(
             self._local_topic_branch_head, topic.project_id, topic.id
         )
-        if local_head is None or local_head == card.pr_head_sha:
+        if local_head is None or local_head in (card.pr_head_sha, remote_head):
+            return False
+        # A plain push can only fast-forward. If the local branch was rewound /
+        # diverged from the PR branch, pushing it is a doomed non-fast-forward —
+        # skip it (never force-push over what's already on the PR) and leave one
+        # named note for 芝士 to merge the PR branch in. Adopt the live remote
+        # head as our record so the caller's own head-sync doesn't wipe the note.
+        can_ff = await asyncio.to_thread(
+            self._remote_head_ff_from_local,
+            topic.project_id,
+            remote_head,
+            local_head,
+        )
+        if not can_ff:
+            logger.warning(
+                "pr_open card %s: local head %s cannot fast-forward PR branch "
+                "%s (rewound/diverged) — not re-pushing, waiting on 芝士",
+                card.id,
+                local_head,
+                remote_head,
+            )
+            if remote_head:
+                card.pr_head_sha = remote_head
+            if not card.note.startswith(_REPUSH_DIVERGED_PREFIX):
+                card.note = (
+                    f"{_REPUSH_DIVERGED_PREFIX}：本地话题分支（{local_head[:8]}）"
+                    f"落后于/偏离了 PR 分支（{remote_head[:8]}），平台不会强推覆盖 PR "
+                    "上已有的提交。请在这个话题的工作区里把 PR 分支的新提交合并进来"
+                    "再提交，平台会自动把结果同步到这个 PR。"
+                )[:2000]
+            await self._session.flush()
             return False
         try:
             pushed = await asyncio.to_thread(
@@ -1197,7 +1308,12 @@ class AcceptService:
         # _repush_if_local_head_moved's docstring for why 芝士 can't do this
         # push itself).
         pushed = await self._repush_if_local_head_moved(
-            card=card, topic=topic, owner=owner, repo=repo, token=token
+            card=card,
+            topic=topic,
+            owner=owner,
+            repo=repo,
+            token=token,
+            remote_head=status.head_sha,
         )
 
         # Only re-read the head when the push above actually moved it;
@@ -1929,11 +2045,13 @@ class AcceptService:
         # only escape (pr_head_sha moving) needs a human to push first. Two
         # separate reasons to stay quiet, spelled out:
         #   1. we already nudged for THIS stage on this commit — don't spam;
-        #   2. 重推失败 outranks a CI failure and must not be overwritten —
-        #      it means 芝士's fix never reached GitHub, so the red CI on
+        #   2. 重推失败/分支分叉 outrank a CI failure and must not be overwritten
+        #      — both mean 芝士's fix never reached GitHub, so the red CI on
         #      record is stale (docs/topics/诊断信息搬上验收卡.md, 优先级说明).
-        if card.note.startswith(_nudge_note_prefix(stage)) or card.note.startswith(
-            _REPUSH_FAILED_PREFIX
+        if (
+            card.note.startswith(_nudge_note_prefix(stage))
+            or card.note.startswith(_REPUSH_FAILED_PREFIX)
+            or card.note.startswith(_REPUSH_DIVERGED_PREFIX)
         ):
             return
         # `tail` is now a headline PLUS per-job links and log excerpts (see

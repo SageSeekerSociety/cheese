@@ -1,10 +1,22 @@
 """机器闸门 background runner (spec §4.4/§9, eval C2).
 
-Filing an accept card on a project with a `check_command` creates the card in
-`pending_gate` and dispatches this runner. It runs the command in the topic's
-workspace (host-side, see workspace.service.run_check_command for the trust
-model), then settles the card: green → pending (the reviewer only ever sees a
-green card), red → gate_failed + a system nudge so 芝士 goes and fixes it.
+采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): THIS RUNNER IS NO
+LONGER DISPATCHED. `AcceptService.create_card` never mints a `pending_gate`
+card any more (a card is the view of a PR; real CI on that PR decides, not a
+private platform check), and `routes/accept.py` no longer calls `dispatch`.
+The module stays only because `review/gate_sweep.py` still needs its constants
+and `in_flight_card_ids()` to clean up any HISTORICAL `pending_gate` rows left
+in the DB from before the retirement — that in-flight set is now always empty,
+which is exactly what lets the sweep condemn every stale row it finds. A guard
+test (`test_accept_gate.py`) pins that filing a card can no longer reach
+`pending_gate`. Do not re-wire `dispatch`; everything below documents the
+retired behaviour for the historical rows the sweep still handles.
+
+Historically: filing an accept card on a project with a `check_command` created
+the card in `pending_gate` and dispatched this runner. It ran the command in the
+topic's workspace (host-side, see workspace.service.run_check_command for the
+trust model), then settled the card: green → pending (the reviewer only ever saw
+a green card), red → gate_failed + a system nudge so 芝士 went and fixed it.
 
 Third outcome (2026-08-11): the check may not run at all — no usable toolchain
 in the gate container, Docker refusing to start. `check_command` reports that as
