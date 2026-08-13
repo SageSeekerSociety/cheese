@@ -154,6 +154,55 @@ def compute_default_name() -> str:
     return COMPUTE_LOCAL
 
 
+# --- Visibility (#282 §四 / #358): the whole-machine question -------------------
+# Visibility is NOT a pool of its own — it is a sub-choice UNDER the self-hosted
+# device pool: when a room runs on an enrolled machine, does its agent see only its
+# own worktree (boxed) or the whole host (operate its services, exec into other
+# rooms, reach the internal network)? The platform exposes this 档's capability
+# description so the room can SHOW it, rather than granting whole-machine access
+# silently (#358 原则八: 平台只说能力，不静默行为).
+VISIBILITY_ISOLATED = "isolated"
+VISIBILITY_HOST = "host"
+
+# The exact honest UI line #282 §四 drafted — the "看得见的安全提示" a Hosted
+# Machine room renders as its badge text / tooltip. Kept here as the single source
+# so backend gate copy and the frontend badge cannot drift.
+MACHINE_VISIBILITY_NOTICE = "让它看到整台机器（能操作这台机器上的服务和其他房间）"
+
+
+def visibility_listings() -> list[PoolListing]:
+    """The visibility 档 a room may run its self-hosted compute under (#282 §四).
+
+    ``isolated`` is the conservative DEFAULT (``default=True``) but its per-room
+    container transport is not built yet (#358 step 2), so it is honestly
+    ``available=False`` — same convention as an undeployed compute pool. ``host``
+    (whole machine) works today but is 申请制: ``default=False``, and its
+    description IS the #282 safety line, so whoever renders the picker or the room
+    badge reads the warning straight from the catalog."""
+    return [
+        PoolListing(
+            kind="visibility",
+            id=VISIBILITY_ISOLATED,
+            label="沙盒（只看自己的工作树）",
+            tier="included",
+            price="包含",
+            description="每个房间一个容器，只看得到自己的工作树，房间之间互不串扰；即将上线。",
+            available=False,
+            default=True,
+        ),
+        PoolListing(
+            kind="visibility",
+            id=VISIBILITY_HOST,
+            label="整台机器（Hosted Machine）",
+            tier="byo",
+            price="自备",
+            description=MACHINE_VISIBILITY_NOTICE,
+            available=True,
+            default=False,
+        ),
+    ]
+
+
 # --- Subscription model (parallel to compute pool): which Claude model a
 # project's subscription turns use. Only meaningful when the subscription path is
 # deployed; a project picks it the same way it picks a compute pool. ------------

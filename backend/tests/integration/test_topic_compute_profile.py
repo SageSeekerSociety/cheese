@@ -100,6 +100,91 @@ def test_select_persists_to_topic_and_project_sticky(client):
     assert pbody["current"] == "local-docker"
 
 
+def test_visibility_block_is_present_non_default_and_carries_the_notice(client):
+    """#282 §四 / #358: the compute-profile response a room reads carries the
+    visibility 档 so the room can SHOW whether a turn sees the whole machine. Boxed
+    is the default-but-undeployed option; whole-machine is available yet non-default
+    and describes itself with the honest #282 warning. A topic with no pinned device
+    is not a Hosted Machine turn, so `machine_access` is False."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+    vis = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]["visibility"]
+
+    opts = {o["id"]: o for o in vis["options"]}
+    assert opts["isolated"]["default"] is True
+    assert opts["isolated"]["available"] is False
+    assert opts["host"]["default"] is False
+    assert opts["host"]["available"] is True
+    assert "整台机器" in opts["host"]["description"]
+
+    assert vis["effective"] is None  # not pinned to any device
+    assert vis["machine_access"] is False
+    assert "整台机器" in vis["notice"]  # badge / tooltip copy is present
+
+
+def test_a_topic_pinned_to_a_whole_machine_device_reports_machine_access(client):
+    """The visible safety signal (#358 原则八): once a topic is frozen to a
+    whole-machine (`host`) device, the room's compute-profile reports
+    `machine_access=True` and `effective="host"` — the exact hook the frontend badge
+    keys on, so "this agent can see and operate the whole machine" is shown, not
+    hidden."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+
+    async def _pin_host_device() -> None:
+        from app.domain.device.service import DeviceService
+        from app.domain.device.sql_repository import SqlDeviceRepository
+        from app.domain.device.supply import Supply, Visibility
+
+        async with client.test_factory() as session:
+            svc = DeviceService(SqlDeviceRepository(session))
+            code = await svc.start("dev-box")
+            device = await svc.approve(
+                code,
+                owner_user_id=1,
+                supply=Supply.self_hosted,
+                visibility=Visibility.host,
+            )
+            await svc.bind_topic_device(uuid.UUID(tid), device.device_id)
+            await session.commit()
+
+    asyncio.run(_pin_host_device())
+    vis = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]["visibility"]
+    assert vis["effective"] == "host"
+    assert vis["machine_access"] is True
+
+
+def test_a_topic_pinned_to_a_boxed_device_does_not_report_machine_access(client):
+    """The mirror: a topic pinned to an `isolated` device is not a whole-machine
+    turn, so no badge — `machine_access` stays False even though a device is pinned.
+    (Such a device cannot actually run a turn yet; this only asserts the surfacing
+    never over-claims whole-machine access.)"""
+    pid = _project(client)
+    tid = _topic(client, pid)
+
+    async def _pin_boxed_device() -> None:
+        from app.domain.device.service import DeviceService
+        from app.domain.device.sql_repository import SqlDeviceRepository
+        from app.domain.device.supply import Supply, Visibility
+
+        async with client.test_factory() as session:
+            svc = DeviceService(SqlDeviceRepository(session))
+            code = await svc.start("boxed")
+            device = await svc.approve(
+                code,
+                owner_user_id=1,
+                supply=Supply.self_hosted,
+                visibility=Visibility.isolated,
+            )
+            await svc.bind_topic_device(uuid.UUID(tid), device.device_id)
+            await session.commit()
+
+    asyncio.run(_pin_boxed_device())
+    vis = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]["visibility"]
+    assert vis["effective"] == "isolated"
+    assert vis["machine_access"] is False
+
+
 def test_locked_once_topic_has_run(client):
     pid = _project(client)
     tid = _topic(client, pid)

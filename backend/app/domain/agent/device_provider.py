@@ -35,7 +35,7 @@ from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksTurnProvider, ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply
+from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
@@ -49,6 +49,18 @@ DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
 ]
 
+# #358 · what a turn gets when its only/pinned machine is enrolled as the boxed
+# `isolated` 档: a clean, actionable refusal, NOT a silent bare-on-host launch. It
+# is deliberately NOT one of platform_failures' host-scoped classifications — an
+# `isolated` machine is not unhealthy, so this must never quarantine it; it is a
+# 「该档尚未实现」 turn error the owner resolves by opting the machine into
+# whole-machine (Hosted Machine), or by waiting for the sandbox transport (step 2).
+DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = (
+    "话题绑定的机器登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
+    "尚未实现（#358 第二步）；平台拒绝以裸跑代替——那等于静默把整台机器暴露给这个"
+    "房间。请把这台机器改登记为『整台机器（Hosted Machine）』后再继续。"
+)
+
 
 async def resolve_pinned_device(
     service: DeviceService,
@@ -59,22 +71,38 @@ async def resolve_pinned_device(
     """The device this topic's turn must run on (execution-architecture v4 §affinity).
 
     A topic's work tree + resumable claude session live on ONE machine. So:
-      * already pinned → return it **iff online**; if the pinned device is offline,
-        raise (queue/retry) — NEVER fall back to another device, which would start
+      * already pinned → return it **iff online AND still whole-machine**; an offline
+        pinned device raises (queue/retry) and an `isolated` pinned device raises the
+        #358 「尚未实现」 error — NEVER fall back to another device, which would start
         from an empty tree and corrupt session resume (the original drift bug);
-      * not yet pinned (first turn) → pick an online, **non-quarantined** device
-        serving the project and **pin it** (write-once), so every later turn returns
-        to the same machine. Quarantined = judged unhealthy by ``device.health``
-        (#186); a topic that is already pinned is only ever moved by the explicit
-        ``agent.host_swap`` flow, never from here.
+      * not yet pinned (first turn) → pick an online, **non-quarantined**,
+        **whole-machine** device serving the project and **pin it** (write-once), so
+        every later turn returns to the same machine. Quarantined = judged unhealthy
+        by ``device.health`` (#186); a topic that is already pinned is only ever
+        moved by the explicit ``agent.host_swap`` flow, never from here.
 
-    Returns the device id, or ``None`` when no bound device is online at all (the
-    caller turns that into a clean "no online device" turn error)."""
+    The #358 visibility gate lives entirely here (the one resolution point every
+    production turn passes through), so an `isolated` device — whose per-room
+    container transport is #358 step 2 — is never pinned to a topic nor launched
+    bare-on-host in its place: silently degrading `isolated` to bare is exactly the
+    whole-machine exposure the gate exists to prevent.
+
+    Returns the device id, or ``None`` when no runnable bound device is online at all
+    (the caller turns that into a clean "no online device" turn error)."""
     pinned = await service.topic_device(topic_id)
     if pinned is not None:
-        if is_online(pinned):
-            return pinned
-        raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
+        if not is_online(pinned):
+            raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
+        # An ALREADY-pinned device that has since been re-enrolled as `isolated`
+        # (its owner flipped it) must refuse rather than run bare — the pin does not
+        # move, but the turn will not silently expose the whole machine either.
+        pinned_device = await service.get_device(pinned)
+        if (
+            pinned_device is not None
+            and pinned_device.visibility is not Visibility.host
+        ):
+            raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
+        return pinned
     # First turn: pick from the machines that are online AND not quarantined. A
     # quarantined machine just failed two turns in a row for a reason that belongs
     # to the box (#186), so pinning a fresh topic to it would hand the next person
@@ -84,6 +112,14 @@ async def resolve_pinned_device(
     # resolver can quietly change is the original drift bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
+        # #358 gate at the PIN: only whole-machine (`host`) devices have a transport
+        # today. An `isolated` device's per-room-container transport is #358 step 2;
+        # until it lands such a device cannot run a turn, so it must never be pinned
+        # — the pin is write-once, and a topic frozen to an unrunnable device would
+        # be bricked with no way to move it. Skipping it here (rather than pinning
+        # and failing at launch) keeps it out of the affinity freeze entirely.
+        if device.visibility is not Visibility.host:
+            continue
         await service.bind_topic_device(topic_id, device.device_id)
         return device.device_id
     return None

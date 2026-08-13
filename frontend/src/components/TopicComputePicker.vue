@@ -76,6 +76,16 @@ watch(
 
 <template>
   <div v-if="state" class="compute-picker">
+    <!-- #358 Hosted Machine safety signal: this topic's agent runs BARE on the
+         whole machine (operate its services, exec into other rooms, reach the
+         internal network). A status-dot + neutral text (never a colored chip —
+         product-ui.md), the honest #282 line as its tooltip, so whole-machine
+         access is SEEN in the room, not silent (原则八). -->
+    <span v-if="state.visibility?.machine_access" class="cp-machine" :title="state.visibility.notice">
+      <span class="status-dot status-dot--warn" />
+      整台机器
+    </span>
+
     <!-- Locked: the topic has run — the pin is frozen, no menu. -->
     <span v-if="state.locked" class="cp-chip cp-chip--locked" title="话题已开始，算力已锁定；新建话题可另选算力">
       <v-icon size="12">mdi-lock-outline</v-icon>
@@ -130,6 +140,20 @@ watch(
 <style scoped>
 .compute-picker {
   display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* Hosted Machine indicator — dot carries the warn signal, text stays neutral ink
+   (product-ui.md: status is a dot + neutral text, not a colored chip). `help`
+   cursor hints the tooltip that spells out the #282 access boundary. */
+.cp-machine {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text);
+  cursor: help;
 }
 .cp-chip {
   display: inline-flex;
