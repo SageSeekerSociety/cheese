@@ -12,16 +12,20 @@ class Settings(BaseSettings):
     )
 
     # --- Database ---
-    database_url: str = "postgresql+asyncpg://cheesex:cheesex@localhost:5433/cheesex"
+    # The dev database the repo-root docker-compose.yml publishes on :5432. The
+    # test server is a SEPARATE container on :5433 (tests/conftest.py's
+    # TEST_PG_BASE), so running the suite never disturbs your dev data.
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cheese"
     db_echo: bool = False
 
     # --- 主仓产品配置并入 (fusion merge I3-config): fields main's product
     # domains (avatars/materials/storage/auth) read from settings. Superset so
     # the adopted product routes boot. Defaults mirror deploy/.env.prod.example.
     # Public origin of THIS merged backend (it serves /avatars itself) — used to
-    # build absolute avatar URLs in notification DTOs. Default matches the
-    # scripts/dev flow (:8799); the docker dev flow and prod override it via env.
-    avatar_base_url: str = "http://127.0.0.1:8799"
+    # build absolute avatar URLs in notification DTOs. Default matches `task dev`
+    # (:8081, the one dev port — see README "Quick Start"); the seeded demo on
+    # :8799 and every deployment override it via env.
+    avatar_base_url: str = "http://127.0.0.1:8081"
     storage_type: str = "local"
     storage_local_path: str = "./uploads"
     storage_local_url: str = "/uploads"

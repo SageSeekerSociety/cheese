@@ -13,6 +13,20 @@ tmp_review/
 tmp_backend.log
 tmp_frontend.log
 
+# ---- Runtime products that once got committed ----
+# Each line below is a file that actually reached main and had to be removed.
+# NOTE what is deliberately absent: `uploads/`. Images pasted into a topic are
+# written into the topic's worktree and merged by 采纳 on purpose (docs/topics/
+# 支持图片输入.md) — they are product data, not build output.
+# connector binary; CI builds it in-image from ./cli, nothing reads it here
+/cheesehost-*
+# redis dump, from running valkey in the repo root
+/dump.rdb
+# machine-local DSNs left by a dev-db run
+/.devdb-env.*
+# sqlite file scripts/preview_sqlite.py creates fresh on every run
+backend/preview.db
+
 # ---- Tooling / local agent config ----
 # .claude/ IS tracked (skills/rules/scripts are team-shared specs); only the
 # machine-local pieces are ignored. A blanket `.claude/` here silently blocked

@@ -19,8 +19,12 @@ DATA_DIR="${CHEESEX_DEV_DB_DIR:-${TMPDIR:-/tmp}/cheesex-dev-db}"
 PG_PORT="${CHEESEX_DEV_PG_PORT:-5433}"
 REDIS_PORT="${CHEESEX_DEV_REDIS_PORT:-6379}"
 
-# Matches backend/tests/conftest.py's TEST_PG_BASE default: the role and password
-# are baked into that default, so initdb has to create exactly this superuser.
+# This server's own superuser — it exists only inside this throwaway cluster and
+# is handed to the suite through the exported TEST_PG_BASE, which is why `eval`
+# is not optional in the usage line above. It used to be documented as "matches
+# conftest.py's TEST_PG_BASE default"; that default now names the docker-compose
+# TEST server (postgres:postgres@:5433) instead, because that is what a developer
+# with Docker actually has. Nothing here depends on the two agreeing.
 PG_USER=cheesex
 PG_PASSWORD=cheesex
 
