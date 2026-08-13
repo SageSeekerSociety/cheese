@@ -20,7 +20,7 @@ from app.domain.task.types import TaskAIAdviceStatus
 
 task_seq = Sequence("task_seq")
 task_membership_seq = Sequence("task_membership_seq")
-task_topics_relation_seq = Sequence("task_topics_relation_seq")
+task_tags_relation_seq = Sequence("task_tags_relation_seq")
 task_submission_seq = Sequence("task_submission_seq")
 task_submission_entry_seq = Sequence("task_submission_entry_seq")
 task_submission_review_seq = Sequence("task_submission_review_seq")
@@ -169,18 +169,18 @@ class TaskSubmissionSchemaEntry(Base):
     type: Mapped[int] = mapped_column("type", SmallInteger, nullable=False)
 
 
-class TaskTopicsRelation(Base):
-    """Minimal mapping for task_topics_relation used for topic-based filtering."""
+class TaskTagRelation(Base):
+    """Minimal mapping for task_tag_relation — which 标签 a 赛题 is filed under."""
 
-    __tablename__ = "task_topics_relation"
+    __tablename__ = "task_tag_relation"
 
     id: Mapped[int] = mapped_column(
-        BigInteger, task_topics_relation_seq, primary_key=True
+        BigInteger, task_tags_relation_seq, primary_key=True
     )
     task_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("task.id"), nullable=False
     )
-    topic_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    tag_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

@@ -405,3 +405,37 @@ def test_a_differing_stamp_is_drift():
 
     assert env_stamp_drifted("old456", "abc123")
     assert not env_stamp_drifted("abc123", "abc123")
+
+
+def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypatch):
+    """The container's CLAUDE_CODE_OAUTH_TOKEN is read once at claude start and
+    never hot-refreshed (env is read at process start; the tmux session is reused
+    across turns — see ContainerSubscription). A 1h token expires under the
+    still-running process and the metering proxy then 407s every later turn, so
+    its exp must span the session — matching the CHEESE_TOKEN minted beside it,
+    not the per-turn default."""
+    import time
+
+    from app.core.config import settings
+    from app.core.sandbox_auth import scoped_token_claims
+    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    env = provider._session_env(
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        session_dir="/s",
+        worktree="/w",
+        token="hook-token",
+        env=None,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+    )
+
+    claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
+    assert claims is not None
+    remaining = claims["exp"] - int(time.time())
+    assert remaining > 7 * 24 * 3600  # rules out the 3600s per-turn default
+    assert SESSION_TOKEN_TTL_S - 300 < remaining <= SESSION_TOKEN_TTL_S + 5

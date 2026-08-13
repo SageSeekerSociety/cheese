@@ -211,7 +211,7 @@ def _post_without_summon(client, topic_id: str, content: str, author: str) -> No
 
 def _notifs(client, project_id: str, handle: str) -> list[dict]:
     return client.get(
-        f"/api/projects/{project_id}/notifications",
+        f"/api/projects/{project_id}/alerts",
         headers=session_auth_headers(handle),
     ).json()["data"]["data"]
 

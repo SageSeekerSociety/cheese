@@ -875,6 +875,36 @@ async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
     script = next(s for _a, s in hub.execs if s and "CHEESECA" in s)
     assert "METERCA" in script and ca.strip() in script
     assert 'export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"' in script
+
+
+@pytest.mark.anyio
+async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
+    monkeypatch, tmp_path
+):
+    """The proxy/OAuth token is baked into the bare process's env (HTTPS_PROXY
+    CONNECT password + CLAUDE_CODE_OAUTH_TOKEN Bearer), read ONCE at launch and
+    never hot-refreshed while the screen is reused across turns. A 1h token
+    therefore expires under a still-running agent and the metering proxy 407s
+    every later turn. Its exp must span the session, like the CHEESE_TOKEN minted
+    beside it — not the per-turn default."""
+    import time
+
+    from app.core.sandbox_auth import scoped_token_claims
+    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=False)
+
+    env = hub.env
+    # The Bearer and the CONNECT credential are one and the same token …
+    token = env["CLAUDE_CODE_OAUTH_TOKEN"]
+    assert f"cheese:{token}@" in env["HTTPS_PROXY"]
+    # … and it lives for the whole session, not one hour.
+    claims = scoped_token_claims(token)
+    assert claims is not None
+    remaining = claims["exp"] - int(time.time())
+    assert remaining > 7 * 24 * 3600  # rules out the 3600s per-turn default
+    assert SESSION_TOKEN_TTL_S - 300 < remaining <= SESSION_TOKEN_TTL_S + 5
     assert hub.env["NODE_EXTRA_CA_CERTS"] == "$HOME/.claude/proxy-ca.pem"
 
 

@@ -1,16 +1,16 @@
-"""Notification request/response schemas (Pydantic v2)."""
+"""Alert request/response schemas (Pydantic v2)."""
 
 import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.alert.models import AlertKind, AlertLevel
 
 
-class NotificationCreate(BaseModel):
-    level: NotifLevel
-    kind: NotifKind
+class AlertCreate(BaseModel):
+    level: AlertLevel
+    kind: AlertKind
     title: str = Field(min_length=1, max_length=300)
     body: str = ""
     target_handle: str | None = Field(default=None, max_length=64)
@@ -28,14 +28,14 @@ class ResolveIn(BaseModel):
     chosen: str
 
 
-class NotificationOut(BaseModel):
+class AlertOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
     project_id: uuid.UUID
     topic_id: uuid.UUID | None
-    level: NotifLevel
-    kind: NotifKind
+    level: AlertLevel
+    kind: AlertKind
     target_handle: str | None
     title: str
     body: str

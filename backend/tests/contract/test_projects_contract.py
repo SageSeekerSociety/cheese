@@ -1,30 +1,35 @@
-"""Contract tests for the 知是-style flat ``/projects`` resource.
+"""Contract tests for the 知是 team-project resource (``/team-projects``).
 
-These assert a 知是 project shape (``colorCode``/``team``/``leader`` …) served at
-``/projects`` and ``/projects/{id}``. That resource is NOT present in the fusion-
-merged app: the surviving projects router is cheesex's, mounted at ``/api/projects``
-with a different shape (``{data: [...], total}``). The 知是 flat project endpoints
-were superseded in the merge, so there is nothing here to contract-test — the whole
-module is skipped until (and unless) that resource is re-introduced.
+The shape asserted here (``colorCode``/``team``/``leader`` …) is the one the
+legacy Kotlin service served; the fusion merge dropped the resource, migration
+41224effe32b brought it back, and #370 moved it off the generic name ``/projects``
+onto ``/team-projects`` so the cheesex workspace resource can have that word.
+
+Still skipped, but NOT for the reason this file used to give ("not present in the
+merged app" — it is, and ``tests/integration/test_team_projects.py`` exercises it
+end to end). The real blocker is this harness: every endpoint here needs
+``require_auth_user`` and ``python_client`` carries no credential, so each probe
+answers 401 and the shape is never reached. Porting these onto ``authed_client``
+is the fix; it is a test-harness job, not a contract question.
 """
 
 import pytest
 
 pytestmark = pytest.mark.skip(
-    reason="知是 flat /projects resource not present in the merged app "
-    "(superseded by cheesex /api/projects — see module docstring)"
+    reason="needs an authenticated client — python_client has no credential, so "
+    "every probe 401s before the shape is reached (see module docstring)"
 )
 
 
 @pytest.mark.anyio
 async def test_python_get_project_not_found(python_client) -> None:
-    resp = await python_client.get("/projects/0")
+    resp = await python_client.get("/team-projects/0")
     assert resp.status_code in (404, 400, 422)
 
 
 @pytest.mark.anyio
 async def test_python_get_project_shape(python_client) -> None:
-    resp = await python_client.get("/projects/1")
+    resp = await python_client.get("/team-projects/1")
     assert resp.status_code in (200, 404)
     if resp.status_code != 200:
         return
@@ -52,7 +57,7 @@ async def test_python_get_project_shape(python_client) -> None:
 
 @pytest.mark.anyio
 async def test_python_get_projects_shape(python_client) -> None:
-    resp = await python_client.get("/projects", params={"team_id": 1})
+    resp = await python_client.get("/team-projects", params={"team_id": 1})
     assert resp.status_code in (200, 400)
     if resp.status_code != 200:
         return

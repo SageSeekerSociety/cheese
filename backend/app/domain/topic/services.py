@@ -16,13 +16,13 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.text import markdown_preview
 from app.domain.agent import clone
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.services import AlertService
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conclusion.models import ConclusionCard
 from app.domain.conclusion.services import ConclusionCardService
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
@@ -838,10 +838,10 @@ class TopicService:
             )
 
         # 3) Notify 本体 (the coordinator) that the 分身 finished.
-        await NotificationService(self._session).create(
+        await AlertService(self._session).create(
             project_id=sub.project_id,
-            level=NotifLevel.light,
-            kind=NotifKind.change_alert,
+            level=AlertLevel.light,
+            kind=AlertKind.change_alert,
             title=f"子话题「{sub.title}」已完成",
             body=markdown_preview(conclusion, 200),
             topic_id=sub.parent_id,

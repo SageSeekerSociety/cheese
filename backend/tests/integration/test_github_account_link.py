@@ -90,7 +90,7 @@ def test_callback_returns_to_the_originating_project(client):
         follow_redirects=False,
     )
     assert r.status_code == 302
-    assert f"/project/{pid}/settings" in r.headers["location"]
+    assert f"/projects/{pid}/settings" in r.headers["location"]
     assert "github_account=error" in r.headers["location"]
 
 

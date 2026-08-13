@@ -19,7 +19,7 @@ from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
-from app.domain.topics.models import Topic
+from app.domain.tag.models import Tag
 
 if TYPE_CHECKING:
     from app.domain.task.repositories import TaskRepository
@@ -50,14 +50,14 @@ class SpaceService:
     # Classification topics
     # ------------------------------------------------------------------
 
-    async def list_classification_topics(self, space_id: int) -> list[Topic]:
+    async def list_classification_topics(self, space_id: int) -> list[Tag]:
         if self._classification_topics_repo is None:
             return []
         return await self._classification_topics_repo.list_topics_for_space(space_id)
 
     async def list_classification_topics_for_spaces(
         self, space_ids: Sequence[int]
-    ) -> dict[int, list[Topic]]:
+    ) -> dict[int, list[Tag]]:
         if self._classification_topics_repo is None or not space_ids:
             return {}
         return await self._classification_topics_repo.list_topics_for_spaces(space_ids)

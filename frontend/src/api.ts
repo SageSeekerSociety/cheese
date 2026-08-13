@@ -766,12 +766,12 @@ export function getInbox(projectId: string, targetHandle: string): Promise<ListP
   )
 }
 
-export function markRead(notificationId: string): Promise<InboxItem> {
-  return request<InboxItem>(`/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'POST' })
+export function markRead(alertId: string): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/read`, { method: 'POST' })
 }
 
-export function sendFeedback(notificationId: string, feedback: 'up' | 'down'): Promise<InboxItem> {
-  return request<InboxItem>(`/notifications/${encodeURIComponent(notificationId)}/feedback`, {
+export function sendFeedback(alertId: string, feedback: 'up' | 'down'): Promise<InboxItem> {
+  return request<InboxItem>(`/alerts/${encodeURIComponent(alertId)}/feedback`, {
     method: 'POST',
     body: JSON.stringify({ feedback }),
   })

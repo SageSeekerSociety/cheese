@@ -32,7 +32,7 @@ from app.domain.space.repositories import (
     SpaceUserRankRepository,
 )
 from app.domain.space.services import SpaceService
-from app.domain.space.topics_service import SpaceTopicsService
+from app.domain.space.tags_service import SpaceTagsService
 from app.domain.task.repositories import TaskMembershipRepository, TaskRepository
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -218,8 +218,8 @@ async def get_space_analytics_view_service(
 
 async def get_space_topics_service(
     db=Depends(get_db),
-) -> SpaceTopicsService:
-    return SpaceTopicsService(session=db)
+) -> SpaceTagsService:
+    return SpaceTagsService(session=db)
 
 
 async def get_space_user_realname_service(
@@ -1086,7 +1086,7 @@ async def get_space_topics(
     sort: str = Query(default="name"),
     limit: int = Query(default=20, ge=1, le=100),
     auth_user: AuthUserInfo = Depends(require_auth_user),
-    service: SpaceTopicsService = Depends(get_space_topics_service),
+    service: SpaceTagsService = Depends(get_space_topics_service),
 ) -> dict:
     """List or search topics associated with the space.
 

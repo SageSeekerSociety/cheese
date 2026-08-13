@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.services import AlertService
 from app.domain.cx_task.models import (
     ApplicationStatus,
     Task,
@@ -125,7 +125,7 @@ class TaskApplicationService:
         self._templates = TaskTemplateRepository(session)
         self._tasks = TaskRepository(session)
         self._project_service = ProjectService(session)
-        self._notifications = NotificationService(session)
+        self._notifications = AlertService(session)
 
     async def apply(
         self, *, template_id: uuid.UUID, project_id: uuid.UUID, pitch: str
@@ -191,8 +191,8 @@ class TaskApplicationService:
         application.task_id = task.id
         await self._notifications.create(
             project_id=project.id,
-            level=NotifLevel.light,
-            kind=NotifKind.change_alert,
+            level=AlertLevel.light,
+            kind=AlertKind.change_alert,
             title=f"应征已通过：「{template.name}」",
             body="项目已链接到该题目，资源包与条件即刻生效。",
             payload={
@@ -218,8 +218,8 @@ class TaskApplicationService:
         application.decided_at = datetime.now(UTC)
         await self._notifications.create(
             project_id=application.project_id,
-            level=NotifLevel.light,
-            kind=NotifKind.change_alert,
+            level=AlertLevel.light,
+            kind=AlertKind.change_alert,
             title=f"应征未通过：「{template.name if template else ''}」",
             body="这次没有匹配上，可以继续在市场里寻找其他题目。",
             payload={
