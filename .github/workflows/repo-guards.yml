@@ -8,11 +8,13 @@ name: Repo Guards
 # is a rule that decays. Nothing here changes what is allowed; it changes who
 # notices.
 #
-# Hosted and dependency-free (bash + python3 stdlib, no uv, no database, no
-# docker) so it reds in seconds and never queues behind the box's single
-# self-hosted runner. Deliberately NOT behind test.yml's `scope` gate — that
-# gate skips the suite for a squash merge whose tree already passed PR CI, which
-# is exactly the path a cross-PR migration fork travels.
+# On the cheese-ci pool and dependency-free (bash + python3 stdlib, no uv, no
+# database, no docker): the org's Actions billing lapsed on 2026-08-13 (every
+# ubuntu-latest job is refused before it starts), so it moved off hosted onto
+# the same three-machine pool as the other checks — separate capacity from the
+# dev box's single deploy slot. Deliberately NOT behind test.yml's `scope` gate
+# — that gate skips the suite for a squash merge whose tree already passed PR
+# CI, which is exactly the path a cross-PR migration fork travels.
 #
 # `.github/workflows/**` is in the path filter because one of the guards judges
 # the workflows themselves (action pinning) — filtering on this file alone would
@@ -44,7 +46,7 @@ concurrency:
 
 jobs:
   guards:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
