@@ -531,3 +531,92 @@ class TestAccountLinkTokenPersistence:
                 assert await get_github_user_token_for_handle(session, handle) is None
 
         asyncio.run(_scenario())
+
+
+class TestTheConnectionShowsAName:
+    """设置页上那行「已连接 …」要给人看，不是给 GitHub 看。
+
+    dev 上实测显示的是「已连接 222958366」——一串 GitHub 数字 id。前端本来就写了
+    `login ?? providerUserId` 的降级，所以病根在后端：连接的序列化从
+    `raw_profile["login"]` 取名字，而这条绑定流程存 profile 时只挑了 email 和
+    name，把 GitHub 的 `login` 扔了。于是所有人、所有时候，都落到那个数字上。
+    """
+
+    def _link(self, client, monkeypatch, *, handle: str, login: str | None):
+        _enable_github_app_provider(monkeypatch)
+
+        async def fake_exchange_code(self, code):
+            return {"access_token": "t-" + handle}
+
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(
+                id="gh-" + handle, email=None, name="N", username=login
+            )
+
+        monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_code)
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+        token = seed_user(client, handle)
+        user_id = int(decode_token(token)["sub"])
+        r = client.get(
+            "/api/users/me/github-account/callback",
+            params={"code": "x", "state": _link_state(user_id)},
+            follow_redirects=False,
+        )
+        assert "github_account=success" in r.headers["location"], r.headers["location"]
+        return user_id, token
+
+    def test_linking_stores_the_github_login(self, client, monkeypatch):
+        user_id, _ = self._link(
+            client, monkeypatch, handle="ghname_new", login="octocat"
+        )
+
+        assert _fetch_connection(client, user_id).raw_profile["login"] == "octocat"
+
+    def test_the_connections_endpoint_hands_the_login_to_the_page(
+        self, client, monkeypatch
+    ):
+        """前端读的是这个字段——存了但没送出去，页面照样显示数字。"""
+        user_id, token = self._link(
+            client, monkeypatch, handle="ghname_api", login="octocat"
+        )
+
+        # 1.0 路由自带 `/users` 前缀，网关那一层的 `/api` 在测试里不存在
+        # （docs/api-conventions.md）。
+        r = client.get(f"/users/{user_id}/oauth/connections", headers=_bearer(token))
+
+        assert r.status_code == 200, r.text
+        rows = r.json()["data"]["connections"]
+        gh = next(c for c in rows if c["providerId"] == "github_app")
+        assert gh["login"] == "octocat"
+
+    def test_relinking_repairs_a_connection_that_has_no_login(
+        self, client, monkeypatch
+    ):
+        """这条是整个修复能不能落到真实用户身上的那一条。
+
+        所有人都已经绑过了，所以新建路径修好对他们没有任何影响——他们走的是
+        「重新连接」，而那条分支以前只换 token、根本不碰 profile。不修这半，线上
+        每个人的设置页会一直显示那串数字，而且没有任何自助的修法（login 只能从
+        GitHub 拿，写不出补数据的迁移）。
+        """
+        user_id, _ = self._link(client, monkeypatch, handle="ghname_old", login=None)
+        assert _fetch_connection(client, user_id).raw_profile.get("login") is None
+
+        # 用户点「重新连接」，这次 GitHub 把 login 给了。
+        self._relink(client, monkeypatch, user_id=user_id, login="octocat")
+
+        assert _fetch_connection(client, user_id).raw_profile["login"] == "octocat"
+
+    def _relink(self, client, monkeypatch, *, user_id: int, login: str):
+        async def fake_get_user_info(self, access_token):
+            return OAuthUserInfo(
+                id="gh-ghname_old", email=None, name="N", username=login
+            )
+
+        monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
+        r = client.get(
+            "/api/users/me/github-account/callback",
+            params={"code": "x", "state": _link_state(user_id)},
+            follow_redirects=False,
+        )
+        assert "github_account=success" in r.headers["location"], r.headers["location"]
