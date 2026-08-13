@@ -2,24 +2,43 @@ import { describe, expect, it } from 'vitest'
 
 import { deliveryNoteTone, deliveryStageOf } from './deliveryStage'
 
+const CHECKS = [
+  { key: 'accepted', label: '已采纳', state: 'done' as const },
+  { key: 'checks', label: '检查', state: 'active' as const },
+  { key: 'merge', label: '合并进 main', state: 'todo' as const },
+]
+
+const NO_CHECKS = [
+  { key: 'accepted', label: '已采纳', state: 'done' as const },
+  { key: 'merge', label: '合并进 main', state: 'active' as const },
+]
+
 describe('deliveryStageOf', () => {
-  // 自 #206 起 `pr_open` 只有一个阶段：合并即完成。原来那条"已合并→等部署"的
-  // 分支不再可达，卡片上也不该再画一个永远不会亮起的「部署」步骤。
-  it('pr_open 的卡停在 CI 阶段', () => {
-    const stage = deliveryStageOf({ pr_merged_at: null })
-    expect(stage.phase).toBe('ci')
-    expect(stage.steps.map((s) => s.state)).toEqual(['done', 'active', 'todo'])
+  // 步骤由后端下发（哪些步骤存在取决于项目的 forge，浏览器看不见），这里只负责
+  // 给它们配文案。原来那套 `pr_merged_at` 推导已经删掉，不是搬走。
+  it('等检查时的文案指向检查', () => {
+    const stage = deliveryStageOf({ stages: CHECKS })
+    expect(stage?.title).toContain('检查')
+    expect(stage?.steps).toHaveLength(3)
   })
 
-  it('链条到「合并进 main」为止，不再承诺部署这一步', () => {
-    const stage = deliveryStageOf({ pr_merged_at: null })
-    expect(stage.steps.map((s) => s.key)).toEqual(['accepted', 'ci', 'merge'])
+  it('没有外部检查的项目只等合并，文案如实说明', () => {
+    const stage = deliveryStageOf({ stages: NO_CHECKS })
+    expect(stage?.title).toContain('合并')
+    expect(stage?.hint).toContain('没有外部检查')
+    expect(stage?.steps.map((s) => s.key)).toEqual(['accepted', 'merge'])
   })
 
-  it('给得出标题和说明（卡面不会出现空白行）', () => {
-    const stage = deliveryStageOf({ pr_merged_at: null })
-    expect(stage.title.length).toBeGreaterThan(0)
-    expect(stage.hint.length).toBeGreaterThan(0)
+  it('没有在飞的机器动作时不渲染阶段条', () => {
+    expect(deliveryStageOf({ stages: [] })).toBeNull()
+  })
+
+  it('永远给得出标题和说明（卡面不会出现空白行）', () => {
+    for (const stages of [CHECKS, NO_CHECKS]) {
+      const stage = deliveryStageOf({ stages })
+      expect(stage!.title.length).toBeGreaterThan(0)
+      expect(stage!.hint.length).toBeGreaterThan(0)
+    }
   })
 })
 

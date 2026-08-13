@@ -72,6 +72,14 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
+    # Names this job's target so GitHub records a deployment for it (a job
+    # with `environment:` gets one created on start and marked
+    # success/failure at the end). Nothing about the deploy changes — this is
+    # what makes "did this change reach dev?" answerable from the API instead
+    # of by hunting for a workflow run by filename, which is how the accept
+    # path used to guess it (#206). The env has no protection rules, so it adds
+    # no approval step.
+    environment: dev
     runs-on: [self-hosted, cheese-dev]
     timeout-minutes: 30
     steps:

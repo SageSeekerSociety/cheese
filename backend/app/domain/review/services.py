@@ -25,7 +25,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review import archive, pr_publish
+from app.domain.review import archive, delivery, pr_publish
 from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
@@ -566,6 +566,14 @@ class AcceptService:
             await self._projects.get(topic.project_id) if topic is not None else None
         )
         data["approvals_required"] = approvals_required_of(project)
+        # 交付进度: the steps THIS project has, decided here rather than derived
+        # in the browser from `pr_merged_at` — whether a project has external
+        # checks is a property of its forge, which only the backend can see.
+        if topic is not None:
+            forge = await self._resolve_forge(topic.project_id)
+            data["stages"] = delivery.steps_for(card, forge)
+        else:
+            data["stages"] = []
         return data
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
