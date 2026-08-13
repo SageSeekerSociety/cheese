@@ -16,6 +16,7 @@ A stub agent keeps tests off the live model.
 
 import asyncio
 import os
+import re
 import time
 from collections.abc import Callable, Iterator
 
@@ -54,6 +55,19 @@ _PG_BASE = os.environ.get(
     "TEST_PG_BASE", "postgresql+asyncpg://cheesex:cheesex@localhost:5433"
 )
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
+# Redis needs the same per-worker split as Postgres. Its keys are scoped by
+# user id (2FA secrets, backup codes, the #357 attempt budgets), and user ids
+# restart from 1 in every worker's own database — so on ONE shared Redis, gw0's
+# user 5 and gw1's user 5 are the same account. A 15-minute lockout earned by
+# one worker would then land on an unrelated test in another, at whatever rate
+# the two id sequences happen to align: the flakiest possible failure. Redis
+# ships 16 numbered databases; one per worker keeps them apart.
+_REDIS_BASE = re.sub(r"/\d*$", "", os.environ.get("REDIS_URL", settings.redis_url))
+# Redis ships 16 numbered databases, so the modulo only bites past -n 16, where
+# it degrades to the shared-Redis behaviour this replaces rather than erroring.
+_REDIS_DB = (int(_XDIST_WORKER[2:]) + 1) % 16 if _XDIST_WORKER.startswith("gw") else 0
+settings.redis_url = f"{_REDIS_BASE}/{_REDIS_DB}"
+os.environ["REDIS_URL"] = settings.redis_url
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB_NAME}")
 # Tests run many event loops per process; the shared app engine must not pool
 # asyncpg connections across them (app.core.db reads this before building it).

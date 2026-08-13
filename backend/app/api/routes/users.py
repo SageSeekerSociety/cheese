@@ -1,6 +1,8 @@
 import asyncio
 import logging
-from typing import Annotated
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Annotated, Any
 
 import jwt
 from fastapi import (
@@ -40,6 +42,7 @@ from app.core.errors import (
     AuthenticationRequiredError,
     BadRequestError,
     ForbiddenError,
+    InternalServerError,
     NotFoundError,
     UnprocessableEntityError,
 )
@@ -70,6 +73,9 @@ from app.domain.user.repositories import (
     UserStatisticsRepository,
 )
 from app.domain.user.services import UserAuthService, UserProfileService
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
 
 # ── Request Models ────────────────────────────────────────────────────────────
 
@@ -180,6 +186,139 @@ class CreateInviteCodeRequest(BaseModel):
 router = APIRouter(prefix="/users", tags=["Users"])
 
 logger = logging.getLogger(__name__)
+
+# Namespaces the single-use reservations that make a 2FA ticket redeemable
+# exactly once (#357).
+_PENDING_2FA_SCOPE = "2fa_pending"
+
+
+async def _issue_2fa_pending_token(
+    user_id: int, *, expires_at: int | None = None
+) -> str:
+    """Mint a 2FA ticket and reserve it, or refuse the login step outright.
+
+    Fail-closed on purpose: a ticket we could not reserve is one the verify
+    step will refuse anyway (its claim finds no reservation), so handing it
+    out would only turn a 500 here into a mystifying "invalid session token"
+    one screen later. ``single_use_state`` raises when Redis is unreachable,
+    and Redis being unreachable already means no 2FA login can complete —
+    the TOTP secret lives there too.
+
+    ``expires_at`` re-issues against an existing deadline (see
+    ``mint_2fa_pending_token``); the reservation is sized to match, so the
+    key dies with the ticket rather than outliving it.
+    """
+    from app.common.auth import PENDING_2FA_TTL_S, mint_2fa_pending_token
+    from app.core.single_use_state import SingleUseUnavailableError, reserve
+
+    if expires_at is None:
+        ttl_s = PENDING_2FA_TTL_S
+    else:
+        ttl_s = expires_at - int(datetime.now(UTC).timestamp())
+        if ttl_s <= 0:
+            raise AuthenticationRequiredError(
+                "2FA session expired, please sign in again",
+                {"reason": "session_expired"},
+            )
+
+    minted = mint_2fa_pending_token(user_id, expires_at=expires_at)
+    try:
+        await reserve(_PENDING_2FA_SCOPE, minted.jti, ttl_s=ttl_s)
+    except SingleUseUnavailableError:
+        logger.exception("2fa: cannot reserve pending ticket uid=%s", user_id)
+        raise InternalServerError("暂时无法完成两步验证，请稍后重试") from None
+    return minted.token
+
+
+async def _spend_2fa_attempt(
+    redis: "Redis",
+    user_id: int,
+    verify: Callable[[], Awaitable[bool]],
+    *,
+    is_backup_code: bool = False,
+    reissue_until: int | None = None,
+) -> None:
+    """Check a second-factor code against a per-user attempt budget (#357).
+
+    Every path that validates a second factor during login must go through
+    here, including the ones that take a code inline and never mint a ticket
+    — otherwise the un-budgeted path is the whole vulnerability, unchanged.
+
+    Raises on a wrong code (or an exhausted budget) and returns None on a
+    good one, so callers cannot forget to check a boolean.
+
+    ``reissue_until`` hands a replacement ticket back with the rejection, so
+    a typo does not cost a whole password round trip. It replaces the *ticket*
+    and nothing else: the budget below is untouched by re-issuing, which is
+    the point — tickets are what bound fan-out, the user counter is what
+    bounds volume, and confusing the two would quietly restore the bug. The
+    replacement inherits ``reissue_until`` as its deadline rather than
+    starting a new one, so wrong guesses cannot extend the half-authenticated
+    window.
+
+    Every rejection carries a machine-readable ``reason``. "Wrong code, try
+    again here", "your session died, go sign in" and "you are locked out for
+    fifteen minutes" need three different things from the user, and a client
+    that cannot tell them apart will sit there retrying the impossible one.
+    """
+    from app.domain.user.login_security import (
+        LOCKOUT_DURATION_SECONDS,
+        BackupCodeRateLimiter,
+        LoginRateLimiter,
+        TwoFactorRateLimiter,
+    )
+
+    subject = str(user_id)
+    # A backup-code guess spends both budgets; a TOTP guess spends only the
+    # shared one, so routine TOTP typos cannot exhaust the backup allowance.
+    limiters: list[LoginRateLimiter] = [TwoFactorRateLimiter(redis)]
+    if is_backup_code:
+        limiters.append(BackupCodeRateLimiter(redis))
+
+    for limiter in limiters:
+        if await limiter.is_locked_out(subject):
+            remaining = await limiter.get_remaining_lockout_seconds(subject)
+            raise ForbiddenError(
+                f"Too many 2FA attempts. Try again in {remaining} seconds",
+                {"reason": "too_many_attempts", "retryAfterSeconds": remaining},
+            )
+
+    budget: int | None = None
+    for limiter in limiters:
+        left = await limiter.consume_attempt(subject)
+        if left is None:
+            raise ForbiddenError(
+                "Too many 2FA attempts. Try again later",
+                {
+                    "reason": "too_many_attempts",
+                    "retryAfterSeconds": LOCKOUT_DURATION_SECONDS,
+                },
+            )
+        budget = left if budget is None else min(budget, left)
+
+    if not await verify():
+        if budget == 0:
+            raise ForbiddenError(
+                "Too many failed 2FA attempts. Account locked for 15 minutes",
+                {
+                    "reason": "too_many_attempts",
+                    "retryAfterSeconds": LOCKOUT_DURATION_SECONDS,
+                },
+            )
+        rejection: dict[str, Any] = {
+            "reason": "invalid_code",
+            "attemptsRemaining": budget,
+        }
+        if reissue_until is not None:
+            rejection["tempToken"] = await _issue_2fa_pending_token(
+                user_id, expires_at=reissue_until
+            )
+        raise AuthenticationRequiredError(
+            f"Invalid 2FA code. {budget} attempts remaining", rejection
+        )
+
+    for limiter in limiters:
+        await limiter.clear_attempts(subject)
 
 
 def _normalize_registration_invite_code(
@@ -1395,8 +1534,6 @@ async def user_login(
 
         if requires_2fa:
             if not totp_code:
-                from app.common.auth import create_2fa_pending_token
-
                 # tempToken lets the client finish via POST /auth/verify-2fa
                 # (same contract as the SRP path).
                 return {
@@ -1405,11 +1542,15 @@ async def user_login(
                     "data": {
                         "requires2FA": True,
                         "userId": user.id,
-                        "tempToken": create_2fa_pending_token(user.id),
+                        "tempToken": await _issue_2fa_pending_token(user.id),
                     },
                 }
-            if not await totp_service.verify_2fa(user.id, totp_code):
-                raise AuthenticationRequiredError("Invalid 2FA code")
+            # This inline branch checks a TOTP code without ever minting a
+            # ticket, so the single-use ticket does nothing for it — without
+            # its own budget it stays exactly the oracle #357 describes.
+            await _spend_2fa_attempt(
+                redis, user.id, lambda: totp_service.verify_2fa(user.id, totp_code)
+            )
 
         await rate_limiter.clear_attempts(username)
 
@@ -1586,20 +1727,16 @@ async def srp_login_verify(
             raise AuthenticationRequiredError("Invalid username or password")
 
         # Check 2FA
-        totp_service = TOTPService(
-            AsyncRedis.from_url(settings.redis_url, decode_responses=False)
-        )
+        bytes_redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        totp_service = TOTPService(bytes_redis)
         requires_2fa = await totp_service.is_2fa_enabled(user.id)
         if requires_2fa and not totp_code:
-            from app.common.auth import create_2fa_pending_token
-
-            temp_token = create_2fa_pending_token(user.id)
             return {
                 "code": 200,
                 "message": "2FA required",
                 "data": {
                     "requires2FA": True,
-                    "tempToken": temp_token,
+                    "tempToken": await _issue_2fa_pending_token(user.id),
                     "serverProof": "",
                 },
             }
@@ -1607,9 +1744,12 @@ async def srp_login_verify(
         if requires_2fa:
             if totp_code is None:
                 raise AuthenticationRequiredError("Invalid 2FA code")
-            is_valid_totp = await totp_service.verify_2fa(user.id, totp_code)
-            if not is_valid_totp:
-                raise AuthenticationRequiredError("Invalid 2FA code")
+            # Same un-ticketed inline branch as the password login — see the
+            # comment there.
+            code = totp_code
+            await _spend_2fa_attempt(
+                bytes_redis, user.id, lambda: totp_service.verify_2fa(user.id, code)
+            )
 
         access_token = create_access_token(user.id, handle=user.username)
         refresh_token = create_refresh_token(user.id)
@@ -1666,11 +1806,22 @@ async def verify_2fa_login(
 ) -> dict:
     """Second step of a 2FA login: exchange the short-lived ``2fa_pending``
     token from the password/SRP step plus a TOTP code (or a one-time backup
-    code) for real session tokens. Reference contract: POST {temp_token, code}."""
+    code) for real session tokens. Reference contract: POST {temp_token, code}.
+
+    Two independent bounds keep this from being a code oracle for anyone
+    holding a leaked password (#357): the ticket is redeemable exactly once
+    whether the code was right or wrong, and the user has a per-15-minutes
+    attempt budget that a successful password step does *not* reset.
+    """
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.common.auth import create_access_token, create_refresh_token
+    from app.common.auth import (
+        create_access_token,
+        create_refresh_token,
+        verify_2fa_pending_token,
+    )
     from app.core.config import settings
+    from app.core.single_use_state import SingleUseUnavailableError, claim
     from app.domain.user.login_security import SessionManager, TOTPService
 
     temp_token = payload.get("temp_token") or ""
@@ -1678,23 +1829,51 @@ async def verify_2fa_login(
     if not temp_token or not code:
         raise BadRequestError("temp_token and code are required")
 
-    claims = decode_token(temp_token)
-    if claims.get("type") != "2fa_pending":
-        raise AuthenticationRequiredError("Invalid 2FA session token")
+    claims = verify_2fa_pending_token(temp_token)
+    if claims is None:
+        raise AuthenticationRequiredError(
+            "Invalid or expired 2FA session token", {"reason": "session_expired"}
+        )
+    user_id = claims.user_id
+
+    # Burn the ticket before the code is checked, so a wrong guess costs one
+    # too. DELETE is atomic, which is what makes this hold against a burst of
+    # simultaneous redemptions of the same ticket rather than just against a
+    # sequential replay — and that fan-out bound is the whole job of the
+    # ticket. A wrong code gets a *replacement* ticket below, on the original
+    # deadline, so bounding fan-out costs an honest user nothing.
     try:
-        user_id = int(claims.get("sub") or "")
-    except (TypeError, ValueError) as exc:
-        raise AuthenticationRequiredError("Invalid 2FA session token") from exc
+        first_use = await claim(_PENDING_2FA_SCOPE, claims.jti)
+    except SingleUseUnavailableError:
+        logger.exception("2fa: cannot claim pending ticket uid=%s", user_id)
+        raise InternalServerError("暂时无法完成两步验证，请稍后重试") from None
+    if not first_use:
+        raise AuthenticationRequiredError(
+            "Invalid or expired 2FA session token", {"reason": "session_expired"}
+        )
+
+    # A backup code is 8 hex chars and a TOTP is 6 digits, so the shape says
+    # which one the user meant — and each gets its own budget. Falling back
+    # from one to the other (the old behaviour) would make "which credential
+    # was this attempt against?" unanswerable, and there is no input that
+    # both accept.
+    is_backup_code = not (len(code) == 6 and code.isdigit())
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
         totp_service = TOTPService(redis)
-        used_backup_code = False
-        if not await totp_service.verify_2fa(user_id, code):
-            if await totp_service.verify_backup_code(user_id, code):
-                used_backup_code = True
-            else:
-                raise AuthenticationRequiredError("Invalid 2FA code")
+        await _spend_2fa_attempt(
+            redis,
+            user_id,
+            (
+                (lambda: totp_service.verify_backup_code(user_id, code))
+                if is_backup_code
+                else (lambda: totp_service.verify_2fa(user_id, code))
+            ),
+            is_backup_code=is_backup_code,
+            reissue_until=claims.expires_at,
+        )
+        used_backup_code = is_backup_code
 
         try:
             user, profile = await auth_service.get_user_with_profile(user_id)
