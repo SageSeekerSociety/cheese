@@ -134,7 +134,7 @@ export function tokenExpiresWithin(token: string, ms: number): boolean {
 }
 
 // 2.0 rides raw `fetch`, so it never passes through the axios response
-// interceptor that refreshes on 401 — and the 2.0 routes do not answer 401
+// interceptor that refreshes on 401 — and most 2.0 routes do not answer 401
 // anyway: they resolve the actor from the token and fall back to "nobody" when
 // it does not verify. Both halves fail silently, which is how an expired token
 // turned into 「左边栏冒出一堆不是我的项目」: the request went out as an anonymous
@@ -143,6 +143,11 @@ export function tokenExpiresWithin(token: string, ms: number): boolean {
 // half), but a signed-in user whose token lapsed would still see an empty
 // sidebar. So refresh it here, before the request, rather than react to a
 // failure the transport cannot see.
+//
+// `GET /projects` is no longer one of the silent ones — it 401s on a bearer
+// that failed to verify, so `request()`'s retry can heal it. Do not read that
+// as "the transport can see it now": it holds for that one route, and this
+// pre-request refresh is still what covers the rest.
 export async function ensureFreshToken(): Promise<void> {
   const token = authToken()
   if (!token || !tokenExpiresWithin(token, TOKEN_REFRESH_LEEWAY_MS)) return
