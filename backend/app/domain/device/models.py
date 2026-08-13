@@ -52,9 +52,13 @@ class DeviceRow(Base):
 
     # #282 四轴 · 供给形式 / 可见性. Stored, never inferred: the same fact is
     # reverse-look-up-able through `project_machines.device_id`, and that reverse
-    # lookup IS the bug — see `repository.Supply`. Both server_defaults are the
-    # conservative reading, so rows written by an older revision (and the backfill's
-    # misses) mean "do not touch this machine", never "safe to destroy".
+    # lookup IS the bug — see `repository.Supply`. Each default is the SAFE reading
+    # of ITS OWN axis, and the two axes are safe in OPPOSITE directions (see the
+    # dataclass comment in `repository.Device`): supply → self_hosted keeps the
+    # destroy decision at "not the platform's to destroy", visibility → isolated
+    # keeps the access decision at the boxed room. Both `default` (ORM insert) and
+    # `server_default` (any INSERT that bypasses the ORM) carry the safe reading, so
+    # a forgetful write can never reach whole-machine `host` by omission (#358 #364).
     supply: Mapped[Supply] = mapped_column(
         Enum(Supply, native_enum=False, length=16),
         default=Supply.self_hosted,
@@ -63,8 +67,8 @@ class DeviceRow(Base):
     )
     visibility: Mapped[Visibility] = mapped_column(
         Enum(Visibility, native_enum=False, length=16),
-        default=Visibility.host,
-        server_default=Visibility.host.value,
+        default=Visibility.isolated,
+        server_default=Visibility.isolated.value,
         nullable=False,
     )
 
