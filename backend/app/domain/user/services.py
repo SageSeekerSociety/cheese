@@ -3,6 +3,7 @@ from collections.abc import Sequence
 
 import bcrypt
 
+from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
 from app.domain.user.repositories import (
     UserFollowingRepository,
@@ -113,6 +114,19 @@ class UserAuthService:
         ).decode("utf-8")
         await self._user_repo.update_password(user_id, hashed)
 
+    @staticmethod
+    def _reject_reserved(username: str) -> None:
+        """A handle the platform already uses to mean "not a person" (#345).
+
+        Lives here rather than in the route because all three registration
+        entry points converge on this service — and because 芝士's own rows go
+        through the repository instead, which is exactly the bypass that must
+        keep working (`IdentityService._create_agent_user` creates `cheese` and
+        `cheese-<topic>`).
+        """
+        if is_reserved_username(username):
+            raise ValueError("USERNAME_RESERVED")
+
     async def is_username_taken(self, username: str) -> bool:
         return await self._user_repo.is_username_taken(username)
 
@@ -134,6 +148,7 @@ class UserAuthService:
         - 不发送真实邮件，也不校验 emailCode。
         - 仅覆盖最常见的用户名/邮箱 + 密码注册路径。
         """
+        self._reject_reserved(username)
         if await self._user_repo.is_username_taken(username):
             raise ValueError("USERNAME_TAKEN")
         if await self._user_repo.is_email_taken(email):
@@ -172,6 +187,7 @@ class UserAuthService:
         SRP salt and verifier are stored as the hashed_password field for now.
         In a full SRP implementation, separate columns would be used.
         """
+        self._reject_reserved(username)
         if await self._user_repo.is_username_taken(username):
             raise ValueError("USERNAME_TAKEN")
         if await self._user_repo.is_email_taken(email):
@@ -204,6 +220,7 @@ class UserAuthService:
         """Create the account chosen on the OAuth decision page. The user picked
         the username/nickname and optionally set a password (SRP credentials);
         without one the account authenticates solely through the provider."""
+        self._reject_reserved(username)
         hashed = f"SRP:{srp_salt}:{srp_verifier}" if srp_salt and srp_verifier else None
         user = await self._user_repo.create_user(
             username=username,
