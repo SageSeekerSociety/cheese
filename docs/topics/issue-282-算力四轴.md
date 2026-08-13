@@ -282,6 +282,8 @@ UPDATE device SET supply='cloud'
 | `alembic heads` | 单头 `c4a71e5d9b30`，哨兵一致 |
 | 相对最新 main 的 diff | 25 个文件，全部是本改动；**没有一处误删主线文件** |
 
+**顺带解掉了那条无限重试的推送**。卡上挂的 `! [rejected] … (non-fast-forward)` 不是 main 造成的，是**远端分支 tip 本身**：`cheesex/bf31805b@upstream` 停在 `97e4c00e`——我自己那条快照在本地历史被重写后遗留的分身（同一个 change id 的 divergent 副本），内容是旧基线。合并 main 治不了它，因为它不在 main 上。已把它并进来（**保留我的树**，`jj diff` 确认合并前后字节一致），唯一的冲突正是那个文件里我误改的 `down_revision`，取主线的 `a1c9e7b30d42`。分支现在是远端 tip 的后代，推送应当能 fast-forward——但**推送发生在平台侧，我看不到结果，这条属于未验证**。
+
 > 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
 
 **实现时发现的一件事，比预想的更实**：反查不是「以后可能有人写」，是**已经在跑的生产代码**——`ProjectMachineRepository.is_provisioned_device()` 用「machine 表里有没有一行指向这个 device」判断 device 是否与后端共享文件系统（co-location），而共享判错是**静默失败**：launcher 会 `mkdir -p` 任何给它的路径，于是芝士在一个空目录里开轮次。已改为读 `device.supply`，该反查方法删除（它只有这一个调用者），顺带断掉了 agent 层对 machine 层的一处跨域 import。
