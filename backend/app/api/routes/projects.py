@@ -88,7 +88,14 @@ async def create_project(
     # the listing — now scoped to the caller — would hide a project from the very
     # person who just made it.
     who = await resolver.resolve(fallback_handle=body.owner_handle)
-    owner_handle = body.owner_handle or (who.handle if who.handle else None)
+    # An unidentified caller resolves to the literal `anonymous` (auth.py), and
+    # storing that as the owner is worse than storing nothing: it reads like a
+    # person everywhere downstream, and it blocks the ownerless-room escape
+    # hatch, which opens only on an ABSENT owner and deliberately refuses to
+    # judge a handle by its name. NULL is the honest value for "we do not know".
+    owner_handle = body.owner_handle or (
+        who.handle if who.authenticated and who.handle else None
+    )
     if not _is_a_real_person(owner_handle):
         # Silence is how this got expensive (#315). A project whose owner is not
         # a real person can be repaired — PUT /{id}/owner exists now — but
