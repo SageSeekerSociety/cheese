@@ -95,6 +95,37 @@ def test_the_launch_needs_no_interpreter_the_machine_may_not_have():
     assert '"$CHEESE_WORK"' in script
 
 
+def test_the_proxy_ca_rides_the_script_and_names_its_real_path():
+    """Subscription turns: the backend's CA path means nothing on the device, and
+    the server cannot know the device user's home — so the CA BYTES travel in the
+    script, and the script itself exports NODE_EXTRA_CA_CERTS at the real
+    (post-substitution) location."""
+    pem = "-----BEGIN CERTIFICATE-----\nDEVCA\n-----END CERTIFICATE-----"
+    script = device_launch.build_launch_script(ca_pem=pem)
+    assert "cat > \"$HOME/.claude/proxy-ca.pem\" <<'CHEESECA'" in script
+    assert "DEVCA" in script
+    assert 'export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"' in script
+
+
+def test_no_ca_means_no_ca_block():
+    """The gateway path must not write a stray cert file or export a CA path
+    that points at nothing (an empty NODE_EXTRA_CA_CERTS breaks TLS wholesale)."""
+    script = device_launch.build_launch_script()
+    assert "CHEESECA" not in script
+    assert 'export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"' not in script
+
+
+def test_build_screen_launch_threads_the_ca_through():
+    command, _env, _cheeselet = device_launch.build_screen_launch(
+        hook_url="http://h/sandbox/hooks/T",
+        hook_token="t",
+        home_dir="/h",
+        work_dir="/w",
+        ca_pem="-----BEGIN CERTIFICATE-----\nDEVCA\n-----END CERTIFICATE-----",
+    )
+    assert "DEVCA" in command[2]
+
+
 # --- the spool drainer's lifecycle (it must live and die with claude) --------
 
 

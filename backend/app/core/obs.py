@@ -171,3 +171,87 @@ def bind_context(**kwargs) -> None:
 
 def clear_context(*keys: str) -> None:
     structlog.contextvars.unbind_contextvars(*keys)
+
+
+class ResponseIntegrityAudit:
+    """Did the body we promised actually leave this process?
+
+    The `req` line logs status + duration the moment the handler returns — i.e.
+    BEFORE a single byte of the body reaches the wire. So a response that the
+    browser reports as `ERR_CONTENT_LENGTH_MISMATCH` (fewer bytes arrived than
+    Content-Length declared) shows up here as a perfectly ordinary
+    `req status=200 ms=60`, and the backend logs look innocent. That gap is
+    exactly what makes an intermittent truncation impossible to place.
+
+    This is pure ASGI (not BaseHTTPMiddleware) and mounted OUTERMOST, so it
+    counts the bytes handed to the transport — after every other middleware has
+    had its say. It only ever emits on an anomaly:
+
+    - ``response truncated``: we sent fewer (or more) bytes than we declared.
+      The cut is on OUR side of the proxy.
+    - ``response aborted mid-body``: the send raised after headers went out —
+      the connection died (peer reset, worker shutting down) while we were still
+      writing. With ``proxy_buffering off`` on the /api/ location, nginx has
+      already forwarded our Content-Length downstream, so the browser sees the
+      mismatch rather than a clean 502.
+
+    Silence here means the body left this process intact and the truncation
+    happened further out (nginx ⇄ APISIX edge ⇄ browser).
+
+    Responses with no Content-Length (streaming/SSE/WS) are not audited — there
+    is nothing declared to compare against.
+    """
+
+    def __init__(self, app) -> None:  # noqa: ANN001 — ASGI app
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:  # noqa: ANN001
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        log = get_logger("app.http")
+        declared: int | None = None
+        sent = 0
+        status: int | None = None
+        started = False
+
+        async def _send(message) -> None:  # noqa: ANN001 — ASGI message
+            nonlocal declared, sent, status, started
+            if message["type"] == "http.response.start":
+                started = True
+                status = message.get("status")
+                for key, value in message.get("headers") or ():
+                    if key.lower() == b"content-length":
+                        try:
+                            declared = int(value)
+                        except ValueError:
+                            declared = None
+                        break
+            elif message["type"] == "http.response.body":
+                sent += len(message.get("body") or b"")
+            await send(message)
+
+        path = scope.get("path", "")
+        try:
+            await self.app(scope, receive, _send)
+        except Exception:
+            if started:
+                log.warning(
+                    "response aborted mid-body",
+                    path=path,
+                    status=status,
+                    declared=declared,
+                    sent=sent,
+                )
+            raise
+
+        if declared is not None and sent != declared:
+            log.warning(
+                "response truncated",
+                path=path,
+                status=status,
+                declared=declared,
+                sent=sent,
+                missing=declared - sent,
+            )

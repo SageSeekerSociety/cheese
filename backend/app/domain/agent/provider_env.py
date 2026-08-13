@@ -74,6 +74,8 @@ def subscription_provider(
     project_id: str | None = None,
     topic_id: str | None = None,
     session_token: str | None = None,
+    connect_proxy_url: str | None = None,
+    no_proxy: str | None = None,
 ) -> ProviderChoice:
     """The subscription, as the container env for a metered sandbox.
 
@@ -110,11 +112,29 @@ def subscription_provider(
     Claude Code into "API Usage Billing" mode — it treats the endpoint as a
     custom API needing a key, ignores the OAuth token and shows "Not logged in".
     Leaving it unset keeps it in SUBSCRIPTION mode against api.anthropic.com;
-    ``--add-host`` alone (to the proxy on 443) does the routing, so the request
-    is byte-for-byte an ordinary session and capture still catches undici (DNS).
+    only the TRANSPORT differs by machine shape:
 
-    The model is deliberately NOT pinned: the subscription serves its own
-    (claude-opus-5), and forcing a name it does not serve fails the turn.
+      - a container is steered by ``--add-host`` (to the proxy on 443) — DNS-level
+        capture, which caught undici back when the node-built CLI ignored proxy
+        env vars entirely;
+      - a bare DEVICE process (no root, no docker, no /etc/hosts write) is steered
+        by ``connect_proxy_url`` → ``HTTPS_PROXY``, pointing at the proxy's
+        CONNECT listener. The current CLI is the native build on every install
+        route (the npm package now wraps the same binary) and it sends
+        /v1/messages through HTTPS_PROXY — measured 2026-08-13 on 2.1.229/2.1.231
+        with a logging CONNECT proxy: the model calls CONNECT through it, the
+        turn answers, and Proxy-Authorization carries the URL's userinfo. So the
+        scoped session token doubles as the CONNECT credential
+        (``http://cheese:<token>@host:port``), which is what keeps an exposed
+        CONNECT listener from being an open relay.
+
+    ``no_proxy`` (→ ``NO_PROXY``/``no_proxy``) must name the backend and loopback:
+    the CLI routes even plain-http requests through HTTPS_PROXY, so without it the
+    hooks/git/CLI traffic detours through the meter — or dies with it.
+
+    Either way the request that leaves the CLI is byte-for-byte an ordinary
+    session's. The model is deliberately NOT pinned: the subscription serves its
+    own (claude-opus-5), and forcing a name it does not serve fails the turn.
     """
     env = {
         # Establishes "logged in" AND is what the CLI sends as the Bearer — the
@@ -125,6 +145,11 @@ def subscription_provider(
         "ANTHROPIC_AUTH_TOKEN": "",
         "NODE_EXTRA_CA_CERTS": ca_path,
     }
+    if connect_proxy_url:
+        env["HTTPS_PROXY"] = connect_proxy_url
+    if no_proxy:
+        env["NO_PROXY"] = no_proxy
+        env["no_proxy"] = no_proxy
     if project_id:
         attr = f"{project_id}/{topic_id}" if topic_id else project_id
         env["ANTHROPIC_CUSTOM_HEADERS"] = f"x-cheese-attr: {attr}"

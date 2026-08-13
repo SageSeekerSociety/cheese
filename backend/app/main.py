@@ -28,7 +28,13 @@ import app.api.routes as routes_pkg
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import register_exception_handlers
-from app.core.obs import bind_context, clear_context, configure_logging, get_logger
+from app.core.obs import (
+    ResponseIntegrityAudit,
+    bind_context,
+    clear_context,
+    configure_logging,
+    get_logger,
+)
 from app.core.sandbox_auth import (
     is_valid_cheese_token,
     looks_like_project_agent_credential,
@@ -401,6 +407,13 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
         ua = request.headers.get("user-agent")
         if ua:
             who["ua"] = ua
+        # `bytes` = what we DECLARED (Content-Length), not what reached the
+        # client — this line is emitted before the body hits the wire. Pair it
+        # with ResponseIntegrityAudit's warnings to tell "we promised 269KB and
+        # sent 269KB" apart from "we promised 269KB and the connection died at
+        # 40KB", which is what an intermittent ERR_CONTENT_LENGTH_MISMATCH
+        # needs answered.
+        declared = response.headers.get("content-length")
         _http_log.info(
             "req",
             method=request.method,
@@ -408,6 +421,7 @@ async def request_context(request: Request, call_next: Callable):  # type: ignor
             status=response.status_code,
             ms=ms,
             req=rid,
+            **({"bytes": int(declared)} if declared and declared.isdigit() else {}),
             **who,
         )
     response.headers["X-Request-ID"] = rid
@@ -480,11 +494,15 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
 async def report_unhandled_to_room(request: Request, call_next: Callable):  # type: ignore[type-arg]
     """The push half of the backend-error channel (app.domain.backend_log).
 
-    Registered LAST, so it is the OUTERMOST user middleware and sees anything
-    that escapes: everything a route handles deliberately — BaseError, AppError,
-    HTTPException, validation — has already become a response further in, which
-    is exactly the cut we want. An expected 4xx is normal flow and is not an
-    incident; only a genuine unhandled exception reaches this except.
+    Registered last among the user middleware, so it sees anything that escapes:
+    everything a route handles deliberately — BaseError, AppError, HTTPException,
+    validation — has already become a response further in, which is exactly the
+    cut we want. An expected 4xx is normal flow and is not an incident; only a
+    genuine unhandled exception reaches this except.
+
+    One layer does sit outside it — ResponseIntegrityAudit, added below — and
+    that changes nothing here: the audit only counts bytes and re-raises what it
+    catches untouched, so every unhandled exception still arrives.
 
     The exception is re-raised untouched: this reports, it does not swallow.
     """
@@ -501,6 +519,16 @@ async def report_unhandled_to_room(request: Request, call_next: Callable):  # ty
                 request_id=request.headers.get("x-request-id"),
             )
         raise
+
+
+# Added LAST on purpose: Starlette builds the stack so the most recently added
+# middleware is the OUTERMOST one, and this has to sit closest to the transport
+# to count the bytes that actually leave the process. Inside a BaseHTTPMiddleware
+# (which is what @app.middleware("http") builds) it would count the inner app's
+# messages instead — which is exactly the number that already looks healthy when
+# a response is truncated. It logs nothing on a healthy response — only when the
+# body we declared and the body we sent differ.
+app.add_middleware(ResponseIntegrityAudit)
 
 
 loaded_routers = _discover_routers(app)
