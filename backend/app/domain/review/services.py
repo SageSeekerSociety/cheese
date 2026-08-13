@@ -17,10 +17,10 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
@@ -2661,10 +2661,10 @@ class AcceptService:
             meta={"platform": True},
         )
         if was == AcceptStatus.pr_open and card.decided_by not in (None, decided_by):
-            await NotificationService(self._session).create(
+            await AlertService(self._session).create(
                 project_id=topic.project_id,
-                level=NotifLevel.strong,
-                kind=NotifKind.change_alert,
+                level=AlertLevel.strong,
+                kind=AlertKind.change_alert,
                 title=f"话题「{topic.title}」的验收卡被作废，你的 PR 还开着",
                 body=(
                     f"<@{decided_by}> 作废了这张验收卡，平台已停止推进它。"

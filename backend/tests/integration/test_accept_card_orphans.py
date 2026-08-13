@@ -144,7 +144,7 @@ def test_archiving_a_stage_one_card_revokes_it_and_leaves_the_pr_open(
         # 通知：强提醒发给当初授权的人（alice），而不是归档的人（bob）。
         def _titles(handle: str) -> list[str]:
             notifs = client.get(
-                f"/api/projects/{pid}/notifications",
+                f"/api/projects/{pid}/alerts",
                 headers=session_auth_headers(handle),
             ).json()["data"]["data"]
             return [n["title"] for n in notifs]

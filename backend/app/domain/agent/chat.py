@@ -44,11 +44,11 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import resolve_stage, stage_scenario
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, Block, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.handles import looks_like_agent_handle
@@ -1834,14 +1834,14 @@ class ChatService:
         # Nobody needs a notification for their own message.
         targets = [h for h in dict.fromkeys(concrete) if h != author]
         if targets:
-            notifs = NotificationService(session)
+            notifs = AlertService(session)
             preview = markdown_preview(text, 200)
             who = "芝士" if looks_like_agent_handle(author) else author
             for h in targets:
                 await notifs.create(
                     project_id=topic.project_id,
-                    level=NotifLevel.strong,
-                    kind=NotifKind.mention,
+                    level=AlertLevel.strong,
+                    kind=AlertKind.mention,
                     title=f"{who} 在「{topic.title}」@了你",
                     body=preview,
                     target_handle=h,

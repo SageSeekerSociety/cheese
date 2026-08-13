@@ -38,10 +38,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 
@@ -140,10 +140,10 @@ async def close_cards_for_archived_topic(
             meta={"platform": True},
         )
         if card.decided_by:
-            await NotificationService(session).create(
+            await AlertService(session).create(
                 project_id=project_id,
-                level=NotifLevel.strong,
-                kind=NotifKind.change_alert,
+                level=AlertLevel.strong,
+                kind=AlertKind.change_alert,
                 title=f"话题「{topic_title}」归档了，你的 PR #{card.pr_number} 还开着",
                 body=(
                     f"<@{by}> 归档了这个话题，平台已停止推进这张验收卡。"

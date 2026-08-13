@@ -97,7 +97,7 @@ def test_conclude_files_a_card_without_touching_the_three_old_side_effects(clien
     assert any("数据清洗完成" in b["content"] for b in blocks), "父话题消息没了"
     doc = client.get(f"/api/topics/{parent['id']}/doc").json()["data"]
     assert doc is not None and "数据清洗完成" in doc["content"], "父活文档没织进去"
-    notifs = client.get(f"/api/projects/{p['id']}/notifications").json()["data"]["data"]
+    notifs = client.get(f"/api/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any("实现数据清洗" in n["title"] for n in notifs), "change_alert 没发"
 
 
@@ -371,7 +371,7 @@ def test_escalate_asks_a_human_and_keeps_the_subtopic_alive(client):
     assert r.json()["data"]["status"] == ConclusionStatus.escalated
     assert _topic_status(client, sub["id"]) != "archived"
 
-    notifs = client.get(f"/api/projects/{p['id']}/notifications").json()["data"]["data"]
+    notifs = client.get(f"/api/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any(n["kind"] == "decision_request" for n in notifs), "没人被叫来拍板"
 
 

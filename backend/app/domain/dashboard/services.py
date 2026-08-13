@@ -15,8 +15,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.alert.repositories import AlertRepository
 from app.domain.block.models import AuthorType, Block
-from app.domain.cx_notification.repositories import NotificationRepository
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
@@ -32,7 +32,7 @@ class DashboardService:
         self._projects = ProjectRepository(session)
         self._topics = TopicRepository(session)
         self._milestones = MilestoneRepository(session)
-        self._notifs = NotificationRepository(session)
+        self._notifs = AlertRepository(session)
         self._members = MemberRepository(session)
         self._spaces = SpaceRepository(session)
         self._templates = TaskTemplateRepository(session)

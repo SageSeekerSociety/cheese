@@ -33,7 +33,7 @@ def _post(ws, content: str) -> None:
 
 def _notifs(client, pid: str, handle: str) -> list[dict]:
     return client.get(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         headers=session_auth_headers(handle),
     ).json()["data"]["data"]
 

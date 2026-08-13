@@ -300,7 +300,9 @@ _TWO_OH_MODULES = {
     "members",
     "memory",
     "milestones",
-    "notifications",
+    # renamed from `notifications` (#370): 1.0 keeps that word for the social
+    # feed, 2.0 reports platform state and now says so.
+    "alerts",
     "ops",
     "projects",
     "roles",
