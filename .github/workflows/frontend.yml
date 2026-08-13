@@ -16,11 +16,12 @@ name: Frontend Test
 # what the `Unit tests` step below exists for; it is a separate gap from the
 # type/lint one and neither covers the other.
 #
-# Hosted, not the box: this is pnpm + eslint + vue-tsc with no service
-# containers and no docker, so it must not queue behind builds and deploys on
-# the box's single self-hosted runner — parking a multi-minute frontend check
-# there would delay deploys for no gain. test.yml already puts its `scope` and
-# `lint` jobs on hosted for the same reason.
+# On the cheese-ci pool, not a hosted runner: this is pnpm + eslint + vue-tsc,
+# and the org's Actions billing lapsed on 2026-08-13 (every ubuntu-latest job
+# is refused before it starts). It runs on the same three-machine cheese-ci
+# pool as test.yml/e2e.yml — separate capacity from the dev box's single deploy
+# slot, so a multi-minute frontend check here never queues behind a deploy.
+# node/pnpm come from the setup actions below, exactly as e2e.yml gets them.
 #
 # DELIBERATE DEVIATION from frontend/Dockerfile, which builds on node:21-slim:
 # this job runs node 22 (21 is end-of-life and gets no security updates). The
@@ -62,7 +63,7 @@ defaults:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-ci]
     # Measured locally: install ~40s, eslint ~90s, vitest ~56s. The margin
     # covers a cold pnpm store without letting a wedged run bill for an hour.
     timeout-minutes: 15
@@ -137,11 +138,10 @@ jobs:
       # tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
       - name: Type check (ratchet)
         env:
-          # Private-repo hosted runners are 2-core/7GB, where Node's default
-          # heap lands around 2GB; vue-tsc on this tree peaks near 1.7GB, which
-          # is too close to the edge to leave to chance. Physical memory is
-          # nowhere near the limit, so this only removes a cliff. Inherited by
-          # the vue-tsc child process the ratchet spawns.
+          # Node's default heap lands around 2GB and vue-tsc on this tree peaks
+          # near 1.7GB — too close to the edge to leave to chance. Raising it
+          # costs nothing (the pool VMs have far more physical memory) and only
+          # removes a cliff. Inherited by the vue-tsc child the ratchet spawns.
           NODE_OPTIONS: --max-old-space-size=4096
         run: pnpm run typecheck
 

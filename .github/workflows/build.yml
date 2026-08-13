@@ -1,11 +1,11 @@
 name: Build and Push Docker Image
 
-# Runs on the dev box's own runner, not a GitHub-hosted one: this is a private
-# repo, so hosted minutes are billed per-minute, and these jobs need native
-# amd64 Docker with a warm layer cache across runs — the box already has both
-# for free, and a hosted runner would rebuild every layer from scratch every
-# time. (Hosted runners themselves work fine; billing was never actually
-# exhausted long-term.)
+# The build jobs below run on the dev box's own runner, not a GitHub-hosted
+# one: this is a private repo, so hosted minutes are billed per-minute, and
+# these jobs need native amd64 Docker with a warm layer cache across runs — the
+# box already has both for free, and a hosted runner would rebuild every layer
+# from scratch every time. (The org's Actions billing lapsed on 2026-08-13, so
+# even the `plan` job that used to run hosted moved onto the cheese-ci pool.)
 on:
   push:
     branches: [main]
@@ -38,18 +38,19 @@ concurrency:
 
 jobs:
   plan:
-    # Hosted, not the box: gh api calls + a planning script + registry-side
-    # `buildx imagetools` manifest copies — no docker builds, no local layer
-    # cache, nothing box-local. It is the job that gates all three heavy build
-    # jobs, so leaving it on the box meant even "does this need building?"
-    # queued behind whatever else the single runner was doing (measured over
-    # 63 runs: median 0.3m queue, but p90 5.9m and max 16.8m) before the jobs
-    # it gates could start. Hosted picks it up in ~0s (p90 3s). Same reason
-    # `scope` in test.yml/e2e.yml is hosted. The fetch-depth: 0 checkout does
-    # cost more without the box's warm git dir — measured 11s median hosted
-    # (claude-review.yml does the same full-history checkout on ubuntu-latest)
-    # vs 4s on the box — which the queue saving repays many times over.
-    runs-on: ubuntu-latest
+    # On the cheese-ci pool, not the dev box: gh api calls + a planning script +
+    # registry-side `buildx imagetools` manifest copies — no docker builds, no
+    # local layer cache, nothing box-local. It gates all three heavy build jobs,
+    # so running it on the dev box meant even "does this need building?" queued
+    # behind whatever else that single slot was doing (measured over 63 runs:
+    # median 0.3m queue, p90 5.9m, max 16.8m). It ran on a hosted runner for
+    # that reason until the org's Actions billing lapsed on 2026-08-13; the
+    # cheese-ci pool is separate three-machine capacity, so it still never queues
+    # behind the dev-box builds it gates (and it does not wait on them — they
+    # `needs: plan`, so there is no deadlock). The pool has no `gh`, so a step
+    # below installs it per-machine; docker/buildx for the imagetools promotion
+    # already ship on the pool (the e2e job uses the pool's docker).
+    runs-on: [self-hosted, cheese-ci]
     # gh api calls + a planning script, no docker builds; still bounded well
     # under the jobs it gates.
     timeout-minutes: 10
@@ -66,6 +67,21 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+
+      # The cheese-ci pool machines don't ship `gh` (hosted runners do). Install
+      # it once per machine into a dir that survives actions/checkout's workspace
+      # reset, then prepend it to PATH — same trick test.yml's scope uses.
+      - name: Ensure gh CLI
+        run: |
+          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
+          if [ ! -x "$gh_dir/bin/gh" ]; then
+            gh_version=2.63.2
+            mkdir -p "$gh_dir"
+            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
+              | tar -xz -C "$gh_dir" --strip-components=1
+          fi
+          echo "$gh_dir/bin" >> "$GITHUB_PATH"
+          "$gh_dir/bin/gh" --version
 
       - name: Test image build planning
         run: bash .github/scripts/test-plan-image-builds.sh

@@ -14,9 +14,11 @@ name: Ops request guard
 #
 # Runs on EVERY pull request, not just ones touching ops/, so it can be
 # registered as a required check: a PR with no manifests passes trivially and in
-# a couple of seconds. It is deliberately hosted (ubuntu-latest) and does NOT
-# `uv sync` the backend — the validator only needs pydantic + pyyaml, so the
-# box's single self-hosted runner never has to queue for it.
+# a couple of seconds. It does NOT `uv sync` the backend — the validator only
+# needs pydantic + pyyaml, pulled on the fly by `uv run --with` below. It ran on
+# a hosted runner until the org's Actions billing lapsed on 2026-08-13 (every
+# ubuntu-latest job is now refused before it starts); it now runs on the
+# cheese-ci pool, whose uv comes from setup-uv below.
 #
 # `--python 3.13` is not decoration: `--no-project` means uv ignores the
 # backend's `requires-python`, so without it uv is free to host the validator on
@@ -36,7 +38,7 @@ concurrency:
 
 jobs:
   guard:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
