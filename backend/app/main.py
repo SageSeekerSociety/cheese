@@ -298,6 +298,20 @@ app = FastAPI(
     title="CheeseX",
     version="0.1.0",
     lifespan=lifespan,
+    # A trailing slash is a 404, never a redirect — because behind this gateway a
+    # slash-redirect cannot be made correct. Starlette answers `/api/topics/` with
+    # 307 to an ORIGIN-ABSOLUTE `Location`, and the client sends that back through
+    # nginx, which strips another `/api`. So the redirect spends a prefix the
+    # caller already paid, and the second pass lands one generation over:
+    # `/api/api/tasks/7/` → 307 → `/api/tasks/7` → 1.0's 赛题 answers, with a
+    # success code (docs/api-conventions.md called this an open hole).
+    #
+    # The backend cannot fix the Location instead, because it cannot know how many
+    # prefixes the proxy in front of it will strip — which is exactly why turning
+    # the behaviour off is the fix and not a workaround. No route declares a
+    # trailing slash, so nothing canonical changes; only the extra-slash spelling
+    # stops being silently accepted.
+    redirect_slashes=False,
     servers=[
         {
             "url": API_GATEWAY_MOUNT,

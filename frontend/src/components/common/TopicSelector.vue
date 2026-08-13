@@ -43,7 +43,7 @@ import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { debounce } from 'lodash-es'
 
-import { TopicsApi } from '@/network/api/topics'
+import { TagsApi } from '@/network/api/tags'
 
 const props = withDefaults(
   defineProps<{
@@ -75,7 +75,7 @@ const createTopic = async (name: string) => {
     isLoading.value = true
     const {
       data: { id },
-    } = await TopicsApi.create(name)
+    } = await TagsApi.create(name)
     return id
   } finally {
     isLoading.value = false
@@ -128,7 +128,7 @@ const fetchTopics = debounce(async (value: string) => {
     isLoading.value = true
     const {
       data: { topics: result },
-    } = await TopicsApi.search(q)
+    } = await TagsApi.search(q)
 
     const items: { id: number; name: string; isFakeItem?: boolean }[] = [...result]
     // Add create option if it doesn't strictly match existing

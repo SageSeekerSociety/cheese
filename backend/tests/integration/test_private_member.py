@@ -47,7 +47,7 @@ def test_member_summary(client, bearer):
         json={"project_id": pid, "title": "我开的话题", "created_by": "user-1"},
     )
     client.post(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         json={
             "level": "light",
             "kind": "decision_request",

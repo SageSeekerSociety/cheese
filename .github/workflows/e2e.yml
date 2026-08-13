@@ -49,11 +49,11 @@ jobs:
   # See test.yml: merged squash commits contain the exact PR tree already gated.
   # The cheap API decision preserves full CI for direct main pushes.
   scope:
-    # Hosted, not the box: identical zero-dependency `gh api` job as
-    # test.yml's scope (no checkout, no box-local network/files), moved for
-    # the same reason — avoid queueing behind other work on the box's single
-    # runner before the jobs it gates.
-    runs-on: ubuntu-latest
+    # On the cheese-ci pool, not a hosted runner: identical `gh api`-only job as
+    # test.yml's scope, moved for the same reason — the org's Actions billing
+    # lapsed on 2026-08-13, so every ubuntu-latest job is refused before it
+    # starts. The pool has no `gh`, so a step below installs it per-machine.
+    runs-on: [self-hosted, cheese-ci]
     # Same job as test.yml's scope: measured median 0.2m, wide margin.
     timeout-minutes: 5
     permissions:
@@ -63,6 +63,23 @@ jobs:
     outputs:
       run_heavy: ${{ steps.decide.outputs.run_heavy }}
     steps:
+      # The cheese-ci pool machines don't ship `gh` (hosted runners do). Install
+      # it once per machine into a dir that survives actions/checkout's
+      # workspace reset, then prepend it to PATH — same trick test.yml's scope
+      # uses. (No `working-directory` override needed: this workflow sets no
+      # `backend` default.)
+      - name: Ensure gh CLI
+        run: |
+          gh_dir="$(dirname "$RUNNER_TEMP")/gh-cli"
+          if [ ! -x "$gh_dir/bin/gh" ]; then
+            gh_version=2.63.2
+            mkdir -p "$gh_dir"
+            curl -sSL "https://github.com/cli/cli/releases/download/v${gh_version}/gh_${gh_version}_linux_amd64.tar.gz" \
+              | tar -xz -C "$gh_dir" --strip-components=1
+          fi
+          echo "$gh_dir/bin" >> "$GITHUB_PATH"
+          "$gh_dir/bin/gh" --version
+
       - name: Decide whether this commit already passed PR CI
         id: decide
         env:
@@ -92,7 +109,25 @@ jobs:
 
   e2e:
     needs: scope
-    if: needs.scope.outputs.run_heavy == 'true'
+    # `always()` + `!= 'false'`, not `== 'true'`: `scope` is an OPTIMISATION —
+    # it answers "did this exact commit already pass CI on its PR, so can the
+    # heavy jobs be skipped?". An optimisation must not hold a veto. Written as
+    # `== 'true'` it did: when `scope` failed, its output was empty, the
+    # condition was false, and the heavy jobs were SKIPPED — the workflow
+    # reported nothing ran and looked green-ish, having tested nothing.
+    #
+    # That is not hypothetical. On 2026-08-13 the org's Actions billing lapsed;
+    # every ubuntu-latest job was refused before it started ("The job was not
+    # started because recent account payments have failed"), 0 steps, 2 seconds.
+    # `scope` was hosted at the time, so it died, and with it the self-hosted
+    # `test` job on machines that were sitting idle and perfectly able to run.
+    # That lapse is also why `scope` itself has since moved onto the pool — but
+    # the rule below stays regardless: an optimisation must never veto the tests.
+    #
+    # Now: skip only on an explicit `false` from a `scope` that actually ran.
+    # Any other outcome — failed, cancelled, never started — means we do not
+    # know, and not knowing means run the tests.
+    if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
     # Not ubuntu-latest: this is a private repo, so hosted minutes are billed
     # per-minute, and this job needs native amd64 Docker plus the Playwright
     # browser install. Runs on the cheese-ci pool (MicroCloud VMs, one runner

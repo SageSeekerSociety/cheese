@@ -31,7 +31,7 @@ def _notify(
     kind: str = "change_alert",
 ) -> dict:
     r = client.post(
-        f"/api/projects/{project_id}/notifications",
+        f"/api/projects/{project_id}/alerts",
         json={
             "level": level,
             "kind": kind,
@@ -49,7 +49,7 @@ def _titles(response) -> list[str]:
 
 def _unread(client, project_id: str, handle: str) -> int:
     r = client.get(
-        f"/api/projects/{project_id}/notifications/unread-count",
+        f"/api/projects/{project_id}/alerts/unread-count",
         headers=session_auth_headers(handle),
     )
     assert r.status_code == 200, r.text
@@ -62,9 +62,7 @@ def test_list_serves_the_caller_their_own_mail_and_broadcasts(client):
     _notify(client, pid, "给bob", target="bob")
     _notify(client, pid, "全体注意")
 
-    r = client.get(
-        f"/api/projects/{pid}/notifications", headers=session_auth_headers("alice")
-    )
+    r = client.get(f"/api/projects/{pid}/alerts", headers=session_auth_headers("alice"))
     assert r.status_code == 200
     assert _titles(r) == ["全体注意", "给alice"]
     assert r.json()["data"]["total"] == 2
@@ -74,7 +72,7 @@ def test_reading_someone_elses_mailbox_is_refused(client):
     pid = _project(client)
     _notify(client, pid, "给bob", target="bob")
 
-    for path in (f"/api/projects/{pid}/notifications", f"/api/projects/{pid}/inbox"):
+    for path in (f"/api/projects/{pid}/alerts", f"/api/projects/{pid}/inbox"):
         r = client.get(
             path,
             params={"target_handle": "bob"},
@@ -84,7 +82,7 @@ def test_reading_someone_elses_mailbox_is_refused(client):
 
     # ...and the caller's own handle is of course fine.
     r = client.get(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         params={"target_handle": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -97,7 +95,7 @@ def test_read_all_leaves_other_peoples_notifications_unread(client):
     bobs = _notify(client, pid, "给bob", target="bob")
 
     r = client.post(
-        f"/api/projects/{pid}/notifications/read-all",
+        f"/api/projects/{pid}/alerts/read-all",
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
@@ -106,7 +104,7 @@ def test_read_all_leaves_other_peoples_notifications_unread(client):
     assert _unread(client, pid, "alice") == 0
     assert _unread(client, pid, "bob") == 1
     still_unread = client.get(
-        f"/api/projects/{pid}/notifications", headers=session_auth_headers("bob")
+        f"/api/projects/{pid}/alerts", headers=session_auth_headers("bob")
     )
     assert [n["read_at"] for n in still_unread.json()["data"]["data"]] == [None]
     assert still_unread.json()["data"]["data"][0]["id"] == bobs["id"]
@@ -116,7 +114,7 @@ def test_read_all_refuses_a_caller_who_names_nobody(client):
     pid = _project(client)
     _notify(client, pid, "给alice", target="alice")
 
-    r = client.post(f"/api/projects/{pid}/notifications/read-all")
+    r = client.post(f"/api/projects/{pid}/alerts/read-all")
     assert r.status_code == 401, r.text
     assert _unread(client, pid, "alice") == 1
 
@@ -146,7 +144,7 @@ def test_an_unidentified_caller_sees_broadcasts_only(client):
     _notify(client, pid, "给alice", target="alice")
     _notify(client, pid, "全体注意")
 
-    r = client.get(f"/api/projects/{pid}/notifications")
+    r = client.get(f"/api/projects/{pid}/alerts")
     assert _titles(r) == ["全体注意"]
 
 
@@ -163,9 +161,9 @@ def test_tokenless_caller_naming_someone_else_is_refused(client):
     _notify(client, pid, "全体注意")
 
     for path in (
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         f"/api/projects/{pid}/inbox",
-        f"/api/projects/{pid}/notifications/unread-count",
+        f"/api/projects/{pid}/alerts/unread-count",
     ):
         r = client.get(path, params={"target_handle": "bob"})
         assert r.status_code == 401, (path, r.text)
@@ -181,7 +179,7 @@ def test_bad_token_naming_someone_else_is_refused(client):
 
     for token in ("garbage-not-a-jwt", session_token("bob", ttl_s=-1)):
         r = client.get(
-            f"/api/projects/{pid}/notifications",
+            f"/api/projects/{pid}/alerts",
             params={"target_handle": "bob"},
             headers={"Authorization": f"Bearer {token}"},
         )
@@ -196,7 +194,7 @@ def test_bad_token_is_refused_even_without_naming_anyone(client):
     _notify(client, pid, "全体注意")
 
     r = client.get(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         headers={"Authorization": "Bearer garbage-not-a-jwt"},
     )
     assert r.status_code == 401, r.text
@@ -208,7 +206,7 @@ def test_read_all_never_clears_a_named_strangers_mailbox(client):
 
     # Anonymous, naming bob → 401, nothing marked.
     r = client.post(
-        f"/api/projects/{pid}/notifications/read-all",
+        f"/api/projects/{pid}/alerts/read-all",
         params={"target_handle": "bob"},
     )
     assert r.status_code == 401, r.text
@@ -216,7 +214,7 @@ def test_read_all_never_clears_a_named_strangers_mailbox(client):
 
     # Bad token, naming bob → 401, nothing marked.
     r = client.post(
-        f"/api/projects/{pid}/notifications/read-all",
+        f"/api/projects/{pid}/alerts/read-all",
         params={"target_handle": "bob"},
         headers={"Authorization": "Bearer garbage-not-a-jwt"},
     )
@@ -225,7 +223,7 @@ def test_read_all_never_clears_a_named_strangers_mailbox(client):
 
     # Authenticated as alice, naming bob → 403, nothing marked.
     r = client.post(
-        f"/api/projects/{pid}/notifications/read-all",
+        f"/api/projects/{pid}/alerts/read-all",
         params={"target_handle": "bob"},
         headers=session_auth_headers("alice"),
     )
@@ -238,7 +236,7 @@ def test_unread_count_refuses_someone_elses_badge(client):
     _notify(client, pid, "给bob", target="bob")
 
     r = client.get(
-        f"/api/projects/{pid}/notifications/unread-count",
+        f"/api/projects/{pid}/alerts/unread-count",
         params={"target_handle": "bob"},
         headers=session_auth_headers("alice"),
     )
@@ -250,7 +248,7 @@ def test_unread_count_refuses_someone_elses_badge(client):
 
 def _decision(client, project_id: str, title: str, target: str) -> dict:
     r = client.post(
-        f"/api/projects/{project_id}/notifications",
+        f"/api/projects/{project_id}/alerts",
         json={
             "level": "strong",
             "kind": "decision_request",
@@ -268,20 +266,20 @@ def test_notification_actions_require_a_verified_caller(client):
     pid = _project(client)
     n = _decision(client, pid, "alice拍板", target="alice")
 
-    r = client.post(f"/api/notifications/{n['id']}/read")
+    r = client.post(f"/api/alerts/{n['id']}/read")
     assert r.status_code == 401, r.text
     assert "机密内容" not in r.text
-    r = client.post(f"/api/notifications/{n['id']}/feedback", json={"feedback": "up"})
+    r = client.post(f"/api/alerts/{n['id']}/feedback", json={"feedback": "up"})
     assert r.status_code == 401, r.text
     r = client.post(
-        f"/api/notifications/{n['id']}/resolve",
+        f"/api/alerts/{n['id']}/resolve",
         json={"chosen": "B", "decided_by": "mallory"},
     )
     assert r.status_code == 401, r.text
 
     # None of the refused attempts changed anything.
     mine = client.get(
-        f"/api/projects/{pid}/notifications", headers=session_auth_headers("alice")
+        f"/api/projects/{pid}/alerts", headers=session_auth_headers("alice")
     ).json()["data"]["data"]
     assert [(x["read_at"], x["resolved_at"], x["feedback"]) for x in mine] == [
         (None, None, None)
@@ -293,16 +291,14 @@ def test_notification_actions_refuse_a_non_recipient(client):
     n = _decision(client, pid, "alice拍板", target="alice")
     bob = session_auth_headers("bob")
 
-    r = client.post(f"/api/notifications/{n['id']}/read", headers=bob)
+    r = client.post(f"/api/alerts/{n['id']}/read", headers=bob)
     assert r.status_code == 403, r.text
     assert "机密内容" not in r.text
     r = client.post(
-        f"/api/notifications/{n['id']}/feedback", json={"feedback": "up"}, headers=bob
+        f"/api/alerts/{n['id']}/feedback", json={"feedback": "up"}, headers=bob
     )
     assert r.status_code == 403, r.text
-    r = client.post(
-        f"/api/notifications/{n['id']}/resolve", json={"chosen": "B"}, headers=bob
-    )
+    r = client.post(f"/api/alerts/{n['id']}/resolve", json={"chosen": "B"}, headers=bob)
     assert r.status_code == 403, r.text
 
 
@@ -312,7 +308,7 @@ def test_resolve_attributes_the_decision_to_the_verified_caller(client):
         "data"
     ]["id"]
     r = client.post(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         json={
             "level": "strong",
             "kind": "decision_request",
@@ -326,7 +322,7 @@ def test_resolve_attributes_the_decision_to_the_verified_caller(client):
 
     # The body claims mallory decided; the block must carry alice.
     r = client.post(
-        f"/api/notifications/{n['id']}/resolve",
+        f"/api/alerts/{n['id']}/resolve",
         json={"chosen": "A", "decided_by": "mallory"},
         headers=session_auth_headers("alice"),
     )
@@ -344,7 +340,7 @@ def test_overview_requires_auth_and_shows_only_the_callers_items(client):
     _decision(client, pid, "alice的事", target="alice")
     _decision(client, pid, "bob的事", target="bob")
     r = client.post(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         json={
             "level": "strong",
             "kind": "accept_request",
@@ -489,7 +485,7 @@ def test_creating_a_notification_requires_a_credential(client):
     unauthenticated itself. The TestClient sends the global sandbox token on
     every request, so the bare-call cases strip it explicitly."""
     pid = _project(client)
-    url = f"/api/projects/{pid}/notifications"
+    url = f"/api/projects/{pid}/alerts"
 
     # Bare call — no cheese token, no bearer → 401, nothing created.
     r = client.post(url, json=_create_body(), headers={"X-Cheese-Token": ""})
@@ -518,7 +514,7 @@ def test_creating_a_notification_requires_a_credential(client):
 def test_creating_with_a_bearer_alone_works(client):
     pid = _project(client)
     r = client.post(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         json=_create_body("人发的"),
         headers={"X-Cheese-Token": "", **session_auth_headers("alice")},
     )
@@ -535,7 +531,7 @@ def test_creating_with_a_scoped_token_works(client):
         mint_scoped_token(project_id=pid, topic_id=tid),
     ):
         r = client.post(
-            f"/api/projects/{pid}/notifications",
+            f"/api/projects/{pid}/alerts",
             json=_create_body("分身发的"),
             headers={"X-Cheese-Token": token},
         )
@@ -546,7 +542,7 @@ def test_a_scoped_token_for_another_project_cannot_notify_here(client):
     pid = _project(client)
     other = _project(client, "Other")
     r = client.post(
-        f"/api/projects/{pid}/notifications",
+        f"/api/projects/{pid}/alerts",
         json=_create_body(),
         headers={"X-Cheese-Token": mint_scoped_token(project_id=other)},
     )

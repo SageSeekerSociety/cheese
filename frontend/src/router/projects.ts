@@ -7,7 +7,10 @@ import SubprojectNavigation from '@/components/projects/navigation/SubprojectNav
 import RouterPassThrough from '@/layouts/RouterPassThrough.vue'
 
 export default {
-  path: '/projects',
+  // 知是 团队项目 (int ids). Moved off the bare `/projects` with its API (#370):
+  // that word now belongs to the cheesex workspace, which is what people mean by
+  // "project" here. Old `/projects/<int>` links are caught in router/index.ts.
+  path: '/team-projects',
   component: RouterPassThrough,
   meta: {
     title: '项目',
