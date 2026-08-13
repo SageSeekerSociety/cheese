@@ -160,11 +160,18 @@ async def list_projects(
             # so every user crosses that boundary constantly — which is exactly
             # what「有时候左边栏冒出一堆不是我的项目」was.
             #
-            # And nothing here can 401: the route answers 200 either way, so
-            # the client cannot tell "yours" from "everyone's" and caches the
-            # leak under the user's own handle. Whatever else is open, THIS
-            # route's meaning without `team_id` is "the caller's OWN projects" —
-            # with no caller, the honest answer is none, not all.
+            # Whatever else is open, THIS route's meaning without `team_id` is
+            # "the caller's OWN projects" — with no caller, the honest answer is
+            # none, not all.
+            #
+            # But "none" is only honest for a caller who presented nothing. The
+            # user this bug was actually about DID present a token; it just
+            # failed. Answering them 200-with-nothing swaps one undetectable
+            # wrong answer for another — measured on dev 2026-08-12: a bearer
+            # with a bad signature got `200 n=0` here while the same token got
+            # 401 from `topic-unread`. So the sidebar sat empty until some other
+            # route happened to 401 and trip the refresh. Say it here instead.
+            resolver.reject_failed_credential(who)
             projects, total = [], 0
     items = [ProjectOut.model_validate(p).model_dump(mode="json") for p in projects]
     return ok(page(items, total))

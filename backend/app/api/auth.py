@@ -223,6 +223,33 @@ class ActorResolver:
             raise AuthenticationRequiredError("访问个人通知需要先登录")
         return "anonymous"
 
+    def reject_failed_credential(self, actor: Actor) -> None:
+        """401 when a bearer WAS presented and did not verify — as opposed to
+        no bearer at all, which stays anonymous.
+
+        `resolve()` deliberately never raises: it answers "who is this" and
+        「认不出」 is a legitimate answer for the surfaces that serve anonymous
+        readers. But on a route whose meaning is per-caller, collapsing a
+        *failed* credential into 「没有凭据」 makes the response a lie the client
+        cannot detect — it gets a 200 with an honest-looking empty payload and
+        no reason to go get a working token. That is the second half of the
+        「左边栏冒出一堆不是我的项目」 bug: #323 stopped the listing from leaking
+        other people's projects, but the lapsed-token user was left staring at
+        an empty sidebar with nothing to react to.
+
+        `resolve_recipient` and `require_verified_caller` already draw exactly
+        this line for mailboxes and gated writes ("downgrading a failed
+        credential to ``anonymous`` is the bug class that let stripped headers
+        read anyone's mail"). This is the same rule, spelled once, for reads.
+
+        Note what it does NOT do: with no ``Authorization`` header there is no
+        failed credential, so genuinely anonymous traffic is untouched, and an
+        agent authenticated by its scoped token is authenticated regardless of
+        what a stale bearer alongside it says.
+        """
+        if not actor.authenticated and self._bearer:
+            raise AuthenticationRequiredError("登录状态无效或已过期，请重新登录")
+
     async def require_verified_caller(
         self, *, project_id: uuid.UUID | None = None
     ) -> Actor:

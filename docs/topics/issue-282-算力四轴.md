@@ -268,7 +268,19 @@ UPDATE device SET supply='cloud'
 
 `uv run alembic heads` → 单头 `c4a71e5d9b30`。
 
-**另**：`main@upstream` 现已同步到 `e5db2c633bd1`（#344），上一轮记的「基线自身两个头 / `_as_utc` 重复定义」这些陈旧基线症状随合并一起消失。
+**另**：`main@upstream` 已同步到 `acf3d18cb0f6`（#347，跑测试期间又前进过一次，已再合一次；那条没带迁移，链不受影响）。上一轮记的「基线自身两个头 / `_as_utc` 重复定义 / `test_cheese_cli` 被环境变量顶掉」这些陈旧基线症状随合并全部消失。
+
+**合并后的完整验证**（沙箱，`dev-db.sh` + `ssh-keygen` 垫片）：
+
+| 检查 | 结果 |
+|---|---|
+| `pytest tests/ -n 4` | **4419 passed / 2 failed** —— 2 条是文档已记的环境缺件（`test_market_api` 缺 provider 凭据、`test_tmux_control` 缺 `kill`），无一与本改动相关 |
+| `pyright` | **0 errors**（上一轮那 2 个 `_as_utc` 是陈旧基线自带的，合并后消失，印证了当时的判断） |
+| `ruff check` / `ruff format --check` | 全绿 |
+| `check-repo-rules.sh` + `--self-test` | PASS（5 条规则） |
+| `check-migration-fork.py --self-test` | PASS |
+| `alembic heads` | 单头 `c4a71e5d9b30`，哨兵一致 |
+| 相对最新 main 的 diff | 25 个文件，全部是本改动；**没有一处误删主线文件** |
 
 > 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
 
