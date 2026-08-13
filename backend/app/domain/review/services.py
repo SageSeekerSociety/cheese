@@ -26,6 +26,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive, pr_publish
+from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
@@ -60,9 +61,6 @@ _ACCEPT_PR_OPEN_FAILED_PREFIX = "⚠️ 采纳未完成：无法为这张卡开 
 _ACCEPT_PR_STALLED_PREFIX = "⚠️ 采纳未完成：PR 未能合并"
 #: 未接 GitHub 的项目 (#363)：平台自己就是 forge，local merge 是它唯一、正当的
 #: 采纳语义——不是降级。这句写在卡上，让它和「该走 PR 却没走」的卡一眼可分。
-_PLATFORM_FORGE_NOTE = (
-    "ℹ️ 本项目未接 GitHub：采纳即合并进平台仓库的 main（无 PR、无外部 CI）"
-)
 #: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
 #: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
 _DEPLOY_STALLED_PREFIX = "⏳ 部署迟迟没有完成"
@@ -717,49 +715,29 @@ class AcceptService:
                 f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
             )
 
-        # 采纳即合并 (#296): a card that ALREADY rides a real PR — the App opened
-        # it fire-and-forget when the card was filed (pr_publish.py, now on by
-        # default via settings.accept_via_pr) — is accepted by merging THAT PR
-        # via the API, never by opening a second one.
+        # 采纳 = merging the topic branch into the project's authoritative main,
+        # wherever that main lives. WHERE is the forge, and the forge is resolved
+        # once (app.domain.review.forge) instead of being crossed out of
+        # `pr_publish.enabled()` × binding × `card.pr_number` here — the crossing
+        # that put a GitHub-bound project's accept onto a direct push to main
+        # twice in one day (#362).
         #
-        # The boundary everything below branches on (#363): is this project
-        # BOUND to GitHub (App installation resolved + GitHub https upstream)?
-        #   - Bound: accepting merges a PR, and ONLY a PR. A card without one
-        #     (filed before accept_via_pr was deployed, or its fire-and-forget
-        #     publish failed / is still in flight) gets its App PR opened right
-        #     here first — #328 shipped without this, its coexistence guard
-        #     dropped legacy PR-less cards into the local-merge branch below,
-        #     and dev's main received merge commits with no PR at all
-        #     (c33cfabf, 8f9b9d94). Any PR-path failure (can't open, GitHub
-        #     unreachable, PR closed unmerged) STOPS the accept visibly
-        #     (note + ValidationError) — for a bound project the local merge
-        #     is never a fallback. The one PR-less case that legitimately
-        #     proceeds is a topic with no branch (discussion-only): the local
-        #     merge below no-ops and nothing bypasses anything.
-        #   - Unbound: the platform IS the forge (#363). The local merge is
-        #     the project's one legitimate accept semantics — not a degrade —
-        #     and the card says so in plain words (`_PLATFORM_FORGE_NOTE`) so
-        #     it can never be mistaken for a bound card that skipped its PR.
-        #   - App mechanism off entirely (`pr_publish.enabled()` False — no
-        #     App configured, or the .env override): the pre-#296 world, with
-        #     the two-phase personal-token path and its graceful degrades,
-        #     stays exactly as it was.
+        # What each lane means for the code below:
+        #   - requires_pr (the App forge): a PR is the only way in. A card
+        #     without one — filed before accept_via_pr shipped, or whose
+        #     fire-and-forget publish failed or is still in flight — gets its PR
+        #     opened right here, and ANY failure on the PR path stops the accept
+        #     visibly rather than falling through to the local merge. The one
+        #     PR-less case that legitimately proceeds is a discussion-only topic
+        #     with no branch, where the local merge no-ops and bypasses nothing.
+        #   - the platform forge: the local merge IS this project's accept
+        #     (#363), and `forge.note` says so on the card so it can never read
+        #     as a bound project that skipped its PR.
+        #   - the personal-token forge: the pre-#296 two-phase path, further
+        #     down, with its documented degrade to the local merge.
         pr_degrade_reason = ""
-        unbound_note = ""
-        app_owns_prs = pr_publish.enabled()
-        try:
-            github_bound = app_owns_prs and await self._github_bound(topic.project_id)
-        except Exception as exc:  # noqa: BLE001 — fail CLOSED: can't pick a lane blind
-            # Unable to even determine the binding (DB hiccup, config error):
-            # choosing the local merge here could silently bypass a PR that
-            # does exist, so the accept stops instead — visibly, retryably.
-            logger.exception(
-                "could not resolve GitHub binding for project %s", topic.project_id
-            )
-            raise ValidationError(
-                "采纳未完成：暂时无法判定项目的 GitHub 绑定状态，稍后重试采纳"
-            ) from exc
-        if github_bound and card.pr_number is None:
+        forge = await self._resolve_forge(topic.project_id)
+        if forge.requires_pr and card.pr_number is None:
             await self._publish_pr_for_accept(card, topic)
         if card.pr_number is not None:
             settled, existing_pr_degrade_reason = await self._accept_via_pr(
@@ -767,14 +745,13 @@ class AcceptService:
             )
             if settled is not None:
                 return settled
-            if github_bound:
+            if forge.requires_pr:
                 # 绑定 GitHub 的项目采纳永不落 local merge (#363).
                 await self._stop_accept_pr_unavailable(
                     card, topic, existing_pr_degrade_reason
                 )
             pr_degrade_reason = existing_pr_degrade_reason
-        elif app_owns_prs and not github_bound:
-            unbound_note = _PLATFORM_FORGE_NOTE
+        unbound_note = forge.note
 
         # 两阶段采纳 (PR迭代式, 2026-08-09): no PR yet — try opening a NEW one via
         # the approver's own connected GitHub token. Any missing prerequisite
@@ -802,7 +779,7 @@ class AcceptService:
         # not connected" and "账号连了但密文坏了" are no longer
         # indistinguishable in the UI.
         two_phase_degrade_reason = ""
-        if not pr_publish.enabled():
+        if forge.kind is forge_mod.ForgeKind.github_user:
             try:
                 (
                     pr_prereqs,
@@ -1779,6 +1756,15 @@ class AcceptService:
         self._notify_merge_result(
             topic,
             f"✅ 话题已被 {by} 采纳并归档：PR #{card.pr_number} {how}。\n{card.pr_url}",
+        )
+
+    async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
+        """Which forge this project's accept goes through — the one place the
+        lane is decided (see app.domain.review.forge)."""
+        return await forge_mod.resolve(
+            project_id=project_id,
+            app_owns_prs=pr_publish.enabled(),
+            is_github_bound=self._github_bound,
         )
 
     async def _github_bound(self, project_id: uuid.UUID) -> bool:
