@@ -13,9 +13,12 @@
 
 ## 归档时每种非终态卡的去向，以及为什么
 
-- `pr_open` 且 `pr_merged_at` 非空（PR 已合并、只差部署验证）：**收尾成
-  `accepted`**。人确实点过采纳、PR 确实进了 main，归档只是把"等部署"这一步
-  截断了——说它被撤销是假话。note 里写明部署结果没再跟踪。
+- `pr_open` 且 `pr_merged_at` 非空（PR 已合并）：**收尾成 `accepted`**。人确实
+  点过采纳、PR 确实进了 main，说它被撤销是假话。
+  自 #206 起合并即终态，所以这一支不再是常态，而是两种情况的兜底：合并和下一次
+  轮询之间那个窗口里被归档的卡，以及本次改动之前就停在"已合并等部署"的老卡
+  （它们本身会在下一轮轮询里自愈——`_advance_pr_checks` 看到 PR 已合并就走
+  `_settle_external_merge`，不需要数据迁移）。
 - `pr_open` 且 `pr_merged_at` 为空（PR 还开着、没合并）：**`revoked`，并且
   平台不去动那个 PR**。这是本次唯一的产品判断，理由见下。
 - `pending` / `pending_gate` / `conflict`：**`revoked`**——话题都归档了，
@@ -87,12 +90,11 @@ async def close_cards_for_archived_topic(
             continue
         was = card.status
         if was == AcceptStatus.pr_open and card.pr_merged_at is not None:
-            # 第二阶段：PR 已经进 main 了，这是收尾，不是撤销。
+            # PR 已经进 main 了，这是收尾，不是撤销。
             card.status = AcceptStatus.accepted
             card.note = prefix_note(
                 card.note,
-                f"{_ARCHIVE_NOTE_PREFIX} 话题归档收尾：PR #{card.pr_number} 已合并，"
-                f"部署结果不再跟踪。",
+                f"{_ARCHIVE_NOTE_PREFIX} 话题归档收尾：PR #{card.pr_number} 已合并。",
             )
         elif was == AcceptStatus.pr_open:
             # 第一阶段：PR 还开着。停止推进，但不替任何人去关它。

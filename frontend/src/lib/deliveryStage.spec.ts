@@ -3,25 +3,23 @@ import { describe, expect, it } from 'vitest'
 import { deliveryNoteTone, deliveryStageOf } from './deliveryStage'
 
 describe('deliveryStageOf', () => {
-  it('未合并的卡停在 CI 阶段', () => {
+  // 自 #206 起 `pr_open` 只有一个阶段：合并即完成。原来那条"已合并→等部署"的
+  // 分支不再可达，卡片上也不该再画一个永远不会亮起的「部署」步骤。
+  it('pr_open 的卡停在 CI 阶段', () => {
     const stage = deliveryStageOf({ pr_merged_at: null })
     expect(stage.phase).toBe('ci')
-    expect(stage.steps.map((s) => s.state)).toEqual(['done', 'active', 'todo', 'todo'])
+    expect(stage.steps.map((s) => s.state)).toEqual(['done', 'active', 'todo'])
   })
 
-  it('已合并的卡进入部署阶段，前面的步骤都算完成', () => {
-    const stage = deliveryStageOf({ pr_merged_at: '2026-08-10T03:00:00Z' })
-    expect(stage.phase).toBe('deploy')
-    expect(stage.steps.map((s) => s.state)).toEqual(['done', 'done', 'done', 'active'])
+  it('链条到「合并进 main」为止，不再承诺部署这一步', () => {
+    const stage = deliveryStageOf({ pr_merged_at: null })
+    expect(stage.steps.map((s) => s.key)).toEqual(['accepted', 'ci', 'merge'])
   })
 
-  it('每个阶段都给得出标题和说明（卡面不会出现空白行）', () => {
-    for (const merged of [null, '2026-08-10T03:00:00Z']) {
-      const stage = deliveryStageOf({ pr_merged_at: merged })
-      expect(stage.title.length).toBeGreaterThan(0)
-      expect(stage.hint.length).toBeGreaterThan(0)
-      expect(stage.steps).toHaveLength(4)
-    }
+  it('给得出标题和说明（卡面不会出现空白行）', () => {
+    const stage = deliveryStageOf({ pr_merged_at: null })
+    expect(stage.title.length).toBeGreaterThan(0)
+    expect(stage.hint.length).toBeGreaterThan(0)
   })
 })
 
