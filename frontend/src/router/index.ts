@@ -4,6 +4,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 import AccountRoutes from './account'
 import HomeRoutes from './home'
+import { legacyProjectRedirects } from './legacyProjectPaths'
 import ProjectsRoutes from './projects'
 import QuestionRoutes from './question'
 import SpacesRoutes from './spaces'
@@ -22,62 +23,72 @@ const routes: RouteRecordRaw[] = [
   TeamsRoutes,
   // --- CheeseX (agent workspace) routes ---------------------------------
   // Our grafted views navigate internally by these route names; they must be
-  // registered here (the merged app uses main's router). Paths are prefixed
-  // at /project (singular; main's dead /projects int table is retired) and
-  // /spaces. App.vue rail items link by path (/project/:id) which
-  // resolves to `workspace-project`.
+  // registered here (the merged app uses main's router).
+  //
+  // These sat at the SINGULAR `/project` for one reason, recorded in the comment
+  // this replaces: "main's dead /projects int table is retired". It was not
+  // retired for long — migration c9f2a3b40e15 dropped it, 41224effe32b brought
+  // it back — so the singular stopped being a choice and became an accident,
+  // leaving the browser telling two generations apart by one letter. #370 ends
+  // that everywhere; here 1.0 moved to /team-projects and the workspace takes
+  // the plural, so the API and the address bar finally read the same.
+  //
+  // Old links keep working through ./legacyProjectPaths — which must stay ahead
+  // of the workspace routes below, since one of its rules matches the same path
+  // shape and is distinguished only by the id being numeric.
+  ...legacyProjectRedirects,
   {
     name: 'workspace-project',
-    path: '/project/:projectId',
+    path: '/projects/:projectId',
     component: () => import('@/views/WorkspaceView.vue'),
     props: true,
     meta: { title: '项目工作台', isFullPage: true },
   },
   {
     name: 'overview',
-    path: '/project/:projectId/overview',
+    path: '/projects/:projectId/overview',
     component: () => import('@/views/OverviewView.vue'),
     props: true,
     meta: { title: '总览', isFullPage: true },
   },
   {
     name: 'calendar',
-    path: '/project/:projectId/calendar',
+    path: '/projects/:projectId/calendar',
     component: () => import('@/views/CalendarView.vue'),
     props: true,
     meta: { title: '日历', isFullPage: true },
   },
   {
     name: 'project-charter',
-    path: '/project/:projectId/charter',
+    path: '/projects/:projectId/charter',
     component: () => import('@/views/ProjectDocsView.vue'),
     props: true,
     meta: { title: '项目章程', isFullPage: true },
   },
   {
     name: 'project-decisions',
-    path: '/project/:projectId/decisions',
+    path: '/projects/:projectId/decisions',
     component: () => import('@/views/ProjectDocsView.vue'),
     props: true,
     meta: { title: '决策记录', isFullPage: true },
   },
   {
     name: 'project-weeklies',
-    path: '/project/:projectId/weeklies',
+    path: '/projects/:projectId/weeklies',
     component: () => import('@/views/ProjectDocsView.vue'),
     props: true,
     meta: { title: '周报', isFullPage: true },
   },
   {
     name: 'project-settings',
-    path: '/project/:projectId/settings',
+    path: '/projects/:projectId/settings',
     component: () => import('@/views/ProjectSettingsView.vue'),
     props: true,
     meta: { title: '项目设置', isFullPage: true },
   },
   {
     name: 'member',
-    path: '/project/:projectId/members/:handle',
+    path: '/projects/:projectId/members/:handle',
     component: () => import('@/views/MemberView.vue'),
     props: true,
     meta: { title: '成员', isFullPage: true },

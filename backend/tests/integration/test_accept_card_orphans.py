@@ -144,7 +144,7 @@ def test_archiving_a_stage_one_card_revokes_it_and_leaves_the_pr_open(
         # 通知：强提醒发给当初授权的人（alice），而不是归档的人（bob）。
         def _titles(handle: str) -> list[str]:
             notifs = client.get(
-                f"/api/projects/{pid}/notifications",
+                f"/api/projects/{pid}/alerts",
                 headers=session_auth_headers(handle),
             ).json()["data"]["data"]
             return [n["title"] for n in notifs]
@@ -156,29 +156,35 @@ def test_archiving_a_stage_one_card_revokes_it_and_leaves_the_pr_open(
 
 
 def test_archiving_a_merged_card_settles_it_as_accepted(client, monkeypatch):
-    """第二阶段（PR 已合并、只差部署验证）+ 归档 = 收尾成 accepted。
+    """一张 `pr_open` 但 PR 已合并的卡被归档 = 收尾成 accepted，不是撤销。
 
-    说它被"撤销"是假话：人确实点过采纳，代码确实进了 main。归档只是把"等部署"
-    这一步截断了，note 里必须讲清这点。
+    自 #206 起合并即终态，所以这个状态只在两个窄窗口里存在：合并与下一次轮询之
+    间，以及本次改动之前就停在"已合并等部署"的老卡。它不再由轮询产生，所以这里
+    直接把卡摆成那个状态——测的是 archive 这条兜底路径本身。
     """
-    fake, _pid, tid, _cid, accepted = _open_pr_card(client, monkeypatch)
+    fake, _pid, tid, cid, accepted = _open_pr_card(client, monkeypatch)
     try:
-        number = accepted["pr_number"]
-        fake.check_state_by_sha[fake.prs[number]["head_sha"]] = ("success", "全绿")
-        fake.merge_sha_by_number[number] = "merge-sha-1"
-        _poll(client)  # CI 绿 → 合并，卡进第二阶段（等部署）
-        assert _cards(client, tid)[0]["pr_merged_at"] is not None
-        assert _topic(client, tid)["status"] == "active"
+        # 直接改库摆出那个窄状态——它不再由任何代码路径产生，正是本测试的前提。
+        from datetime import UTC, datetime
+
+        from app.domain.review.models import AcceptCard
+
+        async def _mark_merged() -> None:
+            async with client.test_factory() as s:
+                card = await s.get(AcceptCard, uuid.UUID(cid))
+                assert card is not None
+                card.pr_merged_at = datetime.now(UTC)
+                await s.commit()
+
+        asyncio.run(_mark_merged())
+        assert _cards(client, tid)[0]["status"] == "pr_open"
 
         _archive(client, tid, by="bob")
 
         card = _cards(client, tid)[0]
         assert card["status"] == "accepted"
         assert "已合并" in card["note"]
-        assert "部署结果不再跟踪" in card["note"]
-
-        # 部署 workflow 转绿也不会再触发任何后续动作（卡已终结）。
-        fake.workflow_state_by_sha["merge-sha-1"] = ("success", "deployed")
+        # 卡已终结，轮询不该再碰它。
         assert _poll(client)["cards_checked"] == 0
     finally:
         _reset_client()

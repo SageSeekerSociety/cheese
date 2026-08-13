@@ -12,7 +12,7 @@ from app.domain.questions.models import (
     QuestionInvitation,
     QuestionQueryLog,
     QuestionSearchLog,
-    QuestionTopicRelation,
+    QuestionTagRelation,
     VoteType,
 )
 
@@ -500,9 +500,9 @@ class QuestionTopicRepository:
     async def replace_topics(
         self, *, question_id: int, topic_ids: Sequence[int], user_id: int
     ) -> None:
-        stmt = select(QuestionTopicRelation).where(
-            QuestionTopicRelation.question_id == question_id,
-            QuestionTopicRelation.deleted_at.is_(None),
+        stmt = select(QuestionTagRelation).where(
+            QuestionTagRelation.question_id == question_id,
+            QuestionTagRelation.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
         existing = list(result.scalars().all())
@@ -511,9 +511,9 @@ class QuestionTopicRepository:
             row.deleted_at = now
         for topic_id in topic_ids:
             self._session.add(
-                QuestionTopicRelation(
+                QuestionTagRelation(
                     question_id=question_id,
-                    topic_id=topic_id,
+                    tag_id=topic_id,
                     created_by_id=user_id,
                     created_at=now,
                     deleted_at=None,
@@ -524,44 +524,44 @@ class QuestionTopicRepository:
     async def list_topic_ids(self, question_ids: Sequence[int]) -> dict[int, list[int]]:
         if not question_ids:
             return {}
-        stmt: Select[tuple[QuestionTopicRelation]] = (
-            select(QuestionTopicRelation)
+        stmt: Select[tuple[QuestionTagRelation]] = (
+            select(QuestionTagRelation)
             .where(
-                QuestionTopicRelation.question_id.in_(list(question_ids)),
-                QuestionTopicRelation.deleted_at.is_(None),
+                QuestionTagRelation.question_id.in_(list(question_ids)),
+                QuestionTagRelation.deleted_at.is_(None),
             )
             .order_by(
-                QuestionTopicRelation.question_id.asc(), QuestionTopicRelation.id.asc()
+                QuestionTagRelation.question_id.asc(), QuestionTagRelation.id.asc()
             )
         )
         result = await self._session.execute(stmt)
         mapping: dict[int, list[int]] = {}
         for row in result.scalars().all():
-            mapping.setdefault(row.question_id, []).append(row.topic_id)
+            mapping.setdefault(row.question_id, []).append(row.tag_id)
         return mapping
 
     async def validate_topic_ids(self, topic_ids: list[int]) -> set[int]:
-        from app.domain.topics.models import Topic
+        from app.domain.tag.models import Tag
 
         if not topic_ids:
             return set()
-        stmt = select(Topic.id).where(
-            Topic.id.in_(topic_ids),
-            Topic.deleted_at.is_(None),
+        stmt = select(Tag.id).where(
+            Tag.id.in_(topic_ids),
+            Tag.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
         return set(result.scalars().all())
 
     async def get_topics_for_question(self, question_id: int) -> list[dict]:
-        from app.domain.topics.models import Topic
+        from app.domain.tag.models import Tag
 
         stmt = (
-            select(Topic)
-            .join(QuestionTopicRelation, QuestionTopicRelation.topic_id == Topic.id)
+            select(Tag)
+            .join(QuestionTagRelation, QuestionTagRelation.tag_id == Tag.id)
             .where(
-                QuestionTopicRelation.question_id == question_id,
-                QuestionTopicRelation.deleted_at.is_(None),
-                Topic.deleted_at.is_(None),
+                QuestionTagRelation.question_id == question_id,
+                QuestionTagRelation.deleted_at.is_(None),
+                Tag.deleted_at.is_(None),
             )
         )
         result = await self._session.execute(stmt)
@@ -572,21 +572,21 @@ class QuestionTopicRepository:
         self, question_ids: Sequence[int]
     ) -> dict[int, list[dict]]:
         """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""  # noqa: E501
-        from app.domain.topics.models import Topic
+        from app.domain.tag.models import Tag
 
         if not question_ids:
             return {}
         stmt = (
-            select(QuestionTopicRelation.question_id, Topic.id, Topic.name)
-            .join(Topic, Topic.id == QuestionTopicRelation.topic_id)
+            select(QuestionTagRelation.question_id, Tag.id, Tag.name)
+            .join(Tag, Tag.id == QuestionTagRelation.tag_id)
             .where(
-                QuestionTopicRelation.question_id.in_(list(question_ids)),
-                QuestionTopicRelation.deleted_at.is_(None),
-                Topic.deleted_at.is_(None),
+                QuestionTagRelation.question_id.in_(list(question_ids)),
+                QuestionTagRelation.deleted_at.is_(None),
+                Tag.deleted_at.is_(None),
             )
             .order_by(
-                QuestionTopicRelation.question_id.asc(),
-                QuestionTopicRelation.id.asc(),
+                QuestionTagRelation.question_id.asc(),
+                QuestionTagRelation.id.asc(),
             )
         )
         result = await self._session.execute(stmt)

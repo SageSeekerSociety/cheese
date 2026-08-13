@@ -1,4 +1,4 @@
-"""知是 team projects (/projects, int-keyed): CRUD + members + tree, per the
+"""知是 team projects (/team-projects, int-keyed): CRUD + members + tree, per the
 reference cheese-backend-nt ProjectController contract."""
 
 import uuid
@@ -49,7 +49,7 @@ class TestTeamProjectsIntegration:
         if parent_id is not None:
             payload["parentId"] = parent_id
         payload.update(kw)
-        resp = self.client.post("/projects", json=payload, headers=self.headers)
+        resp = self.client.post("/team-projects", json=payload, headers=self.headers)
         assert resp.status_code == 200, resp.text
         return resp.json()["data"]["project"]
 
@@ -58,7 +58,7 @@ class TestTeamProjectsIntegration:
         # once crashed _from_ms with an unhandled ValueError -> 500. It must be
         # a clean 400. 10**17 ms -> ~year 3170843, the value seen in prod.
         resp = self.client.post(
-            "/projects",
+            "/team-projects",
             json={
                 "name": "BadDate",
                 "description": "d",
@@ -89,7 +89,7 @@ class TestTeamProjectsIntegration:
         child = self._create_project(name="Child", parent_id=root["id"])
 
         resp = self.client.get(
-            "/projects", params={"team_id": self.team_id}, headers=self.headers
+            "/team-projects", params={"team_id": self.team_id}, headers=self.headers
         )
         assert resp.status_code == 200
         projects = resp.json()["data"]["projects"]
@@ -98,7 +98,7 @@ class TestTeamProjectsIntegration:
 
         # parent_id filter returns the children flat
         resp = self.client.get(
-            "/projects",
+            "/team-projects",
             params={"team_id": self.team_id, "parent_id": root["id"]},
             headers=self.headers,
         )
@@ -108,12 +108,12 @@ class TestTeamProjectsIntegration:
         project = self._create_project(name="Life")
         pid = project["id"]
 
-        got = self.client.get(f"/projects/{pid}", headers=self.headers)
+        got = self.client.get(f"/team-projects/{pid}", headers=self.headers)
         assert got.status_code == 200
         assert got.json()["data"]["project"]["name"] == "Life"
 
         patched = self.client.patch(
-            f"/projects/{pid}",
+            f"/team-projects/{pid}",
             json={"name": "Life2", "archived": True},
             headers=self.headers,
         )
@@ -121,10 +121,11 @@ class TestTeamProjectsIntegration:
         data = patched.json()["data"]["project"]
         assert data["name"] == "Life2" and data["archived"] is True
 
-        deleted = self.client.delete(f"/projects/{pid}", headers=self.headers)
+        deleted = self.client.delete(f"/team-projects/{pid}", headers=self.headers)
         assert deleted.status_code == 204
         assert (
-            self.client.get(f"/projects/{pid}", headers=self.headers).status_code == 404
+            self.client.get(f"/team-projects/{pid}", headers=self.headers).status_code
+            == 404
         )
 
     def test_member_lifecycle(self):
@@ -133,30 +134,30 @@ class TestTeamProjectsIntegration:
         other = self.user_client.create_user()
 
         added = self.client.post(
-            f"/projects/{pid}/members",
+            f"/team-projects/{pid}/members",
             json={"userId": other.user_id, "role": "EXTERNAL"},
             headers=self.headers,
         )
         assert added.status_code == 200
         assert added.json()["data"]["member"]["role"] == "EXTERNAL"
 
-        members = self.client.get(f"/projects/{pid}/members", headers=self.headers)
+        members = self.client.get(f"/team-projects/{pid}/members", headers=self.headers)
         roles = {m["user"]["id"]: m["role"] for m in members.json()["data"]["members"]}
         assert roles == {self.user.user_id: "LEADER", other.user_id: "EXTERNAL"}
 
         # adding a LEADER via the endpoint is forbidden (reference rule)
         as_leader = self.client.post(
-            f"/projects/{pid}/members",
+            f"/team-projects/{pid}/members",
             json={"userId": other.user_id, "role": "LEADER"},
             headers=self.headers,
         )
         assert as_leader.status_code == 403
 
         removed = self.client.delete(
-            f"/projects/{pid}/members/{other.user_id}", headers=self.headers
+            f"/team-projects/{pid}/members/{other.user_id}", headers=self.headers
         )
         assert removed.status_code == 204
-        members = self.client.get(f"/projects/{pid}/members", headers=self.headers)
+        members = self.client.get(f"/team-projects/{pid}/members", headers=self.headers)
         assert len(members.json()["data"]["members"]) == 1
 
     def test_mutations_require_leader(self):
@@ -170,17 +171,19 @@ class TestTeamProjectsIntegration:
 
         assert (
             self.client.patch(
-                f"/projects/{pid}", json={"name": "X"}, headers=outsider_headers
+                f"/team-projects/{pid}", json={"name": "X"}, headers=outsider_headers
             ).status_code
             == 403
         )
         assert (
-            self.client.delete(f"/projects/{pid}", headers=outsider_headers).status_code
+            self.client.delete(
+                f"/team-projects/{pid}", headers=outsider_headers
+            ).status_code
             == 403
         )
         assert (
             self.client.post(
-                f"/projects/{pid}/members",
+                f"/team-projects/{pid}/members",
                 json={"userId": outsider.user_id},
                 headers=outsider_headers,
             ).status_code
@@ -194,7 +197,7 @@ class TestTeamProjectsIntegration:
         )
         outsider_headers = {"Authorization": f"Bearer {token}"}
         resp = self.client.post(
-            "/projects",
+            "/team-projects",
             json={
                 "name": "Nope",
                 "description": "d",
@@ -214,14 +217,14 @@ class TestTeamProjectsIntegration:
         successor = self.user_client.create_user()
 
         patched = self.client.patch(
-            f"/projects/{pid}",
+            f"/team-projects/{pid}",
             json={"leaderId": successor.user_id},
             headers=self.headers,
         )
         assert patched.status_code == 200
         assert patched.json()["data"]["project"]["leader"]["id"] == successor.user_id
 
-        members = self.client.get(f"/projects/{pid}/members", headers=self.headers)
+        members = self.client.get(f"/team-projects/{pid}/members", headers=self.headers)
         roles = {m["user"]["id"]: m["role"] for m in members.json()["data"]["members"]}
         assert roles[successor.user_id] == "LEADER"
         assert roles[self.user.user_id] == "MEMBER"

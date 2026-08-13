@@ -51,7 +51,7 @@ class TestTopicsCreateIntegration:
         ]
         for name in topics:
             response = self.client.post(
-                "/topics",
+                "/tags",
                 headers=self.headers,
                 json={"name": f"{self.topic_prefix} {name}"},
             )
@@ -64,14 +64,14 @@ class TestTopicsCreateIntegration:
 
     def test_create_topic_no_auth(self):
         response = self.client.post(
-            "/topics",
+            "/tags",
             json={"name": f"{self.topic_prefix} 高等数学"},
         )
         assert response.status_code == 401
 
     def test_create_topic_invalid_token(self):
         response = self.client.post(
-            "/topics",
+            "/tags",
             headers={"Authorization": "Bearer invalid_token_123"},
             json={"name": f"{self.topic_prefix} 高等数学"},
         )
@@ -80,12 +80,12 @@ class TestTopicsCreateIntegration:
     def test_create_topic_already_exists(self):
         topic_name = f"{self.topic_prefix} 唯一话题测试"
         self.client.post(
-            "/topics",
+            "/tags",
             headers=self.headers,
             json={"name": topic_name},
         )
         response = self.client.post(
-            "/topics",
+            "/tags",
             headers=self.headers,
             json={"name": topic_name},
         )
@@ -129,7 +129,7 @@ class TestTopicsSearchIntegration:
         ]
         for name in topics:
             resp = self.client.post(
-                "/topics",
+                "/tags",
                 headers=self.headers,
                 json={"name": f"{self.topic_prefix} {name}"},
             )
@@ -138,7 +138,7 @@ class TestTopicsSearchIntegration:
 
     def test_search_empty_query_returns_empty_page(self):
         response = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={"q": ""},
         )
@@ -156,7 +156,7 @@ class TestTopicsSearchIntegration:
     def test_search_topics_and_paging(self):
         time.sleep(0.5)
         response = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={"q": f"{self.topic_code} 高等"},
         )
@@ -168,7 +168,7 @@ class TestTopicsSearchIntegration:
             assert self.topic_code in data["data"]["topics"][i]["name"]
 
         response2 = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={"q": f"{self.topic_code} 高等", "page_size": 3},
         )
@@ -188,7 +188,7 @@ class TestTopicsSearchIntegration:
         assert data2["data"]["page"]["hasMore"] is True
 
         response3 = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={
                 "q": f"{self.topic_code} 高等",
@@ -213,7 +213,7 @@ class TestTopicsSearchIntegration:
         assert data3["data"]["page"]["prevStart"] == data2["data"]["topics"][0]["id"]
 
         response4 = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={
                 "q": f"{self.topic_code} 高等",
@@ -228,7 +228,7 @@ class TestTopicsSearchIntegration:
     def test_search_emoji_topics(self):
         time.sleep(0.5)
         response = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={"q": f"{self.topic_code} 🧑‍🦲", "page_size": 3},
         )
@@ -241,7 +241,7 @@ class TestTopicsSearchIntegration:
 
     def test_search_returns_empty_for_nonexistent(self):
         response = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={"q": "毳毳毳毳"},
         )
@@ -258,7 +258,7 @@ class TestTopicsSearchIntegration:
 
     def test_search_invalid_page_start(self):
         response = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={"q": "something", "page_start": -1},
         )
@@ -266,7 +266,7 @@ class TestTopicsSearchIntegration:
 
     def test_search_bad_page_start_format(self):
         response = self.client.get(
-            "/topics",
+            "/tags",
             headers=self.headers,
             params={"q": "something", "page_start": "abc"},
         )
@@ -274,7 +274,7 @@ class TestTopicsSearchIntegration:
 
     def test_search_no_auth(self):
         response = self.client.get(
-            "/topics",
+            "/tags",
             params={"q": "something"},
         )
         assert response.status_code == 401
@@ -298,7 +298,7 @@ class TestTopicsGetIntegration:
         self.topic_code = str(unique_int(1000000000, 9999999999))
         self.topic_prefix = f"[Test({self.topic_code}) Topic]"
         resp = self.client.post(
-            "/topics",
+            "/tags",
             headers=self.headers,
             json={"name": f"{self.topic_prefix} 高等数学"},
         )
@@ -306,7 +306,7 @@ class TestTopicsGetIntegration:
 
     def test_get_topic(self):
         response = self.client.get(
-            f"/topics/{self.topic_id}",
+            f"/tags/{self.topic_id}",
             headers=self.headers,
         )
         assert response.status_code == 200
@@ -317,20 +317,20 @@ class TestTopicsGetIntegration:
 
     def test_get_topic_not_found(self):
         response = self.client.get(
-            "/topics/-1",
+            "/tags/-1",
             headers=self.headers,
         )
         assert response.status_code == 404
 
     def test_get_topic_bad_id_format(self):
         response = self.client.get(
-            "/topics/abc",
+            "/tags/abc",
             headers=self.headers,
         )
         assert response.status_code in (400, 422)
 
     def test_get_topic_no_auth(self):
         response = self.client.get(
-            f"/topics/{self.topic_id}",
+            f"/tags/{self.topic_id}",
         )
         assert response.status_code == 401

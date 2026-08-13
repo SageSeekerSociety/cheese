@@ -8,25 +8,25 @@ import asyncio
 import logging
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NoReturn
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
-from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.alert.models import AlertKind, AlertLevel
+from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.cx_notification.models import NotifKind, NotifLevel
-from app.domain.cx_notification.services import NotificationService
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review import archive, pr_publish
+from app.domain.review import archive, delivery, pr_publish
+from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
@@ -35,7 +35,7 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
-    from app.domain.review.github_pr import PullRequestStatus, WorkflowRun
+    from app.domain.review.github_pr import PullRequestStatus
 
 logger = logging.getLogger("cheesex.review")
 
@@ -61,9 +61,6 @@ _ACCEPT_PR_OPEN_FAILED_PREFIX = "⚠️ 采纳未完成：无法为这张卡开 
 _ACCEPT_PR_STALLED_PREFIX = "⚠️ 采纳未完成：PR 未能合并"
 #: 未接 GitHub 的项目 (#363)：平台自己就是 forge，local merge 是它唯一、正当的
 #: 采纳语义——不是降级。这句写在卡上，让它和「该走 PR 却没走」的卡一眼可分。
-_PLATFORM_FORGE_NOTE = (
-    "ℹ️ 本项目未接 GitHub：采纳即合并进平台仓库的 main（无 PR、无外部 CI）"
-)
 #: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
 #: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
 _DEPLOY_STALLED_PREFIX = "⏳ 部署迟迟没有完成"
@@ -569,6 +566,14 @@ class AcceptService:
             await self._projects.get(topic.project_id) if topic is not None else None
         )
         data["approvals_required"] = approvals_required_of(project)
+        # 交付进度: the steps THIS project has, decided here rather than derived
+        # in the browser from `pr_merged_at` — whether a project has external
+        # checks is a property of its forge, which only the backend can see.
+        if topic is not None:
+            forge = await self._resolve_forge(topic.project_id)
+            data["stages"] = delivery.steps_for(card, forge)
+        else:
+            data["stages"] = []
         return data
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
@@ -718,49 +723,29 @@ class AcceptService:
                 f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
             )
 
-        # 采纳即合并 (#296): a card that ALREADY rides a real PR — the App opened
-        # it fire-and-forget when the card was filed (pr_publish.py, now on by
-        # default via settings.accept_via_pr) — is accepted by merging THAT PR
-        # via the API, never by opening a second one.
+        # 采纳 = merging the topic branch into the project's authoritative main,
+        # wherever that main lives. WHERE is the forge, and the forge is resolved
+        # once (app.domain.review.forge) instead of being crossed out of
+        # `pr_publish.enabled()` × binding × `card.pr_number` here — the crossing
+        # that put a GitHub-bound project's accept onto a direct push to main
+        # twice in one day (#362).
         #
-        # The boundary everything below branches on (#363): is this project
-        # BOUND to GitHub (App installation resolved + GitHub https upstream)?
-        #   - Bound: accepting merges a PR, and ONLY a PR. A card without one
-        #     (filed before accept_via_pr was deployed, or its fire-and-forget
-        #     publish failed / is still in flight) gets its App PR opened right
-        #     here first — #328 shipped without this, its coexistence guard
-        #     dropped legacy PR-less cards into the local-merge branch below,
-        #     and dev's main received merge commits with no PR at all
-        #     (c33cfabf, 8f9b9d94). Any PR-path failure (can't open, GitHub
-        #     unreachable, PR closed unmerged) STOPS the accept visibly
-        #     (note + ValidationError) — for a bound project the local merge
-        #     is never a fallback. The one PR-less case that legitimately
-        #     proceeds is a topic with no branch (discussion-only): the local
-        #     merge below no-ops and nothing bypasses anything.
-        #   - Unbound: the platform IS the forge (#363). The local merge is
-        #     the project's one legitimate accept semantics — not a degrade —
-        #     and the card says so in plain words (`_PLATFORM_FORGE_NOTE`) so
-        #     it can never be mistaken for a bound card that skipped its PR.
-        #   - App mechanism off entirely (`pr_publish.enabled()` False — no
-        #     App configured, or the .env override): the pre-#296 world, with
-        #     the two-phase personal-token path and its graceful degrades,
-        #     stays exactly as it was.
+        # What each lane means for the code below:
+        #   - requires_pr (the App forge): a PR is the only way in. A card
+        #     without one — filed before accept_via_pr shipped, or whose
+        #     fire-and-forget publish failed or is still in flight — gets its PR
+        #     opened right here, and ANY failure on the PR path stops the accept
+        #     visibly rather than falling through to the local merge. The one
+        #     PR-less case that legitimately proceeds is a discussion-only topic
+        #     with no branch, where the local merge no-ops and bypasses nothing.
+        #   - the platform forge: the local merge IS this project's accept
+        #     (#363), and `forge.note` says so on the card so it can never read
+        #     as a bound project that skipped its PR.
+        #   - the personal-token forge: the pre-#296 two-phase path, further
+        #     down, with its documented degrade to the local merge.
         pr_degrade_reason = ""
-        unbound_note = ""
-        app_owns_prs = pr_publish.enabled()
-        try:
-            github_bound = app_owns_prs and await self._github_bound(topic.project_id)
-        except Exception as exc:  # noqa: BLE001 — fail CLOSED: can't pick a lane blind
-            # Unable to even determine the binding (DB hiccup, config error):
-            # choosing the local merge here could silently bypass a PR that
-            # does exist, so the accept stops instead — visibly, retryably.
-            logger.exception(
-                "could not resolve GitHub binding for project %s", topic.project_id
-            )
-            raise ValidationError(
-                "采纳未完成：暂时无法判定项目的 GitHub 绑定状态，稍后重试采纳"
-            ) from exc
-        if github_bound and card.pr_number is None:
+        forge = await self._resolve_forge(topic.project_id)
+        if forge.requires_pr and card.pr_number is None:
             await self._publish_pr_for_accept(card, topic)
         if card.pr_number is not None:
             settled, existing_pr_degrade_reason = await self._accept_via_pr(
@@ -768,14 +753,13 @@ class AcceptService:
             )
             if settled is not None:
                 return settled
-            if github_bound:
+            if forge.requires_pr:
                 # 绑定 GitHub 的项目采纳永不落 local merge (#363).
                 await self._stop_accept_pr_unavailable(
                     card, topic, existing_pr_degrade_reason
                 )
             pr_degrade_reason = existing_pr_degrade_reason
-        elif app_owns_prs and not github_bound:
-            unbound_note = _PLATFORM_FORGE_NOTE
+        unbound_note = forge.note
 
         # 两阶段采纳 (PR迭代式, 2026-08-09): no PR yet — try opening a NEW one via
         # the approver's own connected GitHub token. Any missing prerequisite
@@ -803,7 +787,7 @@ class AcceptService:
         # not connected" and "账号连了但密文坏了" are no longer
         # indistinguishable in the UI.
         two_phase_degrade_reason = ""
-        if not pr_publish.enabled():
+        if forge.kind is forge_mod.ForgeKind.github_user:
             try:
                 (
                     pr_prereqs,
@@ -1322,26 +1306,19 @@ class AcceptService:
 
         client = github_pr.default_client()
         try:
-            if card.pr_merged_at is None:
-                await self._advance_pr_checks(
-                    card=card,
-                    topic=topic,
-                    owner=owner,
-                    repo=repo,
-                    token=token,
-                    client=client,
-                    chat_service=chat_service,
-                    runner=runner,
-                )
-            else:
-                await self._advance_deploy_checks(
-                    card=card,
-                    topic=topic,
-                    owner=owner,
-                    repo=repo,
-                    token=token,
-                    client=client,
-                )
+            # One stage, since #206: a card in `pr_open` is waiting on the PR's
+            # own checks and nothing else. It used to have a second stage that
+            # waited for a deploy workflow — see this method's docstring.
+            await self._advance_pr_checks(
+                card=card,
+                topic=topic,
+                owner=owner,
+                repo=repo,
+                token=token,
+                client=client,
+                chat_service=chat_service,
+                runner=runner,
+            )
         except github_pr.GitHubPrError as exc:
             logger.warning(
                 "GitHub API hiccup polling pr_open card %s: %s — retrying next tick",
@@ -1488,16 +1465,9 @@ class AcceptService:
             )
             await self._session.flush()
             return
-        merge_sha = result.sha
         card.pr_merged_at = datetime.now(UTC)
-        card.pr_head_sha = merge_sha  # now tracking the merge commit (stage 2)
-        card.note = f"PR #{card.pr_number} 检查全绿，已自动合并，等部署也成功后才归档。"
-        await self._session.flush()
-        self._notify_merge_result(
-            topic,
-            f"✅ PR #{card.pr_number} 的检查全绿，已自动合并。"
-            "等部署也成功后话题才会归档。",
-        )
+        card.pr_head_sha = result.sha  # the merge commit, for the record
+        await self._finish_pr_accept(card=card, topic=topic)
 
     async def _authorization_exception(
         self,
@@ -1599,430 +1569,19 @@ class AcceptService:
             f"合并，或者撤销这次采纳。\n{card.pr_url}",
         )
 
-    async def _advance_deploy_checks(
-        self,
-        *,
-        card: AcceptCard,
-        topic: Topic,
-        owner: str,
-        repo: str,
-        token: str,
-        client,
-    ) -> None:
-        """Stage 2 (2026-08-09 拍板): the PR merged — now wait for the deploy
-        workflow it triggered before the topic is allowed to archive.
-
-        平台原来问的是「**我这个 sha 的部署 run 怎么样了**」，而唯一稳的问法是
-        「**我这个 commit 到底上线了没**」——2026-08-11 量出来的三组对照说明前者
-        取决于 GitHub 调度的偶然：`deploy-dev.yml` 的并发组名是固定字符串
-        `deploy-dev`，合并一密集，后来的 `workflow_run` 触发会被并发组吞掉，
-        **连 run 都不会被创建**（不是 cancelled，是按 sha 查 100 条终态全为 0）。
-        14:58 和 14:59 挨在一起的两个合并都没有 run，15:05 单独的那个有。合并
-        越密集越容易撞上，也就是说：平台自动合并跑得越顺，卡死的概率越高。
-
-        所以顺序是「先看自己的 run，没成功就改问祖先关系」，而祖先关系是主判据
-        而非补丁——它一视同仁地覆盖 run 成功、run 被顶替（cancelled）、run 根本
-        不存在这三种，因为它问的根本不是 run。
-        """
-        state, tail = await client.workflow_run_state(
-            owner=owner,
-            repo=repo,
-            workflow_file=settings.accept_deploy_workflow_file,
-            head_sha=card.pr_head_sha,
-            token=token,
-        )
-        if state == "success":
-            await self._finish_pr_accept(card=card, topic=topic)
-            return
-
-        # 自己那次 run 没有给出「成功」——无论是 cancelled、failure，还是压根没有
-        # run。改问主判据：有没有一次更晚的、真的部署过的成功部署把这个提交带上
-        # 线了。这一步对 pending 也做（run 不存在时状态永远是 pending），但只在
-        # 它真的能定案时才有可见效果。
-        runs = await self._recent_deploy_runs(
-            card=card, owner=owner, repo=repo, token=token, client=client
-        )
-        landed = await self._later_successful_deploy(
-            card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
-        )
-        if landed is not None:
-            await self._finish_pr_accept(
-                card=card,
-                topic=topic,
-                landed_via=landed,
-                failed_tail=tail
-                if state == "failure"
-                else "这个提交自己没有成功的部署 run",
-            )
-            return
-
-        if state == "failure":
-            tail = tail + await self._failed_deploy_jobs_suffix(
-                card=card, runs=runs, owner=owner, repo=repo, token=token, client=client
-            )
-            # wangchangxin 建议的默认值，评估后采纳为最终方案：topic 保持
-            # active，复用卡5 webhook 通知房间，不自动重试，交给人判断。
-            if not card.note.startswith("❌"):
-                card.note = f"❌ 部署失败：{tail}"[:2000]
-                await self._session.flush()
-                self._notify_merge_result(
-                    topic,
-                    f"❌ PR #{card.pr_number} 已合并，但触发的部署失败：{tail}\n"
-                    "话题保持 active，需要人判断下一步（不会自动重试）。",
-                )
-            return
-
-        # 还在等。等太久了就说一声——默默等着正是这个话题要治的病。
-        self._note_deploy_stalled(card=card, topic=topic)
-        await self._session.flush()
-
-    def _note_deploy_stalled(self, *, card: AcceptCard, topic: Topic) -> None:
-        """Merged long ago, deploy neither succeeded nor failed, and nothing
-        later has carried it either — say so once instead of waiting mutely.
-
-        最常见的成因是这个提交**根本没有部署 run**（2026-08-11 实测：
-        fa7d08653 / 482ca022e / 611e43f02 三个 main 上真实存在的合并提交，按
-        sha 查 100 条终态全为 0 条）。`deploy-dev.yml` 的并发组名是固定字符串，
-        合并一密集，后来的 `workflow_run` 触发就被并发组吞掉，连 run 都不会建。
-        那种卡不是「还在等」，是死等——#267 这样躺了三个多小时。
-
-        主判据（祖先关系）已经在调用方问过了，问不出结果才轮到这里，所以这条
-        note 说的是「既没上线、也没有结论」，不是「部署失败」。`❌ 部署失败`
-        是更强的结论（真的跑过并且挂了），永远不被这条盖掉。
-        """
-        merged_at = card.pr_merged_at
-        if merged_at is None:
-            return
-        minutes = settings.accept_deploy_stale_after_minutes
-        if datetime.now(UTC) - merged_at < timedelta(minutes=minutes):
-            return  # 还在正常的等待窗口里
-        if card.note.startswith("❌") or card.note.startswith(_DEPLOY_STALLED_PREFIX):
-            return
-        card.note = (
-            f"{_DEPLOY_STALLED_PREFIX}：合并已超过 {minutes} 分钟，这个提交对应的部署"
-            "仍未成功完成，也还没有更晚的成功部署把它带上线。话题保持 active。"
-        )[:2000]
-        logger.warning(
-            "card %s: deploy for %s still not successful %s min after merge",
-            card.id,
-            card.pr_head_sha,
-            minutes,
-        )
-        self._notify_merge_result(
-            topic,
-            f"⏳ PR #{card.pr_number} 已合并超过 {minutes} 分钟，但它的部署一直没有成功"
-            "完成，也没有更晚的成功部署把这个提交带上线。\n"
-            "实测有一种情况长得和「还在等」一模一样：合并密集时 `deploy-dev.yml` 的"
-            "并发组会把后来的触发吞掉，**连 run 都不会被创建**，那样等下去永远不会有"
-            f"结果。需要人看一眼：重跑 build/deploy，或者直接确认代码上没上线。\n"
-            f"{card.pr_url}",
-        )
-
-    async def _recent_deploy_runs(
-        self, *, card: AcceptCard, owner: str, repo: str, token: str, client
-    ) -> "list[WorkflowRun]":
-        """The deploy workflow's recent runs, newest first — or [] if GitHub
-        won't say. Fetched once per failing tick and shared by the two questions
-        a failed deploy raises: 有没有更晚的成功部署带上线了, and 这次到底挂在
-        哪个 job 上。"""
-        from app.domain.review.github_pr import GitHubPrError
-
-        try:
-            return await client.recent_workflow_runs(
-                owner=owner,
-                repo=repo,
-                workflow_file=settings.accept_deploy_workflow_file,
-                token=token,
-            )
-        except GitHubPrError as exc:
-            logger.warning(
-                "card %s: cannot list deploy runs (%s) — treating the failed "
-                "deploy as final for this tick",
-                card.id,
-                exc,
-            )
-            return []
-
-    async def _later_successful_deploy(
-        self,
-        *,
-        card: AcceptCard,
-        runs: "list[WorkflowRun]",
-        owner: str,
-        repo: str,
-        token: str,
-        client,
-    ) -> "WorkflowRun | None":
-        """The deploy run that shipped this merge commit ANYWAY, or None.
-
-        2026-08-11, PR #251: the card's own deploy run came back `cancelled`,
-        so the poller stopped and asked for a human — but the code was already
-        live. `cancelled` is what GitHub does to a *pending* run when a newer
-        one enters the same concurrency group (`deploy-dev`), i.e. the most
-        common cause of a non-success deploy here is 被顶替, not breakage. The
-        run that superseded it deployed a commit that CONTAINS ours, so the
-        gate ("这段代码上线了没有") is satisfied and the topic must archive.
-        Applies to `failure` too: someone re-running the deploy successfully
-        ships the same commit just as thoroughly.
-
-        Three things this must NOT do, each of which would archive a topic
-        whose code never shipped:
-
-        - **完成 ≠ 成功.** Only the literal conclusion `success` counts —
-          `cancelled`/`skipped`/`neutral` are all "completed".
-        - **更晚才算.** A deploy that ran BEFORE this merge cannot contain it.
-          Runs come back newest-first, so scanning stops at the merge time
-          rather than walking the whole history.
-        - **成功 ≠ 真的部署过.** `deploy-dev.yml` skips its own login+deploy
-          steps for a docs-only commit and still reports the run green. Such a
-          run restarts nothing on the box, so a card whose own deploy was
-          cancelled and then "superseded" by one of these is NOT live. Every
-          candidate is therefore checked at job level — see
-          `_run_actually_deployed`.
-
-        Containment is decided by GitHub's compare API (`base...head` with
-        `base` = the successful run's commit, `head` = ours → `behind` or
-        `identical` means ours is in it). Deliberately not by cloning the repo
-        platform-side: the answer is one API call, and the platform holds no
-        checkout of the project's GitHub repo to run git in.
-
-        Note what is deliberately NOT the criterion: whether THIS commit's own
-        images were pushed. It was proposed twice and withdrawn (2026-08-11,
-        wangchangxin: "我把「镜像在不在」当成了目的，其实它只是「代码上没上
-        线」的一个坏代理"), and a veto built on it briefly lived here. When a
-        build fails (`docker login -u github.actor` 403 on 采纳 commits, fixed
-        in #276) the images for this commit never exist — but a later commit
-        that CONTAINS ours and does build and deploy puts our source on the box
-        all the same. **A commit does not need an image of its own to be
-        live.** Gating on "my own image exists" would leave exactly the cards
-        this whole topic is about (#267/#270/#274 — all three verified
-        ancestors of the 16:11 deploy 45b6169a4) stuck forever; gating on "some
-        run that really deployed shipped a commit containing mine" archives
-        them for the right reason. A build that produced no images and no later
-        deploy carrying it still ends where it did before: 保持 active、告诉人.
-
-        Best-effort by construction: every GitHub hiccup here returns None,
-        which lands back on the old "保持 active、告诉人" path. This check can
-        only ever turn a false alarm into an archive, never the reverse.
-        """
-        from app.domain.review.github_pr import GitHubPrError
-
-        merge_sha = card.pr_head_sha
-        merged_at = card.pr_merged_at
-        if not merge_sha:
-            return None
-
-        compares = 0
-        for run in runs:
-            # 只有 success 算数：completed 里还躺着 cancelled / skipped / neutral。
-            if run.conclusion != "success":
-                continue
-            # 认不出这次部署是什么时候跑的，就不敢拿它当「更晚」的证据。
-            if run.created_at is None:
-                continue
-            if merged_at is not None and run.created_at < merged_at:
-                # 列表是新→旧，再往下只会更早，没必要继续问 GitHub。
-                break
-            if run.head_sha == merge_sha:
-                # 同一个 commit 上后来重跑成功了 —— identical，不必比较，但
-                # 「真的部署过」这一关照走。
-                if await self._run_actually_deployed(
-                    card=card,
-                    run=run,
-                    owner=owner,
-                    repo=repo,
-                    token=token,
-                    client=client,
-                ):
-                    return run
-                continue
-            if compares >= _MAX_SUPERSEDE_COMPARES:
-                logger.info(
-                    "card %s: stopped after %d containment checks — a still "
-                    "older successful deploy (if any) was not examined",
-                    card.id,
-                    compares,
-                )
-                break
-            compares += 1
-            try:
-                status = await client.compare_status(
-                    owner=owner,
-                    repo=repo,
-                    base=run.head_sha,
-                    head=merge_sha,
-                    token=token,
-                )
-            except GitHubPrError as exc:
-                logger.warning(
-                    "card %s: cannot compare %s...%s (%s) — not counting that deploy",
-                    card.id,
-                    run.head_sha,
-                    merge_sha,
-                    exc,
-                )
-                continue
-            # base = 那次成功部署的 commit, head = 我们的合并提交:
-            # behind = 我们在它后面（它包含我们）, identical = 同一个提交。
-            if status not in ("behind", "identical"):
-                continue
-            if await self._run_actually_deployed(
-                card=card, run=run, owner=owner, repo=repo, token=token, client=client
-            ):
-                return run
-        return None
-
-    async def _run_actually_deployed(
-        self,
-        *,
-        card: AcceptCard,
-        run: "WorkflowRun",
-        owner: str,
-        repo: str,
-        token: str,
-        client,
-    ) -> bool:
-        """Did this green run actually deploy anything, or did it green-light
-        itself while skipping the work?
-
-        `deploy-dev.yml` has a "Skip docs-only commits" step that turns the
-        login+deploy steps off for a commit touching only `*.md`/`docs/`; the
-        job still concludes `success`. Nothing on the box changed. So a card
-        whose own deploy got cancelled and whose "superseding" run was one of
-        these has NOT shipped — the box still runs whatever it ran before.
-
-        The test is name-free on purpose (job and step names are the project's
-        to change, and `accept_deploy_workflow_file` is a setting): a run
-        counts only if some job concluded `success`, ran at least one step,
-        and skipped NONE of them. A skipped step inside a green job is the
-        workflow itself saying "I deliberately did not do this part".
-
-        Fails CLOSED — an API error, an empty job list, or a shape we don't
-        recognise all return False, which just leaves the card where it
-        already was (active, waiting for a human). The cost of a wrong True
-        is archiving a topic whose code is not running anywhere.
-        """
-        from app.domain.review.github_pr import GitHubPrError
-
-        if not run.id:
-            logger.info(
-                "card %s: deploy run on %s has no usable id — not counting it",
-                card.id,
-                run.head_sha,
-            )
-            return False
-        try:
-            jobs = await client.workflow_run_jobs(
-                owner=owner, repo=repo, run_id=run.id, token=token
-            )
-        except GitHubPrError as exc:
-            logger.warning(
-                "card %s: cannot read jobs of deploy run %s (%s) — not counting it",
-                card.id,
-                run.id,
-                exc,
-            )
-            return False
-        for job in jobs:
-            if job.conclusion != "success" or not job.steps:
-                continue
-            conclusions = [conclusion for _, conclusion in job.steps]
-            if "skipped" in conclusions:
-                logger.info(
-                    "card %s: deploy run %s reported success but job %r skipped "
-                    "steps — it did not deploy",
-                    card.id,
-                    run.id,
-                    job.name,
-                )
-                continue
-            if "success" in conclusions:
-                return True
-        return False
-
-    async def _failed_deploy_jobs_suffix(
-        self,
-        *,
-        card: AcceptCard,
-        runs: "list[WorkflowRun]",
-        owner: str,
-        repo: str,
-        token: str,
-        client,
-    ) -> str:
-        """`（失败的 job：build-did-not-produce-images）`, or "" if unknown.
-
-        The run-level tail says `部署 workflow 失败：failure` and stops there,
-        which is the same sentence for two situations a human must tell apart
-        (2026-08-11): the deploy ran and broke, versus the build pushed no
-        images at all so the box is still on the previous commit —
-        `deploy-dev.yml` has a job whose NAME says exactly that. Reporting
-        GitHub's own job names puts that difference in front of the human
-        without the platform guessing at causes; nothing here changes what the
-        gate decides.
-        """
-        from app.domain.review.github_pr import GitHubPrError
-
-        run = next((r for r in runs if r.head_sha == card.pr_head_sha and r.id), None)
-        if run is None:
-            return ""
-        try:
-            jobs = await client.workflow_run_jobs(
-                owner=owner, repo=repo, run_id=run.id, token=token
-            )
-        except GitHubPrError:
-            return ""  # 纯粹是给人看的补充信息，拿不到就不说
-        failed = [job.name for job in jobs if job.conclusion == "failure" and job.name]
-        if not failed:
-            return ""
-        return f"（失败的 job：{'、'.join(failed[:5])}）"
-
     async def _settle_external_merge(
         self, *, card: AcceptCard, topic: Topic, status: "PullRequestStatus"
     ) -> None:
-        """Someone merged the PR on GitHub themselves (人工放行, another bot,
-        the merge queue). Book it exactly like our own successful merge —
-        `pr_merged_at` + head moved to the merge commit — so the card falls
-        through to stage 2 and the deploy gate on the next tick. The only
-        差别 from the platform-merged path is where the sha and the timestamp
-        come from.
-
-        Deliberately does NOT archive here: 拍板 2026-08-09 says merge alone
-        never archives, and an externally merged PR triggers the same deploy
-        workflow ours does.
-        """
-        merge_sha = status.merge_commit_sha
-        if not merge_sha:
-            # Never settle onto a sha we don't actually have. Stage 2 looks
-            # the deploy run up BY `pr_head_sha`; pointing it at the PR branch
-            # head (or anything else invented here) means the card waits for a
-            # deploy run that will never exist. Staying in stage 1 costs one
-            # more poll; guessing costs the card forever.
-            note = (
-                f"⚠️ PR #{card.pr_number} 已在 GitHub 合并，但 GitHub 没返回合并提交 "
-                "sha，无法确认要等哪次部署（下一轮还会重试）"
-            )[:2000]
-            if card.note != note:
-                card.note = note
-                await self._session.flush()
-                logger.warning(
-                    "card %s: PR #%s reports merged with no merge_commit_sha",
-                    card.id,
-                    card.pr_number,
-                )
-            return
-
+        """Someone merged the PR on GitHub themselves (人工放行, another bot, the
+        merge queue). Book it exactly like our own merge — because it is the same
+        fact, and since #206 that fact is the whole of what the platform waits
+        for."""
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
-        card.pr_head_sha = merge_sha  # now tracking the merge commit (stage 2)
-        card.note = (
-            f"PR #{card.pr_number} 已在 GitHub 侧被人工合并，等部署也成功后才归档。"
-        )
-        await self._session.flush()
-        self._notify_merge_result(
-            topic,
-            f"✅ PR #{card.pr_number} 已在 GitHub 上被人工合并（不是平台合的）。"
-            "等部署也成功后话题才会归档。",
-        )
+        if status.merge_commit_sha:
+            # Nice to have, not required: nothing downstream looks a run up by
+            # this sha any more, it is just the truest record of what landed.
+            card.pr_head_sha = status.merge_commit_sha
+        await self._finish_pr_accept(card=card, topic=topic, merged_externally=True)
 
     def _note_pr_closed_unmerged(self, *, card: AcceptCard, topic: Topic) -> None:
         """The PR was closed on GitHub WITHOUT merging. Say so and stop there.
@@ -2172,46 +1731,49 @@ class AcceptService:
         *,
         card: AcceptCard,
         topic: Topic,
-        landed_via: "WorkflowRun | None" = None,
-        failed_tail: str = "",
+        merged_externally: bool = False,
     ) -> None:
-        """Archive the topic: merged AND on the box. `landed_via` is set on the
-        被顶替 path (see `_later_successful_deploy`) — the card's own deploy run
-        did not succeed, but a later successful one already carried this commit.
-        Same archive either way; the wording must not claim the card's own
-        deploy went green when it didn't."""
+        """The PR is merged, so the work is accepted (#206).
+
+        This used to also require the deploy workflow the merge triggered to
+        reach success. That gate is gone: merged is a fact about git that holds
+        for every project, while "deployed" is a per-project ops concept the
+        platform was in no position to define — and cards waited on deploy runs
+        that were sometimes never created at all (three real merges on main,
+        2026-08-11, produced zero runs), which is a deadlock, not a safeguard.
+        Watching the deploy is real work and it keeps a home: the webhook
+        primitive already exists for a pipeline to post its outcome into the
+        topic, and #190's ops room is where that judgment belongs.
+        """
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
-        if landed_via is None:
-            card.note = f"PR #{card.pr_number} 已合并且部署成功：{card.pr_url}"
-            message = (
-                f"✅ 话题已被 {card.decided_by} 采纳：PR #{card.pr_number} 合并且部署"
-                f"成功，话题归档。\n{card.pr_url}"
-            )
-        else:
-            short = landed_via.head_sha[:8]
-            card.note = (
-                f"PR #{card.pr_number} 已合并；它自己那次部署没成功"
-                f"（{failed_tail or '非 success'}），但更晚的一次成功部署"
-                f"（{short}）已经包含这个提交，代码确实上线了：{card.pr_url}"
-            )[:2000]
-            message = (
-                f"✅ 话题已被 {card.decided_by} 采纳并归档："
-                f"PR #{card.pr_number} 已合并。\n"
-                f"它自己触发的那次部署没有成功（{failed_tail or '非 success'}），"
-                "最常见的原因是被后一次部署顶替（concurrency 组的正常行为）——"
-                f"平台查过了：更晚的一次**成功**部署 {short} 的提交包含这次合并，"
-                "所以代码确实已经上线，闸门满足。\n"
-                f"{landed_via.url or ''}\n{card.pr_url}"
-            )
+        by = card.decided_by
+        how = (
+            "已在 GitHub 上被人工合并（不是平台合的）"
+            if merged_externally
+            else "已合并"
+        )
+        card.note = f"PR #{card.pr_number} {how}：{card.pr_url}"
         await self._release_topic_compute(topic)
         topic.status = TopicStatus.archived
-        topic.accepted_by = card.decided_by
+        topic.accepted_by = by
         topic.accepted_at = now
         topic.archived_at = now
         await self._session.flush()
         await self._session.refresh(card)
-        self._notify_merge_result(topic, message)
+        self._notify_merge_result(
+            topic,
+            f"✅ 话题已被 {by} 采纳并归档：PR #{card.pr_number} {how}。\n{card.pr_url}",
+        )
+
+    async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
+        """Which forge this project's accept goes through — the one place the
+        lane is decided (see app.domain.review.forge)."""
+        return await forge_mod.resolve(
+            project_id=project_id,
+            app_owns_prs=pr_publish.enabled(),
+            is_github_bound=self._github_bound,
+        )
 
     async def _github_bound(self, project_id: uuid.UUID) -> bool:
         """Is this project bound to GitHub — an App installation resolved for
@@ -2661,10 +2223,10 @@ class AcceptService:
             meta={"platform": True},
         )
         if was == AcceptStatus.pr_open and card.decided_by not in (None, decided_by):
-            await NotificationService(self._session).create(
+            await AlertService(self._session).create(
                 project_id=topic.project_id,
-                level=NotifLevel.strong,
-                kind=NotifKind.change_alert,
+                level=AlertLevel.strong,
+                kind=AlertKind.change_alert,
                 title=f"话题「{topic.title}」的验收卡被作废，你的 PR 还开着",
                 body=(
                     f"<@{decided_by}> 作废了这张验收卡，平台已停止推进它。"

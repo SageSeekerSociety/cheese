@@ -1,6 +1,6 @@
-"""Notification routes — spec §8.5/8.6, evals G2/G3.
+"""Alert routes — spec §8.5/8.6, evals G2/G3.
 
-Spans two resource prefixes (per-project collection + per-notification actions),
+Spans two resource prefixes (per-project collection + per-alert actions),
 so this router uses an empty prefix and spells out each path.
 
 Every endpoint that reads or writes a person's mailbox resolves the recipient
@@ -19,49 +19,49 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.domain.cx_notification.models import Notification
-from app.domain.cx_notification.schemas import (
+from app.domain.alert.models import Alert
+from app.domain.alert.schemas import (
+    AlertCreate,
+    AlertOut,
     FeedbackIn,
-    NotificationCreate,
-    NotificationOut,
     ResolveIn,
 )
-from app.domain.cx_notification.services import NotificationService
+from app.domain.alert.services import AlertService
 
-router = APIRouter(prefix="", tags=["notifications"])
+router = APIRouter(prefix="", tags=["alerts"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-def _dump(notification: Notification) -> dict:
-    return NotificationOut.model_validate(notification).model_dump(mode="json")
+def _dump(alert: Alert) -> dict:
+    return AlertOut.model_validate(alert).model_dump(mode="json")
 
 
-async def _acting_recipient(resolver: ActorResolver, notification: Notification) -> str:
-    """The verified caller allowed to act on this notification: its addressee,
+async def _acting_recipient(resolver: ActorResolver, alert: Alert) -> str:
+    """The verified caller allowed to act on this alert: its addressee,
     or — for a broadcast (no target) — any authenticated caller. Read/feedback/
-    resolve write per-notification state, so the anonymous slice never applies.
+    resolve write per-alert state, so the anonymous slice never applies.
     """
     return await resolver.resolve_recipient(
-        requested=notification.target_handle,
-        project_id=notification.project_id,
+        requested=alert.target_handle,
+        project_id=alert.project_id,
         allow_anonymous=False,
     )
 
 
-@router.post("/api/projects/{project_id}/notifications")
+@router.post("/api/projects/{project_id}/alerts")
 async def create_notification(
     project_id: uuid.UUID,
-    body: NotificationCreate,
+    body: AlertCreate,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Post into the project's notification stream — agents (scoped token),
+    """Post into the project's alert stream — agents (scoped token),
     the dev override, or a signed-in human; never an anonymous drive-by. The
     route checks the credential itself rather than leaning on the middleware
     gate alone (see ``require_verified_caller``)."""
     await resolver.require_verified_caller(project_id=project_id)
-    notification = await NotificationService(db).create(
+    alert = await AlertService(db).create(
         project_id=project_id,
         level=body.level,
         kind=body.kind,
@@ -71,10 +71,10 @@ async def create_notification(
         topic_id=body.topic_id,
         payload=body.payload,
     )
-    return ok(_dump(notification))
+    return ok(_dump(alert))
 
 
-@router.get("/api/projects/{project_id}/notifications")
+@router.get("/api/projects/{project_id}/alerts")
 async def list_notifications(
     project_id: uuid.UUID,
     db: DbSession,
@@ -82,11 +82,11 @@ async def list_notifications(
     target_handle: str | None = None,
     unread_only: bool = False,
 ) -> dict:
-    """This caller's notifications: the ones addressed to them plus broadcasts."""
+    """This caller's alerts: the ones addressed to them plus broadcasts."""
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id
     )
-    items, total = await NotificationService(db).list_for_project(
+    items, total = await AlertService(db).list_for_project(
         project_id, target_handle=handle, unread_only=unread_only
     )
     return ok(page([_dump(n) for n in items], total))
@@ -102,11 +102,11 @@ async def project_inbox(
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id
     )
-    items, total = await NotificationService(db).inbox(project_id, target_handle=handle)
+    items, total = await AlertService(db).inbox(project_id, target_handle=handle)
     return ok(page([_dump(n) for n in items], total))
 
 
-@router.get("/api/projects/{project_id}/notifications/unread-count")
+@router.get("/api/projects/{project_id}/alerts/unread-count")
 async def notifications_unread_count(
     project_id: uuid.UUID,
     db: DbSession,
@@ -118,11 +118,11 @@ async def notifications_unread_count(
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id
     )
-    count = await NotificationService(db).unread_count(project_id, target_handle=handle)
+    count = await AlertService(db).unread_count(project_id, target_handle=handle)
     return ok({"unread": count})
 
 
-@router.post("/api/projects/{project_id}/notifications/read-all")
+@router.post("/api/projects/{project_id}/alerts/read-all")
 async def mark_all_notifications_read(
     project_id: uuid.UUID,
     db: DbSession,
@@ -138,48 +138,44 @@ async def mark_all_notifications_read(
     handle = await resolver.resolve_recipient(
         requested=target_handle, project_id=project_id, allow_anonymous=False
     )
-    marked = await NotificationService(db).mark_all_read(
-        project_id, target_handle=handle
-    )
+    marked = await AlertService(db).mark_all_read(project_id, target_handle=handle)
     return ok({"marked": marked})
 
 
-@router.post("/api/notifications/{notification_id}/read")
+@router.post("/api/alerts/{alert_id}/read")
 async def mark_notification_read(
-    notification_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    alert_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    service = NotificationService(db)
-    notification = await service.get_or_404(notification_id)
-    await _acting_recipient(resolver, notification)
-    return ok(_dump(await service.mark_read(notification_id)))
+    service = AlertService(db)
+    alert = await service.get_or_404(alert_id)
+    await _acting_recipient(resolver, alert)
+    return ok(_dump(await service.mark_read(alert_id)))
 
 
-@router.post("/api/notifications/{notification_id}/feedback")
+@router.post("/api/alerts/{alert_id}/feedback")
 async def set_notification_feedback(
-    notification_id: uuid.UUID,
+    alert_id: uuid.UUID,
     body: FeedbackIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    service = NotificationService(db)
-    notification = await service.get_or_404(notification_id)
-    await _acting_recipient(resolver, notification)
-    return ok(_dump(await service.set_feedback(notification_id, body.feedback)))
+    service = AlertService(db)
+    alert = await service.get_or_404(alert_id)
+    await _acting_recipient(resolver, alert)
+    return ok(_dump(await service.set_feedback(alert_id, body.feedback)))
 
 
-@router.post("/api/notifications/{notification_id}/resolve")
+@router.post("/api/alerts/{alert_id}/resolve")
 async def resolve_notification(
-    notification_id: uuid.UUID,
+    alert_id: uuid.UUID,
     body: ResolveIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
     """拍板 a decision request (spec G2). The decision is attributed to the
     verified caller — a body-supplied name is never trusted."""
-    service = NotificationService(db)
-    notification = await service.get_or_404(notification_id)
-    handle = await _acting_recipient(resolver, notification)
-    resolved = await service.resolve(
-        notification_id, chosen=body.chosen, decided_by=handle
-    )
+    service = AlertService(db)
+    alert = await service.get_or_404(alert_id)
+    handle = await _acting_recipient(resolver, alert)
+    resolved = await service.resolve(alert_id, chosen=body.chosen, decided_by=handle)
     return ok(_dump(resolved))

@@ -7,9 +7,11 @@ name: Deploy Scripts Test
 # that could abort it, six green CI jobs, none of which touched the file (run
 # 31466502982).
 #
-# Hosted on purpose: these suites are pure bash against fakes — no service
-# containers, no registry, no docker at all — so they must not queue behind
-# builds and deploys on the box's single runner. Measured well under a minute.
+# On the cheese-ci pool: these suites are pure bash against fakes — no service
+# containers, no registry, no docker at all. It ran on a hosted runner until
+# the org's Actions billing lapsed on 2026-08-13 (every ubuntu-latest job is
+# refused before it starts); the pool is separate capacity from the dev box's
+# single deploy slot, so it never queues behind a deploy. Under a minute.
 on:
   push:
     branches: [main]
@@ -35,7 +37,7 @@ concurrency:
 
 jobs:
   shell-tests:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -51,9 +53,16 @@ jobs:
           exit "$status"
 
       # One case reads a `run:` block out of deploy-drift.yml. Everything else in
-      # these suites is bash against fakes — this is the whole dependency.
+      # these suites is bash against fakes — this is the whole dependency. On the
+      # pool the system python3 has no PyYAML and `pip install` is blocked
+      # (PEP 668), so install the distro package; it is a no-op once a machine
+      # already has it.
       - name: Ensure a YAML-capable python3
-        run: python3 -c 'import yaml' || pip install --quiet pyyaml
+        run: |
+          python3 -c 'import yaml' 2>/dev/null && exit 0
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-yaml
+          python3 -c 'import yaml'
 
       - name: App-tier deploy contract
         run: bash deploy/tests/test-app-tier-health.sh
