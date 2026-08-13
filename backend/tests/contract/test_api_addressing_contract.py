@@ -66,13 +66,14 @@ _HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH"}
 # set the sweep below recomputes on every run) and mirrored as the table in
 # docs/api-conventions.md. These are the endpoints where losing a prefix does
 # not 404 — it answers, convincingly, from the wrong generation.
+# Shrinks as #370's renames land: each collision here exists because a 1.0 route
+# squats on a word the 2.0 generation also uses, and renaming the 1.0 route
+# retires the entry for good. The six `/api/projects*` rows left when the 知是
+# team project moved to `/team-projects`. What remains is `topics` (1.0 = the
+# question TAG, renaming to `/tags`) and `tasks` (the one pair that is genuinely
+# the same resource, so it merges rather than renames — separate project).
+# When this set is empty, the 2.0 `/api` prefix has no reason left to exist.
 _CROSS_WIRED_TODAY = {
-    ("/api/projects", "GET"),
-    ("/api/projects", "POST"),
-    ("/api/projects/{project_id}", "GET"),
-    ("/api/projects/{project_id}/members", "GET"),
-    ("/api/projects/{project_id}/members", "POST"),
-    ("/api/projects/{project_id}/members/{user_handle}", "DELETE"),
     ("/api/tasks/{task_id}", "GET"),
     ("/api/topics", "GET"),
     ("/api/topics", "POST"),
@@ -236,9 +237,13 @@ def test_flattening_one_api_layer_cross_wires_exactly_the_known_set(
     missing = _CROSS_WIRED_TODAY - observed
     new = observed - _CROSS_WIRED_TODAY
     assert not missing, (
-        f"pinned collisions no longer observed: {sorted(missing)} — their 2.0 "
-        "paths left the /api namespace. If a router prefix was flattened, that "
-        "is the outage docs/api-conventions.md records; put the prefix back."
+        f"pinned collisions no longer observed: {sorted(missing)}. Two very "
+        "different things produce this. (a) A 1.0 route was RENAMED off the "
+        "shared word — the collision is genuinely gone, #370's whole point; "
+        "shrink this set. (b) A 2.0 router prefix was flattened to the bare "
+        "name, which hands its traffic to 1.0 with no error anywhere — that is "
+        "the outage docs/api-conventions.md records; put the prefix back. Check "
+        "which happened before editing this set."
     )
     assert not new, (
         f"new cross-generation collisions: {sorted(new)} — a bare route and an "
