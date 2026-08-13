@@ -603,14 +603,35 @@ class TestTheConnectionShowsAName:
         assert _fetch_connection(client, user_id).raw_profile.get("login") is None
 
         # 用户点「重新连接」，这次 GitHub 把 login 给了。
-        self._relink(client, monkeypatch, user_id=user_id, login="octocat")
+        self._relink(
+            client, monkeypatch, user_id=user_id, handle="ghname_old", login="octocat"
+        )
 
         assert _fetch_connection(client, user_id).raw_profile["login"] == "octocat"
 
-    def _relink(self, client, monkeypatch, *, user_id: int, login: str):
+    def test_relinking_without_a_login_keeps_the_one_we_had(self, client, monkeypatch):
+        """重新连接不能把已经好了的名字降级回去。
+
+        这条是本 PR 自己的反向风险：既然重新连接现在会覆盖 profile，那么某次
+        交换没带回 login 时照写，就会把 octocat 抹成 None、页面退回数字 id——
+        而且恰好发生在用户点「重新连接」想修好它的时候。
+        """
+        user_id, _ = self._link(
+            client, monkeypatch, handle="ghname_keep", login="octocat"
+        )
+
+        self._relink(
+            client, monkeypatch, user_id=user_id, handle="ghname_keep", login=None
+        )
+
+        assert _fetch_connection(client, user_id).raw_profile["login"] == "octocat"
+
+    def _relink(
+        self, client, monkeypatch, *, user_id: int, handle: str, login: str | None
+    ):
         async def fake_get_user_info(self, access_token):
             return OAuthUserInfo(
-                id="gh-ghname_old", email=None, name="N", username=login
+                id="gh-" + handle, email=None, name="N", username=login
             )
 
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)

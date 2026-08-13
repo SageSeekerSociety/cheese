@@ -181,7 +181,10 @@ async def github_account_link_callback(
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
-            raw_profile=profile,
+            # 只有真拿到 login 才覆盖已存的 profile。某次交换没带 login 就照写，
+            # 会把一个已经好了的名字降级回 None——正是这个 PR 要修的毛病反着来
+            # 一遍，而且是在用户主动点「重新连接」想修好它的时候发生。
+            raw_profile=profile if user_info.username else None,
         )
         logger.info(
             "github account link: updated uid=%s github_id=%s",
