@@ -19,7 +19,13 @@ import logging
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+)
 from datetime import datetime
 from functools import lru_cache
 
@@ -113,13 +119,21 @@ class InProcessBroker:
         self._subs.clear()
         self._buffer.clear()
 
-    async def publish(self, channel: str, frame: Frame) -> None:
+    async def publish(self, channel: str, frame: Frame, *, buffer: bool = True) -> None:
         # Reaction frames are standalone state updates, not turn progress: they
         # can fire on an idle channel (a human reacting between turns) and are
         # rebuilt from GET /blocks on (re)connect — so they are fanned out live
         # but never buffered (buffering would also make an idle channel look
         # in_flight forever).
-        if frame.get("type") == "reaction":
+        #
+        # `buffer=False` says the same thing about a frame that isn't a
+        # reaction: fan it out, but keep it out of the in-progress turn's
+        # replay/in_flight bookkeeping. A human's plain message is the case
+        # (#349) — it is persisted as a block, so a reconnect rebuilds it from
+        # GET /blocks, and letting it touch this buffer would make one person
+        # talking look like a turn starting (on an idle channel) or ending (its
+        # `done` would drop a RUNNING turn's replay buffer).
+        if frame.get("type") == "reaction" or not buffer:
             for q in list(self._subs.get(channel, ())):
                 q.put_nowait(frame)
             return
@@ -238,6 +252,35 @@ class TurnRunner:
         redeploy can drain (wait for running turns) instead of killing them."""
         return len(self._tasks)
 
+    def _topic_records(self, topic_id: uuid.UUID) -> Iterator[dict]:
+        """This topic's lifecycle records, newest first."""
+        key = str(topic_id)
+        for rec in reversed(self._recent):
+            if rec["topic_id"] == key:
+                yield rec
+
+    def _current_record(self, topic_id: uuid.UUID) -> dict | None:
+        """The record that answers "what is this topic doing NOW".
+
+        A RUNNING record wins over a newer finished one, and that ordering is
+        the whole point (#349): "newest record" and "the turn in flight" are not
+        the same question, and every caller here is asking the second one. A
+        turn that finished in 0.1s — a plain message, a turn refused on credits,
+        one that crashed on the way up — is created after the turn it says
+        nothing about, and answering with it reports a busy topic as idle.
+        Reported by a human whose watcher read `/status` mid-turn and saw
+        `done / tools=0`, which is exactly what a turn dying at birth looks like.
+
+        With nothing running this is the newest record, i.e. the last thing that
+        happened — unchanged."""
+        newest: dict | None = None
+        for rec in self._topic_records(topic_id):
+            if rec["status"] == "running":
+                return rec
+            if newest is None:
+                newest = rec
+        return newest
+
     def topic_turn(self, topic_id: uuid.UUID) -> dict | None:
         """Latest lifecycle record for this topic. `ceiling_s` is this turn's
         effective absolute ceiling (`self._timeout` for most backends; the tmux
@@ -248,19 +291,20 @@ class TurnRunner:
         the agent rush against what's only meant to be a wedged-turn safety net
         (dev, 2026-08-08). The idle-suspect layer (tmux only) isn't tracked here
         — see `ChatService.tmux_activity_status` / `/topics/{id}/status`.
-        Ring-buffer-backed, so None after a restart or ~100 turns elsewhere."""
-        key = str(topic_id)
-        for rec in reversed(self._recent):
-            if rec["topic_id"] != key:
-                continue
-            out = dict(rec)
-            ceiling_s = rec.get("ceiling_s") or self._timeout
-            out["ceiling_s"] = round(ceiling_s)
-            if rec["status"] == "running":
-                elapsed = time.time() - rec["started_at"]
-                out["near_ceiling"] = (ceiling_s - elapsed) < 600
-            return out
-        return None
+        Ring-buffer-backed, so None after a restart or ~100 turns elsewhere.
+
+        A turn in flight is what this reports, even when a shorter-lived record
+        landed after it — see `_current_record`."""
+        rec = self._current_record(topic_id)
+        if rec is None:
+            return None
+        out = dict(rec)
+        ceiling_s = rec.get("ceiling_s") or self._timeout
+        out["ceiling_s"] = round(ceiling_s)
+        if rec["status"] == "running":
+            elapsed = time.time() - rec["started_at"]
+            out["near_ceiling"] = (ceiling_s - elapsed) < 600
+        return out
 
     def continuation_for(self, topic_id: uuid.UUID) -> uuid.UUID | None:
         """The logical unit of work this topic's CURRENT turn belongs to, or
@@ -271,30 +315,22 @@ class TurnRunner:
         dedup against. None means "not inside an automatic turn": a human
         clicking a button twice means it twice, so the caller skips the check
         rather than inventing a namespace."""
-        key = str(topic_id)
-        for rec in reversed(self._recent):
-            if rec["topic_id"] != key:
-                continue
-            if rec["status"] != "running":
-                return None
-            raw = rec.get("continuation_id")
-            return uuid.UUID(raw) if isinstance(raw, str) else None
-        return None
+        rec = self._current_record(topic_id)
+        if rec is None or rec["status"] != "running":
+            return None
+        raw = rec.get("continuation_id")
+        return uuid.UUID(raw) if isinstance(raw, str) else None
 
     def running_topic_ids(self) -> set[uuid.UUID]:
         """Every topic with a turn currently in flight — for bulk UI signals
         (e.g. the sidebar's "还在说话" indicator) that can't afford one
-        `topic_turn()` lookup per row. Same "newest record per topic wins"
-        rule as `topic_turn()`, just collected across all topics at once."""
-        seen: set[str] = set()
+        `topic_turn()` lookup per row. Same rule as `topic_turn()`, just
+        collected across all topics at once: a topic is running when ANY of its
+        records is, not when its NEWEST one is (#349 — see `_current_record`)."""
         running: set[uuid.UUID] = set()
-        for rec in reversed(self._recent):
-            key = rec["topic_id"]
-            if key in seen:
-                continue
-            seen.add(key)
+        for rec in self._recent:
             if rec["status"] == "running":
-                running.add(uuid.UUID(key))
+                running.add(uuid.UUID(rec["topic_id"]))
         return running
 
     def live_turn_for_topic(self, topic_id: uuid.UUID) -> dict | None:
@@ -986,6 +1022,57 @@ class TurnRunner:
                 self._project_waiting.pop(key, None)
         return "ok", sem
 
+    async def _post_message(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        reply_to: str | None,
+        attachments: list[dict] | None,
+    ) -> None:
+        """Land a human-to-human message (spec C3 默认不召唤) and stop there.
+
+        Two things the turn path did are deliberately NOT done here:
+
+        - the `done` frame is dropped. It means "the turn ended", and other
+          people's browsers act on it — one person typing would retire the
+          正在看… indicator on every client watching the running turn.
+        - frames are published unbuffered, so this cannot start or end a turn
+          in the broker's eyes (`in_flight`, the mid-turn replay buffer). The
+          message is a persisted block; a reconnect gets it from GET /blocks.
+
+        Failure is reported to the room as an unpersisted error rather than a
+        system event: nothing ran, so "芝士这轮中断了，马上自动接着跑" — what
+        the turn path would have said — is false in every part."""
+        channel = str(topic_id)
+        try:
+            async for frame in chat_service.converse(
+                topic_id=topic_id,
+                author=author,
+                content=content,
+                summon=False,
+                turn_id=turn_id,
+                reply_to=reply_to,
+                attachments=attachments,
+            ):
+                if frame.get("type") == "done":
+                    continue
+                await self._broker.publish(channel, frame, buffer=False)
+        except Exception:  # noqa: BLE001 — a failed post must not kill the task
+            logger.exception("failed to post message on topic %s", topic_id)
+            await self._broker.publish(
+                channel,
+                {
+                    "type": "error",
+                    "message": "⚠️ 这条消息没能发出去，请重发一次。",
+                    "persisted": False,
+                },
+                buffer=False,
+            )
+
     async def _refuse_exhausted(
         self,
         chat_service,
@@ -1059,6 +1146,37 @@ class TurnRunner:
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
+        # 说句话不是一轮 (#349). Nobody summoned 芝士, no agent will run, and
+        # everything below this line exists to run and account for an agent —
+        # so a plain message takes none of it. What that machinery did to a
+        # message, when it was still routed through it:
+        #
+        #   - wrote a lifecycle record that finished in 0.1s, which then WAS
+        #     this topic's newest record: `/status` said the topic had stopped
+        #     while a turn was mid-flight (`_current_record` is the other half
+        #     of this fix — a record that outlives its 0.1s can still be born
+        #     during a running turn, e.g. a refusal),
+        #   - ran the turn-end hook, so 说句闲话 auto-accepted (默认采信) every
+        #     conclusion card the RUNNING turn was supposed to read,
+        #   - queued behind the project's concurrency gate and announced itself
+        #     with ⏳ 排队中 / 算力额度已用完 — for a message that costs nothing
+        #     ("speaking is free — only the AI turn is metered"),
+        #   - registered as in-flight on disk, so a process death in that 0.1s
+        #     window could have the orphan sweep RE-SEND the message as a summon.
+        #
+        # The message itself is unchanged: same block (same turn_id), same live
+        # frames. See `_post_message`.
+        if frames is None and not summon and not is_resume and nudge_event is None:
+            await self._post_message(
+                chat_service,
+                topic_id,
+                turn_id,
+                author=author,
+                content=content,
+                reply_to=reply_to,
+                attachments=attachments,
+            )
+            return
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
         # project's concurrent-turn ceiling is reached. Both states are posted
         # into the topic as platform system events, so people SEE why nothing

@@ -21,6 +21,7 @@ from app.domain.conclusion.services import ConclusionCardService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.integration.conftest import chat_ws_url
 
 
 def _project(client) -> dict:
@@ -136,6 +137,30 @@ def test_turn_end_auto_accepts_the_card_and_archives_the_subtopic(client):
     assert card["settled_by"] == "system", "自动采信要记在平台头上，不是某个人"
     assert card["settled_at"] is not None
     assert _topic_status(client, sub["id"]) == "archived", "采信即归档"
+
+
+def test_a_plain_message_in_the_parent_settles_nothing(client):
+    """说句不 @ 芝士的话不是「父话题消化完了一轮」(#349)。
+
+    默认采信的授权来自「有一轮读过这些卡」。一条纯发言什么也没读——它以前之所以
+    能吞掉卡，只是因为它借了轮次那套机制走了一遍收尾。卡要活到真正消化它的那一轮。
+    """
+    # 说话要通过真正的聊天 WebSocket，所以项目得有个进得来的主人。
+    p = client.post(
+        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
+    ).json()["data"]
+    parent = _topic(client, p["id"])
+    sub = _split(client, parent["id"], "查一个数")
+    card = _file_card(client, sub["id"], "查到了：42")
+    assert card["status"] == ConclusionStatus.open
+
+    with client.websocket_connect(chat_ws_url(parent["id"], "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "顺嘴一提，别急", "summon": False})
+        assert ws.receive_json()["type"] == "user_block"
+    _wait_turns_idle()
+
+    assert _cards(client, sub["id"])[0]["status"] == ConclusionStatus.open
+    assert _topic_status(client, sub["id"]) != "archived"
 
 
 def test_a_card_born_mid_turn_survives_that_turn(client):

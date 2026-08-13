@@ -133,17 +133,29 @@ def test_empty_content_rejected(client):
 
 
 def test_message_without_summon_does_not_invoke_cheese(client):
-    """Default human-to-human: posting without @芝士 stays quiet (spec C3)."""
+    """Default human-to-human: posting without @芝士 stays quiet (spec C3).
+
+    "Quiet" now includes the turn frames (#349): the post lands as a `user_block`
+    and nothing else — no ✅ ack, no `done`. `done` means "the turn ended", and
+    every client watching acts on it, so a plain message must not send one: one
+    person typing would retire 正在看… on everyone else's screen. The next
+    summon's frames arriving intact is the proof that nothing trailed the post.
+    """
     _, topic_id = _create_project_and_topic(client)
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
         ws.send_json({"type": "message", "content": "队友我们今晚开会"})
+        assert ws.receive_json()["type"] == "user_block"
+
+        ws.send_json({"type": "message", "content": "芝士看看", "summon": True})
         frames = _drain_until_done(ws)
 
     types = [f["type"] for f in frames]
-    assert types == ["user_block", "done"]  # no ✅ ack / assistant_block
+    assert types == ["user_block", "reaction", "turn_active", "assistant_block", "done"]
 
     blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
-    assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
+    # The unsummoned message got no reply of its own — 芝士 spoke once, for the
+    # summon that followed it.
+    assert [b["author_type"] for b in blocks] == ["human", "human", "ai"]
 
 
 def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
@@ -158,12 +170,11 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
     )
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         ws.send_json({"type": "message", "content": "先随便说一句", "summon": False})
-        quiet = _drain_until_done(ws)
-        assert [f["type"] for f in quiet] == ["user_block", "done"]  # 芝士 quiet
+        assert ws.receive_json()["type"] == "user_block"  # 芝士 quiet, 也不是一轮
 
     with client.websocket_connect(chat_ws_url(topic_id, "bob")) as ws:
         ws.send_json({"type": "message", "content": "再补一句", "summon": False})
-        _drain_until_done(ws)
+        assert ws.receive_json()["type"] == "user_block"
 
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
         ws.send_json({"type": "message", "content": "芝士看看", "summon": True})
