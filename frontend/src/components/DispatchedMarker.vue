@@ -18,9 +18,11 @@ const emit = defineEmits<{ (e: 'open', topicId: string): void }>()
 
 // 归档 = 那件事在子话题里完事了。同一行改口而不是换一种标记：读的人关心的是「这段
 // 归谁」，而不是子话题的生命周期。
-const note = computed(() =>
-  props.marker.status === 'archived' ? '这件事在那边做完了' : '这件事在那边做，不在这里'
-)
+const note = computed(() => (props.marker.status === 'archived' ? '这件事在那边做完了' : '这件事在那边做，不在这里'))
+
+function open() {
+  emit('open', props.marker.topicId)
+}
 </script>
 
 <template>
@@ -29,12 +31,8 @@ const note = computed(() =>
     <span class="dispatched__body">
       <v-icon size="13" class="dispatched__icon">mdi-call-split</v-icon>
       <span class="dispatched__text"
-        >已派出<button
-          type="button"
-          class="dispatched__link"
-          @click="emit('open', marker.topicId)"
-          >《{{ marker.title }}》</button
-        >—— {{ note }}</span
+        >已派出<button type="button" class="dispatched__link" @click="open">《{{ marker.title }}》</button>——
+        {{ note }}</span
       >
     </span>
     <span class="dispatched__rule" aria-hidden="true" />

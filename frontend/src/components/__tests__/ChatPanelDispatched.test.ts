@@ -92,9 +92,7 @@ function mountPanel(topic: Topic, topicList: Topic[]) {
 /** 时间线上从上到下的行：消息记 block id，派出标记记 t:<子话题id>。 */
 function timelineOrder(container: Element): string[] {
   const rows = container.querySelectorAll('[data-mid],[data-testid="dispatched-marker"]')
-  return Array.from(rows).map((el) =>
-    el.getAttribute('data-mid') ?? `t:${el.getAttribute('data-topic-id')}`
-  )
+  return Array.from(rows).map((el) => el.getAttribute('data-mid') ?? `t:${el.getAttribute('data-topic-id')}`)
 }
 
 beforeAll(() => {
@@ -190,9 +188,7 @@ describe('父话题时间线上的「已派出」标记', () => {
     ])
     await flush()
 
-    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain(
-      '这件事在那边做完了'
-    )
+    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('这件事在那边做完了')
   })
 
   it('房间里没派出去任何活时，时间线一如既往', async () => {

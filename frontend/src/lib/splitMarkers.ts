@@ -62,16 +62,10 @@ const WORK_KINDS = new Set(['task', 'subtopic'])
  * `upgraded_to_topic_id`，前端也已经把它渲染成「已升级为话题」链接了。同一件事再
  * 标一次就是重复。
  */
-export function dispatchedChildren(
-  parentTopicId: string | null | undefined,
-  topics: readonly Topic[]
-): SplitMarker[] {
+export function dispatchedChildren(parentTopicId: string | null | undefined, topics: readonly Topic[]): SplitMarker[] {
   if (!parentTopicId) return []
   return topics
-    .filter(
-      (t) =>
-        t.parent_id === parentTopicId && WORK_KINDS.has(t.kind) && !t.upgraded_from_block_id
-    )
+    .filter((t) => t.parent_id === parentTopicId && WORK_KINDS.has(t.kind) && !t.upgraded_from_block_id)
     .map((t) => ({ topicId: t.id, title: t.title, status: t.status, createdAt: t.created_at }))
     .sort((a, b) => at(a.createdAt) - at(b.createdAt))
 }
