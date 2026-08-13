@@ -18,6 +18,22 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cheese"
     db_echo: bool = False
 
+    # --- Migration timeouts (#356) ---
+    # Bound how long a migration waits on a lock / runs, applied by alembic's
+    # env.py to the single connection every `upgrade head` uses. A migration
+    # whose ALTER cannot grab its ACCESS EXCLUSIVE lock within this window fails
+    # fast — the deploy goes red and retries — instead of blocking behind a live
+    # backend's open transaction until the deploy's 30-minute budget is spent,
+    # which starved cheese-dev's only runner slot and browned out the whole box
+    # in #356. lock_timeout is the actual fix; keep it short (a few seconds).
+    # PostgreSQL syntax: "10s", "500ms", or a bare integer (milliseconds).
+    migration_lock_timeout: str = "10s"
+    # Total per-statement ceiling, INCLUDING lock wait. Deliberately "0" (no
+    # limit) by default so a legitimately long table rewrite is never killed
+    # mid-migration; lock_timeout already caps the pathological case (waiting on
+    # a lock we will never get). Ops can tighten it per deployment if wanted.
+    migration_statement_timeout: str = "0"
+
     # --- 主仓产品配置并入 (fusion merge I3-config): fields main's product
     # domains (avatars/materials/storage/auth) read from settings. Superset so
     # the adopted product routes boot. Defaults mirror deploy/.env.prod.example.

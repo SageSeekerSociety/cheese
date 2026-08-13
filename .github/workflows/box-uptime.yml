@@ -136,3 +136,68 @@ jobs:
 
           latest_done_concl="$(echo "$done_runs" | jq -r '.[0].conclusion')"
           echo "boxes look alive (latest heartbeat ${age_s}s old, status=$status; last finished heartbeat=$latest_done_concl)"
+
+  # External /api/health latency probe (#356). The heartbeat check above only
+  # sees the runner queue; it CANNOT see the ~70-minute brownout where the box
+  # was up and running jobs but a migration held a table lock, connection pool
+  # exhausted, and the pure-memory /api/health crawled to 12.3s while logins
+  # timed out. Probing the endpoint from OUTSIDE the box (a hosted runner, like
+  # the check above) is the only way that condition shows up in an alert.
+  #
+  # Cron granularity bounds detection: this runs twice an hour, so it catches a
+  # sustained brownout (like #356's) but not a sub-minute blip — a true
+  # minute-level SLO needs a dedicated always-on monitor, not a scheduled
+  # workflow. This is the cheap 80%.
+  #
+  # Opt-in: needs the dev box's PUBLIC health URL, which is deliberately not in
+  # the repo. Set repo variable DEV_HEALTH_URL to enable; unset = the step
+  # skips green, so this can never page anyone before ops turns it on. Optional
+  # DEV_HEALTH_MAX_MS overrides the 5s threshold (healthy is ~65ms, the brownout
+  # was 12.3s — 5s separates them with wide margin either way).
+  dev-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe dev /api/health latency from outside the box
+        env:
+          HEALTH_URL: ${{ vars.DEV_HEALTH_URL }}
+          MAX_MS: ${{ vars.DEV_HEALTH_MAX_MS || '5000' }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${HEALTH_URL:-}" ]; then
+            echo "DEV_HEALTH_URL not set — external health probe disabled."
+            echo "Set the repo variable to the dev box's public /api/health URL to enable it."
+            exit 0
+          fi
+
+          # Two attempts so a single hosted-runner network blip does not page
+          # admins; the box is only judged unhealthy if BOTH fail the bar.
+          last=""
+          for attempt in 1 2; do
+            # -m caps the whole request, so a wedged endpoint fails HERE instead
+            # of hanging the job; %{time_total} is wall-clock seconds spent.
+            if out="$(curl -sS -o /dev/null -m 20 \
+                -w '%{http_code} %{time_total}' "$HEALTH_URL" 2>/dev/null)"; then
+              code="${out% *}"
+              secs="${out#* }"
+              ms="$(awk -v s="$secs" 'BEGIN{printf "%d", s*1000}')"
+              echo "attempt $attempt: HTTP $code in ${ms}ms (threshold ${MAX_MS}ms)"
+              if [ "$code" = "200" ] && [ "$ms" -le "$MAX_MS" ]; then
+                echo "dev /api/health healthy"
+                exit 0
+              fi
+              last="HTTP $code in ${ms}ms"
+            else
+              echo "attempt $attempt: request failed or timed out"
+              last="request failed or timed out"
+            fi
+            # An `[ ... ] && sleep` one-liner returns non-zero on attempt 2 and
+            # would abort the step under `set -e` before the error below.
+            if [ "$attempt" -eq 1 ]; then
+              sleep 10
+            fi
+          done
+
+          echo "::error::dev /api/health is slow or unreachable ($last, threshold ${MAX_MS}ms) — the box may be browning out (see #356: a migration lock wait starved it for ~70 min while the runner still looked alive)"
+          exit 1

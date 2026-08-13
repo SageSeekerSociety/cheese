@@ -5,6 +5,8 @@ import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -58,7 +60,44 @@ engine = create_async_engine(
 )
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-__all__ = ["AsyncSession", "Base", "async_session_factory", "engine", "get_db"]
+__all__ = [
+    "AsyncSession",
+    "Base",
+    "apply_migration_timeouts",
+    "async_session_factory",
+    "engine",
+    "get_db",
+]
+
+
+def apply_migration_timeouts(connection: Connection) -> None:
+    """Bound each migration's lock wait and total run time (#356).
+
+    Called once by alembic's ``env.py`` on the single connection an
+    ``upgrade head`` uses. Alembic online mode runs the WHOLE upgrade on that
+    one connection inside a single transaction (transaction_per_migration is
+    off), so setting these once protects every migration in the run — the ones
+    present now and any added later.
+
+    ``set_config(name, value, is_local=false)`` is a parameterizable,
+    injection-safe equivalent of session-scoped ``SET``, so the guard survives
+    even if alembic is later switched to transaction-per-migration.
+
+    Why it matters: a migration whose ``ALTER TABLE`` needs an ACCESS EXCLUSIVE
+    lock will otherwise wait indefinitely behind a live backend's open
+    transaction. In #356 that wait consumed the deploy's entire 30-minute budget
+    and browned out cheese-dev's only runner slot. A short ``lock_timeout`` turns
+    that into a fast, retryable failure; ``statement_timeout`` defaults to 0
+    (unlimited) so a genuinely long table rewrite is never killed mid-migration.
+    """
+    connection.execute(
+        text("SELECT set_config('lock_timeout', :value, false)"),
+        {"value": settings.migration_lock_timeout},
+    )
+    connection.execute(
+        text("SELECT set_config('statement_timeout', :value, false)"),
+        {"value": settings.migration_statement_timeout},
+    )
 
 
 async def get_db() -> AsyncGenerator[AsyncSession]:
