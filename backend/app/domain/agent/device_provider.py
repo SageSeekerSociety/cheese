@@ -24,10 +24,12 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import DEVICE_ALIVE_PROBE, build_screen_launch
@@ -126,23 +128,62 @@ async def resolve_pinned_device(
 
 
 # Addresses that only mean something ON the box. Routing the box's own turns
-# through the local LLM gateway is what makes their spend visible — but the same
-# value handed to a machine somewhere else names nothing there, and the failure
-# is a turn that dies on a connection error with no hint why.
+# through the local LLM gateway / metering proxy is what makes their spend
+# visible — but the same value handed to a machine somewhere else names nothing
+# there, and the failure is a turn that dies on a connection error with no hint
+# why.
 _BOX_LOCAL_HOSTS = ("localhost", "127.0.0.1", "172.17.0.1", "172.18.0.1", "litellm")
+
+# Where the launch script writes the metering proxy's CA on the device (under the
+# screen's ISOLATED home) and exports NODE_EXTRA_CA_CERTS to point. The env value
+# built here carries the literal placeholder; only the script knows the real home.
+_DEVICE_PROXY_CA_PATH = "$HOME/.claude/proxy-ca.pem"
 
 
 def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) -> None:
-    base = env.get("ANTHROPIC_BASE_URL", "")
-    if any(h in base for h in _BOX_LOCAL_HOSTS):
-        logger.error(
-            "device %s is remote but its ANTHROPIC_BASE_URL is %s, which only "
-            "resolves on the backend's own host — its turns will fail to reach a "
-            "model. Set a publicly reachable gateway URL, or point remote devices "
-            "back at the upstream.",
-            device_id,
-            base,
+    # ANTHROPIC_BASE_URL is the gateway route; HTTPS_PROXY is the subscription's
+    # CONNECT route to the metering proxy. Either one pointing at a box-local
+    # address fails identically off-box.
+    for key in ("ANTHROPIC_BASE_URL", "HTTPS_PROXY"):
+        value = env.get(key, "")
+        if any(h in value for h in _BOX_LOCAL_HOSTS):
+            logger.error(
+                "device %s is remote but its %s is %s, which only "
+                "resolves on the backend's own host — its turns will fail to "
+                "reach a model. Set a publicly reachable address "
+                "(subscription_device_proxy_host for the metering proxy), or "
+                "point remote devices back at the upstream.",
+                device_id,
+                key,
+                value,
+            )
+
+
+def _read_proxy_ca() -> str:
+    """The metering proxy's CA, read where THIS backend can see it — required for
+    a subscription device turn (the launcher embeds it; without it the screen's
+    `claude` cannot trust the proxy and fails as an opaque TLS error). Raising
+    here, with the setting named, beats the silent alternative: falling back to
+    the gateway would swap the model out from under the user — the exact failure
+    #325 G2 removes."""
+    path = settings.subscription_ca_backend_path.strip()
+    if not path:
+        raise ScreenSetupError(
+            "subscription_enabled 但未设置 SUBSCRIPTION_CA_BACKEND_PATH——"
+            "device 屏幕需要后端能读到计费代理的 CA（部署侧把代理的 "
+            "mitmproxy-ca-cert.pem 只读挂载进后端并指向它）"
         )
+    try:
+        ca = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ScreenSetupError(
+            f"读取计费代理 CA 失败（SUBSCRIPTION_CA_BACKEND_PATH={path}）：{exc}"
+        ) from exc
+    if not ca.strip():
+        raise ScreenSetupError(
+            f"计费代理 CA 为空（SUBSCRIPTION_CA_BACKEND_PATH={path}）"
+        )
+    return ca
 
 
 # How long the idle-suspect liveness probe (DEVICE_ALIVE_PROBE over the link
@@ -313,6 +354,18 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # hook_router), so the device path adds no second hook surface.
         return f"{self._public_base}/sandbox/hooks/{topic_id}"
 
+    def _no_proxy_hosts(self) -> str:
+        """What the screen's HTTPS_PROXY must NOT capture: the backend itself
+        (hooks, git smart-HTTP, the `cheese` CLI) and loopback (local MCP). The
+        CLI sends even plain-http requests through HTTPS_PROXY — measured — so
+        without this the platform wiring detours through the meter, or dies with
+        it when the meter is unreachable."""
+        hosts = ["localhost", "127.0.0.1", "::1"]
+        backend = urlparse(self._public_base).hostname
+        if backend and backend not in hosts:
+            hosts.insert(0, backend)
+        return ",".join(hosts)
+
     async def _ship_launcher(
         self, device_id: str, topic_id: uuid.UUID, command: list[str]
     ) -> list[str]:
@@ -376,25 +429,77 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # to the deployment-wide switch and is wrong for every remote machine.
         self._co_located_at[(project_id, topic_id)] = co_located
         work_dir = self._work_dir(project_id, topic_id, co_located=co_located)
-        # A remote machine gets the backend's own model route and its scoped
-        # token — never the upstream provider key. The backend substitutes the
-        # project's virtual key, so the credential stays on the box and spend is
-        # attributed without having to trust the machine to report it.
-        provider = provider_env.api_key_provider(
-            gateway_base=f"{self._public_base}/llm",
-            key=token,
-            model=settings.agent_model,
-        )
-        gateway_env = {**provider.env, **(env or {})}
+        ca_pem = ""
+        if settings.subscription_enabled:
+            # Subscription deployment: EVERY device turn — co-located and remote
+            # alike — runs on the subscription through the metering proxy, the
+            # same path the local tmux container takes (#325 G2). The machine
+            # holds no real credential either way: the env ships a scoped cheese
+            # token as the fake login, the proxy verifies it and injects the real
+            # token backend-side. The gateway route (/llm → LiteLLM) is NOT a
+            # fallback here — falling back silently is exactly the model swap
+            # this branch exists to kill (dev shipped device screens with
+            # CLAUDE_MODEL=deepseek-chat while users thought they were talking
+            # to Claude).
+            ca_pem = _read_proxy_ca()
+            session_token = mint_scoped_token(
+                project_id=str(project_id), topic_id=str(topic_id)
+            )
+            proxy_host = (
+                settings.subscription_device_proxy_host.strip()
+                or settings.subscription_proxy_host
+            )
+            sub = provider_env.subscription_provider(
+                ca_path=_DEVICE_PROXY_CA_PATH,
+                project_id=str(project_id),
+                topic_id=str(topic_id),
+                session_token=session_token,
+                # The scoped token doubles as the CONNECT credential, so an
+                # exposed listener only relays for callers that can prove which
+                # project to bill.
+                connect_proxy_url=(
+                    f"http://cheese:{session_token}@{proxy_host}:"
+                    f"{settings.subscription_proxy_connect_port}"
+                ),
+                no_proxy=self._no_proxy_hosts(),
+            )
+            # The subscription env WINS over the caller's `env` — that env is
+            # the gateway shape (BASE_URL + model pins), and any of those keys
+            # surviving flips the CLI into API-key mode or asks the subscription
+            # for a model it does not serve. Dropped, not overridden, because
+            # subscription_provider only ADDS keys (mirrors tmux_provider).
+            merged = {**(env or {})}
+            for k in (
+                "ANTHROPIC_BASE_URL",
+                "CLAUDE_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            ):
+                merged.pop(k, None)
+            merged.update(sub.env)
+            model_env = merged
+        else:
+            # No subscription deployed: the machine gets the backend's own model
+            # route and its scoped token — never the upstream provider key. The
+            # backend substitutes the project's virtual key, so the credential
+            # stays on the box and spend is attributed without having to trust
+            # the machine to report it.
+            provider = provider_env.api_key_provider(
+                gateway_base=f"{self._public_base}/llm",
+                key=token,
+                model=settings.agent_model,
+            )
+            model_env = {**provider.env, **(env or {})}
         if not co_located:
-            _warn_if_model_endpoint_is_box_local(gateway_env, device_id)
+            _warn_if_model_endpoint_is_box_local(model_env, device_id)
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),
             hook_token=token,
             home_dir=home_dir,
             work_dir=work_dir,
             model=model,
-            extra_env=gateway_env,
+            extra_env=model_env,
             api_base=f"{self._public_base}/api",
             cli_url=f"{self._public_base}/sandbox/cli/cheese",
             project_id=str(project_id),
@@ -411,6 +516,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             ),
             git_branch=ws.branch_for_topic(topic_id),
             system_prompt=system_prompt,
+            ca_pem=ca_pem,
         )
         command = await self._ship_launcher(device_id, topic_id, command)
         if existing is not None:

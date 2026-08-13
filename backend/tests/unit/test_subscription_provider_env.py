@@ -1,10 +1,13 @@
 """The subscription turn must be capturable by the meter.
 
-These lock in facts that were MEASURED on the dev box, each of which silently
-produces "works but bills nothing" if it regresses:
+These lock in facts that were MEASURED, each of which silently produces "works
+but bills nothing" if it regresses:
 
-  - capture is by hostname (BASE_URL host stays api.anthropic.com), because
-    Claude Code's undici ignores HTTPS_PROXY for /v1/messages;
+  - BASE_URL stays unset (api.anthropic.com), whatever the transport: containers
+    are captured by name (--add-host; the node-built CLI of 2026-08 ignored
+    HTTPS_PROXY for /v1/messages), bare device processes by HTTPS_PROXY at the
+    meter's CONNECT listener (the current native CLI honors it — re-measured
+    2026-08-13 on 2.1.229);
   - a turn with no attribution header is tokens nobody can be charged for;
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
@@ -85,10 +88,36 @@ def test_no_attribution_means_no_header_rather_than_a_broken_one():
 
 
 def test_no_base_url_is_ever_set():
-    """The routing is DNS (--add-host), never a base_url — setting one drops the
-    CLI out of subscription mode."""
+    """The routing is DNS (--add-host) or a CONNECT proxy, never a base_url —
+    setting one drops the CLI out of subscription mode."""
     env = provider_env.subscription_provider(ca_path="/ca.pem").env
     assert "ANTHROPIC_BASE_URL" not in env
+    env = provider_env.subscription_provider(
+        ca_path="/ca.pem", connect_proxy_url="http://cheese:t@172.17.0.1:8444"
+    ).env
+    assert "ANTHROPIC_BASE_URL" not in env
+
+
+def test_connect_transport_rides_https_proxy_with_its_exclusions():
+    """A bare device process is steered by HTTPS_PROXY (no root, no --add-host),
+    and NO_PROXY must keep the backend + loopback out of the detour — the CLI
+    routes even plain-http requests through HTTPS_PROXY (measured)."""
+    env = provider_env.subscription_provider(
+        ca_path="/ca.pem",
+        connect_proxy_url="http://cheese:tok@172.17.0.1:8444",
+        no_proxy="cheese.test,localhost,127.0.0.1,::1",
+    ).env
+    assert env["HTTPS_PROXY"] == "http://cheese:tok@172.17.0.1:8444"
+    assert env["NO_PROXY"] == "cheese.test,localhost,127.0.0.1,::1"
+    assert env["no_proxy"] == env["NO_PROXY"]
+
+
+def test_container_transport_carries_no_proxy_env():
+    """The container path stays --add-host: proxy env vars there would detour
+    every shell tool in the sandbox through the meter for nothing."""
+    env = provider_env.subscription_provider(ca_path="/ca.pem").env
+    assert "HTTPS_PROXY" not in env
+    assert "NO_PROXY" not in env
 
 
 def test_model_names_are_never_pinned_on_the_subscription():

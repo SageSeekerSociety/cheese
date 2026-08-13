@@ -30,6 +30,35 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+# The only names the proxy serves. api.anthropic.com carries the metered
+# messages; console.anthropic.com and platform.claude.com carry interactive
+# Claude Code's login/refresh. Everything else is refused (reverse listener) or
+# tunneled raw without interception (CONNECT listener) — the real credential is
+# injected per-request, so forwarding to an attacker-chosen SNI would hand the
+# subscription token to whatever host the caller named.
+ANTHROPIC_HOSTS = frozenset(
+    {"api.anthropic.com", "console.anthropic.com", "platform.claude.com"}
+)
+
+
+def proxy_basic_password(header_value: str) -> str:
+    """The password of a ``Proxy-Authorization: Basic`` header, else "".
+
+    The CONNECT listener authenticates callers by the scoped cheese token their
+    HTTPS_PROXY URL carries as the password (``http://cheese:<token>@host:port``
+    — Claude Code sends it as Basic on every CONNECT, measured on 2.1.229).
+    Malformed input of any shape yields "" rather than raising: this runs on
+    attacker-controlled bytes."""
+    parts = header_value.split()
+    if len(parts) != 2 or parts[0].lower() != "basic":
+        return ""
+    try:
+        decoded = base64.b64decode(parts[1], validate=True).decode()
+    except (ValueError, UnicodeDecodeError):
+        return ""
+    _user, sep, password = decoded.partition(":")
+    return password if sep else ""
+
 
 def verify_scoped_token(
     token: str, secret: str, now: float | None = None

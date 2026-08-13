@@ -283,11 +283,12 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_device_turn_is_gateway_routed_and_carries_no_env(client, tmp_path):
-    """A device turn's credentials belong to the device provider (/llm route +
-    scoped token). The profile env — box-local gateway URL + a real key — must
-    never reach the machine, and the route is gateway regardless of the
-    deployment's subscription flag."""
+async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path):
+    """A device turn's model env belongs to the device provider — the profile
+    env (box-local gateway URL + a real key) must never reach the machine. The
+    ROUTE follows where its traffic actually goes (#325 G2): the /llm gateway
+    without a subscription, the metering proxy with one — same as the local
+    container, so moving a topic to a device never swaps its model."""
     from app.core.config import settings as app_settings
 
     pool_url = "http://pool.example"
@@ -315,18 +316,20 @@ async def test_device_turn_is_gateway_routed_and_carries_no_env(client, tmp_path
 
     with unittest.mock.patch.object(app_settings, "subscription_enabled", True):
         kwargs, route = await svc._model_kwargs(pid, "device")
-    assert route == "gateway"
-    assert "env" not in kwargs
+    assert route == "subscription"
+    assert "env" not in kwargs  # the device provider builds the proxy env itself
+    assert kwargs["model"] == ""  # the subscription's default, no --model flag
 
 
 @pytest.mark.anyio
-async def test_subscription_route_applies_only_to_the_tmux_provider(
+async def test_subscription_route_applies_only_to_the_hooks_providers(
     client, tmp_path, monkeypatch
 ):
-    """subscription_enabled names a capability only the tmux provider implements
-    (metering-proxy env). The sdk provider under that flag used to fall through
-    with no env and run on the backend's own inherited credentials — it must
-    keep its profile/gateway routing instead."""
+    """subscription_enabled names a capability only the hooks providers (tmux,
+    device) implement — they build the metering-proxy env themselves. The sdk
+    provider under that flag used to fall through with no env and run on the
+    backend's own inherited credentials — it must keep its profile/gateway
+    routing instead."""
     from app.core.config import settings as app_settings
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)

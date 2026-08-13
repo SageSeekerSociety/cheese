@@ -175,10 +175,26 @@ class Settings(BaseSettings):
     # subscription on the LAN).
     subscription_proxy_host: str = "172.17.0.1"
     subscription_proxy_port: int = 8443
+    # The metering proxy's CONNECT (regular-mode) listener. Containers are steered
+    # by --add-host on 443; a DEVICE screen is a bare process with no root and no
+    # docker, so its `claude` reaches the proxy via HTTPS_PROXY instead — that env
+    # needs a listener that speaks CONNECT, which reverse mode does not.
+    subscription_proxy_connect_port: int = 8444
+    # Host a DEVICE reaches the CONNECT listener at. Empty = subscription_proxy_host,
+    # which is right for a co-located device (the box's own bridge address). A
+    # REMOTE device needs an address that resolves from its network — until one is
+    # published, remote subscription turns fail on connect (loud, not silent).
+    subscription_device_proxy_host: str = ""
     # Where the proxy's own CA and the ccproxy CA are mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
     # an opaque TLS error far from its cause.
     subscription_ca_host_path: str = ""
+    # The proxy CA as a path THIS backend process can read (subscription_ca_host_path
+    # is a HOST path handed to `docker -v`; the backend container usually cannot open
+    # it). The device launcher embeds the CA bytes into the launch script, so device
+    # subscription turns need this set — the deploy overlay mounts the proxy's cert
+    # read-only and points this at it.
+    subscription_ca_backend_path: str = ""
     # The `.credentials.json` that makes Claude Code run as a subscription client.
     # ROTATES ON EVERY REFRESH and a failed refresh writes it back EMPTY, which
     # permanently kills the subscription — so it is copied per sandbox and
