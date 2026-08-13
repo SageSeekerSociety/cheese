@@ -21,6 +21,7 @@ tree and pushes it back over git smart-HTTP instead).
 """
 
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -29,7 +30,7 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
 from app.domain.agent.device_launch import DEVICE_ALIVE_PROBE, build_screen_launch
@@ -195,6 +196,24 @@ def _read_proxy_ca() -> str:
 # (15s) so a suspected-wedged turn re-probes on cadence — and a timeout/hiccup is
 # read as alive, never as death (see `_confirm_alive`).
 _ALIVE_PROBE_TIMEOUT_S = 8.0
+
+
+def _credential_expiry(token: str) -> int:
+    """The UNIX expiry the device screen stamps for the model credential it is
+    launched with (``CHEESE_TOKEN_EXPIRES``). The launcher records it against the
+    inner tmux session it creates, and a later launch reads it back to tell a
+    session whose baked credential has DIED — a bare `claude` reads its OAUTH /
+    proxy credential ONCE at startup and never re-reads it, so a freshly minted
+    token never reaches an already-running (adopted) process — from one still
+    holding a good token, and retires only the former. A token with no decodable
+    claim (a dev ``SANDBOX_TOKEN`` passthrough) falls back to a session length from
+    now, so the launcher never reads it as perpetually stale and churns the screen
+    every turn."""
+    claims = scoped_token_claims(token)
+    exp = claims.get("exp") if claims else None
+    if isinstance(exp, int):
+        return exp
+    return int(time.time()) + SESSION_TOKEN_TTL_S
 
 
 class DeviceProvider(HooksTurnProvider[HubScreen]):
@@ -521,6 +540,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 merged.pop(k, None)
             merged.update(sub.env)
             model_env = merged
+            # Stamp the minted session token's expiry so the launcher can retire an
+            # inner tmux session whose baked credential has died instead of adopting
+            # it (device_launch: the reuse that outlives a TTL bump — #385).
+            model_env["CHEESE_TOKEN_EXPIRES"] = str(_credential_expiry(session_token))
         else:
             # No subscription deployed: the machine gets the backend's own model
             # route and its scoped token — never the upstream provider key. The
@@ -533,6 +556,9 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 model=settings.agent_model,
             )
             model_env = {**provider.env, **(env or {})}
+            # Same stamp on the gateway path: the model credential is the scoped
+            # `token`, and its expiry is what the launcher checks before adopting.
+            model_env["CHEESE_TOKEN_EXPIRES"] = str(_credential_expiry(token))
         if not co_located:
             _warn_if_model_endpoint_is_box_local(model_env, device_id)
         command, screen_env, cheeselet = build_screen_launch(

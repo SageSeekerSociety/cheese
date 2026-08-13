@@ -19,6 +19,7 @@ class FakeHub:
 
     def __init__(self) -> None:
         self.opened: list[HubScreen] = []
+        self.envs: list[dict | None] = []  # env injected into each opened screen
         self.prompts: list[list] = []
         self.reasserted: list[str] = []  # sids re-sent as adopt-creates
         self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
@@ -45,6 +46,7 @@ class FakeHub:
             hook_key=kw.get("hook_key", ""),
         )
         self.opened.append(screen)
+        self.envs.append(kw.get("env"))
         return screen
 
     async def reassert_screen(
@@ -1201,3 +1203,46 @@ async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
     assert isinstance(events[-1], AgentResult) and events[-1].is_error
     assert events[-1].text == provider._timeout_message
     assert hub.probe_calls >= 1
+
+
+async def test_each_launch_ships_a_fresh_now_based_token_expiry():
+    """The device screen env must carry ``CHEESE_TOKEN_EXPIRES`` — the expiry the
+    launcher stamps against the inner tmux session it creates, so a later launch
+    retires a session whose baked credential has DIED (a bare `claude` reads its
+    model credential once and never re-reads it) instead of adopting the corpse.
+
+    The regression: a relaunch used to reuse a cached, already-expired credential
+    (the inner session survived, and the freshly minted token never reached the
+    running process — the 407 that #385's TTL bump only delayed). So the value
+    shipped here must be minted from NOW: strictly in the future and no further
+    out than a session, never a reused past expiry."""
+    import time
+
+    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+
+    hub = FakeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    key = str(topic_id)
+
+    before = int(time.time())
+    _events, task = await _run(
+        provider,
+        project_id=project_id,
+        topic_id=topic_id,
+        prompt="hi",
+        system_prompt="",
+        resume_session_id=None,
+    )
+    await asyncio.sleep(0.05)
+    router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
+    await asyncio.wait_for(task, timeout=5)
+
+    assert hub.envs and hub.envs[0] is not None
+    raw = hub.envs[0].get("CHEESE_TOKEN_EXPIRES")
+    assert raw is not None, "the launch env must carry the credential expiry"
+    exp = int(raw)
+    # Minted from now — in the future (the reused corpse had exp in the PAST) and
+    # within a session's reach, never an unbounded or stale value.
+    assert before < exp <= int(time.time()) + SESSION_TOKEN_TTL_S + 5
