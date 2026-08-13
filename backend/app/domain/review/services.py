@@ -6,11 +6,12 @@ This is deterministic platform code, not AI.
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
 from app.core.config import settings
@@ -51,6 +52,18 @@ _REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
 #: 具名 note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
 _REPUSH_DIVERGED_PREFIX = "🌿 本地分支与 PR 分支已分叉"
 _POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
+#: 采纳现场补开 App PR 失败（存量无 PR 卡，#296 stage 1 的回归修复）。开不出 PR
+#: 时采纳停下、原因亮在卡上——绑定 GitHub 的项目绝不静默本地合并直推 main
+#: （all commits go through PR）。卡保持 pending，人处理后可直接重试采纳。
+_ACCEPT_PR_OPEN_FAILED_PREFIX = "⚠️ 采纳未完成：无法为这张卡开 PR"
+#: 卡上有 PR 但此刻推进不了（GitHub 不可达 / PR 被关闭未合并 / …）。绑定 GitHub
+#: 的项目采纳只通过合并 PR 完成 (#363)——这类失败停下亮出来，永不落 local merge。
+_ACCEPT_PR_STALLED_PREFIX = "⚠️ 采纳未完成：PR 未能合并"
+#: 未接 GitHub 的项目 (#363)：平台自己就是 forge，local merge 是它唯一、正当的
+#: 采纳语义——不是降级。这句写在卡上，让它和「该走 PR 却没走」的卡一眼可分。
+_PLATFORM_FORGE_NOTE = (
+    "ℹ️ 本项目未接 GitHub：采纳即合并进平台仓库的 main（无 PR、无外部 CI）"
+)
 #: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
 #: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
 _DEPLOY_STALLED_PREFIX = "⏳ 部署迟迟没有完成"
@@ -174,31 +187,57 @@ def _describe_token_unavailable(reason: str | None) -> str:
     )
 
 
-# 两阶段采纳: the one degrade that is a KNOWN, PERMANENT limitation instead of a
-# failure — this card really does change `.github/workflows/`, and the platform's
-# credential has no `workflows` scope, so no retry or sync can ever make the PR
-# path work for it. Carried as an exact sentinel string (not a substring match)
-# so a combined reason — an existing-PR degrade AND this one — deliberately
-# falls back to the ⚠️ wording: that combination does need a human.
-_WORKFLOW_SCOPE_DEGRADE_REASON = (
-    "本卡改动了 .github/workflows/ 下的文件，平台的 GitHub App 没有 workflows "
-    "权限，按已知限制无法走 PR（不是故障）"
-)
+# ---- CI 镜像与 405 如实转译 (#362, 对齐 GitHub) ------------------------------
+#
+# 平台对可合并性的全部立场：问 forge、显示 forge 说的、转译 forge 拒绝的原因—
+# 自己永远不发明拦截。GitHub 在没有 branch protection 时（本仓是 free plan 私有
+# 仓库，required status checks 配不了——admin 实测 403 "Upgrade to Pro"，
+# 2026-08-13）红着的 checks 照样能 merge：它做的是把检查状态醒目摆在 merge 按钮
+# 上方，把决定留给人。平台持同一姿态：采纳界面在点击前展示 /pr-checks 的实时
+# 状态（前端 WorkspaceView 的 PR chip + 每条 check 行），合并时再读一次并把
+# 当时的状态原样写进卡片 note 和房间通知——人看着红点采纳是合法决定，但那个
+# 决定必须留痕。
 
 
-def _is_known_workflow_scope_degrade(exc: BaseException) -> bool:
-    """Did the two-phase push fail because this card genuinely changes workflow
-    files? `push_topic_branch_for_github_pr` already absorbs the FIRST such
-    rejection (it syncs GitHub's default branch in and pushes exactly once
-    more), so a workflow-permission rejection that reaches this caller is the
-    SECOND one — a precise signal, no file-tree diff needed. A sync that could
-    not complete raises a different message ("…无法同步"), which does not match
-    and stays in the ⚠️ bucket, correctly: that one does need a human."""
-    from app.domain.workspace.service import _is_workflow_permission_rejection
+#: check-run conclusions that read as green. `neutral` and `skipped` are
+#: non-blocking by GitHub's own semantics; everything else that is not
+#: `success` (failure / timed_out / cancelled / action_required / stale) reads
+#: as red.
+_GREEN_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
-    return isinstance(exc, ValidationError) and _is_workflow_permission_rejection(
-        str(exc)
-    )
+
+def _checks_summary(checks: list[dict] | None) -> str:
+    """One line mirroring the forge's check state at merge time — GitHub
+    merge-box style, for the card note and the room notification. Never used
+    to block anything."""
+    if checks is None:
+        return "合并前未能读取 CI 检查状态"
+    if not checks:
+        return "该 PR 没有任何 CI 检查"
+    not_green = [
+        c
+        for c in checks
+        if c.get("status") != "completed"
+        or (c.get("conclusion") or "") not in _GREEN_CHECK_CONCLUSIONS
+    ]
+    if not not_green:
+        return f"CI 检查全绿（{len(checks)} 项）"
+    red = [c for c in not_green if c.get("status") == "completed"]
+    running = [c for c in not_green if c.get("status") != "completed"]
+    parts = []
+    if red:
+        parts.append("未通过：" + "、".join(str(c.get("name")) for c in red[:5]))
+    if running:
+        parts.append("还在跑：" + "、".join(str(c.get("name")) for c in running[:5]))
+    return f"CI 检查未全绿（{'；'.join(parts)}）"
+
+
+def _github_merge_refusal_message(exc: BaseException) -> str:
+    """GitHub's own sentence out of a 405 body, for faithful surfacing — the
+    body rides in the exception text as JSON (`{"message": "...", ...}`).
+    Empty string when there is no parseable message (fakes, truncation)."""
+    match = re.search(r'"message"\s*:\s*"([^"]+)"', str(exc))
+    return match.group(1)[:300] if match else ""
 
 
 def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
@@ -208,16 +247,15 @@ def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
     was never eligible for the PR path at all. No-op when the PR path never
     even attempted a degrade for this accept (`pr_degrade_reason` empty).
 
-    Two shapes, so a reader can tell 正常 from 需要处理 at a glance: the known
-    workflow-scope limitation gets a calm ℹ️ sentence and no git output (the
-    300-char rejection tail is pure noise for a card whose whole point is that
-    it edits workflow files), everything else keeps the ⚠️ + raw-error form."""
+    One shape: ⚠️ + the raw reason. Every degrade that ends in a local merge
+    deserves a human's glance now — the calm ℹ️ variant for workflow-scope
+    rejections is gone with its "known permanent limitation" premise: the
+    platform's App credential has held `workflows:write` since 2026-08-12
+    (installation 152342238), so a workflow-file rejection is a failure to
+    look at, not a fact of life to absorb."""
     if not pr_degrade_reason:
         return base
-    if pr_degrade_reason == _WORKFLOW_SCOPE_DEGRADE_REASON:
-        prefix = f"ℹ️ {pr_degrade_reason}"
-    else:
-        prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
+    prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
     return (f"{prefix}；{base}" if base else prefix)[:2000]
 
 
@@ -683,17 +721,61 @@ class AcceptService:
         # 采纳即合并 (#296): a card that ALREADY rides a real PR — the App opened
         # it fire-and-forget when the card was filed (pr_publish.py, now on by
         # default via settings.accept_via_pr) — is accepted by merging THAT PR
-        # via the API, never by opening a second one. Falls through to the local
-        # path when GitHub is unreachable (availability must never regress) —
-        # the merge commit landing on main closes the PR anyway.
+        # via the API, never by opening a second one.
+        #
+        # The boundary everything below branches on (#363): is this project
+        # BOUND to GitHub (App installation resolved + GitHub https upstream)?
+        #   - Bound: accepting merges a PR, and ONLY a PR. A card without one
+        #     (filed before accept_via_pr was deployed, or its fire-and-forget
+        #     publish failed / is still in flight) gets its App PR opened right
+        #     here first — #328 shipped without this, its coexistence guard
+        #     dropped legacy PR-less cards into the local-merge branch below,
+        #     and dev's main received merge commits with no PR at all
+        #     (c33cfabf, 8f9b9d94). Any PR-path failure (can't open, GitHub
+        #     unreachable, PR closed unmerged) STOPS the accept visibly
+        #     (note + ValidationError) — for a bound project the local merge
+        #     is never a fallback. The one PR-less case that legitimately
+        #     proceeds is a topic with no branch (discussion-only): the local
+        #     merge below no-ops and nothing bypasses anything.
+        #   - Unbound: the platform IS the forge (#363). The local merge is
+        #     the project's one legitimate accept semantics — not a degrade —
+        #     and the card says so in plain words (`_PLATFORM_FORGE_NOTE`) so
+        #     it can never be mistaken for a bound card that skipped its PR.
+        #   - App mechanism off entirely (`pr_publish.enabled()` False — no
+        #     App configured, or the .env override): the pre-#296 world, with
+        #     the two-phase personal-token path and its graceful degrades,
+        #     stays exactly as it was.
         pr_degrade_reason = ""
+        unbound_note = ""
+        app_owns_prs = pr_publish.enabled()
+        try:
+            github_bound = app_owns_prs and await self._github_bound(topic.project_id)
+        except Exception as exc:  # noqa: BLE001 — fail CLOSED: can't pick a lane blind
+            # Unable to even determine the binding (DB hiccup, config error):
+            # choosing the local merge here could silently bypass a PR that
+            # does exist, so the accept stops instead — visibly, retryably.
+            logger.exception(
+                "could not resolve GitHub binding for project %s", topic.project_id
+            )
+            raise ValidationError(
+                "采纳未完成：暂时无法判定项目的 GitHub 绑定状态，稍后重试采纳"
+            ) from exc
+        if github_bound and card.pr_number is None:
+            await self._publish_pr_for_accept(card, topic)
         if card.pr_number is not None:
             settled, existing_pr_degrade_reason = await self._accept_via_pr(
                 card, topic, decided_by
             )
             if settled is not None:
                 return settled
+            if github_bound:
+                # 绑定 GitHub 的项目采纳永不落 local merge (#363).
+                await self._stop_accept_pr_unavailable(
+                    card, topic, existing_pr_degrade_reason
+                )
             pr_degrade_reason = existing_pr_degrade_reason
+        elif app_owns_prs and not github_bound:
+            unbound_note = _PLATFORM_FORGE_NOTE
 
         # 两阶段采纳 (PR迭代式, 2026-08-09): no PR yet — try opening a NEW one via
         # the approver's own connected GitHub token. Any missing prerequisite
@@ -704,14 +786,15 @@ class AcceptService:
         # is exactly as "mechanism unavailable" as a missing token.
         #
         # 采纳即合并 (#296) coexistence guard: when the App owns PR creation
-        # (`pr_publish.enabled()`), this personal-token path is SKIPPED. A
-        # PR-less card at this point means the App PR has not landed yet (the
-        # fire-and-forget publish is still in flight) or genuinely could not be
-        # opened (non-GitHub upstream, GitHub down at filing) — either way,
-        # opening a competing personal-token PR here is exactly the "run both
-        # mechanisms at once" the design warns against, so the card degrades to
-        # the local merge instead. The two-phase path stays live only where the
-        # App mechanism is off (a project without the App, or the .env override).
+        # (`pr_publish.enabled()`), this personal-token path is SKIPPED —
+        # opening a competing personal-token PR is exactly the "run both
+        # mechanisms at once" the design warns against. A card still PR-less
+        # at this point in that world is either on an unbound project (#363:
+        # the platform is its forge, the local merge below is its one accept)
+        # or a discussion-only topic with no branch (the merge no-ops); a
+        # GitHub-side failure never reaches here — it raises above. The
+        # two-phase path stays live only where the App mechanism is off (a
+        # project without the App, or the .env override).
         #
         # `pr_degrade_reason` makes WHY visible (this card's whole reason for
         # existing): every path below that falls through to the local-merge
@@ -755,18 +838,21 @@ class AcceptService:
                         topic.id,
                         exc,
                     )
-                    if _is_known_workflow_scope_degrade(exc):
-                        # Known limitation, not a failure — say so plainly and
-                        # drop the raw git rejection (see the sentinel above).
-                        two_phase_degrade_reason = _WORKFLOW_SCOPE_DEGRADE_REASON
-                    else:
-                        # exc is either GitHubPrError (GitHub's own response body,
-                        # capped at 300 chars) or a ValidationError from a git
-                        # push failure (the token travels via an env-var
-                        # credential helper, never argv/URL — see _token_push_env
-                        # — so git's stderr can't contain it either); safe to
-                        # surface verbatim, same as the push_back() note below.
-                        two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
+                    # exc is either GitHubPrError (GitHub's own response body,
+                    # capped at 300 chars) or a ValidationError from a git
+                    # push failure (the token travels via an env-var
+                    # credential helper, never argv/URL — see _token_push_env
+                    # — so git's stderr can't contain it either); safe to
+                    # surface verbatim, same as the push_back() note below.
+                    # A workflow-permission rejection lands here too now: its
+                    # ℹ️ "known permanent limitation" sentinel is deleted. On
+                    # the App path these cards just work (the App has held
+                    # `workflows:write` since 2026-08-12); on THIS
+                    # personal-token path a rejection that survives the
+                    # sync-and-retry in push_topic_branch_for_github_pr means
+                    # the approver's own token lacks the workflow scope —
+                    # worth a human's ⚠️ look, never a calm auto-direct-merge.
+                    two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
         # Combine rather than overwrite: an existing-PR degrade (closed
         # unmerged / merge-call failure, see `_accept_via_pr`) must not be
         # silently dropped just because the two-phase attempt that follows it
@@ -869,6 +955,11 @@ class AcceptService:
             # deserves the degrade reason — the two-phase attempt happened
             # and fell back, even though there's no push outcome to report.
             card.note = _with_pr_degrade_note("", pr_degrade_reason)
+        if unbound_note:
+            # 平台即 forge (#363): 如实标注，而不是让这张卡看起来像绕过了 PR。
+            card.note = (f"{unbound_note}；{card.note}" if card.note else unbound_note)[
+                :2000
+            ]
 
         # Topic is done → free its long-lived compute (container + device screen).
         await self._release_topic_compute(topic)
@@ -2122,6 +2213,131 @@ class AcceptService:
         await self._session.refresh(card)
         self._notify_merge_result(topic, message)
 
+    async def _github_bound(self, project_id: uuid.UUID) -> bool:
+        """Is this project bound to GitHub — an App installation resolved for
+        it AND a GitHub https upstream? The single judgment the accept path
+        branches on (#363): bound → accepting merges a PR and only a PR;
+        unbound → the platform IS the forge, and the local merge is the one
+        legitimate accept semantics (not a degrade)."""
+        from app.domain.agent.github_app import github_app_tokens_for_project
+        from app.domain.review.github_pr import parse_github_repo
+        from app.domain.workspace import service as ws
+
+        tokens = await github_app_tokens_for_project(project_id, self._session)
+        if tokens is None:
+            return False
+        upstream = await asyncio.to_thread(ws.get_upstream, project_id)
+        return parse_github_repo(upstream) is not None
+
+    async def _stop_accept_pr_unavailable(
+        self, card: AcceptCard, topic: Topic, reason: str
+    ) -> NoReturn:
+        """绑定 GitHub 的项目采纳永不落 local merge (#363): when the card's PR
+        cannot be merged right now (GitHub unreachable, PR closed unmerged, …)
+        the accept STOPS — visibly and retryably — instead of bypassing the PR
+        and its CI with a direct push. The note is persisted outside this
+        transaction because the ValidationError below rolls it back."""
+        why = reason or f"PR #{card.pr_number} 暂时无法推进"
+        await self._note_outside_accept_txn(
+            card.id,
+            f"{_ACCEPT_PR_STALLED_PREFIX}（{why}）。绑定 GitHub 的项目采纳只通过"
+            "合并 PR 完成，平台不会绕过 PR 直推上游；处理后重试采纳。",
+        )
+        self._notify_merge_result(
+            topic,
+            f"⛔ 采纳未完成：PR 未能合并（{why}）。平台不会绕过 PR 直推上游；"
+            "处理后可重试采纳。",
+        )
+        raise ValidationError(f"采纳未完成：PR 未能合并（{why}）。处理后重试采纳")
+
+    async def _publish_pr_for_accept(self, card: AcceptCard, topic: Topic) -> None:
+        """存量无 PR 卡在采纳现场补开 App PR（#296 stage 1 的生产回归修复）.
+
+        Cards already pending when `accept_via_pr` went live never had a PR
+        opened at filing time (and a fire-and-forget publish can also fail, or
+        still be in flight) — #328's coexistence guard then dropped them into
+        the local-merge branch, which direct-pushed merge commits to main with
+        no PR at all (dev: c33cfabf, 8f9b9d94). The repair is to open the App
+        PR HERE and let the normal PR accept path merge exactly that PR.
+
+        Synchronous by design: the accept's outcome must depend on the publish
+        result, and `_accept_via_pr` already runs pushes and the merge API
+        call inside the accept request — one more push plus one create-PR call
+        is the same latency class, so no dispatch/poll machinery is warranted.
+        Racing a still-in-flight fire-and-forget publish is benign: the push
+        is force-with-lease of the same branch, `open_pr` adopts an
+        already-open PR for the head instead of failing, and `record_pr`
+        writes the same numbers this method records.
+
+        On success the PR is recorded on the card DURABLY, outside the accept
+        transaction (`pr_publish.record_pr`): if the accept goes on to fail —
+        a faithful 405 refusal from `_accept_via_pr` raises ValidationError
+        and rolls this request back — the card must keep the PR it now rides,
+        or the next attempt would look PR-less again. The caller then
+        proceeds to `_accept_via_pr`. `open_pr_for_card` can still return
+        None (its own not-applicable checks); with the caller pre-checking
+        `_github_bound`, in practice that means a discussion-only topic with
+        no branch — the card is left untouched and the local merge no-ops.
+        When opening the PR FAILS, the accept STOPS: the reason is persisted
+        on the card outside this transaction, the room is told, and
+        ValidationError surfaces to the caller. Silently direct-pushing main
+        without a PR is never a fallback on a bound project (#363, all
+        commits go through PR)."""
+        try:
+            pr = await pr_publish.open_pr_for_card(
+                self._session,
+                card_id=card.id,
+                topic_id=topic.id,
+                project_id=topic.project_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — surface on the card; never direct-push
+            logger.exception("accept-time PR publication failed for card %s", card.id)
+            reason = f"{exc}"[:300]
+            await self._note_outside_accept_txn(
+                card.id,
+                f"{_ACCEPT_PR_OPEN_FAILED_PREFIX}（{reason}）。"
+                "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳。",
+            )
+            self._notify_merge_result(
+                topic,
+                f"❌ 采纳未完成：无法为这张卡开 PR（{reason}）。"
+                "平台不会在没有 PR 的情况下把改动直推上游；处理后可重试采纳。",
+            )
+            raise ValidationError(
+                "采纳未完成：无法为这张卡开 PR（原因已写在卡片上）。"
+                "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳"
+            ) from exc
+        if pr is None:
+            return  # PR 路对这个项目/话题不适用 — 本地合并就是它唯一的采纳方式
+        # Durable first (survives a later rollback of this request), then the
+        # in-memory mirror so the rest of THIS accept sees the PR. Same
+        # bind-not-global-factory reasoning as _note_outside_accept_txn.
+        factory = async_sessionmaker(self._session.bind, expire_on_commit=False)
+        await pr_publish.record_pr(factory, card_id=card.id, pr=pr)
+        card.pr_number = int(pr["number"])
+        card.pr_url = str(pr.get("html_url") or "")[:255] or None
+        if card.note.startswith(pr_publish.PR_OPEN_FAILED_PREFIX):
+            card.note = ""  # mirror record_pr's stale-failure-note clearing
+        await self._session.flush()
+
+    async def _note_outside_accept_txn(self, card_id: uuid.UUID, note: str) -> None:
+        """Persist a card note through its own session + commit, so it survives
+        the rollback of the accept transaction it accompanies (the caller is
+        about to raise). Sessions are minted off the request session's own
+        engine — NOT the module-level `async_session_factory`, which the test
+        harness binds to a different database than the request session.
+        Best-effort: the raise this note accompanies must fire regardless."""
+        try:
+            factory = async_sessionmaker(self._session.bind, expire_on_commit=False)
+            async with factory() as session:
+                fresh = await AcceptCardRepository(session).get(card_id)
+                if fresh is None:
+                    return
+                fresh.note = note[:2000]
+                await session.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("could not record the PR-open failure on card %s", card_id)
+
     async def _accept_via_pr(
         self, card: AcceptCard, topic: Topic, decided_by: str
     ) -> tuple[AcceptCard | None, str]:
@@ -2137,6 +2353,16 @@ class AcceptService:
         when there's nothing worth surfacing, e.g. the App simply isn't
         configured for this project) — the caller folds it into the same
         `pr_degrade_reason` that ends up on the card's note.
+
+        Mergeability posture (#362, 对齐 GitHub — see the module comment above
+        `_checks_summary`): right before merging, the PR's check-runs are read
+        once and their state is mirrored into the accept's note and room
+        notification — never used to block. A 405 from the merge API is
+        translated faithfully: a genuine conflict goes to the conflict flow
+        (芝士 dispatched to resolve), anything else (draft, required reviews,
+        …) surfaces GitHub's own message and stops the accept — sending 芝士
+        to "resolve" a conflict that does not exist wastes a turn and writes
+        a false history on the card.
         """
         from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review.github_pr import (
@@ -2180,13 +2406,46 @@ class AcceptService:
             await asyncio.to_thread(
                 ws.push_topic_branch, topic.project_id, topic.id, token
             )
+            # CI 镜像 (#362): read the branch tip's check-runs once and carry
+            # their state into the note/notification below — the human saw the
+            # same state in the accept UI (/pr-checks) before clicking, and
+            # the platform never blocks on it. A failed read must not block
+            # the merge either; it is reported as exactly that.
+            try:
+                checks = await client.check_runs(branch)
+            except Exception:  # noqa: BLE001 — mirror-only, never blocks the accept
+                logger.exception("pre-merge check-runs read failed for PR #%s", number)
+                checks = None
+            checks_line = _checks_summary(checks)
             await client.merge_pr(
                 number,
                 title=f"采纳 {branch} → {view.get('base', {}).get('ref', 'main')} "
                 f"(#{number})",
                 message=f"验收人：{decided_by}\n\n{card.routing_reason}".strip(),
             )
-        except GitHubPRMergeBlocked:
+        except GitHubPRMergeBlocked as blocked:
+            # 405 covers a whole family of "cannot merge right now" reasons
+            # (real conflict, draft, required reviews, …). 如实转译 (#362):
+            # only a genuine conflict belongs in the conflict flow below —
+            # for everything else, surface GitHub's own message and stop the
+            # accept. GitHub's body names the reason; the PR view's
+            # mergeable/mergeable_state corroborate. When neither identifies
+            # the reason (message unparseable AND view undecided), keep the
+            # conflict flow — the safe, previously-universal default.
+            github_msg = _github_merge_refusal_message(blocked)
+            mergeable_state = str(view.get("mergeable_state") or "").lower()
+            is_conflict = (
+                view.get("mergeable") is False
+                or mergeable_state == "dirty"
+                or (not github_msg)
+                or "not mergeable" in github_msg.lower()
+            )
+            if not is_conflict:
+                refusal = f"GitHub 拒绝合并 PR #{number}：{github_msg}"
+                self._notify_merge_result(
+                    topic, f"⛔ 采纳未合并：{refusal}（{card.pr_url or ''}）"
+                )
+                raise ValidationError(refusal) from blocked
             # Same contract as a local merge conflict: card → conflict, 芝士 is
             # dispatched (routes/accept.py), human retries. Sync the local base
             # first so the materialized conflict matches what GitHub sees.
@@ -2223,7 +2482,13 @@ class AcceptService:
             return None, f"PR #{number} 采纳失败：{exc}"[:300]
 
         settled = await self._settle_pr_accept(
-            card, topic, decided_by, note=f"已通过 PR #{number} 合并到上游"
+            card,
+            topic,
+            decided_by,
+            # 合并那一刻 forge 检查状态的留痕 (#362): a red or absent CI at
+            # merge time was the human's call to make — but the call and its
+            # context must be readable on the card afterwards.
+            note=f"已通过 PR #{number} 合并到上游（合并时{checks_line}）",
         )
         return settled, ""
 

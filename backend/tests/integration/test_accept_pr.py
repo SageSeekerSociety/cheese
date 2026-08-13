@@ -1107,11 +1107,18 @@ def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
 ):
     """采纳即合并 (#296) coexistence: when the App owns PR creation
     (`pr_publish.enabled()`), accepting a PR-less card must NOT open a competing
-    personal-token PR — it degrades to the local merge instead. This is the
-    guard that makes flipping `accept_via_pr` on safe: without it, the App
-    publish and the accept-time personal-token path could both open a PR in the
-    publish race window."""
+    personal-token PR. This is the guard that makes flipping `accept_via_pr` on
+    safe: without it, the App publish and the accept-time personal-token path
+    could both open a PR in the publish race window.
+
+    What happens to the PR-less card instead CHANGED with the #328 regression
+    fix: on a GitHub-bound project the accept now opens the App's own PR on
+    the spot and merges it (see test_accept_pr_publish.py). Here the project
+    is UNBOUND — no GitHub upstream — so the platform is its forge (#363) and
+    the accept completes via the local merge (noop), labelled as such, still
+    with zero personal-token PRs anywhere."""
     from app.core.config import settings
+    from app.domain.agent import github_app
     from app.domain.review import pr_publish
     from app.domain.review.services import AcceptService
 
@@ -1127,6 +1134,21 @@ def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
         # doesn't spawn a real installation lookup. Its being enabled() is what
         # makes the App the owner of PR creation.
         monkeypatch.setattr(pr_publish, "dispatch", lambda *_a, **_k: None)
+        # The binding check and any accept-time publish resolve App tokens
+        # (the REAL resolver would trip over _pr_ready's minimal fake
+        # installation); with tokens in hand the project still has no GitHub
+        # upstream → unbound, platform-as-forge lane.
+        _app_tokens = object()
+
+        async def _fake_app_tokens(_project_id, _session):
+            return _app_tokens
+
+        monkeypatch.setattr(
+            github_app, "github_app_tokens_for_project", _fake_app_tokens
+        )
+        monkeypatch.setattr(
+            pr_publish, "github_app_tokens_for_project", _fake_app_tokens
+        )
 
         opened_personal: list[dict] = []
         real_open = AcceptService._open_pr_for_accept
@@ -1151,8 +1173,10 @@ def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
         # client was ever touched.
         assert opened_personal == []
         assert fake.opened == []
-        # Degraded to the local merge (noop on an empty topic) and archived.
+        # Unbound project → platform is the forge (#363): the local merge
+        # (noop on an empty topic) IS the accept, labelled as such.
         assert card["status"] == "accepted"
+        assert "本项目未接 GitHub" in card["note"]
         assert _topic(client, tid)["status"] == "archived"
     finally:
         _reset_client()

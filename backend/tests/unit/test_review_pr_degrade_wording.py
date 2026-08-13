@@ -1,14 +1,17 @@
-"""两阶段采纳降级措辞分两种 (2026-08-10).
+"""两阶段采纳降级措辞 (2026-08-10, revised 2026-08-13).
 
-A card that falls back from the PR path to a direct merge used to read the same
-way whatever went wrong: "⚠️ 未走 PR 采纳（GitHub 侧调用失败：…300 chars of raw
-git rejection…）". For a card that genuinely edits `.github/workflows/` that is
-not a failure at all — it is a known, permanent limitation — and the ⚠️ + git
-log made it look broken every single time.
+A card that falls back from the personal-token PR path to a direct merge keeps
+the reason on `card.note`: "⚠️ 未走 PR 采纳（GitHub 侧调用失败：…raw tail…）".
+There used to be a second, calm ℹ️ shape for workflow-permission rejections,
+premised on those being a KNOWN PERMANENT limitation of the platform's
+credential — that premise died on 2026-08-12 when the GitHub App was granted
+`workflows:write` (installation 152342238), so the sentinel is deleted and a
+workflow rejection now reads exactly like every other GitHub-side failure:
+⚠️, needing a human, never a calm auto-direct-merge.
 
-These tests pin the OBSERVABLE difference on `card.note`, and pin the invariant
-that makes the prefix change safe: a degraded card never reaches the pr_open
-poller whose dedup keys on `note.startswith("⚠️")`.
+These tests pin that single wording on `card.note`, and pin the invariant that
+keeps the prefix safe: a degraded card never reaches the pr_open poller whose
+dedup keys on `note.startswith("⚠️")`.
 """
 
 import asyncio
@@ -108,30 +111,6 @@ def _fail_push(monkeypatch, message: str) -> None:
 
 
 @pytest.mark.anyio
-async def test_workflow_scope_rejection_reads_as_a_known_limit(monkeypatch):
-    """同步后仍被 workflow 权限拒绝 → 平静措辞，且不倒原始 git 日志。"""
-    service, card, topic = _accept_service()
-    _stub_local_merge(monkeypatch)
-    _fail_push(monkeypatch, WORKFLOW_REJECTION)
-
-    await service.accept(card_id=card.id, decided_by="alice")
-    await asyncio.sleep(0)  # let the fire-and-forget room notify run
-
-    assert card.status == AcceptStatus.accepted
-    assert not card.note.startswith("⚠️")
-    assert card.note.startswith("ℹ️")
-    # Explains itself in the card, without a human having to read git's output.
-    assert ".github/workflows/" in card.note
-    assert "workflows 权限" in card.note
-    # The 300-char raw rejection is pure noise for this case — it must be gone.
-    assert "refusing to allow" not in card.note
-    assert "remote rejected" not in card.note
-    assert "GitHub 侧调用失败" not in card.note
-    # The actual outcome is still reported.
-    assert "已合并并推送到上游 origin/main" in card.note
-
-
-@pytest.mark.anyio
 @pytest.mark.parametrize(
     ("message", "fragment"),
     [
@@ -152,10 +131,16 @@ async def test_workflow_scope_rejection_reads_as_a_known_limit(monkeypatch):
             "（merge conflict）",
             "无法同步",
         ),
+        # A workflow-permission rejection that survived the sync-and-retry in
+        # push_topic_branch_for_github_pr. No longer a calm ℹ️ "known
+        # permanent limitation" — the App holds `workflows:write` since
+        # 2026-08-12, and on this personal-token path it means the approver's
+        # own token lacks the workflow scope: a human should look.
+        (WORKFLOW_REJECTION, "refusing to allow"),
     ],
 )
-async def test_other_failures_keep_the_warning_wording(monkeypatch, message, fragment):
-    """其它一切失败 → 保持 ⚠️ + 原始错误尾巴。"""
+async def test_all_failures_keep_the_warning_wording(monkeypatch, message, fragment):
+    """一切失败 → ⚠️ + 原始错误尾巴，没有平静的 ℹ️ 例外。"""
     service, card, topic = _accept_service()
     _stub_local_merge(monkeypatch)
     _fail_push(monkeypatch, message)
