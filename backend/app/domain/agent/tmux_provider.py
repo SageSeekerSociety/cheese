@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
+from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
 from app.domain.agent import awaited_tasks, clone, provider_env
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
@@ -36,7 +36,7 @@ from app.domain.agent.hooks_substrate import (
     ScreenSetupError,
     hooks_settings,
 )
-from app.domain.agent.sandbox_notices import warn_image_switch_rebuild
+from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.identity.handles import topic_agent_handle
@@ -287,6 +287,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         image_switched = exists and cur_image.strip() != self._image
         env_drifted = False
         cli_mount_stale = False
+        token_dead = False
         if exists and not image_switched:
             _, cur_stamp, _ = await _docker(
                 "inspect", "-f", f'{{{{index .Config.Labels "{_ENV_LABEL}"}}}}', name
@@ -297,21 +298,90 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             # image's baked copy) for the life of the topic — the very staleness
             # this mount exists to prevent. Recheck it like the model route.
             cli_mount_stale = await self._cli_mount_stale(name, env["SBX_SESSION"])
-        if image_switched or env_drifted or cli_mount_stale:
-            await _docker("rm", "-f", name)  # image, model route, or CLI mount
+            token_dead = await self._hook_token_dead(name)
+        # First match wins, so the room is told the most specific thing that is
+        # true. None means "nothing was torn down" — either the box is fine, or
+        # this is its first creation.
+        cause = next(
+            (
+                c
+                for c, hit in (
+                    ("image", image_switched),
+                    ("env", env_drifted),
+                    ("cli_mount", cli_mount_stale),
+                    ("token", token_dead),
+                )
+                if hit
+            ),
+            None,
+        )
+        if cause is not None:
+            await _docker("rm", "-f", name)
             exists = False
         if not exists:
             await self._create_container(name, env)
-            if image_switched or env_drifted or cli_mount_stale:
+            if cause is not None:
                 # The old box (and anything running in it — the interactive
                 # session, background processes) is gone with no other
                 # warning; tell the topic (best-effort, never blocks the turn).
-                await warn_image_switch_rebuild(topic_id)
+                # `cause` is None only on a FIRST creation, where nothing was
+                # destroyed and there is nothing to announce.
+                await warn_container_rebuilt(topic_id, cause)
             return name
         rc, running, _ = await _docker("inspect", "-f", "{{.State.Running}}", name)
         if running.strip() != "true":
             await _docker("start", name)
         return name
+
+    @staticmethod
+    async def _hook_token_dead(name: str) -> bool:
+        """True when the box's baked ``CHEESE_TOKEN`` no longer verifies.
+
+        This is the box going DEAF, and until it was checked here nothing ever
+        noticed. The hook forwarder sends that token on every event; the
+        endpoint 401s a token it cannot verify and returns — no log, no spool,
+        no listener. The turn then runs to its ceiling having observed nothing:
+        `first_output_s: null`, `tools: 0`, while `claude` inside the box is
+        working perfectly.
+
+        A live token is baked in at CREATION and never refreshed (see
+        `_ensure_container`'s docstring — env is fixed then, and the box outlives
+        many turns). Its 30-day TTL is not the problem. The signing secret is:
+        `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per PROCESS
+        when `SANDBOX_TOKEN` is not pinned in the deployment, so **every backend
+        restart invalidates every existing box's token at once**. On a
+        deploy-on-merge setup that is many times a day (#316), and nothing
+        rebuilds those boxes: the image tag only changes when a merge changes it,
+        so a restart alone leaves every topic permanently unable to reply.
+
+        Rebuilding costs the tmux session (the topic's conversational
+        continuity), which is why it is not done lightly — but a deaf box has
+        already lost more than that, since it can never answer again.
+        """
+        rc, out, _ = await _docker(
+            "inspect",
+            "-f",
+            "{{range .Config.Env}}{{println .}}{{end}}",
+            name,
+        )
+        if rc != 0:
+            return False  # can't tell — never destroy a box on a failed inspect
+        baked = ""
+        project = ""
+        topic = ""
+        for line in out.splitlines():
+            key, _, value = line.partition("=")
+            if key == "CHEESE_TOKEN":
+                baked = value
+            elif key == "CHEESE_PROJECT":
+                project = value
+            elif key == "CHEESE_TOPIC":
+                topic = value
+        if not baked or not project or not topic:
+            # A box predating scoped hook tokens. Unknown is not evidence of
+            # death — same rule as the env stamp, and for the same reason.
+            return False
+        return not verify_scoped_token(baked, project_id=project, topic_id=topic)
 
     @staticmethod
     async def _cli_mount_stale(name: str, session_host: str) -> bool:

@@ -87,6 +87,28 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_live_in_project(
+        self, project_id: uuid.UUID, *, statuses: tuple[AcceptStatus, ...]
+    ) -> list[AcceptCard]:
+        """Every undecided card anywhere in a project, with its topic.
+
+        Scoped by project rather than by topic because the question it answers
+        is about *siblings*: two rooms in the same project each about to land a
+        change (#314). Archived topics are excluded — their cards are already
+        closed, and a room nobody is tracking cannot collide with anything.
+        """
+        stmt = (
+            select(AcceptCard)
+            .join(Topic, Topic.id == AcceptCard.topic_id)
+            .where(
+                Topic.project_id == project_id,
+                Topic.status != TopicStatus.archived,
+                AcceptCard.status.in_(statuses),
+            )
+            .order_by(AcceptCard.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_pr_open_on_active_topics(self) -> list[AcceptCard]:
         """两阶段采纳 (PR迭代式): every card the PR/deploy poller may advance.
 

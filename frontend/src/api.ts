@@ -112,8 +112,96 @@ export class ApiError extends Error {
   }
 }
 
+// How close to expiry is "about to expire". The refresh below is what keeps a
+// request from going out as nobody; a token that dies in flight costs the same
+// as one that was already dead, so leave room for the round trip.
+const TOKEN_REFRESH_LEEWAY_MS = 60_000
+
+// One refresh in flight at a time. Without this, a page that fires eight
+// requests on mount fires eight refreshes, and the losers race to overwrite
+// `accessToken` with each other's result.
+let refreshInFlight: Promise<void> | null = null
+
+export function tokenExpiresWithin(token: string, ms: number): boolean {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { exp?: number }
+    if (typeof payload.exp !== 'number') return false
+    return payload.exp * 1000 - Date.now() <= ms
+  } catch {
+    // Not a JWT we can read — leave it alone rather than refresh on every call.
+    return false
+  }
+}
+
+// 2.0 rides raw `fetch`, so it never passes through the axios response
+// interceptor that refreshes on 401 — and most 2.0 routes do not answer 401
+// anyway: they resolve the actor from the token and fall back to "nobody" when
+// it does not verify. Both halves fail silently, which is how an expired token
+// turned into 「左边栏冒出一堆不是我的项目」: the request went out as an anonymous
+// caller, and the sidebar listing used to answer an anonymous caller with every
+// project on the platform. The listing is scoped now (that is the security
+// half), but a signed-in user whose token lapsed would still see an empty
+// sidebar. So refresh it here, before the request, rather than react to a
+// failure the transport cannot see.
+//
+// `GET /projects` is no longer one of the silent ones — it 401s on a bearer
+// that failed to verify, so `request()`'s retry can heal it. Do not read that
+// as "the transport can see it now": it holds for that one route, and this
+// pre-request refresh is still what covers the rest.
+export async function ensureFreshToken(): Promise<void> {
+  const token = authToken()
+  if (!token || !tokenExpiresWithin(token, TOKEN_REFRESH_LEEWAY_MS)) return
+  await refreshNow()
+}
+
+/**
+ * Refresh regardless of what the token's own `exp` claims.
+ *
+ * `ensureFreshToken` trusts `exp`, and `exp` is not the only way a token dies.
+ * Measured on dev: a token minted 443s earlier, with 457s of its 900s life
+ * left, was rejected 24 times out of 24 by BOTH api layers, while one minted
+ * seconds later worked — and `decode_token` does pure JWT verification with no
+ * revocation store, so the signing secret must have changed under us (a backend
+ * restart). Trusting `exp` alone means a signed-in user then 401s on every
+ * request for up to 14 minutes, until the token nears the expiry that would
+ * finally trigger a refresh. That is the 「通知铃铛必 401」 shape.
+ *
+ * Shares `refreshInFlight` with `ensureFreshToken`, so a burst of 401s costs one
+ * refresh, not one each.
+ */
+export async function refreshNow(): Promise<void> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      try {
+        const res = await fetch('/api/users/auth/refresh-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        })
+        if (!res.ok) return
+        const body = (await res.json()) as { data?: { accessToken?: string } }
+        const next = body?.data?.accessToken
+        if (next) localStorage.setItem('accessToken', next)
+      } catch {
+        // Offline, or the refresh cookie is gone. Sending the stale token is
+        // no worse than sending nothing, and the caller still sees the result.
+      } finally {
+        refreshInFlight = null
+      }
+    })()
+  }
+  await refreshInFlight
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase()
+  await ensureFreshToken()
+  // A 401 is retried once, for ANY method, after forcing a refresh — see
+  // `refreshNow`. Safe for writes too: a 401 means the request was rejected at
+  // the door, so nothing happened that a retry could duplicate. Only retried
+  // when the refresh actually produced a different token, or a server that 401s
+  // for some other reason would make every call fire twice.
+  let authRetried = false
   for (let attempt = 0; ; attempt += 1) {
     let res: Response
     try {
@@ -133,6 +221,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       continue
     }
     if (!res.ok) {
+      if (res.status === 401 && !authRetried) {
+        authRetried = true
+        const before = authToken()
+        await refreshNow()
+        // `attempt` is deliberately not advanced: this retry is not one of the
+        // transport's backoff attempts, and spending one here would cost a real
+        // 502 its retry budget.
+        if (authToken() !== before) {
+          attempt -= 1
+          continue
+        }
+      }
       if (attempt < GET_RETRY_DELAYS_MS.length && isRetryableGetFailure(method, res.status)) {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue

@@ -55,6 +55,21 @@ async def lifespan(_: FastAPI):
     # changed. (reap_sandbox_containers stays available as an ops tool.)
     # Orphan sweep: resume turns the previous process died with (see
     # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
+    # ...and that reuse is exactly why the hook credential must survive a
+    # restart. `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per
+    # PROCESS when unset, which silently invalidates the token baked into every
+    # existing box — every topic goes deaf at once, with the turn reporting no
+    # output at all rather than an error. `_hook_token_dead` now rebuilds such a
+    # box, but that costs the topic its tmux session, so say plainly that this
+    # deployment is choosing to pay it on every restart.
+    if settings.agent_sandbox_enabled and not settings.sandbox_token:
+        get_logger("cheesex.runtime").warning(
+            "SANDBOX_TOKEN is not set: the scoped-token signing secret is "
+            "regenerated on every restart, so every existing sandbox's hook "
+            "token stops verifying and its box has to be rebuilt (losing that "
+            "topic's session). Pin SANDBOX_TOKEN in the deployment env."
+        )
+
     from app.api.deps import get_chat_service, get_turn_runner
     from app.domain.scheduler.service import (
         ConclusionSweepRunner,
