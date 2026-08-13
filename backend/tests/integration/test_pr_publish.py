@@ -71,6 +71,7 @@ def _github_world(monkeypatch) -> None:
     monkeypatch.setattr(
         ws, "push_topic_branch", lambda pid, tid, token: f"topic/{tid.hex[:8]}"
     )
+    monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
     monkeypatch.setattr(ws, "ensure_repo", lambda pid: Path("."))
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
 
@@ -105,7 +106,11 @@ def test_publication_records_the_pr_on_the_card(client, monkeypatch):
     assert snap["pr_number"] == 42
 
 
-def test_failure_leaves_the_card_prless(client, monkeypatch):
+def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
+    """#362 修法 1: a failed publish lands ON THE CARD — a PR-less card must
+    look visibly different from one whose PR simply hasn't landed yet. A later
+    successful publish (the accept-time retry uses the same record path)
+    clears the failure note along with recording the PR."""
     _github_world(monkeypatch)
     from app.domain.review import pr_publish
     from app.domain.workspace import service as ws
@@ -128,10 +133,28 @@ def test_failure_leaves_the_card_prless(client, monkeypatch):
         )
     )
 
-    # Best-effort contract: no PR recorded, card intact, accept will fall back.
+    # No PR recorded, card still pending — but the failure is on the card.
     card = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["pr_number"] is None
     assert card["status"] == "pending"
+    assert card["note"].startswith("⚠️ 开 PR 失败")
+    assert "push refused" in card["note"]
+
+    # The push works again → a re-publish records the PR and clears the note.
+    monkeypatch.setattr(
+        ws, "push_topic_branch", lambda pid_, tid_, token: f"topic/{tid_.hex[:8]}"
+    )
+    asyncio.run(
+        pr_publish._run(
+            client.test_factory,
+            card_id=uuid.UUID(cid),
+            topic_id=uuid.UUID(tid),
+            project_id=uuid.UUID(pid),
+        )
+    )
+    card = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"][0]
+    assert card["pr_number"] == 42
+    assert card["note"] == ""
 
 
 def test_non_github_upstream_is_not_applicable(client, monkeypatch):
