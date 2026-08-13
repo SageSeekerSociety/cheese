@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from app.domain.device.models import DeviceRow
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.device.supply import Visibility
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import Team, TeamMemberRole
 from app.domain.team.repositories import TeamRepository
@@ -61,6 +62,10 @@ def test_project_can_use_a_device_registered_for_its_team(client):
                     token="tok-devteam01",
                     owner_user_id=user.id,
                     created_at=_now(),
+                    # This suite tests team/project routing, not the access axis;
+                    # pin the honest personal-box value so it never rides on the
+                    # column default.
+                    visibility=Visibility.isolated,
                 )
             )
             await s.flush()
@@ -114,6 +119,7 @@ def test_device_team_binding_is_idempotent_and_removable(client):
                     token="tok-devteam02",
                     owner_user_id=user.id,
                     created_at=_now(),
+                    visibility=Visibility.isolated,
                 )
             )
             await s.flush()
@@ -169,6 +175,7 @@ def test_personal_project_uses_owners_personal_team_devices(client):
                         token=f"tok-{did}",
                         owner_user_id=owner.id,
                         created_at=_now(),
+                        visibility=Visibility.isolated,
                     )
                 )
             await s.flush()
