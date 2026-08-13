@@ -28,8 +28,13 @@ def _service() -> DeviceService:
 
 
 async def _enrol(service: DeviceService, supply: Supply, owner: int) -> str:
+    # These tests are about SUPPLY (the destroy axis); visibility is incidental, so
+    # they enrol with the conservative default (isolated) — the value both axes now
+    # take when an entry point does not opt into the dangerous one.
     code = await service.start("a-machine")
-    device = await service.approve(code, owner_user_id=owner, supply=supply)
+    device = await service.approve(
+        code, owner_user_id=owner, supply=supply, visibility=Visibility.isolated
+    )
     return device.device_id
 
 
@@ -86,10 +91,17 @@ async def test_the_owner_may_always_remove_their_own_machine():
     assert await service.get_device(device_id) is None
 
 
-async def test_an_unclassified_device_reads_as_untouchable():
-    """The dataclass default is the SAFE reading, not the common one: anything that
-    reaches storage unclassified must mean "someone else's machine", under which the
-    platform destroys nothing."""
+async def test_an_unclassified_device_reads_as_the_safe_value_on_each_axis():
+    """Each dataclass default is the SAFE reading of ITS OWN axis — and the two axes
+    are safe in OPPOSITE directions, so an unclassified device is not "host + cloud":
+
+      * supply → self_hosted: the destroy decision reads this field, and the safe
+        reading is "someone else's machine", under which the platform destroys
+        nothing;
+      * visibility → isolated: the destroy decision does NOT read this field, so the
+        safe reading is the ACCESS-safe one (boxed), never whole-machine-visible by
+        omission (#358). `host` is 申请制.
+    """
     from app.domain.device.repository import Device
 
     device = Device(
@@ -101,4 +113,4 @@ async def test_an_unclassified_device_reads_as_untouchable():
     )
 
     assert device.supply is Supply.self_hosted
-    assert device.visibility is Visibility.host
+    assert device.visibility is Visibility.isolated

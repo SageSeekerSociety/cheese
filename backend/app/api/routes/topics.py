@@ -26,9 +26,12 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
 from app.domain.agent.market import (
+    MACHINE_VISIBILITY_NOTICE,
+    VISIBILITY_HOST,
     compute_default_name,
     compute_listings,
     compute_selectable,
+    visibility_listings,
 )
 from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, Block, BlockKind
@@ -510,6 +513,21 @@ async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
         team = await TeamRepository(db).get_by_id(project.team_id)
         team_default = team.compute_profile if team is not None else None
     device_online = await project_device_online(db, topic.project_id)
+    # #282 §四 / #358 · whether THIS topic's agent can see the whole machine. The
+    # effective answer is the visibility of the device the topic is pinned to
+    # (device affinity freezes a topic to one machine on its first turn); a topic
+    # on platform compute or not yet pinned has none. Surfaced so the room can show
+    # a visible safety badge for a Hosted Machine turn instead of the platform
+    # granting whole-machine access silently (原则八).
+    from app.domain.device.wiring import sql_device_service
+
+    device_service = sql_device_service(db)
+    pinned_device_id = await device_service.topic_device(topic_id)
+    effective_visibility: str | None = None
+    if pinned_device_id is not None:
+        pinned_device = await device_service.get_device(pinned_device_id)
+        if pinned_device is not None:
+            effective_visibility = pinned_device.visibility.value
     return ok(
         {
             "current": (
@@ -525,6 +543,16 @@ async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
                 asdict(v)
                 for v in compute_listings(settings, device_online=device_online)
             ],
+            "visibility": {
+                "options": [asdict(v) for v in visibility_listings()],
+                # "host" | "isolated" | null (platform compute / not yet pinned).
+                "effective": effective_visibility,
+                # The one boolean the room's badge keys on: this turn can see and
+                # operate the whole machine.
+                "machine_access": effective_visibility == VISIBILITY_HOST,
+                # The honest #282 line, for the badge text / tooltip.
+                "notice": MACHINE_VISIBILITY_NOTICE,
+            },
         }
     )
 

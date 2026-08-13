@@ -16,7 +16,11 @@ from app.api.deps import get_profile_registry, get_turn_runner
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.domain.agent.market import ai_listings, compute_listings
+from app.domain.agent.market import (
+    ai_listings,
+    compute_listings,
+    visibility_listings,
+)
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import TurnRunner
 from app.domain.cx_task.models import TaskApplication
@@ -50,6 +54,10 @@ async def list_pools(registry: Registry) -> dict:
         {
             "ai": [asdict(p) for p in ai_listings(registry)],
             "compute": [asdict(p) for p in compute_listings(settings)],
+            # #282 §四 / #358: the whole-machine sub-choice under a self-hosted
+            # machine, carried with its capability copy so a picker (and the room
+            # badge) renders the honest warning rather than hiding it.
+            "visibility": [asdict(v) for v in visibility_listings()],
         }
     )
 
