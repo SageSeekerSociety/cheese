@@ -15,7 +15,12 @@ from sqlalchemy import select
 from app.common.auth import decode_token
 from app.core.config import settings
 from app.core.crypto import decrypt_text, encrypt_text
-from app.core.github_install_state import mint_account_link_state
+from app.core.github_install_state import (
+    ACCOUNT_LINK_TTL_S,
+    mint_account_link_state,
+)
+from app.core.redis import get_redis_client
+from app.core.single_use_state import reserve
 from app.domain.oauth.models import UserOAuthConnection
 from app.domain.oauth.services import GitHubProvider, OAuthProviderConfig, OAuthUserInfo
 from tests.conftest import seed_user
@@ -23,6 +28,30 @@ from tests.conftest import seed_user
 
 def _bearer(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
+
+
+# Namespace copied from the route rather than imported, so that renaming the
+# route's scope shows up here as a red test instead of a silent pass.
+_LINK_SCOPE = "github_account_link"
+
+
+def _link_state(user_id: int, return_project_id: uuid.UUID | None = None) -> str:
+    """A state the callback will actually accept — minted AND reserved.
+
+    Minting alone stopped being enough at #222: the state is single-use now, so
+    a `jti` the server never reserved takes the "already spent" exit. Without
+    this helper every callback below would quietly redirect to invalid_state
+    and these tests would pass while testing nothing.
+
+    `cache_clear` because `get_redis_client` is `@lru_cache`d and its client is
+    bound to whichever loop asked first — here that would be this throwaway
+    `asyncio.run` loop, which the app's own request would then inherit.
+    """
+    minted = mint_account_link_state(user_id, return_project_id=return_project_id)
+    get_redis_client.cache_clear()
+    asyncio.run(reserve(_LINK_SCOPE, minted.jti, ttl_s=ACCOUNT_LINK_TTL_S))
+    get_redis_client.cache_clear()
+    return minted.state
 
 
 def test_authorize_url_requires_login(client):
@@ -52,7 +81,7 @@ def test_callback_garbage_state_redirects_to_root(client):
 
 def test_callback_returns_to_the_originating_project(client):
     pid = uuid.uuid4()
-    state = mint_account_link_state(1, return_project_id=pid)
+    state = _link_state(1, return_project_id=pid)
     # No oauth provider configured → the exchange itself fails, but the
     # redirect must still land on the project that asked, not the root.
     r = client.get(
@@ -113,7 +142,7 @@ class TestAccountLinkTokenPersistence:
 
         token = seed_user(client, "bob_ghlink")
         user_id = int(decode_token(token)["sub"])
-        state = mint_account_link_state(user_id, return_project_id=None)
+        state = _link_state(user_id)
 
         r = client.get(
             "/api/users/me/github-account/callback",
@@ -161,7 +190,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "x",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -188,7 +217,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "x",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -204,7 +233,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "y",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -230,7 +259,7 @@ class TestAccountLinkTokenPersistence:
             "/api/users/me/github-account/callback",
             params={
                 "code": "bad",
-                "state": mint_account_link_state(user_id, return_project_id=None),
+                "state": _link_state(user_id),
             },
             follow_redirects=False,
         )
@@ -274,7 +303,7 @@ class TestAccountLinkTokenPersistence:
                 "/api/users/me/github-account/callback",
                 params={
                     "code": "x",
-                    "state": mint_account_link_state(owner_id, return_project_id=None),
+                    "state": _link_state(owner_id),
                 },
                 follow_redirects=False,
             )
@@ -284,7 +313,7 @@ class TestAccountLinkTokenPersistence:
                 "/api/users/me/github-account/callback",
                 params={
                     "code": "y",
-                    "state": mint_account_link_state(victim_id, return_project_id=None),
+                    "state": _link_state(victim_id),
                 },
                 follow_redirects=False,
             )

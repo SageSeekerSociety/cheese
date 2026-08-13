@@ -65,24 +65,24 @@ def test_install_state_does_not_validate_as_session_token_or_scoped_token():
 
 
 def test_account_link_state_roundtrip_with_and_without_return_project():
-    claims = gis.verify_account_link_state(gis.mint_account_link_state(42))
+    claims = gis.verify_account_link_state(gis.mint_account_link_state(42).state)
     assert claims is not None
     assert claims.user_id == 42
     assert claims.return_project_id is None
 
     pid = uuid.uuid4()
     claims2 = gis.verify_account_link_state(
-        gis.mint_account_link_state(42, return_project_id=pid)
+        gis.mint_account_link_state(42, return_project_id=pid).state
     )
     assert claims2 is not None
     assert claims2.return_project_id == pid
 
 
 def test_account_link_state_expired_rejected():
-    state = gis.mint_account_link_state(1, ttl_s=-1)
+    state = gis.mint_account_link_state(1, ttl_s=-1).state
     assert gis.verify_account_link_state(state) is None
 
 
 def test_account_link_state_does_not_validate_as_install_state():
-    state = gis.mint_account_link_state(1)
+    state = gis.mint_account_link_state(1).state
     assert gis.verify_install_state(state) is None
