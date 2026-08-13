@@ -85,6 +85,13 @@ diff <(jq -S . /tmp/designed.json) <(jq -S . /tmp/implemented.json)
 3. Run validation
 4. Implement in FastAPI
 
+### Addressing
+
+The spec's `servers` mirror what the app publishes (`backend/app/main.py`): the
+API is reachable at `/api` on the app origin, never at a bare backend port.
+Anything generated from this spec inherits that base, so keep the two `servers`
+lists identical — the full reasoning lives in `docs/api-conventions.md`.
+
 ## Spec-First Workflow
 
 For new features, follow spec-first approach:

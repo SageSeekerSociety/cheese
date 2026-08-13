@@ -93,14 +93,19 @@ class DashboardService:
             ),
         }
 
-    async def project_overview(self, project_id: uuid.UUID) -> dict:
-        """事维度总览 (eval G2): milestones, topics×status, 等你处理的事."""
+    async def project_overview(self, project_id: uuid.UUID, *, viewer: str) -> dict:
+        """事维度总览 (eval G2): milestones, topics×status, 等你处理的事.
+
+        ``viewer`` is the verified caller: 等你处理的事 is their slice (their
+        items + broadcasts under 未分派), not a cross-member board — one
+        person's pending decisions are not another member's business.
+        """
         card = await self._project_card(project_id)
         if card is None:
             raise NotFoundError("Project not found")
         members = await self._members.list_for_project(project_id)
         # 等你处理的事: decision/accept requests still unread, grouped by person.
-        inbox = await self._notifs.list_inbox(project_id, target_handle=None)
+        inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
         todo_by_person: dict[str, list[dict]] = {}
         for n in inbox:
             handle = n.target_handle or "未分派"
@@ -115,9 +120,16 @@ class DashboardService:
             "waiting_on_you": todo_by_person,
         }
 
-    async def member_summary(self, project_id: uuid.UUID, user_handle: str) -> dict:
+    async def member_summary(
+        self, project_id: uuid.UUID, user_handle: str, *, viewer: str
+    ) -> dict:
         """成员页 (spec §7.2): one member's slice — topics they started, what's
-        waiting on them, their role. Doubles as the portfolio source."""
+        waiting on them, their role. Doubles as the portfolio source.
+
+        The public half (topics, contributions, role) is the same for everyone;
+        ``waiting_on_you`` is the member's mailbox, so it is intersected with
+        what ``viewer`` may see: broadcasts for any verified viewer, the
+        member's own items only on their own page."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         members = await self._members.list_for_project(project_id)
@@ -162,7 +174,7 @@ class DashboardService:
                 )
             )
         ) or 0
-        inbox = await self._notifs.list_inbox(project_id, target_handle=user_handle)
+        inbox = await self._notifs.list_inbox(project_id, target_handle=viewer)
         return {
             "handle": user_handle,
             "role": member.role.value if member else None,
@@ -170,7 +182,11 @@ class DashboardService:
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
             "waiting_on_you": [
-                {"id": str(n.id), "title": n.title, "kind": n.kind.value} for n in inbox
+                {"id": str(n.id), "title": n.title, "kind": n.kind.value}
+                for n in inbox
+                # viewer's slice ∩ this member's: their own mail when they are
+                # looking at their own page, broadcasts for anybody else.
+                if n.target_handle in (None, user_handle)
             ],
         }
 

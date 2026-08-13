@@ -9,8 +9,9 @@ ownerless room made every sub-topic under it ownerless too. On the dogfood
 project this had reached 96 of 149 topics.
 
 These tests pin the fallback ladder — real creator → parent room's owner →
-project owner — and the escape hatch that gets the ALREADY-broken rooms out:
-while a room has no manager at all, the project's owner/lead may appoint one.
+project owner → project 组长 — and the escape hatch that gets the ALREADY-broken
+rooms out: while a room has no manager at all, the project's owner/lead may
+appoint one.
 Without it those rooms are a dead end with no route out of the product (only an
 owner may appoint an owner, and there is none), repairable only by hand-editing
 the database.
@@ -19,11 +20,14 @@ the database.
 import asyncio
 import uuid
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.identity.handles import topic_agent_handle
-from app.domain.topic.models import TopicMembership, TopicRole
+from app.domain.membership.repositories import MemberRepository
+from app.domain.project.models import ProjectRole
+from app.domain.project.repositories import ProjectRepository
+from app.domain.topic.models import Topic, TopicMembership, TopicRole
 from tests.conftest import wait_turns_idle as _wait_turns_idle
 from tests.integration.conftest import session_auth_headers
 
@@ -79,6 +83,59 @@ def _orphan_the_roster(client, topic_id: str) -> None:
     asyncio.run(_go())
 
 
+def _make_project_ownerless(client, project_id: str) -> None:
+    """Reproduce the live shape: `owner_handle` NULL **and** a root room with no
+    owner either.
+
+    Both halves are load-bearing. Creating a project over HTTP anonymously does
+    not produce it — the caller resolves to the handle ``anonymous``, so the
+    project is owned by *that* and its root topic inherits the same owner. Strip
+    only the project column and the ladder still stops one rung early, on the
+    root room's ``anonymous`` owner, and never reaches the roster. The dogfood
+    project predates that attribution and has neither, which is exactly why its
+    rooms came out blank.
+    """
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            project = await ProjectRepository(session).get(uuid.UUID(project_id))
+            assert project is not None
+            project.owner_handle = None
+            await session.execute(
+                delete(TopicMembership).where(
+                    TopicMembership.role == TopicRole.owner,
+                    TopicMembership.topic_id.in_(
+                        select(Topic.id).where(
+                            Topic.project_id == uuid.UUID(project_id)
+                        )
+                    ),
+                )
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
+def _seed_project_lead_directly(client, project_id: str, handle: str) -> None:
+    """Put a 组长 on the project roster without going through the API.
+
+    Writing that roster needs an owner/lead token, and the whole premise here is
+    a project that has neither — so an HTTP POST would 403 and leave the roster
+    empty, quietly turning the test below into a test of nothing.
+    """
+
+    async def _go() -> None:
+        async with client.test_factory() as session:
+            await MemberRepository(session).add(
+                project_id=uuid.UUID(project_id),
+                user_handle=handle,
+                role=ProjectRole.lead,
+            )
+            await session.commit()
+
+    asyncio.run(_go())
+
+
 def test_topic_created_by_human_is_owned_by_that_human(client):
     p = _project(client, owner="alice")
     topic = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
@@ -105,6 +162,44 @@ def test_topic_created_anonymously_still_gets_an_owner(client):
     topic = _create_topic(client, p["id"])
 
     assert _roster(client, topic["id"]).get("alice") == "owner"
+
+
+def test_an_ownerless_project_falls_back_to_its_lead(client):
+    """The rung below "the project's owner", and the one the dogfood project
+    actually needed.
+
+    Measured there on 2026-08-12, answering 「新话题的拥有者为什么有的有，有的是
+    空的」: the project's own `owner_handle` is NULL and its root topic is
+    ownerless too, so a topic 芝士 opens under the root falls through creator
+    (an agent handle — skipped), parent owner (empty), and project owner (NULL),
+    and is born blank. Five active rooms were sitting in that state, none of
+    them manageable by anyone.
+
+    The ladder was right; its bottom rung had nothing to stand on. The roster
+    did — that project has a 组长, which is "who answers for this project"
+    already recorded rather than a policy invented to fill the hole.
+    """
+    p = _project(client, owner=None)
+    _make_project_ownerless(client, p["id"])
+    _seed_project_lead_directly(client, p["id"], "dana")
+
+    topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
+
+    assert _roster(client, topic["id"]).get("dana") == "owner"
+
+
+def test_a_room_with_nobody_to_inherit_from_is_still_created(client):
+    """No creator, no parent owner, no project owner, no lead — the ladder runs
+    out. It must not raise: an ownerless room is a roster problem the rescue
+    hatch below already covers, but a 500 on topic-create is a dead product.
+    """
+    p = _project(client, owner=None)
+    _make_project_ownerless(client, p["id"])
+    topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
+
+    roster = _roster(client, topic["id"])
+    assert "owner" not in roster.values()
+    assert roster.get(topic_agent_handle(uuid.UUID(topic["id"]))) == "member"
 
 
 def test_subtopic_under_agent_created_room_is_not_ownerless(client):

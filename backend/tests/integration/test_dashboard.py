@@ -5,6 +5,7 @@ import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import seed_space
+from tests.integration.conftest import session_auth_headers
 
 
 def _seed_block(client, project_id, topic_id, author, author_type, kind):
@@ -52,7 +53,11 @@ def test_member_summary_has_active_and_weekly(client, bearer):
     )
     _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
 
-    s = client.get(f"/api/projects/{pid}/members/user-1/summary").json()["data"]
+    # The member page resolves the viewer like /overview does — read as user-1.
+    s = client.get(
+        f"/api/projects/{pid}/members/user-1/summary",
+        headers=session_auth_headers("user-1"),
+    ).json()["data"]
     assert "topics_active" in s and "weekly_contributions" in s
     assert s["weekly_contributions"] == 1
     # root topic is active and user-1 contributed → it shows under 在忙的话题.
@@ -84,7 +89,9 @@ def test_project_overview(client, bearer):
         },
     )
 
-    ov = client.get(f"/api/projects/{pid}/overview").json()["data"]
+    ov = client.get(
+        f"/api/projects/{pid}/overview", headers=session_auth_headers("user-1")
+    ).json()["data"]
     assert ov["name"] == "P"
     assert ov["topic_count"] >= 1  # root topic auto-created
     assert ov["next_milestone"]["title"] == "中期"
@@ -116,5 +123,8 @@ def test_space_board_empty_for_space_without_links(client):
 
 
 def test_overview_404_for_missing_project(client):
-    r = client.get("/api/projects/00000000-0000-0000-0000-000000000000/overview")
+    r = client.get(
+        "/api/projects/00000000-0000-0000-0000-000000000000/overview",
+        headers=session_auth_headers("user-1"),
+    )
     assert r.status_code == 404

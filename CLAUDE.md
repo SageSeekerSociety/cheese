@@ -27,7 +27,7 @@ triggering is too late for both.
 | `Is a git repository: false` in your environment block | "this checkout has no version control" | It has jj. Only the `.git` probe fails. |
 | `git status` / `gh pr list` → `fatal: not a git repository` | broken checkout | Same. `gh` needs an explicit `-R <owner>/<repo>`; it cannot infer the remote without `.git`. |
 | `jj git fetch` → `Git does not recognize required option: porcelain` | the fetch is broken, retry it | The sandbox ships git 2.39 and jj wants ≥ 2.41. **No `jj git` remote traffic works from inside the box** — the platform syncs `main@upstream` for you on the host. Read that ref, don't repair git. |
-| `gh api repos/<o>/<r>/pulls/<n>` → 403, but `repos/<o>/<r>` → 200 | the token expired, or the PR doesn't exist | The token is scoped to repo metadata + actions/checks. **PRs and refs are 403.** Measured 2026-08-11. |
+| `gh api repos/<o>/<r>/pulls/<n>` → 403, but `repos/<o>/<r>` → 200 | the token expired, or the PR doesn't exist | A permission the token doesn't carry. **`cheese gh-token` prints the list on stderr — read it instead of guessing.** It is not a fixed set: it's whatever the platform's GitHub App was granted, narrowed to read. |
 | `jj rebase -d main@upstream` → `Commit ... is immutable` | you lack permission | You aimed at shared history. Rebase *your own* change only: `jj rebase -s <your-change-id> -d main@upstream`. |
 
 **You cannot observe the remote, so never report on it.** Fetch fails and the
@@ -75,7 +75,7 @@ The dangerous ones are the tools that **fail silently or report success**.
 
 | Need | The supported path |
 |---|---|
-| Read CI logs / check runs / workflow runs | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it |
+| Read anything on GitHub — CI logs, check runs, issue bodies, PR review comments, files outside your workspace | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it. It prints on stderr exactly what this token may read, plus copy-paste commands for each — **read those lines before concluding you can't** |
 | Run the DB-backed test suite without docker | `.claude/scripts/dev-db.sh` (see Testing) |
 | Long-running commands | `cheese await` — the platform wakes the topic with the exit code, instead of you blocking |
 
@@ -86,9 +86,16 @@ The dangerous ones are the tools that **fail silently or report success**.
   `Error: Git does not recognize required option: porcelain`.
   **You cannot sync with upstream from inside the sandbox.** Do not plan around
   "I'll rebase onto latest main first" — you can't see latest main.
-- **The `gh` token is actions/checks scoped only.** `gh api repos/{owner}/{repo}/commits`,
-  PR file lists, and PR conflict data all return **403 Resource not accessible by
-  integration**. You can read what CI *did*; you cannot read what the repo *contains*.
+- **The `gh` token is read-only, and its exact scope is not a constant.** It is
+  whatever the platform's GitHub App holds, narrowed to `read` — so a permission
+  an org admin has not granted comes back as **403 Resource not accessible by
+  integration**, and one they granted this morning starts working without a
+  deploy. `cheese gh-token` prints the current list; **that print is the source
+  of truth, not this file and not your memory of last week.** What is fixed is
+  the ceiling: nothing a sandbox is handed can ever write.
+  If you hit a 403 on something you genuinely need to read, say so in your
+  report — the fix is an App permission an admin can add, not a workaround, and
+  not a human pasting the content in for you.
 
 ### Failures that look like success
 
@@ -128,6 +135,7 @@ Route → Service → Repository → Model
 
 ## API Design
 
+- **A route's path is not a URL you can send.** The backend is mounted at `/api` on the app origin, and the gateway strips that one segment — so a 1.0 route (`/users/…`) is reached at `/api/users/…` and a 2.0 route (which carries its own `/api`) at `/api/api/topics/…`. The doubling is deliberate and load-bearing; flattening it makes six endpoints answer from the wrong generation. Writing a client, or wondering why a call 404s or returns HTML: [`docs/api-conventions.md`](docs/api-conventions.md).
 - RESTful: GET/POST/PUT/DELETE on `/resource`.
 - Pagination: `pageStart` + `pageSize`. Return `{data: [...], total: int}`.
 - Response format: `{"code": 200, "message": "...", "data": {...}}`.
@@ -241,6 +249,8 @@ Don't spend time re-diagnosing them:
 - After `git pull`, run `bash .claude/scripts/post-pull.sh`.
 - **All commits go through PR**: never commit directly to main.
 - **Multiple agents work this repo concurrently.** Before starting a fix, check open PRs and recent main commits for the same problem. In a jj workspace there is nothing to stage — the working copy is the commit — so the equivalent discipline is to run `jj status` before you hand work off and review every path in it. A cache directory in that list (43k files once) is a stop sign.
+- **Green that ran against an older main proves nothing about merging today.** Before merging any PR that adds a migration or touches symbols another open PR also touches: update the branch (`gh pr update-branch`), wait for the fresh run, then merge. GitHub re-evaluates CONFLICTING continuously but never re-runs your checks — on 2026-08-12 four individually-green PRs merged into a three-headed alembic chain and a duplicated function that 500'd the topic list. Migrations also move `backend/alembic/HEAD` (one line, see `.claude/rules/migrations.md`) precisely so concurrent migration PRs collide in git instead of merging cleanly into a fork.
+- **Never `git stash` in a worktree.** Worktrees share one `.git`, so they share one stash stack: a `pop` returns whichever session pushed last, not yours. Two sessions collided this way on 2026-08-12 and each popped the other's diff — recoverable only via `git fsck --unreachable`, and the stack already held several `recovered:` entries from earlier collisions. To set changes aside, write a patch (`git diff > /tmp/x.patch`) or add another worktree.
 - Box operations (env changes, container recreation) go through `deploy/deploy-docker.sh` only — see the runbook in `docs/infrastructure.md`. Hand-rolled `docker compose up` drops the deploy script's image-pin exports and has broken dev before.
 
 ## Documentation Map

@@ -125,8 +125,8 @@ function newTopic() {
 // Four fixed combinations (field × direction) — a picker, not a builder, so a
 // v-menu list beats a two-axis control for this small a option set.
 const SORT_OPTIONS: Array<{ sort: TopicSortField; order: TopicSortOrder; label: string }> = [
-  { sort: 'updated_at', order: 'desc', label: '最后更新 · 新到旧' },
-  { sort: 'updated_at', order: 'asc', label: '最后更新 · 旧到新' },
+  { sort: 'last_activity_at', order: 'desc', label: '最后活动 · 新到旧' },
+  { sort: 'last_activity_at', order: 'asc', label: '最后活动 · 旧到新' },
   { sort: 'title', order: 'asc', label: '标题 · A→Z' },
   { sort: 'title', order: 'desc', label: '标题 · Z→A' },
 ]
@@ -506,8 +506,11 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                   :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
                   >{{ countLabel(row.unreadTotal) }}</span
                 >
-                <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰） -->
-                <span v-else class="row-time">{{ relTime(row.topic.updated_at) }}</span>
+                <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰）。
+                     updated_at 是兜底：它只在话题行自己被改过时才动，回答不了
+                     "最后有动静是什么时候"，只用在 last_activity_at 缺席的接口
+                     返回上（新建/改名/归档的响应体）。 -->
+                <span v-else class="row-time">{{ relTime(row.topic.last_activity_at ?? row.topic.updated_at) }}</span>
                 <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
                 <div class="row-actions" @click.stop>
                   <v-btn

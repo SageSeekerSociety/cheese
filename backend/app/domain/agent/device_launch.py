@@ -194,11 +194,61 @@ else:
 """
 
 
-def build_launch_script(sync_on_stop: bool = False) -> str:
+# Liveness probe for a device screen (turn 活跃度检测 — the device half of the
+# two-layer idle-suspect / hard-ceiling check). Run over the hub's `exec` once a
+# turn crosses the idle-suspect threshold, to tell a `claude` that is silently
+# working — a long FOREGROUND command (pytest, a build) emits NO interim hook, yet
+# its process is alive — from one whose process actually died.
+#
+# There is no cheap screen-byte signal on a HEADLESS device (the hub relays raw
+# screen bytes only to a live browser viewer, and only while one is subscribed), so
+# the probe asks the box directly: the process-tree signal, the one that stays
+# valid through a hook-silent window where transcript mtime / statusline / OTel do
+# not. It keys on the `claude` process's own CHEESE_TOPIC env, so it is per-topic
+# precise even with several screens on one machine, and is identical for a
+# co-located device (the backend's own host) and a remote one (both reached over
+# the same link `exec`).
+#
+# Prints exactly one of `alive` / `dead` / `unknown`. The caller treats ONLY an
+# explicit `dead` as fatal; `unknown` (no /proc, an unreadable environ) and any
+# exec error are read conservatively as alive, so a probe hiccup never false-kills.
+DEVICE_ALIVE_PROBE = r"""topic="${CHEESE_ALIVE_TOPIC:-}"
+[ -n "$topic" ] || { echo unknown; exit 0; }
+# Linux: match the topic on each process's own environ → per-topic precise. The
+# connector (same user as the screen it spawned) can read that same-uid /proc entry.
+if [ -d /proc ] && [ -r /proc/self/environ ]; then
+  for c in /proc/[0-9]*/cmdline; do
+    [ -r "$c" ] || continue
+    case "$(tr '\0' ' ' < "$c" 2>/dev/null)" in *claude*) ;; *) continue ;; esac
+    d="${c%/cmdline}"
+    if tr '\0' '\n' < "$d/environ" 2>/dev/null | grep -qx "CHEESE_TOPIC=$topic"; then
+      echo alive; exit 0
+    fi
+  done
+  # /proc was readable but no live `claude` carries this topic → its process is gone.
+  echo dead; exit 0
+fi
+# No /proc (non-Linux) or an unreadable environ: no per-topic view, so never assert
+# death — report unknown and let the caller keep the turn alive to the hard ceiling.
+echo unknown
+"""
+
+
+def build_launch_script(sync_on_stop: bool = False, system_prompt: str = "") -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
     ``CHEESE_WORK`` (cwd), plus the hook wiring (``CHEESE_HOOK_URL``/``CHEESE_TOKEN``)
-    and ``CLAUDE_MODEL`` (optional)."""
+    and ``CLAUDE_MODEL`` (optional).
+
+    ``system_prompt`` (the platform's assembled system prompt) is embedded in the
+    script itself — written to ``$HOME/.claude/cheese-system-prompt.md`` on the
+    device and handed to `claude` via ``--append-system-prompt-file``. Embedding
+    beats an env var here: the connector's env transport is not guaranteed to
+    survive multi-KB values with newlines, while a quoted heredoc is."""
+    # The heredoc delimiter must sit on its own line, so the content always ends
+    # with exactly one newline (empty stays empty → the [ -s ] launch guard skips
+    # the flag and claude runs with its stock prompt).
+    system_prompt = system_prompt.rstrip("\n") + "\n" if system_prompt else ""
     usage_script = CHEESE_USAGE_SCRIPT
     usage_reader = CHEESE_USAGE_READER
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
@@ -257,6 +307,8 @@ JSON
 cat > "$HOME/.claude/settings.json" <<'JSON'
 {settings_json}
 JSON
+cat > "$HOME/.claude/cheese-system-prompt.md" <<'SYSPROMPT'
+{system_prompt}SYSPROMPT
 cat > "$HOME/.claude/cheese-sync" <<'SYNC'
 #!/bin/sh
 # Runs at the end of every turn on a machine that owns its own tree: commit what
@@ -346,6 +398,11 @@ cd "$CHEESE_WORK"
 # viewer and the cheeselet types into it). Direct exec if tmux isn't installed.
 CLAUDE="{CLAUDE_BASE_CMD}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
+# The platform system prompt (written next to settings.json above). The path is
+# embedded QUOTED so both consumers survive a home dir with spaces: the tmux
+# branch re-parses $CLAUDE through sh -c, the exec branch through eval.
+CHEESE_SP="$HOME/.claude/cheese-system-prompt.md"
+[ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 if command -v tmux >/dev/null 2>&1; then
   # The screen runs inside the connector's own tmux, so $TMUX points at ITS
   # socket — inherited, new-session would land the claude session there (dying
@@ -364,7 +421,9 @@ if command -v tmux >/dev/null 2>&1; then
     tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" "$CLAUDE"
   exec tmux attach -t "$SESSION"
 else
-  exec $CLAUDE
+  # eval, not bare exec: $CLAUDE now carries a QUOTED file path, and plain
+  # word-splitting would hand claude the quote characters themselves.
+  eval "exec $CLAUDE"
 fi
 """
 
@@ -384,6 +443,7 @@ def build_screen_launch(
     author: str | None = None,
     git_remote: str | None = None,
     git_branch: str | None = None,
+    system_prompt: str = "",
 ) -> tuple[list[str], dict[str, str], str]:
     """Assemble ``(command, env, cheeselet_source)`` for ``DeviceHub.open_screen``.
 
@@ -393,7 +453,9 @@ def build_screen_launch(
     ``project_id``/``topic_id`` context are given, the launcher also fetches the
     ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
-    script = build_launch_script(sync_on_stop=bool(git_remote))
+    script = build_launch_script(
+        sync_on_stop=bool(git_remote), system_prompt=system_prompt
+    )
     command = ["bash", "-lc", script]
     env: dict[str, str] = {
         "CHEESE_HOOK_URL": hook_url,

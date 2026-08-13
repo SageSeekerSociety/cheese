@@ -8,6 +8,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 import difflib
 import uuid
 from datetime import UTC, datetime
+from typing import overload
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,12 +19,21 @@ from app.domain.agent import clone
 from app.domain.block.doc_tree import markdown_to_nodes
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conclusion.models import ConclusionCard
+from app.domain.conclusion.services import ConclusionCardService
 from app.domain.cx_notification.models import NotifKind, NotifLevel
 from app.domain.cx_notification.services import NotificationService
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.membership.services import MemberService
+from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
-from app.domain.topic.repositories import SortOrder, TopicRepository, TopicSortField
+from app.domain.topic.repositories import (
+    SortOrder,
+    TopicProgressRepository,
+    TopicRepository,
+    TopicSortField,
+)
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 
@@ -31,6 +41,24 @@ from app.domain.workspace import service as ws
 # deterministically derived from text — see CLAUDE.md. An upgraded block starts
 # untitled and 芝士 names it on its first turn (same as a + new topic).
 PLACEHOLDER_TITLE = "新话题"
+
+
+@overload
+def _as_utc(when: datetime) -> datetime: ...
+@overload
+def _as_utc(when: None) -> None: ...
+def _as_utc(when: datetime | None) -> datetime | None:
+    """Read an offset-less instant as UTC, passing None through.
+
+    Two callers need this and used to carry one copy each (which shadowed each
+    other — the stricter copy won at runtime and crashed on None): query strings
+    routinely arrive as `2026-08-12T00:00:00` with no zone, and some drivers
+    hand a TIMESTAMPTZ back naive, which raises rather than merely reading
+    wrong when subtracted.
+    """
+    if when is None or when.tzinfo is not None:
+        return when
+    return when.replace(tzinfo=UTC)
 
 
 def _child_kind(parent: Topic) -> TopicKind:
@@ -86,6 +114,35 @@ def _brief_doc(
     return "\n\n".join(parts)
 
 
+def _is_mid_turn_block(block: Block) -> bool:
+    """Is this block the middle of a turn rather than the end of one?
+
+    A tool action by 芝士 — `meta.tool` is stamped by the 现场 event writer, so
+    this asks what the block IS rather than parsing its text. Nothing healthy
+    leaves one as a topic's last word: the turn either keeps working (another
+    action, a message) or fails into a system event.
+    """
+    return (
+        block.kind == BlockKind.event
+        and block.author_type == AuthorType.ai
+        and bool((block.meta or {}).get("tool"))
+    )
+
+
+def _stall_block_summary(block: Block | None) -> dict | None:
+    """What the stall verdict was read off, so a caller can check it by hand
+    instead of trusting the boolean."""
+    if block is None:
+        return None
+    return {
+        "id": str(block.id),
+        "kind": str(block.kind),
+        "author_type": str(block.author_type),
+        "tool": (block.meta or {}).get("tool"),
+        "created_at": _as_utc(block.created_at).isoformat(),
+    }
+
+
 class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -133,7 +190,10 @@ class TopicService:
         await self._members.seed(
             topic.id,
             owner_handle=await self._resolve_owner(
-                created_by, parent_id=parent_id, project_owner=project.owner_handle
+                created_by,
+                project_id=project_id,
+                parent_id=parent_id,
+                project_owner=project.owner_handle,
             ),
         )
         return topic
@@ -142,12 +202,23 @@ class TopicService:
         self,
         created_by: str | None,
         *,
+        project_id: uuid.UUID,
         parent_id: uuid.UUID | None,
         project_owner: str | None,
     ) -> str | None:
         """Who owns a newborn topic: the real human who created it, else the
-        parent room's owner, else the project's owner. Returns None only when
-        the whole chain is ownerless (a legacy project) — the caller still
+        parent room's owner, else the project's owner, else the project's 组长.
+
+        That last rung is not decoration. Measured on the dogfooding project
+        2026-08-12, answering 「新话题的拥有者为什么有的有，有的是空的」: the
+        project's ``owner_handle`` is NULL and its root topic is ownerless too,
+        so every topic 芝士 opened under the root fell through all three rungs
+        and came out blank — five active rooms with no one able to manage the
+        roster. The ladder was right; its bottom had nothing to stand on. The
+        roster did: that project has a ``lead``, which is exactly "who is in
+        charge here" already recorded, not a new policy invented to fill a hole.
+
+        Returns None only when even the roster has no lead — the caller still
         seeds 芝士, and the room stays manageable by any project member.
 
         "Is the creator 芝士" spans the whole agent handle namespace, not the bare
@@ -164,7 +235,21 @@ class TopicService:
             )
             if parent_owner:
                 return parent_owner
-        return project_owner
+        return project_owner or await self._project_lead(project_id)
+
+    async def _project_lead(self, project_id: uuid.UUID) -> str | None:
+        """The project's 组长, as the last rung of the ownership ladder.
+
+        Read lazily — only when the rungs above came up empty — so an ordinary
+        topic-create still costs no extra query. Through the roster's *service*,
+        not its repository: `test_domain_import_guard` forbids the shortcut, and
+        the service is also where "who counts as a member" is decided.
+        """
+        members, _ = await MemberService(self._session).list_for_project(project_id)
+        return next(
+            (m.user_handle for m in members if m.role == ProjectRole.lead),
+            None,
+        )
 
     async def get_or_create_private(
         self,
@@ -196,15 +281,102 @@ class TopicService:
         *,
         sort: TopicSortField | None = None,
         order: SortOrder = "asc",
+        active_since: datetime | None = None,
     ) -> tuple[list[Topic], int]:
-        return (
-            await self._repo.list_for_project(project_id, sort=sort, order=order),
-            await self._repo.count_for_project(project_id),
+        topics = await self._repo.list_for_project(
+            project_id,
+            sort=sort,
+            order=order,
+            active_since=_as_utc(active_since),
         )
+        # `total` counts what the caller got: a filtered page whose total still
+        # said "all topics" would tell a paging client to keep asking for rows
+        # that do not exist.
+        total = (
+            len(topics)
+            if active_since is not None
+            else await self._repo.count_for_project(project_id)
+        )
+        return topics, total
+
+    async def last_activity_for_topics(
+        self, topic_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, datetime]:
+        return await self._repo.last_activity_for_topics(topic_ids)
 
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
         return await self._repo.list_children(topic_id)
+
+    # ---- 轮次猝死信号 (a turn can die without the process dying) ----------
+
+    async def stall_signal(
+        self,
+        topic_id: uuid.UUID,
+        *,
+        live_turn: dict | None,
+        background_tasks: int = 0,
+        threshold_s: float | None = None,
+    ) -> dict:
+        """Is this topic sitting on a turn that died? A queryable verdict.
+
+        The 8-hour incident (2026-08-11) was not that a turn died — turns die,
+        containers get recreated, children get OOM-killed. It was that nothing
+        on the platform could be ASKED about it: `status` still read `active`,
+        the newest block was an ordinary tool action, and the only way to find
+        out was for a human to notice the silence. The orphan sweep now cleans
+        such turns up, but a sweep is a background actor: it tells you when it
+        acts, not when you ask.
+
+        The verdict rests on two facts that a long-running turn cannot both
+        fail, which is what keeps it from crying wolf over slow work:
+
+        1. **No heartbeat.** `live_turn` is what the runner is really executing
+           for this topic (frames, tool calls included — activity the DB never
+           sees). Present and recently framed ⇒ alive, full stop. Registered
+           background commands (`cheese await`) count the same way: the agent
+           declared it is waiting on something long, so silence is expected.
+        2. **The timeline stops mid-action.** The newest block is a tool action
+           by 芝士 — the shape a turn leaves when it is cut off between doing
+           something and reporting it. A turn that ends properly leaves a
+           message, and every failure path the platform knows about leaves a
+           system event; neither counts as stalled, because in both cases the
+           topic already says what happened.
+        """
+        await self.get_or_404(topic_id)
+        if threshold_s is None:
+            threshold_s = settings.turn_stall_signal_s
+        heartbeat_s = None if live_turn is None else live_turn.get("silent_for_s")
+        alive = live_turn is not None and (
+            heartbeat_s is not None and heartbeat_s <= threshold_s
+        )
+        last = await self._blocks.latest_for_topic(topic_id)
+        silent_for_s = (
+            None
+            if last is None
+            else round((datetime.now(UTC) - _as_utc(last.created_at)).total_seconds())
+        )
+        signal: dict = {
+            "stalled": False,
+            "reason": None,
+            "threshold_s": round(threshold_s),
+            "silent_for_s": silent_for_s,
+            "last_block": _stall_block_summary(last),
+            "live_turn": live_turn,
+            "background_tasks": background_tasks,
+        }
+        if alive or background_tasks > 0:
+            return signal
+        if last is None or silent_for_s is None or silent_for_s <= threshold_s:
+            return signal
+        if not _is_mid_turn_block(last):
+            return signal
+        signal["stalled"] = True
+        # Which of the two ways it died, because they send whoever reads this to
+        # different places: a process that is not running the turn at all versus
+        # one holding a task that stopped producing.
+        signal["reason"] = "no_live_turn" if live_turn is None else "silent_turn"
+        return signal
 
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 
@@ -353,6 +525,7 @@ class TopicService:
             new_topic.id,
             owner_handle=await self._resolve_owner(
                 created_by,
+                project_id=block.project_id,
                 parent_id=parent_id,
                 project_owner=project.owner_handle if project else None,
             ),
@@ -484,7 +657,7 @@ class TopicService:
         if source.id == target.id:
             raise ValidationError("不能把话题克隆到它自己")
         if source.project_id != target.project_id:
-            # Session dirs + the /work slug are keyed per project; a cross-project
+            # Session dirs + workdir slugs are keyed per project; a cross-project
             # clone would point the transcript at a different repo. Keep in-project.
             raise ValidationError("只能在同一项目内克隆会话")
         source_sid = source.session_id
@@ -497,6 +670,9 @@ class TopicService:
                 source_session_id=source_sid,
                 target_session_dir=ws.session_dir(target.project_id, target.id),
                 new_session_id=new_sid,
+                # Claude resolves --resume under the slug of the cwd it runs
+                # with, so the fork must land under the TARGET topic's workdir.
+                target_cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(target.id)),
             )
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
@@ -507,6 +683,21 @@ class TopicService:
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
         await self.get_or_404(topic_id)
         return await self._blocks.doc_root(topic_id)
+
+    async def get_progress(
+        self, topic_id: uuid.UUID
+    ) -> tuple[list[dict], datetime | None]:
+        """进度层 (#187): the checklist this topic's work left behind.
+
+        Returns ``([], None)`` for a topic that never had one — an empty
+        checklist and no checklist are the same thing to a reader, and making
+        the caller handle a null row buys nothing.
+        """
+        await self.get_or_404(topic_id)
+        row = await TopicProgressRepository(self._session).get(topic_id)
+        if row is None:
+            return [], None
+        return [dict(item) for item in row.items], row.updated_at
 
     async def edit_doc(
         self, *, topic_id: uuid.UUID, content: str, author: str
@@ -599,11 +790,16 @@ class TopicService:
 
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str
-    ) -> Block:
+    ) -> tuple[Block, ConclusionCard | None]:
         """结论回流 (spec §6.1 / eval C4): a sub-topic's (分身) conclusion flows
         back to its parent (本体) three ways — a referencing message in the
         conversation, woven into the parent's living doc (so 分身 stay consistent
         via the doc, spec §8.4), and a change-alert so the coordinator is notified.
+
+        结论卡·阶段一 (purely additive): a 4th thing now happens — an ``open``
+        conclusion card is filed for the parent to settle, which is what finally
+        gives 回流 a receipt, a status and idempotency. The three side effects
+        above are UNCHANGED; nothing about the old flow depends on the card.
         """
         sub = await self.get_or_404(subtopic_id)
         if sub.parent_id is None:
@@ -643,4 +839,13 @@ class TopicService:
             body=markdown_preview(conclusion, 200),
             topic_id=sub.parent_id,
         )
-        return block
+
+        # 4) 结论卡: the receipt. Opening it can't fail the 回流 — a parent that
+        # was already archived has no turn left to settle a card, so it gets the
+        # three side effects above and no card.
+        card = None
+        if parent is not None and parent.status != TopicStatus.archived:
+            card = await ConclusionCardService(self._session).open_for_conclusion(
+                sub=sub, parent=parent, conclusion=conclusion
+            )
+        return block, card

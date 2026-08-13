@@ -108,9 +108,9 @@ const loadingTopics = ref(false)
 const globalError = ref<string | null>(null)
 
 // 话题列表排序: defaults to most-recently-active first — the sidebar's row
-// already shows relTime(updated_at) as its right anchor, so this is the
+// already shows relTime(last_activity_at) as its right anchor, so this is the
 // ordering that anchor implies. `title` sorting is the other option.
-const topicSort = ref<TopicSortField>('updated_at')
+const topicSort = ref<TopicSortField>('last_activity_at')
 const topicOrder = ref<TopicSortOrder>('desc')
 
 async function setTopicSort(payload: { sort: TopicSortField; order: TopicSortOrder }) {
@@ -240,6 +240,17 @@ const workingSince = ref<number | null>(null)
 const commentIntent = ref<{ anchorId: string | null; quote: string } | null>(null)
 const commentSending = ref(false)
 const composerInput = ref<{ focus?: () => void } | null>(null)
+
+// 切换后把焦点还给输入框。不还的话 chip 自己一直握着焦点，用户接下来按的那次
+// Enter 就打在 chip 上——把刚点亮的 @芝士 又静默关掉，而且那次 Enter 也不发送。
+// 「先打字、再点 @芝士、再按 Enter」是很自然的顺序，走这条路的人得到的是：消息
+// 正常发出、芝士不来、页面上没有任何东西说明为什么。和「忘了 @」长得一模一样。
+// 2026-08-13 在 dev 上复现确认：点亮 → Enter → class 从 summon-chip--on 掉回
+// summon-chip，随后那条消息的 turn 记录里 summon=false、0.1 秒空转结束。
+function toggleSummon() {
+  summon.value = !summon.value
+  void nextTick(() => composerInput.value?.focus?.())
+}
 
 function onCommentIntent(payload: { anchorId: string | null; quote: string }) {
   commentIntent.value = payload
@@ -493,7 +504,7 @@ const deliveryNote = computed(() => {
 // topic is enforced server-side).
 const gateCard = computed<AcceptCard | null>(() => {
   const c = acceptCards.value[0]
-  return c && (c.status === 'pending_gate' || c.status === 'gate_failed') ? c : null
+  return c && (c.status === 'pending_gate' || c.status === 'gate_failed' || c.status === 'gate_blocked') ? c : null
 })
 const showGateOutput = ref(false)
 
@@ -1134,6 +1145,35 @@ onUnmounted(() => {
               </div>
             </v-card>
 
+            <!-- 闸门没跑成：检查本身没能在门禁容器里跑起来，对代码没有结论。
+                 刻意跟「未通过」分开显示——它是需要人看一眼的状态，不是代码红了。 -->
+            <v-card
+              v-else-if="gateCard && gateCard.status === 'gate_blocked'"
+              variant="outlined"
+              class="merge-box mt-2"
+            >
+              <div class="merge-box__bar" />
+              <div class="pa-3">
+                <div class="d-flex align-center ga-2 mb-1">
+                  <v-icon color="warning" size="19">mdi-help-circle-outline</v-icon>
+                  <span class="t-title">平台检查没跑成</span>
+                </div>
+                <div class="text-caption text-medium-emphasis mb-2">
+                  检查没能在门禁环境里跑起来，所以它对这次改动<strong>没有结论</strong>（既不是通过也不是未通过）。
+                  这张验收卡没有送出。芝士已收到通知去把检查环境弄起来再重新递卡；如果它反复跑不起来，需要人看一眼。
+                </div>
+                <v-btn
+                  size="small"
+                  variant="text"
+                  :prepend-icon="showGateOutput ? 'mdi-chevron-up' : 'mdi-chevron-down'"
+                  @click="showGateOutput = !showGateOutput"
+                >
+                  {{ showGateOutput ? '收起输出' : '查看输出' }}
+                </v-btn>
+                <pre v-if="showGateOutput" class="gate-output mt-2">{{ gateCard.gate_output || '（无输出）' }}</pre>
+              </div>
+            </v-card>
+
             <v-card v-else-if="pendingCard" variant="outlined" class="merge-box mt-2">
               <div class="merge-box__bar" />
               <div class="pa-3">
@@ -1455,7 +1495,7 @@ onUnmounted(() => {
               class="summon-chip"
               :class="{ 'summon-chip--on': summon }"
               title="@芝士 — 让芝士回复（默认不 @）"
-              @click="summon = !summon"
+              @click="toggleSummon"
             >
               <v-icon v-if="summon" size="13">mdi-creation</v-icon>
               @芝士

@@ -12,12 +12,15 @@ It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 import logging
 import uuid
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
 
+from app.api.deps import get_chat_service
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
 from app.domain.agent import event_spool
+from app.domain.agent.chat import ChatService
 from app.domain.agent.hook_events import hook_router
 from app.domain.workspace import service as ws
 
@@ -71,6 +74,7 @@ async def get_cheese_cli(
 async def receive_hook(
     topic_id: str,
     request: Request,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     x_cheese_token: str = Header(default=""),
     x_cheese_event_id: str = Header(default=""),
 ) -> dict | JSONResponse:
@@ -78,6 +82,20 @@ async def receive_hook(
     active turn. Responds fast (the container's hook call blocks on this): an
     empty 200 body = "no decision", so a PreToolUse hook proceeds normally."""
     if not is_valid_cheese_token(x_cheese_token, topic_id=topic_id):
+        # Say so. A rejected hook used to vanish here with no trace at all, and
+        # that silence is the whole reason a deaf sandbox took days to find: the
+        # turn observes nothing, reports `first_output_s: null` / `tools: 0`, and
+        # runs to its ceiling, which is indistinguishable from a model that never
+        # spoke. The common cause is a box baked with a token signed by a
+        # PREVIOUS backend process (`SANDBOX_TOKEN` unpinned → a fresh random
+        # secret per restart), so the hook it just sent is not malicious traffic
+        # to drop quietly — it is our own agent, locked out.
+        logger.warning(
+            "sandbox hook rejected: token does not verify for topic %s "
+            "(box likely baked before a backend restart — see tmux_provider."
+            "_hook_token_dead)",
+            topic_id,
+        )
         return JSONResponse(
             {"code": 401, "message": "invalid sandbox token", "data": None},
             status_code=401,
@@ -98,10 +116,14 @@ async def receive_hook(
     delivered = hook_router.push(topic_id, payload)
     if not delivered and x_cheese_event_id:
         # No turn is listening (hook outside a run_turn window). Park it in the
-        # topic's server-side spool so the next turn's reconcile materializes it
-        # as HISTORY — never dropped, and never replayed into a later live queue
-        # (a stale Stop would end the wrong turn). Idempotent by event-id, so a
-        # container-side spooled copy of the same event stays a no-op.
+        # topic's server-side spool so a reconcile materializes it as HISTORY —
+        # never dropped, and never replayed into a later live queue (a stale
+        # Stop would end the wrong turn). Idempotent by event-id, so a
+        # container-side spooled copy of the same event stays a no-op. Then
+        # schedule the settle that drains it: an orphaned turn's claude keeps
+        # working after a backend restart (#316), and with the sweep no longer
+        # re-prompting it, "the next turn's reconcile" may otherwise be never —
+        # its progress, and the Stop that finishes the turn, land via this.
         claims = scoped_token_claims(x_cheese_token)
         project = str(claims.get("p") or "") if claims else ""
         try:
@@ -110,6 +132,7 @@ async def receive_hook(
                 x_cheese_event_id,
                 payload,
             )
+            chat.schedule_spool_settle(uuid.UUID(topic_id))
         except Exception:  # noqa: BLE001 — parking is best-effort, reply stays 200
             logger.warning("hook park failed for topic %s", topic_id, exc_info=True)
     # Still 200 either way so claude doesn't treat it as a hook failure.

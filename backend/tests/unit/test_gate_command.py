@@ -6,7 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.domain.workspace.service import run_check_command
+from app.domain.workspace.service import run_check_command, sandbox_topic_workdir
 
 
 class FakeProcess:
@@ -51,6 +51,53 @@ def test_command_is_data_in_restricted_docker_argv(tmp_path: Path, monkeypatch):
     assert "/var/run/docker.sock" not in " ".join(argv)
     assert argv[-1] == "echo hello; touch /host-owned"
     assert argv[-3:-1] == ['exec sh -lc "$1"', "cheesex-gate"]
+
+
+def test_worktree_is_mounted_where_the_agent_built_its_venv(
+    tmp_path: Path, monkeypatch
+):
+    # Console scripts (pyright, pytest, alembic) bake their venv's absolute path
+    # into their shebang, so mounting the worktree anywhere other than where the
+    # agent built it leaves a venv whose tools can't execute — and with no
+    # network in the gate container, nothing can repair that. That is how the
+    # gate came to run lint only, on every card.
+    #
+    # This assertion used to read `target=/work`, and it was true when written.
+    # Then the sandbox moved to the topic's REAL path under the /topics mount
+    # (tmux_provider: "not a /work remap" — hardlinks cannot cross bind mounts)
+    # and this test kept passing, because a literal cannot notice that the OTHER
+    # side moved. The gate ran lint-only for every card until someone read the
+    # DNS error in gate_output closely enough. So compare against the sandbox's
+    # own answer: the property is "same path as the sandbox", not "/work".
+    def popen(argv, **kwargs):
+        seen["argv"] = argv
+        return FakeProcess(argv, **kwargs)
+
+    seen: dict = {}
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    run_check_command(tmp_path, "true")
+
+    expected = sandbox_topic_workdir(tmp_path.resolve().name)
+    argv = seen["argv"]
+    mount = argv[argv.index("--mount") + 1]
+    assert mount == f"type=bind,source={tmp_path.resolve()},target={expected}"
+    assert argv[argv.index("--workdir") + 1] == expected
+
+
+def test_check_command_is_told_it_is_a_gate(tmp_path: Path, monkeypatch):
+    # CHECK_STRICT=1 is how the check command learns it must not report a check
+    # it couldn't run as passed (check.sh answers with exit 2 → gate_blocked).
+    def popen(argv, **kwargs):
+        seen["argv"] = argv
+        return FakeProcess(argv, **kwargs)
+
+    seen: dict = {}
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    run_check_command(tmp_path, "true")
+
+    argv = seen["argv"]
+    env_values = [argv[i + 1] for i, a in enumerate(argv) if a == "--env"]
+    assert "CHECK_STRICT=1" in env_values
 
 
 def test_full_output_is_logged_and_tail_is_bounded(tmp_path: Path, monkeypatch):

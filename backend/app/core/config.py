@@ -107,18 +107,31 @@ class Settings(BaseSettings):
     # releases the lock and tears down the in-container claude process.
     #
     # Still governs: TurnRunner's outer transport-independent wrap for the SDK
-    # backend (no activity signal exists there) and the remote device backend's
-    # own inner deadline. The LOCAL tmux backend no longer uses this value for
-    # its effective timeout — see agent_idle_suspect_s / agent_turn_hard_ceiling_s
-    # below (turn 活跃度检测, 2026-08-09).
+    # backend (no activity signal exists there), plus the generic outer default
+    # any backend keeps until it signals its own ceiling. The hooks-driven
+    # backends — LOCAL tmux AND remote device — no longer use this for their
+    # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
+    # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
+    # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
     agent_turn_timeout_s: float = 900.0
-    # Two-layer safety net for the hooks-driven LOCAL tmux backend only. Below
-    # this much idle time (no hook, no tmux pane output change) a turn is normal;
-    # past it the turn is only SUSPECTED wedged and gets one lightweight liveness
-    # probe (pane_dead) rather than being killed outright — a long tool call with
-    # no interim hook must not look identical to a dead pane.
+    # 冷启动看门狗: a turn that has emitted no assistant text and made no tool
+    # call within this many seconds is declared dead, whatever its ceiling says.
+    # It answers "did this turn ever start?", which `agent_turn_timeout_s` cannot
+    # — silence and hard thinking look identical from the runner, so a turn whose
+    # sandbox never came up used to hold 进行中 for the full 900s (dev, 2026-08-12:
+    # every topic at once, `tools=0`, 30 minutes of platform-wide silence).
+    # Generous on purpose: this must never cut a slow-but-live turn, only one
+    # that never started. 0 disables it.
+    agent_first_output_timeout_s: float = 300.0
+    # Two-layer safety net for the hooks-driven backends — LOCAL tmux AND remote
+    # device (they share one policy). Below this much idle time (no hook, and no
+    # backend-specific activity signal) a turn is normal; past it the turn is only
+    # SUSPECTED wedged and gets one lightweight liveness probe (tmux: pane_dead;
+    # device: a process-tree probe over the link) rather than being killed outright
+    # — a long foreground command with no interim hook must not look identical to a
+    # dead screen.
     agent_idle_suspect_s: float = 300.0
-    # Unconditional backstop for the tmux backend regardless of activity — guards
+    # Unconditional backstop for both hooks backends regardless of activity — guards
     # against a pathological "looks active but never converges" turn (a tool
     # retrying forever, a genuine infinite loop that keeps printing).
     agent_turn_hard_ceiling_s: float = 10800.0
@@ -212,8 +225,6 @@ class Settings(BaseSettings):
     # Empty (default) → behaviour unchanged. Ported from design/cheese-agent-layer
     # (CONNECTOR_WS_OVERRIDES, commits ce30e62 + 6327c7e).
     connector_ws_overrides: dict[str, str] = {}
-    # Per-turn wall-clock ceiling for a device turn (mirrors agent_turn_timeout_s).
-    device_turn_timeout_s: float = 900.0
 
     # --- MicroCloud: cloud nodes for the team's compute pool ---
     # A project remains the billing/audit unit for each machine, but enrollment
@@ -330,6 +341,13 @@ class Settings(BaseSettings):
     # before the sweep calls it wedged and tears it down. See
     # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
     turn_silence_timeout_s: float = 1800.0
+    # How long a topic may sit on a mid-turn block before `/topics/{id}/status`
+    # calls it stalled. Lower than the sweep's ceiling above on purpose: this
+    # one only REPORTS, so a false positive costs a second look rather than a
+    # cancelled turn, and 10 minutes is already past the ceiling of a single
+    # blocking tool call — the longest a healthy turn can legitimately go
+    # without adding a block.
+    turn_stall_signal_s: float = 600.0
 
     # --- Memory backend (spec §8.4 / §15 Q9) ---
     # "db": flat memory_entries projection in PG (Phase 0 default, no extra deps).
@@ -381,21 +399,41 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
-    # PR-based accept (#188 §5.1, docs/plans/2026-08-09-pr-based-accept-design.md):
-    # submitting an accept card pushes the topic branch and opens a real PR;
-    # 采纳 merges that PR via the API. Submission-side only — accept dispatches
-    # on the card's stored pr_number, so flipping this never strands a card.
-    accept_via_pr: bool = False
+    # 采纳即合并 (docs/accept-is-merge.md #296, staged rollout): submitting an
+    # accept card opens a real PR with the App's installation token; 采纳 merges
+    # that PR via the API. On by default as of stage 1 — the App owns PR
+    # creation, so the accept path never opens a competing PR while this is on
+    # (see AcceptService.accept). Submission-side only — accept dispatches on the
+    # card's stored pr_number, so flipping this never strands a card, and a
+    # deployment can still switch it off via .env (dev override) if needed.
+    accept_via_pr: bool = True
+
+    # --- 闸门孤儿卡扫底 (2026-08-11) ---
+    # How often to look for `pending_gate` cards nobody will ever settle (the
+    # gate runner is an in-memory asyncio task — see review/gate_sweep.py for
+    # the three ways it goes missing). Startup does one sweep unconditionally;
+    # this interval is what covers the "process still alive, task died" half.
+    # 0 disables the periodic sweep (the startup one still runs).
+    gate_sweep_interval_s: int = 300
 
     # --- 两阶段采纳 (PR迭代式, 2026-08-09) ---
     # How often the background poller checks an open PR's CI / the deploy
     # workflow it triggers after merge.
     accept_pr_poll_interval_s: int = 60
+    # 后端报错回房间 (issue #283): how often to close expired burst windows so a
+    # flood that STOPPED still reports how big it was. Only bounds how late that
+    # summary line is — the dedup window decides whether it exists. 0 disables.
+    backend_error_flush_interval_s: int = 60
     # 自动同步上游: how often to pull the upstream's default branch into each
     # linked project's base. Falling behind is what makes accepts unable to push
     # (see SchedulerService.sync_upstreams), so this only has to run often
     # enough that the gap stays small — not on every commit. 0 disables it.
     upstream_sync_interval_s: int = 1800
+    # --- 结论卡 (2026-08-11) ---
+    # How often open conclusion cards past their absolute deadline are swept and
+    # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on
+    # the parent's digest turn ever running. 0 disables the loop (tests).
+    conclusion_sweep_interval_s: int = 60
     # Workflow file (under .github/workflows/) that deploys after a merge to
     # the base branch — must reach completed+success before a pr_open card's
     # topic is finally archived (2026-08-09 拍板: merge alone is not enough).
@@ -471,6 +509,15 @@ class Settings(BaseSettings):
     # (no-token) callers are unaffected. Ops kill-switch: set false to disable the
     # membership check entirely if a token rollout surfaces an unexpected block.
     authz_enforce_topic_access: bool = True
+    # Escape hatch for LOCAL harnesses only (the eval runner's throwaway backend,
+    # browser probes): admit a chat WebSocket that carries no ``?token=`` and let
+    # the message body name its own author. That is the pre-token Phase-0 path —
+    # with it on, any client can post as any handle, which is why production
+    # leaves it off. It does NOT weaken the invalid/expired-token case: a socket
+    # that presents a token we cannot verify is refused either way, because
+    # silently downgrading a failed credential to "anonymous" is what let a whole
+    # batch of messages land under 匿名者 while the sender saw no error at all.
+    chat_ws_allow_anonymous: bool = False
 
     # --- 主仓产品配置并入 (fusion merge, restored): main's live product domains
     # (task AI advice, rank checks, email/notifications, meilisearch, real-name
@@ -514,6 +561,9 @@ class Settings(BaseSettings):
     )
     notification_email_queue_key: str = Field(
         default="cheese:notifications:email", alias="NOTIFICATION_EMAIL_QUEUE_KEY"
+    )
+    notification_email_max_retries: int = Field(
+        default=3, alias="NOTIFICATION_EMAIL_MAX_RETRIES"
     )
 
     meilisearch_url: str = Field(default="", alias="MEILISEARCH_URL")

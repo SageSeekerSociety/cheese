@@ -26,8 +26,16 @@ import type {
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { answerOptions, attachmentRawUrl, chatWsUrl, listBlocks, toggleReaction as apiToggleReaction } from '../api'
+import {
+  answerOptions,
+  attachmentRawUrl,
+  chatWsUrl,
+  getProgress,
+  listBlocks,
+  toggleReaction as apiToggleReaction,
+} from '../api'
 import { usePendingAttachments } from '../lib/attachments'
+import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
 import { platformErrorPresentation } from '../lib/platformEvents'
@@ -36,10 +44,12 @@ import {
   renderMarkdown as renderMarkdownWith,
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
+import { placeSplitMarkers } from '../lib/splitMarkers'
 import { myHandle } from '../me'
 import { avatarColor } from '../utils/avatar'
 
 import CheeseAvatar from './CheeseAvatar.vue'
+import DispatchedMarker from './DispatchedMarker.vue'
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
@@ -146,8 +156,13 @@ const errorMsg = ref<string | null>(null)
 const awaitingReply = ref(false)
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
-// Live working-log todo (芝士's Task tools) for the in-progress turn (§3.1.1).
+// Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between
+// turns it holds the topic's stored 进度层 (#187) instead of being wiped, so
+// "做到哪了" is visible in the room without summoning anyone.
 const todoItems = ref<TodoItem[]>([])
+// The list on screen is a previous turn's leftovers, not this turn's live
+// progress — labelled differently so nobody reads a stale ◐ as "running now".
+const todoRestored = ref(false)
 // Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
 // event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
 const ACTION_META: Record<string, { verb: string; btn: string }> = {
@@ -414,8 +429,24 @@ function cancelRetry() {
   }
 }
 
+// Every way the backend can refuse a socket AT CONNECT (app/api/routes/chat.py):
+// no token, a token it could not verify, and a verified token whose owner is not
+// on this topic's roster. The set is the point — `forbidden` was left out once
+// and behaved exactly like the bug this latch exists to fix, because a refusal
+// the client doesn't recognise falls through to the reconnect path below.
+const CONNECT_REFUSAL_CODES = new Set(['auth_required', 'auth_expired', 'forbidden'])
+
+// A connect refusal is not an outage: the backend closes the socket after one
+// error frame, so retrying just reopens and gets refused again. And it does not
+// even back off — the HANDSHAKE succeeds, the refusal arrives as a frame, so
+// onopen has already cleared the banner and reset retryDelayMs to 1s before the
+// reason lands. Measured with `forbidden` unlatched: 9 connections in 8 seconds,
+// the green dot flickering and the reason blinking with it, forever. So we latch
+// it: stop retrying and keep the reason on screen until they act.
+const connectRefused = ref(false)
+
 function scheduleReconnect(topicId: string) {
-  if (retryTimer) return
+  if (retryTimer || connectRefused.value) return
   const delay = retryDelayMs
   retryDelayMs = Math.min(retryDelayMs * 2, 15000)
   retryTimer = setTimeout(() => {
@@ -459,7 +490,7 @@ function openSocket(topicId: string) {
   }
   ws.onerror = () => {
     // The close handler owns retry; the banner just explains the grey dot.
-    errorMsg.value = '连接断开，正在自动重连…'
+    if (!connectRefused.value) errorMsg.value = '连接断开，正在自动重连…'
   }
   ws.onmessage = (ev: MessageEvent) => {
     // Guard against frames from a stale socket after topic switch.
@@ -501,8 +532,11 @@ function handleFrame(frame: WsServerFrame) {
       emit('tool-used', frame.name.replace(/^mcp__cheese__/, ''), frame.input)
       break
     case 'todo':
-      // Live working-log checklist (process), updated in place.
+      // Working-log checklist, updated in place. `restored` marks the replay of
+      // a previous turn's list at turn start (进度层) — the first live frame of
+      // this turn clears the flag.
       todoItems.value = frame.items
+      todoRestored.value = frame.restored === true
       autoScroll()
       break
     case 'state':
@@ -524,15 +558,27 @@ function handleFrame(frame: WsServerFrame) {
       autoScroll()
       break
     case 'error':
+      // The socket was refused at connect — the backend closes right after this
+      // frame, so latch the reason and stop the reconnect loop from burying it.
+      if (frame.code && CONNECT_REFUSAL_CODES.has(frame.code)) {
+        connectRefused.value = true
+        errorMsg.value = frame.message
+        awaitingReply.value = false
+        return
+      }
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
       awaitingReply.value = false
-      todoItems.value = []
+      // A failed turn is exactly when the checklist matters most — it is what
+      // whoever picks this up next (person or new machine) works from. Keep it.
+      todoRestored.value = true
       break
     case 'done':
       awaitingReply.value = false
-      todoItems.value = [] // working-log done; the messages are the record
+      // Kept, not cleared: the checklist is the topic's 进度层 now, not just
+      // this turn's working log, and it is what the next turn resumes from.
+      todoRestored.value = true
       emit('turn-done')
       autoScroll()
       break
@@ -549,8 +595,26 @@ function handleFrame(frame: WsServerFrame) {
 
 async function loadTopic(topic: Topic) {
   errorMsg.value = null
+  connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
   todoItems.value = []
+  todoRestored.value = false
+  // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
+  // guarded on the topic still being active — it is context, never a reason to
+  // hold up (or fail) opening the conversation.
+  void getProgress(topic.id)
+    .then((p) => {
+      if (props.topic?.id !== topic.id || todoItems.value.length) return
+      // `?? []` 不是防御性洁癖：这个 ref 只要被写成 undefined，模板里的
+      // `todoItems.length` 就抛，整个 ChatPanel 渲染失败——房间变成白板。而下面
+      // 那句 `.catch(() => {})` 只吞掉报错，撤不回已经写进去的 undefined，所以
+      // 屏幕上不会有任何东西说明发生了什么。今天的后端始终带 items，够不到这里；
+      // 前后端版本错开一次就够得到，代价是整个房间。
+      const items = p.items ?? []
+      todoItems.value = items
+      todoRestored.value = items.length > 0
+    })
+    .catch(() => {})
   reactionPickerFor.value = null
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
@@ -641,7 +705,6 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   const msg: WsClientMessage = {
     type: 'message',
     content: trimmed,
-    author: AUTHOR,
     summon,
     reply_to: replyTarget.value?.id ?? undefined,
     attachments: atts,
@@ -651,7 +714,9 @@ function send(content: string, summon: boolean, attachments?: ChatAttachment[]):
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
   // instant local ack (正在看…) even before the backend's ✅ receipt lands.
   if (summon) awaitingReply.value = true
-  todoItems.value = []
+  // The stored checklist stays on screen until this turn's first live frame
+  // replaces it — blanking it here would hide 进度 during the cold start, which
+  // is precisely when someone is wondering where the work got to.
   scrollToBottom()
   return true
 }
@@ -687,6 +752,17 @@ const visible = computed<Block[]>(() => {
   return out
 })
 
+// 「已派出」标记 (issue #314): 本房间拆出去的子话题，在时间线上它被拆出去的那个
+// 时刻标一行，点进去就是那边。库里没有这行 —— split 不往父话题写任何 block，所以
+// 位置只能由子话题的 parent_id + created_at 现算（lib/splitMarkers.ts 说明了它能
+// 标什么、标不了什么）。topicList 是本项目的全部话题，子话题已经在里面了。
+const splitMarkers = computed(() =>
+  placeSplitMarkers(props.topic?.id, props.topicList, {
+    blocks: visible.value,
+    hasMore: hasMore.value,
+  })
+)
+
 // ---- Feishu group-chat helpers (Fix 2) ----
 function displayName(m: Block): string {
   return m.author_type === 'ai' ? '芝士' : m.author
@@ -706,6 +782,9 @@ function isRunStart(i: number): boolean {
   const prev = visible.value[i - 1]
   const cur = visible.value[i]
   if (prev.kind === 'event' || cur.kind === 'event') return true
+  // 一条「已派出」标记横在中间时，下面这条必须重新带头像和名字 —— 否则它看上去
+  // 像是挂在标记上的续话。同 event 的道理：中间隔了东西，run 就断了。
+  if (splitMarkers.value.before.has(cur.id)) return true
   return prev.author !== cur.author || prev.author_type !== cur.author_type
 }
 
@@ -723,6 +802,14 @@ const prState = computed(() => {
 // ---- Self-contained composer (only when showComposer) ----
 const draft = ref('')
 const summon = ref(props.defaultSummon)
+const composerInput = ref<{ focus?: () => void } | null>(null)
+
+// 同 WorkspaceView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
+// 按的那次 Enter 打在 chip 上，把刚点亮的 @芝士 又静默关掉且不发送。
+function toggleSummon() {
+  summon.value = !summon.value
+  void nextTick(() => composerInput.value?.focus?.())
+}
 
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
@@ -891,7 +978,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="chat d-flex flex-column fill-height">
+  <!-- The layout lives in `.chat` below, NOT in Vuetify's d-flex/flex-column/
+       fill-height utilities. Those carry `!important`, and 专注模式 hides this
+       whole panel with `v-show` — which sets inline `display: none`, which
+       `.d-flex { display: flex !important }` then overrides. The button
+       toggled, the icon flipped, and the chat column never moved. -->
+  <div class="chat">
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
@@ -957,6 +1049,15 @@ onBeforeUnmount(() => {
           </div>
 
           <template v-for="(m, i) in visible" :key="m.id">
+            <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
+               这一行是按子话题的 parent_id + created_at 现算出来的，插在它被拆出
+               去的那个时刻上。它不是消息，但会像 event 一样把消息分组打断。 -->
+            <DispatchedMarker
+              v-for="marker in splitMarkers.before.get(m.id) ?? []"
+              :key="marker.topicId"
+              :marker="marker"
+              @open="emit('open-topic', $event)"
+            />
             <!-- Infrastructure incidents are facts in the conversation, but they
                are neither 芝士 messages nor faint activity lines. Structured
                metadata selects this persistent, accessible recovery card. -->
@@ -999,6 +1100,27 @@ onBeforeUnmount(() => {
                 {{ ACTION_META[actionResource(m)!].btn }}
               </button>
             </div>
+            <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
+               person needs to know it happened. So the line shows by default
+               and the stack is one click away — a room is a conversation, not
+               a monitoring dashboard. -->
+            <details v-else-if="backendErrorPresentation(m)" class="backend-error" data-testid="backend-error-event">
+              <summary class="backend-error__line">
+                <span>{{ backendErrorPresentation(m)!.line }}</span>
+                <span v-if="backendErrorPresentation(m)!.count" class="backend-error__count">
+                  ×{{ backendErrorPresentation(m)!.count }}
+                </span>
+              </summary>
+              <div class="backend-error__meta">
+                <span v-if="backendErrorPresentation(m)!.where">{{ backendErrorPresentation(m)!.where }}</span>
+                <span v-if="backendErrorPresentation(m)!.requestId">
+                  req {{ backendErrorPresentation(m)!.requestId }}
+                </span>
+              </div>
+              <pre v-if="backendErrorPresentation(m)!.stack" class="backend-error__stack">{{
+                backendErrorPresentation(m)!.stack
+              }}</pre>
+            </details>
             <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
                Content may carry a <@handle> actor token (归档/编辑…): render it
                through the SAME token→chip path as messages so the actor is a
@@ -1114,6 +1236,15 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
+          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚拆出去、之后房间里还
+             没人说过话的那些子话题。 -->
+          <DispatchedMarker
+            v-for="marker in splitMarkers.tail"
+            :key="marker.topicId"
+            :marker="marker"
+            @open="emit('open-topic', $event)"
+          />
+
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until the turn's FIRST message lands; the live
              working-log checklist stays visible for the whole turn. -->
@@ -1126,7 +1257,10 @@ onBeforeUnmount(() => {
                 <span class="im-name">芝士</span>
               </div>
 
-              <!-- Live working-log checklist (芝士's tasks this turn, §3.1.1) -->
+              <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
+                 turn; between turns this is the topic's stored 进度层 (#187),
+                 labelled so a leftover ◐ is not read as "running right now". -->
+              <div v-if="todoItems.length && todoRestored" class="todo-label">进度（上次做到这里）</div>
               <ul v-if="todoItems.length" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
                   <span class="todo-mark">{{ todoMark(t.status) }}</span>
@@ -1178,7 +1312,7 @@ onBeforeUnmount(() => {
               class="summon-chip"
               :class="{ 'summon-chip--on': summon }"
               title="@芝士 — 让芝士回复"
-              @click="summon = !summon"
+              @click="toggleSummon"
             >
               <v-icon v-if="summon" size="13">mdi-creation</v-icon>
               @芝士
@@ -1222,6 +1356,7 @@ onBeforeUnmount(() => {
           </div>
           <div class="d-flex align-end ga-2">
             <v-textarea
+              ref="composerInput"
               v-model="draft"
               variant="plain"
               rows="1"
@@ -1270,6 +1405,12 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .chat {
+  /* Was `d-flex flex-column fill-height` on the root. Spelled here instead so
+     the declarations carry normal specificity: v-show's inline `display: none`
+     has to be able to win. See the comment on the root element. */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   background: var(--surface);
 }
 /* Action cards (§3.1.1 控件) — 芝士's cheese actions as clickable affordances.
@@ -1322,7 +1463,13 @@ onBeforeUnmount(() => {
   background: var(--accent);
   flex: none;
 }
-/* Live working-log checklist (§3.1.1) — process, sits above the streaming text. */
+/* Working-log checklist (§3.1.1) — process, sits above the streaming text.
+   Between turns the same list shows the stored 进度层 (#187) under a label. */
+.todo-label {
+  font-size: 12px;
+  color: var(--muted, #666);
+  margin: 2px 0 0;
+}
 .todo-list {
   list-style: none;
   margin: 2px 0 6px;
@@ -1941,6 +2088,57 @@ onBeforeUnmount(() => {
 .im-event span {
   display: inline-block;
   padding: 0 10px;
+}
+
+/* 后端报错: collapsed by default — one quiet line among the system lines, with
+   the traceback behind a click. Louder than 编辑了文档, quieter than a platform
+   incident card. */
+.backend-error {
+  margin: 8px 16px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #c65a1e 5%, transparent);
+  font-size: 12px;
+}
+.backend-error__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-muted, var(--faint));
+  list-style: none;
+}
+.backend-error__line > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.backend-error__count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #c65a1e 16%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.backend-error__meta {
+  display: flex;
+  gap: 12px;
+  margin-top: 6px;
+  color: var(--faint);
+  font-size: 11px;
+}
+.backend-error__stack {
+  margin: 6px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-sunken, rgb(0 0 0 / 4%));
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
 }
 
 .caret {

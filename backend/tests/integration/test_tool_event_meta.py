@@ -12,6 +12,7 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from tests.conftest import StubAgent
+from tests.integration.conftest import chat_ws_url
 
 
 class ToolStubAgent(StubAgent):
@@ -49,10 +50,8 @@ def stub_agent() -> ToolStubAgent:
 
 
 def _chat(client, topic_id: str) -> None:
-    with client.websocket_connect(f"/api/topics/{topic_id}/chat") as ws:
-        ws.send_json(
-            {"type": "message", "content": "hi", "author": "user-1", "summon": True}
-        )
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
 
@@ -60,7 +59,8 @@ def _chat(client, topic_id: str) -> None:
 def test_event_blocks_persist_structured_meta(client):
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "话题"}
+        "/api/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]
     _chat(client, t["id"])
 

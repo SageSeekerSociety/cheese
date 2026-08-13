@@ -45,7 +45,7 @@ def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     return min_val + (uuid.uuid4().int % span)
 
 
-def session_token(handle: str) -> str:
+def session_token(handle: str, *, ttl_s: int | None = None) -> str:
     """A handle-scoped session token — the ONLY sanctioned way for a test to
     mint one.
 
@@ -54,18 +54,32 @@ def session_token(handle: str) -> str:
     split / connector / project routes) keys off. When a test needs a real DB
     user instead, use ``seed_user`` or the ``authenticated_user`` fixture.
 
+    ``ttl_s`` overrides the lifetime; pass a negative value for an already-expired
+    token (what a client holds after leaving a tab open over the weekend).
+
     ``backend/tests/`` must not import ``mint_session_token`` directly —
     ``tests/unit/test_no_adhoc_auth_helpers.py`` enforces it. Fourteen
     hand-rolled copies of this had accumulated — 9 named ``_auth``, 3 named
     ``_login``, 2 inlined into headers — which is why the rule is now a test
     rather than a sentence in a rules file.
     """
-    return mint_session_token(handle=handle, user_id=None)
+    return mint_session_token(handle=handle, user_id=None, ttl_s=ttl_s)
 
 
 def session_auth_headers(handle: str) -> dict[str, str]:
     """``Authorization`` header carrying :func:`session_token` for ``handle``."""
     return {"Authorization": f"Bearer {session_token(handle)}"}
+
+
+def chat_ws_url(topic_id: str, handle: str) -> str:
+    """The topic's chat WebSocket, authenticated as ``handle``.
+
+    The socket requires a session token (``app.api.routes.chat``), so tests take
+    the same path the browser does. ``handle`` must be able to reach the topic —
+    its roster owner, or a member/owner of its project — or the connect is
+    refused with ``code: forbidden``.
+    """
+    return f"/api/topics/{topic_id}/chat?token={session_token(handle)}"
 
 
 @dataclass

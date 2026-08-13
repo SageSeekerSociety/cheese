@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.db import get_db
 from app.domain.dashboard.services import DashboardService
@@ -17,8 +18,16 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.get("/projects/{project_id}/overview")
-async def project_overview(project_id: uuid.UUID, db: DbSession) -> dict:
-    return ok(await DashboardService(db).project_overview(project_id))
+async def project_overview(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """事维度总览 — for a verified caller; 等你处理的事 shows THEIR items plus
+    broadcasts, never other members' mailboxes (those ids/titles used to leak
+    here unauthenticated)."""
+    viewer = await resolver.resolve_recipient(
+        requested=None, project_id=project_id, allow_anonymous=False
+    )
+    return ok(await DashboardService(db).project_overview(project_id, viewer=viewer))
 
 
 @router.get("/spaces/{space_id}/dashboard")
@@ -28,10 +37,25 @@ async def space_dashboard(space_id: int, db: DbSession) -> dict:
 
 @router.get("/projects/{project_id}/members/{user_handle}/summary")
 async def member_summary(
-    project_id: uuid.UUID, user_handle: str, db: DbSession
+    project_id: uuid.UUID,
+    user_handle: str,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
-    """成员页 (spec §7.2): one member's topics + waiting items + role."""
-    return ok(await DashboardService(db).member_summary(project_id, user_handle))
+    """成员页 (spec §7.2): one member's topics + waiting items + role.
+
+    ``user_handle`` says whose page this is, not who is asking — the caller is
+    resolved like on /overview above, and ``waiting_on_you`` is trimmed to what
+    the viewer may see (this route used to hand the named member's inbox to
+    anyone unauthenticated)."""
+    viewer = await resolver.resolve_recipient(
+        requested=None, project_id=project_id, allow_anonymous=False
+    )
+    return ok(
+        await DashboardService(db).member_summary(
+            project_id, user_handle, viewer=viewer
+        )
+    )
 
 
 @router.get("/projects/{project_id}/usage")

@@ -177,3 +177,24 @@ async def test_inbound_frame_updates_last_seen():
     await hub.attach_device("dev1", t)
     await hub.on_device_message("dev1", {"t": "heartbeat"})
     assert hub._device("dev1").last_seen > 0
+
+
+async def test_screens_for_topic_spans_devices_online_or_not():
+    """The lifecycle reaper reverse-looks-up a topic's screen to free it. topic_id is
+    globally unique, so the lookup returns every device's screen for it — including
+    one on a device that never attached a transport (offline)."""
+    hub = DeviceHub()
+    await hub.attach_device("dev1", FakeDeviceTransport())
+    topic = uuid.uuid4()
+    a = await hub.open_screen(
+        "dev1", ["claude"], "//js", **{**_screen_args(), "topic_id": topic}
+    )
+    # dev2 has no transport (never attached) — its screen is still registered.
+    b = await hub.open_screen(
+        "dev2", ["claude"], "//js", **{**_screen_args(), "topic_id": topic}
+    )
+    other = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+
+    found = {s.sid for s in hub.screens_for_topic(topic)}
+    assert found == {a.sid, b.sid}
+    assert other.sid not in found  # a different topic is not swept in

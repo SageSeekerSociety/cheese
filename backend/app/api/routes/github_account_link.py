@@ -27,10 +27,13 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.errors import InternalServerError
 from app.core.github_install_state import (
+    ACCOUNT_LINK_TTL_S,
     mint_account_link_state,
     verify_account_link_state,
 )
+from app.core.single_use_state import SingleUseUnavailableError, claim, reserve
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
 
@@ -39,6 +42,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/users/me/github-account", tags=["github"])
 
 _PROVIDER_ID = "github_app"
+# Namespaces the reservation keys. The repo-install flow (github_install.py)
+# carries the same forwardable-state shape and is NOT covered here — see #222.
+_LINK_SCOPE = "github_account_link"
 
 
 async def _oauth_service(db: AsyncSession = Depends(get_db)) -> OAuthService:
@@ -61,10 +67,20 @@ async def get_github_account_authorize_url(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     oauth_service: OAuthService = Depends(_oauth_service),
 ) -> dict:
-    state = mint_account_link_state(
+    minted = mint_account_link_state(
         auth_user.user_id, return_project_id=return_project_id
     )
-    url = oauth_service.generate_authorization_url(_PROVIDER_ID, state)
+    try:
+        await reserve(_LINK_SCOPE, minted.jti, ttl_s=ACCOUNT_LINK_TTL_S)
+    except SingleUseUnavailableError:
+        # Refuse rather than hand out a state we cannot retire. Minting it
+        # anyway would produce a link that either never works (the claim finds
+        # no reservation) or works forever — and "works forever" is the bug.
+        logger.exception(
+            "github account link: cannot reserve state uid=%s", auth_user.user_id
+        )
+        raise InternalServerError("暂时无法发起 GitHub 账号连接，请稍后重试") from None
+    url = oauth_service.generate_authorization_url(_PROVIDER_ID, minted.state)
     return ok({"url": url})
 
 
@@ -83,6 +99,27 @@ async def github_account_link_callback(
     claims = verify_account_link_state(state)
     if claims is None:
         logger.info("github account link: invalid state")
+        return _link_redirect(None, github_account="error", reason="invalid_state")
+
+    try:
+        first_use = await claim(_LINK_SCOPE, claims.jti)
+    except SingleUseUnavailableError:
+        logger.exception(
+            "github account link: cannot claim state uid=%s", claims.user_id
+        )
+        return _link_redirect(
+            claims.return_project_id, github_account="error", reason="internal_error"
+        )
+    if not first_use:
+        # Either a forwarded link someone else clicked (#222's incident) or the
+        # rightful user reloading the callback. Both get the same answer,
+        # because from here the two are indistinguishable — and the copy for
+        # invalid_state already says 「已失效或被用过了，请重新点一次」.
+        #
+        # Deliberately NOT bounced to `claims.return_project_id`: whoever is
+        # holding a spent state may well be a stranger, and the project id is
+        # the one thing in these claims worth not handing them.
+        logger.info("github account link: state already spent uid=%s", claims.user_id)
         return _link_redirect(None, github_account="error", reason="invalid_state")
 
     try:
@@ -109,6 +146,17 @@ async def github_account_link_callback(
     )
     refresh_token = token_data.get("refresh_token")
 
+    # `login` is what a person recognises; `id` is a number only GitHub means
+    # anything by. The connections serializer reads the login out of here
+    # (`raw_profile["login"]`), and this flow used to store only email+name —
+    # so the settings page fell back to the bare numeric id for EVERY user
+    # ever linked (observed on dev: 「已连接 222958366」).
+    profile = {
+        "login": user_info.username,
+        "email": user_info.email,
+        "name": user_info.name,
+    }
+
     existing = await oauth_service.get_connection_by_provider(
         provider_id=_PROVIDER_ID, provider_user_id=user_info.id
     )
@@ -123,11 +171,20 @@ async def github_account_link_callback(
             claims.return_project_id, github_account="error", reason="already_linked"
         )
     if existing:
+        # Re-link refreshes the profile too. Without this the fix above would
+        # do nothing for anyone who is ALREADY linked — which is everyone —
+        # because 重新连接 took this branch and only ever touched tokens. With
+        # it, one click repairs the display; no backfill migration needed, and
+        # none is possible anyway (the login has to come from GitHub).
         await oauth_service.update_connection_tokens(
             connection_id=existing["id"],
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,
+            # 只有真拿到 login 才覆盖已存的 profile。某次交换没带 login 就照写，
+            # 会把一个已经好了的名字降级回 None——正是这个 PR 要修的毛病反着来
+            # 一遍，而且是在用户主动点「重新连接」想修好它的时候发生。
+            raw_profile=profile if user_info.username else None,
         )
         logger.info(
             "github account link: updated uid=%s github_id=%s",
@@ -139,7 +196,7 @@ async def github_account_link_callback(
             user_id=claims.user_id,
             provider_id=_PROVIDER_ID,
             provider_user_id=user_info.id,
-            raw_profile={"email": user_info.email, "name": user_info.name},
+            raw_profile=profile,
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires=token_expires,

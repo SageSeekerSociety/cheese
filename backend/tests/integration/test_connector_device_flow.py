@@ -68,6 +68,54 @@ def test_full_device_flow_start_approve_poll(client):
     assert dd["device_id"] == device_id and dd["token"]
 
 
+def test_the_human_door_enrols_a_machine_the_platform_may_never_destroy(client):
+    """入口决定待遇 (#282 决定 2): this door is a human running the connector on a box
+    they already keep running, so what it enrols is `self_hosted` — a CONSTANT at
+    the call site. The MicroCloud sweep writes `cloud` for identical hardware
+    (test_machine_enrollment covers that side); nothing about the machine itself is
+    consulted either way.
+
+    Drives the real route and captures what it passed, because the constant IS the
+    behaviour here — 「入口决定待遇」 is only true if each entry point states its own
+    answer rather than sharing a default.
+    """
+    from app.api.routes.connector import DbSession, get_device_service
+    from app.domain.device.service import DeviceService
+    from app.domain.device.supply import Supply
+
+    recorded: list[Supply] = []
+
+    class Recording(DeviceService):
+        async def approve(self, code_value, *, owner_user_id, supply, name=None):
+            recorded.append(supply)
+            return await super().approve(
+                code_value, owner_user_id=owner_user_id, supply=supply, name=name
+            )
+
+    def _recording_service(db: DbSession) -> DeviceService:
+        from app.domain.device.sql_repository import SqlDeviceRepository
+
+        return Recording(SqlDeviceRepository(db))
+
+    token = _login(client, "bob")
+    code = client.post(
+        "/connector/auth/device/start", json={"device_name": "bobs-desktop"}
+    ).json()["device_code"]
+
+    client.app.dependency_overrides[get_device_service] = _recording_service
+    try:
+        connect = client.post(
+            "/connector/connect",
+            json={"device_code": code},
+            headers=_bearer(token),
+        )
+    finally:
+        client.app.dependency_overrides.pop(get_device_service, None)
+
+    assert connect.status_code == 200, connect.text
+    assert recorded == [Supply.self_hosted]
+
+
 def test_proposed_name_lets_approval_page_prefill_hostname(client):
     # The cli posts this machine's hostname at start; the approval page reads it back
     # (by code) to prefill an editable default — never a blank "unnamed" field.

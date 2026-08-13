@@ -50,6 +50,7 @@ import {
 } from '../lib/docEditState'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../lib/docMarkdown'
 import { relTime } from '../lib/relTime'
+import { countLines, isLongSiteEntry, shouldFollowTail, shouldKeepPinning, SITE_CLAMP_LINES } from '../lib/siteLog'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../lib/toolLabels'
 import { costLabel, costNote, fmtNum } from '../lib/usageFormat'
 import { myHandle } from '../me'
@@ -481,6 +482,57 @@ const commentsFolded = ref(false)
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
+// The 现场 scroll container, so the timeline can open on its newest entry the
+// way a chat log does. Measured before this existed: opening 现场 left
+// scrollTop at 0 with a scrollHeight of 1818 and a viewport of 500 — the
+// reader landed 1300px above the thing they came to see.
+const toolContentRef = ref<HTMLElement | null>(null)
+// Entries the reader has expanded. Keyed by block id, and deliberately NOT
+// reset when the transcript refreshes: a silent refresh re-collapsing what
+// someone just opened is the same bug as scrolling them away from it.
+const expandedSite = ref<Set<string>>(new Set())
+
+function toggleSiteEntry(id: string): void {
+  const next = new Set(expandedSite.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedSite.value = next
+}
+
+// A single `scrollTop = scrollHeight` at nextTick does NOT work here, which is
+// how this shipped broken the first time: the panel renders its spinner first,
+// so the container is one viewport tall with nothing to scroll, the assignment
+// clamps to 0, and the timeline lays out underneath — leaving the reader on the
+// oldest entry, the exact bug this exists to fix. Measured on the deployed page:
+// scrollHeight 500 at +40ms, 2066 at +120ms, scrollTop 0 throughout.
+// So keep re-pinning while the height is still moving (see shouldKeepPinning).
+function scrollSiteToTail(): void {
+  let lastHeight = -1
+  let frames = 0
+  const pin = (): void => {
+    const el = toolContentRef.value
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    if (shouldKeepPinning(el.scrollHeight, lastHeight, frames)) {
+      lastHeight = el.scrollHeight
+      frames += 1
+      requestAnimationFrame(pin)
+    }
+  }
+  nextTick(() => requestAnimationFrame(pin))
+}
+
+// 本轮实时动作 appends to the bottom of the same list while a turn runs, so it
+// has to follow the tail too — otherwise 现场 opens on the newest entry and then
+// grows out of view while you watch it. Only when the reader is already parked
+// at the bottom: someone who scrolled up to read a tool argument is reading it.
+watch(
+  () => props.worklog.length,
+  () => {
+    const el = toolContentRef.value
+    if (openTool.value === 'site' && el && shouldFollowTail(el)) scrollSiteToTail()
+  }
+)
 // 现场实时终端: when the tmux backend has this topic's container up, the 现场
 // drawer embeds the real read-only terminal (ttyd) instead of the rebuilt
 // worklog. `terminalUrl` is the backend proxy the iframe loads.
@@ -680,7 +732,12 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       // just stays null and the worklog view renders.
       const [tx, term] = await Promise.all([getTranscript(tid), getTerminal(tid).catch(() => null)])
       if (props.topic?.id !== tid) return
+      // Follow the tail on the FIRST load of a topic's 现场 unconditionally
+      // (that is what "open on the newest" means), and on a silent refresh only
+      // when the reader is still parked at the bottom.
+      const follow = !opts.silent || !toolContentRef.value || shouldFollowTail(toolContentRef.value)
       transcript.value = tx.data
+      if (follow) scrollSiteToTail()
       // `url` is a root-relative path ("/api/topics/…/terminal/live/") loaded
       // through the same dev/proxy that fronts /api. The session token has to be
       // appended: the proxy authorizes every request and an iframe can carry no
@@ -2452,7 +2509,7 @@ onBeforeUnmount(() => {
             </div>
             <v-divider />
 
-            <div class="tool-content">
+            <div ref="toolContentRef" class="tool-content">
               <div v-if="toolLoading" class="d-flex justify-center py-8">
                 <v-progress-circular indeterminate color="primary" size="28" />
               </div>
@@ -2506,7 +2563,24 @@ onBeforeUnmount(() => {
                          现场 shows what 芝士 actually emitted — markdown syntax,
                          <@handle> tokens and all — like a Claude Code session,
                          NOT the rendered chat version. -->
-                        <div class="site-msg__raw">{{ b.content }}</div>
+                        <div
+                          class="site-msg__raw"
+                          :class="{ 'site-msg__raw--clamped': isLongSiteEntry(b.content) && !expandedSite.has(b.id) }"
+                          :style="{ '--site-clamp-lines': SITE_CLAMP_LINES }"
+                        >
+                          {{ b.content }}
+                        </div>
+                        <!-- 过长时不直接摊开：一条几千字的输出会把它前后的所有
+                             东西挤出屏幕，而 现场 的价值恰恰是「一眼看完发生了
+                             什么」。折叠到 12 行，想看全的自己点开。 -->
+                        <button
+                          v-if="isLongSiteEntry(b.content)"
+                          type="button"
+                          class="site-msg__more"
+                          @click="toggleSiteEntry(b.id)"
+                        >
+                          {{ expandedSite.has(b.id) ? '收起' : `展开全部（${countLines(b.content)} 行）` }}
+                        </button>
                       </div>
                     </div>
                   </template>
@@ -3206,6 +3280,30 @@ onBeforeUnmount(() => {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
+}
+/* Collapsed long entry. The height comes from SITE_CLAMP_LINES via a bound
+   custom property rather than a literal here: the template asks that same
+   module whether to render the 展开 button, so if the two drift an entry gets
+   clamped with no way out of the clamp. */
+.site-msg__raw--clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: var(--site-clamp-lines);
+  line-clamp: var(--site-clamp-lines);
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.site-msg__more {
+  margin-top: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 12px;
+  color: var(--text-muted, #888);
+  cursor: pointer;
+}
+.site-msg__more:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 /* Transparent scrim: an outside click dismisses the floating panel. */
 .tool-scrim {

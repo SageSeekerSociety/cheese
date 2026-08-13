@@ -16,6 +16,7 @@ from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.hooks_substrate import ScreenSetupError
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
+from app.domain.device.supply import Supply
 
 OWNER = 1
 
@@ -28,7 +29,7 @@ async def _device_on_project(
     service: DeviceService, project_id: uuid.UUID, name: str
 ) -> str:
     code = await service.start(name)
-    device = await service.approve(code, owner_user_id=OWNER)
+    device = await service.approve(code, owner_user_id=OWNER, supply=Supply.self_hosted)
     await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
     return device.device_id
 

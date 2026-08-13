@@ -57,6 +57,9 @@ def verify_install_state(state: str) -> uuid.UUID | None:
 # app.core.tokens — from ever validating as each other despite sharing
 # `jwt_secret`.
 _ACCOUNT_LINK_TYPE = "github_account_link"
+# Exported so the reservation that makes a state single-use expires with the
+# state itself, rather than being kept in step by hand in two files.
+ACCOUNT_LINK_TTL_S = _TTL_S
 
 
 class AccountLinkClaims(NamedTuple):
@@ -65,6 +68,15 @@ class AccountLinkClaims(NamedTuple):
     # ProjectSettingsView, not a standalone account page) — None falls back
     # to the app root.
     return_project_id: uuid.UUID | None
+    # This state's one-shot identity. The signature says the platform minted
+    # it; only this says nobody has spent it yet — see core.single_use_state
+    # and #222.
+    jti: str
+
+
+class MintedAccountLinkState(NamedTuple):
+    state: str
+    jti: str
 
 
 def mint_account_link_state(
@@ -72,25 +84,44 @@ def mint_account_link_state(
     *,
     return_project_id: uuid.UUID | None = None,
     ttl_s: int = _TTL_S,
-) -> str:
+) -> MintedAccountLinkState:
+    """A state plus the ``jti`` the caller must reserve before handing it out.
+
+    Returned rather than reserved here so this module stays pure JWT with no
+    I/O — and so the route cannot accidentally hand out a state whose reserve
+    failed, which would be a link that never works.
+    """
     now = int(time.time())
+    jti = uuid.uuid4().hex
     payload = {
         "uid": user_id,
         "rpid": str(return_project_id) if return_project_id else None,
+        "jti": jti,
         "type": _ACCOUNT_LINK_TYPE,
         "iat": now,
         "exp": now + ttl_s,
     }
-    return jwt.encode(payload, _SECRET, algorithm=_ALG)
+    return MintedAccountLinkState(
+        state=jwt.encode(payload, _SECRET, algorithm=_ALG), jti=jti
+    )
 
 
 def verify_account_link_state(state: str) -> AccountLinkClaims | None:
-    """The claims a valid, unexpired account-link state was minted with."""
+    """The claims a valid, unexpired account-link state was minted with.
+
+    A state with no ``jti`` cannot be spent exactly once, so it is not a valid
+    state — that includes any minted by the previous build. They are gone
+    within the 600s TTL, and 「重新点一次」 is what the invalid_state copy
+    already tells the user to do.
+    """
     try:
         decoded = jwt.decode(state, _SECRET, algorithms=[_ALG])
     except jwt.PyJWTError:
         return None
     if decoded.get("type") != _ACCOUNT_LINK_TYPE or decoded.get("uid") is None:
+        return None
+    jti = decoded.get("jti")
+    if not isinstance(jti, str) or not jti:
         return None
     try:
         user_id = int(decoded["uid"])
@@ -101,4 +132,6 @@ def verify_account_link_state(state: str) -> AccountLinkClaims | None:
         return_project_id = uuid.UUID(str(rpid)) if rpid else None
     except ValueError:
         return_project_id = None
-    return AccountLinkClaims(user_id=user_id, return_project_id=return_project_id)
+    return AccountLinkClaims(
+        user_id=user_id, return_project_id=return_project_id, jti=jti
+    )

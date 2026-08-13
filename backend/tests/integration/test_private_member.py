@@ -1,5 +1,7 @@
 """私聊 (spec §1) + 成员页 (spec §7.2)."""
 
+from tests.integration.conftest import chat_ws_url
+
 
 def _project(client) -> str:
     return client.post(
@@ -22,15 +24,8 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     assert all(t["id"] != private["id"] for t in tree)
 
     # It still works as a chat (stub agent replies when summoned).
-    with client.websocket_connect(f"/api/topics/{private['id']}/chat") as ws:
-        ws.send_json(
-            {
-                "type": "message",
-                "content": "设个偏好",
-                "author": "user-1",
-                "summon": True,
-            }
-        )
+    with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "设个偏好", "summon": True})
         frames = []
         while True:
             f = ws.receive_json()
@@ -61,7 +56,11 @@ def test_member_summary(client, bearer):
         },
     )
 
-    s = client.get(f"/api/projects/{pid}/members/user-1/summary").json()["data"]
+    # The member page resolves the viewer; personal waiting items show only on
+    # the member's own page, so read it as user-1.
+    s = client.get(
+        f"/api/projects/{pid}/members/user-1/summary", headers=bearer("user-1")
+    ).json()["data"]
     assert s["handle"] == "user-1"
     assert s["role"] == "member"
     assert any(t["title"] == "我开的话题" for t in s["topics_started"])

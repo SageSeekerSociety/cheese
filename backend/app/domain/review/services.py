@@ -12,15 +12,21 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.cx_notification.models import NotifKind, NotifLevel
+from app.domain.cx_notification.services import NotificationService
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review import archive, pr_publish
+from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
 from app.domain.topic.models import Topic, TopicStatus
@@ -37,6 +43,13 @@ logger = logging.getLogger("cheesex.review")
 # 表情去粗判 (2026-08-10 修的就是这个: 用 "⚠️" 粗判会让"轮询暂停"冒充"重推
 # 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
 _REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
+#: 本地话题分支与 PR 分支分叉 (采纳即合并 #296, 2026-08-12). `push_topic_branch_
+#: for_github_pr` 是**非强制**推送，一旦本地分支被 jj rewind / rebase 挪到了 PR
+#: 分支的祖先或旁支上（bookmark set --allow-backwards 允许回退），plain push 就会
+#: 被 GitHub 以 non-fast-forward 拒绝——而轮询每 60 秒无脑重试这条注定失败的推送，
+#: 就是 card 946bf5de 每 ~70 秒失败一次的死循环。检测到不能快进就**不推**，留一条
+#: 具名 note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
+_REPUSH_DIVERGED_PREFIX = "🌿 本地分支与 PR 分支已分叉"
 _POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
 #: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
 #: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
@@ -46,6 +59,15 @@ _DEPLOY_STALLED_PREFIX = "⏳ 部署迟迟没有完成"
 #: (`_later_successful_deploy`)。顶替我们的那次部署必然是合并之后最近的几次之一，
 #: 而这段代码每 60 秒跑一次 —— 无上限地遍历会把一次误报变成持续的 API 消耗。
 _MAX_SUPERSEDE_COMPARES = 5
+
+#: pending_gate 孤儿卡 (2026-08-11). 判死的卡和检查真红了的卡都落在 `gate_failed`
+#: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
+#: 代码。状态列分不开，所以**这条前缀就是那个区分**：它在 note 和 gate_output 里
+#: 都出现，任何读卡的人/代码靠它判断，不要靠猜 gate_output 是不是空的。
+GATE_ABANDONED_PREFIX = "⏱ 闸门没跑完"
+#: 人工作废 (2026-08-11)。作废复用 `revoked` 终态（archive.py 收敛非终态卡时也
+#: 用它），所以「谁作废的、为什么」只能靠这条前缀留在 note 里。
+VOIDED_PREFIX = "🗑 卡片已作废"
 
 
 def _nudge_note_prefix(stage: str) -> str:
@@ -215,6 +237,10 @@ _BLOCKED_BY_CARD_MESSAGES = {
 }
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
+#: Where an alembic revision lives. Two live cards each ADDING a file under
+#: here is the one overlap a machine can judge on its own (#314).
+_ALEMBIC_VERSIONS_DIR = "alembic/versions/"
+
 
 # ---- 人类授权动作前移 (2026-08-10) -----------------------------------------
 #
@@ -278,7 +304,16 @@ def approvals_required_of(project: Project | None) -> int:
 
 
 def check_command_of(project: Project | None) -> str | None:
-    """机器闸门 (eval C2): the project's configured check command, or None."""
+    """The project's stored `check_command`, or None.
+
+    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): this setting no
+    longer gates anything. The platform used to run it in the topic workspace
+    before a card reached the reviewer; that whole mechanism is retired — a
+    repository declares its checks in `.github/workflows`, the forge runs them,
+    and the card mirrors the forge's result. The value is still stored and read
+    back (the settings endpoint round-trips it, and a later stage clears it)
+    but nothing consumes it to produce a green card any more.
+    """
     if project is None:
         return None
     cmd = str((project.settings or {}).get("check_command") or "").strip()
@@ -304,6 +339,28 @@ class AcceptService:
             raise NotFoundError("Accept card not found")
         return card
 
+    async def _release_topic_compute(self, topic: Topic) -> None:
+        """Free a done topic's long-lived compute on 采纳/归档 — the sandbox
+        container(s) AND, when the topic ran on an enrolled device, its screen (plus
+        a remote device's per-topic work dir). The container reaper only ever knew
+        about Docker boxes, so a device screen (and the ``claude`` process behind it)
+        used to leak on the machine forever.
+
+        Best-effort in both halves: a missing box or screen is a successful no-op
+        (it is recreated on demand if the archived topic is ever resumed), and a
+        failure here must never fail the accept itself."""
+        from app.domain.agent.device_provider import release_topic_screen
+        from app.domain.workspace import service as ws
+
+        try:
+            ws.stop_topic_container(topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+        try:
+            await release_topic_screen(topic.project_id, topic.id)
+        except Exception:  # noqa: BLE001 — best effort, never fatal
+            pass
+
     async def create_card(
         self,
         *,
@@ -323,49 +380,124 @@ class AcceptService:
         # merge `conflict` did not block a second card. The frontend only ever
         # renders the NEWEST card, so the older one — and the PR it was
         # driving — vanished from the UI while the poller kept advancing it.
-        # Every non-terminal status blocks now; `gate_failed` deliberately does
-        # not (a red gate voids the card, and re-递卡 after fixing IS the flow).
+        # Every non-terminal status blocks now; `gate_failed` and `gate_blocked`
+        # deliberately do not (a red gate voids the card, and re-递卡 after fixing
+        # IS the flow — same for a gate that never ran: 芝士 fixes the check
+        # environment and re-files. Adding either here locks 芝士 out for good).
         existing = await self._repo.list_for_topic(topic_id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
-        # 机器闸门 (spec §4.4/§9, eval C2): with a check_command configured the
-        # card is born pending_gate; the platform runs the check in the topic's
-        # workspace and only a green result promotes it to pending. The check
-        # runs in the background (it can take minutes) — see review/gate.py.
-        project = await self._projects.get(topic.project_id)
-        status = (
-            AcceptStatus.pending_gate
-            if check_command_of(project)
-            else AcceptStatus.pending
-        )
-        return await self._repo.add(
+        # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is always
+        # born `pending`. The old machine gate (`check_command` → born
+        # `pending_gate`, platform runs the check, only green promotes to
+        # pending) is retired: a card is the platform's view of a PR, and real
+        # CI on that PR — not a private platform check — is what decides whether
+        # a change is good. `pending_gate`/`gate_failed`/`gate_blocked` are no
+        # longer entered; existing rows keep their historical values and their
+        # exits (review/gate_sweep.py, AcceptService.void) stay in place.
+        card = await self._repo.add(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
-            status=status,
+            status=AcceptStatus.pending,
+        )
+        await self._warn_about_a_second_pending_migration(topic)
+        return card
+
+    async def _warn_about_a_second_pending_migration(self, topic: Topic) -> None:
+        """两张未决卡各带一个新迁移 → 在房间里说一声 (#314).
+
+        The narrow, clean half of "two rooms doing the same work". Two branches
+        editing the same existing file is ordinary — parent and child legitimately
+        touch one file each. Two branches each CREATING an alembic revision is
+        not: at best it forks the chain the moment both land (#312), at worst the
+        two are the same feature implemented twice, which is what happened on
+        2026-08-11 — `topics.progress` (a column) and `topic_progress` (a table),
+        two incompatible data models, each with a green card.
+
+        Deliberately a notice, not a block. The judgement "these two are the same
+        work" needs a human; what a machine can contribute is making sure the
+        human is looking at the moment there is something to look at. Both cards
+        being individually green is exactly the state that hides this.
+
+        Best-effort throughout: a git read that fails, or a room that won't take
+        the message, must never stop someone filing a card.
+        """
+        from app.domain.workspace import service as ws
+
+        def migrations(topic_id: uuid.UUID) -> list[str]:
+            try:
+                added = ws.topic_added_files(topic.project_id, topic_id)
+            except Exception:  # noqa: BLE001 — a diagnostic must not break 递卡
+                return []
+            return [p for p in added if _ALEMBIC_VERSIONS_DIR in p]
+
+        mine = migrations(topic.id)
+        if not mine:
+            return
+        others = await self._repo.list_live_in_project(
+            topic.project_id, statuses=_CARD_BLOCKS_NEW_CARD
+        )
+        collisions = [
+            other
+            for other in others
+            if other.topic_id != topic.id and migrations(other.topic_id)
+        ]
+        if not collisions:
+            return
+        rooms = []
+        for other in collisions:
+            sibling = await self._topics.get(other.topic_id)
+            rooms.append(f"「{sibling.title}」" if sibling else str(other.topic_id))
+        self._notify_merge_result(
+            topic,
+            "⚠️ **另一张未决的验收卡也新建了迁移**："
+            + "、".join(rooms)
+            + "。两张卡各带一个 alembic revision，合到一起会把迁移链分叉"
+            + "（#312），而且往往说明同一件事被做了两遍（#314 那次是 "
+            + "`topics.progress` 列和 `topic_progress` 表）。"
+            + "\n\n这里不拦，只是提醒验收的人**先比一下两张卡的改动**："
+            + "如果确实是两件事，照常采纳，先合的那张合完后另一张要 rebase。",
         )
 
-    async def gate_plan(self, topic_id: uuid.UUID) -> tuple[uuid.UUID, str | None]:
-        """(project_id, check_command) for a topic — what the gate should run."""
+    async def project_id_for_topic(self, topic_id: uuid.UUID) -> uuid.UUID:
+        """The topic's project id — what the PR-publish dispatch needs to resolve
+        the App installation and upstream (采纳即合并 #296)."""
         topic = await self._topic_or_404(topic_id)
-        project = await self._projects.get(topic.project_id)
-        return topic.project_id, check_command_of(project)
+        return topic.project_id
+
+    async def mark_gate_started(self, *, card_id: uuid.UUID) -> AcceptCard:
+        """闸门开跑打点 (孤儿卡, 2026-08-11). Idempotent-ish and deliberately
+        forgiving: if the card already left `pending_gate` (swept as abandoned,
+        or voided by a human) this is a no-op rather than an error — a
+        diagnostic timestamp must never resurrect a closed card, and it must
+        never be the thing that fails a check that is about to run anyway."""
+        card = await self._card_or_404(card_id)
+        if card.status != AcceptStatus.pending_gate:
+            return card
+        card.gate_started_at = datetime.now(UTC)
+        await self._session.flush()
+        await self._session.refresh(card)
+        return card
 
     async def finish_gate(
-        self, *, card_id: uuid.UUID, passed: bool, output_tail: str
+        self, *, card_id: uuid.UUID, outcome: GateOutcome, output_tail: str
     ) -> AcceptCard:
-        """Settle a pending_gate card: green → pending (卡片这才递到验收人手上),
-        red → gate_failed (卡片作废，芝士被 nudge 去修)."""
+        """Settle a pending_gate card: 绿 → pending (卡片这才递到验收人手上),
+        红 → gate_failed (卡片作废，芝士被 nudge 去修), 没跑成 → gate_blocked
+        (同样不递出去，但检查对代码没有结论，别说成"未通过")."""
         card = await self._card_or_404(card_id)
         if card.status != AcceptStatus.pending_gate:
             raise ValidationError("只有等待检查的验收卡能记录检查结果")
         card.gate_output = output_tail
-        if passed:
+        if outcome == GateOutcome.passed:
             card.status = AcceptStatus.pending
             card.gate_passed_at = datetime.now(UTC)
+        elif outcome == GateOutcome.blocked:
+            card.status = AcceptStatus.gate_blocked
         else:
             card.status = AcceptStatus.gate_failed
         await self._session.flush()
@@ -375,6 +507,19 @@ class AcceptService:
     async def list_for_topic(self, topic_id: uuid.UUID) -> tuple[list[AcceptCard], int]:
         cards = await self._repo.list_for_topic(topic_id)
         return cards, len(cards)
+
+    async def open_pr_card_ids(self) -> list[uuid.UUID]:
+        """还开着 PR、等着被推进状态机的验收卡 id —— 调度器每轮的输入。
+
+        只回 id 不回对象：调度器一张卡一个事务，跨事务复用 ORM 对象拿到的是过期状态。
+        「哪个状态算开着」是本领域的知识，所以判断留在这里，而不是让调度器自己去查
+        ``AcceptCardRepository``。
+
+        孤儿卡修复 (2026-08-10) 的那条判据也在这里面：已归档话题上的卡不算开着——
+        推进它们等于拿批准人的 GitHub token 去动没人跟的活儿。
+        """
+        cards = await self._repo.list_pr_open_on_active_topics()
+        return [c.id for c in cards]
 
     async def describe(self, card: AcceptCard) -> dict:
         """AcceptCardOut payload enriched with the vote state (approvals live in
@@ -477,18 +622,21 @@ class AcceptService:
         the notice lands even when the accept itself is about to be rolled
         back by a raised ValidationError.
 
-        Fire-and-forget (asyncio.create_task, mirroring workspace/service.py's
-        watch_dogfood_push): post_with_retries can sleep up to 35s across its
-        retries, and the accepter's HTTP response must not wait on a room
+        Fire-and-forget, but through `spawn`, which holds a strong reference:
+        asyncio keeps only a weak one, and this coroutine sleeps up to 35s across
+        its retries — a wide window in which an unreferenced task can be
+        collected mid-await. Losing it means the room never learns the accept's
+        outcome at all. The accepter's HTTP response still doesn't wait on the
         notification succeeding — only on the merge itself."""
-        asyncio.get_running_loop().create_task(
+        spawn(
             webhook_service.post_with_retries(
                 async_session_factory,
                 project_id=topic.project_id,
                 topic_id=topic.id,
                 content=content,
                 source="accept",
-            )
+            ),
+            name=f"accept notice topic={topic.id}",
         )
 
     async def accept(self, *, card_id: uuid.UUID, decided_by: str) -> AcceptCard:
@@ -498,6 +646,8 @@ class AcceptService:
             raise ValidationError("平台检查还在进行中，检查通过后才能采纳")
         if card.status == AcceptStatus.gate_failed:
             raise ValidationError("平台检查未通过，等芝士修复后重新递卡")
+        if card.status == AcceptStatus.gate_blocked:
+            raise ValidationError("平台检查没能跑起来（对代码没有结论），等重新递卡")
         # pending → first attempt; conflict → retry after 芝士 resolved.
         if card.status not in (AcceptStatus.pending, AcceptStatus.conflict):
             raise ValidationError("验收卡已处理，不能重复验收")
@@ -530,13 +680,12 @@ class AcceptService:
                 f"批准人数不足，还差 {required - votes} 票（{votes}/{required}）"
             )
 
-        # PR-based accept (#188 §5.1): a card that ALREADY rides a real PR
-        # (published fire-and-forget by pr_publish.py when the card turned
-        # pending, behind settings.accept_via_pr — off by default) is accepted
-        # by merging THAT PR via the API, never by opening a second one. Falls
-        # through to the local path when GitHub is unreachable (availability
-        # must never regress) — the merge commit landing on main closes the
-        # PR anyway.
+        # 采纳即合并 (#296): a card that ALREADY rides a real PR — the App opened
+        # it fire-and-forget when the card was filed (pr_publish.py, now on by
+        # default via settings.accept_via_pr) — is accepted by merging THAT PR
+        # via the API, never by opening a second one. Falls through to the local
+        # path when GitHub is unreachable (availability must never regress) —
+        # the merge commit landing on main closes the PR anyway.
         pr_degrade_reason = ""
         if card.pr_number is not None:
             settled, existing_pr_degrade_reason = await self._accept_via_pr(
@@ -554,55 +703,70 @@ class AcceptService:
         # prerequisites themselves must degrade the same way: a DB hiccup here
         # is exactly as "mechanism unavailable" as a missing token.
         #
+        # 采纳即合并 (#296) coexistence guard: when the App owns PR creation
+        # (`pr_publish.enabled()`), this personal-token path is SKIPPED. A
+        # PR-less card at this point means the App PR has not landed yet (the
+        # fire-and-forget publish is still in flight) or genuinely could not be
+        # opened (non-GitHub upstream, GitHub down at filing) — either way,
+        # opening a competing personal-token PR here is exactly the "run both
+        # mechanisms at once" the design warns against, so the card degrades to
+        # the local merge instead. The two-phase path stays live only where the
+        # App mechanism is off (a project without the App, or the .env override).
+        #
         # `pr_degrade_reason` makes WHY visible (this card's whole reason for
         # existing): every path below that falls through to the local-merge
         # branch sets it to a human-readable, secret-free explanation, and it
         # gets prefixed onto card.note further down so "looks like account
         # not connected" and "账号连了但密文坏了" are no longer
         # indistinguishable in the UI.
-        try:
-            pr_prereqs, two_phase_degrade_reason = await self._resolve_pr_prerequisites(
-                topic, decided_by
-            )
-        except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
-            logger.warning(
-                "could not resolve PR prerequisites for topic=%s, degrading to "
-                "direct merge: %s",
-                topic.id,
-                exc,
-            )
-            pr_prereqs = None
-            two_phase_degrade_reason = f"检查 PR 前提条件时出错（{type(exc).__name__}）"
-        if pr_prereqs is not None:
-            token, pr_owner, pr_repo = pr_prereqs
+        two_phase_degrade_reason = ""
+        if not pr_publish.enabled():
             try:
-                return await self._open_pr_for_accept(
-                    card=card,
-                    topic=topic,
-                    decided_by=decided_by,
-                    token=token,
-                    owner=pr_owner,
-                    repo=pr_repo,
-                )
+                (
+                    pr_prereqs,
+                    two_phase_degrade_reason,
+                ) = await self._resolve_pr_prerequisites(topic, decided_by)
             except Exception as exc:  # noqa: BLE001 — degrade, don't fail the accept
                 logger.warning(
-                    "PR-based accept unavailable for topic=%s, degrading to "
+                    "could not resolve PR prerequisites for topic=%s, degrading to "
                     "direct merge: %s",
                     topic.id,
                     exc,
                 )
-                if _is_known_workflow_scope_degrade(exc):
-                    # Known limitation, not a failure — say so plainly and drop
-                    # the raw git rejection entirely (see the sentinel above).
-                    two_phase_degrade_reason = _WORKFLOW_SCOPE_DEGRADE_REASON
-                else:
-                    # exc is either GitHubPrError (GitHub's own response body,
-                    # capped at 300 chars) or a ValidationError from a git push
-                    # failure (the token travels via an env-var credential
-                    # helper, never argv/URL — see _token_push_env — so git's
-                    # stderr can't contain it either); safe to surface verbatim,
-                    # same as the existing push_back() failure note below.
-                    two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
+                pr_prereqs = None
+                two_phase_degrade_reason = (
+                    f"检查 PR 前提条件时出错（{type(exc).__name__}）"
+                )
+            if pr_prereqs is not None:
+                token, pr_owner, pr_repo = pr_prereqs
+                try:
+                    return await self._open_pr_for_accept(
+                        card=card,
+                        topic=topic,
+                        decided_by=decided_by,
+                        token=token,
+                        owner=pr_owner,
+                        repo=pr_repo,
+                    )
+                except Exception as exc:  # noqa: BLE001 — degrade, don't fail accept
+                    logger.warning(
+                        "PR-based accept unavailable for topic=%s, degrading to "
+                        "direct merge: %s",
+                        topic.id,
+                        exc,
+                    )
+                    if _is_known_workflow_scope_degrade(exc):
+                        # Known limitation, not a failure — say so plainly and
+                        # drop the raw git rejection (see the sentinel above).
+                        two_phase_degrade_reason = _WORKFLOW_SCOPE_DEGRADE_REASON
+                    else:
+                        # exc is either GitHubPrError (GitHub's own response body,
+                        # capped at 300 chars) or a ValidationError from a git
+                        # push failure (the token travels via an env-var
+                        # credential helper, never argv/URL — see _token_push_env
+                        # — so git's stderr can't contain it either); safe to
+                        # surface verbatim, same as the push_back() note below.
+                        two_phase_degrade_reason = f"GitHub 侧调用失败：{exc}"[:300]
         # Combine rather than overwrite: an existing-PR degrade (closed
         # unmerged / merge-call failure, see `_accept_via_pr`) must not be
         # silently dropped just because the two-phase attempt that follows it
@@ -706,12 +870,8 @@ class AcceptService:
             # and fell back, even though there's no push outcome to report.
             card.note = _with_pr_degrade_note("", pr_degrade_reason)
 
-        # Topic is done → free its long-lived sandbox container (it would be
-        # recreated on demand if the archived topic is ever resumed).
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        # Topic is done → free its long-lived compute (container + device screen).
+        await self._release_topic_compute(topic)
 
         # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
@@ -758,8 +918,53 @@ class AcceptService:
             return None
         return result.stdout.strip()
 
+    def _remote_head_ff_from_local(
+        self, project_id: uuid.UUID, remote_head: str, local_head: str
+    ) -> bool:
+        """Would a plain (non-force) push of `local_head` fast-forward the PR
+        branch that is currently at `remote_head`? True only when `remote_head`
+        is an ancestor of `local_head` in the platform's own repo.
+
+        采纳即合并 (#296): `push_topic_branch_for_github_pr` pushes WITHOUT
+        --force, so a local head that is behind or diverged from the remote PR
+        branch (a jj rewind moved the bookmark backwards) can never land — GitHub
+        rejects it non-fast-forward. Re-attempting that push every poll tick is
+        the loop this guards. Fails CLOSED: if the remote commit isn't even
+        present locally to compare (git errors, exit ≠ 0/1), treat it as "cannot
+        fast-forward" and skip — never a blind push that would just be rejected
+        again. `git merge-base --is-ancestor` is reflexive, so an identical head
+        also returns True, but the caller has already excluded that case."""
+        import subprocess
+
+        from app.domain.workspace import service as ws
+
+        if not remote_head or not local_head:
+            return False
+        repo_path = ws.ensure_repo(project_id)
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(repo_path),
+                "merge-base",
+                "--is-ancestor",
+                remote_head,
+                local_head,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+
     async def _repush_if_local_head_moved(
-        self, *, card: AcceptCard, topic: Topic, owner: str, repo: str, token: str
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        token: str,
+        remote_head: str,
     ) -> bool:
         """两阶段采纳: the platform side of the iterate loop — if 芝士 committed a
         fix since the last push, push it to the PR branch ourselves (芝士's
@@ -774,6 +979,14 @@ class AcceptService:
 
         Returns True only when a push actually landed (so the caller knows the
         PR head it read a moment ago may be stale).
+
+        采纳即合并 (#296): before pushing, confirm the push CAN fast-forward the
+        PR branch (`remote_head`, the head the caller just read live). A plain
+        push of a local head that is behind / diverged from the remote branch is
+        rejected non-fast-forward, and re-attempting it every 60s poll lands
+        nothing forever (card 946bf5de). When it cannot fast-forward, the
+        platform declines to push — it does not force-push over commits already
+        on the PR — and says so once so 芝士 reconciles in its workspace.
 
         红鲱鱼警告 (2026-08-10): cards #210/#211 wore the note
         `⚠️ 平台自动重推失败（refusing to allow ... without workflows
@@ -792,7 +1005,37 @@ class AcceptService:
         local_head = await asyncio.to_thread(
             self._local_topic_branch_head, topic.project_id, topic.id
         )
-        if local_head is None or local_head == card.pr_head_sha:
+        if local_head is None or local_head in (card.pr_head_sha, remote_head):
+            return False
+        # A plain push can only fast-forward. If the local branch was rewound /
+        # diverged from the PR branch, pushing it is a doomed non-fast-forward —
+        # skip it (never force-push over what's already on the PR) and leave one
+        # named note for 芝士 to merge the PR branch in. Adopt the live remote
+        # head as our record so the caller's own head-sync doesn't wipe the note.
+        can_ff = await asyncio.to_thread(
+            self._remote_head_ff_from_local,
+            topic.project_id,
+            remote_head,
+            local_head,
+        )
+        if not can_ff:
+            logger.warning(
+                "pr_open card %s: local head %s cannot fast-forward PR branch "
+                "%s (rewound/diverged) — not re-pushing, waiting on 芝士",
+                card.id,
+                local_head,
+                remote_head,
+            )
+            if remote_head:
+                card.pr_head_sha = remote_head
+            if not card.note.startswith(_REPUSH_DIVERGED_PREFIX):
+                card.note = (
+                    f"{_REPUSH_DIVERGED_PREFIX}：本地话题分支（{local_head[:8]}）"
+                    f"落后于/偏离了 PR 分支（{remote_head[:8]}），平台不会强推覆盖 PR "
+                    "上已有的提交。请在这个话题的工作区里把 PR 分支的新提交合并进来"
+                    "再提交，平台会自动把结果同步到这个 PR。"
+                )[:2000]
+            await self._session.flush()
             return False
         try:
             pushed = await asyncio.to_thread(
@@ -1065,7 +1308,12 @@ class AcceptService:
         # _repush_if_local_head_moved's docstring for why 芝士 can't do this
         # push itself).
         pushed = await self._repush_if_local_head_moved(
-            card=card, topic=topic, owner=owner, repo=repo, token=token
+            card=card,
+            topic=topic,
+            owner=owner,
+            repo=repo,
+            token=token,
+            remote_head=status.head_sha,
         )
 
         # Only re-read the head when the push above actually moved it;
@@ -1797,11 +2045,13 @@ class AcceptService:
         # only escape (pr_head_sha moving) needs a human to push first. Two
         # separate reasons to stay quiet, spelled out:
         #   1. we already nudged for THIS stage on this commit — don't spam;
-        #   2. 重推失败 outranks a CI failure and must not be overwritten —
-        #      it means 芝士's fix never reached GitHub, so the red CI on
+        #   2. 重推失败/分支分叉 outrank a CI failure and must not be overwritten
+        #      — both mean 芝士's fix never reached GitHub, so the red CI on
         #      record is stale (docs/topics/诊断信息搬上验收卡.md, 优先级说明).
-        if card.note.startswith(_nudge_note_prefix(stage)) or card.note.startswith(
-            _REPUSH_FAILED_PREFIX
+        if (
+            card.note.startswith(_nudge_note_prefix(stage))
+            or card.note.startswith(_REPUSH_FAILED_PREFIX)
+            or card.note.startswith(_REPUSH_DIVERGED_PREFIX)
         ):
             return
         # `tail` is now a headline PLUS per-job links and log excerpts (see
@@ -1839,8 +2089,6 @@ class AcceptService:
         did not succeed, but a later successful one already carried this commit.
         Same archive either way; the wording must not claim the card's own
         deploy went green when it didn't."""
-        from app.domain.workspace import service as ws
-
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
         if landed_via is None:
@@ -1865,10 +2113,7 @@ class AcceptService:
                 "所以代码确实已经上线，闸门满足。\n"
                 f"{landed_via.url or ''}\n{card.pr_url}"
             )
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        await self._release_topic_compute(topic)
         topic.status = TopicStatus.archived
         topic.accepted_by = card.decided_by
         topic.accepted_at = now
@@ -2010,10 +2255,7 @@ class AcceptService:
         card.decided_at = now
         card.note = note[:2000]
 
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
+        await self._release_topic_compute(topic)
 
         # 采纳即归档 (spec §6.3).
         topic.status = TopicStatus.archived
@@ -2076,4 +2318,95 @@ class AcceptService:
 
         await self._session.flush()
         await self._session.refresh(card)
+        return card
+
+    async def void(
+        self, *, card_id: uuid.UUID, decided_by: str, note: str = ""
+    ) -> AcceptCard:
+        """人工作废一张未决的验收卡 (pending_gate 孤儿卡出口, 2026-08-11).
+
+        这是**唯一**能把非终态卡强制收尾的人工动作。它存在的理由是 `create_card`
+        的互斥：一张卡卡在 `pending_gate` / `conflict` / `pr_open` 上，整个话题
+        就再也递不出第二张卡，而 accept/reject/revoke/reassign 五条路由对这些状态
+        全部是拒绝的——出口是零。
+
+        ⚠️ **它把卡置为终态，不是"放行到 pending"**。放行等于让卡面的绿勾替一段
+        从没被检查过的代码背书；作废 + 重递效果一样而且安全，这条区别是本功能的
+        设计前提，不要"优化"掉。
+
+        授权：卡上的验收人、项目 owner、项目 lead。它是授权类动作，所以芝士在
+        collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
+        —— 路由也**故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`。
+        """
+        card = await self._card_or_404(card_id)
+        if card.status not in archive.OPEN_CARD_STATUSES:
+            raise ValidationError(f"这张验收卡已经是终态（{card.status}），不用作废")
+
+        topic = await self._topic_or_404(card.topic_id)
+        project = await self._projects.get(topic.project_id)
+        self._forbid_ai(project, decided_by, "作废")
+
+        allowed = {card.reviewer_handle}
+        if project is not None and project.owner_handle:
+            allowed.add(project.owner_handle)
+        members = await MemberRepository(self._session).list_for_project(
+            topic.project_id
+        )
+        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
+        if decided_by not in allowed:
+            raise ForbiddenError("只有这张卡的验收人或项目 owner / 组长能作废它")
+
+        was = card.status
+        reason = f" 理由：{note.strip()}" if note.strip() else ""
+        headline = (
+            f"{VOIDED_PREFIX}：<@{decided_by}> 作废了这张卡（原状态：{was}）。"
+            f"话题可以重新递卡。{reason}"
+        )
+        if was == AcceptStatus.pr_open and card.pr_merged_at is None:
+            # 跟归档收敛同一条产品判断 (review/archive.py 的模块 docstring)：平台
+            # 不拿别人的 token 去关别人名下的 PR。停止推进 + 留痕 + 通知授权人。
+            headline = (
+                f"{VOIDED_PREFIX}：<@{decided_by}> 作废了这张卡，平台已停止推进 "
+                f"PR #{card.pr_number}。PR 未合并、仍开在 GitHub 上，合还是关由人"
+                f"决定：{card.pr_url or '(无链接)'}{reason}"
+            )
+        card.status = AcceptStatus.revoked
+        card.note = archive.prefix_note(card.note, headline)
+        # 只在空的时候补：`pr_open` 的卡上 decided_by 记的是当初授权开 PR 的人，
+        # 覆盖掉就丢了授权来源；作废人始终写在 note 里。
+        if card.decided_by is None:
+            card.decided_by = decided_by
+        if card.decided_at is None:
+            card.decided_at = datetime.now(UTC)
+
+        await self._session.flush()
+        await self._session.refresh(card)
+
+        await BlockRepository(self._session).add(
+            project_id=topic.project_id,
+            topic_id=topic.id,
+            author="cheese",
+            author_type=AuthorType.system,
+            content=(
+                f"🗑 <@{decided_by}> 作废了这张验收卡（原状态：{was}）。"
+                f"这不是驳回，也不代表检查不通过——它只是把卡收尾，"
+                f"好让这个话题能重新递卡。{reason}"
+            ),
+            kind=BlockKind.event,
+            meta={"platform": True},
+        )
+        if was == AcceptStatus.pr_open and card.decided_by not in (None, decided_by):
+            await NotificationService(self._session).create(
+                project_id=topic.project_id,
+                level=NotifLevel.strong,
+                kind=NotifKind.change_alert,
+                title=f"话题「{topic.title}」的验收卡被作废，你的 PR 还开着",
+                body=(
+                    f"<@{decided_by}> 作废了这张验收卡，平台已停止推进它。"
+                    f"PR #{card.pr_number} 是以你的身份开的，平台不会替你关掉："
+                    f"{card.pr_url or '(无链接)'}"
+                ),
+                target_handle=card.decided_by or "",
+                topic_id=topic.id,
+            )
         return card
