@@ -1572,11 +1572,15 @@ class ChatService:
           "native"       profile-pinned credentials; the SDK's own usage report
                          is all there is.
 
-        The route is a fact about the PROVIDER executing the turn, not about the
-        deployment. `subscription_enabled` used to force every turn onto the
-        subscription branch, which mis-labeled device turns — their traffic goes
-        through /llm → gateway regardless — so their spend sat in the gateway
-        log and was never drained into the books."""
+        The route is a fact about where the PROVIDER actually sends the turn's
+        traffic. On a subscription deployment the device provider builds the
+        same metering-proxy env the tmux provider does (#325 G2: co-located and
+        remote devices alike — the machine never holds a credential, so there is
+        nothing "unsafe for remote" about it), so its route is "subscription"
+        and its spend is metered by the proxy's usage log. Only WITHOUT the
+        subscription does a device turn ride /llm → gateway. Labeling device
+        turns "subscription" while their traffic went through /llm was a real
+        bug once — the label must follow the traffic, in both directions."""
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
         kwargs: dict = {}
@@ -1584,11 +1588,23 @@ class ChatService:
         if image:
             kwargs["sandbox_image"] = image
         if provider_name == "device":
-            # A machine's credentials are the device provider's own affair: it
-            # gets the backend's /llm route + its scoped token, and the backend
-            # swaps in the project's virtual key per request (routes/llm_proxy).
-            # Handing it this box's profile env would put a box-local URL and a
-            # raw provider key on hardware the platform does not control.
+            # A machine's model env is the device provider's own affair — handing
+            # it this box's profile env would put a box-local URL and a raw
+            # provider key on hardware the platform does not control. Under the
+            # subscription the provider builds the metering-proxy env itself;
+            # only the project's model pick travels from here, as the --model
+            # alias ("" = the subscription's default, no flag). Without the
+            # subscription it gets the backend's /llm route + its scoped token,
+            # and the backend swaps in the project's virtual key per request
+            # (routes/llm_proxy).
+            if settings.subscription_enabled:
+                choice = (
+                    (project.settings or {}).get("subscription_model")
+                    if project
+                    else None
+                )
+                kwargs["model"] = subscription_model_alias(choice)
+                return kwargs, "subscription"
             return kwargs, "gateway"
         if settings.subscription_enabled and provider_name == "tmux-hooks":
             # The subscription path doesn't route through the gateway or a

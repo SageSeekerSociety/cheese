@@ -155,6 +155,82 @@ async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry
     assert hub.prompts == [["turn 0"], ["turn 1"]]
 
 
+class DeadClaudeHub(FakeHub):
+    """A device whose `claude` DIED while the connector kept running: the hub's
+    registry still holds the screen, but the liveness probe (DEVICE_ALIVE_PROBE
+    over `exec`) answers `dead`. Records `close_screen` and hands out distinct
+    sids so a reopen is distinguishable from a reassert."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed: list[str] = []
+        self._sid_seq = 0
+
+    async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
+        self._sid_seq += 1
+        screen = HubScreen(
+            sid=f"s{self._sid_seq}",
+            device_id=device_id,
+            command=command,
+            token="tok",
+            agent_user_id=kw["agent_user_id"],
+            agent_handle=kw["agent_handle"],
+            project_id=kw["project_id"],
+            topic_id=kw["topic_id"],
+            hook_key=kw.get("hook_key", ""),
+        )
+        self.opened.append(screen)
+        return screen
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        self.execs.append((argv, stdin))
+        # Only the liveness probe (no stdin) reports death; the launcher-ship exec
+        # (script on stdin) must still succeed or the turn never reaches a screen.
+        out = "dead" if stdin is None else ""
+        return {"stdout": out, "stderr": "", "exit": 0, "truncated": False}
+
+    async def close_screen(self, device_id, sid) -> bool:
+        self.closed.append(sid)
+        self.opened = [s for s in self.opened if s.sid != sid]  # hub forgets it
+        return True
+
+
+async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
+    """The registry holding a screen is NOT proof its `claude` still runs: an orphan
+    sweep or `tmux kill-server` can end the device session while the connector lives
+    on. Reasserting (adopt-create) would only hot-reload the cheeselet into the dead
+    pane — the frozen connector re-Spawns solely for a sid it forgot (i.e. after IT
+    restarted), so a screen whose process died under a live connector is never
+    respawned and the turn dies in the delivery timeout with no model reached. So a
+    reused screen is probed first; a `dead` one is CLOSED (which makes the connector
+    forget the sid too) and reopened under a fresh sid the connector must Spawn."""
+    hub = DeadClaudeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    key = str(topic_id)
+
+    for turn in range(2):
+        _events, task = await _run(
+            provider,
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt=f"turn {turn}",
+            system_prompt="",
+            resume_session_id=None,
+        )
+        await asyncio.sleep(0.05)
+        router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
+        await asyncio.wait_for(task, timeout=5)
+
+    assert hub.reasserted == []  # NEVER reasserted into the corpse …
+    assert hub.closed == ["s1"]  # … the stale screen was dropped …
+    assert [s.sid for s in hub.opened] == ["s2"]  # … and a fresh screen Spawned
+    assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+
+
 async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     """The frozen cli hands the screen command to `tmux new-session`, whose packed
     command tops out around 16KB — a launcher carrying the assembled system prompt
@@ -687,6 +763,241 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
     # base already maps 1:1 onto the backend root — see routes/llm_proxy.py.
     assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
     assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-token-for-this-topic"
+
+
+# --- subscription parity (#325 G2): device turns ride the metering proxy --------
+# On a subscription deployment a device screen must get the SAME supply a local
+# tmux container gets: fake credential + proxy CA + scoped session token, no
+# ANTHROPIC_BASE_URL, no gateway model pin. The regression this guards is dev
+# shipping device screens with CLAUDE_MODEL=deepseek-chat — users thought they
+# were talking to Claude and were not.
+
+
+class SubRecordingHub(FakeHub):
+    def __init__(self) -> None:
+        super().__init__()
+        self.env: dict = {}
+
+    async def open_screen(self, device_id, command, source, **kw):
+        self.env = kw.get("env") or {}
+        return await super().open_screen(device_id, command, source, **kw)
+
+
+def _subscription_settings(monkeypatch, tmp_path) -> str:
+    """Point the backend at a readable proxy CA and switch the subscription on.
+    Returns the CA text so tests can assert it reaches the device."""
+    from app.core.config import settings
+
+    ca = "-----BEGIN CERTIFICATE-----\nMETERCA\n-----END CERTIFICATE-----\n"
+    ca_path = tmp_path / "proxy-ca.pem"
+    ca_path.write_text(ca)
+    monkeypatch.setattr(settings, "subscription_enabled", True)
+    monkeypatch.setattr(settings, "subscription_ca_backend_path", str(ca_path))
+    monkeypatch.setattr(settings, "subscription_proxy_host", "172.17.0.1")
+    monkeypatch.setattr(settings, "subscription_device_proxy_host", "")
+    monkeypatch.setattr(settings, "subscription_proxy_connect_port", 8444)
+    return ca
+
+
+async def _subscription_screen(
+    monkeypatch, co_located: bool, env: dict | None = None
+) -> tuple[SubRecordingHub, uuid.UUID, uuid.UUID]:
+    hub = SubRecordingHub()
+    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(co_located))
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    await provider._ensure_screen(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=project,
+        topic_id=topic,
+        token="hook-token",
+        model=None,
+        env=env,
+    )
+    return hub, project, topic
+
+
+@pytest.mark.anyio
+async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
+    monkeypatch, tmp_path
+):
+    from app.core.config import settings
+    from app.core.sandbox_auth import scoped_token_claims
+
+    monkeypatch.setattr(settings, "anthropic_auth_token", "UPSTREAM-PROVIDER-KEY")
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, project, topic = await _subscription_screen(monkeypatch, co_located=False)
+
+    env = hub.env
+    # No BASE_URL (it flips the CLI into API-key mode), no gateway key, no
+    # deepseek/gateway model pin — the exact env dev observed is impossible.
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert env["ANTHROPIC_AUTH_TOKEN"] == ""
+    assert not [k for k in env if "MODEL" in k]
+    assert "UPSTREAM-PROVIDER-KEY" not in repr(env)
+    # The login credential is a scoped cheese token the proxy can verify —
+    # never a real subscription credential.
+    claims = scoped_token_claims(env["CLAUDE_CODE_OAUTH_TOKEN"])
+    assert claims is not None
+    assert claims["p"] == str(project) and claims["t"] == str(topic)
+
+
+@pytest.mark.anyio
+async def test_subscription_screen_reaches_the_meter_by_connect_proxy(
+    monkeypatch, tmp_path
+):
+    """A bare device process has no --add-host, so the capture is HTTPS_PROXY at
+    the meter's CONNECT listener, with the scoped token as the proxy password —
+    and NO_PROXY keeps the platform's own wiring (hooks, git, CLI) out of it."""
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=False)
+
+    env = hub.env
+    token = env["CLAUDE_CODE_OAUTH_TOKEN"]
+    assert env["HTTPS_PROXY"] == f"http://cheese:{token}@172.17.0.1:8444"
+    for key in ("NO_PROXY", "no_proxy"):
+        assert "cheese.test" in env[key]
+        assert "localhost" in env[key]
+
+
+@pytest.mark.anyio
+async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
+    monkeypatch, tmp_path
+):
+    """The backend's CA path means nothing on the device. The CA BYTES ride the
+    shipped launch script, which writes them under the screen's isolated home
+    and exports NODE_EXTRA_CA_CERTS itself."""
+    ca = _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=False)
+
+    script = next(s for _a, s in hub.execs if s and "CHEESECA" in s)
+    assert "METERCA" in script and ca.strip() in script
+    assert 'export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"' in script
+    assert hub.env["NODE_EXTRA_CA_CERTS"] == "$HOME/.claude/proxy-ca.pem"
+
+
+@pytest.mark.anyio
+async def test_subscription_env_is_identical_for_co_located_and_remote(
+    monkeypatch, tmp_path
+):
+    """#325 G2: co-located and remote are one path. The machine never holds a
+    credential either way, so nothing about the supply may differ — only the
+    worktree wiring (clone vs shared tree) does."""
+    _subscription_settings(monkeypatch, tmp_path)
+    co_hub, _p1, _t1 = await _subscription_screen(monkeypatch, co_located=True)
+    re_hub, _p2, _t2 = await _subscription_screen(monkeypatch, co_located=False)
+
+    supply_keys = {
+        "ANTHROPIC_AUTH_TOKEN",
+        "NODE_EXTRA_CA_CERTS",
+        "HTTPS_PROXY",
+        "NO_PROXY",
+        "no_proxy",
+    }
+    for key in supply_keys:
+        co, remote = co_hub.env[key], re_hub.env[key]
+        if key == "HTTPS_PROXY":
+            # Same shape; only the embedded per-session token differs.
+            co = co.split("@")[-1]
+            remote = remote.split("@")[-1]
+        assert co == remote, key
+    for env in (co_hub.env, re_hub.env):
+        assert "ANTHROPIC_BASE_URL" not in env
+        assert env["CLAUDE_CODE_OAUTH_TOKEN"]
+
+
+@pytest.mark.anyio
+async def test_subscription_drops_gateway_pins_a_caller_env_carries(
+    monkeypatch, tmp_path
+):
+    """The caller's env is the gateway shape (BASE_URL + model pins). Any of it
+    surviving flips the CLI into API-key mode or pins a model the subscription
+    does not serve — dropped, not overridden (mirrors the tmux provider)."""
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _p, _t = await _subscription_screen(
+        monkeypatch,
+        co_located=False,
+        env={
+            "ANTHROPIC_BASE_URL": "http://cheese.test/llm",
+            "CLAUDE_MODEL": "deepseek-chat",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-chat",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL": "deepseek-chat",
+            "SOME_OTHER": "kept",
+        },
+    )
+    env = hub.env
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert "deepseek" not in repr(env)
+    assert env["SOME_OTHER"] == "kept"
+
+
+@pytest.mark.anyio
+async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gateway(
+    monkeypatch, tmp_path
+):
+    """Falling back to the gateway would silently swap the model — the failure
+    #325 G2 exists to kill. A half-configured deployment must say what to fix."""
+    from app.core.config import settings
+    from app.domain.agent.hooks_substrate import ScreenSetupError
+
+    _subscription_settings(monkeypatch, tmp_path)
+    monkeypatch.setattr(settings, "subscription_ca_backend_path", "")
+
+    with pytest.raises(ScreenSetupError, match="SUBSCRIPTION_CA_BACKEND_PATH"):
+        await _subscription_screen(monkeypatch, co_located=True)
+
+
+@pytest.mark.anyio
+async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
+    monkeypatch,
+):
+    """subscription_enabled=False keeps the /llm gateway path byte-for-byte: a
+    deployment without the metering proxy must not lose device compute."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "agent_model", "glm-4.7")
+    hub = SubRecordingHub()
+    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    await provider._ensure_screen(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        token="scoped-tok",
+        model=None,
+        env=None,
+    )
+    assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
+    assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-tok"
+    assert hub.env["CLAUDE_MODEL"] == "glm-4.7"
+    assert "HTTPS_PROXY" not in hub.env
+
+
+def test_a_remote_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
+    """The subscription's analogue of the box-local gateway URL: HTTPS_PROXY at
+    the docker bridge names nothing on a machine elsewhere."""
+    import logging
+
+    from app.domain.agent.device_provider import _warn_if_model_endpoint_is_box_local
+
+    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
+        _warn_if_model_endpoint_is_box_local(
+            {"HTTPS_PROXY": "http://cheese:tok@172.17.0.1:8444"}, "machine-1"
+        )
+    assert any("HTTPS_PROXY" in r.getMessage() for r in caplog.records)
+
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
+        _warn_if_model_endpoint_is_box_local(
+            {"HTTPS_PROXY": "http://cheese:tok@proxy.cheese.example:8444"},
+            "machine-1",
+        )
+    assert not caplog.records, "a reachable proxy must not be flagged"
 
 
 # --- turn 活跃度检测 (the device half): two-layer timeout + liveness probe -------

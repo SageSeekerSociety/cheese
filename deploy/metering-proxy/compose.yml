@@ -8,23 +8,31 @@
 #   CHEESE_TOKEN_CAP        rolling-window backstop, 0 = off
 #   CHEESE_ALLOW_HEADER_ATTR  1 ONLY on bridge-only single-host deployments
 #
-# Published on the docker bridge address only (172.17.0.1:443): sandboxes reach
-# it by --add-host; exposing it wider requires CHEESE_SCOPED_SECRET so a caller
-# must prove which project to bill before the subscription is spent (#198).
+# Published on the docker bridge address only (172.17.0.1): sandboxes reach the
+# reverse listener (:443) by --add-host; bare DEVICE screens (no root, no docker)
+# reach the CONNECT listener (:8444) via HTTPS_PROXY. Exposing either wider
+# requires CHEESE_SCOPED_SECRET so a caller must prove which project to bill
+# before the subscription is spent (#198) — the CONNECT listener additionally
+# demands that token as Proxy-Authorization before it relays anything, and only
+# ever MITMs the Anthropic names (everything else tunnels raw, so device shell
+# tools that honor HTTPS_PROXY but not our CA still work). Publishing 8444 on a
+# device-reachable interface is what remote-device subscription turns wait on.
 services:
   metering-proxy:
     image: mitmproxy/mitmproxy:12.1.2
     container_name: cheese-metering-proxy
     restart: unless-stopped
     command: >
-      mitmdump --listen-host 0.0.0.0 --listen-port 8443
-      --mode reverse:https://api.anthropic.com
+      mitmdump --listen-host 0.0.0.0
+      --mode reverse:https://api.anthropic.com@8443
+      --mode regular@8444
       --ssl-insecure
       --upstream-auth ${CCPROXY_UPSTREAM_AUTH}
       --set connection_strategy=lazy
       -s /addons/billing_addon.py
     ports:
       - "172.17.0.1:443:8443"
+      - "172.17.0.1:8444:8444"
     environment:
       CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
       CHEESE_INJECT_TOKEN: /etc/cheese/inject.token

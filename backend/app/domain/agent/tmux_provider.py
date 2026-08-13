@@ -189,11 +189,16 @@ def _hook_base() -> str:
 def _subscription_args() -> list[str]:
     """Docker args that route this sandbox's model calls through the meter.
 
-    The capture is by NAME, not by proxy env: Claude Code issues the model call
-    through Node's built-in undici, which ignores HTTPS_PROXY (measured — the
-    proxy saw every auxiliary request and never a single /v1/messages, while the
-    turns kept answering). Resolving api.anthropic.com to the meter catches
-    undici too, because that path still goes through DNS.
+    The capture is by NAME, not by proxy env. When this was built (2026-08-03),
+    the node-built CLI issued model calls through undici, which ignored
+    HTTPS_PROXY (measured — the proxy saw every auxiliary request and never a
+    single /v1/messages, while the turns kept answering). Resolving
+    api.anthropic.com to the meter catches every runtime, because that path goes
+    through DNS. The CURRENT CLI is the native build and does honor HTTPS_PROXY
+    (re-measured 2026-08-13 on 2.1.229 — the device path relies on that, see
+    provider_env.subscription_provider), but --add-host stays the container
+    transport: it is version-independent and captures nothing but the three
+    Anthropic names.
 
     Only the CA is mounted. The real credential is NEVER placed in the container
     (hard requirement: a machine must not hold a valid credential). Login is a

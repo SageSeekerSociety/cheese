@@ -89,6 +89,31 @@ def test_subscription_mode_removes_the_image_base_url(tmp_path: Path):
     assert out.startswith("ok ")
 
 
+def test_our_subscription_overrides_the_image_supply_route(tmp_path: Path):
+    """The platform's OWN subscription (marked by the injected
+    CLAUDE_CODE_OAUTH_TOKEN): the image's proxy/CA entries in the file would win
+    over the process environment key by key and send the session through the
+    image's channel instead of our meter — so ours are asserted INTO the file."""
+    ours = {
+        "CLAUDE_CODE_OAUTH_TOKEN": "scoped.token",
+        "HTTPS_PROXY": "http://cheese:scoped.token@proxy.cheese.example:8444",
+        "NO_PROXY": "cheese.example,localhost,127.0.0.1,::1",
+        "no_proxy": "cheese.example,localhost,127.0.0.1,::1",
+        "NODE_EXTRA_CA_CERTS": "/home/cheese/.cheese/home/p/.claude/proxy-ca.pem",
+    }
+    out, on_disk = _reconcile(tmp_path, IMAGE_SETTINGS, ours)
+    env = on_disk["env"]
+    for key, value in ours.items():
+        assert env[key] == value, key
+    # The image's gateway route and plain-http proxy are gone with it.
+    assert "ANTHROPIC_BASE_URL" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert "HTTP_PROXY" not in env
+    assert out.startswith("ok ")
+    # The original is still backed up beside the file.
+    assert (tmp_path / "settings.json.cheese-orig").exists()
+
+
 def test_a_machine_without_image_settings_is_left_alone(tmp_path: Path):
     """Nothing overrides us there, so inventing a file would only add a second
     place for the route to disagree with itself."""

@@ -24,7 +24,15 @@ only when CHEESE_ALLOW_HEADER_ATTR=1 (bridge-only deployments still on the
 fixed placeholder token). On a proxy exposed beyond the box's own docker
 bridge, leave that off — the header is whatever the machine says it is.
 
-  mitmdump -s billing_addon.py --mode reverse:https://api.anthropic.com
+  mitmdump -s billing_addon.py \
+    --mode reverse:https://api.anthropic.com@8443 --mode regular@8444
+
+Two listeners, one addon: containers arrive on the reverse listener (steered by
+--add-host on 443), bare DEVICE screens on the regular one (steered by
+HTTPS_PROXY — no root, no docker, so no --add-host for them). The regular
+listener demands the scoped token as Proxy-Authorization before it relays
+anything and MITMs only the Anthropic names; either way every request that
+reaches the `request` hook below is handled identically.
 
 Config (env): CHEESE_USAGE_LOG, CHEESE_INJECT_TOKEN, CHEESE_TOKEN_CAP,
 CHEESE_CAP_WINDOW_S, CHEESE_UPSTREAM_VIA, CHEESE_SCOPED_SECRET,
@@ -38,12 +46,14 @@ import os
 import sys
 from pathlib import Path
 
-from mitmproxy import http
+from mitmproxy import http, tls
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cheese_billing_core import (  # noqa: E402
+    ANTHROPIC_HOSTS,
     AdmissionGate,
     Meter,
+    proxy_basic_password,
     usage_from_sse,
     verify_scoped_token,
 )
@@ -129,6 +139,40 @@ def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
     )
 
 
+def http_connect(flow: http.HTTPFlow) -> None:
+    """Gate the CONNECT (regular-mode) listener: a bare DEVICE screen reaches the
+    meter via HTTPS_PROXY, and its scoped cheese token rides as the proxy
+    password (Basic userinfo of the HTTPS_PROXY URL). Without this gate an
+    exposed listener is an open relay for whoever can reach it — with it, only a
+    caller that can prove "bill this project" gets a tunnel at all. Reverse-mode
+    connections never CONNECT, so the container path is untouched. The legacy
+    bridge-only posture (ALLOW_HEADER_ATTR, or no secret configured) keeps its
+    old trust model."""
+    if not SCOPED_SECRET or ALLOW_HEADER_ATTR:
+        return
+    password = proxy_basic_password(flow.request.headers.get("proxy-authorization", ""))
+    if password and verify_scoped_token(password, SCOPED_SECRET):
+        return
+    flow.response = http.Response.make(
+        407,
+        b"cheese: a valid scoped token is required as the proxy password",
+        {"Proxy-Authenticate": 'Basic realm="cheese-metering"'},
+    )
+
+
+def tls_clienthello(data: tls.ClientHelloData) -> None:
+    """On the CONNECT listener, MITM ONLY the Anthropic names. Everything else a
+    device's HTTPS_PROXY sends here (its shell tools honor the env var too:
+    pip, statsig, github…) tunnels raw — TLS stays end-to-end, so tools that do
+    not trust our CA keep working; they just detour. Reverse-mode connections
+    (the container path) are left exactly as they were."""
+    mode = getattr(data.context.client, "proxy_mode", None)
+    if getattr(mode, "type_name", "") != "regular":
+        return
+    if (data.client_hello.sni or "") not in ANTHROPIC_HOSTS:
+        data.ignore_connection = True
+
+
 async def request(flow: http.HTTPFlow) -> None:
     # Multi-host by SNI: the sandbox --add-hosts api.anthropic.com AND the login
     # hosts (console.anthropic.com, platform.claude.com) to this one proxy, so
@@ -139,6 +183,22 @@ async def request(flow: http.HTTPFlow) -> None:
     if sni:
         flow.request.host = sni
         flow.request.headers["host"] = sni
+
+    # Only the Anthropic names are served, and only over TLS the proxy
+    # terminated. This request handler injects the REAL credential below — so a
+    # caller naming any other host (an arbitrary SNI on the reverse listener, a
+    # plain-HTTP proxy request on the CONNECT one) must be refused, not
+    # forwarded: forwarding would hand the subscription token to whatever host
+    # the caller chose. Non-Anthropic HTTPS through the CONNECT listener never
+    # reaches here (tls_clienthello tunnels it raw).
+    if flow.request.host not in ANTHROPIC_HOSTS or not flow.client_conn.tls_established:
+        _refuse(
+            flow,
+            403,
+            "invalid_request_error",
+            "cheese: only the Anthropic endpoints are served here",
+        )
+        return
 
     via = _via()
     if via is not None:
