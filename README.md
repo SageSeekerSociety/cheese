@@ -31,6 +31,26 @@ task dev        # backend on localhost:8081, frontend on localhost:3000
 
 Open http://localhost:3000 in your browser.
 
+### Ports
+
+There is exactly one development stack. Anything else you find (an :8799
+backend, a :5200 vite, a second Postgres on :5433 with different credentials)
+predates this table; the seeded demo under `scripts/dev/` is the one deliberate
+exception and says so in its own header.
+
+| What | Port | Declared in |
+|---|---|---|
+| Backend | 8081 | `backend/Taskfile.yml`, `e2e/playwright.config.ts` |
+| Frontend (vite) | 3000 | `frontend/vite.config.ts` |
+| Postgres — **dev** (`cheese`) | 5432 | `docker-compose.yml` |
+| Postgres — **test** (per-worker DBs) | 5433 | `docker-compose.yml`, `backend/tests/conftest.py` |
+| Redis / Valkey | 6379 (test: 6380) | `docker-compose.yml` |
+
+The frontend dev server proxies `/api` to the backend the same way production
+nginx does; `BACKEND_URL` repoints it if you run the backend elsewhere. The two
+Postgres containers are separate on purpose — running the test suite never
+touches the database you were developing against.
+
 ## Project Structure
 
 ```
@@ -38,7 +58,7 @@ cheese/
 ├── backend/                 # Python/FastAPI backend
 │   ├── app/                 # source code (routes → services → repositories → models)
 │   ├── tests/               # unit + integration + contract tests
-│   ├── migrations/          # Alembic database migrations
+│   ├── alembic/             # Alembic database migrations
 │   └── Dockerfile           # production image
 ├── frontend/                # Vue 3 / TypeScript frontend
 │   ├── src/                 # source code

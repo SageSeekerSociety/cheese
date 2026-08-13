@@ -17,19 +17,24 @@ which are retired.
 
 ## Quick Start
 
+Setup and the everyday run live in the [repo README](../README.md#quick-start) —
+one infra stack (`docker compose up -d` from the repo root) and `task dev`
+(backend :8081, frontend :3000). This file used to document a competing flow on
+:8799/:5200 against a second Postgres of its own, which is how the repo ended up
+with two READMEs describing two setups that could not both be right.
+
+From this directory:
+
 ```bash
-# Infra: Postgres (host :5433) + Redis via docker
-docker compose up -d          # from backend/
-bash ../scripts/dev/db-reset.sh   # create + migrate the dev DB
-
-# Backend on :8799 (and vite on :5200) — the fusion demo entrypoint
-bash ../scripts/dev/up.sh
-# or backend only:
-bash ../scripts/dev/backend.sh
-
-# Run the test suite (provisions per-worker DBs on the docker PG)
-uv run pytest tests/ -n 4
+uv run alembic upgrade head     # migrate (reads DATABASE_URL from .env)
+task be:dev                     # or: uv run uvicorn app.main:app --port 8081 --reload
+uv run pytest tests/ -n 4       # per-worker DBs on the :5433 test server
 ```
+
+**Seeded demo (optional, separate ports).** `scripts/dev/up.sh` brings up a
+backend on :8799 with vite on :5200, seeded with demo data — deliberately beside
+`task dev` rather than instead of it. Point `DATABASE_URL` at `fusion_test` and
+run `scripts/dev/db-reset.sh` first.
 
 ## Project Structure
 

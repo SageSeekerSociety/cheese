@@ -6,18 +6,20 @@
 
 ## 0. 起服务（本地全栈）
 
-三件套：PostgreSQL（Docker）+ 后端（uvicorn）+ 前端（Vite）。
+三件套：PostgreSQL（Docker）+ 后端（uvicorn）+ 前端（Vite）。**端口只有一套**，
+写在 [README 的 Ports 表](../README.md#ports)，
+别再另起一套——这一节以前写的是 PG 5433 / 后端 8099 / Vite 5173，和 README、
+Taskfile、e2e 各不相同，四套里没有一套跑得起来另外三套。
 
 ```bash
-# 1. 数据库
-cd backend && docker compose up -d            # PG，端口 5433
+# 1. 基础设施（PG 5432 开发库 + 5433 测试库 + Redis），仓库根目录
+docker compose up -d
 
-# 2. 后端（8000 常被占用，用 8099）
-cd backend && uv run uvicorn app.main:app --host 127.0.0.1 --port 8099
-#   首次/拉取后：uv run alembic upgrade head
+# 2. 首次/拉取后：迁移
+cd backend && uv run alembic upgrade head
 
-# 3. 前端（Vite 5173，/api 代理到 8099，含 WebSocket）
-cd frontend && npm run dev
+# 3. 后端 8081 + 前端 3000，一条命令
+task dev
 
 # 4. 灌入 demo 场景（书院 + 记忆充足的项目 + 话题/里程碑/验收卡…）
 cd backend && PYTHONPATH=. uv run python scripts/seed_demo.py

@@ -9,11 +9,16 @@
 # way to pick up an edited migration is to drop the DB and upgrade fresh.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)/backend"
-PG=cheesex-pg   # postgres docker container (maps host :5433)
-docker exec -e PGPASSWORD=cheesex "$PG" psql -U cheesex -d postgres \
+# The repo-root docker-compose.yml's dev Postgres (host :5432). There used to be
+# a second compose under backend/ publishing its own PG as `cheesex-pg` on :5433
+# — which collided with the root stack's TEST database on that same port, and
+# ran stock postgres where the app wants ParadeDB's pg_search. One server now;
+# the demo lives in its own database beside the dev one.
+PG="${DEV_PG_CONTAINER:-cheese_py_postgres}"
+docker exec -e PGPASSWORD=postgres "$PG" psql -U postgres -d postgres \
   -c "DROP DATABASE IF EXISTS fusion_test WITH (FORCE);" >/dev/null
-docker exec -e PGPASSWORD=cheesex "$PG" psql -U cheesex -d postgres \
-  -c "CREATE DATABASE fusion_test OWNER cheesex;" >/dev/null
+docker exec -e PGPASSWORD=postgres "$PG" psql -U postgres -d postgres \
+  -c "CREATE DATABASE fusion_test OWNER postgres;" >/dev/null
 cd "$ROOT"
 env -u ANTHROPIC_API_KEY -u ANTHROPIC_MODEL -u ANTHROPIC_AUTH_TOKEN -u ANTHROPIC_BASE_URL \
   .venv/bin/alembic upgrade head
