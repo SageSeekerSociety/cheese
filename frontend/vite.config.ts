@@ -61,7 +61,13 @@ export default defineConfig({
       // arrive here double- (`/api/api/*`) or single- (`/api/users/*`) prefixed and
       // must lose exactly one `/api` to hit the real backend route.
       '/api': {
-        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799',
+        // :8081 is where `task dev` puts the backend (backend/Taskfile.yml),
+        // what e2e/playwright.config.ts starts, and what nginx talks to in
+        // production. It defaulted to :8799 — the port scripts/dev/backend.sh
+        // uses for the seeded demo — so the documented path (`task dev`) served
+        // a page whose every API call reached a port nothing was listening on.
+        // BACKEND_URL points this at another backend (e.g. that demo).
+        target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081',
         changeOrigin: true,
         ws: true,
         // Exception: the two iframe proxies — the ttyd terminal
@@ -75,10 +81,10 @@ export default defineConfig({
           /^\/api\/topics\/[^/]+\/(terminal|app)(\/|$)/.test(path) ? path : path.replace(/^\/api/, ''),
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
-      '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
       // Safety net for any bare 1.0 call that bypasses the /api-prefixed axios layer
       // (e.g. SRP login GET /users/auth/methods/:username): reach the backend directly.
-      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8799', changeOrigin: true, ws: true },
+      '/users': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },
     },
   },
   build: {
