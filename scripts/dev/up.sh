@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Bring the fusion demo up: backend :8799 + vite :5200. Assumes docker PG
-# (cheesex-pg) + redis are already running and fusion_test exists (else run
-# scripts/dev/db-reset.sh first).
+# Bring the fusion demo up: backend :8799 + vite :5200.
+#
+# This is the SEEDED DEMO, deliberately on its own ports so it can run beside
+# `task dev` (:8081 + :3000, the everyday flow — see README "Quick Start").
+# Its backend reads backend/.env like any other, so point DATABASE_URL at
+# fusion_test to get the demo data.
+#
+# Assumes the repo-root `docker compose up -d` stack is running and fusion_test
+# exists (else run scripts/dev/db-reset.sh first).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 bash "$ROOT/scripts/dev/backend.sh"

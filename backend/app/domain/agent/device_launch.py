@@ -234,6 +234,49 @@ echo unknown
 """
 
 
+# The spool drainer, shipped to "$HOME/.claude/cheese-drain" and started INSIDE
+# claude's own tmux session (same life, same death). It used to be backgrounded
+# in the OUTER launcher tree — the CONNECTOR's process tree — so a connector
+# restart killed the drainer while claude survived inside tmux: claude kept
+# working, every hook landed in the spool, and nothing ever sent them (84 events
+# piled up on a dev box while the platform read the turn as unresponsive).
+#
+# Config (spool dir / hook URL / token) is sourced from "$0.env" on EVERY pass:
+# the launcher rewrites that file (atomically) on each launch, so a drainer
+# adopted from an earlier turn delivers with the CURRENT turn's token and URL,
+# not the ones its session was born with. "$0.pid" is the idempotence handle —
+# a relaunch checks it before starting a second drainer. (Both are per isolated
+# HOME, matching the spool itself, which a project's topics share.)
+#
+# CHEESE_DRAIN_TETHER (set by the revival path only): the pid of the claude
+# pane this drainer was revived NEXT TO. A revived drainer runs in its own tmux
+# window, and a window with no exit condition would hold the session open after
+# claude died — the next launch would then adopt a claude-less session and
+# prompt into nothing. The tether makes it exit when claude goes, taking the
+# window (and with it the otherwise-empty session) down.
+CHEESE_DRAIN_SCRIPT = """#!/bin/sh
+echo $$ > "$0.pid" 2>/dev/null || true
+while true; do
+  if [ -n "$CHEESE_DRAIN_TETHER" ] && ! kill -0 "$CHEESE_DRAIN_TETHER" 2>/dev/null
+  then
+    exit 0
+  fi
+  [ -r "$0.env" ] || { sleep 5; continue; }
+  . "$0.env"
+  [ -n "$CHEESE_HOOK_SPOOL" ] || { sleep 5; continue; }
+  for f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
+    [ -e "$f" ] || continue
+    resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' \\
+      -H "X-Cheese-Token: $CHEESE_TOKEN" -H "X-Cheese-Event-Id: ${f##*.}" \\
+      --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
+    case "$resp" in *'"code":200'*) rm -f "$f";; esac
+  done
+  find "$CHEESE_HOOK_SPOOL" -type f -mmin +1440 -delete 2>/dev/null
+  sleep 1
+done
+"""
+
+
 def build_launch_script(sync_on_stop: bool = False, system_prompt: str = "") -> str:
     """The ``bash -lc`` body run as the screen's program. It reads a few env vars the
     screen is created with: ``CHEESE_HOME`` (isolated config/home dir),
@@ -252,6 +295,7 @@ def build_launch_script(sync_on_stop: bool = False, system_prompt: str = "") -> 
     usage_script = CHEESE_USAGE_SCRIPT
     usage_reader = CHEESE_USAGE_READER
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
+    drain_script = CHEESE_DRAIN_SCRIPT
     settings_json = json.dumps(
         hooks_settings(
             ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
@@ -371,26 +415,32 @@ if [ -f "$REAL_HOME/.claude/settings.json" ]; then
   esac
 fi
 # Durable event delivery on the device: cheese-hook spools every hook and (via
-# CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so this ONE background drainer is
-# the sole sender — it retries each spooled event until the backend DURABLY accepts
-# it (code:200 = pushed to the live turn OR parked in the topic's server-side spool
-# for the next reconcile), so a link/backend outage never drops an event. A 24h age
-# cap stops an unreachable backend from accumulating retries forever. The backend
-# dedups re-deliveries by event-id.
+# CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so the cheese-drain script
+# is the sole sender — it retries each spooled event until the backend DURABLY
+# accepts it (code:200 = pushed to the live turn OR parked in the topic's
+# server-side spool for the next reconcile), so a link/backend outage never
+# drops an event. A 24h age cap stops an unreachable backend from accumulating
+# retries forever. The backend dedups re-deliveries by event-id.
+#
+# The drainer is NOT started here: this launcher runs in the CONNECTOR's
+# process tree, which dies with the connector while claude survives in its own
+# tmux — a drainer backgrounded here died exactly then, and every later hook
+# spooled with no sender. It starts inside claude's tmux session below (same
+# life, same death). Only its config is written here, atomically (tmp + mv, so
+# a running drainer never sources a half-written file) and on EVERY launch, so
+# an adopted drainer always delivers with the current turn's token/URL.
 export CHEESE_HOOK_SPOOL="$HOME/.claude/cheese-spool"
 export CHEESE_HOOK_SPOOL_ONLY=1
 mkdir -p "$CHEESE_HOOK_SPOOL"
-( while true; do
-    for f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
-      [ -e "$f" ] || continue
-      resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' \\
-        -H "X-Cheese-Token: $CHEESE_TOKEN" -H "X-Cheese-Event-Id: ${{f##*.}}" \\
-        --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
-      case "$resp" in *'"code":200'*) rm -f "$f";; esac
-    done
-    find "$CHEESE_HOOK_SPOOL" -type f -mmin +1440 -delete 2>/dev/null
-    sleep 1
-  done ) &
+cat > "$HOME/.claude/cheese-drain" <<'DRAIN'
+{drain_script}DRAIN
+chmod +x "$HOME/.claude/cheese-drain"
+cat > "$HOME/.claude/cheese-drain.env.tmp" <<DRAINENV
+CHEESE_HOOK_SPOOL="$CHEESE_HOOK_SPOOL"
+CHEESE_HOOK_URL="$CHEESE_HOOK_URL"
+CHEESE_TOKEN="$CHEESE_TOKEN"
+DRAINENV
+mv "$HOME/.claude/cheese-drain.env.tmp" "$HOME/.claude/cheese-drain.env"
 cd "$CHEESE_WORK"
 # Host claude in a PERSISTENT tmux session so it survives a link/screen drop: the
 # session keeps running on the device and re-opening the screen re-attaches to it
@@ -417,12 +467,35 @@ if command -v tmux >/dev/null 2>&1; then
   # the work dir gives per-topic isolation AND retires a stale session whenever
   # the resolved work dir changes.
   SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
-  tmux has-session -t "$SESSION" 2>/dev/null || \\
-    tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" "$CLAUDE"
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    # Adopt: claude (and normally the drainer sharing its pane, started below)
+    # is already running — never start a second drainer. But a session CAN
+    # outlive its drainer (one created before the drainer moved in-session; a
+    # crashed loop), so when the recorded pid is gone, revive one in a window
+    # of THIS session — tethered to the claude pane so it can never outlive
+    # claude and pin the session open.
+    DRAIN_PID="$(cat "$HOME/.claude/cheese-drain.pid" 2>/dev/null || true)"
+    if [ -z "$DRAIN_PID" ] || ! kill -0 "$DRAIN_PID" 2>/dev/null; then
+      TETHER="$(tmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
+        2>/dev/null | head -n 1)"
+      tmux new-window -d -t "$SESSION" -n cheese-drain \\
+        "CHEESE_DRAIN_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-drain\\"" \\
+        || true
+    fi
+  else
+    # The drainer is backgrounded INSIDE the session command, then the shell
+    # execs claude in the same pane: the whole delivery chain lives and dies
+    # with the tmux session, not with the connector that spawned this launcher.
+    tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
+      "sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
+  fi
   exec tmux attach -t "$SESSION"
 else
   # eval, not bare exec: $CLAUDE now carries a QUOTED file path, and plain
   # word-splitting would hand claude the quote characters themselves.
+  # No tmux → claude stays in THIS process tree, so a drainer backgrounded
+  # right here genuinely shares its fate; same-life-same-death holds as is.
+  sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
   eval "exec $CLAUDE"
 fi
 """

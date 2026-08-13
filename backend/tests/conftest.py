@@ -48,11 +48,13 @@ _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (ser
 _DB_SUFFIX = f"_{_XDIST_WORKER}" if _XDIST_WORKER else ""
 _INTG_DB_NAME = f"cheesex_test{_DB_SUFFIX}"
 _CLIENT_DB_NAME = f"cheesex_test{_DB_SUFFIX}_c"
-# Postgres server root (no database). Defaults to the local docker-compose test
-# PG; CI (and any other host) overrides it via TEST_PG_BASE so the per-worker
-# databases are provisioned over the network instead of `docker exec`.
+# Postgres server root (no database). Defaults to the TEST server the repo-root
+# docker-compose.yml publishes on :5433 (separate from the dev database on
+# :5432, so a test run never touches what you were developing against). CI (and
+# any other host) overrides it via TEST_PG_BASE so the per-worker databases are
+# provisioned over the network instead of `docker exec`.
 _PG_BASE = os.environ.get(
-    "TEST_PG_BASE", "postgresql+asyncpg://cheesex:cheesex@localhost:5433"
+    "TEST_PG_BASE", "postgresql+asyncpg://postgres:postgres@localhost:5433"
 )
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
 # Redis needs the same per-worker split as Postgres. Its keys are scoped by
