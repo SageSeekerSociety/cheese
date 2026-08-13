@@ -164,10 +164,12 @@ def test_device_launch_without_prompt_writes_an_empty_file():
 
 
 class _RecordingHub:
-    """Minimal DeviceHub stand-in: records the launch command it was given."""
+    """Minimal DeviceHub stand-in: records the launch command and the launcher
+    script shipped over `exec` (the script travels as a file, never tmux argv)."""
 
     def __init__(self) -> None:
         self.opened: list[HubScreen] = []
+        self.shipped: list[str] = []  # exec stdin payloads (launch scripts)
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -177,6 +179,13 @@ class _RecordingHub:
 
     def all_online_screens(self) -> list[HubScreen]:
         return list(self.opened)
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        if stdin is not None:
+            self.shipped.append(stdin)
+        return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
     async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
         screen = HubScreen(
@@ -215,6 +224,10 @@ async def test_device_screen_opens_with_the_system_prompt(monkeypatch):
         system_prompt=_PROMPT,
     )
 
-    script = hub.opened[0].command[2]  # ["bash", "-lc", script]
+    # The launcher rides to the device as a FILE over `exec` (tmux argv caps out
+    # around 16KB and a real system prompt exceeds it); the screen command is a
+    # short runner pointing at that file. The prompt lives in the shipped script.
+    script = hub.shipped[0]
     assert _heredoc_body(script) == _PROMPT
     assert _FLAG in script
+    assert "/.cheese/launch/" in hub.opened[0].command[2]

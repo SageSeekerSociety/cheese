@@ -20,6 +20,8 @@ class FakeHub:
     def __init__(self) -> None:
         self.opened: list[HubScreen] = []
         self.prompts: list[list] = []
+        self.reasserted: list[str] = []  # sids re-sent as adopt-creates
+        self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -44,6 +46,18 @@ class FakeHub:
         )
         self.opened.append(screen)
         return screen
+
+    async def reassert_screen(
+        self, screen: HubScreen, *, command, cheeselet_source, env=None
+    ) -> None:
+        screen.command = command
+        self.reasserted.append(screen.sid)
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        self.execs.append((argv, stdin))
+        return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
     async def call_screen(self, device_id, sid, name, args) -> str:
         self.prompts.append(args)
@@ -108,6 +122,72 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[0], AgentSessionInfo)
     assert isinstance(events[1], AgentMessage) and events[1].text == "2"
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
+
+
+async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry():
+    """The hub's registry outlives what the device actually runs (a connector
+    restart kills its sessions; a create sent on a dying transport was never
+    delivered), and the frozen cli silently drops rpc.calls for unknown sids. So a
+    later turn must re-send the screen's adopt-create — idempotent on a live
+    session, a respawn for a lost one — rather than prompt a screen that may not
+    exist and die in a blank timeout."""
+    hub = FakeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    key = str(topic_id)
+
+    for turn in range(2):
+        _events, task = await _run(
+            provider,
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt=f"turn {turn}",
+            system_prompt="",
+            resume_session_id=None,
+        )
+        await asyncio.sleep(0.05)
+        router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "ok"})
+        await asyncio.wait_for(task, timeout=5)
+
+    assert len(hub.opened) == 1  # the topic keeps ONE screen …
+    assert hub.reasserted == [hub.opened[0].sid]  # … re-asserted on reuse
+    assert hub.prompts == [["turn 0"], ["turn 1"]]
+
+
+async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
+    """The frozen cli hands the screen command to `tmux new-session`, whose packed
+    command tops out around 16KB — a launcher carrying the assembled system prompt
+    blows through that and every spawn dies with `command too long` (observed live:
+    a 57KB session.create, tmux exit 1, and a silent 3×60s prompt timeout). So the
+    script must travel over the link's `exec` (stdin → a per-topic file) and the
+    session command must stay a short runner, no matter how large the prompt is."""
+    hub = FakeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    _events, task = await _run(
+        provider,
+        project_id=project_id,
+        topic_id=topic_id,
+        prompt="hi",
+        system_prompt="x" * 100_000,  # a system prompt far past tmux's limit
+        resume_session_id=None,
+    )
+    await asyncio.sleep(0.05)
+    router.push(
+        str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
+    )
+    await asyncio.wait_for(task, timeout=5)
+
+    # The big script went over exec's stdin, into the per-topic launch file …
+    (argv, stdin) = next((a, s) for a, s in hub.execs if s and "x" * 1000 in s)
+    assert f"$HOME/.cheese/launch/{topic_id}.sh" in argv[-1]
+    # … and the command the device passes to tmux stays tiny and points at it.
+    command = hub.opened[0].command
+    assert sum(len(part) for part in command) < 1024
+    assert f"$HOME/.cheese/launch/{topic_id}.sh" in command[-1]
 
 
 async def test_no_topic_is_a_clean_error():
