@@ -95,6 +95,13 @@ def compute_listings(
 
         device_online = bool(device_hub.online_device_ids())
     device_ready = device_online
+    # #22 收敛: local-docker can be retired from NEW selection per deployment. When
+    # off, its `available` goes False so `compute_selectable` no longer offers it —
+    # yet it stays LISTED (a topic already frozen on it keeps a readable label) and
+    # stays registered in the ComputePool (execution never consults `available`, so
+    # existing pins still run). `default` stays True: it remains the always-on
+    # runtime fallback (`compute_default_name`), just not a pick for new topics.
+    local_selectable = getattr(settings, "compute_local_docker_selectable", True)
     return [
         PoolListing(
             kind="compute",
@@ -103,7 +110,7 @@ def compute_listings(
             tier="included",
             price="包含",
             description="平台托管的容器算力（CPU 级），适合代码、文档与数据分析。",
-            available=True,
+            available=local_selectable,
             default=True,
         ),
         PoolListing(

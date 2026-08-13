@@ -5,6 +5,8 @@ import re
 import subprocess
 import time
 
+import pytest
+
 from app.domain.agent import device_launch
 
 
@@ -276,3 +278,223 @@ def test_the_gates_written_are_valid_json():
     parsed = _json.loads(body.group(1).replace("$CHEESE_WORK", "/w"))
     assert parsed["bypassPermissionsModeAccepted"] is True
     assert parsed["projects"]["/w"]["hasTrustDialogAccepted"] is True
+
+
+# --- the inner claude must boot on THIS launch's token, not a frozen one ------
+#
+# A device's `claude` runs in a PERSISTENT inner tmux session on the box's default
+# tmux server. The 407-that-outlives-a-re-mint has two layers:
+#   1. tmux seeds a new session's env from the SERVER's GLOBAL env — frozen when
+#      the server first started — for every var not in `update-environment`
+#      (DISPLAY/SSH_* only). So a brand-new claude on an already-running server
+#      inherits the token frozen weeks ago, not the one this turn minted. The
+#      launcher now passes the credential per-key with `-e`, overriding the global.
+#   2. A surviving session's claude reads its credential ONCE at startup; an
+#      adopted-but-expired one keeps serving a dead token. The launcher stamps the
+#      born-with expiry and retires a session whose credential has died.
+# These tests drive the real generated shell (stub tmux, and a real tmux server
+# for the frozen-global case) and assert both.
+
+
+def _tmux_hosting_block() -> str:
+    """The tmux-hosting branch of the launcher, standalone (its env is supplied by
+    the caller instead of the full launcher's earlier setup)."""
+    script = device_launch.build_launch_script()
+    after = script.split("  unset TMUX\n", 1)[1]
+    body = after.split('  exec tmux attach -t "$SESSION"\n', 1)[0]
+    return "set -e\nunset TMUX\n" + body + 'exec tmux attach -t "$SESSION"\n'
+
+
+def _stub_tmux_env(tmp_path):
+    """A home + a stub `tmux` that records kill/new/window to a log and toggles a
+    has-session marker, so a run's session-lifecycle decisions are observable."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    work = home / "work"
+    work.mkdir()
+    log = tmp_path / "tmux.log"
+    mark = tmp_path / "session.mark"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    stub = bindir / "tmux"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'cmd="$1"; shift\n'
+        'case "$cmd" in\n'
+        '  has-session) [ -f "$STUB_MARK" ] ;;\n'
+        '  kill-session) printf \'kill\\n\' >> "$STUB_LOG"; rm -f "$STUB_MARK" ;;\n'
+        "  new-session) printf 'new\\n' >> \"$STUB_LOG\";"
+        ' printf \'%s\\n\' "$@" >> "$STUB_ARGS"; : > "$STUB_MARK" ;;\n'
+        "  new-window) printf 'window\\n' >> \"$STUB_LOG\" ;;\n"
+        "  list-panes) printf '12345\\n' ;;\n"
+        "  attach) printf 'attach\\n' >> \"$STUB_LOG\" ;;\n"
+        "  *) : ;;\n"
+        "esac\n"
+    )
+    stub.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{bindir}:{os.environ['PATH']}",
+        "HOME": str(home),
+        "CHEESE_WORK": str(work),
+        "CLAUDE": "claude --model x",
+        "STUB_LOG": str(log),
+        "STUB_MARK": str(mark),
+        "STUB_ARGS": str(tmp_path / "newsession.args"),
+    }
+    return home, env, log
+
+
+def _run_block(env, expiry):
+    env = {**env, "CHEESE_TOKEN_EXPIRES": str(expiry)}
+    proc = subprocess.run(
+        ["sh", "-c", _tmux_hosting_block()], env=env, capture_output=True, text=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    return proc
+
+
+def _tokexp_file(home):
+    files = list((home / ".claude").glob("*.tokexp"))
+    assert len(files) == 1, files
+    return files[0]
+
+
+def test_a_fresh_inner_session_records_the_launch_token_expiry(tmp_path):
+    """First launch (no session yet): claude starts and the launcher records the
+    expiry of the token it was born with, so a later launch can judge it."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    exp = int(time.time()) + 100_000
+    _run_block(env, expiry=exp)
+    assert "new" in log.read_text().split()  # a session was created
+    assert _tokexp_file(home).read_text().strip() == str(exp)
+
+
+def test_a_stale_inner_session_is_retired_and_relaunched_with_the_fresh_expiry(
+    tmp_path,
+):
+    """The bug: a surviving session whose baked credential has expired is adopted,
+    so the fresh token never runs. Now it is killed and replaced, and the NEW
+    launch's expiry is recorded — not the reused dead one."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    _run_block(env, expiry=int(time.time()) + 100_000)  # create the session
+    # Its baked token has since expired (a pre-#385 1h token, or a >TTL-old one).
+    _tokexp_file(home).write_text(str(int(time.time()) - 100))
+    fresh = int(time.time()) + 900_000
+    _run_block(env, expiry=fresh)  # relaunch
+
+    steps = log.read_text().split()
+    assert "kill" in steps, "a stale-credential session must be retired"
+    assert steps.count("new") == 2, "and replaced by a fresh claude"
+    assert _tokexp_file(home).read_text().strip() == str(fresh), (
+        "the relaunch must record the FRESH expiry, not the reused dead one"
+    )
+
+
+def test_a_valid_inner_session_is_adopted_without_relaunch(tmp_path):
+    """No churn: a session whose baked token is still good is adopted unchanged —
+    an in-flight turn on a live credential is never interrupted."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    good = int(time.time()) + 100_000
+    _run_block(env, expiry=good)  # create
+    _run_block(env, expiry=int(time.time()) + 900_000)  # relaunch, token still good
+
+    steps = log.read_text().split()
+    assert "kill" not in steps, "a still-valid session must not be killed"
+    assert steps.count("new") == 1, "and must not be relaunched"
+    assert _tokexp_file(home).read_text().strip() == str(good), "expiry left intact"
+
+
+def test_create_passes_the_fresh_credential_explicitly_via_dash_e(tmp_path):
+    """The new session must be handed THIS launch's token with -e, not left to
+    inherit it — inheritance is exactly what pulls the stale frozen-global token."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    env = {
+        **env,
+        "CLAUDE_CODE_OAUTH_TOKEN": "fresh-oauth-tok",
+        "HTTPS_PROXY": "http://cheese:fresh-oauth-tok@proxy:8080",
+        "CHEESE_TOPIC": "topic-abc",
+    }
+    _run_block(env, expiry=int(time.time()) + 100_000)
+    args = open(env["STUB_ARGS"]).read().splitlines()
+    assert "-e" in args, "the session must be created with explicit env"
+    assert "CLAUDE_CODE_OAUTH_TOKEN=fresh-oauth-tok" in args
+    assert "HTTPS_PROXY=http://cheese:fresh-oauth-tok@proxy:8080" in args
+    # per-topic attribution must be explicit too (the alive probe keys on it)
+    assert "CHEESE_TOPIC=topic-abc" in args
+
+
+def _tmux_ge_30() -> bool:
+    import shutil
+
+    if not shutil.which("tmux"):
+        return False
+    out = subprocess.run(["tmux", "-V"], capture_output=True, text=True).stdout
+    m = re.search(r"(\d+)\.(\d+)", out)
+    return bool(m) and (int(m.group(1)), int(m.group(2))) >= (3, 0)
+
+
+@pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
+def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
+    """End-to-end against a REAL tmux server whose GLOBAL env holds a stale token
+    (the box's exact condition). A brand-new claude must boot carrying THIS
+    launch's fresh token — proving the frozen-global inheritance (the 407 root
+    cause) is overridden, not merely that a new process was spawned."""
+    import shutil
+
+    real_tmux = shutil.which("tmux")
+    # A short socket path: a unix socket path is capped near 104 chars, and
+    # pytest's tmp_path alone already blows past it on macOS.
+    sock = f"/tmp/ct{os.getpid()}.sock"  # noqa: S108 — ephemeral, kill-server'd below
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    work = home / "work"
+    work.mkdir()
+    (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nsleep 3\n")
+    token_out = tmp_path / "claude_token.out"
+    fake_claude = tmp_path / "fakeclaude.sh"
+    fake_claude.write_text(
+        f'#!/bin/sh\nprintenv CLAUDE_CODE_OAUTH_TOKEN > "{token_out}"\nsleep 3\n'
+    )
+    fake_claude.chmod(0o755)
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    # A tmux that pins every launcher call to our private test server (which we
+    # pre-seed with a STALE global token, standing in for the box's old server).
+    (bindir / "tmux").write_text(f'#!/bin/sh\nexec "{real_tmux}" -S "{sock}" "$@"\n')
+    (bindir / "tmux").chmod(0o755)
+    try:
+        subprocess.run(
+            [real_tmux, "-S", sock, "new-session", "-d", "-s", "seed", "sleep 60"],
+            env={**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": "STALE-frozen-token"},
+            check=True,
+        )
+        env = {
+            **os.environ,
+            "PATH": f"{bindir}:{os.environ['PATH']}",
+            "HOME": str(home),
+            "CHEESE_WORK": str(work),
+            "CLAUDE": f"sh {fake_claude}",
+            "CLAUDE_CODE_OAUTH_TOKEN": "FRESH-live-token",
+            "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+        }
+        subprocess.run(
+            ["sh", "-c", _tmux_hosting_block()],
+            env=env,
+            capture_output=True,
+            text=True,
+        )  # ends in `exec tmux attach` (fails fast, no tty) — the session is up
+        deadline = time.monotonic() + 8
+        while not token_out.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert token_out.exists(), "the inner claude never launched"
+        assert token_out.read_text().strip() == "FRESH-live-token", (
+            "the new claude booted on the STALE server-global token, not this "
+            "launch's fresh one — the frozen-global 407 is not fixed"
+        )
+    finally:
+        subprocess.run([real_tmux, "-S", sock, "kill-server"], capture_output=True)
+        try:
+            os.unlink(sock)
+        except OSError:
+            pass
