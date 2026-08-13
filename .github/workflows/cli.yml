@@ -11,8 +11,11 @@ name: CLI Test (Go)
 # clean — build, vet, and the tests all passed on the first run — so it gates at
 # zero from day one with no baseline and no ratchet.
 #
-# Hosted: pure Go, no service containers, no docker. It must not queue behind
-# builds and deploys on the box's single self-hosted runner.
+# On the cheese-ci pool: pure Go, but the org's Actions billing lapsed on
+# 2026-08-13 (every ubuntu-latest job is refused before it starts). The pool is
+# separate capacity from the dev box's single deploy slot, so this never queues
+# behind a deploy; Go comes from setup-go below, and `go test -race` finds the
+# gcc it needs in the pool's build-essential (installed there for srp_rs).
 on:
   push:
     branches: [main]
@@ -41,7 +44,7 @@ defaults:
 
 jobs:
   go:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-ci]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

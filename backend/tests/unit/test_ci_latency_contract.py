@@ -50,15 +50,17 @@ def test_squash_merge_does_not_repeat_pr_backend_and_e2e_suites():
 
 
 def test_backend_lint_is_a_separate_hosted_job():
-    """Inverted from the single-runner era (#166), where a separate lint job
-    could only queue serially behind test on the one slot, so lint HAD to
-    reuse the test environment. The CI plan's P3 schedules the split for when
-    real runners exist; the cheese-ci pool (#212) is that moment. Lint now
-    reds in ~2 minutes on a hosted runner without occupying a pool slot, and
-    the pool's test job must NOT duplicate it."""
+    """Lint is its own job, kept out of `test` (which must not re-run
+    ruff/pyright). It used to run on GitHub-hosted `ubuntu-latest` (#166) to
+    stay fast and off the self-hosted pool — until 2026-08-13, when the org's
+    Actions billing lapsed and every hosted job was refused before its first
+    step. The whole merge gate now runs on the self-hosted `cheese-ci` pool
+    (#383) so CI no longer depends on GitHub's paid minutes; the ~1min
+    pool-queue latency is the deliberate price. What this test still guards is
+    the split itself — a separate lint job, never duplicated inside `test`."""
     workflow = load_workflow("test.yml")
     lint = workflow["jobs"]["lint"]
-    assert lint["runs-on"] == "ubuntu-latest"
+    assert lint["runs-on"] == ["self-hosted", "cheese-ci"]
     # Gated by `scope` like the heavy job, and by the same non-veto rule: a
     # scope that could not decide must let lint run, not silently skip it. The
     # test above pins this for `test`; without it here, lint could be reverted
