@@ -1,4 +1,4 @@
-"""Notification business logic."""
+"""Alert business logic."""
 
 import uuid
 from datetime import UTC, datetime
@@ -7,34 +7,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.runtime import get_broker
+from app.domain.alert.models import Alert, AlertKind, AlertLevel
+from app.domain.alert.repositories import AlertRepository
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
-from app.domain.cx_notification.models import Notification, NotifKind, NotifLevel
-from app.domain.cx_notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 
 _VALID_FEEDBACK = {"up", "down"}
 
 
-class NotificationService:
+class AlertService:
     def __init__(self, session: AsyncSession):
         self._session = session
-        self._repo = NotificationRepository(session)
+        self._repo = AlertRepository(session)
         self._projects = ProjectRepository(session)
 
     async def create(
         self,
         *,
         project_id: uuid.UUID,
-        level: NotifLevel,
-        kind: NotifKind,
+        level: AlertLevel,
+        kind: AlertKind,
         title: str,
         body: str = "",
         target_handle: str | None = None,
         topic_id: uuid.UUID | None = None,
         payload: dict | None = None,
-    ) -> Notification:
+    ) -> Alert:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
         return await self._repo.add(
@@ -54,7 +54,7 @@ class NotificationService:
         *,
         target_handle: str | None = None,
         unread_only: bool = False,
-    ) -> tuple[list[Notification], int]:
+    ) -> tuple[list[Alert], int]:
         items = await self._repo.list_for_project(
             project_id, target_handle=target_handle, unread_only=unread_only
         )
@@ -65,7 +65,7 @@ class NotificationService:
         project_id: uuid.UUID,
         *,
         target_handle: str | None = None,
-    ) -> tuple[list[Notification], int]:
+    ) -> tuple[list[Alert], int]:
         items = await self._repo.list_inbox(project_id, target_handle=target_handle)
         return items, len(items)
 
@@ -79,24 +79,24 @@ class NotificationService:
     ) -> int:
         return await self._repo.mark_all_read(project_id, target_handle=target_handle)
 
-    async def get_or_404(self, notification_id: uuid.UUID) -> Notification:
+    async def get_or_404(self, notification_id: uuid.UUID) -> Alert:
         notification = await self._repo.get(notification_id)
         if notification is None:
-            raise NotFoundError("Notification not found")
+            raise NotFoundError("Alert not found")
         return notification
 
-    async def mark_read(self, notification_id: uuid.UUID) -> Notification:
+    async def mark_read(self, notification_id: uuid.UUID) -> Alert:
         notification = await self.get_or_404(notification_id)
         notification.read_at = datetime.now(UTC)
         return await self._repo.save(notification)
 
     async def resolve(
         self, notification_id: uuid.UUID, *, chosen: str, decided_by: str
-    ) -> Notification:
+    ) -> Alert:
         """拍板 (spec G2): record the chosen option on a decision request and drop
         the decision into the topic so 芝士 picks it up on its next turn."""
         n = await self.get_or_404(notification_id)
-        if n.kind != NotifKind.decision_request:
+        if n.kind != AlertKind.decision_request:
             raise ValidationError("只有决策请求可以拍板")
         # Idempotent: a decision is resolved once. Re-resolving must not post a
         # second 【决策】block into the topic.
@@ -130,9 +130,7 @@ class NotificationService:
             )
         return saved
 
-    async def set_feedback(
-        self, notification_id: uuid.UUID, feedback: str
-    ) -> Notification:
+    async def set_feedback(self, notification_id: uuid.UUID, feedback: str) -> Alert:
         if feedback not in _VALID_FEEDBACK:
             raise ValidationError("feedback must be 'up' or 'down'")
         notification = await self.get_or_404(notification_id)

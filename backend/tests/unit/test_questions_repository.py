@@ -658,9 +658,9 @@ class TestQuestionTopicRepository:
     @pytest.mark.anyio
     async def test_list_topic_ids(self):
         session = _mock_session()
-        rel1 = SimpleNamespace(question_id=10, topic_id=1)
-        rel2 = SimpleNamespace(question_id=10, topic_id=2)
-        rel3 = SimpleNamespace(question_id=20, topic_id=3)
+        rel1 = SimpleNamespace(question_id=10, tag_id=1)
+        rel2 = SimpleNamespace(question_id=10, tag_id=2)
+        rel3 = SimpleNamespace(question_id=20, tag_id=3)
         session.execute.return_value = _mock_execute_scalars([rel1, rel2, rel3])
         repo = QuestionTopicRepository(session)
 

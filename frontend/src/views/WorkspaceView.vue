@@ -488,14 +488,15 @@ const pendingCard = computed<AcceptCard | null>(
 const acceptedCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'accepted') ?? null)
 
 // 交付进度 (两阶段采纳, 2026-08-09): the human already clicked 采纳 and the PR
-// is open — CI / merge / deploy run for hours after that. Without this branch
+// is open — CI and the merge run for hours after that. Without this branch
 // the whole merge box vanishes the moment someone accepts, and nothing on
 // screen says the delivery is still in flight. Read-only: the decision was
 // already made, nobody should be asked to click a second time.
 const deliveringCard = computed<AcceptCard | null>(() => acceptCards.value.find((c) => c.status === 'pr_open') ?? null)
-// 阶段推导只此一处 —— 见 lib/deliveryStage.ts 顶部关于那个 `if` 的说明。
+// 步骤由后端下发（`card.stages`）——哪些步骤存在取决于项目的 forge，浏览器看不见。
+// 这里只把它们配上文案，见 lib/deliveryStage.ts。
 const deliveryStage = computed(() => (deliveringCard.value ? deliveryStageOf(deliveringCard.value) : null))
-// 交付途中后端把阶段信息/故障写在卡的 note 上（CI 红了、部署失败、GitHub 拒绝
+// 交付途中后端把阶段信息/故障写在卡的 note 上（CI 红了、GitHub 拒绝
 // 合并、轮询用的 token 失效），那是这些事唯一露头的地方，照原样显示。
 const deliveryNote = computed(() => {
   const note = deliveringCard.value?.note ?? ''
@@ -1377,9 +1378,9 @@ onUnmounted(() => {
               </div>
             </v-card>
 
-            <!-- 交付进度 (两阶段采纳): 人已经点过采纳，剩下的 CI → 合并 →
-                 部署是机器在跑，要跑几小时。只读，不给任何按钮 —— 授权已经
-                 给过了，不该再问人第二次。 -->
+            <!-- 交付进度: 人已经点过采纳，剩下的（检查、合并——具体几步由项目的
+                 forge 决定，后端下发）是机器在跑，要跑几小时。只读，不给任何按钮
+                 —— 授权已经给过了，不该再问人第二次。 -->
             <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box mt-2">
               <div class="merge-box__bar" />
               <div class="pa-3">

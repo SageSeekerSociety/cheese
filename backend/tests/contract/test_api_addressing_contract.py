@@ -66,17 +66,18 @@ _HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH"}
 # set the sweep below recomputes on every run) and mirrored as the table in
 # docs/api-conventions.md. These are the endpoints where losing a prefix does
 # not 404 — it answers, convincingly, from the wrong generation.
+# Shrinks as #370's renames land: each collision here exists because a 1.0 route
+# squats on a word the 2.0 generation also uses, and renaming the 1.0 route
+# retires the entry for good. Six `/api/projects*` rows left when the 知是 team
+# project moved to `/team-projects`; three `/api/topics*` rows left when the 1.0
+# question tag moved to `/tags`.
+#
+# One pair is left, and it will not leave by renaming: 1.0 `/tasks` and 2.0
+# `/api/tasks` are the SAME resource written twice (#370 — 机构发题, 队伍领题),
+# so they merge, which is its own project. When this set is empty the 2.0 `/api`
+# prefix has no reason left to exist and step 2 can flatten it.
 _CROSS_WIRED_TODAY = {
-    ("/api/projects", "GET"),
-    ("/api/projects", "POST"),
-    ("/api/projects/{project_id}", "GET"),
-    ("/api/projects/{project_id}/members", "GET"),
-    ("/api/projects/{project_id}/members", "POST"),
-    ("/api/projects/{project_id}/members/{user_handle}", "DELETE"),
     ("/api/tasks/{task_id}", "GET"),
-    ("/api/topics", "GET"),
-    ("/api/topics", "POST"),
-    ("/api/topics/{topic_id}", "GET"),
 }
 
 
@@ -236,9 +237,13 @@ def test_flattening_one_api_layer_cross_wires_exactly_the_known_set(
     missing = _CROSS_WIRED_TODAY - observed
     new = observed - _CROSS_WIRED_TODAY
     assert not missing, (
-        f"pinned collisions no longer observed: {sorted(missing)} — their 2.0 "
-        "paths left the /api namespace. If a router prefix was flattened, that "
-        "is the outage docs/api-conventions.md records; put the prefix back."
+        f"pinned collisions no longer observed: {sorted(missing)}. Two very "
+        "different things produce this. (a) A 1.0 route was RENAMED off the "
+        "shared word — the collision is genuinely gone, #370's whole point; "
+        "shrink this set. (b) A 2.0 router prefix was flattened to the bare "
+        "name, which hands its traffic to 1.0 with no error anywhere — that is "
+        "the outage docs/api-conventions.md records; put the prefix back. Check "
+        "which happened before editing this set."
     )
     assert not new, (
         f"new cross-generation collisions: {sorted(new)} — a bare route and an "
@@ -295,7 +300,9 @@ _TWO_OH_MODULES = {
     "members",
     "memory",
     "milestones",
-    "notifications",
+    # renamed from `notifications` (#370): 1.0 keeps that word for the social
+    # feed, 2.0 reports platform state and now says so.
+    "alerts",
     "ops",
     "projects",
     "roles",
@@ -364,6 +371,69 @@ def test_no_two_routes_claim_the_same_path_and_method() -> None:
     assert not dupes, (
         "routes shadowing each other (first registered wins, the rest go "
         f"silently dead): {dict(sorted(dupes.items()))}"
+    )
+
+
+def test_no_two_routes_want_the_same_url_from_a_caller() -> None:
+    """Two routes may never be reachable at the SAME external URL (#370 step 3).
+
+    The test above bans duplicate BACKEND paths. This one asks the question a
+    caller asks: given the published mount, what do I type? A 1.0 `/x` is typed
+    `/api/x` and a 2.0 `/api/x` is typed `/api/api/x`, so today they differ — and
+    that difference is the only thing keeping the two generations apart while
+    they still share resource words.
+
+    It matters most for what comes next: #370 step 2 drops the 2.0 prefix, at
+    which point external URL and backend path become the same string and any
+    surviving shared word becomes a real duplicate. This assertion holds before
+    and after that change, so it is what makes the flattening checkable rather
+    than hopeful.
+    """
+    claims: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for module, routes in _module_routers().items():
+        for path, methods in routes:
+            external = _GATEWAY_PREFIX + re.sub(r"\{[^}]+\}", "{}", path)
+            for method in methods:
+                claims[(external, method)].append(module)
+
+    dupes = {key: mods for key, mods in claims.items() if len(mods) > 1}
+    assert not dupes, (
+        "two routes answer the same URL a caller would send; one of them is "
+        f"unreachable and nothing said so: {dict(sorted(dupes.items()))}"
+    )
+
+
+def test_a_trailing_slash_never_reaches_the_other_generation(
+    lenient_client: TestClient,
+) -> None:
+    """One stray `/` used to convert a correct 2.0 URL into a 1.0 answer.
+
+    The chain, verified live before it was closed: nginx strips one `/api`, the
+    backend finds no route for `/api/tasks/7/` and redirects to an
+    ORIGIN-ABSOLUTE `/api/tasks/7`, the client follows, nginx strips AGAIN, and
+    1.0's 赛题 answers. A success code, from the wrong generation, for a URL that
+    was right apart from its last character.
+
+    The backend cannot emit a correct `Location` here — it cannot know how many
+    prefixes the proxy ahead of it will strip — so `redirect_slashes=False` is
+    the fix rather than a workaround, and this pins it. A 404 is the point: the
+    caller learns immediately instead of being handed someone else's data.
+    """
+    schema = _published_schema(lenient_client)
+    two_oh = [p for p in schema["paths"] if p == "/api" or p.startswith("/api/")]
+    assert two_oh, "the 2.0 generation vanished from the schema entirely"
+
+    redirected = []
+    for path in two_oh:
+        response = lenient_client.request(
+            "GET", _concrete(path) + "/", follow_redirects=False
+        )
+        if response.is_redirect:
+            redirected.append((path, response.headers.get("location", "")))
+
+    assert not redirected, (
+        "these answer a trailing slash with a redirect, which spends an /api the "
+        f"caller already paid and lands one generation over: {redirected}"
     )
 
 
