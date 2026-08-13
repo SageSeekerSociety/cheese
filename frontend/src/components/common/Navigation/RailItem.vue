@@ -1,9 +1,14 @@
 <template>
+  <!-- 项目格子只画首字方块（projectAvatar），没有任何可见文字，所以链接的可访问
+       名称只能来自 aria-label —— 少了它，读屏读不出来，12 个项目里 4 个「机」字
+       方块也没法区分。悬停浮层（下面的 v-tooltip）负责鼠标用户；不加原生 title=，
+       否则悬停会同时冒出浏览器气泡和这个浮层。 -->
   <v-card
     v-if="item.type === 'item'"
     :to="item.to"
     rounded="lg"
     class="app-rail-item"
+    :aria-label="item.title"
     :class="{
       'app-rail-item-cheese': item.icon === 'cheese',
       'app-rail-item--tile': item.img,
