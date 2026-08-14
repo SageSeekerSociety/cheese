@@ -67,6 +67,17 @@ class HubScreen:
     project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
     hook_key: str = ""
+    # UNIX expiry of the model credential the screen's `claude` was LAUNCHED with
+    # (its `CHEESE_TOKEN_EXPIRES`). A bare `claude` reads that credential — the
+    # HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN — ONCE at startup and
+    # never re-reads it, and a reused screen is only reasserted (a cheeselet
+    # hot-reload), never relaunched, so once this passes the process is a corpse
+    # that 407s/401s every turn while still alive. The DeviceProvider stamps it at
+    # open time and folds it into the reuse decision (retire + reopen past it),
+    # and the zero-output fuse reads it to fast-fail with the true reason (#388).
+    # `None` = never recorded (a screen adopted after a server restart, or a dev
+    # token with no decodable expiry) → treated as fresh, never retired on it.
+    credential_expires: int | None = None
     vars: dict[str, Any] = field(default_factory=dict)
     viewers: set[ViewerTransport] = field(default_factory=set)
 

@@ -21,6 +21,7 @@ _VCS_PERMS_MARKERS = (
     "工作区版本库权限异常",
 )
 HOST_UNREACHABLE_CODE = "host_unreachable"
+SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE = "subscription_credential_expired"
 
 # The platform's OWN wording for "the machine this topic is pinned to is not
 # answering". It lives here, not in the device provider that raises it, because
@@ -113,6 +114,26 @@ HOST_UNREACHABLE = PlatformFailure(
     ),
     retryable=True,
     host_scoped=True,
+)
+
+
+SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
+    code=SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE,
+    title="平台的模型订阅凭据已过期",
+    content=(
+        "这轮没能开始：平台的 Claude 订阅凭据已过期，需要有主机权限的人在盒子上"
+        "重新认证（claude setup-token，或恢复 .credentials.json）。这不是容器、"
+        "磁盘或网络的问题，也不是芝士卡在某一步——所以这里没有「已完成的改动」。"
+        "反复 @芝士 不会有用；凭据在主机侧刷新后，下一次 @ 它就会自动恢复。"
+    ),
+    # Not retried automatically: another turn against the same dead credential just
+    # burns 300s again (the platform "对自己的失败没有记忆" complaint in #388). It
+    # self-heals on the next human summon once the host re-auths.
+    retryable=False,
+    # The subscription credential is DEPLOYMENT-level (one metering proxy, shared
+    # by every machine), not a property of one box — moving the topic to another
+    # machine reaches the same dead credential. So it must NOT indict the machine.
+    host_scoped=False,
 )
 
 
