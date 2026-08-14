@@ -113,14 +113,14 @@ def live_stack(monkeypatch):
             time.sleep(0.05)
 
     try:
-        yield helper_port, meter
+        yield helper_port, meter, api_port
     finally:
         server.should_exit = True
         meter.close()
 
 
 def test_a_turns_bytes_survive_the_whole_chain(live_stack):
-    helper_port, meter = live_stack
+    helper_port, meter, _ = live_stack
     with socket.create_connection(("127.0.0.1", helper_port), timeout=10) as client:
         client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
         assert client.recv(4096) == b"CONNECT API.ANTHROPIC.COM:443 HTTP/1.1\r\n\r\n"
@@ -138,7 +138,7 @@ def test_a_turns_bytes_survive_the_whole_chain(live_stack):
 def test_a_payload_larger_than_one_frame_arrives_whole(live_stack):
     """126 and 65536 bytes are where WebSocket switches to 2- and 8-byte length
     fields; a body that crosses either is where a hand-written framer breaks."""
-    helper_port, meter = live_stack
+    helper_port, meter, _ = live_stack
     payload = bytes(range(256)) * 400  # 102400 bytes: past both boundaries
     with socket.create_connection(("127.0.0.1", helper_port), timeout=15) as client:
         client.sendall(payload)
@@ -155,7 +155,7 @@ def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack, monkeyp
     """`claude` waiting on a CONNECT that will never be answered looks exactly
     like a stalled model — the most expensive failure to diagnose. A refused
     upgrade must reach it as a closed socket."""
-    _, meter = live_stack
+    _, meter, _ = live_stack
     api_port = _free_port()  # nothing here; stands in for any upgrade failure
     port = _free_port()
     threading.Thread(
@@ -183,3 +183,54 @@ def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack, monkeyp
         except ConnectionResetError:
             pass
     assert not meter.received
+
+
+def test_a_refreshed_token_takes_effect_without_restarting_the_helper(live_stack):
+    """A scoped token has a session lifetime and this helper outlives one. If it
+    baked the token at startup the failure would be #385's shape: the process
+    stays healthy while its credential dies under it, every turn is refused, and
+    nothing on the machine looks wrong. So the token is read per connection."""
+    _, meter, api_port = live_stack
+    import tempfile
+
+    from app.domain.agent.machine_tunnel import TokenSource, serve
+
+    with tempfile.NamedTemporaryFile("w", suffix=".tok", delete=False) as handle:
+        token_path = handle.name
+        handle.write("not-a-real-token")
+
+    port = _free_port()
+    threading.Thread(
+        target=serve,
+        args=(
+            port,
+            f"ws://127.0.0.1:{api_port}/llm/tunnel",
+            TokenSource(path=token_path),
+        ),
+        daemon=True,
+    ).start()
+    for _ in range(100):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.05)
+
+    # A bad token: refused, so nothing reaches the meter.
+    before = len(meter.received)
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as client:
+        client.sendall(b"first")
+        client.settimeout(10)
+        try:
+            client.recv(4096)
+        except ConnectionResetError:
+            pass
+    assert len(meter.received) == before
+
+    # Drop a good one in place — no restart, no signal.
+    with open(token_path, "w") as handle:
+        handle.write(mint_scoped_token(project_id=_PROJECT))
+
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as client:
+        client.sendall(b"second")
+        assert client.recv(4096) == b"SECOND"

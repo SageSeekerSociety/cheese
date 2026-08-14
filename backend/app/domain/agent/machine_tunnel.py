@@ -203,10 +203,36 @@ def _pump_ws_to_local(ws: socket.socket, local: socket.socket) -> None:
         return
 
 
+class TokenSource:
+    """Where the scoped token comes from, read fresh for EVERY connection.
+
+    Deliberately not a value captured at startup. A scoped token has a session
+    lifetime, this helper outlives one, and `claude` reads its own credential
+    exactly once at launch — so a token baked into a long-running process is the
+    shape of #385: the process keeps running, the credential dies under it, and
+    every turn afterwards is refused by the meter with nothing to relaunch,
+    because the helper looks perfectly healthy. Reading per connection means the
+    launcher can drop a fresh token in place and the next turn just works.
+    """
+
+    def __init__(self, value: str = "", path: str | None = None) -> None:
+        self._value = value
+        self._path = path
+
+    def get(self) -> str:
+        if self._path:
+            try:
+                with open(self._path) as handle:
+                    return handle.read().strip()
+            except OSError as exc:
+                raise TunnelError(f"could not read {self._path}: {exc}") from exc
+        return self._value
+
+
 def handle_connection(
     local: socket.socket,
     url: str,
-    token: str,
+    token: "str | TokenSource",
     *,
     ca_path: str | None = None,
     insecure: bool = False,
@@ -219,7 +245,10 @@ def handle_connection(
     """
     ws = None
     try:
-        ws = open_tunnel(url, token, ca_path=ca_path, insecure=insecure)
+        secret = token.get() if isinstance(token, TokenSource) else token
+        if not secret:
+            raise TunnelError("no scoped token available")
+        ws = open_tunnel(url, secret, ca_path=ca_path, insecure=insecure)
     except (OSError, TunnelError) as exc:
         logger.warning("tunnel could not be opened: %s", exc)
         # Close rather than hang: `claude` waiting on a CONNECT that will never
@@ -244,7 +273,7 @@ def handle_connection(
 def serve(
     listen_port: int,
     url: str,
-    token: str,
+    token: "str | TokenSource",
     *,
     ca_path: str | None = None,
     insecure: bool = False,
@@ -274,19 +303,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--url", required=True, help="wss://…/llm/tunnel")
     parser.add_argument(
+        "--token-file",
+        default=os.environ.get("CHEESE_TUNNEL_TOKEN_FILE") or None,
+        help="file holding the scoped cheese token, re-read per connection. "
+        "PREFERRED: it keeps the token out of the machine's process list, and "
+        "lets a refreshed token take effect without restarting this helper",
+    )
+    parser.add_argument(
         "--token",
         default=os.environ.get("CHEESE_TUNNEL_TOKEN", ""),
-        help="scoped cheese token; prefer CHEESE_TUNNEL_TOKEN so it stays out "
-        "of the machine's process list",
+        help="the token inline; only for a one-off run, since it can never be "
+        "refreshed under a running process",
     )
     parser.add_argument("--ca", default=os.environ.get("CHEESE_TUNNEL_CA") or None)
     parser.add_argument("--insecure", action="store_true")
     args = parser.parse_args(argv)
-    if not args.token:
+    if not (args.token_file or args.token):
         print("a scoped cheese token is required", file=sys.stderr)
         return 2
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    serve(args.port, args.url, args.token, ca_path=args.ca, insecure=args.insecure)
+    source = TokenSource(value=args.token, path=args.token_file)
+    serve(args.port, args.url, source, ca_path=args.ca, insecure=args.insecure)
     return 0
 
 
