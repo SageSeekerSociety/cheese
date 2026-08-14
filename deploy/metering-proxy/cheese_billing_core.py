@@ -193,6 +193,13 @@ class Verdict:
     reason: str
     pool: str = SUBSCRIPTION
     key: str | None = None
+    # `user:password` — which ccproxy identity to authenticate the upstream hop
+    # as for this project's turns. Present only when the backend knows the
+    # machine those turns run on; ccproxy scopes its fake→real ticket swap to
+    # the authenticated connection, so this is what lets the machine's own
+    # ticket be forwarded untouched instead of swapped for one the proxy holds.
+    # None = fall back to the deployment-wide identity, and to the swap.
+    upstream: str | None = None
 
 
 def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
@@ -205,11 +212,20 @@ def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
     data = payload.get("data") or {}
     supply = data.get("supply") or {}
     pool = supply.get("pool")
+    upstream = supply.get("upstream")
     return Verdict(
         allow=bool(data.get("allow", True)),
         reason=str(data.get("reason", "")),
         pool=pool if pool in (SUBSCRIPTION, GATEWAY) else SUBSCRIPTION,
         key=supply.get("key") or None,
+        # Shape-checked here rather than at use: a half credential ("m516:" or
+        # ":pw") would authenticate as nobody, and failing at the parse names
+        # the control plane as the source instead of surfacing as an upstream
+        # 407 several hops away.
+        upstream=upstream
+        if isinstance(upstream, str) and len(upstream.split(":", 1)) == 2
+        and all(upstream.split(":", 1))
+        else None,
     )
 
 

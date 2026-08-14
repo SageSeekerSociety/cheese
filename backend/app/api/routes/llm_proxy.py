@@ -38,7 +38,8 @@ from app.core.errors import (
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
-from app.domain.agent.supply import GATEWAY, resolve_pool
+from app.domain.agent.supply import GATEWAY, SUBSCRIPTION, resolve_pool
+from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.repositories import ComputeGrantRepository
 
@@ -140,6 +141,26 @@ async def admission(
         # gets no key here and the proxy refuses rather than falling back to a
         # shared credential (which would bill every project to one bucket).
         supply["key"] = await chat.project_gateway_key(project_uuid)
+    elif pool == SUBSCRIPTION and decision.allow:
+        # Which identity the proxy should authenticate as on its ccproxy hop.
+        # ccproxy scopes its ticket swap to the authenticated connection, so
+        # relaying a machine's OWN ticket only works from that machine's
+        # identity — carrying it here is what lets the proxy forward the ticket
+        # untouched instead of holding a credential to swap in. Absent (an
+        # unpinned topic, a machine enrolled before this was recorded) means
+        # "use the deployment-wide identity", i.e. exactly today's behaviour.
+        topic = claims.get("t")
+        if isinstance(topic, str) and topic:
+            try:
+                topic_uuid = uuid.UUID(topic)
+            except ValueError:
+                topic_uuid = None
+            if topic_uuid is not None:
+                upstream = await ProjectMachineRepository(
+                    db
+                ).ccproxy_upstream_for_topic(topic_uuid)
+                if upstream:
+                    supply["upstream"] = upstream
 
     return ok({"allow": decision.allow, "reason": decision.reason, "supply": supply})
 
