@@ -320,6 +320,8 @@ run_guard "repo rules" "repo rules" \
     bash "$REPO_ROOT/.claude/scripts/check-repo-rules.sh"
 run_guard "actions pinned to a commit SHA" "unpinned GitHub Action" \
     bash "$REPO_ROOT/.claude/scripts/check-action-pins.sh"
+run_guard "metering proxy stays credential-hardened" "metering proxy hardening" \
+    bash "$REPO_ROOT/.claude/scripts/check-metering-proxy.sh"
 
 echo "==> migration fork (vs origin/main)"
 run_guard "merging would not fork the alembic chain" "migration fork" \

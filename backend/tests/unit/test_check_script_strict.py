@@ -54,6 +54,7 @@ TOOL_RED = '#!/usr/bin/env bash\necho "E501 line too long"\nexit 1\n'
 GUARDS_OK = {
     "check-repo-rules.sh": "#!/usr/bin/env bash\nexit 0\n",
     "check-action-pins.sh": "#!/usr/bin/env bash\nexit 0\n",
+    "check-metering-proxy.sh": "#!/usr/bin/env bash\nexit 0\n",
     "check-migration-fork.py": "import sys\n\nsys.exit(0)\n",
 }
 GUARD_RED = '#!/usr/bin/env bash\necho "naive datetime at foo.py:12"\nexit 1\n'
@@ -141,7 +142,7 @@ def test_explicit_no_tests_still_green_under_strict(working_repo: Path):
     result = _run(working_repo, "--no-tests", strict=True)
 
     assert result.returncode == 0, result.stdout
-    assert "Result: 6/6 passed, 1 skipped" in result.stdout
+    assert "Result: 7/7 passed, 1 skipped" in result.stdout
     assert "BLOCKED" not in result.stdout
 
 
@@ -151,7 +152,7 @@ def test_blocked_checks_do_not_pass_under_strict(toolless_repo: Path):
     result = _run(toolless_repo, "--no-tests", strict=True)
 
     assert result.returncode == 2, result.stdout
-    assert "Result: 3/6 passed, 3 blocked, 1 skipped" in result.stdout
+    assert "Result: 4/7 passed, 3 blocked, 1 skipped" in result.stdout
     for tool in ("ruff", "pyright", "alembic"):
         assert f"BLOCKED: {tool}" in result.stdout
 
@@ -169,7 +170,7 @@ def test_blocked_checks_are_counted_in_the_denominator(toolless_repo: Path):
     # The old summary said "1/1 passed" whenever a single check could start.
     result = _run(toolless_repo, "--no-tests")
 
-    assert "Result: 3/6 passed" in result.stdout
+    assert "Result: 4/7 passed" in result.stdout
 
 
 def test_a_repo_guard_violation_is_a_failure_and_does_not_abort_the_run(
@@ -194,7 +195,7 @@ def test_a_repo_guard_violation_is_a_failure_and_does_not_abort_the_run(
     # The checks downstream of the failing guard still ran, and the run still
     # accounted for itself.
     assert "PASS: merging would not fork the alembic chain" in result.stdout
-    assert "Result: 5/6 passed, 1 skipped" in result.stdout
+    assert "Result: 6/7 passed, 1 skipped" in result.stdout
 
 
 def test_a_missing_repo_guard_is_blocked_not_a_code_failure(tmp_path: Path):
@@ -211,9 +212,10 @@ def test_a_missing_repo_guard_is_blocked_not_a_code_failure(tmp_path: Path):
 
     assert result.returncode == 2, result.stdout
     assert "BLOCKED: repo rules" in result.stdout
+    assert "BLOCKED: metering proxy hardening" in result.stdout
     assert "BLOCKED: migration fork" in result.stdout
     assert "FAIL" not in result.stdout
-    assert "Result: 4/6 passed, 2 blocked, 1 skipped" in result.stdout
+    assert "Result: 4/7 passed, 3 blocked, 1 skipped" in result.stdout
 
 
 def test_the_scripts_own_self_test_passes():

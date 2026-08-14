@@ -15,8 +15,11 @@ That placement also makes this the only point that can:
   - enforce a cap BEFORE forwarding, so an exhausted budget cannot overspend:
     per-project via the backend's /llm/admission (#218), plus the rolling
     token window as the deployment-wide backstop,
-  - refresh the real token in ONE place (a single-flight loop writes the token
-    file this reads), so no two sandboxes race a rotation and kill it.
+  - hold the ONE durable credential the sandboxes never see: a non-refreshing
+    one-year `claude setup-token` (or the stable ccproxy fake token). There is
+    no refresh loop and no daemon — a setup-token does not rotate — so no two
+    sandboxes can race a rotation and kill it. Rotation is a planned, roughly
+    annual manual swap of the token file, not a background process.
 
 Attribution comes from the VERIFIED claims of the caller's scoped token (#198)
 when CHEESE_SCOPED_SECRET is set; the legacy x-cheese-attr header is honored
@@ -65,13 +68,16 @@ USAGE_LOG = Path(os.environ.get("CHEESE_USAGE_LOG", "/var/log/cheese/usage.jsonl
 # 0 disables the backstop cap. Set per deployment from the subscription's ceiling.
 TOKEN_CAP = int(os.environ.get("CHEESE_TOKEN_CAP", "0"))
 CAP_WINDOW_S = int(os.environ.get("CHEESE_CAP_WINDOW_S", str(5 * 3600)))
-# File holding the REAL OAuth access token (just the token string, no JSON). A
-# single-flight refresh loop owns this file; the addon only reads it, re-reading
-# each request so a rotation is picked up without a proxy restart. Absent/empty =
-# inject nothing (the sandbox's token goes through and Anthropic 401s — the
-# honest failure when we have no credential, never a silent one).
+# File holding the REAL durable credential (just the token string, no JSON): a
+# non-refreshing one-year `claude setup-token`, or the stable ccproxy fake
+# token. Nothing writes it at runtime — a setup-token does not rotate, so there
+# is no refresh loop and no daemon; rotation is a planned manual swap. The addon
+# re-reads the file on every request, so a manual atomic replace inside the
+# mounted secrets dir is picked up without a proxy restart. Absent/empty = fail
+# closed with a local 503 (see request()), never a silent forward of the
+# sandbox's own scoped token upstream.
 INJECT_TOKEN_FILE = Path(
-    os.environ.get("CHEESE_INJECT_TOKEN", "/etc/cheese/inject.token")
+    os.environ.get("CHEESE_INJECT_TOKEN", "/etc/cheese/secrets/inject.token")
 )
 # Shared with the backend (SANDBOX_TOKEN): verifies the caller's scoped token.
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
@@ -209,6 +215,26 @@ async def request(flow: http.HTTPFlow) -> None:
     flow.metadata["cheese_attr"] = (project_id, topic_id)
 
     token = _real_token()
+
+    # Fail closed BEFORE forwarding when the platform has no real credential. An
+    # absent/empty injector means the subscription setup-token is missing or
+    # expired on the host; without it the proxy cannot serve ANY Anthropic
+    # request (Claude Code's startup api/oauth/profile check included). Return a
+    # clear local 503 here so the caller learns the PLATFORM credential is the
+    # problem, instead of forwarding the sandbox's scoped bearer upstream only to
+    # collect an opaque 401 that reads like the caller's own auth failing. The
+    # fix is host-side: (re)install the durable setup-token in the secrets dir.
+    if not token:
+        _refuse(
+            flow,
+            503,
+            "api_error",
+            "cheese: subscription credential unavailable — the platform's "
+            "Claude setup-token is missing or expired; host-side configuration "
+            "is required before requests can be served",
+        )
+        return
+
     is_messages = "/v1/messages" in flow.request.path
 
     if is_messages:
@@ -248,11 +274,11 @@ async def request(flow: http.HTTPFlow) -> None:
     # Inject the real credential on EVERY request, not just messages: Claude
     # Code validates its login against api/oauth/profile at startup, so if only
     # /v1/messages carried the real token that check would 401 and the turn
-    # would never start.
-    if token:
-        flow.request.headers["authorization"] = f"Bearer {token}"
-        # A stale x-api-key would override the bearer on Anthropic's side.
-        flow.request.headers.pop("x-api-key", None)
+    # would never start. `token` is guaranteed non-empty here — the fail-closed
+    # 503 above already returned when the injector was absent/empty.
+    flow.request.headers["authorization"] = f"Bearer {token}"
+    # A stale x-api-key would override the bearer on Anthropic's side.
+    flow.request.headers.pop("x-api-key", None)
 
 
 def response(flow: http.HTTPFlow) -> None:
