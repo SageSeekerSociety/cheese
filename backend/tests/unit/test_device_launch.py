@@ -606,3 +606,58 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
         ["sh", "-n"], input=CHEESE_TUNNEL_UP, text=True, capture_output=True
     )
     assert checked.returncode == 0, checked.stderr
+
+
+def _reconcile(existing: dict, env: dict) -> dict:
+    """Run the shipped reconcile against a settings.json, as it runs on a
+    machine: same source, same os.environ contract."""
+    import json
+    import subprocess
+    import tempfile
+
+    from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+        json.dump(existing, handle)
+        path = handle.name
+    subprocess.run(
+        ["python3", "-", path],
+        input=CHEESE_SETTINGS_RECONCILE,
+        text=True,
+        capture_output=True,
+        env={"PATH": "/usr/bin:/bin", **env},
+        check=True,
+    )
+    with open(path) as handle:
+        return json.load(handle)
+
+
+def test_the_pass_through_path_keeps_the_machines_own_ticket():
+    """On the tunnel the meter forwards the bearer untouched, because ccproxy
+    only honours a machine's ticket over that machine's own identity. Asserting
+    ours would send a scoped cheese token to Anthropic — measured 2026-08-14,
+    that is `401 OAuth access token has been revoked` with the whole chain up."""
+    result = _reconcile(
+        {"env": {"CLAUDE_CODE_OAUTH_TOKEN": "machine-ticket", "HTTPS_PROXY": "old"}},
+        {
+            "CLAUDE_CODE_OAUTH_TOKEN": "our-scoped-token",
+            "HTTPS_PROXY": "http://127.0.0.1:8445",
+            "CHEESE_TUNNEL_URL": "wss://gw/api/llm/tunnel",
+        },
+    )
+    assert result["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "machine-ticket"
+    # Everything else is still ours — the route has to point at the helper.
+    assert result["env"]["HTTPS_PROXY"] == "http://127.0.0.1:8445"
+
+
+def test_the_swap_path_still_asserts_our_ticket():
+    """No tunnel: the meter replaces the bearer with the credential the host
+    holds, so the image's own would only be a second thing to keep in sync."""
+    result = _reconcile(
+        {"env": {"CLAUDE_CODE_OAUTH_TOKEN": "machine-ticket", "HTTPS_PROXY": "old"}},
+        {
+            "CLAUDE_CODE_OAUTH_TOKEN": "our-scoped-token",
+            "HTTPS_PROXY": "http://cheese:tok@172.17.0.1:8444",
+        },
+    )
+    assert result["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "our-scoped-token"
