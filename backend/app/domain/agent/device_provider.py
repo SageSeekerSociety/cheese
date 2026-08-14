@@ -197,6 +197,14 @@ def _read_proxy_ca() -> str:
 # read as alive, never as death (see `_confirm_alive`).
 _ALIVE_PROBE_TIMEOUT_S = 8.0
 
+# Retire-and-reopen a reused screen whose baked credential is within this many
+# seconds of expiry, mirroring the launcher's ``$EXPFILE`` gate (device_launch)
+# so the backend's reuse decision and the on-device create gate agree on ONE
+# margin. Small on purpose: it only rejects an already-dead-or-dying credential,
+# never a healthy one, so a short-lived token (the gateway path's hour) is
+# re-minted at most once per margin rather than on every turn.
+_CREDENTIAL_EXPIRY_MARGIN_S = 300
+
 
 def _credential_expiry(token: str) -> int:
     """The UNIX expiry the device screen stamps for the model credential it is
@@ -450,6 +458,24 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         (``_confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
+        if existing is not None and self._credential_is_stale(existing):
+            # #388 缺陷二: the screen is still alive, but the credential its `claude`
+            # was LAUNCHED with has expired (or is within the retire margin). That
+            # credential is read ONCE at startup and never re-read, and a reused
+            # screen is only reasserted (a cheeselet hot-reload), never relaunched —
+            # so reasserting here would leave the process forever holding a dead
+            # token, 407'd by the metering proxy / 401'd upstream on every turn
+            # while its process stays healthy (the exact "alive process + dead
+            # credential = looks healthy to the probe" the issue names). Retire it:
+            # close_screen makes the connector forget the sid, so the OPEN below
+            # Spawns a fresh `claude` carrying THIS launch's live credential. This
+            # is the same retirement the launcher's `$EXPFILE` gate does in its
+            # CREATE branch — but that branch only runs when the connector already
+            # forgot the sid, so on plain reuse this backend-side gate is the ONLY
+            # place it can fire. A refreshed host credential is thereby picked up on
+            # the next summon instead of an unrunnable screen being reused forever.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
         if existing is not None and not await self._confirm_alive(existing):
             # The hub still has a screen for this topic, but the `claude` behind it
             # is GONE — its tmux session was killed out from under a STILL-RUNNING
@@ -542,8 +568,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             model_env = merged
             # Stamp the minted session token's expiry so the launcher can retire an
             # inner tmux session whose baked credential has died instead of adopting
-            # it (device_launch: the reuse that outlives a TTL bump — #385).
-            model_env["CHEESE_TOKEN_EXPIRES"] = str(_credential_expiry(session_token))
+            # it (device_launch: the reuse that outlives a TTL bump — #385), and so
+            # the backend's own reuse gate below can do the same for a plain reuse.
+            credential_expires = _credential_expiry(session_token)
+            model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
         else:
             # No subscription deployed: the machine gets the backend's own model
             # route and its scoped token — never the upstream provider key. The
@@ -557,8 +585,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             )
             model_env = {**provider.env, **(env or {})}
             # Same stamp on the gateway path: the model credential is the scoped
-            # `token`, and its expiry is what the launcher checks before adopting.
-            model_env["CHEESE_TOKEN_EXPIRES"] = str(_credential_expiry(token))
+            # `token`, and its expiry is what both the launcher and the reuse gate
+            # check before adopting.
+            credential_expires = _credential_expiry(token)
+            model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
         if not co_located:
             _warn_if_model_endpoint_is_box_local(model_env, device_id)
         command, screen_env, cheeselet = build_screen_launch(
@@ -588,11 +618,15 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         )
         command = await self._ship_launcher(device_id, topic_id, command)
         if existing is not None:
+            # A reassert keeps the CURRENTLY-RUNNING `claude`, which still holds the
+            # credential it was born with — so the recorded birth expiry must NOT be
+            # overwritten with this launch's freshly-minted one (the new token never
+            # reaches the running process). It stays as the reuse gate's truth.
             await self._hub.reassert_screen(
                 existing, command=command, cheeselet_source=cheeselet, env=screen_env
             )
             return existing
-        return await self._hub.open_screen(
+        screen = await self._hub.open_screen(
             device_id,
             command,
             cheeselet,
@@ -603,6 +637,11 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             hook_key=str(topic_id),
             env=screen_env,
         )
+        # Record what credential this freshly-Spawned `claude` was born with, so a
+        # later turn's reuse gate (and the zero-output fuse) can tell a live
+        # credential from a dead one without re-deriving it.
+        screen.credential_expires = credential_expires
+        return screen
 
     # --- turn --------------------------------------------------------------
 
@@ -673,6 +712,28 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             raise ScreenSetupError(
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
+
+    def _credential_is_stale(self, screen: HubScreen) -> bool:
+        """Whether the credential this screen's `claude` was LAUNCHED with has
+        expired, or is within the retire margin of it (#388 缺陷二).
+
+        The freshness of that credential is part of whether a screen may be REUSED,
+        not just whether its process is alive: `claude` reads its model credential
+        (HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN) exactly once at
+        startup, and a reused screen is only reasserted (a cheeselet hot-reload),
+        never relaunched — so a still-running process on a dead credential is
+        rejected on every request while the process-tree probe (`_confirm_alive`)
+        keeps reporting it healthy. This is the local, in-memory half of the gate;
+        it never touches the device.
+
+        Conservative in the same direction as `_confirm_alive`: a screen with no
+        recorded expiry (`None` — adopted after a server restart, or a dev token
+        with no decodable claim) is treated as FRESH and never retired on missing
+        information, so we only ever retire a credential we can prove is dying."""
+        exp = screen.credential_expires
+        if exp is None:
+            return False
+        return exp <= int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
 
     async def _confirm_alive(self, screen: HubScreen) -> bool:
         """Idle-suspect liveness probe for a device screen (turn 活跃度检测, the
@@ -796,3 +857,27 @@ async def release_topic_screen(
     backend: a topic that never ran on a device simply has no screen to free."""
     provider = DeviceProvider(hub=hub, session_factory=session_factory)
     await provider.release_topic(project_id, topic_id)
+
+
+def topic_credential_expiry(
+    topic_id: uuid.UUID, *, hub: DeviceHub | None = None
+) -> int | None:
+    """The UNIX expiry of the model credential the topic's LIVE device screen was
+    launched with, or ``None`` when the topic has no online device screen (or its
+    expiry was never recorded).
+
+    The zero-output fuse (``runtime``) reads this to tell a turn that is doomed
+    BECAUSE its baked credential is already dead — a live `claude` being fed
+    messages and rejected on every one (#388 缺陷一) — from a generic cold start,
+    so it can fast-fail with the true reason instead of burning the full fuse on a
+    guess. Backend-agnostic by construction: a topic running on the local tmux/SDK
+    path has no device screen here, so this returns ``None`` and the fuse is
+    unchanged for it. Returns the SOONEST expiry across the topic's online screens
+    (there is normally one — a topic pins to a single device)."""
+    hub = hub or device_hub
+    exps = [
+        screen.credential_expires
+        for screen in hub.screens_for_topic(topic_id)
+        if hub.is_online(screen.device_id) and screen.credential_expires is not None
+    ]
+    return min(exps) if exps else None

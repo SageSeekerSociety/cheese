@@ -140,3 +140,67 @@ async def test_the_fuse_can_be_turned_off():
 
     assert "超时被中断" in frame["message"]
     assert "一个字都没输出" not in frame["message"]
+
+
+# --- #388 缺陷一: known-expired credential → fast-fail + the TRUE reason ---------
+# The 10-hour outage was a live `claude` 401'd on every message while the fuse
+# fired every 300s and the event blamed "容器/磁盘/网络" — three guesses, when the
+# real reason (an expired subscription credential) was already known to the
+# backend. When it IS known, the fuse must be cut short AND the event must say so.
+
+
+@pytest.mark.anyio
+async def test_known_expired_credential_fast_fails_with_the_true_reason():
+    # first_output_timeout_s is LARGE (30s) but the credential is known-expired, so
+    # the credential fuse (0.05s) is what fires — proving the short-circuit is the
+    # credential signal, not a small generic fuse. If it did NOT fire, the 30s wall
+    # would blow past the 2s wait below.
+    runner = TurnRunner(
+        InProcessBroker(),
+        turn_timeout_s=60.0,
+        first_output_timeout_s=30.0,
+        credential_expiry_of=lambda _topic: 0,  # epoch → long expired
+        credential_expired_fuse_s=0.05,
+    )
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 2)
+
+    # The event tells the truth: an expired subscription credential needing host
+    # re-auth — NOT the misleading container/disk/network guesses.
+    assert "凭据已过期" in frame["message"]
+    assert "重新认证" in frame["message"]
+    assert "运行环境" not in frame["message"]
+    # And it does not promise an auto-retry — retrying burns another fuse on the
+    # same dead credential.
+    assert "会自动再试一次" not in frame["message"]
+    assert frame.get("code") == "subscription_credential_expired"
+
+
+@pytest.mark.anyio
+async def test_a_live_credential_keeps_the_generic_cold_start_message():
+    # Credential lookup reports a healthy (far-future) expiry → the credential path
+    # never engages, and a mute turn falls to the ordinary cold-start message.
+    runner = TurnRunner(
+        InProcessBroker(),
+        turn_timeout_s=10.0,
+        first_output_timeout_s=0.05,
+        credential_expiry_of=lambda _topic: 10**12,  # year 33658 — very much alive
+        credential_expired_fuse_s=0.05,
+    )
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 2)
+
+    assert "一个字都没输出" in frame["message"]
+    assert "凭据已过期" not in frame["message"]
+    assert frame.get("code") is None
+
+
+@pytest.mark.anyio
+async def test_no_credential_lookup_leaves_the_fuse_untouched():
+    # The default (no lookup wired) must behave exactly as before: a mute turn is
+    # the generic cold-start failure, no credential branch anywhere.
+    runner = TurnRunner(
+        InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
+    )
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 2)
+
+    assert "一个字都没输出" in frame["message"]
+    assert "凭据已过期" not in frame["message"]

@@ -1246,3 +1246,183 @@ async def test_each_launch_ships_a_fresh_now_based_token_expiry():
     # Minted from now — in the future (the reused corpse had exp in the PAST) and
     # within a session's reach, never an unbounded or stale value.
     assert before < exp <= int(time.time()) + SESSION_TOKEN_TTL_S + 5
+
+
+# --- #388 缺陷二: credential freshness is part of the reuse decision -------------
+# `_confirm_alive` is a process-tree probe: it says a `claude` is running, never
+# whether the credential that `claude` was LAUNCHED with is still good. A bare
+# `claude` reads that credential once and never re-reads it, and a reused screen is
+# only reasserted (a cheeselet hot-reload), never relaunched — so a live process on
+# a dead credential is 401/407'd every turn while the probe reports it healthy, and
+# the screen is reused forever. The backend already stamps the credential's expiry
+# (#386's CHEESE_TOKEN_EXPIRES); these pin that it now gates reuse too, so an
+# expired-credential screen is RETIRED and reopened rather than adopted.
+
+
+class ReuseGateHub(FakeHub):
+    """Hands out a fresh sid per open and records close_screen, but its liveness
+    probe ALWAYS answers `alive` — so the only thing that can retire a reused
+    screen here is the credential-freshness gate, never the process probe."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed: list[str] = []
+        self._sid_seq = 0
+
+    async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
+        self._sid_seq += 1
+        screen = HubScreen(
+            sid=f"s{self._sid_seq}",
+            device_id=device_id,
+            command=command,
+            token="tok",
+            agent_user_id=kw["agent_user_id"],
+            agent_handle=kw["agent_handle"],
+            project_id=kw["project_id"],
+            topic_id=kw["topic_id"],
+            hook_key=kw.get("hook_key", ""),
+        )
+        self.opened.append(screen)
+        self.envs.append(kw.get("env"))
+        return screen
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        # The launcher-ship exec carries the script on stdin; the liveness probe
+        # carries none. Only the probe returns a verdict — and here it is always
+        # `alive`, isolating the credential gate as the sole retirement cause.
+        self.execs.append((argv, stdin))
+        out = "" if stdin is not None else "alive"
+        return {"stdout": out, "stderr": "", "exit": 0, "truncated": False}
+
+    async def close_screen(self, device_id, sid) -> bool:
+        self.closed.append(sid)
+        self.opened = [s for s in self.opened if s.sid != sid]
+        return True
+
+
+@pytest.mark.anyio
+async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_adopted(
+    monkeypatch,
+):
+    import time
+
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
+    hub = ReuseGateHub()
+    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure() -> HubScreen:
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            model=None,
+            env=None,
+        )
+
+    first = await ensure()
+    assert first.sid == "s1"
+    # The backend stamped a live expiry on the freshly-Spawned screen.
+    assert isinstance(first.credential_expires, int)
+    assert first.credential_expires > int(time.time())
+
+    # The credential this screen was BORN with has since died.
+    first.credential_expires = int(time.time()) - 1
+    second = await ensure()
+
+    # It is RETIRED (close_screen makes the connector forget the sid) and reopened
+    # under a fresh sid the connector must Spawn with THIS launch's live credential
+    # — never reasserted into the corpse (which would only hot-reload the cheeselet).
+    assert hub.closed == ["s1"]
+    assert hub.reasserted == []
+    assert second.sid == "s2"
+    assert second.credential_expires > int(time.time())
+
+
+@pytest.mark.anyio
+async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "subscription_enabled", False)
+    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
+    hub = ReuseGateHub()
+    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    pid, tid = uuid.uuid4(), uuid.uuid4()
+
+    async def ensure() -> HubScreen:
+        return await provider._ensure_screen(
+            device_id="dev1",
+            agent_user_id=1,
+            agent_handle="cheese",
+            project_id=pid,
+            topic_id=tid,
+            token="tok",
+            model=None,
+            env=None,
+        )
+
+    first = await ensure()
+    second = await ensure()
+
+    # A still-good credential means normal reuse: the SAME screen, reasserted, never
+    # closed — no churn, and an in-flight turn is never interrupted.
+    assert second is first
+    assert hub.reasserted == ["s1"]
+    assert hub.closed == []
+    assert [s.sid for s in hub.opened] == ["s1"]
+
+
+def test_topic_credential_expiry_reads_the_live_screens_stamp():
+    """The runtime fuse's lookup (#388 缺陷一): the credential expiry of a topic's
+    LIVE device screen, or None when it has none online / unrecorded — so a topic on
+    the local tmux/SDK path (no device screen) never perturbs the fuse."""
+    from app.domain.agent.device_provider import topic_credential_expiry
+
+    tid = uuid.uuid4()
+
+    class Hub:
+        def __init__(self, screens: dict, online: set) -> None:
+            self._screens = screens
+            self._online = online
+
+        def screens_for_topic(self, topic_id):
+            return list(self._screens.get(topic_id, []))
+
+        def is_online(self, device_id):
+            return device_id in self._online
+
+    def _screen_with(device_id: str, exp: int | None) -> HubScreen:
+        s = HubScreen(
+            sid="s",
+            device_id=device_id,
+            command=[],
+            token="t",
+            agent_user_id=1,
+            agent_handle="a",
+            topic_id=tid,
+        )
+        s.credential_expires = exp
+        return s
+
+    # A live screen with a recorded expiry → that value.
+    hub = Hub({tid: [_screen_with("dev1", 12345)]}, {"dev1"})
+    assert topic_credential_expiry(tid, hub=hub) == 12345  # type: ignore[arg-type]
+
+    # No screen for the topic (local backend, or none open) → None.
+    assert topic_credential_expiry(tid, hub=Hub({}, set())) is None  # type: ignore[arg-type]
+
+    # An OFFLINE device's screen doesn't count — it isn't the one running the turn.
+    hub_off = Hub({tid: [_screen_with("devX", 999)]}, set())
+    assert topic_credential_expiry(tid, hub=hub_off) is None  # type: ignore[arg-type]
+
+    # A screen whose expiry was never recorded is skipped, not read as 0.
+    hub_none = Hub({tid: [_screen_with("dev1", None)]}, {"dev1"})
+    assert topic_credential_expiry(tid, hub=hub_none) is None  # type: ignore[arg-type]

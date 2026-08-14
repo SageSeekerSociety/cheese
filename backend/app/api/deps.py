@@ -83,8 +83,16 @@ def get_scheduler_service(
 
 @lru_cache
 def get_turn_runner() -> TurnRunner:
+    # #388 缺陷一: let the cold-start fuse know when a topic's device screen is
+    # running on a credential the backend already stamped as expired, so a doomed
+    # turn fast-fails with the true reason instead of burning the full fuse. Reads
+    # the device hub's live screen state (in-memory, cheap); a topic on the local
+    # tmux/SDK path has no screen there → None → the fuse is unchanged.
+    from app.domain.agent.device_provider import topic_credential_expiry
+
     return TurnRunner(
         get_broker(),
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
+        credential_expiry_of=topic_credential_expiry,
     )
