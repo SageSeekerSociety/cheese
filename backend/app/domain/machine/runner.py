@@ -67,6 +67,10 @@ class MachineEnrollmentRunner:
             # identity permanently (observed live 2026-08-14, machine 472).
             # Both halves are needed: this starts the switch, and enrolment waits
             # for it to land (`list_awaiting_enrollment`, bounded).
+            # Refresh first: both steps below read state that only a read path
+            # ever updated, so without this the sweep decides on whatever was
+            # true the last time a human opened the project.
+            await service.refresh_unsettled()
             await service.reconcile_ai_mode()
             result = await service.enroll_pending()
             await session.commit()

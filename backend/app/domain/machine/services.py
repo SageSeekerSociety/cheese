@@ -436,6 +436,27 @@ class MachineService:
             ccproxy_upstream=upstream,
         )
 
+    async def refresh_unsettled(self, limit: int = 10) -> int:
+        """Poll MicroCloud for machines whose lifecycle can still change.
+
+        Nothing else does this outside a read: `list_for_project` refreshes what
+        it returns, so a machine that settles while nobody has the project open
+        keeps its last-read state forever. That was harmless while enrolment
+        only needed `running`; it stopped being harmless once enrolment also
+        waits for the AI channel, because the value it waits on is exactly the
+        one that goes stale. Machine 473 sat unenrolled for 13 minutes on
+        2026-08-14 while MicroCloud had it `ready` throughout.
+        """
+        machines = await self._repo.list_unsettled(limit)
+        for machine in machines:
+            try:
+                await self.refresh(machine)
+            except MicroCloudError:
+                # An unreachable provider is not this sweep's problem to solve;
+                # the next tick tries again, and `refresh` records the attempt.
+                logger.warning("refreshing machine %s failed", machine.hostname)
+        return len(machines)
+
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:
         """Enroll every machine that is up and wired but not yet a device.
 

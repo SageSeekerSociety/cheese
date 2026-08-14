@@ -8,7 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceTopicRow
 from app.domain.machine.models import (
+    AI_TRANSITIONAL,
+    GONE,
     MAX_ENROLL_ATTEMPTS,
+    TRANSITIONAL,
     AiStatus,
     MachineStatus,
     ProjectMachine,
@@ -197,6 +200,33 @@ class ProjectMachineRepository:
         result = await self._session.execute(
             select(ProjectMachine)
             .where(*conditions)
+            .order_by(ProjectMachine.created_at)
+            .limit(limit)
+        )
+        return list(result.scalars())
+
+    async def list_unsettled(self, limit: int) -> list[ProjectMachine]:
+        """Machines whose lifecycle can still change on its own.
+
+        The sweep needs this because the ONLY place that refreshes a machine
+        from MicroCloud is `list_for_project` — a read path, so a machine that
+        finishes provisioning while nobody has the project open keeps whatever
+        state it had at the last read. Enrolment waits on `ai_status`, so a row
+        frozen at `provisioning` is a machine that never becomes compute:
+        observed live 2026-08-14, machine 473 sat unenrolled for 13 minutes
+        while MicroCloud had reported it `ready` the whole time.
+        """
+        result = await self._session.execute(
+            select(ProjectMachine)
+            .where(
+                ProjectMachine.status.not_in(GONE),
+                or_(
+                    ProjectMachine.status.in_(TRANSITIONAL),
+                    ProjectMachine.status == MachineStatus.unknown,
+                    ProjectMachine.ai_status.in_(AI_TRANSITIONAL),
+                    ProjectMachine.ai_status == AiStatus.unknown,
+                ),
+            )
             .order_by(ProjectMachine.created_at)
             .limit(limit)
         )
