@@ -179,13 +179,28 @@ else:
     # file, not merely exported. Absent that marker the image's entries are its
     # own supply route and stay untouched, as before.
     if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
-        for key in (
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "HTTPS_PROXY",
-            "NO_PROXY",
-            "no_proxy",
-            "NODE_EXTRA_CA_CERTS",
-        ):
+        keys = ["HTTPS_PROXY", "NO_PROXY", "no_proxy", "NODE_EXTRA_CA_CERTS"]
+        # WHOSE ticket claude carries depends on what the meter will do with it.
+        #
+        # Swap path: the meter replaces the bearer with the credential the host
+        # holds, so ours goes out and the image's is irrelevant — assert ours.
+        #
+        # Pass-through path (a remote machine on the tunnel, marked by
+        # CHEESE_TUNNEL_URL): the meter forwards the bearer UNTOUCHED, because
+        # ccproxy only honours a machine's ticket over that machine's own
+        # identity. So the ticket has to be the machine's own — the one
+        # MicroCloud wrote here. Overwriting it sends OUR scoped token to
+        # Anthropic, which answers `401 OAuth access token has been revoked`
+        # (measured 2026-08-14: the whole chain up, refused at the far end).
+        # The scoped token still travels, as the proxy password the helper
+        # stamps onto the CONNECT — it authenticates the project, not the model
+        # call.
+        passthrough = bool(os.environ.get("CHEESE_TUNNEL_URL")) and bool(
+            env.get("CLAUDE_CODE_OAUTH_TOKEN")
+        )
+        if not passthrough:
+            keys.insert(0, "CLAUDE_CODE_OAUTH_TOKEN")
+        for key in keys:
             val = os.environ.get(key)
             if val is not None:
                 env[key] = val
