@@ -59,11 +59,16 @@ class MachineEnrollmentRunner:
                 # No MicroCloud credentials — nothing can have been provisioned,
                 # so there is nothing to enroll. Not an error.
                 return {"enrolled": 0, "failed": 0}
-            result = await service.enroll_pending()
-            # Same sweep also converges the machines' built-in AI channel
-            # (→ccproxy): platform plumbing with no judgment in it, and it must
-            # keep happening for machines whose provision-time switch failed.
+            # Converge the built-in AI channel (→ccproxy) BEFORE enrolling, not
+            # after. Enrollment is the one moment the platform is on the machine
+            # over ssh, and what it reads there only exists once the channel has
+            # settled — so the old order enrolled a machine at the provisioning
+            # default and switched it a step too late, losing its ccproxy
+            # identity permanently (observed live 2026-08-14, machine 472).
+            # Both halves are needed: this starts the switch, and enrolment waits
+            # for it to land (`list_awaiting_enrollment`, bounded).
             await service.reconcile_ai_mode()
+            result = await service.enroll_pending()
             await session.commit()
         if result["enrolled"] or result["failed"]:
             logger.info(

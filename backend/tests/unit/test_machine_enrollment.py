@@ -257,7 +257,11 @@ async def test_the_sweep_keeps_going_when_one_machine_fails(monkeypatch):
 
     monkeypatch.setattr(service, "enroll", _enroll)
 
-    async def _awaiting(limit):
+    async def _awaiting(limit, **_settle_gate):
+        # **kwargs: the service now also asks for the desired AI mode and a
+        # settle cutoff (a machine enrolled before its channel settles loses its
+        # ccproxy identity for good). This test is about the sweep surviving one
+        # bad machine, so it takes the gate as given.
         return [bad, good]
 
     service._repo.list_awaiting_enrollment = _awaiting
