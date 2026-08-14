@@ -25,6 +25,7 @@ from pathlib import Path
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
+from app.domain.agent import machine_tunnel
 from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
 from app.domain.agent.service import CLAUDE_BASE_CMD
 
@@ -272,6 +273,48 @@ echo unknown
 # claude died — the next launch would then adopt a claude-less session and
 # prompt into nothing. The tether makes it exit when claude goes, taking the
 # window (and with it the otherwise-empty session) down.
+# Starts the tunnel helper and does NOT return until its port answers.
+#
+# The wait is the point. `claude` reads HTTPS_PROXY once at startup and makes its
+# first request (the login/profile check) immediately, so a helper that is merely
+# "starting" loses that race and the screen boots looking unauthenticated. Bounded
+# rather than unbounded: if it cannot bind in five seconds it is not going to, and
+# hanging the launch would be a worse failure than a loud one.
+#
+# Adopt-if-alive for the same reason the drainer does: a screen is reused across
+# turns, and a second helper on the same port would exit immediately, leaving
+# whichever one won holding a token file the other launch had already replaced.
+CHEESE_TUNNEL_UP = """#!/bin/sh
+PIDF="$HOME/.claude/cheese-tunnel.pid"
+PID="$(cat "$PIDF" 2>/dev/null || true)"
+if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+  exit 0
+fi
+python3 "$HOME/.claude/cheese-tunnel.py" \\
+  --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
+  --token-file "$HOME/.claude/cheese-tunnel.token" \\
+  >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
+echo $! > "$PIDF"
+# The readiness check runs in python3, NOT with bash's /dev/tcp: this script is
+# invoked as `sh`, /bin/sh is dash on the machine images, and dash has no
+# /dev/tcp — the redirect fails on EVERY iteration, so the loop would spend its
+# whole budget and then report "not ready" for a helper that came up fine.
+# python3 is not an extra dependency here; the helper itself is written in it.
+python3 - "$CHEESE_TUNNEL_PORT" <<'WAITPY'
+import socket, sys, time
+port = int(sys.argv[1])
+deadline = time.monotonic() + 5.0
+while time.monotonic() < deadline:
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+        raise SystemExit(0)
+    except OSError:
+        time.sleep(0.1)
+raise SystemExit(1)
+WAITPY
+"""
+
+
 CHEESE_DRAIN_SCRIPT = """#!/bin/sh
 echo $$ > "$0.pid" 2>/dev/null || true
 while true; do
@@ -330,6 +373,11 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     usage_reader = CHEESE_USAGE_READER
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
     drain_script = CHEESE_DRAIN_SCRIPT
+    # Shipped by reading the module's own bytes rather than by keeping a second
+    # copy here: it is a real, linted, unit-tested module precisely so there is
+    # only one version of it to be wrong.
+    tunnel_helper = Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n"
+    tunnel_up = CHEESE_TUNNEL_UP
     settings_json = json.dumps(
         hooks_settings(
             ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
@@ -476,11 +524,35 @@ CHEESE_HOOK_URL="$CHEESE_HOOK_URL"
 CHEESE_TOKEN="$CHEESE_TOKEN"
 DRAINENV
 mv "$HOME/.claude/cheese-drain.env.tmp" "$HOME/.claude/cheese-drain.env"
+# The tunnel helper, for a machine that cannot reach the meter's listener
+# directly. Written on EVERY launch, token included: the helper re-reads the
+# token per connection, so replacing this file is how a refreshed credential
+# reaches a still-running helper (#385's shape, one layer down).
+if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
+  cat > "$HOME/.claude/cheese-tunnel.py" <<'TUNNELPY'
+{tunnel_helper}TUNNELPY
+  cat > "$HOME/.claude/cheese-tunnel.token.tmp" <<TUNNELTOK
+$CLAUDE_CODE_OAUTH_TOKEN
+TUNNELTOK
+  chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"
+  mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"
+  cat > "$HOME/.claude/cheese-tunnel-up" <<'TUNNELUP'
+{tunnel_up}TUNNELUP
+  chmod +x "$HOME/.claude/cheese-tunnel-up"
+fi
 cd "$CHEESE_WORK"
 # Host claude in a PERSISTENT tmux session so it survives a link/screen drop: the
 # session keeps running on the device and re-opening the screen re-attaches to it
 # (same hosting as the local tmux backend; the PTY mirrors the pane for the human
 # viewer and the cheeselet types into it). Direct exec if tmux isn't installed.
+# Prefix that must complete BEFORE claude: it brings the tunnel helper up and
+# waits for its port, because claude reads HTTPS_PROXY once and calls out
+# immediately. Empty when this deployment has no tunnel, so the direct path
+# does not pay for a script it does not use.
+TUP=""
+if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
+  TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"
+fi
 CLAUDE="{CLAUDE_BASE_CMD}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 # The platform system prompt (written next to settings.json above). The path is
@@ -533,6 +605,18 @@ if command -v tmux >/dev/null 2>&1; then
     # crashed loop), so when the recorded pid is gone, revive one in a window
     # of THIS session — tethered to the claude pane so it can never outlive
     # claude and pin the session open.
+    # Same reasoning as the drainer below: a session can outlive the helper
+    # (connector restart, crashed loop), and claude keeps pointing at that dead
+    # loopback port — every turn then fails looking exactly like a stalled model.
+    # `cheese-tunnel-up` adopts a live one and starts a new one otherwise.
+    if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
+      TETHER="$(tmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
+        2>/dev/null | head -n 1)"
+      tmux new-window -d -t "$SESSION" -n cheese-tunnel \\
+        "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT \\
+         CHEESE_TUNNEL_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
+        || true
+    fi
     DRAIN_PID="$(cat "$HOME/.claude/cheese-drain.pid" 2>/dev/null || true)"
     if [ -z "$DRAIN_PID" ] || ! kill -0 "$DRAIN_PID" 2>/dev/null; then
       TETHER="$(tmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
@@ -574,16 +658,19 @@ if command -v tmux >/dev/null 2>&1; then
       "CHEESE_TOKEN=$CHEESE_TOKEN" "CHEESE_HOOK_URL=$CHEESE_HOOK_URL" \\
       "CHEESE_API=$CHEESE_API" "CHEESE_PROJECT=$CHEESE_PROJECT" \\
       "CHEESE_TOPIC=$CHEESE_TOPIC" "CHEESE_AUTHOR=$CHEESE_AUTHOR" \\
-      "CHEESE_CLI_URL=$CHEESE_CLI_URL"; do
+      "CHEESE_CLI_URL=$CHEESE_CLI_URL" \\
+      "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL" \\
+      "CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT"; do
       # An empty value = a var this launch didn't set; skip it (a same-mode box's
       # frozen-global copy already matches, and forcing empty could flip modes).
       case "$_kv" in *=) ;; *) set -- "$@" -e "$_kv" ;; esac
     done
-    set -- "$@" "sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
+    DRAINCMD="sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1"
+    set -- "$@" "$TUP $DRAINCMD & exec $CLAUDE"
     # Fall back to a plain create if this tmux predates -e (< 3.0): the screen
     # still launches (with the old inheritance behaviour) rather than not at all.
     tmux "$@" || tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
-      "sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
+      "$TUP sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
   fi
   exec tmux attach -t "$SESSION"
 else
@@ -591,6 +678,9 @@ else
   # word-splitting would hand claude the quote characters themselves.
   # No tmux → claude stays in THIS process tree, so a drainer backgrounded
   # right here genuinely shares its fate; same-life-same-death holds as is.
+  if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
+    sh "$HOME/.claude/cheese-tunnel-up" >/dev/null 2>&1 || true
+  fi
   sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
   eval "exec $CLAUDE"
 fi

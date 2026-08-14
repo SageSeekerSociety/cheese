@@ -205,6 +205,21 @@ class Settings(BaseSettings):
     # REMOTE device needs an address that resolves from its network — until one is
     # published, remote subscription turns fail on connect (loud, not silent).
     subscription_device_proxy_host: str = ""
+    # Where a REMOTE machine reaches the tunnel (`wss://…/llm/tunnel`), when it
+    # cannot reach the CONNECT listener directly. On the ghg network it cannot:
+    # measured 2026-08-14, packets to the box's listener port never reach its NIC,
+    # dropped at a hypervisor bridge the box can neither see nor change — while
+    # the gateway path those machines already use for the connector works and
+    # carries websockets. Set this to that path and remote subscription turns ride
+    # it instead. Empty = no tunnel, and a remote machine falls back to dialling
+    # `subscription_device_proxy_host` directly (right for a flat network, and the
+    # behaviour every deployment has today).
+    subscription_tunnel_url: str = ""
+    # Loopback port the machine-side helper listens on. Fixed rather than chosen
+    # per launch: `claude` reads HTTPS_PROXY once at startup and a screen is
+    # reused across turns, so a port that moved between launches would leave an
+    # adopted session pointed at a helper that no longer exists.
+    subscription_tunnel_local_port: int = 8445
     # Where the proxy's own CA and the ccproxy CA are mounted from. The sandbox
     # must trust the metering proxy (it terminates TLS) — an untrusted CA fails as
     # an opaque TLS error far from its cause.

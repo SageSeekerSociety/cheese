@@ -139,6 +139,46 @@ async def resolve_pinned_device(
 # why.
 _BOX_LOCAL_HOSTS = ("localhost", "127.0.0.1", "172.17.0.1", "172.18.0.1", "litellm")
 
+
+def uses_tunnel(*, co_located: bool, tunnel_url: str) -> bool:
+    """Whether this screen's CONNECT traffic rides the tunnel.
+
+    Only a REMOTE machine ever needs it: a co-located screen shares the box's
+    network and reaches the listener's bridge address directly, so tunnelling it
+    would add a hop and a failure mode for nothing.
+
+    No tunnel configured means no tunnel — a remote machine then dials
+    ``subscription_device_proxy_host`` as it does today. That is right for a flat
+    network and wrong for this one, which is exactly why it is a setting rather
+    than a guess: the deployment knows whether its machines can reach the box.
+    """
+    return bool(tunnel_url.strip()) and not co_located
+
+
+def connect_transport(*, session_token: str, via_tunnel: bool) -> str:
+    """The ``HTTPS_PROXY`` value that steers this screen to the meter.
+
+    Through the tunnel the address is loopback and carries NO credential: the
+    helper is the only thing listening there, and it reads the scoped token from
+    a file the launcher writes — kept out of the URL so a refreshed token takes
+    effect without relaunching `claude`, which reads this value exactly once at
+    startup (#385).
+
+    Direct, the scoped token rides as the proxy password, which is what stops an
+    exposed listener relaying for anyone who cannot prove which project to bill.
+    """
+    if via_tunnel:
+        return f"http://127.0.0.1:{settings.subscription_tunnel_local_port}"
+    host = (
+        settings.subscription_device_proxy_host.strip()
+        or settings.subscription_proxy_host
+    )
+    return (
+        f"http://cheese:{session_token}@{host}:"
+        f"{settings.subscription_proxy_connect_port}"
+    )
+
+
 # Where the launch script writes the metering proxy's CA on the device (under the
 # screen's ISOLATED home) and exports NODE_EXTRA_CA_CERTS to point. The env value
 # built here carries the literal placeholder; only the script knows the real home.
@@ -532,22 +572,17 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 topic_id=str(topic_id),
                 ttl_s=SESSION_TOKEN_TTL_S,
             )
-            proxy_host = (
-                settings.subscription_device_proxy_host.strip()
-                or settings.subscription_proxy_host
+            tunnel_url = settings.subscription_tunnel_url.strip()
+            via_tunnel = uses_tunnel(co_located=co_located, tunnel_url=tunnel_url)
+            connect_proxy_url = connect_transport(
+                session_token=session_token, via_tunnel=via_tunnel
             )
             sub = provider_env.subscription_provider(
                 ca_path=_DEVICE_PROXY_CA_PATH,
                 project_id=str(project_id),
                 topic_id=str(topic_id),
                 session_token=session_token,
-                # The scoped token doubles as the CONNECT credential, so an
-                # exposed listener only relays for callers that can prove which
-                # project to bill.
-                connect_proxy_url=(
-                    f"http://cheese:{session_token}@{proxy_host}:"
-                    f"{settings.subscription_proxy_connect_port}"
-                ),
+                connect_proxy_url=connect_proxy_url,
                 no_proxy=self._no_proxy_hosts(),
             )
             # The subscription env WINS over the caller's `env` — that env is
@@ -565,6 +600,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             ):
                 merged.pop(k, None)
             merged.update(sub.env)
+            if via_tunnel:
+                # Read by the launch script: it writes the helper and the token
+                # file, and starts the helper before `claude`. Carried on the env
+                # rather than as arguments because a remote machine's launch is
+                # built entirely from `extra_env` — there is no other channel
+                # into that builder.
+                merged["CHEESE_TUNNEL_URL"] = tunnel_url
+                merged["CHEESE_TUNNEL_PORT"] = str(
+                    settings.subscription_tunnel_local_port
+                )
             model_env = merged
             # Stamp the minted session token's expiry so the launcher can retire an
             # inner tmux session whose baked credential has died instead of adopting
