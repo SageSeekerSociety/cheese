@@ -28,6 +28,7 @@ from app.core.obs import bind_context, clear_context
 from app.domain.agent.host_swap import handle_host_failure, record_host_success
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
+    SUBSCRIPTION_CREDENTIAL_EXPIRED,
     classify_platform_failure,
 )
 
@@ -182,6 +183,8 @@ class TurnRunner:
         *,
         turn_timeout_s: float = 900.0,
         first_output_timeout_s: float = 300.0,
+        credential_expiry_of: Callable[[uuid.UUID], int | None] | None = None,
+        credential_expired_fuse_s: float = 15.0,
     ) -> None:
         self._broker = broker
         self._timeout = turn_timeout_s
@@ -190,6 +193,16 @@ class TurnRunner:
         # question — that one asks "is this turn taking too long?", this one asks
         # "did this turn ever start?". 0 disables it. See `_execute`.
         self._first_output_timeout_s = first_output_timeout_s
+        # #388 缺陷一: a lookup for "the model credential this topic's turn will run
+        # with is already expired". When it answers yes, the backend KNOWS the turn
+        # is doomed (the metering proxy / upstream rejects every request), so the
+        # cold-start fuse is cut to `credential_expired_fuse_s` — a short grace that
+        # still lets a credential refreshed between setup and now speak first (which
+        # retires the fuse) — and the failure event says the TRUE reason instead of
+        # guessing container/disk/network. `None` (the default, and every backend
+        # with no such signal) leaves the fuse byte-for-byte unchanged.
+        self._credential_expiry_of = credential_expiry_of
+        self._credential_expired_fuse_s = credential_expired_fuse_s
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
@@ -1110,6 +1123,21 @@ class TurnRunner:
             if gate is not None:
                 gate.release()
 
+    def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
+        """Does the backend already KNOW this topic's model credential is expired?
+        (#388 缺陷一.) True only when the injected lookup returns an expiry in the
+        past. A lookup failure is swallowed (never block a turn on it) and reads as
+        "not known-expired" — the honest default, since a missing signal is not
+        evidence of death."""
+        if self._credential_expiry_of is None:
+            return False
+        try:
+            exp = self._credential_expiry_of(topic_id)
+        except Exception:  # noqa: BLE001 — a lookup must never break a turn
+            logger.exception("credential-expiry lookup failed for topic %s", topic_id)
+            return False
+        return exp is not None and exp <= time.time()
+
     async def _execute(
         self,
         chat_service,
@@ -1132,6 +1160,11 @@ class TurnRunner:
         continuation_id = continuation_id or turn_id
         resume_after: float | None = None
         resume_why = "上一轮异常中断，接着跑"
+        # #388 缺陷一: set when the backend already knows this turn's credential is
+        # dead. Read in the fuse-arming block (to cut the fuse short) and again in
+        # the TimeoutError handler (to say the true reason and skip the auto-retry).
+        # Bound here so it is always defined, even on an early failure path.
+        credential_expired = False
         # Did this turn blame the MACHINE? Decides whether finishing counts as
         # evidence the machine is healthy (#186) — a turn that ends in a
         # host-scoped failure must not immediately clear the streak it just added.
@@ -1225,6 +1258,20 @@ class TurnRunner:
             # output instead.
             first_output_fuse_s = self._first_output_timeout_s
             ceiling_s = self._timeout
+            # #388 缺陷一: when the backend already knows this turn's model
+            # credential is expired, the turn cannot produce a token — every
+            # request is rejected (401/407) before a hook can flow. Don't spend the
+            # full cold-start fuse guessing at container/disk/network: cut it to a
+            # short grace (still long enough that a credential refreshed between
+            # setup and now speaks first, retiring the fuse) so a silent turn fails
+            # FAST and with the true reason. The definitive first-hand 401 lives in
+            # the metering proxy (box infra, out of this repo); this is the part the
+            # backend lands on its own from the expiry #386 already stamps.
+            credential_expired = self._credential_is_known_expired(topic_id)
+            if credential_expired and first_output_fuse_s:
+                first_output_fuse_s = min(
+                    first_output_fuse_s, self._credential_expired_fuse_s
+                )
             if first_output_fuse_s:
                 fuse_deadline = loop_start + min(first_output_fuse_s, self._timeout)
             else:
@@ -1380,7 +1427,26 @@ class TurnRunner:
             never_started = bool(
                 rec["first_output_s"] is None and self._first_output_timeout_s
             )
-            if never_started:
+            # Meta for the posted event: only the credential-expired case carries a
+            # platform_error classification the frontend can render; the two generic
+            # branches stay a plain system event, exactly as before.
+            fuse_meta: dict | None = None
+            if never_started and credential_expired:
+                # #388 缺陷一: the backend KNEW the credential was dead. Say so —
+                # the guessing message ("容器/磁盘/网络") is the one that cost four
+                # people ten hours when the true reason was already known.
+                logger.error(
+                    "turn %s never produced output for topic %s and its model "
+                    "credential is known-expired; fast-failing as a subscription "
+                    "credential failure (tools=%s)",
+                    turn_id,
+                    topic_id,
+                    rec["tools"],
+                )
+                rec["detail"] = "subscription credential expired"
+                text = SUBSCRIPTION_CREDENTIAL_EXPIRED.content
+                fuse_meta = SUBSCRIPTION_CREDENTIAL_EXPIRED.meta
+            elif never_started:
                 logger.error(
                     "turn %s produced no output within %ss for topic %s; "
                     "treating as a substrate failure (tools=%s)",
@@ -1394,7 +1460,8 @@ class TurnRunner:
                     f"⚠️ 芝士这轮**一个字都没输出**"
                     f"（{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
                     "也没有任何工具调用），按运行环境没起来处理。"
-                    "常见原因是沙箱容器建不起来、磁盘满了、或者模型侧连不上"
+                    "常见原因：平台的模型订阅凭据过期（需要主机侧重新认证）、"
+                    "沙箱容器建不起来、磁盘满了、或者模型侧连不上"
                     "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
                     "会自动再试一次；再失败就先去看平台状态，反复 @ 它没有用。"
                 )
@@ -1413,18 +1480,34 @@ class TurnRunner:
                 )
             block = None
             try:
-                block = await chat_service.post_system_event(topic_id, text, turn_id)
+                if fuse_meta is not None:
+                    block = await chat_service.post_system_event(
+                        topic_id, text, turn_id, meta=fuse_meta
+                    )
+                else:
+                    block = await chat_service.post_system_event(
+                        topic_id, text, turn_id
+                    )
             except Exception:  # noqa: BLE001 — best effort
                 logger.exception("failed to persist timeout event")
             if block is not None:
                 await self._broker.publish(
                     channel, {"type": "event_block", "block": block}
                 )
-            await self._broker.publish(
-                channel,
-                {"type": "error", "message": text, "persisted": block is not None},
-            )
-            if not is_resume:
+            error_frame: dict = {
+                "type": "error",
+                "message": text,
+                "persisted": block is not None,
+            }
+            if fuse_meta is not None:
+                error_frame["code"] = SUBSCRIPTION_CREDENTIAL_EXPIRED.code
+            await self._broker.publish(channel, error_frame)
+            # No auto-retry when the credential is known-dead: another turn just
+            # burns the fuse again against the same expired credential (#388's
+            # "对自己的失败没有记忆"). It self-heals on the next human summon once
+            # the host re-auths — the reused screen is then retired (缺陷二) and
+            # reopened with a live credential. Every other timeout retries as before.
+            if not is_resume and not credential_expired:
                 resume_after = 10.0
                 resume_why = "上一轮超时中断，接着跑"
         except AppError as exc:
