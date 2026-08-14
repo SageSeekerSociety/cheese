@@ -48,12 +48,14 @@ import logging
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 from mitmproxy import http, tls
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cheese_billing_core import (  # noqa: E402
     ANTHROPIC_HOSTS,
+    GATEWAY,
     AdmissionGate,
     Meter,
     proxy_basic_password,
@@ -91,6 +93,13 @@ ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 # token through m161 gets a real request_id. reverse mode does not honour
 # HTTPS_PROXY for its upstream, so the route is set per-flow via server_conn.via.
 UPSTREAM_VIA = os.environ.get("CHEESE_UPSTREAM_VIA", "")  # "host:port"
+
+# Where the API-key pool lives (LiteLLM). A project whose supply decision says
+# `gateway` is rewritten to this base instead of going out through ccproxy —
+# same interception point, different destination (#243). Empty = this
+# deployment has no API-key pool, and such a project is refused rather than
+# silently served from the subscription it did not ask for.
+GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 
 METER = Meter(USAGE_LOG, CAP_WINDOW_S)
 ADMISSION = AdmissionGate(ADMISSION_URL, cache_s=ADMISSION_CACHE_S)
@@ -133,6 +142,37 @@ def _attribution(flow: http.HTTPFlow) -> tuple[str, str, str]:
         project, _, topic = attr.partition("/")
         return project, topic, bearer
     return "", "", bearer
+
+
+def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
+    """Send this request to the API-key pool (LiteLLM) instead of ccproxy.
+
+    Returns False when the deployment has no gateway configured or the control
+    plane could not supply the project's virtual key — the caller refuses in
+    that case. Serving such a request from the subscription instead would bill
+    a pool the project did not choose, which is the exact confusion this whole
+    routing decision exists to remove.
+
+    The upstream hop is direct: `via` is cleared because ccproxy's egress is
+    only needed for Anthropic, and sending Zhipu/DeepSeek traffic through it
+    would route domestic providers out through an overseas exit for no reason.
+    """
+    if not GATEWAY_BASE or not key:
+        return False
+    parsed = urlparse(GATEWAY_BASE)
+    if not parsed.hostname:
+        return False
+    flow.server_conn.via = None
+    flow.request.scheme = parsed.scheme or "http"
+    flow.request.host = parsed.hostname
+    flow.request.port = parsed.port or (443 if flow.request.scheme == "https" else 80)
+    flow.request.headers["host"] = parsed.netloc
+    # LiteLLM authenticates with the project's virtual key; the subscription
+    # credential must NOT ride along (x-api-key would also override the bearer
+    # downstream, which is how a swapped credential silently 401s).
+    flow.request.headers["authorization"] = f"Bearer {key}"
+    flow.request.headers.pop("x-api-key", None)
+    return True
 
 
 def _refuse(flow: http.HTTPFlow, status: int, kind: str, message: str) -> None:
@@ -251,14 +291,29 @@ async def request(flow: http.HTTPFlow) -> None:
         if project_id and ADMISSION_URL:
             # Off-loop: urllib blocks, and one slow admission call must not
             # stall every other flow through the proxy.
-            allow, reason = await asyncio.to_thread(ADMISSION.check, project_id, bearer)
-            if not allow:
+            verdict = await asyncio.to_thread(ADMISSION.check, project_id, bearer)
+            if not verdict.allow:
                 _refuse(
                     flow,
                     429,
                     "rate_limit_error",
-                    f"cheese project budget: {reason}",
+                    f"cheese project budget: {verdict.reason}",
                 )
+                return
+            # Supply decision (#243): the same answer says WHERE this project's
+            # traffic goes. The subscription is the default and keeps every
+            # step below (real-token injection, ccproxy egress, the rolling
+            # cap); a gateway project leaves here and none of it applies.
+            if verdict.pool == GATEWAY:
+                if not _route_to_gateway(flow, verdict.key or ""):
+                    _refuse(
+                        flow,
+                        503,
+                        "api_error",
+                        "cheese: this project is configured for the API-key "
+                        "pool, but the pool has no route or no project key on "
+                        "this deployment; no model call was made",
+                    )
                 return
         if METER.would_exceed(TOKEN_CAP):
             used = METER.used()

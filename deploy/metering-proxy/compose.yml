@@ -5,6 +5,11 @@
 #   CHEESE_UPSTREAM_VIA     e.g. ccproxy-prod.119net.ghg.org.cn:3128
 #   CHEESE_SCOPED_SECRET    = the backend's SANDBOX_TOKEN (rotate together)
 #   CHEESE_ADMISSION_URL    e.g. http://172.17.0.1:8081/llm/admission
+#   CHEESE_GATEWAY_BASE     e.g. http://172.17.0.1:4000 — where the API-key
+#                           pool (LiteLLM) listens. A project whose supply
+#                           decision says `gateway` is routed here instead of
+#                           out through ccproxy. Empty = no API-key pool on
+#                           this box, and such a project is refused.
 #   CHEESE_TOKEN_CAP        rolling-window backstop, 0 = off
 #   CHEESE_ALLOW_HEADER_ATTR  1 ONLY on bridge-only single-host deployments
 #
@@ -41,6 +46,7 @@ services:
       CHEESE_SCOPED_SECRET: ${CHEESE_SCOPED_SECRET:-}
       CHEESE_ALLOW_HEADER_ATTR: ${CHEESE_ALLOW_HEADER_ATTR:-}
       CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
+      CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
     volumes:
       - ./logs:/var/log/cheese
       - .:/addons:ro
