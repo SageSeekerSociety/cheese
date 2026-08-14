@@ -28,6 +28,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 # The only names the proxy serves. api.anthropic.com carries the metered
@@ -175,7 +176,26 @@ class Meter:
             fh.write(json.dumps(rec) + "\n")
 
 
-def _post_admission(url: str, bearer: str, timeout_s: float) -> tuple[bool, str]:
+SUBSCRIPTION = "subscription"
+GATEWAY = "gateway"
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """The backend's answer for one project: may it run, and where does it go.
+
+    ``pool`` defaults to the subscription because that is the only destination
+    a proxy older than the supply decision ever had — an admission response
+    without a ``supply`` block must keep behaving exactly as before.
+    """
+
+    allow: bool
+    reason: str
+    pool: str = SUBSCRIPTION
+    key: str | None = None
+
+
+def _post_admission(url: str, bearer: str, timeout_s: float) -> Verdict:
     """One admission call. Raises on transport problems (caller decides policy)."""
     req = urllib.request.Request(
         url, method="POST", headers={"Authorization": f"Bearer {bearer}"}, data=b""
@@ -183,7 +203,14 @@ def _post_admission(url: str, bearer: str, timeout_s: float) -> tuple[bool, str]
     with urllib.request.urlopen(req, timeout=timeout_s) as resp:  # noqa: S310 — fixed scheme/URL from deployment config
         payload = json.loads(resp.read())
     data = payload.get("data") or {}
-    return bool(data.get("allow", True)), str(data.get("reason", ""))
+    supply = data.get("supply") or {}
+    pool = supply.get("pool")
+    return Verdict(
+        allow=bool(data.get("allow", True)),
+        reason=str(data.get("reason", "")),
+        pool=pool if pool in (SUBSCRIPTION, GATEWAY) else SUBSCRIPTION,
+        key=supply.get("key") or None,
+    )
 
 
 class AdmissionGate:
@@ -193,6 +220,11 @@ class AdmissionGate:
     token cap stays as the deployment-wide backstop, and a brake that can take
     the platform down is worse than the overspend it prevents. Verdicts cache
     for ``cache_s`` so a chatty session asks once, not per request.
+
+    The same answer also carries the SUPPLY decision (#243): which pool serves
+    this project. Fail-open therefore has a direction — an unreachable control
+    plane falls back to the subscription, the destination this proxy has always
+    had, rather than to a gateway whose per-project key it would not have.
     """
 
     def __init__(
@@ -207,20 +239,20 @@ class AdmissionGate:
         self._timeout = timeout_s
         self._post = post  # test seam
         self._lock = threading.Lock()
-        self._cache: dict[str, tuple[float, bool, str]] = {}
+        self._cache: dict[str, tuple[float, Verdict]] = {}
 
-    def check(self, project_id: str, bearer: str) -> tuple[bool, str]:
+    def check(self, project_id: str, bearer: str) -> Verdict:
         if not self._url or not project_id:
-            return True, "admission not configured"
+            return Verdict(True, "admission not configured")
         now = time.time()
         with self._lock:
             hit = self._cache.get(project_id)
             if hit and now - hit[0] < self._cache_s:
-                return hit[1], hit[2]
+                return hit[1]
         try:
-            allow, reason = self._post(self._url, bearer, self._timeout)
+            verdict = self._post(self._url, bearer, self._timeout)
         except (urllib.error.URLError, OSError, ValueError, json.JSONDecodeError):
-            return True, "admission unreachable (fail-open)"
+            return Verdict(True, "admission unreachable (fail-open)")
         with self._lock:
-            self._cache[project_id] = (now, allow, reason)
-        return allow, reason
+            self._cache[project_id] = (now, verdict)
+        return verdict

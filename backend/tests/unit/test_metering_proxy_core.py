@@ -8,9 +8,11 @@ import base64
 import hashlib
 import hmac
 import importlib.util
+import io
 import json
 import time
 from pathlib import Path
+from unittest import mock
 
 CORE = (
     Path(__file__).resolve().parents[3]
@@ -123,24 +125,73 @@ def test_meter_records_and_caps_over_the_window(tmp_path):
     assert again.used() == 100
 
 
+def test_admission_verdict_carries_the_supply_decision():
+    """The same answer says both 'may it run' and 'where does it go' (#243)."""
+
+    def gateway_post(url, bearer, timeout_s):
+        return core.Verdict(True, "ok", pool=core.GATEWAY, key="sk-virt-1")
+
+    gate = core.AdmissionGate("http://backend/llm/admission", post=gateway_post)
+    v = gate.check("p1", "tok")
+    assert v.allow and v.pool == core.GATEWAY and v.key == "sk-virt-1"
+
+
+def test_unknown_or_absent_supply_falls_back_to_the_subscription():
+    """A backend older than this proxy sends no `supply`; a typo sends a name
+    we don't know. Both must keep the destination this proxy has always had —
+    never guess a gateway it holds no key for."""
+
+    def answer(payload: dict) -> core.Verdict:
+        captured = json.dumps(payload).encode()
+
+        class _Resp:
+            def __enter__(self):
+                return io.BytesIO(captured)
+
+            def __exit__(self, *a):
+                return False
+
+        with mock.patch.object(core.urllib.request, "urlopen", return_value=_Resp()):
+            return core._post_admission("http://backend/llm/admission", "tok", 3.0)
+
+    assert answer({"data": {"allow": True, "reason": "r"}}).pool == core.SUBSCRIPTION
+    assert (
+        answer({"data": {"allow": True, "reason": "r", "supply": {"pool": "wat"}}}).pool
+        == core.SUBSCRIPTION
+    )
+    ok = answer(
+        {
+            "data": {
+                "allow": True,
+                "reason": "r",
+                "supply": {"pool": "gateway", "key": "sk-virt-9"},
+            }
+        }
+    )
+    assert ok.pool == core.GATEWAY and ok.key == "sk-virt-9"
+
+
 def test_admission_gate_caches_and_fails_open():
     calls: list[str] = []
 
     def fake_post(url, bearer, timeout_s):
         calls.append(bearer)
-        return False, "budget spent: 5.0000 of 5.0000"
+        return core.Verdict(False, "budget spent: 5.0000 of 5.0000")
 
     gate = core.AdmissionGate("http://backend/llm/admission", post=fake_post)
-    assert gate.check("p1", "tok") == (False, "budget spent: 5.0000 of 5.0000")
-    assert gate.check("p1", "tok")[0] is False
+    first = gate.check("p1", "tok")
+    assert first.allow is False and "5.0000" in first.reason
+    assert gate.check("p1", "tok").allow is False
     assert len(calls) == 1  # second answer came from the cache
 
     def broken_post(url, bearer, timeout_s):
         raise OSError("backend down")
 
     open_gate = core.AdmissionGate("http://backend/llm/admission", post=broken_post)
-    allow, reason = open_gate.check("p2", "tok")
-    assert allow is True and "fail-open" in reason
+    v = open_gate.check("p2", "tok")
+    assert v.allow is True and "fail-open" in v.reason
+    # Fail-open has a direction: never guess a gateway we have no key for.
+    assert v.pool == core.SUBSCRIPTION
 
     # Not configured → always allow, no calls.
-    assert core.AdmissionGate("", post=fake_post).check("p3", "tok")[0] is True
+    assert core.AdmissionGate("", post=fake_post).check("p3", "tok").allow is True

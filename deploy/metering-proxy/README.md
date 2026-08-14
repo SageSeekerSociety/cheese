@@ -15,6 +15,22 @@ cap as backstop). Design context: issue #218 and
   only, unit-tested from `backend/tests/unit/test_metering_proxy_core.py`.
 - `compose.yml` — the container. Values via a box-local `.env` (see header).
 
+## One interception point, two destinations (#243)
+
+Every sandbox's traffic passes through here, and the destination is a per-request
+decision rather than something pinned into the sandbox's launch environment:
+
+- `subscription` → inject the real credential, egress via ccproxy → Anthropic.
+- `gateway` → rewrite to `CHEESE_GATEWAY_BASE` (LiteLLM) with the project's
+  virtual key, no subscription credential, no ccproxy hop (domestic providers
+  must not be routed through an overseas exit).
+
+The backend decides (`POST /llm/admission` answers both "may it run" and "where
+does it go"); this proxy only carries it out. That is why a project can change
+supply without restarting its agent. Fail-open has a direction: an unreachable
+control plane falls back to the subscription — the destination this proxy has
+always had — never to a gateway whose per-project key it would not hold.
+
 ## Why the constraints are what they are
 
 - **Transparent**: a subscription's legitimacy rests on the client being Claude
