@@ -195,10 +195,27 @@ else:
         # The scoped token still travels, as the proxy password the helper
         # stamps onto the CONNECT — it authenticates the project, not the model
         # call.
-        passthrough = bool(os.environ.get("CHEESE_TUNNEL_URL")) and bool(
-            env.get("CLAUDE_CODE_OAUTH_TOKEN")
-        )
-        if not passthrough:
+        # Read from the BACKUP, not from the live file. The live file's token is
+        # whatever the last launch left there — and every launch before this one
+        # overwrote it with ours, so "keep what is there" would faithfully
+        # preserve our own stale scoped token and change nothing. The backup is
+        # written once, on the first reconcile, before anything was overwritten:
+        # it is the only place the machine's original ticket still exists.
+        machine_ticket = ""
+        if os.environ.get("CHEESE_TUNNEL_URL"):
+            try:
+                with open(backup) as fh:
+                    machine_ticket = (
+                        ((json.load(fh) or {}).get("env") or {}).get(
+                            "CLAUDE_CODE_OAUTH_TOKEN"
+                        )
+                        or ""
+                    )
+            except Exception:
+                machine_ticket = ""
+        if machine_ticket:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = machine_ticket
+        else:
             keys.insert(0, "CLAUDE_CODE_OAUTH_TOKEN")
         for key in keys:
             val = os.environ.get(key)
@@ -622,7 +639,19 @@ if command -v tmux >/dev/null 2>&1; then
   if tmux has-session -t "$SESSION" 2>/dev/null; then
     TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
     case "$TOKEXP" in ''|*[!0-9]*) TOKEXP=0 ;; esac
-    if [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ]; then
+    # Retire on a dead credential OR on a changed launch contract. claude reads
+    # settings.json ONCE at startup, so a screen reused across turns keeps
+    # whatever contract it was born with — a shipped change to WHICH ticket it
+    # carries reaches the file and never reaches the process. Measured
+    # 2026-08-14: the file said one thing and the running claude was still
+    # failing on the other. Same reasoning as the tunnel helper's stamp.
+    CFGF="$HOME/.claude/$SESSION.cfg"
+    CFGNOW="$(cksum "$REAL_HOME/.claude/settings.json" 2>/dev/null | cut -d" " -f1)"
+    CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
+    RETIRE=0
+    [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ] && RETIRE=1
+    [ -n "$CFGNOW" ] && [ "$CFGNOW" != "$CFGWAS" ] && RETIRE=1
+    if [ "$RETIRE" = 1 ]; then
       tmux kill-session -t "$SESSION" 2>/dev/null || true
     fi
   fi
@@ -660,6 +689,8 @@ if command -v tmux >/dev/null 2>&1; then
     # Stamp the token expiry this claude is BORN with so the gate above can later
     # tell a stale-credential session from a good one and retire only the stale.
     printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
+    cksum "$REAL_HOME/.claude/settings.json" 2>/dev/null | cut -d" " -f1 \\
+      > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
     # Hand THIS launch's credential / routing / attribution env to the new session
     # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from
     # the tmux SERVER's GLOBAL env — frozen when that server first started — for
