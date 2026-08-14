@@ -38,6 +38,8 @@ from app.core.errors import (
 from app.core.sandbox_auth import scoped_token_claims
 from app.domain.agent.budget_proxy import BudgetState, decide
 from app.domain.agent.chat import ChatService
+from app.domain.agent.supply import GATEWAY, resolve_pool
+from app.domain.project.repositories import ProjectRepository
 from app.domain.usage.repositories import ComputeGrantRepository
 
 logger = logging.getLogger("cheesex.llm_proxy")
@@ -94,6 +96,7 @@ def _upstream_url(path: str) -> str:
 async def admission(
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """Whether the caller's project can afford one more subscription turn.
 
@@ -119,7 +122,26 @@ async def admission(
         limit=None if summary["unlimited"] else summary["credits_total"],
     )
     decision = decide(state)
-    return ok({"allow": decision.allow, "reason": decision.reason})
+
+    # The supply decision rides along with the admission answer: the proxy has
+    # to ask before every turn anyway, and one round trip that says both "may
+    # it run" and "where does it go" keeps the data plane from needing a second
+    # source of truth. Resolved even when refused — a caller that logs the
+    # refusal can still say which pool it was refused against.
+    project = await ProjectRepository(db).get(project_uuid)
+    pool = resolve_pool(
+        project.settings if project else None,
+        subscription_enabled=settings.subscription_enabled,
+    )
+    supply: dict = {"pool": pool}
+    if pool == GATEWAY and decision.allow:
+        # Minted lazily and cached on the project; the proxy never holds a
+        # provider key of its own, so a project whose key cannot be provisioned
+        # gets no key here and the proxy refuses rather than falling back to a
+        # shared credential (which would bill every project to one bucket).
+        supply["key"] = await chat.project_gateway_key(project_uuid)
+
+    return ok({"allow": decision.allow, "reason": decision.reason, "supply": supply})
 
 
 @router.api_route("/{path:path}", methods=["GET", "POST"], include_in_schema=False)

@@ -187,7 +187,8 @@ async def test_admission_answers_from_the_grant_balance(client):
     # No grants at all = 自治项目: never refused.
     r = client.post("/llm/admission", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
-    assert r.json()["data"] == {"allow": True, "reason": "unlimited"}
+    body = r.json()["data"]
+    assert body["allow"] is True and body["reason"] == "unlimited"
 
     from app.domain.usage.repositories import ComputeGrantRepository
 
@@ -208,3 +209,35 @@ async def test_admission_answers_from_the_grant_balance(client):
     body = r.json()["data"]
     assert body["allow"] is False
     assert "5.0000" in body["reason"]
+
+
+@pytest.mark.anyio
+async def test_admission_says_which_pool_serves_the_project(client, monkeypatch):
+    """The proxy asks once and learns both things: may it run, and where does
+    it go (#243). Where it goes is a project setting, so supply can change
+    without touching the proxy or restarting the sandbox."""
+    from app.core.config import settings as app_settings
+    from app.domain.project.repositories import ProjectRepository
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    token = mint_scoped_token(project_id=pid)
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Default: the deployment's own supply, and no key travels for it — the
+    # subscription credential lives on the proxy, never in a control-plane body.
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert body["supply"] == {"pool": "subscription"}
+    assert body["allow"] is True
+
+    async with client.test_factory() as session:
+        project = await ProjectRepository(session).get(uuid.UUID(pid))
+        assert project is not None
+        project.settings = {"supply": "gateway"}
+        await session.commit()
+
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert body["supply"]["pool"] == "gateway"
+    # No gateway configured in this harness → no key. The proxy refuses on an
+    # empty key rather than serving the project from a pool it did not choose.
+    assert body["supply"].get("key") is None
