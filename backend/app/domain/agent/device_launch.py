@@ -203,16 +203,31 @@ else:
         # it is the only place the machine's original ticket still exists.
         machine_ticket = ""
         if os.environ.get("CHEESE_TUNNEL_URL"):
-            try:
-                with open(backup) as fh:
-                    machine_ticket = (
-                        ((json.load(fh) or {}).get("env") or {}).get(
-                            "CLAUDE_CODE_OAUTH_TOKEN"
+            # A ccproxy ticket EXPIRES, and ccproxy refreshes it the way its
+            # clients do: Claude Code writes the new one back into this file. So
+            # the live file is the freshest copy there is, and overwriting it —
+            # even with the machine's original — hands ccproxy a ticket that
+            # stopped being valid hours ago (measured 2026-08-14: a two-hour-old
+            # one came back `401 OAuth access token has been revoked`).
+            #
+            # Ours is distinguishable by shape: a scoped cheese token is
+            # `body.signature`, a ccproxy ticket has no dot. So keep a ticket,
+            # and heal the field from the backup only when a previous launch
+            # (before this path existed) left OUR token sitting in it.
+            live = env.get("CLAUDE_CODE_OAUTH_TOKEN") or ""
+            if live and "." not in live:
+                machine_ticket = live
+            else:
+                try:
+                    with open(backup) as fh:
+                        machine_ticket = (
+                            ((json.load(fh) or {}).get("env") or {}).get(
+                                "CLAUDE_CODE_OAUTH_TOKEN"
+                            )
+                            or ""
                         )
-                        or ""
-                    )
-            except Exception:
-                machine_ticket = ""
+                except Exception:
+                    machine_ticket = ""
         if machine_ticket:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = machine_ticket
         else:

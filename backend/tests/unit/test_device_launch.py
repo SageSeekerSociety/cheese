@@ -715,3 +715,54 @@ def test_a_session_born_on_a_different_contract_is_retired():
     # Both reasons retire, and neither is allowed to mask the other.
     assert "RETIRE=1" in script
     assert script.count("RETIRE=1") >= 2
+
+
+def _reconcile_tunnel(live_token: str, backup_token: str) -> str:
+    """Run the shipped reconcile on the tunnel path and return the token it left."""
+    import json
+    import subprocess
+    import tempfile
+
+    from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+
+    with tempfile.TemporaryDirectory() as tmp:
+        live = f"{tmp}/settings.json"
+        with open(live, "w") as handle:
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": live_token}}, handle)
+        with open(live + ".cheese-orig", "w") as handle:
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": backup_token}}, handle)
+        subprocess.run(
+            ["python3", "-", live],
+            input=CHEESE_SETTINGS_RECONCILE,
+            text=True,
+            capture_output=True,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token",
+                "HTTPS_PROXY": "http://127.0.0.1:8445",
+                "CHEESE_TUNNEL_URL": "wss://gw/api/llm/tunnel",
+            },
+            check=True,
+        )
+        with open(live) as handle:
+            return json.load(handle)["env"]["CLAUDE_CODE_OAUTH_TOKEN"]
+
+
+def test_a_live_ccproxy_ticket_is_never_overwritten():
+    """ccproxy tickets expire, and ccproxy refreshes them the way its clients do:
+    Claude Code writes the new one back into this file. So the live file is the
+    freshest copy there is — restoring the original over it hands ccproxy a
+    ticket that died hours ago (measured 2026-08-14: `401 OAuth access token has
+    been revoked` from a two-hour-old one)."""
+    assert _reconcile_tunnel("refreshed-ticket", "original-ticket") == (
+        "refreshed-ticket"
+    )
+
+
+def test_our_own_token_left_in_the_field_is_healed_from_the_backup():
+    """Machines launched before this path existed have OUR scoped token sitting
+    there. It is distinguishable by shape — `body.signature` has a dot, a ccproxy
+    ticket does not — so that one case restores, and only that one."""
+    assert _reconcile_tunnel("old.scoped.token", "original-ticket") == (
+        "original-ticket"
+    )
