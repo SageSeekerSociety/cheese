@@ -179,13 +179,28 @@ else:
     # file, not merely exported. Absent that marker the image's entries are its
     # own supply route and stay untouched, as before.
     if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
-        for key in (
-            "CLAUDE_CODE_OAUTH_TOKEN",
-            "HTTPS_PROXY",
-            "NO_PROXY",
-            "no_proxy",
-            "NODE_EXTRA_CA_CERTS",
-        ):
+        keys = ["HTTPS_PROXY", "NO_PROXY", "no_proxy", "NODE_EXTRA_CA_CERTS"]
+        # WHOSE ticket claude carries depends on what the meter will do with it.
+        #
+        # Swap path: the meter replaces the bearer with the credential the host
+        # holds, so ours goes out and the image's is irrelevant — assert ours.
+        #
+        # Pass-through path (a remote machine on the tunnel, marked by
+        # CHEESE_TUNNEL_URL): the meter forwards the bearer UNTOUCHED, because
+        # ccproxy only honours a machine's ticket over that machine's own
+        # identity. So the ticket has to be the machine's own — the one
+        # MicroCloud wrote here. Overwriting it sends OUR scoped token to
+        # Anthropic, which answers `401 OAuth access token has been revoked`
+        # (measured 2026-08-14: the whole chain up, refused at the far end).
+        # The scoped token still travels, as the proxy password the helper
+        # stamps onto the CONNECT — it authenticates the project, not the model
+        # call.
+        passthrough = bool(os.environ.get("CHEESE_TUNNEL_URL")) and bool(
+            env.get("CLAUDE_CODE_OAUTH_TOKEN")
+        )
+        if not passthrough:
+            keys.insert(0, "CLAUDE_CODE_OAUTH_TOKEN")
+        for key in keys:
             val = os.environ.get(key)
             if val is not None:
                 env[key] = val
@@ -286,15 +301,28 @@ echo unknown
 # whichever one won holding a token file the other launch had already replaced.
 CHEESE_TUNNEL_UP = """#!/bin/sh
 PIDF="$HOME/.claude/cheese-tunnel.pid"
+STAMPF="$HOME/.claude/cheese-tunnel.stamp"
+# Adopt a live helper ONLY if it is running the helper we just wrote. The
+# launcher rewrites cheese-tunnel.py on every launch, so a shipped fix would
+# otherwise never reach a machine whose helper is still alive — it would keep
+# serving the old code indefinitely, and nothing would look wrong.
+WANT="$(cksum "$HOME/.claude/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
+HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  exit 0
+  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ]; then
+    exit 0
+  fi
+  # Different code: retire it. In-flight turns see one connection reset, which
+  # claude retries; a permanently stale helper does not heal at all.
+  kill "$PID" 2>/dev/null || true
 fi
 python3 "$HOME/.claude/cheese-tunnel.py" \\
   --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
   --token-file "$HOME/.claude/cheese-tunnel.token" \\
   >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
 echo $! > "$PIDF"
+printf '%s\n' "$WANT" > "$STAMPF"
 # The readiness check runs in python3, NOT with bash's /dev/tcp: this script is
 # invoked as `sh`, /bin/sh is dash on the machine images, and dash has no
 # /dev/tcp — the redirect fails on EVERY iteration, so the loop would spend its

@@ -181,6 +181,44 @@ def open_tunnel(
     return raw
 
 
+_HEAD_END = b"\r\n\r\n"
+_MAX_HEAD = 16384
+
+
+def _read_request_head(sock: socket.socket) -> bytes:
+    """The client's first request head, up to and including the blank line.
+
+    Bounded: a peer that never sends the terminator would otherwise buy an
+    unbounded buffer on a machine we do not own."""
+    buffer = bytearray()
+    while _HEAD_END not in buffer:
+        if len(buffer) > _MAX_HEAD:
+            raise TunnelError("request head too large")
+        chunk = sock.recv(4096)
+        if not chunk:
+            raise TunnelError("client closed before sending a request")
+        buffer.extend(chunk)
+    return bytes(buffer)
+
+
+def _with_proxy_auth(head: bytes, token: str) -> bytes:
+    """`head` with a Proxy-Authorization carrying the scoped token.
+
+    Replaces any existing one rather than appending: two of them is a malformed
+    request, and the client's own (there is none today) would not be the one the
+    meter accepts anyway.
+    """
+    credential = base64.b64encode(f"cheese:{token}".encode()).decode()
+    lines = [
+        line
+        for line in head.split(b"\r\n")
+        if not line.lower().startswith(b"proxy-authorization:")
+    ]
+    # Insert after the request line so the head stays readable in a capture.
+    lines.insert(1, f"Proxy-Authorization: Basic {credential}".encode())
+    return b"\r\n".join(lines)
+
+
 def _pump_local_to_ws(local: socket.socket, ws: socket.socket) -> None:
     try:
         while True:
@@ -256,6 +294,24 @@ def handle_connection(
         # that costs an operator the most time to diagnose.
         local.close()
         return
+
+    # Stamp the scoped token onto the CONNECT before anything else crosses.
+    #
+    # HTTPS_PROXY is a bare loopback URL with no userinfo, deliberately: a
+    # credential baked into it is read once by claude at startup and cannot be
+    # refreshed under a running process (#385). But the meter still demands a
+    # scoped token as the proxy password and answers 407 without one — measured
+    # 2026-08-14, a turn died with exactly that. The token has to enter the
+    # stream somewhere, and this is the only place that holds it AND sees the
+    # request: read per connection from a file the launcher rewrites.
+    try:
+        head = _read_request_head(local)
+    except (OSError, TunnelError) as exc:
+        logger.warning("could not read the CONNECT request: %s", exc)
+        local.close()
+        ws.close()
+        return
+    send_frame(ws, _with_proxy_auth(head, secret))
 
     up = threading.Thread(target=_pump_local_to_ws, args=(local, ws), daemon=True)
     up.start()
