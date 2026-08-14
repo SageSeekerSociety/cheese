@@ -79,6 +79,9 @@
 
     <!-- 内测: running-build badge, self-hides unless the box opted in. -->
     <VersionBadge />
+
+    <!-- 离线指示: shows only while offline, auto-hides when the network returns. -->
+    <OfflineBanner />
   </my-app>
 </template>
 
@@ -100,6 +103,7 @@ import { usePageTitleStore } from './stores/title'
 import { createProject, listProjects } from '@/api'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
+import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
