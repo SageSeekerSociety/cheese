@@ -35,14 +35,46 @@ cap as backstop). Design context: issue #218 and
 1. Stop nothing yet. Copy the box-local values into `deploy/metering-proxy/.env`:
    upstream auth + via, `CHEESE_SCOPED_SECRET` = backend's `SANDBOX_TOKEN`,
    `CHEESE_ADMISSION_URL` pointing at the backend on the bridge.
-2. Point `INJECT_TOKEN_FILE` and `CERTS_DIR` at the EXISTING token file and CA
-   dir — the CA is baked into sandbox images' `NODE_EXTRA_CA_CERTS` by absolute
-   path, so the cert must not change identity.
+2. Point `INJECT_SECRETS_DIR` at the host directory that CONTAINS `inject.token`
+   (mounted read-only at `/etc/cheese/secrets`, a directory — not a single-file
+   bind mount — so an atomic token swap is seen without a restart; see below),
+   and `CERTS_DIR` at the CA dir — the CA is baked into sandbox images'
+   `NODE_EXTRA_CA_CERTS` by absolute path, so the cert must not change identity.
 3. `docker compose -f deploy/metering-proxy/compose.yml up -d` after
    `docker rm -f cheese-metering-proxy` (same name, same published address —
    in-flight turns see one connection reset, Claude Code retries).
 4. Verify: a sandbox turn answers; `logs/usage.jsonl` gains rows whose
    project/topic match the turn; with a zero-grant test project,
    `/v1/messages` is refused 429 with the budget reason.
-5. Retire the old `~/cheese-proxy/addons` copy (leave the creds daemon and
-   token-refresh loop untouched — they own the inject token file, not this).
+5. Retire the old `~/cheese-proxy/addons` copy. The injector holds a durable,
+   non-refreshing credential (see "The injected credential" below), so there is
+   no creds daemon or token-refresh loop to keep running — retire those too, and
+   mask any leftover unit so it cannot start by accident.
+
+## The injected credential
+
+The token in `inject.token` is a durable, **non-refreshing** credential: a
+one-year setup-token minted by `claude setup-token` (Anthropic's
+service/automation credential), or the stable fake token an m161/ccproxy
+setup-token-backed machine hands back. It is NOT a Claude Code interactive
+`/login` access token and NOT sourced from Claude Code's login credential JSON:
+those age out in hours and only stay alive via an OAuth refresh chain, and
+treating that human-session credential as a service credential — with a local
+"refresh near expiry" daemon owning the file — is the exact failure that caused
+an outage. So there is **no refresh loop, no daemon, no print-mode refresh
+call** anywhere in this deployment; rotation is a planned, roughly annual, manual
+swap. A CI guard (`.claude/scripts/check-metering-proxy.sh`) fails the build if
+any of those retired mechanisms reappear under `deploy/`.
+
+- **Absent/empty injector = fail closed.** With no token the proxy returns a
+  local `503` before forwarding, rather than sending the sandbox's scoped bearer
+  upstream to collect an opaque `401`. That 503 means "the platform's
+  setup-token is missing or expired — (re)install it on the host."
+- **Atomic rotation, no restart.** `inject.token` lives in a directory mounted
+  read-only at `/etc/cheese/secrets`. Because a directory (not the single file)
+  is bind-mounted, a rotation done as write-new-then-rename is resolved on the
+  addon's next per-request read with no container restart and no inode trap.
+  **Changing this mount requires a one-time metering-proxy rebuild** on the box
+  (via the normal deploy flow — `docker rm -f cheese-metering-proxy` then bring
+  it back up); pre-existing single-file `inject.token` mounts keep working until
+  that rebuild.

@@ -35,7 +35,7 @@ services:
       - "172.17.0.1:8444:8444"
     environment:
       CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
-      CHEESE_INJECT_TOKEN: /etc/cheese/inject.token
+      CHEESE_INJECT_TOKEN: /etc/cheese/secrets/inject.token
       CHEESE_TOKEN_CAP: ${CHEESE_TOKEN_CAP:-0}
       CHEESE_UPSTREAM_VIA: ${CHEESE_UPSTREAM_VIA:-}
       CHEESE_SCOPED_SECRET: ${CHEESE_SCOPED_SECRET:-}
@@ -44,5 +44,14 @@ services:
     volumes:
       - ./logs:/var/log/cheese
       - .:/addons:ro
-      - ${INJECT_TOKEN_FILE:-./inject.token}:/etc/cheese/inject.token:ro
+      # Mount the secrets DIRECTORY read-only, not the single token file. A
+      # single-file bind mount pins the container to the host inode it saw at
+      # start, so an atomic rotation (write a new file, then rename it over the
+      # old name) leaves the container reading the OLD inode's contents until it
+      # is restarted — a stale-token trap hit in production. With the directory
+      # mounted, ${INJECT_SECRETS_DIR}/inject.token is resolved on each read, so
+      # an atomic replace inside that dir is picked up with no restart (the addon
+      # re-reads the file on every request). Boxes point INJECT_SECRETS_DIR at an
+      # absolute host secrets dir; ./secrets is only the self-contained default.
+      - ${INJECT_SECRETS_DIR:-./secrets}:/etc/cheese/secrets:ro
       - ${CERTS_DIR:-./certs}:/home/mitmproxy/.mitmproxy
