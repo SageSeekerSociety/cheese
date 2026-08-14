@@ -196,3 +196,46 @@ async def test_enrolment_asks_only_for_machines_whose_channel_has_settled(
 
     assert seen["desired_ai_mode"] == "ccproxy"
     assert seen["settle_cutoff"] is not None, "an unbounded wait bricks a machine"
+
+
+async def test_the_sweep_refreshes_before_it_decides(monkeypatch):
+    """Both later steps read state that only a READ path ever updated. Machine
+    473 sat unenrolled for 13 minutes on 2026-08-14 while MicroCloud had it
+    `ready` the whole time — the sweep was deciding on a value nothing in the
+    sweep refreshes."""
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[2] / "app" / "domain" / "machine" / "runner.py"
+    )
+    text = source.read_text()
+    order = [
+        text.index("refresh_unsettled()"),
+        text.index("reconcile_ai_mode()"),
+        text.index("enroll_pending()"),
+    ]
+    assert order == sorted(order), "refresh → reconcile → enrol"
+
+
+async def test_a_provider_outage_does_not_stop_the_refresh_sweep():
+    """One unreachable machine must not cost the others their turn: the sweep is
+    the only thing that unsticks a machine, so it has to keep going."""
+    from app.domain.machine.microcloud import MicroCloudError
+
+    class _Repo:
+        async def list_unsettled(self, limit):
+            return [SimpleNamespace(hostname="a"), SimpleNamespace(hostname="b")]
+
+    service = MachineService.__new__(MachineService)
+    service._repo = _Repo()  # type: ignore[attr-defined]
+    seen: list[str] = []
+
+    async def _refresh(machine):
+        seen.append(machine.hostname)
+        if machine.hostname == "a":
+            raise MicroCloudError("provider down")
+
+    service.refresh = _refresh  # type: ignore[method-assign]
+
+    assert await MachineService.refresh_unsettled(service) == 2
+    assert seen == ["a", "b"]
