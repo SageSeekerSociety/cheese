@@ -25,6 +25,11 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import machine_tunnel
 
 _PROJECT = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+# What HTTPS_PROXY actually opens with. The helper reads this head in full so
+# it can stamp the scoped token on, so every test has to speak it.
+_CONNECT_HEAD = (
+    b"CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: api.anthropic.com\r\n\r\n"
+)
 
 
 def _free_port() -> int:
@@ -122,8 +127,11 @@ def live_stack(monkeypatch):
 def test_a_turns_bytes_survive_the_whole_chain(live_stack):
     helper_port, meter, _ = live_stack
     with socket.create_connection(("127.0.0.1", helper_port), timeout=10) as client:
-        client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
-        assert client.recv(4096) == b"CONNECT API.ANTHROPIC.COM:443 HTTP/1.1\r\n\r\n"
+        # A real client's first bytes are always a CONNECT head; the helper reads
+        # it in full so it can stamp the scoped token on, then goes back to being
+        # a pipe. Every test therefore opens the way HTTPS_PROXY does.
+        client.sendall(_CONNECT_HEAD)
+        assert b"CONNECT API.ANTHROPIC.COM:443" in client.recv(4096)
 
         # A second write on the same connection: the meter answers a CONNECT and
         # then relays a TLS stream over the same socket, so one exchange proving
@@ -141,6 +149,8 @@ def test_a_payload_larger_than_one_frame_arrives_whole(live_stack):
     helper_port, meter, _ = live_stack
     payload = bytes(range(256)) * 400  # 102400 bytes: past both boundaries
     with socket.create_connection(("127.0.0.1", helper_port), timeout=15) as client:
+        client.sendall(_CONNECT_HEAD)
+        client.recv(4096)
         client.sendall(payload)
         seen = bytearray()
         while len(seen) < len(payload):
@@ -219,7 +229,7 @@ def test_a_refreshed_token_takes_effect_without_restarting_the_helper(live_stack
     # A bad token: refused, so nothing reaches the meter.
     before = len(meter.received)
     with socket.create_connection(("127.0.0.1", port), timeout=10) as client:
-        client.sendall(b"first")
+        client.sendall(_CONNECT_HEAD)
         client.settimeout(10)
         try:
             client.recv(4096)
@@ -232,5 +242,33 @@ def test_a_refreshed_token_takes_effect_without_restarting_the_helper(live_stack
         handle.write(mint_scoped_token(project_id=_PROJECT))
 
     with socket.create_connection(("127.0.0.1", port), timeout=10) as client:
-        client.sendall(b"second")
-        assert client.recv(4096) == b"SECOND"
+        client.sendall(_CONNECT_HEAD)
+        assert b"CONNECT API.ANTHROPIC.COM:443" in client.recv(4096)
+
+
+def test_the_scoped_token_reaches_the_meter_as_the_proxy_password(live_stack):
+    """The meter answers 407 without one, and HTTPS_PROXY deliberately carries no
+    userinfo (a credential baked there cannot be refreshed under a running
+    claude — #385). So the helper is what puts it on the wire, per connection.
+
+    Measured 2026-08-14: without this the turn died with
+    `API Error: 407 cheese: a valid scoped token is required as the proxy
+    password` — the whole chain was up, and refused at the last hop.
+    """
+    import base64
+
+    helper_port, meter, _ = live_stack
+    with socket.create_connection(("127.0.0.1", helper_port), timeout=10) as client:
+        client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\nHost: x\r\n\r\n")
+        client.recv(4096)
+
+    time.sleep(0.1)
+    head = bytes(meter.received)
+    assert b"Proxy-Authorization: Basic " in head, head[:200]
+    encoded = head.split(b"Proxy-Authorization: Basic ", 1)[1].split(b"\r\n", 1)[0]
+    user, _, token = base64.b64decode(encoded).decode().partition(":")
+    assert user == "cheese"
+    # The real token, not a placeholder — the meter verifies its signature.
+    assert token.count(".") == 1 and len(token) > 40
+    # The request line itself must survive intact; the meter parses it.
+    assert head.startswith(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n")
