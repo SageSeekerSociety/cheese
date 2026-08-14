@@ -154,6 +154,14 @@ export class AccountService {
     // missing, so leaving it here makes the NEXT login keep the previous
     // account's handle — requests then carry new token + old handle and 403.
     localStorage.removeItem('cheesex.me')
+    // The service-worker API cache is per-browser, not per-user: on a shared
+    // machine the next account must not read this one's cached API responses.
+    // Drop the data cache on logout (the app-shell precache is not user data,
+    // so offline shell loading survives). Fire-and-forget — a cache hiccup must
+    // never block sign-out.
+    if (typeof caches !== 'undefined') {
+      void caches.delete('cheese-api-get').catch(() => {})
+    }
   }
 }
 
