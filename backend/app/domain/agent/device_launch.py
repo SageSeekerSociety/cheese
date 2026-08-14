@@ -286,15 +286,28 @@ echo unknown
 # whichever one won holding a token file the other launch had already replaced.
 CHEESE_TUNNEL_UP = """#!/bin/sh
 PIDF="$HOME/.claude/cheese-tunnel.pid"
+STAMPF="$HOME/.claude/cheese-tunnel.stamp"
+# Adopt a live helper ONLY if it is running the helper we just wrote. The
+# launcher rewrites cheese-tunnel.py on every launch, so a shipped fix would
+# otherwise never reach a machine whose helper is still alive — it would keep
+# serving the old code indefinitely, and nothing would look wrong.
+WANT="$(cksum "$HOME/.claude/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
+HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  exit 0
+  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ]; then
+    exit 0
+  fi
+  # Different code: retire it. In-flight turns see one connection reset, which
+  # claude retries; a permanently stale helper does not heal at all.
+  kill "$PID" 2>/dev/null || true
 fi
 python3 "$HOME/.claude/cheese-tunnel.py" \\
   --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
   --token-file "$HOME/.claude/cheese-tunnel.token" \\
   >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
 echo $! > "$PIDF"
+printf '%s\n' "$WANT" > "$STAMPF"
 # The readiness check runs in python3, NOT with bash's /dev/tcp: this script is
 # invoked as `sh`, /bin/sh is dash on the machine images, and dash has no
 # /dev/tcp — the redirect fails on EVERY iteration, so the loop would spend its

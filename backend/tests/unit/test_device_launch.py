@@ -578,3 +578,31 @@ def test_a_deployment_without_a_tunnel_writes_and_runs_none_of_it():
     assert 'TUP=""' in script
     # The guard is what makes it inert; the heredoc body may still be present.
     assert 'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then' in script
+
+
+def test_a_helper_running_older_code_is_retired_not_adopted():
+    """The launcher rewrites the helper on every launch, and `cheese-tunnel-up`
+    adopts a live one. Without a version check a shipped fix would never reach a
+    machine whose helper is still running — it would serve the old code forever,
+    and nothing about that looks wrong from outside."""
+    script = _launch_with_tunnel()
+    # The stamp is what makes "same helper" decidable at all.
+    assert "cheese-tunnel.stamp" in script
+    assert 'cksum "$HOME/.claude/cheese-tunnel.py"' in script
+    # Adoption is conditional on it, and the mismatch path kills.
+    assert '[ "$WANT" = "$HAVE" ]' in script
+    assert 'kill "$PID"' in script
+
+
+def test_the_helper_is_verified_by_the_dash_syntax_check_too():
+    """`cheese-tunnel-up` runs under sh (dash on the machine images), and it is
+    nested inside a heredoc inside an f-string — `bash -n` on the outer script
+    does not parse it. Extracting it is the only way this is checked at all."""
+    import subprocess
+
+    from app.domain.agent.device_launch import CHEESE_TUNNEL_UP
+
+    checked = subprocess.run(
+        ["sh", "-n"], input=CHEESE_TUNNEL_UP, text=True, capture_output=True
+    )
+    assert checked.returncode == 0, checked.stderr
