@@ -493,15 +493,49 @@ def sandbox_vcs_mounts(
 # is how one project's 220 worktrees came to hold 236GB.
 SANDBOX_TOPICS_ROOT = "/topics"
 
-# Shared per-project dependency stores, as (host dirname, container env var).
-# Dot-named so they can never collide with a topic worktree dir (`topic_<hex>`)
-# or the merge-worktree root (`_merge`). pnpm reads npm_config_store_dir (its
-# documented env form of store-dir); uv reads UV_CACHE_DIR. Both install by
+# Where uv keeps the Python builds it downloads. The base sandbox image ships
+# system python 3.11 and this project needs >=3.13, so uv fetches a managed
+# interpreter at RUNTIME — and uv's default home for it is `~/.local/share/uv`,
+# i.e. `/home/node`, which is the container's own overlay layer. The worktree
+# (and its `.venv`) is a host bind mount and outlives the container; the
+# interpreter it points at does not. `.venv/bin/python` is an absolute symlink
+# into that layer and `pyvenv.cfg`'s `home =` names the same directory, so
+# every container rebuild leaves the surviving venv pointing at nothing:
+#
+#     $ .venv/bin/python -V
+#     No such file or directory
+#     $ .venv/bin/pyright --version
+#     cannot execute: required file not found      # shebang -> that same symlink
+#
+# `uv run` does repair this on its own (it recreates the venv from scratch),
+# so this is a cost, not a breakage — measured in a sandbox on 2026-08-13:
+# 15s and a 33MiB interpreter re-download per rebuild, versus 1s and no
+# download once the interpreter lives here. Rebuilds are frequent (#316: 23 in
+# one day), the re-download is NOT served by `.uv-cache` (uv caches wheels,
+# not managed interpreters), and anything invoking `.venv/bin/<tool>` directly
+# — or via `uv run --no-sync`, which recreates the venv WITHOUT reinstalling
+# and so hands back an empty one — is broken until a plain `uv run` runs.
+#
+# `backend/Dockerfile` hit the identical symlink problem across image stages
+# and fixed it the identical way (`ENV UV_PYTHON_INSTALL_DIR=/opt/python`);
+# this is the same fix on the axis the sandbox varies along, which is time
+# rather than stages.
+UV_PYTHON_STORE = ".uv-python"
+
+# Shared per-project stores that live on the HOST, as (host dirname, container
+# env var). Dot-named so they can never collide with a topic worktree dir
+# (`topic_<hex>`) or the merge-worktree root (`_merge`).
+#
+# The first two are dependency caches: pnpm reads npm_config_store_dir (its
+# documented env form of store-dir), uv reads UV_CACHE_DIR, and both install by
 # hardlinking out of their store when it is on the same filesystem/mount, so
-# every topic's node_modules/.venv shares one physical copy per file.
+# every topic's node_modules/.venv shares one physical copy per file. The third
+# is not a cache — see UV_PYTHON_STORE: it is the interpreter the venv POINTS
+# AT, and it is here because a venv that outlives its container has to be.
 _SANDBOX_STORES = (
     (".pnpm-store", "npm_config_store_dir"),
     (".uv-cache", "UV_CACHE_DIR"),
+    (UV_PYTHON_STORE, "UV_PYTHON_INSTALL_DIR"),
 )
 
 
@@ -525,6 +559,27 @@ def gate_workdir_for(worktree: Path) -> str:
     return f"{SANDBOX_TOPICS_ROOT}/{worktree.name}"
 
 
+def sandbox_store_env(root: Path) -> list[str]:
+    """`docker run -e` args pointing each tool at its shared store, creating the
+    host dirs (world-writable — the backend may run as a different uid than the
+    container user that fills them).
+
+    Split out of `sandbox_project_mounts` so the one place that decides where a
+    sandbox puts its interpreter can be read by a test without standing up a jj
+    repo — see tests/unit/test_sandbox_stores.py.
+    """
+    env_args: list[str] = []
+    for dirname, env_var in _SANDBOX_STORES:
+        store = root / dirname
+        store.mkdir(parents=True, exist_ok=True)
+        try:  # the sandbox's non-root `node` user fills the store
+            os.chmod(store, 0o777)
+        except OSError:
+            pass
+        env_args += ["-e", f"{env_var}={SANDBOX_TOPICS_ROOT}/{dirname}"]
+    return env_args
+
+
 def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
     """`docker run` args mounting the project's `.worktrees` tree (topics +
     shared stores, one mount — see SANDBOX_TOPICS_ROOT) plus the jj/git store
@@ -541,15 +596,7 @@ def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
     isolation is unchanged."""
     root = _worktree_path(project_id, branch).parent
     root.mkdir(parents=True, exist_ok=True)
-    env_args: list[str] = []
-    for dirname, env_var in _SANDBOX_STORES:
-        store = root / dirname
-        store.mkdir(exist_ok=True)
-        try:  # the sandbox's non-root `node` user fills the store
-            os.chmod(store, 0o777)
-        except OSError:
-            pass
-        env_args += ["-e", f"{env_var}={SANDBOX_TOPICS_ROOT}/{dirname}"]
+    env_args = sandbox_store_env(root)
     workdir = sandbox_topic_workdir(branch)
     return [
         "-v",
