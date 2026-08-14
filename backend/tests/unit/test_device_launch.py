@@ -498,3 +498,83 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
             os.unlink(sock)
         except OSError:
             pass
+
+
+# --- the tunnel branch ------------------------------------------------------
+# A remote machine cannot dial the meter's listener on the ghg network, so its
+# CONNECT rides a helper on its own loopback. The helper is the fragile part:
+# started in the wrong process tree it dies with the connector while claude
+# lives on, pointed at a dead port — every turn then fails looking exactly like
+# a stalled model, which is the most expensive failure to diagnose.
+
+
+def _launch_with_tunnel(**overrides):
+    env = {
+        "CHEESE_TUNNEL_URL": "wss://gw.example/api/llm/tunnel",
+        "CHEESE_TUNNEL_PORT": "8445",
+        "CLAUDE_CODE_OAUTH_TOKEN": "scoped.session.token",
+        "HTTPS_PROXY": "http://127.0.0.1:8445",
+    }
+    env.update(overrides)
+    command, _env, _cheeselet = device_launch.build_screen_launch(
+        hook_url="http://h/sandbox/hooks/T",
+        hook_token="scoped-tok",
+        home_dir="/dev/home",
+        work_dir="/dev/work",
+        model="",
+        extra_env=env,
+    )
+    return command[2]
+
+
+def test_the_tunnel_launch_is_valid_shell():
+    """The script is assembled from an f-string wrapping heredocs that now carry
+    a whole python module; a mis-escaped brace or quote turns into a syntax
+    error that would only surface on a real machine, mid-turn."""
+    import subprocess
+
+    checked = subprocess.run(
+        ["bash", "-n"], input=_launch_with_tunnel(), text=True, capture_output=True
+    )
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_the_helper_and_its_token_are_written_every_launch():
+    """The helper re-reads the token per connection, so rewriting this file is
+    how a refreshed credential reaches a helper that is already running — the
+    thing that stops #385 repeating one layer down."""
+    script = _launch_with_tunnel()
+    assert 'cat > "$HOME/.claude/cheese-tunnel.py"' in script
+    # The real module, not a paraphrase of it.
+    assert "def open_tunnel(" in script and "Sec-WebSocket-Key" in script
+    # Written atomically and mode-restricted: it holds a spendable token.
+    assert 'chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"' in script
+    assert (
+        'mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"'
+        in script
+    )
+
+
+def test_the_helper_starts_inside_the_session_and_before_claude():
+    """Two properties, one line. INSIDE: backgrounded in the launcher's own tree
+    it would die with the connector while claude survives in tmux. BEFORE:
+    claude reads HTTPS_PROXY once and calls out immediately, so a helper that is
+    still binding loses that race and the screen boots unauthenticated."""
+    script = _launch_with_tunnel()
+    assert "$TUP $DRAINCMD & exec $CLAUDE" in script
+    assert 'TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"' in script
+    # The wait itself, in the up-script — and NOT via bash's /dev/tcp: this runs
+    # under `sh`, which is dash on the machine images, where that redirect fails
+    # on every iteration and the loop would report "not ready" for a helper that
+    # came up fine (verified on the real image: `cannot create /dev/tcp/...`).
+    assert "/dev/tcp/" not in script
+    assert 'python3 - "$CHEESE_TUNNEL_PORT"' in script
+
+
+def test_a_deployment_without_a_tunnel_writes_and_runs_none_of_it():
+    """Every deployment that has one today reaches the listener directly. The
+    tunnel must cost them nothing — not a written file, not a no-op call."""
+    script = _launch_with_tunnel(CHEESE_TUNNEL_URL="")
+    assert 'TUP=""' in script
+    # The guard is what makes it inert; the heredoc body may still be present.
+    assert 'if [ -n "${CHEESE_TUNNEL_URL:-}" ]; then' in script

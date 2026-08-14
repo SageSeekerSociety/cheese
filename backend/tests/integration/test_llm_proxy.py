@@ -241,3 +241,107 @@ async def test_admission_says_which_pool_serves_the_project(client, monkeypatch)
     # No gateway configured in this harness → no key. The proxy refuses on an
     # empty key rather than serving the project from a pool it did not choose.
     assert body["supply"].get("key") is None
+
+
+# --- which ccproxy identity a turn goes out as ------------------------------
+# ccproxy only honours a machine's ticket over that machine's OWN identity
+# (measured 2026-08-14: m516's ticket over an m161 connection is a 401 with no
+# request_id). So the proxy must learn WHICH identity before it forwards, and
+# admission is the hop it already waits on.
+
+
+async def _pin_topic_to_machine(
+    client, *, project_id: str, topic_id, machine_id: int, upstream: str | None
+):
+    """A topic pinned to an enrolled machine — the real chain admission walks:
+    topic → pinned device → machine row."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.domain.device.models import DeviceRow, DeviceTopicRow
+    from app.domain.machine.models import ProjectMachine
+    from app.domain.user.models import User
+
+    device_id = f"dev-{machine_id}"
+    async with client.test_factory() as session:
+        owner = (await session.execute(select(User).limit(1))).scalar_one()
+        session.add(
+            DeviceRow(
+                device_id=device_id,
+                name=f"machine-{machine_id}",
+                token=f"tok-{device_id}",
+                owner_user_id=owner.id,
+                created_at=datetime.now(UTC),
+            )
+        )
+        await session.flush()
+        session.add(
+            ProjectMachine(
+                project_id=uuid.UUID(project_id),
+                machine_id=machine_id,
+                customer_id=1,
+                account_id=1,
+                offering_id=1,
+                hostname=f"host-{machine_id}",
+                login_user="cheese",
+                cores=2,
+                memory_mb=4096,
+                disk_gb=20,
+                device_id=device_id,
+                enrolled_at=datetime.now(UTC),
+                ccproxy_upstream=upstream,
+            )
+        )
+        session.add(DeviceTopicRow(topic_id=topic_id, device_id=device_id))
+        await session.commit()
+
+
+async def test_admission_names_the_machine_identity_a_topics_turns_go_out_as(
+    client, monkeypatch
+):
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    topic_id = uuid.uuid4()
+    headers = {
+        "Authorization": "Bearer "
+        + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
+    }
+
+    # Nothing pinned yet: there is no machine, so there is no identity to name.
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert body["supply"] == {"pool": "subscription"}
+
+    await _pin_topic_to_machine(
+        client, project_id=pid, topic_id=topic_id, machine_id=516, upstream="m516:pw516"
+    )
+
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+    assert body["supply"]["upstream"] == "m516:pw516"
+
+
+async def test_a_machine_without_a_recorded_identity_names_none(client, monkeypatch):
+    """Enrollment is the only moment the platform is on the machine over ssh
+    (the bootstrap key is erased the instant it succeeds), so machines enrolled
+    before this existed keep NULL forever. NULL must read as "use the
+    deployment-wide identity" — never as an empty string the proxy would then
+    try to authenticate with."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    topic_id = uuid.uuid4()
+    await _pin_topic_to_machine(
+        client, project_id=pid, topic_id=topic_id, machine_id=161, upstream=None
+    )
+
+    body = client.post(
+        "/llm/admission",
+        headers={
+            "Authorization": "Bearer "
+            + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
+        },
+    ).json()["data"]
+    assert "upstream" not in body["supply"]

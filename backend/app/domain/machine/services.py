@@ -11,7 +11,7 @@ looking is correct the next time anyone asks.
 import logging
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +51,14 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
     slug = _HOSTNAME_SAFE.sub("-", project_name.lower()).strip("-")
     slug = slug[:20].strip("-") or "project"
     return f"{slug}-{str(project_id)[:6]}-{index}"
+
+
+# How long a machine may sit at the wrong AI mode before it is enrolled anyway.
+# Long enough that a normal switch (seconds) always wins the race, short enough
+# that a machine whose channel is genuinely stuck still becomes usable compute
+# within one coffee. It trades the per-machine ccproxy identity — a fallback the
+# meter already handles — for never leaving a healthy machine unenrolled.
+ENROLL_SETTLE_GRACE = timedelta(minutes=10)
 
 
 class MachineService:
@@ -408,14 +416,24 @@ class MachineService:
             logger.warning("enrolling machine %s failed: %s", machine.hostname, reason)
             return await self._repo.mark_enroll_failed(machine, error=reason)
 
+        # Read here or never: `mark_enrolled` erases the bootstrap key, so this
+        # is the last moment the platform can look at the machine over ssh.
+        upstream = enrollment.parse_ccproxy_upstream(output)
         logger.info(
-            "enrolled machine %s as device %s: %s",
+            "enrolled machine %s as device %s (ccproxy identity %s): %s",
             machine.hostname,
             device.device_id,
-            enrollment.redact(output, device.token)[-200:],
+            upstream.split(":", 1)[0] if upstream else "not recorded",
+            # The identity's password rides in the same output as the device
+            # token, so it is redacted on the same line rather than one call
+            # later — a log is exactly where a credential must not appear.
+            enrollment.redact(output, device.token, upstream or "")[-200:],
         )
         return await self._repo.mark_enrolled(
-            machine, device_id=device.device_id, when=datetime.now(UTC)
+            machine,
+            device_id=device.device_id,
+            when=datetime.now(UTC),
+            ccproxy_upstream=upstream,
         )
 
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:
@@ -425,7 +443,11 @@ class MachineService:
         which is far too slow to hang a read on, and it must keep happening for a
         machine that became ready while nobody was looking.
         """
-        machines = await self._repo.list_awaiting_enrollment(limit)
+        machines = await self._repo.list_awaiting_enrollment(
+            limit,
+            desired_ai_mode=(settings.microcloud_ai_mode or "").strip().lower(),
+            settle_cutoff=datetime.now(UTC) - ENROLL_SETTLE_GRACE,
+        )
         enrolled = failed = 0
         for machine in machines:
             try:

@@ -171,6 +171,32 @@ def test_unknown_or_absent_supply_falls_back_to_the_subscription():
     assert ok.pool == core.GATEWAY and ok.key == "sk-virt-9"
 
 
+def test_a_half_upstream_identity_is_read_as_none(monkeypatch):
+    """`user:password` is what the ccproxy hop authenticates with. Half of one
+    authenticates as nobody, and the failure would surface as an upstream 407
+    several hops from the control plane that sent it — so it is rejected at the
+    parse, where the source is still obvious. None then means what it always
+    means: fall back to the deployment-wide identity."""
+
+    def answer(supply: dict) -> core.Verdict:
+        captured = json.dumps({"data": {"allow": True, "supply": supply}}).encode()
+
+        class _Resp:
+            def __enter__(self):
+                return io.BytesIO(captured)
+
+            def __exit__(self, *a):
+                return False
+
+        with mock.patch.object(core.urllib.request, "urlopen", return_value=_Resp()):
+            return core._post_admission("http://backend/llm/admission", "tok", 3.0)
+
+    assert answer({"pool": "subscription", "upstream": "m516:pw"}).upstream == "m516:pw"
+    for junk in ("m516:", ":pw", "m516", "", None, 5, ["m516:pw"]):
+        assert answer({"pool": "subscription", "upstream": junk}).upstream is None
+    assert answer({"pool": "subscription"}).upstream is None
+
+
 def test_admission_gate_caches_and_fails_open():
     calls: list[str] = []
 
