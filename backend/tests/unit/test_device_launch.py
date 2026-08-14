@@ -632,6 +632,47 @@ def _reconcile(existing: dict, env: dict) -> dict:
         return json.load(handle)
 
 
+def test_the_pass_through_ticket_comes_from_the_backup_not_the_live_file():
+    """The live file's token is whatever the LAST launch left there, and every
+    launch before the tunnel existed overwrote it with ours. So reading the live
+    file preserves our own stale scoped token and changes nothing — measured
+    2026-08-14, that is exactly what happened. The backup is written once,
+    before anything was overwritten, and is the only place the machine's
+    original ticket survives."""
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        live = f"{tmp}/settings.json"
+        with open(live, "w") as handle:
+            # what a previous launch left: OUR token, not the machine's
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "old.scoped.token"}}, handle)
+        with open(live + ".cheese-orig", "w") as handle:
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "machine-ticket"}}, handle)
+
+        import subprocess
+
+        from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+
+        subprocess.run(
+            ["python3", "-", live],
+            input=CHEESE_SETTINGS_RECONCILE,
+            text=True,
+            capture_output=True,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "CLAUDE_CODE_OAUTH_TOKEN": "our-scoped-token",
+                "HTTPS_PROXY": "http://127.0.0.1:8445",
+                "CHEESE_TUNNEL_URL": "wss://gw/api/llm/tunnel",
+            },
+            check=True,
+        )
+        with open(live) as handle:
+            env = json.load(handle)["env"]
+
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "machine-ticket"
+
+
 def test_the_pass_through_path_keeps_the_machines_own_ticket():
     """On the tunnel the meter forwards the bearer untouched, because ccproxy
     only honours a machine's ticket over that machine's own identity. Asserting
@@ -661,3 +702,16 @@ def test_the_swap_path_still_asserts_our_ticket():
         },
     )
     assert result["env"]["CLAUDE_CODE_OAUTH_TOKEN"] == "our-scoped-token"
+
+
+def test_a_session_born_on_a_different_contract_is_retired():
+    """claude reads settings.json ONCE at startup and a screen is reused across
+    turns, so a shipped change to WHICH ticket it carries reaches the file and
+    never reaches the process. Measured 2026-08-14: the file said one thing and
+    the running claude kept failing on the other, with nothing to indicate why."""
+    script = _launch_with_tunnel()
+    assert "$SESSION.cfg" in script
+    assert 'cksum "$REAL_HOME/.claude/settings.json"' in script
+    # Both reasons retire, and neither is allowed to mask the other.
+    assert "RETIRE=1" in script
+    assert script.count("RETIRE=1") >= 2
