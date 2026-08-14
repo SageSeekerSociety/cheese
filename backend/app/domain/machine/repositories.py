@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.device.models import DeviceTopicRow
 from app.domain.machine.models import (
     MAX_ENROLL_ATTEMPTS,
     AiStatus,
@@ -124,11 +125,21 @@ class ProjectMachineRepository:
         await self._session.flush()
 
     async def mark_enrolled(
-        self, machine: ProjectMachine, *, device_id: str, when: datetime
+        self,
+        machine: ProjectMachine,
+        *,
+        device_id: str,
+        when: datetime,
+        ccproxy_upstream: str | None = None,
     ) -> ProjectMachine:
         machine.device_id = device_id
         machine.enrolled_at = when
         machine.enroll_error = None
+        # Only ever set, never cleared: the bootstrap key is erased below, so a
+        # re-run that came back empty could not recover it, and blanking a known
+        # identity would silently drop the machine back to the shared one.
+        if ccproxy_upstream:
+            machine.ccproxy_upstream = ccproxy_upstream
         # The bootstrap key existed for this one setup; keeping it would leave a
         # standing way into the machine that nobody asked for.
         machine.bootstrap_key = None
@@ -160,6 +171,29 @@ class ProjectMachineRepository:
             .limit(limit)
         )
         return list(result.scalars())
+
+    async def ccproxy_upstream_for_topic(self, topic_id: uuid.UUID) -> str | None:
+        """The ccproxy identity of the machine this topic's turns run on.
+
+        One join rather than two round trips, because the metering proxy asks
+        this on the admission path — the hop every turn already waits on. The
+        chain is topic → pinned device → machine: a topic's work tree and its
+        resumable claude session live on ONE machine, and that pin is write-once
+        (``bind_topic_device``), so the answer is stable for the topic's life.
+
+        None whenever any link is missing — an unpinned topic, a device that is
+        not a MicroCloud machine, a machine enrolled before the identity was
+        recorded. Every one of those means "use the deployment-wide identity",
+        which is the behaviour those turns have today.
+        """
+        return await self._session.scalar(
+            select(ProjectMachine.ccproxy_upstream)
+            .join(DeviceTopicRow, DeviceTopicRow.device_id == ProjectMachine.device_id)
+            .where(
+                DeviceTopicRow.topic_id == topic_id,
+                ProjectMachine.ccproxy_upstream.is_not(None),
+            )
+        )
 
     async def list_ai_mode_mismatch(
         self, desired: str, limit: int

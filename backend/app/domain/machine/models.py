@@ -125,6 +125,24 @@ class ProjectMachine(UuidPk, Timestamps, Base):
     # solely so the platform can perform the one-time bootstrap. Erased the
     # moment enrollment succeeds — it is a means, not an access path we keep.
     bootstrap_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # `user:password` — this machine's identity at ccproxy, as MicroCloud wrote
+    # it into the machine's own ~/.claude/settings.json. The meter presents it
+    # when carrying THIS machine's traffic, because ccproxy scopes its
+    # fake→real ticket swap to the identity the connection authenticated as:
+    # measured 2026-08-14, a ticket issued to m516 replayed over an m161
+    # connection comes back `401 OAuth access token is invalid` with no
+    # request_id, while the same ticket over m516's own connection reaches
+    # Anthropic. Carrying the identity is therefore what lets the machine's own
+    # ticket pass through untouched — the platform never holds a model
+    # credential of its own.
+    #
+    # Read once, during enrollment — the only moment the platform is on the
+    # machine over ssh, since `mark_enrolled` erases the bootstrap key. So a
+    # machine enrolled before this column existed keeps NULL forever, and NULL
+    # is therefore a supported steady state, not a gap to backfill: the meter
+    # falls back to the deployment-wide identity and its old swap, which is
+    # exactly the behaviour that machine has today.
+    ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # When MicroCloud last answered about this machine at all. `updated_at` is
     # not a substitute: it only moves when a field actually changes, so a

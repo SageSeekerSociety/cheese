@@ -31,6 +31,33 @@ supply without restarting its agent. Fail-open has a direction: an unreachable
 control plane falls back to the subscription — the destination this proxy has
 always had — never to a gateway whose per-project key it would not hold.
 
+## Who reaches which listener (and the MicroCloud gap this closed)
+
+Two listeners, because a client's *shape* decides how it can be steered here at
+all:
+
+| Listener | Steered by | Who |
+|---|---|---|
+| `:443` reverse | DNS (`--add-host`) | containers on this box — needs root to write hosts |
+| `:8444` CONNECT | `HTTPS_PROXY` | every bare process: local device screens, **and MicroCloud machines** |
+
+A remote machine has no root, no docker and no `/etc/hosts` to rewrite, so
+CONNECT is its only route. It also cannot set `ANTHROPIC_BASE_URL` instead:
+that flips Claude Code into API-key mode, where it ignores the OAuth token
+entirely — so a subscription turn *must* be steered at the transport layer.
+
+`:8444` used to be pinned to the docker bridge, which is what actually blocked
+remote subscription turns. It was never a routing problem: measured 2026-08-14
+from machine `192.168.31.2`, the box answers on `192.168.16.5:22` while
+`172.17.0.1:8444` does not — the machine shares the box's `/20`, but nothing
+routes to a bridge address. Hence `CONNECT_BIND_HOST` (see `compose.yml`);
+`0.0.0.0` on a box that serves machines, since local screens still use the
+bridge address.
+
+Both halves are needed: this publishes the listener, and the backend's
+`subscription_device_proxy_host` is the address a machine is *told* to use.
+Set one without the other and every launch logs an error naming the missing one.
+
 ## Why the constraints are what they are
 
 - **Transparent**: a subscription's legitimacy rests on the client being Claude
@@ -42,6 +69,11 @@ always had — never to a gateway whose per-project key it would not hold.
   its Bearer. `CHEESE_ALLOW_HEADER_ATTR=1` re-enables the legacy spoofable
   `x-cheese-attr` header and is acceptable ONLY while the proxy is reachable
   solely on the box's own docker bridge.
+- **The CONNECT gate fails closed**: no `CHEESE_SCOPED_SECRET` means every
+  CONNECT is refused (407), not relayed on trust. Now that the bind address is a
+  per-box setting, the dangerous configuration — widened bind, secret forgotten
+  — has nothing about it that looks like a failure, so it must not be one that
+  quietly works. `CHEESE_ALLOW_HEADER_ATTR=1` stays the one explicit opt-out.
 - **Fail-open admission**: an unreachable backend logs and allows. A brake that
   can take the platform down is worse than the overspend it prevents; the token
   cap stays as the deployment-wide backstop.

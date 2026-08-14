@@ -408,14 +408,24 @@ class MachineService:
             logger.warning("enrolling machine %s failed: %s", machine.hostname, reason)
             return await self._repo.mark_enroll_failed(machine, error=reason)
 
+        # Read here or never: `mark_enrolled` erases the bootstrap key, so this
+        # is the last moment the platform can look at the machine over ssh.
+        upstream = enrollment.parse_ccproxy_upstream(output)
         logger.info(
-            "enrolled machine %s as device %s: %s",
+            "enrolled machine %s as device %s (ccproxy identity %s): %s",
             machine.hostname,
             device.device_id,
-            enrollment.redact(output, device.token)[-200:],
+            upstream.split(":", 1)[0] if upstream else "not recorded",
+            # The identity's password rides in the same output as the device
+            # token, so it is redacted on the same line rather than one call
+            # later — a log is exactly where a credential must not appear.
+            enrollment.redact(output, device.token, upstream or "")[-200:],
         )
         return await self._repo.mark_enrolled(
-            machine, device_id=device.device_id, when=datetime.now(UTC)
+            machine,
+            device_id=device.device_id,
+            when=datetime.now(UTC),
+            ccproxy_upstream=upstream,
         )
 
     async def enroll_pending(self, limit: int = 5) -> dict[str, int]:

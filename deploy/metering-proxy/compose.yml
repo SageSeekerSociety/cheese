@@ -1,7 +1,13 @@
 # Subscription metering proxy — the one place the real Claude credential lives.
 #
 # Values come from a box-local .env next to this file (never committed):
-#   CCPROXY_UPSTREAM_AUTH   user:password for the explicit ccproxy hop
+#   CCPROXY_UPSTREAM_AUTH   user:password for the explicit ccproxy hop. NOT
+#                           mitmdump's --upstream-auth any more: that stamps one
+#                           identity onto every upstream connection, and ccproxy
+#                           only honours a machine's ticket over that machine's
+#                           own identity. The addon sets the header per request
+#                           from the admission verdict and uses this as the
+#                           fallback, so the two can never disagree.
 #   CHEESE_UPSTREAM_VIA     e.g. ccproxy-prod.119net.ghg.org.cn:3128
 #   CHEESE_SCOPED_SECRET    = the backend's SANDBOX_TOKEN (rotate together)
 #   CHEESE_ADMISSION_URL    e.g. http://172.17.0.1:8081/llm/admission
@@ -12,16 +18,35 @@
 #                           this box, and such a project is refused.
 #   CHEESE_TOKEN_CAP        rolling-window backstop, 0 = off
 #   CHEESE_ALLOW_HEADER_ATTR  1 ONLY on bridge-only single-host deployments
+#   CONNECT_BIND_HOST       bind address for the CONNECT listener (see below);
+#                           0.0.0.0 on a box that serves MicroCloud machines
 #
-# Published on the docker bridge address only (172.17.0.1): sandboxes reach the
-# reverse listener (:443) by --add-host; bare DEVICE screens (no root, no docker)
-# reach the CONNECT listener (:8444) via HTTPS_PROXY. Exposing either wider
-# requires CHEESE_SCOPED_SECRET so a caller must prove which project to bill
-# before the subscription is spent (#198) — the CONNECT listener additionally
-# demands that token as Proxy-Authorization before it relays anything, and only
-# ever MITMs the Anthropic names (everything else tunnels raw, so device shell
-# tools that honor HTTPS_PROXY but not our CA still work). Publishing 8444 on a
-# device-reachable interface is what remote-device subscription turns wait on.
+# The reverse listener (:443) stays on the docker bridge (172.17.0.1): only
+# sandboxes on this box reach it, and they are steered there by --add-host.
+#
+# The CONNECT listener (:8444) is where every BARE process reaches the meter via
+# HTTPS_PROXY — a local device screen, and (measured 2026-08-14) a MicroCloud
+# machine, which has no root, no docker and no /etc/hosts to steer. Its bind
+# address is therefore a per-box decision, CONNECT_BIND_HOST:
+#
+#   172.17.0.1  (default) local screens only — a remote machine cannot route to
+#               the bridge address even though it CAN route to the box: measured
+#               from machine 192.168.31.2, 192.168.16.5:22 answers while
+#               172.17.0.1:8444 does not. The gap was never routing.
+#   0.0.0.0     boxes whose MicroCloud machines run subscription turns. NOT the
+#               LAN address alone: local screens still reach the bridge address,
+#               so a single bind has to cover both.
+#
+# Widening it is safe because the listener authenticates: it demands a scoped
+# cheese token as Proxy-Authorization before relaying anything (#198), and with
+# no CHEESE_SCOPED_SECRET configured it refuses every CONNECT rather than
+# relaying — so a wider bind cannot silently become an open relay. It also only
+# ever MITMs the Anthropic names; everything else tunnels raw, so device shell
+# tools that honor HTTPS_PROXY but not our CA keep working.
+#
+# The backend half is subscription_device_proxy_host: the address a machine is
+# TOLD to use. Publishing here without setting that leaves machines pointed at
+# the bridge address (the backend logs an error per launch, device_provider.py).
 services:
   metering-proxy:
     image: mitmproxy/mitmproxy:12.1.2
@@ -32,17 +57,17 @@ services:
       --mode reverse:https://api.anthropic.com@8443
       --mode regular@8444
       --ssl-insecure
-      --upstream-auth ${CCPROXY_UPSTREAM_AUTH}
       --set connection_strategy=lazy
       -s /addons/billing_addon.py
     ports:
       - "172.17.0.1:443:8443"
-      - "172.17.0.1:8444:8444"
+      - "${CONNECT_BIND_HOST:-172.17.0.1}:8444:8444"
     environment:
       CHEESE_USAGE_LOG: /var/log/cheese/usage.jsonl
       CHEESE_INJECT_TOKEN: /etc/cheese/secrets/inject.token
       CHEESE_TOKEN_CAP: ${CHEESE_TOKEN_CAP:-0}
       CHEESE_UPSTREAM_VIA: ${CHEESE_UPSTREAM_VIA:-}
+      CHEESE_UPSTREAM_AUTH: ${CCPROXY_UPSTREAM_AUTH:-}
       CHEESE_SCOPED_SECRET: ${CHEESE_SCOPED_SECRET:-}
       CHEESE_ALLOW_HEADER_ATTR: ${CHEESE_ALLOW_HEADER_ATTR:-}
       CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}

@@ -141,6 +141,23 @@ if ! systemctl is-active --quiet cheese; then
   exit 1
 fi
 echo "cheese.service active"
+# The machine's identity at ccproxy, exactly as MicroCloud wrote it into the
+# machine's own settings.json. The meter has to present THIS identity to relay
+# THIS machine's ticket (ccproxy scopes the swap to the authenticated
+# connection), and reading it here costs nothing: we are already on the machine
+# over ssh. Best-effort by design — MicroCloud writes that file when the AI
+# channel settles, which can be after enrollment runs, so a machine that has no
+# file yet is backfilled by the sweep rather than failing to enroll.
+python3 - <<'CHEESE_UPSTREAM_EOF' || true
+import json, os, urllib.parse
+try:
+    env = json.load(open(os.path.expanduser("~/.claude/settings.json")))["env"]
+    parts = urllib.parse.urlsplit(env.get("HTTPS_PROXY") or "")
+except Exception:
+    raise SystemExit(0)
+if parts.username and parts.password:
+    print("CHEESE_CCPROXY_UPSTREAM=%s:%s" % (parts.username, parts.password))
+CHEESE_UPSTREAM_EOF
 """
 
 
@@ -200,6 +217,29 @@ def combine_authorized_keys(*keys: str | None) -> str:
         if cleaned and cleaned not in seen:
             seen.append(cleaned)
     return "\n".join(seen)
+
+
+CCPROXY_UPSTREAM_MARKER = "CHEESE_CCPROXY_UPSTREAM="
+
+
+def parse_ccproxy_upstream(output: str) -> str | None:
+    """The `user:password` the bootstrap read off the machine, or None.
+
+    A marker line rather than a second ssh round trip. None covers every way it
+    can be absent — machine wired for a different supply, AI channel still
+    settling, python missing — because none of those is an enrollment failure;
+    the machine is a perfectly good agent host either way, it just falls back to
+    the deployment-wide upstream until the sweep fills this in.
+    """
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(CCPROXY_UPSTREAM_MARKER):
+            value = stripped[len(CCPROXY_UPSTREAM_MARKER) :].strip()
+            # A bare "user:" or ":password" is not usable as proxy auth, and
+            # storing half a credential would fail later, further from here.
+            head, sep, tail = value.partition(":")
+            return value if (head and sep and tail) else None
+    return None
 
 
 def redact(text: str, *secrets: str) -> str:
