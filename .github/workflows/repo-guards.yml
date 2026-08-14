@@ -19,17 +19,21 @@ name: Repo Guards
 # `.github/workflows/**` is in the path filter because one of the guards judges
 # the workflows themselves (action pinning) — filtering on this file alone would
 # let an unpinned action land in any other workflow without ever running it.
+# `deploy/**` is there for the same reason: the metering-proxy guard judges the
+# deployment config, so a change under deploy/ must be able to trip it.
 on:
   push:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'deploy/**'
       - '.claude/scripts/**'
       - '.github/workflows/**'
   pull_request:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'deploy/**'
       - '.claude/scripts/**'
       - '.github/workflows/**'
 
@@ -58,6 +62,7 @@ jobs:
         run: |
           bash .claude/scripts/check-repo-rules.sh --self-test
           bash .claude/scripts/check-action-pins.sh --self-test
+          bash .claude/scripts/check-metering-proxy.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
 
       - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException)
@@ -70,6 +75,13 @@ jobs:
       # happens to us.
       - name: Actions are pinned to a commit SHA
         run: bash .claude/scripts/check-action-pins.sh
+
+      # The subscription metering proxy's durable credential is a one-year,
+      # non-refreshing setup-token (CODEX findings / #388). This fails the build
+      # if the deploy config reintroduces a refresh command, a login-JSON source,
+      # or a credential-refresh daemon — the mechanisms behind the outage.
+      - name: Metering proxy stays credential-hardened
+        run: bash .claude/scripts/check-metering-proxy.sh
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
       # does not create it. Shallow is enough — only the tree at main's tip is
