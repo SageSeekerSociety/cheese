@@ -40,6 +40,7 @@ import translation from 'zod-i18n-map/locales/zh-CN/zod.json'
 
 import App from './App.vue'
 import { installErrorReporter } from './errorReporter'
+import { registerPwa } from './pwa'
 
 // Plugins
 import { registerPlugins } from '@/plugins'
@@ -73,6 +74,10 @@ installErrorReporter(app)
 
 registerPlugins(app)
 app.mount('#app')
+
+// Register the service worker (offline shell + auto-update). No-op where the
+// browser has no SW support or the build produced none (dev).
+registerPwa()
 
 // Initialize i18next
 i18next.init({

@@ -7,6 +7,7 @@
 import '@xterm/xterm/css/xterm.css'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useEventListener } from '@vueuse/core'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 
@@ -95,6 +96,15 @@ watch(
     connect(sid)
   }
 )
+
+// 有网就自动转出来 (owner spec): if the 现场 socket dropped (a network blip closes
+// it and this read-only viewer has no retry loop by design — offline it simply
+// shows 已断开, and spinning is acceptable), reconnect the moment the network is
+// back. Driving recovery off the online edge means no busy loop can hammer the
+// hub while offline.
+useEventListener(window, 'online', () => {
+  if (status.value === 'closed') connect(props.sid)
+})
 
 onBeforeUnmount(() => {
   ro?.disconnect()

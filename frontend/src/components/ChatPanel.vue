@@ -25,6 +25,7 @@ import type {
 } from '../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useEventListener } from '@vueuse/core'
 
 import {
   answerOptions,
@@ -505,6 +506,20 @@ function openSocket(topicId: string) {
     noteCatchUpFrame()
   }
 }
+
+// 有网就自动转出来 (owner spec): the offline→online transition is our cue to
+// reconnect NOW rather than wait out the backoff, and to refetch history so
+// messages that landed during the outage are pulled in — loadTopic re-runs the
+// history fetch and reopens the socket, and pushBlock dedups the overlap. Guards:
+// a connect refusal is an auth problem, not an outage (leave it latched); a
+// still-healthy socket needs nothing; no active topic, nothing to do.
+function reconnectOnOnline() {
+  if (connectRefused.value || connected.value || !props.topic) return
+  cancelRetry()
+  retryDelayMs = 1000 // recovered → next outage starts backoff fresh
+  void loadTopic(props.topic)
+}
+useEventListener(window, 'online', reconnectOnOnline)
 
 // Append a block unless it's already in the timeline: after a switch-away /
 // return, history (DB) and the broker's in-progress-turn replay overlap, and
