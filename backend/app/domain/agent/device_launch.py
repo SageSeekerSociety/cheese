@@ -295,16 +295,23 @@ python3 "$HOME/.claude/cheese-tunnel.py" \\
   --token-file "$HOME/.claude/cheese-tunnel.token" \\
   >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
 echo $! > "$PIDF"
-i=0
-while [ "$i" -lt 50 ]; do
-  if (exec 3<>/dev/tcp/127.0.0.1/"$CHEESE_TUNNEL_PORT") 2>/dev/null; then
-    exec 3<&- 2>/dev/null || true
-    exit 0
-  fi
-  i=$((i + 1))
-  sleep 0.1
-done
-exit 1
+# The readiness check runs in python3, NOT with bash's /dev/tcp: this script is
+# invoked as `sh`, /bin/sh is dash on the machine images, and dash has no
+# /dev/tcp — the redirect fails on EVERY iteration, so the loop would spend its
+# whole budget and then report "not ready" for a helper that came up fine.
+# python3 is not an extra dependency here; the helper itself is written in it.
+python3 - "$CHEESE_TUNNEL_PORT" <<'WAITPY'
+import socket, sys, time
+port = int(sys.argv[1])
+deadline = time.monotonic() + 5.0
+while time.monotonic() < deadline:
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=0.2).close()
+        raise SystemExit(0)
+    except OSError:
+        time.sleep(0.1)
+raise SystemExit(1)
+WAITPY
 """
 
 

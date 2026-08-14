@@ -563,8 +563,12 @@ def test_the_helper_starts_inside_the_session_and_before_claude():
     script = _launch_with_tunnel()
     assert "$TUP $DRAINCMD & exec $CLAUDE" in script
     assert 'TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"' in script
-    # The wait itself, in the up-script.
-    assert "/dev/tcp/127.0.0.1/" in script
+    # The wait itself, in the up-script — and NOT via bash's /dev/tcp: this runs
+    # under `sh`, which is dash on the machine images, where that redirect fails
+    # on every iteration and the loop would report "not ready" for a helper that
+    # came up fine (verified on the real image: `cannot create /dev/tcp/...`).
+    assert "/dev/tcp/" not in script
+    assert 'python3 - "$CHEESE_TUNNEL_PORT"' in script
 
 
 def test_a_deployment_without_a_tunnel_writes_and_runs_none_of_it():
