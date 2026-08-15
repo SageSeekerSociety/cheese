@@ -517,6 +517,83 @@ def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(
     assert fake.merge_calls == []
 
 
+def test_closed_unmerged_pr_stops_the_accept(client, app_world):
+    """PR 在 GitHub 上被关掉且没合并 —— forge 说了不。采纳停下亮出来，绝不把被
+    否掉的改动本地合并直推上游。"""
+    fake = app_world["fake"]
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+
+    original = FakeGitHubPrClient.pull_request_status
+
+    async def _closed(self, *, owner, repo, number, token):
+        fake.close_unmerged(number)
+        return await original(self, owner=owner, repo=repo, number=number, token=token)
+
+    fake.pull_request_status = _closed.__get__(fake, FakeGitHubPrClient)
+
+    r = _accept(client, cid)
+    assert r.status_code == 422
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert "关闭" in card["note"]
+    assert app_world["local_merges"] == []
+    assert fake.merge_calls == []
+    assert _topic(client, tid)["status"] == "active"
+
+
+def test_legacy_prless_card_gets_its_pr_opened_then_waits(client, app_world):
+    """存量无 PR 卡（在 App 那条路上线之前就 pending 的）采纳时现场补开 PR ——
+    补开之后同样是等 CI，而不是补开完立刻合。"""
+    tid, cid, number, _head = _authorized(client, app_world)
+
+    assert len(app_world["opened"]) == 1
+    assert app_world["opened"][0]["head"].startswith("topic/")
+    assert app_world["fake"].merge_calls == []
+    assert app_world["local_merges"] == []
+    assert _cards(client, tid)[0]["status"] == "pr_open"
+    assert _topic(client, tid)["status"] == "active"
+
+
+def test_pr_open_failure_stops_the_accept_and_lands_on_the_card(client, app_world):
+    """开 PR 失败（推分支被拒）→ 采纳停下（422），原因亮在卡上，卡保持 pending，
+    main 一个直推都收不到。人处理后重试，同一张卡走通。"""
+    from app.core.errors import ValidationError
+    from app.domain.workspace import service as ws
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+
+    good_push = ws.push_topic_branch
+
+    def _rejected(pid_, tid_, token):
+        raise ValidationError("git push failed: ! [remote rejected] topic/abcd")
+
+    ws.push_topic_branch = _rejected
+    try:
+        r = _accept(client, cid)
+    finally:
+        ws.push_topic_branch = good_push
+
+    assert r.status_code == 422
+    assert "无法为这张卡开 PR" in r.json()["message"]
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["note"].startswith("⚠️ 采纳未完成：无法为这张卡开 PR")
+    assert "remote rejected" in card["note"]
+    assert app_world["local_merges"] == []
+    assert app_world["fake"].merge_calls == []
+    assert _topic(client, tid)["status"] == "active"
+
+    # 原因消失后，同一张卡走通 —— 走到等 CI，不是走到已合并。
+    r = _accept(client, cid)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["status"] == "pr_open"
+    assert app_world["fake"].merge_calls == []
+
+
 def test_pr_already_merged_on_github_is_taken_as_the_accept(
     client, app_world, monkeypatch
 ):
