@@ -47,7 +47,8 @@ import {
 } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
 import { myHandle } from '../me'
-import { avatarColor } from '../utils/avatar'
+import { avatarColor, avatarInitial } from '../utils/avatar'
+import { getAvatarUrl } from '../utils/materials'
 
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
@@ -779,8 +780,32 @@ const splitMarkers = computed(() =>
 )
 
 // ---- Feishu group-chat helpers (Fix 2) ----
+// handle → 名册行。**不要**改用 mentionNames：那张表额外塞了 all/here 两个保留
+// 键（渲染成「所有人」「在线成员」），一个恰好叫 all 的用户会被显示成「所有人」。
+const memberByHandle = computed(() => {
+  const map = new Map<string, ProjectMemberRow>()
+  for (const row of props.members) map.set(row.user_handle, row)
+  return map
+})
+// 消息里存的 author 是登录身份的 handle（后端有意固定成这个，防伪造），所以
+// 「显示成昵称」只能在这里做：查名册，查不到（退出项目的人、anonymous 兜底
+// 作者）就把 handle 原样显示出来。
 function displayName(m: Block): string {
-  return m.author_type === 'ai' ? '芝士' : m.author
+  if (m.author_type === 'ai') return '芝士'
+  return memberByHandle.value.get(m.author)?.name || m.author
+}
+// 真头像加载失败过的 handle —— 退回彩色首字母，不留破图。
+const avatarBroken = ref<Set<string>>(new Set())
+function avatarSrc(handle: string): string | null {
+  if (avatarBroken.value.has(handle)) return null
+  const id = memberByHandle.value.get(handle)?.avatar_id
+  // 名册上没这个人、或这行没有头像时返回 null：宁可留一个按 handle 哈希、认得出
+  // 是谁的色块，也不要 getAvatarUrl(undefined) 给陌生人配一张 /avatars/default。
+  return id == null ? null : getAvatarUrl(id)
+}
+function onAvatarError(handle: string): void {
+  if (avatarBroken.value.has(handle)) return
+  avatarBroken.value = new Set(avatarBroken.value).add(handle)
 }
 function fmtTime(iso: string): string {
   // Local HH:mm next to the name on the first of a run (not raw UTC).
@@ -1150,8 +1175,18 @@ onBeforeUnmount(() => {
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
                   <CheeseAvatar v-if="m.author_type === 'ai'" :size="28" />
+                  <!-- 真头像；取不到或加载失败退回按 handle 哈希的彩色首字母。
+                     底色的种子继续用 handle（换成昵称会让每个人的颜色都变）,
+                     变的只有色块里的字。 -->
+                  <img
+                    v-else-if="avatarSrc(m.author)"
+                    class="im-avatar im-avatar--photo"
+                    :src="avatarSrc(m.author)!"
+                    :alt="displayName(m)"
+                    @error="onAvatarError(m.author)"
+                  />
                   <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(m.author) }">
-                    {{ m.author.slice(0, 1).toUpperCase() }}
+                    {{ avatarInitial(displayName(m)) }}
                   </div>
                 </template>
               </div>
@@ -1696,6 +1731,11 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 600;
   border-radius: 8px;
+}
+/* 真头像：同一个 28px 方槽，图片裁进去，不撑变消息行。 */
+.im-avatar--photo {
+  object-fit: cover;
+  background: var(--fill);
 }
 .im-main {
   min-width: 0;
