@@ -132,20 +132,30 @@ class ProjectRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def list_members(self, project_id: uuid.UUID) -> list[dict]:
-        """Project roster: each member's handle, display name, and role — used to
-        inject 芝士's teammate context and to resolve @mentions to a handle."""
+        """Project roster: each member's handle, display name, avatar and role —
+        used to inject 芝士's teammate context, to resolve @mentions to a handle,
+        and to render a member's real avatar in the chat panel."""
         # Display name lives on UserProfile.nickname (main's User has only
         # username); join both, keyed by handle == username (fusion identity).
+        # ``avatar_id`` rides along from the same profile row: the column is NOT
+        # NULL, so it is None here only when the outer join found no profile
+        # (a handle with no fusion user behind it) — the caller renders the
+        # colored-initial fallback for exactly that case.
         stmt = (
-            select(ProjectMember.user_handle, ProjectMember.role, UserProfile.nickname)
+            select(
+                ProjectMember.user_handle,
+                ProjectMember.role,
+                UserProfile.nickname,
+                UserProfile.avatar_id,
+            )
             .join(User, User.username == ProjectMember.user_handle, isouter=True)
             .join(UserProfile, UserProfile.user_id == User.id, isouter=True)
             .where(ProjectMember.project_id == project_id)
         )
         rows = (await self._session.execute(stmt)).all()
         return [
-            {"handle": h, "role": str(role), "name": name or h}
-            for (h, role, name) in rows
+            {"handle": h, "role": str(role), "name": name or h, "avatar_id": avatar_id}
+            for (h, role, name, avatar_id) in rows
         ]
 
     async def list_projects_for_task(self, task_id: uuid.UUID) -> list[ProjectTaskLink]:

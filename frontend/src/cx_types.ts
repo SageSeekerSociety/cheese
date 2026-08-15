@@ -199,11 +199,14 @@ export interface ProjectMember {
   role: string
 }
 
-// GET /api/projects/{id}/members → {data:[{user_handle, role, name}], total}
+// GET /api/projects/{id}/members → {data:[{user_handle, role, name, avatar_id}], total}
 export interface ProjectMemberRow {
   user_handle: string
   role: string
   name?: string
+  // 头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。名册行背后没有 fusion 用户
+  // 档案时为 null —— 那种情况用彩色首字母兜底，不要去取 /avatars/default。
+  avatar_id?: number | null
   // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
   // execution binding — never from the handle string, which differs per topic.
   agent?: boolean
