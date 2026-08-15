@@ -268,7 +268,9 @@ def test_gate_result_lands_as_one_line_event(
     client, monkeypatch, tmp_path, exit_code, event_type, expect_in_line
 ):
     output = "".join(f"E   assert {i} == {i + 1}\n" for i in range(200))
-    call = _run_retired_gate(client, monkeypatch, tmp_path, exit_code=exit_code, tail=output)
+    call = _run_retired_gate(
+        client, monkeypatch, tmp_path, exit_code=exit_code, tail=output
+    )
 
     assert "\n" not in call["nudge_event"]
     assert len(call["nudge_event"]) <= 40
