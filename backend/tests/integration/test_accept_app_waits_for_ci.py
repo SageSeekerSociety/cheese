@@ -137,6 +137,10 @@ def app_world(monkeypatch):
         pr_publish, "github_app_tokens_for_project", _tokens_for_project
     )
     monkeypatch.setattr(pr_publish, "GitHubPRClient", _AppPrOpener)
+    # 递卡那一刻的 fire-and-forget 开 PR 在这里是噪音，而且是竞态源：它跟采纳
+    # 现场补开的那次谁先谁后不确定，会让「开了几个 PR」这类断言随机翻。默认关掉，
+    # 于是「卡上有没有 PR」由每个测试自己决定（见 _give_card_a_pr）。
+    monkeypatch.setattr(pr_publish, "dispatch", lambda *a, **kw: None)
 
     monkeypatch.setattr(ws, "get_upstream", lambda pid: f"https://github.com/{REPO}")
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid, tid: True)
@@ -175,6 +179,29 @@ def app_world(monkeypatch):
         yield recorded
     finally:
         github_pr.set_default_client(None)
+
+
+def _give_card_a_pr(client, app_world, topic_id: str, card_id: str, number: int = 7):
+    """把卡做成「递卡时 PR 就已经开好了」的样子 —— 生产上的常态（`pr_publish`
+    在卡转 pending 时就 fire-and-forget 开了 PR）。"""
+    import asyncio
+    import uuid
+
+    from app.domain.review.repositories import AcceptCardRepository
+
+    branch = f"topic/{uuid.UUID(topic_id).hex[:8]}"
+    app_world["fake"].seed_pr(number, head=branch)
+
+    async def _do() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(card_id))
+            assert card is not None
+            card.pr_number = number
+            card.pr_url = f"https://github.com/{REPO}/pull/{number}"
+            await session.commit()
+
+    asyncio.run(_do())
+    return branch
 
 
 def _authorized(client, app_world) -> tuple[str, str, int, str]:
@@ -554,6 +581,31 @@ def test_legacy_prless_card_gets_its_pr_opened_then_waits(client, app_world):
     assert app_world["local_merges"] == []
     assert _cards(client, tid)[0]["status"] == "pr_open"
     assert _topic(client, tid)["status"] == "active"
+
+
+def test_card_that_already_rides_a_pr_waits_too(client, app_world):
+    """生产上的常态：递卡时 PR 就已经开好了。采纳照样只是授权，不重开 PR，
+    也不合并。"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    branch = _give_card_a_pr(client, app_world, tid, cid, number=7)
+
+    r = _accept(client, cid)
+    assert r.status_code == 200, r.text
+    card = r.json()["data"]
+    assert card["status"] == "pr_open"
+    assert card["pr_number"] == 7
+    assert card["pr_repo"] == REPO
+    assert app_world["opened"] == []  # 没有重开
+    assert app_world["fake"].merge_calls == []
+    assert _topic(client, tid)["status"] == "active"
+
+    # 并且它真的可轮询：转绿就合。
+    app_world["fake"].check_state_by_sha[f"sha-{branch}-1"] = ("success", "全部通过")
+    _poll(client)
+    assert [m["number"] for m in app_world["fake"].merge_calls] == [7]
+    assert _topic(client, tid)["status"] == "archived"
 
 
 def test_pr_open_failure_stops_the_accept_and_lands_on_the_card(client, app_world):
