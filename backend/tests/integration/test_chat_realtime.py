@@ -214,14 +214,22 @@ async def test_error_result_never_becomes_cheeses_reply(client, tmp_path):
     kinds = [f["type"] for f in frames]
     assert "assistant_block" not in kinds  # the raw provider text is NOT 芝士 speaking
     err = next(f for f in frames if f["type"] == "error")
-    assert err["persisted"] is True and "session limit" in err["message"]
+    # The transient frame carries the same one line the room got; the provider's
+    # own words live in the persisted block's meta (see below).
+    assert err["persisted"] is True and "额度用完了" in err["message"]
     ev = next(f for f in frames if f["type"] == "event_block")
     assert ev["block"]["author"] == "system"
-    # Structured rate-limit → platform wording with the reset in 北京时间,
-    # raw provider text quoted for the record.
+    # Structured rate-limit → platform wording with the reset in 北京时间.
     assert "额度用完了" in ev["block"]["content"]
     assert "北京时间 08-12 20:00" in ev["block"]["content"]
-    assert "服务原话" in ev["block"]["content"]
+    # 平台提示统一契约: 服务原话不再拼进正文（那让一条朴素系统行动辄七八行），
+    # 它原样躺在 meta.detail 里等人展开 —— 信息不能丢，只能收起来。
+    assert "服务原话" not in ev["block"]["content"]
+    meta = ev["block"]["meta"]
+    assert meta["event_type"] == "turn_failed"
+    # 座位限流会自动续跑，所以这条是"平台自愈"，不需要人管。
+    assert meta["who"] == "platform"
+    assert "session limit" in meta["detail"]
 
     # Persisted state: user message + the system event, no cheese message.
     from app.domain.block.repositories import BlockRepository
@@ -231,6 +239,57 @@ async def test_error_result_never_becomes_cheeses_reply(client, tmp_path):
     authors = [(b.author, b.kind.value) for b in rows]
     assert ("cheese", "message") not in authors
     assert ("system", "event") in authors
+
+
+@pytest.mark.anyio
+async def test_unclassified_failure_still_gets_meta_and_hides_the_raw_words(
+    client, tmp_path
+):
+    """本卡修的那个根因：`classify_platform_failure()` 没命中就**一个结构化字段
+    都没有**，于是最常见的几条（AI 接口错误 / 余额用尽 / 座位限流）全都退化成
+    「朴素系统行 + 整段原话」。
+
+    现在：没命中也照样产出 `turn_failed` 的 meta，正文只留一行，原话原样躺在
+    `meta.detail` 里。"""
+    factory = client.test_factory  # type: ignore[attr-defined]
+    raw = "upstream connect error or disconnect/reset before headers. reset reason: overflow"
+    svc = ChatService(
+        session_factory=factory,
+        # 400 不在任何一条分类规则里 —— 这正是要测的"没命中"。
+        agent=LimitAgent(api_error_status=400),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P2", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T2", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    frames = [
+        f
+        async for f in svc.converse(
+            topic_id=topic_id, author="u", content="做点事", summon=True
+        )
+    ]
+    ev = next(f for f in frames if f["type"] == "event_block")
+    block = ev["block"]
+    assert block["author_type"] == "system" and block["kind"] == "event"
+    # 一行，而且原话不在里面。
+    assert "\n" not in block["content"]
+    assert "服务原话" not in block["content"]
+    assert "session limit" not in block["content"]
+    assert "HTTP 400" in block["content"]
+    # 原话一字不差取得回来 —— 它没有第二个副本，丢了就真丢了。
+    meta = block["meta"]
+    assert meta["event_type"] == "turn_failed"
+    assert meta["severity"] == "error"
+    # 400 没有自动续跑，得有人再 @ 它。
+    assert meta["who"] == "human"
+    assert "session limit" in meta["detail"]
+    assert meta["detail_label"] == "详细说明"
 
 
 class StorageFullAgent(AgentService):
@@ -298,9 +357,18 @@ async def test_storage_exhaustion_is_a_persistent_platform_event(client, tmp_pat
         "severity": "error",
         "title": "运行环境存储空间不足",
         "retryable": True,
+        # 平台提示统一契约: 卡面留一句，解释性的那几句收进 detail 由前端折叠。
+        "detail": (
+            "项目文件和已完成的改动都还在。平台正在清理临时空间，"
+            "请稍后再 @芝士 继续；若持续出现，请联系管理员。"
+        ),
+        "detail_label": "详细说明",
     }
-    assert "项目文件和已完成的改动都还在" in event["block"]["content"]
+    # 卡面是一句话；「已完成的改动都还在」这条信息没丢，它在展开区里。
+    assert event["block"]["content"].count("。") == 1
+    assert "项目文件和已完成的改动都还在" in event["block"]["meta"]["detail"]
     assert "/home/nictheboy" not in event["block"]["content"]
+    assert "/home/nictheboy" not in event["block"]["meta"]["detail"]
     error = next(frame for frame in frames if frame["type"] == "error")
     assert error == {
         "type": "error",

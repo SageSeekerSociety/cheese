@@ -252,6 +252,7 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
     class _Hang:
         def __init__(self) -> None:
             self.posted: str | None = None
+            self.posted_meta: dict | None = None
 
         async def converse(self, **_):
             yield {"type": "user_block"}
@@ -263,8 +264,9 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
             await asyncio.sleep(10)  # wedge, well past the 1s ceiling
             yield {"type": "done"}  # pragma: no cover
 
-        async def post_system_event(self, topic_id, content, turn_id=None):
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
             self.posted = content
+            self.posted_meta = meta
             return {"id": "b1", "kind": "event", "content": content}
 
     svc = _Hang()
@@ -277,7 +279,10 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
                 break
     assert svc.posted is not None
     assert "1秒的上限" in svc.posted
-    assert "实际跑了约" in svc.posted
+    # 平台提示统一契约: 房间里一行，"实际跑了约 N 秒"收进 meta.detail 由前端折叠。
+    assert svc.posted_meta is not None
+    assert svc.posted_meta["event_type"] == "turn_timeout"
+    assert "实际跑了约" in svc.posted_meta["detail"]
 
 
 @pytest.mark.anyio
@@ -293,6 +298,7 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
     class _Hang:
         def __init__(self) -> None:
             self.posted: str | None = None
+            self.posted_meta: dict | None = None
 
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 2.0}
@@ -303,8 +309,9 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
             await asyncio.sleep(10)  # wedge, well past the rescheduled 2s
             yield {"type": "done"}  # pragma: no cover
 
-        async def post_system_event(self, topic_id, content, turn_id=None):
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
             self.posted = content
+            self.posted_meta = meta
             return {"id": "b1", "kind": "event", "content": content}
 
     svc = _Hang()
@@ -382,13 +389,15 @@ async def test_turn_failure_lands_in_the_timeline():
     class _Boom:
         def __init__(self) -> None:
             self.posted: str | None = None
+            self.posted_meta: dict | None = None
 
         async def converse(self, **_):
             raise RuntimeError("kaboom")
             yield  # pragma: no cover — makes this an async generator
 
-        async def post_system_event(self, topic_id, content, turn_id=None):
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
             self.posted = content
+            self.posted_meta = meta
             return {"id": "b1", "kind": "event", "content": content}
 
     svc = _Boom()
@@ -488,7 +497,7 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
             yield {"type": "assistant_block", "block": {"id": "a"}}
             yield {"type": "done"}
 
-        async def post_system_event(self, topic_id, content, turn_id=None):
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
             return {"id": "sys", "kind": "event", "content": content}
 
     svc = _Svc()
@@ -563,9 +572,13 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     class _Chat:
         def __init__(self):
             self.events: list[tuple[uuid.UUID, str]] = []
+            self.notices: list[tuple[uuid.UUID, str]] = []
 
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             self.events.append((topic_id, text))
+            # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在
+            # `meta.detail` —— 想断言"提示里说了什么"就得把两半都算上。
+            self.notices.append((topic_id, text + ((meta or {}).get("detail") or "")))
             return {"id": "b1", "content": text}
 
         async def orphan_turn_evidence(self, topic_id, turn_ids):
@@ -584,7 +597,7 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     # refuse to touch. A dropped turn that says nothing is what made a dead
     # topic look exactly like a working one.
     assert len(chat.events) == 3
-    dropped = [text for tid, text in chat.events if tid != topic]
+    dropped = [text for tid, text in chat.notices if tid != topic]
     assert len(dropped) == 2
     assert all("@ 芝士" in text for text in dropped)
     # registry cleared: a second sweep is a no-op
@@ -637,7 +650,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
     )
 
     class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
         async def orphan_turn_evidence(self, topic_id, turn_ids):
@@ -672,7 +685,7 @@ async def test_periodic_sweep_ignores_a_just_started_turn(tmp_path, monkeypatch)
     runner = TurnRunner(InProcessBroker())
 
     class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             raise AssertionError("a just-started turn must not be touched")
 
     assert await runner.sweep_orphans(_Chat()) == 0
@@ -713,9 +726,13 @@ async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
     class _Chat:
         def __init__(self):
             self.texts: list[str] = []
+            # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在
+            # `meta.detail` —— 断言"提示里说了什么"要把两半都算上。
+            self.notices: list[str] = []
 
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             self.texts.append(text)
+            self.notices.append(text + ((meta or {}).get("detail") or ""))
             return {"id": "b1", "content": text}
 
         async def orphan_turn_evidence(self, topic_id, turn_ids):
@@ -725,7 +742,7 @@ async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
     assert await runner.sweep_orphans(chat) == 0  # not resumed...
     assert len(chat.texts) == 1  # ...but not silent either
     assert "173" in chat.texts[0]  # says how long it has been dead
-    assert "@ 芝士" in chat.texts[0]  # says what the human can do
+    assert "@ 芝士" in chat.notices[0]  # says what the human can do
     assert rt._load_inflight() == {}  # claimed, so it is not re-announced
     assert [f["type"] for f in seen] == ["event_block"]  # pushed to the UI live
 
@@ -797,9 +814,13 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
     class _Chat:
         def __init__(self):
             self.texts: list[str] = []
+            # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在
+            # `meta.detail` —— 断言"提示里说了什么"要把两半都算上。
+            self.notices: list[str] = []
 
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             self.texts.append(text)
+            self.notices.append(text + ((meta or {}).get("detail") or ""))
             return {"id": "b1", "content": text}
 
     chat = _Chat()
@@ -810,7 +831,7 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
     assert task.cancelled() or task.cancelling()  # the zombie no longer holds the lock
     assert len(chat.texts) == 1
     assert "卡死" in chat.texts[0]  # says HOW it died, not just that it did
-    assert "@ 芝士" in chat.texts[0]
+    assert "@ 芝士" in chat.notices[0]
     assert rt._load_inflight() == {}
 
 
@@ -844,7 +865,7 @@ async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch)
         return {topic: datetime.now(UTC) - timedelta(hours=4)}  # DB says silent
 
     class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             raise AssertionError("a turn that is still emitting frames is alive")
 
     assert await runner.sweep_orphans(_Chat(), last_activity=_last_block) == 0
@@ -882,7 +903,7 @@ async def test_sweep_spares_live_turns_when_the_activity_probe_fails(
         raise RuntimeError("PG is down")
 
     class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             raise AssertionError("no verdict may be reached without evidence")
 
     assert await runner.sweep_orphans(_Chat(), last_activity=_boom) == 0
@@ -926,7 +947,7 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
         return {topic: datetime.now(UTC) - timedelta(seconds=2700)}
 
     class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
     assert await runner.sweep_orphans(_Chat(), last_activity=_last_block) == 1
@@ -983,7 +1004,7 @@ async def test_sweep_keeps_a_turn_that_registered_while_it_was_probing(
         return {dead_topic: datetime.now(UTC) - timedelta(hours=8)}
 
     class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
     await runner.sweep_orphans(_Chat(), last_activity=_last_block)
@@ -1085,7 +1106,7 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
         return {topic: datetime.now(UTC) - timedelta(hours=8)}
 
     class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None):
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
     await runner.sweep_orphans(_Chat(), last_activity=_last_block)
