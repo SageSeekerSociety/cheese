@@ -1,7 +1,15 @@
 # Accepting a card is merging its pull request
 
-Status: design, not yet implemented. Supersedes constraint 4 of
-`docs/topics/两阶段采纳-PR迭代式实现.md` — see "The decision this reverses".
+Status: partly implemented, and one rule below was overruled after it was
+written. PR-first is on (`accept_via_pr` defaults to `True`,
+`core/config.py:470`) and the gate is retired (`review/gate.py` is no longer
+dispatched). Not done: `project.settings.check_command` still exists, and the
+card states in "Card states" were never built — the shipped path runs
+`pending → pr_open → accepted` (`review/models.py`, `AcceptStatus`). Overruled:
+the deploy-gated archive, removed by #206 — see "What is kept".
+
+Supersedes constraint 4 of `docs/topics/两阶段采纳-PR迭代式实现.md` — see "The
+decision this reverses".
 
 ## The one sentence
 
@@ -42,7 +50,8 @@ Three things follow from that ordering, and all three are load-bearing problems:
 A second mechanism already implements the right ordering — a card turning
 `pending` opens its PR immediately using the **App's** installation token
 (`review/pr_publish.py`, #195) — but it ships dark behind `accept_via_pr`,
-which has been `False` since it landed and has never been switched on.
+which was `False` when this was written. It has since been switched on
+(`core/config.py:470`).
 
 ## Target
 
@@ -53,7 +62,7 @@ which has been `False` since it landed and has never been switched on.
          → CI runs whatever .github/workflows declares
             → the card's state mirrors the PR's
                → 采纳 = call the merge API                      only when green
-                  → watch the deploy workflow → archive the topic
+                  → archive the topic
 ```
 
 ### Principles
@@ -83,7 +92,7 @@ reconciles. A local state that disagrees with the forge is always wrong.
 | `checks_pending` | PR is open, checks have not concluded | checks conclude |
 | `checks_failed` | a required check is red | 芝士 pushes a fix → `checks_pending` |
 | `ready` | the forge says it is mergeable | 采纳 → `merged`; close → `closed` |
-| `merged` | merged; the deploy workflow is being watched | deploy succeeds → topic archived |
+| `merged` | merged | topic archived |
 | `closed` | PR closed without merging | terminal |
 
 `pending_gate`, `gate_failed` and `conflict` are removed. Existing rows keep
@@ -104,8 +113,8 @@ iteration is. A card never opens a second PR; if the PR is closed, the card is
 closed and 芝士 files a new one.
 
 **Someone acts on GitHub directly.** The poller reconciles rather than fights:
-merged there → `merged` here, and the deploy watch proceeds; closed there →
-`closed` here, the topic stays active and 芝士 is told.
+merged there → `merged` here; closed there → `closed` here, the topic stays
+active and 芝士 is told.
 
 **A project with no connected forge.** The card is created `open_failed` with
 that reason, and 采纳 falls back to the local merge that exists today. This is
@@ -131,11 +140,20 @@ repository's decision to make, not the platform's to override.
 
 ## What is kept
 
-`PrPollRunner`, `_nudge_pr_fix` (a red check wakes 芝士 to fix it, deduplicated
-per commit), and the rule that a topic is archived only after the deploy
-workflow reaches completed+success. That last one was decided on evidence —
-merges whose deploy was silently cancelled — and the new ordering does not
-touch it.
+`PrPollRunner` and `_nudge_pr_fix` (a red check wakes 芝士 to fix it,
+deduplicated per commit).
+
+This paragraph used to also keep the rule that a topic is archived only after
+the deploy workflow reaches completed+success. **That rule was removed by #206
+and is not kept.** Merged is a fact about git that holds for every project,
+while "deployed" is a per-project ops concept the platform was in no position to
+define; cards then waited on deploy runs that were sometimes never created at
+all — three real merges on main on 2026-08-11 produced zero runs, which is a
+deadlock rather than a safeguard. The shipped code archives on merge with no
+deploy wait: `review/services.py::_finish_pr_accept`. Watching the deploy is
+real work and it keeps a home — the webhook primitive (`POST /webhooks/{topic_id}`,
+`api/routes/webhooks.py`) lets a pipeline post its outcome into the topic, and
+#190's ops room is where that judgment belongs.
 
 ## The decision this reverses
 
@@ -161,7 +179,7 @@ anything the previous step has not already replaced.
    `accept_via_pr` would run both at once — the existing design note warns about
    exactly that.
 2. **Turn on PR-first on dev and drive a full round**: file a card → PR opens →
-   CI runs → merge → deploy → topic archived. Nothing is deleted yet, so this is
+   CI runs → merge → topic archived. Nothing is deleted yet, so this is
    reversible by flipping the flag back.
 3. **Retire the gate** once step 2 has run clean, taking #286's machinery with
    it and clearing `check_command`.
