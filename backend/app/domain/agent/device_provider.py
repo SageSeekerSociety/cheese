@@ -415,7 +415,15 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             factory = async_session_factory
         async with factory() as session:
             device = await sql_device_service(session).get_device(device_id)
-        return (getattr(device, "ccproxy_upstream", None) or "").strip()
+        if device is None:
+            return ""
+        # Direct attribute access, not getattr-with-default: this field was added
+        # to the model but not the domain dataclass at first, and a
+        # getattr(..., None) fallback turned that gap into a silent "" — the
+        # signal was never sent and the box looped on the swap path. A missing
+        # field must now be an AttributeError at the first turn, not a quiet
+        # miss (2026-08-15).
+        return (device.ccproxy_upstream or "").strip()
 
     def _work_dir(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, *, co_located: bool
