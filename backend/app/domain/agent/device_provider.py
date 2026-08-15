@@ -566,7 +566,15 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
-        home_dir = f"$HOME/.cheese/home/{project_id}"
+        # The home MUST be per topic, not per project: every hook event lands in
+        # a spool under $HOME/.claude, and the drainer ships that spool with the
+        # hook URL + token in $HOME/.claude/cheese-drain.env — which every screen
+        # start overwrites (deliberately, so a rotated ticket reaches a long-lived
+        # screen). With a project-shared home, all concurrent screens spool into
+        # one dir and the drainer delivers everything to whichever session started
+        # last: its topic swallows every screen's events while the other topics'
+        # turns show zero output.
+        home_dir = f"$HOME/.cheese/home/{project_id}/{topic_id}"
         co_located = await self._is_co_located(device_id)
         # checkpoint() runs after the turn, from a caller that has no device in
         # hand — remember what this device is, or the snapshot decision falls back
