@@ -600,3 +600,27 @@ def test_a_scoped_caller_with_no_admission_still_gets_the_platform_credential(
 
     assert flow.response is None
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
+
+
+def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_path):
+    """Admission resolves an identity only for a turn it is ALLOWING, so a
+    refused project also arrives here with no identity — and would be reported
+    as the box being misconfigured, sending whoever reads it to the wrong file.
+    The refusal has to name the balance."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.allow = False
+    verdict.reason = "budget spent: 10.0000 of 10.0000"
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _machine_flow(conn="c1")
+
+    asyncio.run(mod.request(flow))
+
+    assert flow.response is not None and flow.response.status_code == 429
+    assert b"budget" in flow.response.content
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"

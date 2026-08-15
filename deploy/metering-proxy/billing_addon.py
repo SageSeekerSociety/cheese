@@ -488,6 +488,18 @@ async def request(flow: http.HTTPFlow) -> None:
     # configured" — an unset env var looks exactly like a working one. Refusing
     # here turns that into one line that names the missing piece.
     if carries_own_credential:
+        if verdict is not None and not verdict.allow:
+            # An exhausted budget also produces no identity (admission only
+            # resolves one for a turn it is allowing), so it would otherwise be
+            # reported as the misconfiguration below — pointing whoever reads it
+            # at the box's env instead of at the project's balance.
+            _refuse(
+                flow,
+                429,
+                "rate_limit_error",
+                f"cheese project budget: {verdict.reason}",
+            )
+            return
         _refuse(
             flow,
             503,
