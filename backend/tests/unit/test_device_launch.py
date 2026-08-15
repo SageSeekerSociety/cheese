@@ -914,3 +914,86 @@ def test_a_co_located_device_with_its_own_identity_keeps_its_ticket():
 
     assert kept == "boxes-own-ticket"
     assert handed == "boxes-own-ticket"
+
+
+def _reconcile_with_credentials(
+    live_token: str, creds_token: str | None, backup_token: str | None, *, signal: str
+) -> str:
+    """Reconcile with a `.credentials.json` beside the settings file, returning
+    the token it left. `signal` picks the gate env var (tunnel vs co-located)."""
+    import json
+    import subprocess
+    import tempfile
+
+    from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+
+    with tempfile.TemporaryDirectory() as tmp:
+        live = f"{tmp}/settings.json"
+        with open(live, "w") as handle:
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": live_token}}, handle)
+        backup_env: dict = {}
+        if backup_token is not None:
+            backup_env["CLAUDE_CODE_OAUTH_TOKEN"] = backup_token
+        with open(live + ".cheese-orig", "w") as handle:
+            json.dump({"env": backup_env}, handle)
+        if creds_token is not None:
+            with open(f"{tmp}/.credentials.json", "w") as handle:
+                json.dump({"claudeAiOauth": {"accessToken": creds_token}}, handle)
+        subprocess.run(
+            ["python3", "-", live],
+            input=CHEESE_SETTINGS_RECONCILE,
+            text=True,
+            capture_output=True,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token",
+                "HTTPS_PROXY": "http://127.0.0.1:8444",
+                signal: "1" if signal == "CHEESE_MACHINE_TICKET" else "wss://gw/t",
+            },
+            check=True,
+        )
+        with open(live) as handle:
+            return json.load(handle)["env"]["CLAUDE_CODE_OAUTH_TOKEN"]
+
+
+def test_a_co_located_ticket_is_recovered_from_the_credentials_store():
+    """The dev box's shape and the bug that shipped in #410: a co-located device
+    never carried its ticket in settings.json, so the live field holds OUR
+    scoped token (a dot) and the settings backup has no token at all. Without a
+    credentials source the ticket resolves empty and the field is rewritten with
+    our scoped token every launch — a loop the box actually hit (2026-08-15).
+    `.credentials.json` is where Claude Code keeps the ccproxy ticket, so it is
+    both the recovery source and the only one this shape has."""
+    got = _reconcile_with_credentials(
+        "our.scoped.token",
+        "ccproxy-ticket-from-store",
+        None,
+        signal="CHEESE_MACHINE_TICKET",
+    )
+    assert got == "ccproxy-ticket-from-store"
+
+
+def test_the_credentials_store_wins_over_the_settings_backup():
+    """Both present: the credentials store is the FRESHEST copy (Claude Code
+    writes every refresh there), so a stale backup ticket must never shadow it."""
+    got = _reconcile_with_credentials(
+        "our.scoped.token",
+        "fresh-from-store",
+        "stale-in-backup",
+        signal="CHEESE_MACHINE_TICKET",
+    )
+    assert got == "fresh-from-store"
+
+
+def test_the_settings_backup_still_serves_a_machine_with_no_credentials_store():
+    """A MicroCloud machine seeds its ticket into settings.json's env, so its
+    backup carries one and it may have no separate credentials file. That path
+    must keep working — the credentials source is an ADDED fallback, not a
+    replacement."""
+    got = _reconcile_with_credentials(
+        "our.scoped.token",
+        None,
+        "ticket-from-backup",
+        signal="CHEESE_TUNNEL_URL",
+    )
+    assert got == "ticket-from-backup"
