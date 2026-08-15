@@ -6,6 +6,10 @@ attachment block, and the agent prompt points 芝士 at the file (its sandbox
 Read tool is image-capable).
 """
 
+from app.api.deps import get_chat_service
+from app.domain.agent.chat import ChatService
+from app.domain.agent.compute import ComputePool, LocalDockerProvider
+from app.main import app
 from tests.integration.conftest import chat_ws_url
 
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
@@ -134,3 +138,84 @@ def test_image_only_message_allowed(client, stub_agent):
     # 芝士's reply threads under the attachment block (the turn's anchor).
     assistant = next(f for f in frames if f["type"] == "assistant_block")["block"]
     assert assistant["reply_to"] == user_frames[0]["id"]
+
+
+# --- 图片输入 on a backend that does NOT embed images -----------------------
+# The hooks-driven backends (local tmux, remote device) inject the prompt as
+# TEXT into a live Claude Code screen: `images=` reaches run_turn and is dropped
+# on the floor. The prompt has to say so. A backend that silently drops the
+# image while the prompt insists it is attached is the worst shape available —
+# 芝士 doesn't error, it writes a confident answer about a picture it never saw.
+
+
+class _NoEmbedProvider(LocalDockerProvider):
+    """Executes exactly like the default provider but declares the capability
+    the hooks backends actually have. Subclassing the real provider (rather than
+    faking run_turn) keeps this a test of the prompt, not of a mock."""
+
+    name = "no-embed"
+    embeds_images = False
+
+
+def _run_on_non_embedding_backend(client, tmp_path, stub_agent) -> None:
+    """Point this client's next turn at a provider that cannot embed images."""
+    provider = _NoEmbedProvider(
+        agent=stub_agent, workspace_root=str(tmp_path / "ws"), sandbox_enabled=False
+    )
+    pool = ComputePool([provider], provider.name)
+
+    def override() -> ChatService:
+        return ChatService(
+            session_factory=client.test_factory,
+            agent=stub_agent,
+            base_system_prompt="你是芝士。",
+            workspace_root=str(tmp_path / "ws"),
+            compute=pool,
+        )
+
+    app.dependency_overrides[get_chat_service] = override
+
+
+def test_prompt_does_not_claim_attachment_when_backend_drops_images(
+    client, stub_agent, tmp_path
+):
+    _, topic_id = _create_project_and_topic(client)
+    att = _upload(client, topic_id)
+    _run_on_non_embedding_backend(client, tmp_path, stub_agent)
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json(
+            {
+                "type": "message",
+                "content": "看看这张截图",
+                "summon": True,
+                "attachments": [att],
+            }
+        )
+        _drain_until_done(ws)
+
+    prompt = stub_agent.last_prompt or ""
+    # The path stays — the file is real and 芝士 can open it with Read.
+    assert att["path"] in prompt
+    # ...but the turn must not claim the bytes rode along with the message,
+    assert "已附在本条消息里" not in prompt
+    # ...and must say the opposite plainly, so a turn that cannot open the file
+    # reports that instead of inventing what the picture showed.
+    assert "没有附在本条消息里" in prompt
+
+
+def test_embedding_backend_still_says_the_image_is_attached(client, stub_agent):
+    """Per-provider capability, not a global downgrade: the SDK path really does
+    embed, so it must keep telling 芝士 the image is inline."""
+    _, topic_id = _create_project_and_topic(client)
+    att = _upload(client, topic_id)
+
+    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+        ws.send_json(
+            {"type": "message", "content": "看图", "summon": True, "attachments": [att]}
+        )
+        _drain_until_done(ws)
+
+    prompt = stub_agent.last_prompt or ""
+    assert "已附在本条消息里" in prompt
+    assert "没有附在本条消息里" not in prompt
