@@ -809,11 +809,12 @@ class TurnRunner:
         if not allow_actions:
             # This topic's remedy was already taken by the wedged branch — its
             # coming resume turn picks any pending message up; just say so.
+            # 这条本来就一句话，没有可折叠的东西 —— detail 留空，别拿正文复读一遍
+            # 去填展开区（那只会让人点开一次就再也不点了）。
             text = (
-                f"⚠️ 同一次中断还波及了本话题的另外 {len(entries)} 轮，"
-                "会并入接下来的轮次。"
+                f"⚠️ 同一次中断还波及了本话题的另外 {len(entries)} 轮；"
+                "它们的消息和进展会并入接下来的轮次。"
             )
-            deploy_detail = "它们的消息和进展会并入接下来的轮次。"
         elif attach and resend is not None:
             text = "⚠️ 平台部署中断了本话题的几个轮次，平台在自动收尾。"
             deploy_detail = (

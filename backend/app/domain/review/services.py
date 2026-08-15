@@ -1748,7 +1748,7 @@ class AcceptService:
             # log excerpts in a full chat bubble. Now the room sees one line and
             # the excerpt rides in `meta.detail`, byte-for-byte the same text
             # under the same `_NUDGE_TAIL_LIMIT` bound.
-            nudge_event=f"⚠️ PR #{card.pr_number} 的{stage}检查没过 · 芝士在修",
+            nudge_event=f"⚠️ PR #{card.pr_number} 的 {stage} 检查没过 · 芝士在修",
             nudge_meta=notice(
                 EVENT_CI_FAILED,
                 severity=SEVERITY_ERROR,
