@@ -345,3 +345,77 @@ async def test_a_machine_without_a_recorded_identity_names_none(client, monkeypa
         },
     ).json()["data"]
     assert "upstream" not in body["supply"]
+
+
+async def _pin_topic_to_self_hosted_device(
+    client, *, topic_id, device_id: str, upstream: str | None
+):
+    """A topic pinned to a SELF-HOSTED device — no machine row at all. This is
+    the dev box's shape: it was never enrolled from MicroCloud, so its ccproxy
+    identity lives on the device row itself."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.domain.device.models import DeviceRow, DeviceTopicRow
+    from app.domain.user.models import User
+
+    async with client.test_factory() as session:
+        owner = (await session.execute(select(User).limit(1))).scalar_one()
+        session.add(
+            DeviceRow(
+                device_id=device_id,
+                name=device_id,
+                token=f"tok-{device_id}",
+                owner_user_id=owner.id,
+                created_at=datetime.now(UTC),
+                ccproxy_upstream=upstream,
+            )
+        )
+        session.add(DeviceTopicRow(topic_id=topic_id, device_id=device_id))
+        await session.commit()
+
+
+async def test_admission_names_a_self_hosted_devices_own_identity(client, monkeypatch):
+    """The self-hosted twin of the machine case: the dev box brings its own
+    ccproxy identity on the DEVICE row (it has no enrollment and no machine
+    row), and admission must surface it the same way — one credential model for
+    every compute form, or the box stays chained to the platform-credential
+    swap path that #393 is about."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    topic_id = uuid.uuid4()
+    await _pin_topic_to_self_hosted_device(
+        client, topic_id=topic_id, device_id="the-box", upstream="m161:pw161"
+    )
+
+    headers = {
+        "Authorization": "Bearer "
+        + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+
+    assert body["supply"]["upstream"] == "m161:pw161"
+
+
+async def test_a_device_with_no_identity_still_names_none(client, monkeypatch):
+    """Every laptop-class self-hosted device: NULL means "platform pool", never
+    an empty identity the proxy would try to authenticate with."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "subscription_enabled", True)
+    pid = _make_project(client)
+    topic_id = uuid.uuid4()
+    await _pin_topic_to_self_hosted_device(
+        client, topic_id=topic_id, device_id="a-laptop", upstream=None
+    )
+
+    headers = {
+        "Authorization": "Bearer "
+        + mint_scoped_token(project_id=pid, topic_id=str(topic_id))
+    }
+    body = client.post("/llm/admission", headers=headers).json()["data"]
+
+    assert "upstream" not in body["supply"]

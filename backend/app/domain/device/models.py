@@ -19,6 +19,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
 )
@@ -71,6 +72,18 @@ class DeviceRow(Base):
         server_default=Visibility.isolated.value,
         nullable=False,
     )
+    # The ccproxy identity (`user:password`) this DEVICE's subscription turns go
+    # out as — the self-hosted twin of `ProjectMachine.ccproxy_upstream`, so
+    # every compute form uses ONE credential model: the device carries its own
+    # ccproxy ticket (worthless off that proxy), claude refreshes it, the
+    # platform holds no spendable credential, and the meter relays the ticket
+    # over this identity (ccproxy scopes its fake→real swap to the authenticated
+    # connection, measured 2026-08-14). A MicroCloud machine's identity is
+    # captured at enrollment; a self-hosted device has no enrollment, so this is
+    # set by whoever administers the device (the dev box being the first). NULL —
+    # the overwhelmingly common case, every laptop-class device — means the
+    # device brings no identity and its turns use the platform pool as before.
+    ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DeviceAuthCodeRow(Base):

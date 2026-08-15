@@ -14,6 +14,22 @@ from app.domain.device.repository import Device
 from app.domain.device.supply import Supply
 
 
+@pytest.fixture(autouse=True)
+def _no_device_identity(monkeypatch):
+    """Default every test to a device that brings no ccproxy identity.
+
+    `_device_ccproxy_upstream` hits the database exactly like `_is_co_located`
+    does, and these tests run without one — but unlike `_is_co_located` it is
+    called on one specific branch, so leaving it unpatched fails only the six
+    subscription-path tests and looks like their bug. Tests about the
+    machine-ticket signal override this with a real value."""
+
+    async def none(_self, _device_id):
+        return ""
+
+    monkeypatch.setattr(DeviceProvider, "_device_ccproxy_upstream", none)
+
+
 class FakeHub:
     """Minimal DeviceHub stand-in recording what the provider drives."""
 
@@ -1426,3 +1442,37 @@ def test_topic_credential_expiry_reads_the_live_screens_stamp():
     # A screen whose expiry was never recorded is skipped, not read as 0.
     hub_none = Hub({tid: [_screen_with("dev1", None)]}, {"dev1"})
     assert topic_credential_expiry(tid, hub=hub_none) is None  # type: ignore[arg-type]
+
+
+@pytest.mark.anyio
+async def test_a_device_with_its_own_identity_gets_the_machine_ticket_signal(
+    monkeypatch, tmp_path
+):
+    """The dev box's shape: co-located, no tunnel, but it brings a ccproxy
+    identity on its device row. The launcher must be told to hand claude the
+    DEVICE's ticket (CHEESE_MACHINE_TICKET) — without the signal the reconcile
+    injects our scoped token and every turn dies upstream as
+    `401 Invalid bearer token` (measured on the box, 2026-08-15)."""
+    _subscription_settings(monkeypatch, tmp_path)
+
+    async def own_identity(_self, _device_id):
+        return "m161:pw161"
+
+    monkeypatch.setattr(DeviceProvider, "_device_ccproxy_upstream", own_identity)
+    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=True)
+
+    assert hub.env["CHEESE_MACHINE_TICKET"] == "1"
+    # The identity itself must NOT travel: the machine authenticates the meter
+    # hop with its scoped token, and admission tells the meter the identity.
+    assert "m161" not in repr(hub.env)
+
+
+@pytest.mark.anyio
+async def test_a_device_without_identity_keeps_the_swap_path(monkeypatch, tmp_path):
+    """No identity, no signal: the reconcile keeps asserting our scoped token,
+    which the meter swaps for the platform credential — today's behaviour for
+    every laptop-class device."""
+    _subscription_settings(monkeypatch, tmp_path)
+    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=True)
+
+    assert "CHEESE_MACHINE_TICKET" not in hub.env

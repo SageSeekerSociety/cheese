@@ -872,3 +872,45 @@ def test_a_changed_machine_ticket_retires_the_session_that_baked_the_old_one():
     # And the old single-file form is gone from both, or one side would compare
     # a checksum of different bytes and never match.
     assert 'cksum "$REAL_HOME/.claude/settings.json"' not in script
+
+
+def test_a_co_located_device_with_its_own_identity_keeps_its_ticket():
+    """The dev box's shape: no tunnel (it reaches the meter directly), but it
+    brings its own ccproxy identity, so its claude must carry the DEVICE's
+    ticket — not our scoped token, which ccproxy passes through for Anthropic
+    to refuse as `401 Invalid bearer token` (measured on the box, 2026-08-15).
+    CHEESE_MACHINE_TICKET is the provider's signal for exactly this case."""
+    import json
+    import subprocess
+    import tempfile
+
+    from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+
+    with tempfile.TemporaryDirectory() as tmp:
+        live = f"{tmp}/settings.json"
+        with open(live, "w") as handle:
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": "boxes-own-ticket"}}, handle)
+        with open(live + ".cheese-orig", "w") as handle:
+            json.dump({"env": {}}, handle)
+        subprocess.run(
+            ["python3", "-", live, f"{tmp}/cheese-machine.token"],
+            input=CHEESE_SETTINGS_RECONCILE,
+            text=True,
+            capture_output=True,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token",
+                "HTTPS_PROXY": "http://127.0.0.1:8444",
+                # No CHEESE_TUNNEL_URL — co-located devices dial the meter
+                # directly. The machine-ticket flag alone must select the path.
+                "CHEESE_MACHINE_TICKET": "1",
+            },
+            check=True,
+        )
+        with open(live) as handle:
+            kept = json.load(handle)["env"]["CLAUDE_CODE_OAUTH_TOKEN"]
+        with open(f"{tmp}/cheese-machine.token") as handle:
+            handed = handle.read()
+
+    assert kept == "boxes-own-ticket"
+    assert handed == "boxes-own-ticket"
