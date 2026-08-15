@@ -156,6 +156,17 @@ if not os.path.exists(backup):
     with open(backup, "w") as fh:
         json.dump({"env": dict(env)}, fh)
 
+# Resolved below on the tunnel path, and handed to the caller through argv[2]
+# because THIS file is not the one Claude Code reads. The launcher exports an
+# isolated $HOME, so claude opens `$HOME/.claude/settings.json` — not the login
+# user's. Writing the machine's ticket here and stopping was the whole bug:
+# reconcile faithfully kept it, claude never saw it, and the scoped cheese token
+# in the process environment stayed the model credential. Measured on machine
+# 474 (2026-08-15): every turn came back `401 Invalid bearer token` from
+# Anthropic, because that is what a cheese token looks like once ccproxy has
+# declined to recognise it as one of its own tickets.
+machine_ticket = ""
+
 if want_base:
     env["ANTHROPIC_BASE_URL"] = want_base
     env["ANTHROPIC_AUTH_TOKEN"] = want_token
@@ -201,7 +212,6 @@ else:
         # preserve our own stale scoped token and change nothing. The backup is
         # written once, on the first reconcile, before anything was overwritten:
         # it is the only place the machine's original ticket still exists.
-        machine_ticket = ""
         if os.environ.get("CHEESE_TUNNEL_URL"):
             # A ccproxy ticket EXPIRES, and ccproxy refreshes it the way its
             # clients do: Claude Code writes the new one back into this file. So
@@ -240,6 +250,15 @@ else:
 
 with open(path, "w") as fh:
     json.dump(data, fh)
+
+# Hand the ticket to the launcher, which is the only place that can put it where
+# claude will read it. A FILE, not stdout: this script's stdout is reported into
+# a hook payload on mismatch, and a credential must never travel that way.
+if len(sys.argv) > 2 and machine_ticket:
+    out = sys.argv[2]
+    fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(machine_ticket)
 
 # Report what the file SAYS, re-read from disk — not what we meant to write.
 # A write that silently did not take is the failure this whole block exists to
@@ -550,7 +569,22 @@ if [ -f "$REAL_HOME/.claude/settings.json" ]; then
   cat > "$HOME/.claude/cheese-settings-reconcile.py" <<'RECONCILE'
 {settings_reconcile}RECONCILE
   CHEESE_ROUTE="$(python3 "$HOME/.claude/cheese-settings-reconcile.py" \\
-    "$REAL_HOME/.claude/settings.json" 2>&1 || echo "reconcile-crashed")"
+    "$REAL_HOME/.claude/settings.json" \\
+    "$HOME/.claude/cheese-machine.token" 2>&1 || echo "reconcile-crashed")"
+  # The model credential claude will actually use. It has to be asserted into
+  # the process environment because the settings.json holding the machine's
+  # ticket lives in the LOGIN user's home, and claude reads the isolated $HOME
+  # this launcher exports — so that file never reaches it.
+  #
+  # Only the model call changes hands here. The scoped cheese token keeps doing
+  # its own job (proving which project to bill) as CHEESE_TOKEN and as the
+  # CONNECT password the tunnel helper stamps; the two are different credentials
+  # answering different questions, and conflating them is what sent a cheese
+  # token to Anthropic.
+  if [ -s "$HOME/.claude/cheese-machine.token" ]; then
+    CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/cheese-machine.token")"
+    export CLAUDE_CODE_OAUTH_TOKEN
+  fi
   case "$CHEESE_ROUTE" in
     ok\\ *|absent) ;;
     *) printf '{{"hook_event_name":"CheeseRoute","status":"failed","detail":"%s"}}' \\
@@ -591,8 +625,14 @@ mv "$HOME/.claude/cheese-drain.env.tmp" "$HOME/.claude/cheese-drain.env"
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   cat > "$HOME/.claude/cheese-tunnel.py" <<'TUNNELPY'
 {tunnel_helper}TUNNELPY
+  # CHEESE_TOKEN, deliberately — not CLAUDE_CODE_OAUTH_TOKEN. The helper's token
+  # answers "which project is opening this tunnel, and may it spend", which is
+  # the scoped cheese token's job and nothing else's. They used to be the same
+  # string, so reading either worked by accident; on an enrolled machine
+  # CLAUDE_CODE_OAUTH_TOKEN is now the machine's ccproxy ticket, and stamping
+  # THAT as the CONNECT password would get every tunnel refused with 407.
   cat > "$HOME/.claude/cheese-tunnel.token.tmp" <<TUNNELTOK
-$CLAUDE_CODE_OAUTH_TOKEN
+$CHEESE_TOKEN
 TUNNELTOK
   chmod 600 "$HOME/.claude/cheese-tunnel.token.tmp"
   mv "$HOME/.claude/cheese-tunnel.token.tmp" "$HOME/.claude/cheese-tunnel.token"
@@ -661,7 +701,15 @@ if command -v tmux >/dev/null 2>&1; then
     # 2026-08-14: the file said one thing and the running claude was still
     # failing on the other. Same reasoning as the tunnel helper's stamp.
     CFGF="$HOME/.claude/$SESSION.cfg"
-    CFGNOW="$(cksum "$REAL_HOME/.claude/settings.json" 2>/dev/null | cut -d" " -f1)"
+    # The machine's ticket is part of the contract, and it does NOT live in that
+    # settings.json as far as this process is concerned — the launcher exports
+    # it, so a ticket that changed (or appeared for the first time, the moment
+    # this path shipped) leaves the file byte-identical and the running claude
+    # holding the old credential forever. Folding the ticket into the checksum
+    # is what makes a rotation reach the process. On a device with no ticket the
+    # file is absent and this is the old checksum unchanged, so nothing churns.
+    CFGNOW="$(cat "$REAL_HOME/.claude/settings.json" \\
+      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1)"
     CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
     RETIRE=0
     [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ] && RETIRE=1
@@ -704,7 +752,8 @@ if command -v tmux >/dev/null 2>&1; then
     # Stamp the token expiry this claude is BORN with so the gate above can later
     # tell a stale-credential session from a good one and retire only the stale.
     printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
-    cksum "$REAL_HOME/.claude/settings.json" 2>/dev/null | cut -d" " -f1 \\
+    cat "$REAL_HOME/.claude/settings.json" \\
+      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1 \\
       > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
     # Hand THIS launch's credential / routing / attribution env to the new session
     # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from

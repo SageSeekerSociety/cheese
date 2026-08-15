@@ -711,7 +711,11 @@ def test_a_session_born_on_a_different_contract_is_retired():
     the running claude kept failing on the other, with nothing to indicate why."""
     script = _launch_with_tunnel()
     assert "$SESSION.cfg" in script
-    assert 'cksum "$REAL_HOME/.claude/settings.json"' in script
+    assert '"$REAL_HOME/.claude/settings.json"' in script
+    # The contract is the settings file AND the ticket the launcher exports; the
+    # ticket does not live in that file, so checksumming the file alone would
+    # miss a rotation entirely. See the test below.
+    assert "cksum" in script
     # Both reasons retire, and neither is allowed to mask the other.
     assert "RETIRE=1" in script
     assert script.count("RETIRE=1") >= 2
@@ -766,3 +770,105 @@ def test_our_own_token_left_in_the_field_is_healed_from_the_backup():
     assert _reconcile_tunnel("old.scoped.token", "original-ticket") == (
         "original-ticket"
     )
+
+
+def _reconcile_ticket_handoff(live_token: str) -> str | None:
+    """Run the shipped reconcile with an out-path and return what it handed over.
+
+    None = it wrote no file, which is how the launcher knows to leave the
+    process environment alone.
+    """
+    import json
+    import os
+    import subprocess
+    import tempfile
+
+    from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+
+    with tempfile.TemporaryDirectory() as tmp:
+        live = f"{tmp}/settings.json"
+        out = f"{tmp}/cheese-machine.token"
+        with open(live, "w") as handle:
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": live_token}}, handle)
+        with open(live + ".cheese-orig", "w") as handle:
+            json.dump({"env": {"CLAUDE_CODE_OAUTH_TOKEN": ""}}, handle)
+        subprocess.run(
+            ["python3", "-", live, out],
+            input=CHEESE_SETTINGS_RECONCILE,
+            text=True,
+            capture_output=True,
+            env={
+                "PATH": "/usr/bin:/bin",
+                "CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token",
+                "HTTPS_PROXY": "http://127.0.0.1:8445",
+                "CHEESE_TUNNEL_URL": "wss://gw/api/llm/tunnel",
+            },
+            check=True,
+        )
+        if not os.path.exists(out):
+            return None
+        assert oct(os.stat(out).st_mode)[-3:] == "600", "a credential file is 0600"
+        with open(out) as handle:
+            return handle.read()
+
+
+def test_the_machine_ticket_is_handed_to_the_launcher_not_just_written_back():
+    """The file reconcile edits is NOT the one claude reads: the launcher exports
+    an isolated $HOME, so claude opens `$HOME/.claude/settings.json` while this
+    ticket sits in the login user's. Keeping it there and stopping is the whole
+    bug — on machine 474 (2026-08-15) every turn came back `401 Invalid bearer
+    token`, Anthropic's answer to the scoped cheese token that stayed in the
+    process environment."""
+    assert _reconcile_ticket_handoff("machines-own-ticket") == "machines-own-ticket"
+
+
+def test_nothing_is_handed_over_when_there_is_no_machine_ticket():
+    """A caller the swap path serves must keep its scoped token: writing an empty
+    file would make the launcher export a blank credential."""
+    assert _reconcile_ticket_handoff("our.scoped.token") is None
+
+
+def test_the_launcher_adopts_that_ticket_as_the_model_credential():
+    """It has to reach claude through the process environment, because the file
+    that would otherwise carry it is in a home claude does not read."""
+    script = device_launch.build_launch_script()
+
+    assert '"$HOME/.claude/cheese-machine.token"' in script
+    assert 'CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/cheese-machine.token")"' in (
+        script
+    )
+    # Before claude starts, and before the tunnel helper's token is written.
+    adopt = script.index("cheese-machine.token")
+    assert adopt < script.index("cheese-tunnel.token.tmp")
+
+
+def test_the_tunnel_password_stays_the_scoped_token():
+    """The helper's token proves which project may open a tunnel — the scoped
+    cheese token's job. Those two strings used to be equal, so reading either
+    worked by accident; now CLAUDE_CODE_OAUTH_TOKEN is the machine's ccproxy
+    ticket, and stamping it as the CONNECT password would 407 every tunnel."""
+    script = device_launch.build_launch_script()
+    start = script.index("<<TUNNELTOK\n") + len("<<TUNNELTOK\n")
+    written = script[start : script.index("\nTUNNELTOK", start)]
+
+    assert written.strip() == "$CHEESE_TOKEN"
+
+
+def test_a_changed_machine_ticket_retires_the_session_that_baked_the_old_one():
+    """claude reads its model credential ONCE at startup, and the ticket is
+    exported by the launcher rather than living in the settings.json the retire
+    gate checksums — so a rotated ticket would leave that file byte-identical
+    and the running claude holding a dead credential forever. Both sides of the
+    comparison have to include it, or the gate compares the wrong thing on one
+    of them and retires on every single launch."""
+    script = device_launch.build_launch_script()
+
+    both = [
+        line
+        for line in script.splitlines()
+        if "cheese-machine.token" in line and "cksum" in script
+    ]
+    assert len(both) >= 2, "the ticket joins the checksum when read AND when recorded"
+    # And the old single-file form is gone from both, or one side would compare
+    # a checksum of different bytes and never match.
+    assert 'cksum "$REAL_HOME/.claude/settings.json"' not in script

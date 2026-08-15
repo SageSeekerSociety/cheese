@@ -82,7 +82,17 @@ Set one without the other and every launch logs an error naming the missing one.
 
 1. Stop nothing yet. Copy the box-local values into `deploy/metering-proxy/.env`:
    upstream auth + via, `CHEESE_SCOPED_SECRET` = backend's `SANDBOX_TOKEN`,
-   `CHEESE_ADMISSION_URL` pointing at the backend on the bridge.
+   `CHEESE_ADMISSION_URL` pointing at the backend on the bridge, and
+   `USAGE_LOG_DIR` = the directory the backend's `SUBSCRIPTION_USAGE_LOG` is in.
+
+   Both of those last two fail silently when wrong, which is why they are named
+   here rather than left to the compose defaults. An unset `CHEESE_ADMISSION_URL`
+   disables per-project budgets *and* leaves every enrolled machine unplaceable
+   on its own ccproxy identity. A `USAGE_LOG_DIR` that is not the backend's
+   ingest directory meters into a file nobody reads: rows are written, the
+   ledger never grows, and neither side reports anything. Both were wrong on
+   dev after the cutover below, and neither was noticed until a turn was traced
+   end to end (2026-08-15).
 2. Point `INJECT_SECRETS_DIR` at the host directory that CONTAINS `inject.token`
    (mounted read-only at `/etc/cheese/secrets`, a directory — not a single-file
    bind mount — so an atomic token swap is seen without a restart; see below),

@@ -10,7 +10,19 @@
 #                           fallback, so the two can never disagree.
 #   CHEESE_UPSTREAM_VIA     e.g. ccproxy-prod.119net.ghg.org.cn:3128
 #   CHEESE_SCOPED_SECRET    = the backend's SANDBOX_TOKEN (rotate together)
-#   CHEESE_ADMISSION_URL    e.g. http://172.17.0.1:8081/llm/admission
+#   CHEESE_ADMISSION_URL    e.g. http://172.17.0.1:8081/llm/admission. Leaving
+#                           it unset switches off TWO things with no error:
+#                           per-project budgets stop being enforced, and no
+#                           enrolled machine can be placed on its own ccproxy
+#                           identity (every such turn is refused instead). The
+#                           addon warns once at load; that line is the only
+#                           signal you get.
+#   USAGE_LOG_DIR           host dir for the ledger. MUST be the same directory
+#                           the backend's SUBSCRIPTION_USAGE_LOG points into —
+#                           the proxy writes the rows, the backend ingests them,
+#                           and nothing checks the two agree. The default (the
+#                           compose file's own ./logs) is only right when this
+#                           checkout is where the backend already reads from.
 #   CHEESE_GATEWAY_BASE     e.g. http://172.17.0.1:4000 — where the API-key
 #                           pool (LiteLLM) listens. A project whose supply
 #                           decision says `gateway` is routed here instead of
@@ -73,7 +85,14 @@ services:
       CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
       CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
     volumes:
-      - ./logs:/var/log/cheese
+      # The ledger. This MUST resolve to the same host directory the backend's
+      # SUBSCRIPTION_USAGE_LOG points into — the proxy writes the rows and the
+      # backend ingests them, and nothing checks that the two agree. Defaulting
+      # it to `./logs` pins the ledger to wherever this compose file happens to
+      # sit, which is how a box that moved its checkout ended up metering into a
+      # directory no one read: turns were billed, rows were written, and the
+      # ledger simply stopped growing. No error, on either side.
+      - ${USAGE_LOG_DIR:-./logs}:/var/log/cheese
       - .:/addons:ro
       # Mount the secrets DIRECTORY read-only, not the single token file. A
       # single-file bind mount pins the container to the host inode it saw at
