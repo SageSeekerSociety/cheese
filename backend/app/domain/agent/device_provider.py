@@ -398,6 +398,25 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             device = await sql_device_service(session).get_device(device_id)
         return device is None or device.supply is not Supply.cloud
 
+    async def _device_ccproxy_upstream(self, device_id: str) -> str:
+        """The ccproxy identity this DEVICE brings, '' when it brings none.
+
+        Non-empty means the device runs on the machine-ticket model — claude
+        carries the device's own ccproxy ticket and the meter relays it over
+        this identity — the same credential shape as an enrolled MicroCloud
+        machine (whose identity lives on `ProjectMachine` and whose launches are
+        already steered by CHEESE_TUNNEL_URL). Kept separate from
+        `_is_co_located` on purpose: the two facts change independently, and
+        that method is monkeypatched all over the tests."""
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        async with factory() as session:
+            device = await sql_device_service(session).get_device(device_id)
+        return (getattr(device, "ccproxy_upstream", None) or "").strip()
+
     def _work_dir(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, *, co_located: bool
     ) -> str:
@@ -610,6 +629,16 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 merged["CHEESE_TUNNEL_PORT"] = str(
                     settings.subscription_tunnel_local_port
                 )
+            elif await self._device_ccproxy_upstream(device_id):
+                # A CO-LOCATED device that brings its own ccproxy identity (the
+                # dev box, registered on `DeviceRow.ccproxy_upstream`) runs on
+                # the machine-ticket model exactly like a tunneled MicroCloud
+                # machine: the launcher's reconcile hands claude the device's
+                # own ticket instead of our scoped token, and admission tells
+                # the meter which identity to relay it over. Without this flag
+                # such a device silently falls onto the platform-credential swap
+                # path — the #393 dependency this model exists to remove.
+                merged["CHEESE_MACHINE_TICKET"] = "1"
             model_env = merged
             # Stamp the minted session token's expiry so the launcher can retire an
             # inner tmux session whose baked credential has died instead of adopting

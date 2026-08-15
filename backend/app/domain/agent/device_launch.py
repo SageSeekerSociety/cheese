@@ -197,22 +197,26 @@ else:
         # holds, so ours goes out and the image's is irrelevant — assert ours.
         #
         # Pass-through path (a remote machine on the tunnel, marked by
-        # CHEESE_TUNNEL_URL): the meter forwards the bearer UNTOUCHED, because
-        # ccproxy only honours a machine's ticket over that machine's own
-        # identity. So the ticket has to be the machine's own — the one
-        # MicroCloud wrote here. Overwriting it sends OUR scoped token to
-        # Anthropic, which answers `401 OAuth access token has been revoked`
-        # (measured 2026-08-14: the whole chain up, refused at the far end).
-        # The scoped token still travels, as the proxy password the helper
-        # stamps onto the CONNECT — it authenticates the project, not the model
-        # call.
+        # CHEESE_TUNNEL_URL; or a co-located device that brings its own ccproxy
+        # identity, marked by CHEESE_MACHINE_TICKET — the dev box): the meter
+        # forwards the bearer UNTOUCHED, because ccproxy only honours a
+        # machine's ticket over that machine's own identity. So the ticket has
+        # to be the machine's own — written here by MicroCloud on its machines,
+        # or by the device's administrator on a self-hosted box. Overwriting it
+        # sends OUR scoped token to Anthropic, which answers
+        # `401 Invalid bearer token` (measured on both paths, 2026-08-14/15:
+        # the whole chain up, refused at the far end). The scoped token still
+        # travels, as the proxy password on the CONNECT — it authenticates the
+        # project, not the model call.
         # Read from the BACKUP, not from the live file. The live file's token is
         # whatever the last launch left there — and every launch before this one
         # overwrote it with ours, so "keep what is there" would faithfully
         # preserve our own stale scoped token and change nothing. The backup is
         # written once, on the first reconcile, before anything was overwritten:
         # it is the only place the machine's original ticket still exists.
-        if os.environ.get("CHEESE_TUNNEL_URL"):
+        if os.environ.get("CHEESE_TUNNEL_URL") or os.environ.get(
+            "CHEESE_MACHINE_TICKET"
+        ):
             # A ccproxy ticket EXPIRES, and ccproxy refreshes it the way its
             # clients do: Claude Code writes the new one back into this file. So
             # the live file is the freshest copy there is, and overwriting it —

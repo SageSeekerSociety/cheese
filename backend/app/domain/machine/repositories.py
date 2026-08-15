@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.device.models import DeviceTopicRow
+from app.domain.device.models import DeviceRow, DeviceTopicRow
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
@@ -241,17 +241,33 @@ class ProjectMachineRepository:
         resumable claude session live on ONE machine, and that pin is write-once
         (``bind_topic_device``), so the answer is stable for the topic's life.
 
-        None whenever any link is missing — an unpinned topic, a device that is
-        not a MicroCloud machine, a machine enrolled before the identity was
-        recorded. Every one of those means "use the deployment-wide identity",
-        which is the behaviour those turns have today.
+        Two sources, one meaning. A MicroCloud machine's identity is captured at
+        enrollment into `ProjectMachine`; a self-hosted device has no enrollment,
+        so its identity lives on `DeviceRow` (set by whoever administers the
+        device — the dev box first). Checked in that order; they cannot disagree,
+        because a device is only ever one of the two kinds.
+
+        None whenever every link is missing — an unpinned topic, a device that
+        brings no identity, a machine enrolled before the identity was recorded.
+        Every one of those means "use the deployment-wide identity", which is
+        the behaviour those turns have today.
         """
-        return await self._session.scalar(
+        from_machine = await self._session.scalar(
             select(ProjectMachine.ccproxy_upstream)
             .join(DeviceTopicRow, DeviceTopicRow.device_id == ProjectMachine.device_id)
             .where(
                 DeviceTopicRow.topic_id == topic_id,
                 ProjectMachine.ccproxy_upstream.is_not(None),
+            )
+        )
+        if from_machine:
+            return from_machine
+        return await self._session.scalar(
+            select(DeviceRow.ccproxy_upstream)
+            .join(DeviceTopicRow, DeviceTopicRow.device_id == DeviceRow.device_id)
+            .where(
+                DeviceTopicRow.topic_id == topic_id,
+                DeviceRow.ccproxy_upstream.is_not(None),
             )
         )
 
