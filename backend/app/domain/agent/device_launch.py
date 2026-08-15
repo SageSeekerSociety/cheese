@@ -29,11 +29,11 @@ from app.domain.agent import machine_tunnel
 from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
 from app.domain.agent.service import CLAUDE_BASE_CMD
 
-# First-launch gates (Claude Code 2.1.x) for $HOME/.claude.json, kept here as the
-# readable statement of what the launch script writes inline. Without the
-# per-project trust gate a "do you trust this folder?" dialog appears and eats the
-# first prompt (its menu even renders a `❯`, fooling readiness); without
-# bypassPermissionsModeAccepted the permissions gate does the same.
+# First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
+# kept here as the readable statement of what the launch script writes inline.
+# Without the per-project trust gate a "do you trust this folder?" dialog appears
+# and eats the first prompt (its menu even renders a `❯`, fooling readiness);
+# without bypassPermissionsModeAccepted the permissions gate does the same.
 _CLAUDE_JSON_GATES = {
     "hasCompletedOnboarding": True,
     "autoUpdates": False,
@@ -103,212 +103,88 @@ CHEESE_USAGE_SCRIPT = """#!/bin/sh
 python3 "$HOME/.claude/cheese-usage.py" | cheese-hook >/dev/null 2>&1 || true
 """
 
-# Claude Code applies the `env` block of the machine user's own
-# ~/.claude/settings.json OVER the process environment, key by key — and it
-# reads that file from the LOGIN user's home, not from the isolated $HOME this
-# launcher exports. A provisioned machine ships one, so every routing variable
-# the platform injects is discarded and the turn goes wherever the image says.
-#
-# Measured on a real MicroCloud machine (2026-08-02), sink on loopback:
-#   file present, base URL injected as env  -> 0 requests to us, answered by the
-#                                              image's own endpoint
-#   file's env block pointing at the sink   -> 7 requests to us
-#   file's env block emptied, env injected  -> 7 requests to us
-# so the file is the control point, and agreeing with it is the only way an
-# injected route takes effect. (The first two rounds of that experiment were
-# wrong because the image also sets HTTP(S)_PROXY there: a loopback sink is
-# unreachable *through a proxy*, which looks exactly like "the route was
-# ignored". Controlling for it is what produced the numbers above.)
-#
-# Merge rather than overwrite: the proxy and CA entries are the image's own
-# supply route and destroying them would take the subscription path down with
-# it. The original `env` is kept beside the file, once.
+# READ-ONLY against the machine owner's files, by contract (#5). History, so
+# nobody reintroduces the write: the 2026-08-02 measurement showed the login
+# user's ~/.claude/settings.json env block wins over the process environment,
+# so earlier launches REWROTE that file to be routed at all — which hijacked
+# every claude the machine's owner started by hand (their sessions suddenly
+# went through our meter), and burned their credentials' refresh chain when we
+# later touched .credentials.json too. CLAUDE_CONFIG_DIR removes the premise:
+# claude no longer reads the owner's settings.json at all (verified 2026-08-15
+# — with the config dir set, a bogus credential inside it fails 401 while a
+# valid one sits in ~/.claude untouched), so the process environment and OUR
+# config dir are the control point, and the owner's files need no agreeing
+# with. What remains of the reconcile is extraction: on the machine-ticket
+# path, the machine's own ccproxy ticket lives in the OWNER's files (MicroCloud
+# seeds settings.json; a login-style box keeps .credentials.json), and this
+# script READS it out and hands it to the launcher through argv[2]. It opens
+# the owner's files only ever to read.
 CHEESE_SETTINGS_RECONCILE = """import json, os, sys
 
 path = sys.argv[1]
-want_base = os.environ.get("ANTHROPIC_BASE_URL") or ""
-want_token = os.environ.get("ANTHROPIC_AUTH_TOKEN") or ""
 
-try:
-    with open(path) as fh:
-        data = json.load(fh)
-except FileNotFoundError:
-    # No image-supplied settings means nothing overrides us; the injected
-    # environment already decides, and writing a file here would only invent a
-    # new thing to keep in sync.
-    print("absent")
-    raise SystemExit(0)
-except Exception as exc:
-    print("unreadable %s" % exc)
+# Only the machine-ticket path has anything to extract; every other supply
+# shape is fully described by the process environment and our own config dir.
+if not (
+    os.environ.get("CHEESE_TUNNEL_URL") or os.environ.get("CHEESE_MACHINE_TICKET")
+):
+    print("ok (env only)")
     raise SystemExit(0)
 
-if not isinstance(data, dict):
-    print("unreadable not-an-object")
-    raise SystemExit(0)
+def read_json(p):
+    try:
+        with open(p) as fh:
+            loaded = json.load(fh)
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        return {}
 
-env = data.get("env")
-if not isinstance(env, dict):
-    env = {}
-    data["env"] = env
-
-backup = path + ".cheese-orig"
-if not os.path.exists(backup):
-    with open(backup, "w") as fh:
-        json.dump({"env": dict(env)}, fh)
-
-# Resolved below on the tunnel path, and handed to the caller through argv[2]
-# because THIS file is not the one Claude Code reads. The launcher exports an
-# isolated $HOME, so claude opens `$HOME/.claude/settings.json` — not the login
-# user's. Writing the machine's ticket here and stopping was the whole bug:
-# reconcile faithfully kept it, claude never saw it, and the scoped cheese token
-# in the process environment stayed the model credential. Measured on machine
-# 474 (2026-08-15): every turn came back `401 Invalid bearer token` from
-# Anthropic, because that is what a cheese token looks like once ccproxy has
-# declined to recognise it as one of its own tickets.
+# The machine's own ccproxy ticket, wherever the machine keeps it. A ticket is
+# distinguishable by shape: a scoped cheese token is `body.signature` (has a
+# dot), a ccproxy ticket has no dot — a dotted value here is residue of an old
+# launcher that WROTE into this file, never a ticket.
+#
+# Order matters and encodes freshness:
+#   1. settings.json env — where MicroCloud seeds the ticket on its machines,
+#      and where a refresh lands on machines that run with that file as the
+#      credential source (measured 2026-08-14: the live field held the fresh
+#      ticket while the backup's copy had already expired);
+#   2. .credentials.json — the client's canonical store, the ONLY copy on a
+#      login-style box that never had a ticket in settings.json;
+#   3. the .cheese-orig backup — written by launchers that predate the
+#      read-only reconcile; exists only on machines they touched.
 machine_ticket = ""
+live = (read_json(path).get("env") or {}).get("CLAUDE_CODE_OAUTH_TOKEN") or ""
+if live and "." not in live:
+    machine_ticket = live
+if not machine_ticket:
+    creds = os.path.join(os.path.dirname(path), ".credentials.json")
+    machine_ticket = (read_json(creds).get("claudeAiOauth") or {}).get(
+        "accessToken"
+    ) or ""
+if not machine_ticket:
+    backup = (read_json(path + ".cheese-orig").get("env") or {}).get(
+        "CLAUDE_CODE_OAUTH_TOKEN"
+    ) or ""
+    if backup and "." not in backup:
+        machine_ticket = backup
 
-if want_base:
-    env["ANTHROPIC_BASE_URL"] = want_base
-    env["ANTHROPIC_AUTH_TOKEN"] = want_token
-    # Reach our own gateway directly. Leaving the image's forward proxy in
-    # charge of it would route platform traffic through a third party for no
-    # reason, and a proxy that cannot resolve our host fails the whole turn.
-    host = want_base.split("//", 1)[-1].split("/")[0].split(":")[0]
-    if host:
-        env["NO_PROXY"] = host
-        env["no_proxy"] = host
-else:
-    # Subscription mode: we inject no base URL, so the image's has to go too —
-    # left in place it would send the session to the image's endpoint instead
-    # of the official one through the proxy.
-    for key in ("ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "NO_PROXY", "no_proxy"):
-        env.pop(key, None)
-    # OUR subscription (the platform's metering proxy, marked by the injected
-    # CLAUDE_CODE_OAUTH_TOKEN): the image's own proxy/CA entries would win over
-    # the process environment key by key and send the session through the
-    # image's supply route instead of the meter — so ours are asserted INTO the
-    # file, not merely exported. Absent that marker the image's entries are its
-    # own supply route and stay untouched, as before.
-    if os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
-        keys = ["HTTPS_PROXY", "NO_PROXY", "no_proxy", "NODE_EXTRA_CA_CERTS"]
-        # WHOSE ticket claude carries depends on what the meter will do with it.
-        #
-        # Swap path: the meter replaces the bearer with the credential the host
-        # holds, so ours goes out and the image's is irrelevant — assert ours.
-        #
-        # Pass-through path (a remote machine on the tunnel, marked by
-        # CHEESE_TUNNEL_URL; or a co-located device that brings its own ccproxy
-        # identity, marked by CHEESE_MACHINE_TICKET — the dev box): the meter
-        # forwards the bearer UNTOUCHED, because ccproxy only honours a
-        # machine's ticket over that machine's own identity. So the ticket has
-        # to be the machine's own — written here by MicroCloud on its machines,
-        # or by the device's administrator on a self-hosted box. Overwriting it
-        # sends OUR scoped token to Anthropic, which answers
-        # `401 Invalid bearer token` (measured on both paths, 2026-08-14/15:
-        # the whole chain up, refused at the far end). The scoped token still
-        # travels, as the proxy password on the CONNECT — it authenticates the
-        # project, not the model call.
-        # Read from the BACKUP, not from the live file. The live file's token is
-        # whatever the last launch left there — and every launch before this one
-        # overwrote it with ours, so "keep what is there" would faithfully
-        # preserve our own stale scoped token and change nothing. The backup is
-        # written once, on the first reconcile, before anything was overwritten:
-        # it is the only place the machine's original ticket still exists.
-        if os.environ.get("CHEESE_TUNNEL_URL") or os.environ.get(
-            "CHEESE_MACHINE_TICKET"
-        ):
-            # A ccproxy ticket EXPIRES, and ccproxy refreshes it the way its
-            # clients do: Claude Code writes the new one back into this file. So
-            # the live file is the freshest copy there is, and overwriting it —
-            # even with the machine's original — hands ccproxy a ticket that
-            # stopped being valid hours ago (measured 2026-08-14: a two-hour-old
-            # one came back `401 OAuth access token has been revoked`).
-            #
-            # Ours is distinguishable by shape: a scoped cheese token is
-            # `body.signature`, a ccproxy ticket has no dot. So keep a ticket,
-            # and heal the field from the backup only when a previous launch
-            # (before this path existed) left OUR token sitting in it.
-            live = env.get("CLAUDE_CODE_OAUTH_TOKEN") or ""
-            if live and "." not in live:
-                machine_ticket = live
-            else:
-                # The live field holds OUR scoped token (has a dot): a previous
-                # launch on the swap path wrote it, or a co-located device never
-                # carried a ticket in settings.json at all. Recover the machine's
-                # own ticket, preferring the client's canonical credential store
-                # over the settings backup.
-                #
-                # `.credentials.json` is where Claude Code writes the ccproxy
-                # ticket AND every refresh of it, so it is both the freshest copy
-                # and — for a co-located device whose ticket was never in
-                # settings.json — the ONLY copy. The settings backup only ever
-                # held a ticket on a MicroCloud machine (MicroCloud seeds it into
-                # settings.json's env), so it stays as the fallback for that
-                # shape. Without the credentials source a co-located device loops
-                # forever: live has a dot, the backup has no token, so the ticket
-                # resolves empty and the field is rewritten with our scoped token
-                # every launch (measured on the dev box, 2026-08-15).
-                machine_ticket = ""
-                creds = os.path.join(os.path.dirname(path), ".credentials.json")
-                try:
-                    with open(creds) as fh:
-                        machine_ticket = (
-                            ((json.load(fh) or {}).get("claudeAiOauth") or {}).get(
-                                "accessToken"
-                            )
-                            or ""
-                        )
-                except Exception:
-                    machine_ticket = ""
-                if not machine_ticket:
-                    try:
-                        with open(backup) as fh:
-                            machine_ticket = (
-                                ((json.load(fh) or {}).get("env") or {}).get(
-                                    "CLAUDE_CODE_OAUTH_TOKEN"
-                                )
-                                or ""
-                            )
-                    except Exception:
-                        machine_ticket = ""
-        if machine_ticket:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = machine_ticket
-        else:
-            keys.insert(0, "CLAUDE_CODE_OAUTH_TOKEN")
-        for key in keys:
-            val = os.environ.get(key)
-            if val is not None:
-                env[key] = val
-        env.pop("HTTP_PROXY", None)
+if not machine_ticket:
+    # Named loudly: without a ticket the launcher keeps the scoped token as the
+    # bearer, and on a pass-through deployment that dies upstream as an opaque
+    # `401 Invalid bearer token` — this line is what tells the two apart.
+    print("no-machine-ticket")
+    raise SystemExit(0)
 
-with open(path, "w") as fh:
-    json.dump(data, fh)
-
-# Hand the ticket to the launcher, which is the only place that can put it where
-# claude will read it. A FILE, not stdout: this script's stdout is reported into
-# a hook payload on mismatch, and a credential must never travel that way.
-if len(sys.argv) > 2 and machine_ticket:
+# Hand the ticket to the launcher through a file, never stdout: stdout is
+# reported into a hook payload on failure, and a credential must not travel
+# that way.
+if len(sys.argv) > 2:
     out = sys.argv[2]
     fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         fh.write(machine_ticket)
-
-# Report what the file SAYS, re-read from disk — not what we meant to write.
-# A write that silently did not take is the failure this whole block exists to
-# stop, so it must not be the one thing taken on trust.
-try:
-    with open(path) as fh:
-        effective = ((json.load(fh) or {}).get("env") or {}).get(
-            "ANTHROPIC_BASE_URL", ""
-        )
-except Exception as exc:
-    print("verify-failed %s" % exc)
-    raise SystemExit(0)
-
-if effective == want_base:
-    print("ok %s" % (effective or "(image default)"))
-else:
-    print("mismatch wanted=%s effective=%s" % (want_base or "(none)", effective))
+print("ok (ticket extracted)")
 """
 
 
@@ -533,6 +409,17 @@ if [ -n "${{CHEESE_GIT_REMOTE:-}}" ] && [ ! -d "$CHEESE_WORK/.git" ]; then
   fi
 fi
 mkdir -p "$HOME/.claude"
+# THE isolation boundary on a machine we do not own (#5): claude reads AND
+# writes its config — settings.json, .claude.json, .credentials.json — under
+# CLAUDE_CONFIG_DIR when it is set, and never falls back to the login user's
+# ~/.claude for any of them (verified 2026-08-15: a bogus credential in the
+# config dir fails 401 with a valid one sitting in ~/.claude, untouched; hooks
+# and the onboarding gate inside the dir both take effect). Without this,
+# os.homedir() ignores our exported $HOME and claude lands in the machine
+# owner's real ~/.claude — which is why earlier launches had to REWRITE the
+# owner's settings.json to be routed at all, hijacking every claude the owner
+# starts by hand. With it, the owner's files are never read and never written.
+export CLAUDE_CONFIG_DIR="$HOME/.claude"
 {ca_block}
 # Written by the shell, not node: a machine whose `claude` is the native binary
 # has no node at all (MicroCloud's Debian image is exactly that), and under
@@ -540,7 +427,12 @@ mkdir -p "$HOME/.claude"
 # never started, and the turn hung with nothing anywhere saying why. The only
 # dynamic value here is a work dir this platform generates, so an unquoted
 # heredoc is enough and depends on nothing.
-cat > "$HOME/.claude.json" <<JSON
+#
+# Inside CLAUDE_CONFIG_DIR, not at $HOME/.claude.json: with the config dir set,
+# claude reads the onboarding/trust gates from THERE (verified — the gate in the
+# dir let a non-interactive run proceed), and a file at $HOME/.claude.json would
+# just be dead weight in the isolated home.
+cat > "$CLAUDE_CONFIG_DIR/.claude.json" <<JSON
 {{"hasCompletedOnboarding":true,"autoUpdates":false,"bypassPermissionsModeAccepted":true,"projects":{{"$CHEESE_WORK":{{"hasTrustDialogAccepted":true,"hasCompletedProjectOnboarding":true}}}}}}
 JSON
 cat > "$HOME/.claude/settings.json" <<'JSON'
@@ -593,37 +485,38 @@ if [ -n "$CHEESE_CLI_URL" ]; then
     && chmod +x "$HOME/.claude/cheese" || rm -f "$HOME/.claude/cheese"
 fi
 export PATH="$HOME/.claude:$PATH"
-# Make the injected route actually take effect. See CHEESE_SETTINGS_RECONCILE:
-# the machine user's own settings.json outranks the process environment, so
-# without this the turn silently bills whatever endpoint the image was built
-# with. Non-fatal — a machine we cannot reconcile still runs — but never
-# silent: the outcome is reported, and a mismatch is the interesting case.
-if [ -f "$REAL_HOME/.claude/settings.json" ]; then
-  cat > "$HOME/.claude/cheese-settings-reconcile.py" <<'RECONCILE'
+# Extract the machine's own ccproxy ticket, READING the owner's files only —
+# see CHEESE_SETTINGS_RECONCILE for why nothing is written there any more
+# (CLAUDE_CONFIG_DIR made the owner's settings.json irrelevant to routing).
+# Runs unconditionally: the script itself is a no-op off the machine-ticket
+# path, and the owner's settings.json may be absent on a box whose ticket
+# lives only in .credentials.json. Non-fatal, never silent: anything but "ok"
+# is reported, and "no-machine-ticket" is the interesting case — without a
+# ticket a pass-through turn dies upstream as an opaque 401.
+cat > "$HOME/.claude/cheese-settings-reconcile.py" <<'RECONCILE'
 {settings_reconcile}RECONCILE
-  CHEESE_ROUTE="$(python3 "$HOME/.claude/cheese-settings-reconcile.py" \\
-    "$REAL_HOME/.claude/settings.json" \\
-    "$HOME/.claude/cheese-machine.token" 2>&1 || echo "reconcile-crashed")"
-  # The model credential claude will actually use. It has to be asserted into
-  # the process environment because the settings.json holding the machine's
-  # ticket lives in the LOGIN user's home, and claude reads the isolated $HOME
-  # this launcher exports — so that file never reaches it.
-  #
-  # Only the model call changes hands here. The scoped cheese token keeps doing
-  # its own job (proving which project to bill) as CHEESE_TOKEN and as the
-  # CONNECT password the tunnel helper stamps; the two are different credentials
-  # answering different questions, and conflating them is what sent a cheese
-  # token to Anthropic.
-  if [ -s "$HOME/.claude/cheese-machine.token" ]; then
-    CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/cheese-machine.token")"
-    export CLAUDE_CODE_OAUTH_TOKEN
-  fi
-  case "$CHEESE_ROUTE" in
-    ok\\ *|absent) ;;
-    *) printf '{{"hook_event_name":"CheeseRoute","status":"failed","detail":"%s"}}' \\
-         "$CHEESE_ROUTE" | cheese-hook >/dev/null 2>&1 || true ;;
-  esac
+rm -f "$HOME/.claude/cheese-machine.token"
+CHEESE_ROUTE="$(python3 "$HOME/.claude/cheese-settings-reconcile.py" \\
+  "$REAL_HOME/.claude/settings.json" \\
+  "$HOME/.claude/cheese-machine.token" 2>&1 || echo "reconcile-crashed")"
+# The model credential claude will actually use, asserted into the process
+# environment — which is authoritative now that CLAUDE_CONFIG_DIR keeps claude
+# out of the owner's settings.json (whose env block used to override us).
+#
+# Only the model call changes hands here. The scoped cheese token keeps doing
+# its own job (proving which project to bill) as CHEESE_TOKEN and as the
+# CONNECT password the tunnel helper stamps; the two are different credentials
+# answering different questions, and conflating them is what sent a cheese
+# token to Anthropic.
+if [ -s "$HOME/.claude/cheese-machine.token" ]; then
+  CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.claude/cheese-machine.token")"
+  export CLAUDE_CODE_OAUTH_TOKEN
 fi
+case "$CHEESE_ROUTE" in
+  ok\\ *) ;;
+  *) printf '{{"hook_event_name":"CheeseRoute","status":"failed","detail":"%s"}}' \\
+       "$CHEESE_ROUTE" | cheese-hook >/dev/null 2>&1 || true ;;
+esac
 # Durable event delivery on the device: cheese-hook spools every hook and (via
 # CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so the cheese-drain script
 # is the sole sender — it retries each spooled event until the backend DURABLY
@@ -803,6 +696,7 @@ if command -v tmux >/dev/null 2>&1; then
     # each topic's claude runs on its OWN live credential.
     set -- new-session -d -s "$SESSION" -c "$CHEESE_WORK"
     for _kv in \\
+      "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" \\
       "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN" \\
       "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN" \\
       "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL" \\
@@ -878,8 +772,6 @@ def build_screen_launch(
         "CHEESE_TOKEN": hook_token,
         "CHEESE_HOME": home_dir,
         "CHEESE_WORK": work_dir,
-        # Base first-launch gates the launcher's node reads to build ~/.claude.json
-        # (it adds the per-project trust entry for the resolved work dir).
     }
     if model:
         env["CLAUDE_MODEL"] = model
