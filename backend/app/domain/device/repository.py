@@ -48,6 +48,14 @@ class Device:
     # error, not a machine deleted by surprise nor one silently exposed.
     supply: Supply = Supply.self_hosted
     visibility: Visibility = Visibility.isolated
+    # The device's own ccproxy identity (`user:password`), or None. Mirrors the
+    # model column (b7c4e9a20d13): a self-hosted device that brings its own
+    # ccproxy ticket runs on the machine-ticket model, and the provider reads
+    # THIS to decide whether to signal the launcher. It has to live on the
+    # dataclass, not just the row — `get_device` returns this, and reading the
+    # attribute off a dataclass that lacked it silently returned None, so the
+    # signal was never sent and the dev box looped on the swap path (2026-08-15).
+    ccproxy_upstream: str | None = None
 
 
 @dataclass

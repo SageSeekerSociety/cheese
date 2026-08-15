@@ -135,3 +135,50 @@ def test_visibility_defaults_to_isolated_when_omitted(
         assert row.supply == "self_hosted"
 
     _portal.call(_run)
+
+
+def test_ccproxy_upstream_survives_the_round_trip_to_the_domain_object(
+    db_session: AsyncSession, _portal: "BlockingPortal"
+):
+    """The bug that shipped in #410/#411 and only surfaced on the live box: the
+    column was added to DeviceRow, but `get_device` returns the Device DATACLASS,
+    which lacked the field — so `device.ccproxy_upstream` silently read None, the
+    provider never signalled the launcher, and the dev box looped on the swap
+    path. A unit test could not catch it (the provider's lookup is monkeypatched
+    everywhere); only a real read of a real row does. This is that read."""
+
+    async def _run() -> None:
+        service = DeviceService(SqlDeviceRepository(db_session))
+        dev = await service.approve(
+            await service.start("box-with-identity"),
+            owner_user_id=1,
+            supply=Supply.self_hosted,
+            visibility=Visibility.host,
+        )
+        # Set the identity the way an administrator does — straight on the row,
+        # there being no enrollment path for a self-hosted device.
+        await db_session.execute(
+            text("UPDATE device SET ccproxy_upstream = :up WHERE device_id = :d"),
+            {"up": "m161:secret", "d": dev.device_id},
+        )
+        await db_session.flush()
+        db_session.expunge_all()  # force a genuine read, not the identity map
+
+        stored = await service.get_device(dev.device_id)
+        assert stored is not None
+        # The whole point: the value reaches the domain object the provider reads.
+        assert stored.ccproxy_upstream == "m161:secret"
+
+        # And a device with no identity reads as None, never a stray "".
+        plain = await service.approve(
+            await service.start("plain-laptop"),
+            owner_user_id=1,
+            supply=Supply.self_hosted,
+            visibility=Visibility.isolated,
+        )
+        await db_session.flush()
+        db_session.expunge_all()
+        stored_plain = await service.get_device(plain.device_id)
+        assert stored_plain is not None and stored_plain.ccproxy_upstream is None
+
+    _portal.call(_run)
