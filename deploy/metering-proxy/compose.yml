@@ -73,7 +73,14 @@ services:
       CHEESE_ADMISSION_URL: ${CHEESE_ADMISSION_URL:-}
       CHEESE_GATEWAY_BASE: ${CHEESE_GATEWAY_BASE:-}
     volumes:
-      - ./logs:/var/log/cheese
+      # The ledger. This MUST resolve to the same host directory the backend's
+      # SUBSCRIPTION_USAGE_LOG points into — the proxy writes the rows and the
+      # backend ingests them, and nothing checks that the two agree. Defaulting
+      # it to `./logs` pins the ledger to wherever this compose file happens to
+      # sit, which is how a box that moved its checkout ended up metering into a
+      # directory no one read: turns were billed, rows were written, and the
+      # ledger simply stopped growing. No error, on either side.
+      - ${USAGE_LOG_DIR:-./logs}:/var/log/cheese
       - .:/addons:ro
       # Mount the secrets DIRECTORY read-only, not the single token file. A
       # single-file bind mount pins the container to the host inode it saw at
