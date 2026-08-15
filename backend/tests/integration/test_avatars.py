@@ -15,6 +15,44 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.avatars.models import Avatar
 from tests.integration.conftest import CreatedUser, UserCreator, unique_int
 
+# A JPEG that is a JPEG all the way down to its magic bytes (SOI + JFIF APP0 +
+# EOI), so the server has to read the file to know what it is serving. The PNG
+# below likewise carries a real PNG signature.
+REAL_JPEG_BYTES = (
+    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
+)
+REAL_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+
+
+def create_avatar_row_without_file(
+    db_session: AsyncSession,
+    portal: BlockingPortal,
+) -> int:
+    """Insert an avatar row that provably has no file behind it.
+
+    The id is forced far above the ``avatar`` sequence (seeded to 5, so uploads
+    start at 6), because the upload endpoint writes real files into a directory
+    that is shared by every xdist worker and never rolled back. Picking an id
+    nothing can ever upload to is what makes "the file is missing" an arranged
+    fact instead of a hope — and it avoids deleting a file another worker is
+    still using.
+    """
+    avatar = Avatar(
+        id=900_000_000 + unique_int(1, 9_999_999),
+        url="/predefined/avatar_without_file.png",
+        name="avatar_without_file",
+        created_at=datetime.now(UTC),
+        avatar_type="predefined",
+        usage_count=0,
+    )
+
+    async def _do() -> int:
+        db_session.add(avatar)
+        await db_session.flush()
+        return avatar.id
+
+    return portal.call(_do)
+
 
 def create_predefined_avatars(
     db_session: AsyncSession, portal: BlockingPortal, count: int = 3
@@ -150,6 +188,50 @@ class TestAvatarsGetIntegration:
         )
         assert response.status_code == 404
 
+    def _upload(self, filename: str, content: bytes, content_type: str) -> int:
+        response = self.client.post(
+            "/avatars",
+            headers=self.headers,
+            files={"avatar": (filename, io.BytesIO(content), content_type)},
+        )
+        assert response.status_code == 201
+        return response.json()["data"]["avatarId"]
+
+    def test_get_avatar_with_missing_file_is_404_and_not_cached(self):
+        """A row in the DB with no file on disk must not be served as an image.
+
+        It used to answer 200 with a PNG signature followed by 100 zero bytes —
+        no IHDR, so it could never decode — and cached that for a year.
+        """
+        avatar_id = create_avatar_row_without_file(self.db, self.portal)
+
+        response = self.client.get(f"/avatars/{avatar_id}", headers=self.headers)
+
+        assert response.status_code == 404
+        assert "max-age=31536000" not in response.headers.get("cache-control", "")
+
+    def test_get_uploaded_jpeg_reports_jpeg_and_stays_cacheable(self):
+        """Content type comes from the bytes; the long cache stays on real files."""
+        avatar_id = self._upload(
+            "photo.bin", REAL_JPEG_BYTES, "application/octet-stream"
+        )
+
+        response = self.client.get(f"/avatars/{avatar_id}", headers=self.headers)
+
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith("image/jpeg")
+        assert "max-age=31536000" in response.headers.get("cache-control", "")
+
+    def test_get_uploaded_png_reports_png(self):
+        avatar_id = self._upload(
+            "photo.bin", REAL_PNG_BYTES, "application/octet-stream"
+        )
+
+        response = self.client.get(f"/avatars/{avatar_id}", headers=self.headers)
+
+        assert response.status_code == 200
+        assert response.headers.get("content-type", "").startswith("image/png")
+
     def test_get_avatar_without_auth(self):
         response = self.client.get(f"/avatars/{self.avatar_id}")
         assert response.status_code == 200
@@ -184,18 +266,23 @@ class TestDefaultAvatarIntegration:
         self.db = db_session
         self.portal = _portal
 
-    def test_get_default_avatar(self):
+    def test_get_default_avatar_without_file_is_404_and_not_cached(self):
+        """The seeded default avatar is a DB row with no image file behind it.
+
+        This test used to assert 200 + a long ``max-age`` here, which meant it
+        was pinning the bug: the seed migration inserts avatar rows (1..5) but
+        never writes any file, and uploads start at id 6, so this endpoint was
+        always taking the fabricated 108-byte "PNG" branch — content that can
+        never decode, handed out with a one-year cache. That is issue #417, so
+        the expectation is now 404 with no year-long cache.
+
+        The "file is present" half of the contract is pinned by the upload
+        round-trips in :class:`TestAvatarsGetIntegration`.
+        """
         response = self.client.get("/avatars/default")
-        assert response.status_code == 200
-        assert "cache-control" in response.headers
-        assert "max-age" in response.headers.get("cache-control", "")
-        content_type = response.headers.get("content-type", "")
-        assert content_type.startswith("image/")
-        assert "content-disposition" in response.headers
-        assert "inline" in response.headers.get("content-disposition", "")
-        assert "content-length" in response.headers
-        assert "etag" in response.headers
-        assert "last-modified" in response.headers
+
+        assert response.status_code == 404
+        assert "max-age=31536000" not in response.headers.get("cache-control", "")
 
 
 class TestPredefinedAvatarsIntegration:
