@@ -24,6 +24,7 @@ import {
   listTopics,
   markTopicRead,
   reassignCard,
+  mergeCardAnyway,
   rejectCard,
   revokeCard,
   setTopicTitle,
@@ -477,6 +478,10 @@ const acceptCards = ref<AcceptCard[]>([])
 const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
+// 人工放行 (App 采纳等 CI 再合): 明知检查没全绿仍合并。默认拒绝、显式放行，所以
+// 它藏在一个要先展开、再填理由的小表单后面——不是一个可以顺手点到的按钮。
+const showForceMergeInput = ref(false)
+const forceMergeReason = ref('')
 
 // Newest pending card (the list comes newest-first). A card in `conflict`
 // (采纳时合并冲突，芝士被派去解决) keeps the merge box up — as a STATE, with a
@@ -674,6 +679,22 @@ async function onRevokeCard() {
     await Promise.all([loadAcceptCard(), refreshSelectedTopic()])
   } catch (e) {
     reportError(e, '撤回采纳失败')
+  } finally {
+    acceptBusy.value = false
+  }
+}
+
+async function onForceMerge() {
+  const card = deliveringCard.value
+  if (!card) return
+  acceptBusy.value = true
+  try {
+    await mergeCardAnyway(card.id, forceMergeReason.value)
+    showForceMergeInput.value = false
+    forceMergeReason.value = ''
+    await Promise.all([loadAcceptCard(), refreshSelectedTopic()])
+  } catch (e) {
+    reportError(e, '人工放行失败')
   } finally {
     acceptBusy.value = false
   }
@@ -1455,6 +1476,53 @@ onUnmounted(() => {
                     {{ chk.name }}
                     <span v-if="chk.status !== 'completed'">（进行中）</span>
                   </div>
+                </div>
+                <!--
+                  人工放行：明知检查没全绿仍合并。平台自己永远不走这条路——红着合
+                  有时候是对的（CI 抽风、与本次改动无关的既有失败），不能接受的是
+                  没有人做过这个决定。所以它默认收起、要填理由，点下去在卡上留名。
+                -->
+                <div class="mt-3">
+                  <v-btn
+                    v-if="!showForceMergeInput"
+                    size="small"
+                    variant="text"
+                    class="text-medium-emphasis"
+                    prepend-icon="mdi-alert-decagram-outline"
+                    @click="showForceMergeInput = true"
+                  >
+                    等不了了，人工放行合并
+                  </v-btn>
+                  <template v-else>
+                    <div class="text-caption text-medium-emphasis mb-1">
+                      明知检查没有全绿仍然合并。平台会在卡上记下是你、什么时候、当时检查是什么状态。
+                    </div>
+                    <v-textarea
+                      v-model="forceMergeReason"
+                      label="理由（会留在卡上）"
+                      rows="2"
+                      auto-grow
+                      density="compact"
+                      variant="outlined"
+                      hide-details
+                      class="mb-2"
+                    />
+                    <div class="d-flex ga-2">
+                      <v-btn
+                        size="small"
+                        color="warning"
+                        variant="flat"
+                        :loading="acceptBusy"
+                        :disabled="acceptBusy"
+                        @click="onForceMerge"
+                      >
+                        确认放行并合并
+                      </v-btn>
+                      <v-btn size="small" variant="text" :disabled="acceptBusy" @click="showForceMergeInput = false">
+                        取消
+                      </v-btn>
+                    </div>
+                  </template>
                 </div>
               </div>
             </v-card>

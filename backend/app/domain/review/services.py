@@ -78,6 +78,20 @@ GATE_ABANDONED_PREFIX = "⏱ 闸门没跑完"
 #: 人工作废 (2026-08-11)。作废复用 `revoked` 终态（archive.py 收敛非终态卡时也
 #: 用它），所以「谁作废的、为什么」只能靠这条前缀留在 note 里。
 VOIDED_PREFIX = "🗑 卡片已作废"
+#: 等 CI (App 采纳等 CI 再合)。`pr_open` 期间「什么都没发生」和「还在等」在卡面上
+#: 长得一模一样——一张不动的卡读起来像死了。这条前缀让等待自己说话：在等哪几项、
+#: 已经等了多久。它是 note 家族里**优先级最低**的一条：只在 note 为空、或上一条
+#: 也是它自己的时候才写，绝不盖掉 ⚠️/🚫/✋/❌/🌿/🚪 这些描述真实故障的 note。
+WAITING_CHECKS_PREFIX = "⏳ 等 CI"
+#: 人工放行 (App 采纳等 CI 再合)。红着合有时是对的（CI 基础设施抽风、与本次改动
+#: 无关的既有失败），不能接受的是**没有人做过这个决定**。这条前缀就是那个署名：
+#: 谁、什么时候、当时检查是什么状态、理由。默认拒绝、显式放行。
+FORCE_MERGED_PREFIX = "🔨 人工放行"
+
+#: 等待提示里「已等多久」的粒度。轮询每 60 秒一次，按分钟写会让这条 note 每一轮
+#: 都变一次（等于每分钟一次无意义的写 + UI 抖动）；按 5 分钟分档，一次等待里它
+#: 最多每 5 分钟变一次，而人想知道的「等很久了没有」照样看得出来。
+_WAIT_BUCKET_MINUTES = 5
 
 
 def _nudge_note_prefix(stage: str) -> str:
@@ -738,6 +752,9 @@ class AcceptService:
         #     visibly rather than falling through to the local merge. The one
         #     PR-less case that legitimately proceeds is a discussion-only topic
         #     with no branch, where the local merge no-ops and bypasses nothing.
+        #     Accepting there does NOT merge: it AUTHORIZES (see
+        #     `_authorize_pr_for_accept`) and the poller merges once CI is
+        #     actually green.
         #   - the platform forge: the local merge IS this project's accept
         #     (#363), and `forge.note` says so on the card so it can never read
         #     as a bound project that skipped its PR.
@@ -745,8 +762,15 @@ class AcceptService:
         #     down, with its documented degrade to the local merge.
         pr_degrade_reason = ""
         forge = await self._resolve_forge(topic.project_id)
-        if forge.requires_pr and card.pr_number is None:
-            await self._publish_pr_for_accept(card, topic)
+        if forge.requires_pr:
+            if card.pr_number is None:
+                await self._publish_pr_for_accept(card, topic)
+            if card.pr_number is not None:
+                # App 采纳等 CI 再合: 采纳 = 授权，合并归轮询器。Falls through to
+                # the local merge ONLY when the topic has no branch at all
+                # (`_publish_pr_for_accept` returned without a PR) — there the
+                # merge is a no-op and bypasses nothing.
+                return await self._authorize_pr_for_accept(card, topic, decided_by)
         if card.pr_number is not None:
             settled, existing_pr_degrade_reason = await self._accept_via_pr(
                 card, topic, decided_by
@@ -1040,6 +1064,7 @@ class AcceptService:
         repo: str,
         token: str,
         remote_head: str,
+        remote_branch: str = "",
     ) -> bool:
         """两阶段采纳: the platform side of the iterate loop — if 芝士 committed a
         fix since the last push, push it to the PR branch ourselves (芝士's
@@ -1119,7 +1144,10 @@ class AcceptService:
                 topic.id,
                 owner=owner,
                 repo=repo,
-                remote_branch=github_pr.pr_branch_name(topic.id),
+                # The PR's own head branch when the caller could read it off
+                # the PR; the derived name only as a fallback (that is what
+                # the personal-token lane's PRs are always called anyway).
+                remote_branch=remote_branch or github_pr.pr_branch_name(topic.id),
                 token=token,
             )
         except ValidationError as exc:
@@ -1251,6 +1279,58 @@ class AcceptService:
         )
         return card
 
+    async def _pr_poll_token(
+        self, card: AcceptCard, topic: Topic
+    ) -> tuple[str | None, str]:
+        """Whose GitHub credential drives THIS card's poll — paired with a
+        human-readable reason when there is none (empty when there is).
+
+        The two lanes answer differently, and picking the wrong one is how a
+        card stalls forever:
+
+        - **App forge**: the platform's own installation token. The approver is
+          not necessarily connected to GitHub at all, and — the part that
+          actually bites — is not necessarily allowed to write to `main`; the
+          App is. Binding an already-authorized card's progress to someone's
+          personal account state means a card that no one can move and no one
+          can see why. Attribution does not need their token either: it rides
+          the merge commit's `Reviewed-by` trailer.
+        - **personal-token forge**: unchanged (pre-#296 behaviour). Attribution
+          IS the point there — the PR was opened as that human.
+
+        Never raises: `_resolve_forge` fails closed with a ValidationError when
+        it cannot judge the binding, and a poll tick must degrade to "pause and
+        retry", not to a card whose only trace is a stack trace in the log.
+        """
+        try:
+            forge = await self._resolve_forge(topic.project_id)
+        except Exception as exc:  # noqa: BLE001 — pause this tick, retry the next
+            return None, f"判定不了项目的 GitHub 绑定状态（{type(exc).__name__}）"
+        if forge.kind is forge_mod.ForgeKind.github_app:
+            from app.domain.agent.github_app import github_app_tokens_for_project
+
+            tokens = await github_app_tokens_for_project(
+                topic.project_id, self._session
+            )
+            if tokens is None:
+                return None, "平台 GitHub App 对这个项目不可用"
+            try:
+                token, _ = await tokens.write_token()
+            except Exception as exc:  # noqa: BLE001 — same: pause, don't crash
+                return None, f"平台 GitHub App 取 token 失败（{type(exc).__name__}）"
+            return token, ""
+
+        from app.domain.oauth.services import (
+            get_github_user_token_for_handle_with_reason,
+        )
+
+        token, reason = await get_github_user_token_for_handle_with_reason(
+            self._session, card.decided_by or ""
+        )
+        if not token:
+            return None, _describe_token_unavailable(reason)
+        return token, ""
+
     async def advance_pr_card(
         self, card_id: uuid.UUID, *, chat_service, runner
     ) -> None:
@@ -1268,13 +1348,7 @@ class AcceptService:
         topic = await self._topic_or_404(card.topic_id)
         owner, _, repo = card.pr_repo.partition("/")
 
-        from app.domain.oauth.services import (
-            get_github_user_token_for_handle_with_reason,
-        )
-
-        token, reason = await get_github_user_token_for_handle_with_reason(
-            self._session, card.decided_by or ""
-        )
+        token, reason = await self._pr_poll_token(card, topic)
         if not token:
             logger.warning(
                 "pr_open card %s has no usable GitHub token anymore (%s); "
@@ -1285,10 +1359,9 @@ class AcceptService:
             # Without this the card just sits at `pr_open` forever and looks
             # identical to "CI still running" — no signal anyone's token died.
             if not card.note.startswith(_POLL_PAUSED_PREFIX):
-                card.note = (
-                    f"{_POLL_PAUSED_PREFIX}（下一轮还会重试）："
-                    f"{_describe_token_unavailable(reason)}"
-                )[:2000]
+                card.note = (f"{_POLL_PAUSED_PREFIX}（下一轮还会重试）：{reason}")[
+                    :2000
+                ]
                 await self._session.flush()
             return
 
@@ -1382,6 +1455,12 @@ class AcceptService:
             repo=repo,
             token=token,
             remote_head=status.head_sha,
+            # The branch THIS PR is open on, from the PR itself. It used to be
+            # derived from the topic id, which is right for one lane and wrong
+            # for the other (`cheesex/<hex8>` vs `topic/<hex8>`) — a derived
+            # name pushes 芝士's fix onto a branch no PR is watching, so the
+            # commit lands and the PR never moves.
+            remote_branch=status.head_ref,
         )
 
         # Only re-read the head when the push above actually moved it;
@@ -1409,6 +1488,8 @@ class AcceptService:
             owner=owner, repo=repo, ref=card.pr_head_sha, token=token
         )
         if state == "pending":
+            self._note_waiting_on_checks(card=card, tail=tail)
+            await self._session.flush()
             return
         if state == "failure":
             self._nudge_pr_fix(
@@ -1536,6 +1617,48 @@ class AcceptService:
             shown += f" 等 {len(reasons)} 处"
         return f"授权之后的新提交超出了当时授权的范围（{shown}）"
 
+    def _waited_phrase(self, card: AcceptCard) -> str:
+        """How long this card has been waiting, in 5-minute buckets."""
+        if card.decided_at is None:
+            return "刚开始等"
+        since = card.decided_at
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=UTC)
+        minutes = int((datetime.now(UTC) - since).total_seconds() // 60)
+        if minutes < _WAIT_BUCKET_MINUTES:
+            return "刚开始等"
+        return f"已等约 {minutes // _WAIT_BUCKET_MINUTES * _WAIT_BUCKET_MINUTES} 分钟"
+
+    def _note_waiting_on_checks(self, *, card: AcceptCard, tail: str) -> None:
+        """约束一 (App 采纳等 CI 再合): a waiting card has to say what it is
+        waiting for and how long it has been at it.
+
+        Waiting is now the normal state of an accepted card — the accept stops
+        being instant, and a card that shows nothing for 16 minutes reads as a
+        card nobody is working. This is the note that keeps it legible.
+
+        Two rules it must obey, both learned from notes that swallowed each
+        other (docs 诊断信息搬上验收卡 的优先级说明):
+
+        - **Lowest priority in the family.** It writes only into an empty note
+          or over one of its own. `⚠️` (CI 红了 / 重推失败 / 轮询暂停)、`🌿`
+          (分支分叉)、`🚫` (GitHub 拒绝合并)、`✋` (安全阀扣住)、`🚪` (PR 被关)、
+          `❌` (部署失败) all describe something that needs a human and must
+          never be replaced by "还在等".
+        - **No churn.** The elapsed time is bucketed (`_WAIT_BUCKET_MINUTES`)
+          and the write is skipped when the text is unchanged, so a 16-minute
+          wait costs a handful of updates rather than one per 60s tick.
+        """
+        if card.note and not card.note.startswith(WAITING_CHECKS_PREFIX):
+            return
+        note = (
+            f"{WAITING_CHECKS_PREFIX}（{self._waited_phrase(card)}）："
+            f"{tail}。全绿后平台自动合并"
+        )[:2000]
+        if note == card.note:
+            return
+        card.note = note
+
     def _note_needs_human(self, *, card: AcceptCard, topic: Topic, reason: str) -> None:
         """One of the three exceptions fired: say so on the card and in the
         room, and stop — never merge.
@@ -1554,7 +1677,8 @@ class AcceptService:
             return
         note = (
             f"✋ PR #{card.pr_number} 平台不会自动合并：{reason}。"
-            "需要人来定：自己在 GitHub 上合并这个 PR，或者撤销这次采纳。"
+            "需要人来定：在卡片上「人工放行」（会记下是谁、什么时候、当时检查什么"
+            "状态），自己在 GitHub 上合并这个 PR，或者作废这张卡。"
         )[:2000]
         if card.note == note:
             return  # already said once — the 60s poll must not repeat it
@@ -1565,8 +1689,9 @@ class AcceptService:
             f"✋ PR #{card.pr_number} 的检查没有拦住它，"
             f"但平台不会自动合并：{reason}。\n"
             f"这是「人类授权动作前移」的安全阀之一：{card.decided_by} 当初授权的是"
-            "另一份改动，机器不替他把这一份也签下去。需要人来定：自己在 GitHub 上"
-            f"合并，或者撤销这次采纳。\n{card.pr_url}",
+            "另一份改动，机器不替他把这一份也签下去。需要人来定：在卡片上「人工"
+            "放行」（明知如此仍合并，平台会记名留痕），自己在 GitHub 上合并，"
+            f"或者作废这张卡。\n{card.pr_url}",
         )
 
     async def _settle_external_merge(
@@ -1732,6 +1857,7 @@ class AcceptService:
         card: AcceptCard,
         topic: Topic,
         merged_externally: bool = False,
+        headline: str = "",
     ) -> None:
         """The PR is merged, so the work is accepted (#206).
 
@@ -1744,6 +1870,12 @@ class AcceptService:
         Watching the deploy is real work and it keeps a home: the webhook
         primitive already exists for a pipeline to post its outcome into the
         topic, and #190's ops room is where that judgment belongs.
+
+        `headline` is prefixed onto the card's note when the merge was NOT the
+        ordinary all-green one — today that means 人工放行 (`FORCE_MERGED_
+        PREFIX`), whose whole point is that the card afterwards says who
+        decided to merge red and why. It must survive this method, which
+        otherwise rewrites `note` wholesale.
         """
         now = datetime.now(UTC)
         card.status = AcceptStatus.accepted
@@ -1753,7 +1885,8 @@ class AcceptService:
             if merged_externally
             else "已合并"
         )
-        card.note = f"PR #{card.pr_number} {how}：{card.pr_url}"
+        settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
+        card.note = (f"{headline}；{settled}" if headline else settled)[:2000]
         await self._release_topic_compute(topic)
         topic.status = TopicStatus.archived
         topic.accepted_by = by
@@ -1881,6 +2014,123 @@ class AcceptService:
         if card.note.startswith(pr_publish.PR_OPEN_FAILED_PREFIX):
             card.note = ""  # mirror record_pr's stale-failure-note clearing
         await self._session.flush()
+
+    async def _authorize_pr_for_accept(
+        self, card: AcceptCard, topic: Topic, decided_by: str
+    ) -> AcceptCard:
+        """App forge (App 采纳等 CI 再合)：采纳把卡送进 `pr_open`，**不合并**。
+
+        这是这条路上「合并」和「授权」的分家。在此之前 `_accept_via_pr` 读一次
+        check-runs、把状态写进 note，然后立刻调合并 API —— 那句 note 是如实留痕，
+        不是拦截，所以 PR #414 在开出 25 秒后就进了 main，而最后一项检查比合并晚
+        了 16 分钟。绿是运气，门禁根本没等。
+
+        改法不是新造一道闸门（andy 在 #362 定的原则是 mirror, don't gate，而
+        `review/gate.py` 第一行至今写着 NO LONGER DISPATCHED），而是让这条路也走
+        `github_user` 早就在走的两阶段：人点采纳 = 授权「以我的名义把这份改动送
+        进 CI，全绿且没超出授权范围就合」，剩下的交给 `advance_pr_card`。等 CI
+        全绿再合，读的正是 forge 自己的检查结论——这恰恰是 mirror。
+
+        轮询器要的四个字段在这里一次补齐（`pr_repo` / `pr_head_sha` /
+        `pr_authorized_sha`，外加 `pr_merged_at=None`）。App 这条路此前只写
+        `pr_number` + `pr_url`，而 `advance_pr_card` 缺任何一个就只 log 一行
+        error 然后 return —— 卡会永远停在 `pr_open`，不报错、不提醒、界面上看不
+        出来。
+
+        PR 当前状态在这里读一次，为的是保住 #363 已经定下的两条契约：GitHub 上
+        已经合了 → 照单收下；PR 被关掉没合 → 采纳停下（forge 说了不，绝不改走
+        本地合并直推）。GitHub 不可达同样停下、可重试。
+        """
+        from app.domain.agent.github_app import github_app_tokens_for_project
+        from app.domain.review import github_pr
+        from app.domain.review.github_pr import parse_github_repo
+        from app.domain.workspace import service as ws
+
+        number = card.pr_number
+        assert number is not None  # caller checked; keeps the type checker honest
+
+        tokens = await github_app_tokens_for_project(topic.project_id, self._session)
+        upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
+        parsed = parse_github_repo(upstream)
+        if tokens is None or parsed is None:
+            # `_github_bound` said yes moments ago, so this is config changing
+            # under us. Stop rather than guess where the PR should land.
+            await self._stop_accept_pr_unavailable(
+                card, topic, f"读不到 PR #{number} 该合进哪个仓库（App 或上游配置已变）"
+            )
+        owner, repo_name = parsed
+        client = github_pr.default_client()
+        try:
+            token, _ = await tokens.write_token()
+            status = await client.pull_request_status(
+                owner=owner, repo=repo_name, number=number, token=token
+            )
+        except Exception as exc:  # noqa: BLE001 — stop visibly; never local-merge
+            logger.warning(
+                "cannot read PR #%s for card %s at accept time: %s",
+                number,
+                card.id,
+                exc,
+            )
+            await self._stop_accept_pr_unavailable(
+                card, topic, f"PR #{number} 状态读取失败：{exc}"[:300]
+            )
+
+        if status.merged:
+            # 人已经在 GitHub 上合了这个 PR —— 同一件事，照单收下。
+            return await self._settle_pr_accept(
+                card, topic, decided_by, note=f"PR #{number} 已在 GitHub 合并"
+            )
+        if status.state == "closed":
+            await self._stop_accept_pr_unavailable(
+                card, topic, f"PR #{number} 已在 GitHub 被关闭但未合并"
+            )
+
+        # 人授权的是「现在工作区里这一份」，所以最后的改动先推上去，再把推上去的
+        # 那个 commit 冻结成授权基线。
+        try:
+            await asyncio.to_thread(
+                ws.push_topic_branch, topic.project_id, topic.id, token
+            )
+            head_sha = await client.pull_request_head_sha(
+                owner=owner, repo=repo_name, number=number, token=token
+            )
+        except Exception as exc:  # noqa: BLE001 — stop visibly; never local-merge
+            logger.warning(
+                "cannot push/refresh PR #%s for card %s: %s", number, card.id, exc
+            )
+            await self._stop_accept_pr_unavailable(
+                card, topic, f"PR #{number} 推送话题分支失败：{exc}"[:300]
+            )
+
+        await self._repo.add_approval(card.id, decided_by)
+        now = datetime.now(UTC)
+        card.status = AcceptStatus.pr_open
+        card.decided_by = decided_by
+        card.decided_at = now
+        card.pr_repo = f"{owner}/{repo_name}"
+        card.pr_head_sha = head_sha
+        # 人类授权动作前移: 冻结人此刻批的那个 commit。`pr_head_sha` 之后会跟着
+        # 芝士推的每个修复走，这一个不会——轮询器合并前拿两者比对。
+        card.pr_authorized_sha = head_sha
+        card.pr_merged_at = None
+        card.note = (
+            f"{WAITING_CHECKS_PREFIX}（刚开始等）：已授权 PR #{number}，"
+            f"检查全绿且没超出授权范围时平台自动合并：{card.pr_url or ''}"
+        )[:2000]
+        await self._session.flush()
+        await self._session.refresh(card)
+        self._notify_merge_result(
+            topic,
+            f"🔁 {decided_by} 授权了这次改动，PR #{number} 交给 CI —— "
+            f"**采纳不再是秒回**，本仓库的检查要跑十几分钟。{card.pr_url or ''}\n"
+            "话题保持 active（容器不停）。检查全绿、且改动没超出授权范围时平台自动"
+            "合并并归档；三种例外（新 diff 越界 / 根本没有 CI 会跑 / 目标是 prod）"
+            "会回来找人。\n"
+            "⚠️ 等 CI 期间平台每 60 秒会把工作区的新提交同步到这个 PR —— 这时候改"
+            "工作区会让 CI 从头重跑。",
+        )
+        return card
 
     async def _note_outside_accept_txn(self, card_id: uuid.UUID, note: str) -> None:
         """Persist a card note through its own session + commit, so it survives
@@ -2145,6 +2395,115 @@ class AcceptService:
 
         await self._session.flush()
         await self._session.refresh(card)
+        return card
+
+    async def merge_despite_checks(
+        self, *, card_id: uuid.UUID, decided_by: str, reason: str = ""
+    ) -> AcceptCard:
+        """约束二 (App 采纳等 CI 再合)：人明知检查没全绿，仍然决定合并——**署名的**
+        显式出口。
+
+        为什么必须有：红着合有时候是对的。CI 基础设施抽风、与本次改动无关的既有
+        失败、赶时间的热修——真正不能接受的不是「红着合」，而是**没有人做过这个
+        决定**。这正是这次改动要终结的东西：`_accept_via_pr` 读一次检查、把
+        「合并时 CI 检查未全绿」写进 note，然后照合——默认放行、事后留痕。这条
+        出口把它翻过来：**默认拒绝、显式放行**，而且放行必须签字。
+
+        为什么不是把 andy 已经退役的前置闸门造回来（`review/gate.py` 第一行至今
+        写着 NO LONGER DISPATCHED）：平台不重算「这段代码好不好」，它只是把
+        forge 的结论如实呈上，然后让一个**具名的人**在上面按手印。
+
+        它记什么：谁、什么时候、**当时的检查到底是什么状态**（现读一次，读不到
+        就如实写读不到——但绝不因此拒绝放行，凭据坏了不该把人锁在门外）、以及
+        人自己写的理由。这四样凑齐，事后才答得上「这次红着合，是谁决定的」。
+
+        谁能点：这张卡的验收人、当初授权开 PR 的人、项目 owner、项目 lead。
+        芝士被 `_forbid_ai` 挡在外面（跟 accept/approve/void 同一条线），路由也
+        **故意不进** `app/main.py` 的 `_CHEESE_WRITE_PATHS`——照 `void` 的先例：
+        不进白名单本身拦不住任何东西（没列进去的写路由压根不过那个中间件），真正
+        拦住芝士的是这里的 `_forbid_ai` 加路由上的登录校验。
+        """
+        card = await self._card_or_404(card_id)
+        if card.status != AcceptStatus.pr_open or card.pr_merged_at is not None:
+            raise ValidationError("只有还在等检查的验收卡（pr_open）能人工放行合并")
+        if card.pr_number is None or not card.pr_repo or not card.pr_head_sha:
+            raise ValidationError("这张卡没有可合并的 PR")
+
+        topic = await self._topic_or_404(card.topic_id)
+        project = await self._projects.get(topic.project_id)
+        self._forbid_ai(project, decided_by, "人工放行合并")
+
+        allowed = {card.reviewer_handle}
+        if card.decided_by:
+            allowed.add(card.decided_by)
+        if project is not None and project.owner_handle:
+            allowed.add(project.owner_handle)
+        members = await MemberRepository(self._session).list_for_project(
+            topic.project_id
+        )
+        allowed |= {m.user_handle for m in members if m.role == ProjectRole.lead}
+        if decided_by not in allowed:
+            raise ForbiddenError(
+                "只有这张卡的验收人、授权人或项目 owner / 组长能人工放行"
+            )
+
+        token, why = await self._pr_poll_token(card, topic)
+        if not token:
+            raise ValidationError(f"暂时拿不到合并这个 PR 用的 GitHub 凭据（{why}）")
+
+        from app.domain.review import github_pr
+
+        owner, _, repo = card.pr_repo.partition("/")
+        client = github_pr.default_client()
+        # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
+        try:
+            state, tail = await client.check_state(
+                owner=owner, repo=repo, ref=card.pr_head_sha, token=token
+            )
+            checks_at_merge = f"{state}（{tail.splitlines()[0] if tail else ''}）"
+        except Exception as exc:  # noqa: BLE001 — a broken read must not lock a human out
+            logger.warning(
+                "force-merge check read failed for card %s: %s", card.id, exc
+            )
+            checks_at_merge = "读不到检查状态"
+
+        number = card.pr_number
+        result = await client.merge_pull_request(
+            owner=owner,
+            repo=repo,
+            number=number,
+            token=token,
+            commit_title=_pr_merge_commit_title(topic, number),
+            commit_message=_pr_merge_commit_message(topic, card.decided_by or ""),
+        )
+        if result.sha is None:
+            raise ValidationError(
+                f"GitHub 拒绝合并 PR #{number}：{result.blocked_reason or '未说明原因'}"
+            )
+
+        now = datetime.now(UTC)
+        stamp = now.strftime("%Y-%m-%d %H:%M UTC")
+        tail_reason = f"，理由：{reason.strip()}" if reason.strip() else ""
+        headline = (
+            f"{FORCE_MERGED_PREFIX}：<@{decided_by}> 于 {stamp} 明知检查未全绿仍"
+            f"合并（合并时检查状态：{checks_at_merge}）{tail_reason}"
+        )
+        card.pr_merged_at = now
+        card.pr_head_sha = result.sha
+        await self._finish_pr_accept(card=card, topic=topic, headline=headline)
+        logger.warning(
+            "card %s: PR #%s force-merged by %s (checks: %s)",
+            card.id,
+            number,
+            decided_by,
+            checks_at_merge,
+        )
+        self._notify_merge_result(
+            topic,
+            f"🔨 <@{decided_by}> 人工放行了 PR #{number}：明知检查未全绿仍合并"
+            f"（合并时检查状态：{checks_at_merge}）{tail_reason}。\n"
+            f"{card.pr_url or ''}",
+        )
         return card
 
     async def void(
