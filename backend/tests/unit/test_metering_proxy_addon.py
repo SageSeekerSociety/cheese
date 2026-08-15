@@ -315,13 +315,22 @@ def _basic(password: str) -> str:
     return "Basic " + base64.b64encode(f"cheese:{password}".encode()).decode()
 
 
-def _make_connect_flow(proxy_auth: str | None = None):
+def _make_connect_flow(proxy_auth: str | None = None, *, conn: str = "client-1"):
     """A CONNECT as the regular-mode listener sees it: the caller's scoped token
-    rides as the Basic password of its HTTPS_PROXY URL."""
+    rides as the Basic password of its HTTPS_PROXY URL.
+
+    It carries a client connection because a real one always does, and because
+    the token proved here has to be findable later from the requests that arrive
+    on this same connection — the connection is the only thing the CONNECT hook
+    and the request hook share."""
     headers: dict[str, str] = {}
     if proxy_auth is not None:
         headers["proxy-authorization"] = proxy_auth
-    return SimpleNamespace(request=SimpleNamespace(headers=headers), response=None)
+    return SimpleNamespace(
+        request=SimpleNamespace(headers=headers),
+        client_conn=SimpleNamespace(id=conn),
+        response=None,
+    )
 
 
 def test_connect_without_a_configured_secret_refuses_rather_than_relaying(
@@ -400,3 +409,243 @@ def test_hardening_guard_selftest_and_clean_tree():
         ["bash", str(GUARD), str(REPO_ROOT)], capture_output=True, text=True
     )
     assert clean.returncode == 0, clean.stdout + clean.stderr
+
+
+# --- attribution on the pass-through path ----------------------------------
+# The two halves of the machine design contradicted each other in production:
+# pass-through requires the caller's Bearer to be the MACHINE's ccproxy ticket,
+# while attribution read the project out of that same Bearer expecting a scoped
+# cheese token. So an enrolled machine could never be attributed, never got an
+# admission verdict, never got its identity — and its turns were refused by the
+# meter itself ("a valid scoped token is required", measured on machine 474,
+# 2026-08-15). The token was never missing: it rode on the CONNECT, one layer
+# down, where nothing looked for it.
+
+
+def _machine_flow(*, ticket="sk-ant-oat01-machine-ticket", attr=None, conn="client-1"):
+    """A request as an ENROLLED MACHINE makes it: the Bearer is its own ccproxy
+    ticket (77 chars, no dot — not a scoped token and not verifiable here), on a
+    connection that proved its project at CONNECT time."""
+    headers = {"authorization": f"Bearer {ticket}"}
+    if attr is not None:
+        headers["x-cheese-attr"] = attr
+    request = SimpleNamespace(
+        path="/v1/messages", host="api.anthropic.com", headers=headers
+    )
+    return SimpleNamespace(
+        request=request,
+        client_conn=SimpleNamespace(
+            sni="api.anthropic.com", tls_established=True, id=conn
+        ),
+        server_conn=SimpleNamespace(via=None),
+        metadata={},
+        response=None,
+    )
+
+
+def _connect_flow_on(conn: str, proxy_auth: str | None):
+    return _make_connect_flow(proxy_auth, conn=conn)
+
+
+def test_a_machines_ticket_is_attributed_from_what_it_proved_at_connect(
+    monkeypatch, tmp_path
+):
+    """The whole point of pass-through: the Bearer is NOT a scoped token, so the
+    project has to come from the CONNECT that opened this connection."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+
+    project, topic, bearer, _ = mod._attribution(_machine_flow(conn="c1"))
+
+    assert project == "p9", "an enrolled machine must still be attributable"
+    assert topic == "t1"
+
+
+def test_the_admission_call_uses_the_token_the_caller_actually_proved(
+    monkeypatch, tmp_path
+):
+    """Admission authenticates with a scoped cheese token. Handing it the
+    machine's ccproxy ticket instead would 401 — and the proxy fails OPEN on
+    admission errors, so the budget brake would quietly stop braking."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
+    )
+    token = _scoped_token(secret, project="p9")
+    mod.http_connect(_connect_flow_on("c1", _basic(token)))
+
+    _, _, bearer, _ = mod._attribution(_machine_flow(conn="c1"))
+
+    assert bearer == token
+
+
+def test_a_connection_that_proved_nothing_is_still_unattributable(
+    monkeypatch, tmp_path
+):
+    """The security property must not regress: reading the CONNECT is a new
+    SOURCE of verified claims, not a new way to skip proving one."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
+    )
+
+    project, _, _, _ = mod._attribution(_machine_flow(conn="never-connected"))
+
+    assert project == ""
+
+
+def test_the_session_header_refines_the_topic_inside_the_proven_project(
+    monkeypatch, tmp_path
+):
+    """One machine hosts several topics of a project but shares ONE tunnel
+    helper, so the CONNECT token names whichever session launched last. The
+    per-request header is the only per-topic signal, and it is safe to honour
+    for the topic alone: the project it is checked against was proven."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+
+    project, topic, _, _ = mod._attribution(
+        _machine_flow(conn="c1", attr="p9/other-topic")
+    )
+
+    assert (project, topic) == ("p9", "other-topic")
+
+
+def test_the_session_header_cannot_move_billing_to_another_project(
+    monkeypatch, tmp_path
+):
+    """The header is unverified. It may pick a topic, never a payer."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+
+    project, topic, _, _ = mod._attribution(
+        _machine_flow(conn="c1", attr="someone-elses-project/their-topic")
+    )
+
+    assert (project, topic) == ("p9", "t1"), "a foreign project is ignored entirely"
+
+
+def test_a_closed_connection_stops_pinning_a_proven_project(monkeypatch, tmp_path):
+    """Same lifetime rule as the identity map: a long-lived proxy must not
+    accumulate one entry per connection ever made, and a recycled connection id
+    must not inherit the previous caller's project."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-X", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+
+    mod.client_disconnected(SimpleNamespace(id="c1"))
+
+    assert mod._attribution(_machine_flow(conn="c1"))[0] == ""
+
+
+def test_an_unplaceable_machine_is_refused_rather_than_billed_to_the_platform(
+    monkeypatch, tmp_path
+):
+    """The day-costing failure, pinned. A box with no CHEESE_ADMISSION_URL gives
+    no verdict, so no machine is ever placed on its own identity — and the swap
+    below would put the PLATFORM's credential on a caller that brought its own.
+    Upstream then answers about a token the machine never held, which is how
+    this read as "the platform's subscription is revoked" for a day.
+
+    Refusing keeps two properties the swap would break: the wrong account is not
+    spent, and the error names the missing piece instead of impersonating an
+    auth failure."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _machine_flow(conn="c1")
+
+    asyncio.run(mod.request(flow))
+
+    assert flow.response is not None and flow.response.status_code == 503
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"
+
+
+def test_a_scoped_caller_with_no_admission_still_gets_the_platform_credential(
+    monkeypatch, tmp_path
+):
+    """The refusal above must be narrow. A caller whose Bearer IS a scoped token
+    holds nothing spendable of its own, so swapping in the platform credential
+    is the whole point of its path — unchanged by any of this."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    flow = _make_flow(caller_bearer=_scoped_token(secret))
+
+    asyncio.run(mod.request(flow))
+
+    assert flow.response is None
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
+
+
+def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_path):
+    """Admission resolves an identity only for a turn it is ALLOWING, so a
+    refused project also arrives here with no identity — and would be reported
+    as the box being misconfigured, sending whoever reads it to the wrong file.
+    The refusal has to name the balance."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    verdict = _with_admission(mod, monkeypatch, None)
+    verdict.allow = False
+    verdict.reason = "budget spent: 10.0000 of 10.0000"
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _machine_flow(conn="c1")
+
+    asyncio.run(mod.request(flow))
+
+    assert flow.response is not None and flow.response.status_code == 429
+    assert b"budget" in flow.response.content
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"
+
+
+def test_a_request_with_no_bearer_is_not_treated_as_carrying_its_own(
+    monkeypatch, tmp_path
+):
+    """Claude Code calls some endpoints with no Authorization at all
+    (`/api/event_logging/v2/batch` among them). "No credential" is not "someone
+    else's credential": refusing those broke telemetry for every CONNECT caller
+    whose project owns no machine — seen on dev as a burst of 503s from a
+    project that has none. Such a request takes the ordinary swap path."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _machine_flow(conn="c1")
+    del flow.request.headers["authorization"]
+    flow.request.path = "/api/event_logging/v2/batch"
+
+    asyncio.run(mod.request(flow))
+
+    assert flow.response is None, "telemetry must not be refused"
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"

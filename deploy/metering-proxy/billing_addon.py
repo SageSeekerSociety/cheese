@@ -130,12 +130,34 @@ GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 METER = Meter(USAGE_LOG, CAP_WINDOW_S)
 ADMISSION = AdmissionGate(ADMISSION_URL, cache_s=ADMISSION_CACHE_S)
 
+if not ADMISSION_URL:
+    # Said once, loudly, at load: an unset env var produces no error anywhere
+    # downstream, and both things it switches off are invisible from outside —
+    # the budget never refuses, and no enrolled machine is ever placed on its
+    # own identity. A deployment that means it can read this line and move on.
+    logger.warning(
+        "CHEESE_ADMISSION_URL is unset: per-project budgets are NOT enforced "
+        "(only the rolling token cap), and no enrolled machine can be placed on "
+        "its own ccproxy identity — every such turn will be refused instead of "
+        "falling back to the platform credential."
+    )
+
 # Which identity each client connection's traffic goes out as, keyed by the
 # client connection's id. Two hooks have to agree and neither can tell the other
 # directly: `request` learns the identity from the admission verdict, while the
 # upstream CONNECT is a DIFFERENT flow raised later, when the lazy server
 # connection is finally opened. The client connection is what they share.
 _UPSTREAM_BY_CLIENT: dict[str, str] = {}
+
+# What each client connection PROVED at CONNECT time: (scoped token, claims).
+# The pass-through path needs this because its two halves otherwise contradict
+# each other — relaying a machine's own ccproxy ticket means the request Bearer
+# is that ticket, while attribution wants a scoped cheese token in the very same
+# header. Only one can be there. The scoped token is not missing though: the
+# tunnel helper stamps it as the CONNECT's proxy password, which http_connect
+# already verifies to open the tunnel at all. Keeping the verified result turns
+# that check into a second source of attribution instead of a fact thrown away.
+_SCOPED_BY_CLIENT: dict[str, tuple[str, dict]] = {}
 
 
 def _real_token() -> str:
@@ -159,22 +181,81 @@ def _caller_bearer(flow: http.HTTPFlow) -> str:
     return ""
 
 
-def _attribution(flow: http.HTTPFlow) -> tuple[str, str, str]:
-    """(project_id, topic_id, caller_bearer) for this request.
+def _topic_within(flow: http.HTTPFlow, project: str, claims: dict) -> str:
+    """The topic to bill inside an ALREADY PROVEN project.
+
+    One machine hosts several topics of a project but shares a single tunnel
+    helper, and that helper holds one token file — rewritten by whichever
+    session launched last. So the CONNECT's token names the right project and an
+    arbitrary one of its topics. The per-request header is the only per-topic
+    signal that survives to here.
+
+    Honouring it for the topic alone is safe in a way honouring it for the
+    project is not. The project decides who pays and which budget is checked, so
+    it stays strictly on verified claims. The topic only says which of that
+    payer's own rows this lands on; a caller lying about it can misattribute a
+    turn inside a project it already proved it owns, which costs no one else
+    anything. Hence the equality check: a header naming a different project is
+    discarded whole, never used to move billing.
+    """
+    attr = flow.request.headers.get(X_ATTR_HEADER, "")
+    header_project, _, header_topic = attr.partition("/")
+    if header_topic and header_project == project:
+        return header_topic
+    return str(claims.get("t") or "")
+
+
+def _attribution(flow: http.HTTPFlow) -> tuple[str, str, str, bool]:
+    """(project_id, topic_id, scoped_token, carries_own_credential) for this
+    request.
 
     Verified claims first; the spoofable header only where explicitly allowed.
     Empty project = unattributable (recorded as such; refused separately when
-    scoped auth is required)."""
+    scoped auth is required).
+
+    Two places carry verified claims, and the second is not a fallback for a
+    weaker caller — it is the ONLY one an enrolled machine can use. Such a
+    caller's Bearer is its own ccproxy ticket by design (that is what
+    pass-through relays), so its scoped token can only be the one it proved when
+    it opened the tunnel.
+
+    The third element is what authenticates the admission call, so it must be
+    the scoped token and not merely whatever was in the Authorization header —
+    handing admission a ccproxy ticket 401s, and the proxy fails OPEN on
+    admission errors, which would leave the budget brake silently not braking.
+
+    The fourth element says the caller PUT a credential of its own in the
+    Authorization header — it sent a bearer, and that bearer is not a scoped
+    cheese token. That is the one header the platform's credential must never
+    overwrite (see request()).
+
+    An ABSENT bearer is deliberately not that. Claude Code calls some endpoints
+    (`/api/event_logging/v2/batch` among them) with no Authorization at all, and
+    treating "no credential" as "someone else's credential" refused telemetry
+    for every caller on the CONNECT listener whose project has no machine —
+    observed on dev the moment this shipped, as a burst of 503s from a project
+    that owns no machine at all.
+    """
     bearer = _caller_bearer(flow)
     if SCOPED_SECRET:
         claims = verify_scoped_token(bearer, SCOPED_SECRET)
         if claims:
-            return str(claims.get("p") or ""), str(claims.get("t") or ""), bearer
+            return str(claims.get("p") or ""), str(claims.get("t") or ""), bearer, False
+        pinned = _SCOPED_BY_CLIENT.get(getattr(flow.client_conn, "id", ""))
+        if pinned:
+            token, connect_claims = pinned
+            project = str(connect_claims.get("p") or "")
+            return (
+                project,
+                _topic_within(flow, project, connect_claims),
+                token,
+                bool(bearer),
+            )
     if ALLOW_HEADER_ATTR:
         attr = flow.request.headers.get(X_ATTR_HEADER, "")
         project, _, topic = attr.partition("/")
-        return project, topic, bearer
-    return "", "", bearer
+        return project, topic, bearer, False
+    return "", "", bearer, False
 
 
 def _route_to_gateway(flow: http.HTTPFlow, key: str) -> bool:
@@ -237,7 +318,16 @@ def http_connect(flow: http.HTTPFlow) -> None:
     if ALLOW_HEADER_ATTR:
         return
     password = proxy_basic_password(flow.request.headers.get("proxy-authorization", ""))
-    if password and SCOPED_SECRET and verify_scoped_token(password, SCOPED_SECRET):
+    claims = (
+        verify_scoped_token(password, SCOPED_SECRET)
+        if password and SCOPED_SECRET
+        else None
+    )
+    if claims:
+        # Kept, not discarded: for an enrolled machine this is the only scoped
+        # token on the whole connection — its request Bearer is the ccproxy
+        # ticket that pass-through exists to relay. See _attribution.
+        _SCOPED_BY_CLIENT[getattr(flow.client_conn, "id", "")] = (password, claims)
         return
     flow.response = http.Response.make(
         407,
@@ -268,8 +358,11 @@ def http_connect_upstream(flow: http.HTTPFlow) -> None:
 
 def client_disconnected(client) -> None:
     """A long-lived proxy must not accumulate one entry per connection ever
-    made; the identity is only meaningful while the connection is open."""
+    made; neither the identity nor the proven project outlives the connection
+    that established it — and a recycled connection id must not inherit the
+    previous caller's project."""
     _UPSTREAM_BY_CLIENT.pop(getattr(client, "id", ""), None)
+    _SCOPED_BY_CLIENT.pop(getattr(client, "id", ""), None)
 
 
 def tls_clienthello(data: tls.ClientHelloData) -> None:
@@ -318,7 +411,7 @@ async def request(flow: http.HTTPFlow) -> None:
 
     # Attribution BEFORE anything else: the caller's own Bearer is the scoped
     # token.
-    project_id, topic_id, bearer = _attribution(flow)
+    project_id, topic_id, bearer, carries_own_credential = _attribution(flow)
     flow.metadata["cheese_attr"] = (project_id, topic_id)
 
     is_messages = "/v1/messages" in flow.request.path
@@ -391,6 +484,63 @@ async def request(flow: http.HTTPFlow) -> None:
     # no model credential for this path at all.
     if verdict is not None and verdict.upstream:
         _UPSTREAM_BY_CLIENT[getattr(flow.client_conn, "id", "")] = verdict.upstream
+        return
+
+    # Reaching here with a caller that brought its OWN credential means the
+    # control plane could not place it, and the swap below would replace that
+    # caller's ticket with the platform's — spending the wrong account, and
+    # reporting it as an auth failure that reads like the caller's own.
+    #
+    # This is the failure that cost a day (2026-08-15): the box had no
+    # CHEESE_ADMISSION_URL, so no verdict ever carried an identity, so every
+    # enrolled machine silently fell back to the platform credential and every
+    # turn died with an upstream "OAuth access token has been revoked" naming a
+    # token the machine never held. Nothing anywhere said "admission is not
+    # configured" — an unset env var looks exactly like a working one. Refusing
+    # here turns that into one line that names the missing piece.
+    if carries_own_credential:
+        if verdict is not None and not verdict.allow:
+            # An exhausted budget also produces no identity (admission only
+            # resolves one for a turn it is allowing), so it would otherwise be
+            # reported as the misconfiguration below — pointing whoever reads it
+            # at the box's env instead of at the project's balance.
+            _refuse(
+                flow,
+                429,
+                "rate_limit_error",
+                f"cheese project budget: {verdict.reason}",
+            )
+            return
+        # Which of the three it was, on the box, at the moment it happened. The
+        # refusal body has to name all three because the caller cannot see the
+        # deployment; the operator can, and guessing between them is what turned
+        # this into a day. Project id only — never the token.
+        caller = _caller_bearer(flow)
+        logger.warning(
+            "refusing a machine turn: no identity to send it as "
+            "(project=%s admission_url=%s verdict=%s upstream=%s path=%s "
+            "bearer=len:%d/dot:%s/%s)",
+            project_id or "<none>",
+            "set" if ADMISSION_URL else "UNSET",
+            "none" if verdict is None else "received",
+            "absent" if verdict is None or not verdict.upstream else "present",
+            flow.request.path,
+            # Shape only — enough to tell a ccproxy ticket from a stale scoped
+            # token from something unexpected, and never the value itself.
+            len(caller),
+            "." in caller,
+            caller[:12],
+        )
+        _refuse(
+            flow,
+            503,
+            "api_error",
+            "cheese: this machine carries its own ccproxy ticket but the "
+            "control plane did not say which identity to send it as — "
+            "CHEESE_ADMISSION_URL unset, admission unreachable, or the machine "
+            "has no recorded ccproxy identity; refusing rather than spending "
+            "the platform's credential",
+        )
         return
 
     # SWAP. Nothing placed this caller on a machine identity, so its bearer is a
