@@ -224,11 +224,17 @@ def _attribution(flow: http.HTTPFlow) -> tuple[str, str, str, bool]:
     handing admission a ccproxy ticket 401s, and the proxy fails OPEN on
     admission errors, which would leave the budget brake silently not braking.
 
-    The fourth element says the caller's Authorization header is a credential of
-    its OWN rather than a scoped cheese token — true exactly when the claims
-    came from the CONNECT. Only a machine relaying its own ccproxy ticket looks
-    like that, and it is the one caller whose header must never be overwritten
-    with the platform's credential (see request()).
+    The fourth element says the caller PUT a credential of its own in the
+    Authorization header — it sent a bearer, and that bearer is not a scoped
+    cheese token. That is the one header the platform's credential must never
+    overwrite (see request()).
+
+    An ABSENT bearer is deliberately not that. Claude Code calls some endpoints
+    (`/api/event_logging/v2/batch` among them) with no Authorization at all, and
+    treating "no credential" as "someone else's credential" refused telemetry
+    for every caller on the CONNECT listener whose project has no machine —
+    observed on dev the moment this shipped, as a burst of 503s from a project
+    that owns no machine at all.
     """
     bearer = _caller_bearer(flow)
     if SCOPED_SECRET:
@@ -239,7 +245,12 @@ def _attribution(flow: http.HTTPFlow) -> tuple[str, str, str, bool]:
         if pinned:
             token, connect_claims = pinned
             project = str(connect_claims.get("p") or "")
-            return project, _topic_within(flow, project, connect_claims), token, True
+            return (
+                project,
+                _topic_within(flow, project, connect_claims),
+                token,
+                bool(bearer),
+            )
     if ALLOW_HEADER_ATTR:
         attr = flow.request.headers.get(X_ATTR_HEADER, "")
         project, _, topic = attr.partition("/")
@@ -500,6 +511,26 @@ async def request(flow: http.HTTPFlow) -> None:
                 f"cheese project budget: {verdict.reason}",
             )
             return
+        # Which of the three it was, on the box, at the moment it happened. The
+        # refusal body has to name all three because the caller cannot see the
+        # deployment; the operator can, and guessing between them is what turned
+        # this into a day. Project id only — never the token.
+        caller = _caller_bearer(flow)
+        logger.warning(
+            "refusing a machine turn: no identity to send it as "
+            "(project=%s admission_url=%s verdict=%s upstream=%s path=%s "
+            "bearer=len:%d/dot:%s/%s)",
+            project_id or "<none>",
+            "set" if ADMISSION_URL else "UNSET",
+            "none" if verdict is None else "received",
+            "absent" if verdict is None or not verdict.upstream else "present",
+            flow.request.path,
+            # Shape only — enough to tell a ccproxy ticket from a stale scoped
+            # token from something unexpected, and never the value itself.
+            len(caller),
+            "." in caller,
+            caller[:12],
+        )
         _refuse(
             flow,
             503,

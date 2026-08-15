@@ -624,3 +624,28 @@ def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_p
     assert flow.response is not None and flow.response.status_code == 429
     assert b"budget" in flow.response.content
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"
+
+
+def test_a_request_with_no_bearer_is_not_treated_as_carrying_its_own(
+    monkeypatch, tmp_path
+):
+    """Claude Code calls some endpoints with no Authorization at all
+    (`/api/event_logging/v2/batch` among them). "No credential" is not "someone
+    else's credential": refusing those broke telemetry for every CONNECT caller
+    whose project owns no machine — seen on dev as a burst of 503s from a
+    project that has none. Such a request takes the ordinary swap path."""
+    secret = "s3cr3t"
+    mod = _load_addon(
+        monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
+    )
+    mod.http_connect(
+        _connect_flow_on("c1", _basic(_scoped_token(secret, project="p9")))
+    )
+    flow = _machine_flow(conn="c1")
+    del flow.request.headers["authorization"]
+    flow.request.path = "/api/event_logging/v2/batch"
+
+    asyncio.run(mod.request(flow))
+
+    assert flow.response is None, "telemetry must not be refused"
+    assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
