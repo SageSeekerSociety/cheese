@@ -204,8 +204,10 @@ export interface ProjectMemberRow {
   user_handle: string
   role: string
   name?: string
-  // 头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。名册行背后没有 fusion 用户
-  // 档案时为 null —— 那种情况用彩色首字母兜底，不要去取 /avatars/default。
+  // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
+  // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
+  // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
+  // /avatars/default，那会让所有没设过头像的人共用同一张脸。
   avatar_id?: number | null
   // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
   // execution binding — never from the handle string, which differs per topic.
