@@ -197,22 +197,26 @@ else:
         # holds, so ours goes out and the image's is irrelevant — assert ours.
         #
         # Pass-through path (a remote machine on the tunnel, marked by
-        # CHEESE_TUNNEL_URL): the meter forwards the bearer UNTOUCHED, because
-        # ccproxy only honours a machine's ticket over that machine's own
-        # identity. So the ticket has to be the machine's own — the one
-        # MicroCloud wrote here. Overwriting it sends OUR scoped token to
-        # Anthropic, which answers `401 OAuth access token has been revoked`
-        # (measured 2026-08-14: the whole chain up, refused at the far end).
-        # The scoped token still travels, as the proxy password the helper
-        # stamps onto the CONNECT — it authenticates the project, not the model
-        # call.
+        # CHEESE_TUNNEL_URL; or a co-located device that brings its own ccproxy
+        # identity, marked by CHEESE_MACHINE_TICKET — the dev box): the meter
+        # forwards the bearer UNTOUCHED, because ccproxy only honours a
+        # machine's ticket over that machine's own identity. So the ticket has
+        # to be the machine's own — written here by MicroCloud on its machines,
+        # or by the device's administrator on a self-hosted box. Overwriting it
+        # sends OUR scoped token to Anthropic, which answers
+        # `401 Invalid bearer token` (measured on both paths, 2026-08-14/15:
+        # the whole chain up, refused at the far end). The scoped token still
+        # travels, as the proxy password on the CONNECT — it authenticates the
+        # project, not the model call.
         # Read from the BACKUP, not from the live file. The live file's token is
         # whatever the last launch left there — and every launch before this one
         # overwrote it with ours, so "keep what is there" would faithfully
         # preserve our own stale scoped token and change nothing. The backup is
         # written once, on the first reconcile, before anything was overwritten:
         # it is the only place the machine's original ticket still exists.
-        if os.environ.get("CHEESE_TUNNEL_URL"):
+        if os.environ.get("CHEESE_TUNNEL_URL") or os.environ.get(
+            "CHEESE_MACHINE_TICKET"
+        ):
             # A ccproxy ticket EXPIRES, and ccproxy refreshes it the way its
             # clients do: Claude Code writes the new one back into this file. So
             # the live file is the freshest copy there is, and overwriting it —
@@ -228,16 +232,45 @@ else:
             if live and "." not in live:
                 machine_ticket = live
             else:
+                # The live field holds OUR scoped token (has a dot): a previous
+                # launch on the swap path wrote it, or a co-located device never
+                # carried a ticket in settings.json at all. Recover the machine's
+                # own ticket, preferring the client's canonical credential store
+                # over the settings backup.
+                #
+                # `.credentials.json` is where Claude Code writes the ccproxy
+                # ticket AND every refresh of it, so it is both the freshest copy
+                # and — for a co-located device whose ticket was never in
+                # settings.json — the ONLY copy. The settings backup only ever
+                # held a ticket on a MicroCloud machine (MicroCloud seeds it into
+                # settings.json's env), so it stays as the fallback for that
+                # shape. Without the credentials source a co-located device loops
+                # forever: live has a dot, the backup has no token, so the ticket
+                # resolves empty and the field is rewritten with our scoped token
+                # every launch (measured on the dev box, 2026-08-15).
+                machine_ticket = ""
+                creds = os.path.join(os.path.dirname(path), ".credentials.json")
                 try:
-                    with open(backup) as fh:
+                    with open(creds) as fh:
                         machine_ticket = (
-                            ((json.load(fh) or {}).get("env") or {}).get(
-                                "CLAUDE_CODE_OAUTH_TOKEN"
+                            ((json.load(fh) or {}).get("claudeAiOauth") or {}).get(
+                                "accessToken"
                             )
                             or ""
                         )
                 except Exception:
                     machine_ticket = ""
+                if not machine_ticket:
+                    try:
+                        with open(backup) as fh:
+                            machine_ticket = (
+                                ((json.load(fh) or {}).get("env") or {}).get(
+                                    "CLAUDE_CODE_OAUTH_TOKEN"
+                                )
+                                or ""
+                            )
+                    except Exception:
+                        machine_ticket = ""
         if machine_ticket:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = machine_ticket
         else:
