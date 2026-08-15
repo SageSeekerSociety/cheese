@@ -724,12 +724,34 @@ if command -v tmux >/dev/null 2>&1; then
       # frozen-global copy already matches, and forcing empty could flip modes).
       case "$_kv" in *=) ;; *) set -- "$@" -e "$_kv" ;; esac
     done
+    # The -e list above is a curated view of THIS launcher's environment, and
+    # every var it misses is inherited from the server's frozen global env —
+    # i.e. from a DIFFERENT topic's launcher. That class of bug has now struck
+    # three times (the token / #409, HOME+PATH / #433, CHEESE_HOOK_SPOOL —
+    # measured 2026-08-16: topic E's claude spooled every hook into topic F's
+    # dir, so F's drainer shipped E's events under F's identity). So the
+    # session no longer TRUSTS inheritance at all: the launcher dumps its
+    # complete environment (shell-quoted by python, atomically renamed) and
+    # the session command sources it before exec'ing claude. The -e list stays
+    # as a safety net for the window where the dump could not be written.
+    # TMUX/TMUX_PANE are tmux's own (and deliberately unset here), PWD/OLDPWD
+    # would lie about the session's real cwd, SHLVL/_ are shell bookkeeping.
+    ENVF="$HOME/.claude/cheese-session-env"
+    python3 -c 'import os, shlex
+skip = ("TMUX", "TMUX_PANE", "PWD", "OLDPWD", "SHLVL", "_")
+for k, v in os.environ.items():
+    if k not in skip:
+        print("export %s=%s" % (k, shlex.quote(v)))' > "$ENVF.tmp" \\
+      && mv "$ENVF.tmp" "$ENVF" || rm -f "$ENVF.tmp"
+    SRCENV=""
+    [ -s "$ENVF" ] && SRCENV=". \\"$ENVF\\"; "
     DRAINCMD="sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1"
-    set -- "$@" "$TUP $DRAINCMD & exec $CLAUDE"
+    set -- "$@" "$SRCENV$TUP $DRAINCMD & exec $CLAUDE"
     # Fall back to a plain create if this tmux predates -e (< 3.0): the screen
-    # still launches (with the old inheritance behaviour) rather than not at all.
+    # still launches — and the sourced env file carries the full environment
+    # even here, so the fallback no longer boots on another topic's globals.
     tmux "$@" || tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
-      "$TUP sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
+      "$SRCENV$TUP sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
   fi
   exec tmux attach -t "$SESSION"
 else
