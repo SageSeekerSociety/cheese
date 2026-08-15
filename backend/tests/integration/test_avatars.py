@@ -5,7 +5,9 @@ Complete equivalence migration.
 """
 
 import io
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 from anyio.from_thread import BlockingPortal
@@ -24,22 +26,30 @@ REAL_JPEG_BYTES = (
 REAL_PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 
 
-def create_avatar_row_without_file(
+def isolate_avatar_storage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point avatar storage at this test's own directory.
+
+    Any test whose premise is "this avatar has no file" MUST do this first. The
+    real ``AVATAR_STORAGE_DIR`` is one directory shared by every xdist worker and
+    never rolled back, while each worker gets its own database — so an id that is
+    unused here can very well have a file written by a worker running something
+    else. Concretely: the contract suite's DB is not seeded, so its avatar
+    sequence starts at 1 and its upload writes ``avatars/1``, which is exactly the
+    id the integration suite's seeded *default* avatar occupies. That collision
+    turned this file red once already.
+    """
+    storage = tmp_path / "avatars"
+    monkeypatch.setattr("app.api.routes.avatars.AVATAR_STORAGE_DIR", str(storage))
+    return storage
+
+
+def create_avatar_row(
     db_session: AsyncSession,
     portal: BlockingPortal,
 ) -> int:
-    """Insert an avatar row that provably has no file behind it.
-
-    The id is forced far above the ``avatar`` sequence (seeded to 5, so uploads
-    start at 6), because the upload endpoint writes real files into a directory
-    that is shared by every xdist worker and never rolled back. Picking an id
-    nothing can ever upload to is what makes "the file is missing" an arranged
-    fact instead of a hope — and it avoids deleting a file another worker is
-    still using.
-    """
+    """Insert an avatar row. Writes no file — that is the caller's business."""
     avatar = Avatar(
-        id=900_000_000 + unique_int(1, 9_999_999),
-        url="/predefined/avatar_without_file.png",
+        url=f"/predefined/avatar_{unique_int(1000, 9999)}.png",
         name="avatar_without_file",
         created_at=datetime.now(UTC),
         avatar_type="predefined",
@@ -197,21 +207,27 @@ class TestAvatarsGetIntegration:
         assert response.status_code == 201
         return response.json()["data"]["avatarId"]
 
-    def test_get_avatar_with_missing_file_is_404_and_not_cached(self):
+    def test_get_avatar_with_missing_file_is_404_and_not_cached(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
         """A row in the DB with no file on disk must not be served as an image.
 
         It used to answer 200 with a PNG signature followed by 100 zero bytes —
         no IHDR, so it could never decode — and cached that for a year.
         """
-        avatar_id = create_avatar_row_without_file(self.db, self.portal)
+        isolate_avatar_storage(monkeypatch, tmp_path)
+        avatar_id = create_avatar_row(self.db, self.portal)
 
         response = self.client.get(f"/avatars/{avatar_id}", headers=self.headers)
 
         assert response.status_code == 404
         assert "max-age=31536000" not in response.headers.get("cache-control", "")
 
-    def test_get_uploaded_jpeg_reports_jpeg_and_stays_cacheable(self):
+    def test_get_uploaded_jpeg_reports_jpeg_and_stays_cacheable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
         """Content type comes from the bytes; the long cache stays on real files."""
+        isolate_avatar_storage(monkeypatch, tmp_path)
         avatar_id = self._upload(
             "photo.bin", REAL_JPEG_BYTES, "application/octet-stream"
         )
@@ -222,7 +238,10 @@ class TestAvatarsGetIntegration:
         assert response.headers.get("content-type", "").startswith("image/jpeg")
         assert "max-age=31536000" in response.headers.get("cache-control", "")
 
-    def test_get_uploaded_png_reports_png(self):
+    def test_get_uploaded_png_reports_png(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        isolate_avatar_storage(monkeypatch, tmp_path)
         avatar_id = self._upload(
             "photo.bin", REAL_PNG_BYTES, "application/octet-stream"
         )
@@ -266,23 +285,47 @@ class TestDefaultAvatarIntegration:
         self.db = db_session
         self.portal = _portal
 
-    def test_get_default_avatar_without_file_is_404_and_not_cached(self):
+    def _default_avatar_id(self) -> int:
+        response = self.client.get("/avatars/default/id", headers=self.headers)
+        assert response.status_code == 200
+        return response.json()["data"]["avatarId"]
+
+    def test_get_default_avatar_without_file_is_404_and_not_cached(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
         """The seeded default avatar is a DB row with no image file behind it.
 
         This test used to assert 200 + a long ``max-age`` here, which meant it
-        was pinning the bug: the seed migration inserts avatar rows (1..5) but
-        never writes any file, and uploads start at id 6, so this endpoint was
-        always taking the fabricated 108-byte "PNG" branch — content that can
-        never decode, handed out with a one-year cache. That is issue #417, so
-        the expectation is now 404 with no year-long cache.
-
-        The "file is present" half of the contract is pinned by the upload
-        round-trips in :class:`TestAvatarsGetIntegration`.
+        was pinning the bug: the seed migration inserts avatar rows but never
+        writes any file, so this endpoint was always taking the fabricated
+        108-byte "PNG" branch — content that can never decode, handed out with a
+        one-year cache. That is issue #417, so the expectation is now 404 with no
+        year-long cache.
         """
+        isolate_avatar_storage(monkeypatch, tmp_path)
+
         response = self.client.get("/avatars/default")
 
         assert response.status_code == 404
         assert "max-age=31536000" not in response.headers.get("cache-control", "")
+
+    def test_get_default_avatar_with_file_is_served_and_cacheable(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ):
+        """The other half: when the file is really there, nothing changed."""
+        storage = isolate_avatar_storage(monkeypatch, tmp_path)
+        os.makedirs(storage, exist_ok=True)
+        (storage / str(self._default_avatar_id())).write_bytes(REAL_PNG_BYTES)
+
+        response = self.client.get("/avatars/default")
+
+        assert response.status_code == 200
+        assert response.content == REAL_PNG_BYTES
+        assert response.headers.get("content-type", "").startswith("image/png")
+        assert "max-age=31536000" in response.headers.get("cache-control", "")
+        assert "inline" in response.headers.get("content-disposition", "")
+        assert "etag" in response.headers
+        assert "last-modified" in response.headers
 
 
 class TestPredefinedAvatarsIntegration:
