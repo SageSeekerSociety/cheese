@@ -463,9 +463,13 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     # runner's real values, so if -e does not carry them the inner claude leaks
     # the first-launcher's identity (the cross-topic hook mis-routing of
     # 2026-08-15 — topic B's claude running with topic A's HOME and PATH).
+    # CHEESE_HOOK_SPOOL stands in for the UNLISTED vars: it is not on the -e
+    # list, so only the sourced env dump can carry it — the seed server global
+    # holds another topic's spool (the exact 2026-08-16 failure, where topic
+    # E's hooks landed in topic F's spool and shipped under F's identity).
     fake_claude.write_text(
         f"#!/bin/sh\n{{ printenv CLAUDE_CODE_OAUTH_TOKEN; printenv HOME;\n"
-        f'  printenv PATH; }} > "{token_out}.tmp"\n'
+        f'  printenv PATH; printenv CHEESE_HOOK_SPOOL; }} > "{token_out}.tmp"\n'
         f'mv "{token_out}.tmp" "{token_out}"\nsleep 3\n'
     )
     fake_claude.chmod(0o755)
@@ -478,7 +482,11 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     try:
         subprocess.run(
             [real_tmux, "-S", sock, "new-session", "-d", "-s", "seed", "sleep 60"],
-            env={**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": "STALE-frozen-token"},
+            env={
+                **os.environ,
+                "CLAUDE_CODE_OAUTH_TOKEN": "STALE-frozen-token",
+                "CHEESE_HOOK_SPOOL": "/stale/other-topics/spool",
+            },
             check=True,
         )
         env = {
@@ -488,6 +496,7 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
             "CHEESE_WORK": str(work),
             "CLAUDE": f"sh {fake_claude}",
             "CLAUDE_CODE_OAUTH_TOKEN": "FRESH-live-token",
+            "CHEESE_HOOK_SPOOL": f"{home}/.claude/cheese-spool",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
         }
         subprocess.run(
@@ -510,6 +519,10 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
         )
         assert got[2:] and got[2].startswith(str(bindir)), (
             f"the inner claude's PATH does not lead with this launch's: {got}"
+        )
+        assert got[3:] == [f"{home}/.claude/cheese-spool"], (
+            "an UNLISTED var (CHEESE_HOOK_SPOOL) did not survive into the inner "
+            f"claude — the sourced env dump is not reaching the session: {got}"
         )
     finally:
         subprocess.run([real_tmux, "-S", sock, "kill-server"], capture_output=True)
