@@ -167,11 +167,31 @@ class FakeGitHubPrClient:
         self.status_calls.append(number)
         return github_pr.PullRequestStatus(
             head_sha=pr["head_sha"],
+            # The branch the PR is actually open on. Fed back to the poller so
+            # a re-push goes to THIS PR's branch instead of one derived from
+            # the topic id — the two lanes name it differently.
+            head_ref=pr["head"],
             state=pr["state"],
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
             merged_at=pr["merged_at"],
         )
+
+    def seed_pr(self, number: int, *, head: str, base: str = "main") -> str:
+        """Register a PR this fake did not open itself — the App lane opens its
+        PR through a different client (`GitHubPRClient.open_pr`), so the poller
+        side has to be told the PR exists. Returns its head sha."""
+        head_sha = f"sha-{head}-1"
+        self.prs[number] = {
+            "head": head,
+            "base": base,
+            "head_sha": head_sha,
+            "state": "open",
+            "merged": False,
+            "merge_commit_sha": None,
+            "merged_at": None,
+        }
+        return head_sha
 
     def merge_externally(
         self,
