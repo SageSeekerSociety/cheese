@@ -50,10 +50,12 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     from app.domain.user.repositories import UserRepository
 
     members, total = await MemberService(db).list_for_project(project_id)
-    # Attach display names (User.name) so the UI can resolve @名字 → handle.
-    names = {
-        m["handle"]: m["name"]
-        for m in await ProjectRepository(db).list_members(project_id)
+    # Attach display names (User.name) so the UI can resolve @名字 → handle, and
+    # the profile's avatar_id so the chat panel can render the real avatar
+    # instead of a colored initial. Both come off the same roster row; a handle
+    # with no fusion profile behind it has avatar_id None (→ initial fallback).
+    profiles = {
+        m["handle"]: m for m in await ProjectRepository(db).list_members(project_id)
     }
     # Same is-agent derivation as the topic roster: a member is an agent iff it
     # carries an AgentBinding — never a handle-string check. The UI badges and
@@ -67,7 +69,9 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     items = []
     for m in members:
         d = MemberOut.model_validate(m).model_dump(mode="json")
-        d["name"] = names.get(m.user_handle, m.user_handle)
+        profile = profiles.get(m.user_handle)
+        d["name"] = profile["name"] if profile else m.user_handle
+        d["avatar_id"] = profile["avatar_id"] if profile else None
         user = rows.get(m.user_handle)
         d["agent"] = user is not None and user.id in agent_ids
         items.append(d)
