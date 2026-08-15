@@ -711,7 +711,11 @@ def test_a_session_born_on_a_different_contract_is_retired():
     the running claude kept failing on the other, with nothing to indicate why."""
     script = _launch_with_tunnel()
     assert "$SESSION.cfg" in script
-    assert 'cksum "$REAL_HOME/.claude/settings.json"' in script
+    assert '"$REAL_HOME/.claude/settings.json"' in script
+    # The contract is the settings file AND the ticket the launcher exports; the
+    # ticket does not live in that file, so checksumming the file alone would
+    # miss a rotation entirely. See the test below.
+    assert "cksum" in script
     # Both reasons retire, and neither is allowed to mask the other.
     assert "RETIRE=1" in script
     assert script.count("RETIRE=1") >= 2
@@ -848,3 +852,23 @@ def test_the_tunnel_password_stays_the_scoped_token():
     written = script[start : script.index("\nTUNNELTOK", start)]
 
     assert written.strip() == "$CHEESE_TOKEN"
+
+
+def test_a_changed_machine_ticket_retires_the_session_that_baked_the_old_one():
+    """claude reads its model credential ONCE at startup, and the ticket is
+    exported by the launcher rather than living in the settings.json the retire
+    gate checksums — so a rotated ticket would leave that file byte-identical
+    and the running claude holding a dead credential forever. Both sides of the
+    comparison have to include it, or the gate compares the wrong thing on one
+    of them and retires on every single launch."""
+    script = device_launch.build_launch_script()
+
+    both = [
+        line
+        for line in script.splitlines()
+        if "cheese-machine.token" in line and "cksum" in script
+    ]
+    assert len(both) >= 2, "the ticket joins the checksum when read AND when recorded"
+    # And the old single-file form is gone from both, or one side would compare
+    # a checksum of different bytes and never match.
+    assert 'cksum "$REAL_HOME/.claude/settings.json"' not in script

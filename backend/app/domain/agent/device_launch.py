@@ -701,7 +701,15 @@ if command -v tmux >/dev/null 2>&1; then
     # 2026-08-14: the file said one thing and the running claude was still
     # failing on the other. Same reasoning as the tunnel helper's stamp.
     CFGF="$HOME/.claude/$SESSION.cfg"
-    CFGNOW="$(cksum "$REAL_HOME/.claude/settings.json" 2>/dev/null | cut -d" " -f1)"
+    # The machine's ticket is part of the contract, and it does NOT live in that
+    # settings.json as far as this process is concerned — the launcher exports
+    # it, so a ticket that changed (or appeared for the first time, the moment
+    # this path shipped) leaves the file byte-identical and the running claude
+    # holding the old credential forever. Folding the ticket into the checksum
+    # is what makes a rotation reach the process. On a device with no ticket the
+    # file is absent and this is the old checksum unchanged, so nothing churns.
+    CFGNOW="$(cat "$REAL_HOME/.claude/settings.json" \\
+      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1)"
     CFGWAS="$(cat "$CFGF" 2>/dev/null || true)"
     RETIRE=0
     [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ] && RETIRE=1
@@ -744,7 +752,8 @@ if command -v tmux >/dev/null 2>&1; then
     # Stamp the token expiry this claude is BORN with so the gate above can later
     # tell a stale-credential session from a good one and retire only the stale.
     printf '%s\\n' "${{CHEESE_TOKEN_EXPIRES:-0}}" > "$EXPFILE" 2>/dev/null || true
-    cksum "$REAL_HOME/.claude/settings.json" 2>/dev/null | cut -d" " -f1 \\
+    cat "$REAL_HOME/.claude/settings.json" \\
+      "$HOME/.claude/cheese-machine.token" 2>/dev/null | cksum | cut -d" " -f1 \\
       > "$HOME/.claude/$SESSION.cfg" 2>/dev/null || true
     # Hand THIS launch's credential / routing / attribution env to the new session
     # EXPLICITLY with -e, never by inheritance. tmux seeds a new session's env from
