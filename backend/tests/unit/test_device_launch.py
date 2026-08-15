@@ -456,8 +456,12 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nsleep 3\n")
     token_out = tmp_path / "claude_token.out"
     fake_claude = tmp_path / "fakeclaude.sh"
+    # Write-then-rename: the waiter below keys on the file EXISTING, and a plain
+    # `> file` creates it empty before printenv writes — on a loaded CI runner
+    # the reader wins that race and sees ''. The rename makes it appear complete.
     fake_claude.write_text(
-        f'#!/bin/sh\nprintenv CLAUDE_CODE_OAUTH_TOKEN > "{token_out}"\nsleep 3\n'
+        f'#!/bin/sh\nprintenv CLAUDE_CODE_OAUTH_TOKEN > "{token_out}.tmp"\n'
+        f'mv "{token_out}.tmp" "{token_out}"\nsleep 3\n'
     )
     fake_claude.chmod(0o755)
     bindir = tmp_path / "bin"
