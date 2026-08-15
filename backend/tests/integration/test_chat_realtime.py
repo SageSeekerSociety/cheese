@@ -252,7 +252,6 @@ async def test_unclassified_failure_still_gets_meta_and_hides_the_raw_words(
     现在：没命中也照样产出 `turn_failed` 的 meta，正文只留一行，原话原样躺在
     `meta.detail` 里。"""
     factory = client.test_factory  # type: ignore[attr-defined]
-    raw = "upstream connect error or disconnect/reset before headers. reset reason: overflow"
     svc = ChatService(
         session_factory=factory,
         # 400 不在任何一条分类规则里 —— 这正是要测的"没命中"。

@@ -63,10 +63,11 @@ def _wait_for_event(client, topic_id: str, event_type: str, *, timeout: float = 
             if (block.get("meta") or {}).get("event_type") == event_type:
                 return block
         time.sleep(0.05)
-    raise AssertionError(
-        f"没等到 event_type={event_type} 的系统事件；"
-        f"现有的块：{[(b['kind'], (b.get('meta') or {}).get('event_type')) for b in _blocks(client, topic_id)]}"
-    )
+    seen = [
+        (b["kind"], (b.get("meta") or {}).get("event_type"))
+        for b in _blocks(client, topic_id)
+    ]
+    raise AssertionError(f"没等到 event_type={event_type} 的系统事件；现有的块：{seen}")
 
 
 def _assert_is_a_platform_notice(
