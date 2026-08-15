@@ -2005,7 +2005,13 @@ class AcceptService:
                 project_id=topic.project_id,
             )
         except Exception as exc:  # noqa: BLE001 — surface on the card; never direct-push
-            logger.exception("accept-time PR publication failed for card %s", card.id)
+            # Read every attribute we still need BEFORE the rollback below:
+            # rollback expires the instance, and an expired attribute reloads
+            # itself with synchronous IO that an AsyncSession cannot perform
+            # (MissingGreenlet) — which would replace this readable failure
+            # with an unreadable one.
+            card_id = card.id
+            logger.exception("accept-time PR publication failed for card %s", card_id)
             reason = f"{exc}"[:300]
             note = (
                 f"{_ACCEPT_PR_OPEN_FAILED_PREFIX}（{reason}）。"
@@ -2021,7 +2027,7 @@ class AcceptService:
             # its own connection, and it must never be able to queue behind a
             # lock this doomed transaction is still holding.
             await self._session.rollback()
-            await self._note_outside_accept_txn(card.id, note)
+            await self._note_outside_accept_txn(card_id, note)
             raise ValidationError(
                 "采纳未完成：无法为这张卡开 PR（原因已写在卡片上）。"
                 "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳"
