@@ -1,13 +1,19 @@
-"""The route a machine's Claude Code actually takes.
+"""The route a machine's Claude Code actually takes — against a REAL machine's
+settings shape.
 
-Claude Code applies the `env` block of the login user's own
-~/.claude/settings.json over the process environment, and reads that file from
-the login home rather than the isolated one the launcher exports. A provisioned
-machine ships such a file, so an injected gateway route is discarded and the
-turn bills the image's endpoint instead — with our books showing nothing.
+History, so nobody resurrects the write: Claude Code used to apply the `env`
+block of the login user's own ~/.claude/settings.json over the process
+environment, so the launcher had to REWRITE that file for an injected route to
+take effect at all — hijacking every claude the machine's owner started by
+hand. CLAUDE_CONFIG_DIR removed the premise (claude no longer reads the
+owner's file, verified 2026-08-15), and the reconcile became a read-only
+ticket extractor. What is left to pin here is exactly that: run the shipped
+program against a settings file shaped like a real provisioned machine's and
+prove it (a) extracts the right ticket and (b) leaves the owner's file
+byte-identical, whatever the supply shape.
 
-These run the reconcile program exactly as the launcher ships it, against a
-settings file shaped like a real machine's.
+test_device_launch.py covers the extractor's precedence matrix on synthetic
+shapes; this file keeps the real-machine shape as the fixture.
 """
 
 import json
@@ -18,10 +24,11 @@ from pathlib import Path
 from app.domain.agent import device_launch
 
 # What a provisioned MicroCloud machine actually has on disk (values redacted).
+# The env block carries the image's own supply route AND the machine's ccproxy
+# ticket — a dot-less sk-ant value, seeded by MicroCloud.
 IMAGE_SETTINGS = {
     "env": {
-        "ANTHROPIC_BASE_URL": "http://10.0.0.9:80/newapi",
-        "ANTHROPIC_AUTH_TOKEN": "image-token",
+        "CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-machineticket",
         "HTTPS_PROXY": "http://user:pw@ccproxy.example:3128",
         "HTTP_PROXY": "http://user:pw@ccproxy.example:3128",
         "NODE_EXTRA_CA_CERTS": "/home/cheese/.claude/ccproxy-ca.crt",
@@ -29,120 +36,75 @@ IMAGE_SETTINGS = {
 }
 
 
-def _reconcile(tmp_path: Path, settings: dict | None, env: dict) -> tuple[str, dict]:
-    """Run the shipped program over a settings file; return (stdout, file)."""
+def _reconcile(
+    tmp_path: Path, settings: dict | None, env: dict
+) -> tuple[str, str | None, str | None]:
+    """Run the shipped program; return (stdout, file_bytes_after, handoff)."""
     program = tmp_path / "reconcile.py"
     program.write_text(device_launch.CHEESE_SETTINGS_RECONCILE)
     target = tmp_path / "settings.json"
     if settings is not None:
         target.write_text(json.dumps(settings))
+    handoff = tmp_path / "handoff.token"
     result = subprocess.run(
-        [sys.executable, str(program), str(target)],
+        [sys.executable, str(program), str(target), str(handoff)],
         capture_output=True,
         text=True,
         env={"PATH": "/usr/bin:/bin", **env},
     )
-    on_disk = json.loads(target.read_text()) if target.exists() else {}
-    return result.stdout.strip(), on_disk
+    after = target.read_text() if target.exists() else None
+    ticket = handoff.read_text() if handoff.exists() else None
+    return result.stdout.strip(), after, ticket
 
 
-def test_injected_gateway_route_reaches_the_settings_file(tmp_path: Path):
-    """Without this the image's endpoint wins and the turn is billed elsewhere."""
-    out, on_disk = _reconcile(
+def test_a_real_machines_ticket_is_extracted_and_its_file_left_alone(
+    tmp_path: Path,
+):
+    """The machine-ticket path against the real shape: the seeded ticket comes
+    out through the handoff, and the owner's file is byte-identical — the write
+    this file used to assert is now the regression it guards against."""
+    before = json.dumps(IMAGE_SETTINGS)
+    out, after, ticket = _reconcile(
         tmp_path,
         IMAGE_SETTINGS,
         {
-            "ANTHROPIC_BASE_URL": "https://cheese.example/api/llm",
-            "ANTHROPIC_AUTH_TOKEN": "scoped-project-token",
+            "CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token",
+            "CHEESE_TUNNEL_URL": "wss://gw/api/llm/tunnel",
         },
     )
-    env = on_disk["env"]
-    assert env["ANTHROPIC_BASE_URL"] == "https://cheese.example/api/llm"
-    assert env["ANTHROPIC_AUTH_TOKEN"] == "scoped-project-token"
-    # Our own gateway is reached directly, not through the image's proxy.
-    assert env["NO_PROXY"] == "cheese.example"
-    assert out.startswith("ok ")
+    assert out == "ok (ticket extracted)"
+    assert ticket == "sk-ant-oat01-machineticket"
+    assert after == before
 
 
-def test_the_image_supply_route_survives(tmp_path: Path):
-    """Overwriting the file instead of merging would take ccproxy down with it,
-    and with it the subscription path — one silent failure traded for another."""
-    _, on_disk = _reconcile(
+def test_off_the_machine_ticket_path_the_real_file_is_not_even_opened_for_write(
+    tmp_path: Path,
+):
+    """Gateway/swap shapes are fully described by the process environment now;
+    the program is a declared no-op and the image's own supply route survives
+    untouched for whatever the machine itself runs."""
+    before = json.dumps(IMAGE_SETTINGS)
+    out, after, ticket = _reconcile(
         tmp_path,
         IMAGE_SETTINGS,
-        {"ANTHROPIC_BASE_URL": "https://cheese.example/api/llm"},
+        {"ANTHROPIC_BASE_URL": "http://cheese.test/llm"},
     )
-    env = on_disk["env"]
-    assert env["HTTPS_PROXY"] == IMAGE_SETTINGS["env"]["HTTPS_PROXY"]
-    assert env["NODE_EXTRA_CA_CERTS"] == IMAGE_SETTINGS["env"]["NODE_EXTRA_CA_CERTS"]
-    assert (tmp_path / "settings.json.cheese-orig").exists()
+    assert out == "ok (env only)"
+    assert ticket is None
+    assert after == before
 
 
-def test_subscription_mode_removes_the_image_base_url(tmp_path: Path):
-    """No base URL of ours means the official endpoint through the proxy. Leaving
-    the image's in place would quietly send the subscription to newapi."""
-    out, on_disk = _reconcile(tmp_path, IMAGE_SETTINGS, {})
-    env = on_disk["env"]
-    assert "ANTHROPIC_BASE_URL" not in env
-    assert "ANTHROPIC_AUTH_TOKEN" not in env
-    assert env["HTTPS_PROXY"] == IMAGE_SETTINGS["env"]["HTTPS_PROXY"]
-    assert out.startswith("ok ")
-
-
-def test_our_subscription_overrides_the_image_supply_route(tmp_path: Path):
-    """The platform's OWN subscription (marked by the injected
-    CLAUDE_CODE_OAUTH_TOKEN): the image's proxy/CA entries in the file would win
-    over the process environment key by key and send the session through the
-    image's channel instead of our meter — so ours are asserted INTO the file."""
-    ours = {
-        "CLAUDE_CODE_OAUTH_TOKEN": "scoped.token",
-        "HTTPS_PROXY": "http://cheese:scoped.token@proxy.cheese.example:8444",
-        "NO_PROXY": "cheese.example,localhost,127.0.0.1,::1",
-        "no_proxy": "cheese.example,localhost,127.0.0.1,::1",
-        "NODE_EXTRA_CA_CERTS": "/home/cheese/.cheese/home/p/.claude/proxy-ca.pem",
-    }
-    out, on_disk = _reconcile(tmp_path, IMAGE_SETTINGS, ours)
-    env = on_disk["env"]
-    for key, value in ours.items():
-        assert env[key] == value, key
-    # The image's gateway route and plain-http proxy are gone with it.
-    assert "ANTHROPIC_BASE_URL" not in env
-    assert "ANTHROPIC_AUTH_TOKEN" not in env
-    assert "HTTP_PROXY" not in env
-    assert out.startswith("ok ")
-    # The original is still backed up beside the file.
-    assert (tmp_path / "settings.json.cheese-orig").exists()
-
-
-def test_a_machine_without_image_settings_is_left_alone(tmp_path: Path):
-    """Nothing overrides us there, so inventing a file would only add a second
-    place for the route to disagree with itself."""
-    out, on_disk = _reconcile(
-        tmp_path, None, {"ANTHROPIC_BASE_URL": "https://cheese.example/api/llm"}
-    )
-    assert out == "absent"
-    assert on_disk == {}
-
-
-def test_a_write_that_did_not_take_is_reported_not_assumed(tmp_path: Path):
-    """The verification re-reads from disk. Reporting the intent instead would
-    recreate exactly the failure this step exists to catch."""
-    out, _ = _reconcile(
+def test_a_machine_without_image_settings_is_still_fine(tmp_path: Path):
+    """No settings file at all (a bare box): nothing to extract from settings,
+    nothing to crash on."""
+    out, after, ticket = _reconcile(
         tmp_path,
-        {"env": {"ANTHROPIC_BASE_URL": "http://10.0.0.9:80/newapi"}},
-        {"ANTHROPIC_BASE_URL": "https://cheese.example/api/llm"},
+        None,
+        {
+            "CLAUDE_CODE_OAUTH_TOKEN": "our.scoped.token",
+            "CHEESE_TUNNEL_URL": "wss://gw/api/llm/tunnel",
+        },
     )
-    assert out.startswith("ok https://cheese.example/api/llm")
-    assert "mismatch" in device_launch.CHEESE_SETTINGS_RECONCILE
-
-
-def test_the_launcher_actually_runs_the_reconcile():
-    """A mechanism nothing calls has shipped from this file before: the redaction
-    filter was added to a module no caller imported, and every test passed
-    because they exercised the class directly."""
-    script = device_launch.build_launch_script()
-    assert "cheese-settings-reconcile.py" in script
-    assert '"$REAL_HOME/.claude/settings.json"' in script
-    # It has to run BEFORE claude is started, or the process is already up with
-    # the image's route.
-    assert script.index("cheese-settings-reconcile.py") < script.index("exec $CLAUDE")
+    assert out == "no-machine-ticket"
+    assert ticket is None
+    assert after is None
