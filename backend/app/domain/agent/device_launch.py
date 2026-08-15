@@ -695,7 +695,16 @@ if command -v tmux >/dev/null 2>&1; then
     # inherits it again. -e writes the session env before claude execs, per key, so
     # each topic's claude runs on its OWN live credential.
     set -- new-session -d -s "$SESSION" -c "$CHEESE_WORK"
+    # HOME and PATH are load-bearing for isolation and MUST travel per session:
+    # both point into this topic's isolated home (PATH leads with its .claude,
+    # where cheese-hook/cheese live), both are always non-empty, and neither is
+    # in tmux's update-environment set — so without -e every claude after the
+    # server's first would inherit the FIRST topic's HOME/PATH from the frozen
+    # server global, resolve the first topic's hook forwarder, and report every
+    # event as that topic (measured live 2026-08-15: /proc of topic B's claude
+    # showed topic A's HOME and PATH).
     for _kv in \\
+      "HOME=$HOME" "PATH=$PATH" \\
       "CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" \\
       "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN" \\
       "ANTHROPIC_AUTH_TOKEN=$ANTHROPIC_AUTH_TOKEN" \\

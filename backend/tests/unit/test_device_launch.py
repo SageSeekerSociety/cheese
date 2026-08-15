@@ -459,8 +459,13 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     # Write-then-rename: the waiter below keys on the file EXISTING, and a plain
     # `> file` creates it empty before printenv writes — on a loaded CI runner
     # the reader wins that race and sees ''. The rename makes it appear complete.
+    # HOME and PATH ride along: the seed server's global env froze the test
+    # runner's real values, so if -e does not carry them the inner claude leaks
+    # the first-launcher's identity (the cross-topic hook mis-routing of
+    # 2026-08-15 — topic B's claude running with topic A's HOME and PATH).
     fake_claude.write_text(
-        f'#!/bin/sh\nprintenv CLAUDE_CODE_OAUTH_TOKEN > "{token_out}.tmp"\n'
+        f"#!/bin/sh\n{{ printenv CLAUDE_CODE_OAUTH_TOKEN; printenv HOME;\n"
+        f'  printenv PATH; }} > "{token_out}.tmp"\n'
         f'mv "{token_out}.tmp" "{token_out}"\nsleep 3\n'
     )
     fake_claude.chmod(0o755)
@@ -495,9 +500,16 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
         while not token_out.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert token_out.exists(), "the inner claude never launched"
-        assert token_out.read_text().strip() == "FRESH-live-token", (
+        got = token_out.read_text().splitlines()
+        assert got and got[0] == "FRESH-live-token", (
             "the new claude booted on the STALE server-global token, not this "
-            "launch's fresh one — the frozen-global 407 is not fixed"
+            f"launch's fresh one — the frozen-global 407 is not fixed: {got}"
+        )
+        assert got[1:2] == [str(home)], (
+            f"the inner claude's HOME is not this launch's isolated home: {got}"
+        )
+        assert got[2:] and got[2].startswith(str(bindir)), (
+            f"the inner claude's PATH does not lead with this launch's: {got}"
         )
     finally:
         subprocess.run([real_tmux, "-S", sock, "kill-server"], capture_output=True)
