@@ -1931,18 +1931,37 @@ class AcceptService:
         cannot be merged right now (GitHub unreachable, PR closed unmerged, …)
         the accept STOPS — visibly and retryably — instead of bypassing the PR
         and its CI with a direct push. The note is persisted outside this
-        transaction because the ValidationError below rolls it back."""
+        transaction because the ValidationError below rolls it back.
+
+        **Roll back BEFORE writing that note.** `_note_outside_accept_txn` uses
+        its own connection, and by the time we get here this request's
+        transaction may already hold a row lock on the very card it wants to
+        write (`_publish_pr_for_accept` opens the PR and flushes `pr_number`
+        onto the card, and SQLAlchemy's autoflush can push that UPDATE out even
+        without an explicit flush). Two connections, one row, and the one
+        holding the lock is the one waiting for the other — the request hangs
+        until something times it out, and "采纳按钮点下去没反应" is the worst
+        possible presentation of a path whose entire job is to fail visibly.
+        The rollback loses nothing: this method always raises, so the accept
+        transaction was never going to commit, and the PR itself was already
+        recorded durably by `pr_publish.record_pr` on its own connection.
+
+        The room notification is built and dispatched first, while `topic` is
+        still live — after a rollback its attributes are expired and reading
+        them would go back to the database for no reason."""
         why = reason or f"PR #{card.pr_number} 暂时无法推进"
-        await self._note_outside_accept_txn(
-            card.id,
+        card_id = card.id
+        note = (
             f"{_ACCEPT_PR_STALLED_PREFIX}（{why}）。绑定 GitHub 的项目采纳只通过"
-            "合并 PR 完成，平台不会绕过 PR 直推上游；处理后重试采纳。",
+            "合并 PR 完成，平台不会绕过 PR 直推上游；处理后重试采纳。"
         )
         self._notify_merge_result(
             topic,
             f"⛔ 采纳未完成：PR 未能合并（{why}）。平台不会绕过 PR 直推上游；"
             "处理后可重试采纳。",
         )
+        await self._session.rollback()
+        await self._note_outside_accept_txn(card_id, note)
         raise ValidationError(f"采纳未完成：PR 未能合并（{why}）。处理后重试采纳")
 
     async def _publish_pr_for_accept(self, card: AcceptCard, topic: Topic) -> None:
@@ -1988,16 +2007,21 @@ class AcceptService:
         except Exception as exc:  # noqa: BLE001 — surface on the card; never direct-push
             logger.exception("accept-time PR publication failed for card %s", card.id)
             reason = f"{exc}"[:300]
-            await self._note_outside_accept_txn(
-                card.id,
+            note = (
                 f"{_ACCEPT_PR_OPEN_FAILED_PREFIX}（{reason}）。"
-                "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳。",
+                "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳。"
             )
             self._notify_merge_result(
                 topic,
                 f"❌ 采纳未完成：无法为这张卡开 PR（{reason}）。"
                 "平台不会在没有 PR 的情况下把改动直推上游；处理后可重试采纳。",
             )
+            # Roll back first, for the same reason as `_stop_accept_pr_
+            # unavailable`: the out-of-transaction note writes the card row on
+            # its own connection, and it must never be able to queue behind a
+            # lock this doomed transaction is still holding.
+            await self._session.rollback()
+            await self._note_outside_accept_txn(card.id, note)
             raise ValidationError(
                 "采纳未完成：无法为这张卡开 PR（原因已写在卡片上）。"
                 "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳"
@@ -2165,6 +2189,14 @@ class AcceptService:
         when there's nothing worth surfacing, e.g. the App simply isn't
         configured for this project) — the caller folds it into the same
         `pr_degrade_reason` that ends up on the card's note.
+
+        **No longer on the App forge** (App 采纳等 CI 再合, 2026-08-15). There,
+        accepting authorizes and the poller merges once CI is green
+        (`_authorize_pr_for_accept`) — precisely because the posture described
+        below merged PR #414 twenty-five seconds after it was opened, sixteen
+        minutes before its last check finished. What still reaches here is the
+        personal-token / unbound world: a card carrying a `pr_number` on a
+        project whose forge is NOT `github_app`.
 
         Mergeability posture (#362, 对齐 GitHub — see the module comment above
         `_checks_summary`): right before merging, the PR's check-runs are read

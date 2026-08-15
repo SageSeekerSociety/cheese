@@ -56,6 +56,14 @@ which has been `False` since it landed and has never been switched on.
                   → watch the deploy workflow → archive the topic
 ```
 
+> **Update (2026-08-15).** "only when green" is now enforced by the platform,
+> not left to whoever is looking at the card: 采纳 on the App forge marks the
+> card `pr_open` and the poller calls the merge API once the forge's checks are
+> actually green. The escape hatch for merging a red PR is an explicit, signed
+> action (`POST /accept-cards/{id}/merge-anyway`). See
+> [`docs/topics/App采纳等CI再合.md`](topics/App采纳等CI再合.md) — including why
+> this is still "mirror, don't gate" and not a revival of `review/gate.py`.
+
 ### Principles
 
 - **The platform never runs checks.** A repository declares its checks in
