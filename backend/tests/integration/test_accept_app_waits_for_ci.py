@@ -74,12 +74,14 @@ class _FakeTokens:
     """平台 GitHub App 的 installation token。轮询这条路上唯一该用的凭据。"""
 
     minted_write = 0
+    minted_read = 0
 
     async def write_token(self) -> tuple[str, str]:
         type(self).minted_write += 1
         return "ghs_app_write", "2099-01-01T00:00:00+00:00"
 
     async def readonly_token(self) -> tuple[str, str]:
+        type(self).minted_read += 1
         return "ghs_app_read", "2099-01-01T00:00:00+00:00"
 
 
@@ -105,6 +107,7 @@ def app_world(monkeypatch):
         "opened": [],
     }
     _FakeTokens.minted_write = 0
+    _FakeTokens.minted_read = 0
 
     class _AppPrOpener:
         """`pr_publish` 用来开 PR 的那只 client（App token，大写 PR 的那个）。
@@ -471,6 +474,21 @@ def test_poll_advances_even_when_the_approver_has_no_github_account(
     assert _topic(client, tid)["status"] == "archived"
     # 用的确实是 App 的 token（accept 时一次 + 轮询时至少一次）。
     assert _FakeTokens.minted_write >= 2
+
+
+def test_checks_are_read_with_the_read_mint_not_the_write_one(client, app_world):
+    """App 的 write token 只有 `contents` + `pull_requests` 写权限，**没有
+    `checks`**。拿它去读 check-runs 是 403，而轮询器把 403 当成 GitHub 抖动、下一
+    轮再来 —— 卡就永远停在 pr_open，卡面上什么都不会写。所以读检查必须走只读
+    mint，合并才走写 mint。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全部通过")
+
+    _poll(client)
+
+    assert fake.check_state_tokens == ["ghs_app_read"]
+    assert [m["token"] for m in fake.merge_calls] == ["ghs_app_write"]
 
 
 # ---- 验收标准 8：重推推到这个 PR 真正的 head 分支 ----------------------------

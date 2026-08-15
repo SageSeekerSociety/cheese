@@ -46,7 +46,7 @@ PR 是在采纳那一刻才现场补开的（人点采纳时界面上根本没�
 ②`no_checks`（根本没有 workflow 会对这次改动跑）③目标分支是 prod。任一命中就不
 合并、回来找人；判断不了也算「找人」（fail closed）。
 
-## 四个必须知道的接线点
+## 五个必须知道的接线点
 
 1. **两条路的远端分支名不一样。** App 的 PR 开在 `ws.branch_for_topic` →
    `topic/<hex8>`；轮询器原来按话题 id 推算，推的是 `github_pr.pr_branch_name`
@@ -56,11 +56,20 @@ PR 是在采纳那一刻才现场补开的（人点采纳时界面上根本没�
    `pr_head_sha` 任何一个，就只 log 一行 error 然后 return——卡永远停在
    `pr_open`，不报错、不提醒、界面看不出来。App 那条路此前只写 `pr_number` +
    `pr_url`，所以 `_authorize_pr_for_accept` 一次补齐四个（含 `pr_authorized_sha`）。
-3. **轮询 App 卡用 App 的 write token，不是验收人的。** 验收人未必连过 GitHub，
+3. **App 这条路要两把钥匙，不是一把。** `GitHubAppTokens.write_token()` 请求的是
+   `contents:write` + `pull_requests:write` + `metadata:read`——**没有 `checks`**
+   （`_WRITE_PERMISSIONS`，故意的；`GitHubPRClient.check_runs` 早就为此改用只读
+   mint 了）。拿写 token 去读 `/commits/{ref}/check-runs` 是 403，而轮询器把 403
+   当成一次 GitHub 抖动、下一轮再来——于是卡永远停在 `pr_open`，卡面上什么都不
+   写。所以 GET 走只读 mint、推分支和合并走写 mint，见 `_GitHubCredentials`。
+   （没有改 `_WRITE_PERMISSIONS` 加 `checks:read`：那个集合是**不 narrow 直接送给
+   GitHub** 的，某个 installation 没被授予 `checks` 就会让整次铸 token 以 422 挂
+   掉，把「读检查」的需求捆进写权限并不划算。）
+4. **轮询 App 卡用 App 的凭据，不是验收人的。** 验收人未必连过 GitHub，
    也未必有 main 的写权限；把一张已经授权过的卡的推进权绑在别人的账号状态上，
    等于让它随时可能停住而没人知道为什么。归属靠合并提交的 `Reviewed-by` trailer
-   留，不靠借谁的钥匙。选凭据的地方是 `AcceptService._pr_poll_token`。
-4. **卡片 `note` 是状态机的一部分，不是自由文本。** 各写入方靠前缀互相识别：
+   留，不靠借谁的钥匙。选凭据的地方是 `AcceptService._pr_poll_credentials`。
+5. **卡片 `note` 是状态机的一部分，不是自由文本。** 各写入方靠前缀互相识别：
    `⚠️`（CI 未通过 / 重推失败 / 轮询暂停）、`🌿`（分支分叉）、`🚫`（GitHub 拒绝
    合并）、`✋`（安全阀扣住）、`🚪`（PR 被关）、`❌`（部署失败）。新加的
    `⏳ 等 CI` 是这个家族里**优先级最低**的一条：只写进空 note 或盖自己，绝不盖掉
@@ -108,12 +117,11 @@ PR 是在采纳那一刻才现场补开的（人点采纳时界面上根本没�
   达，是否该删是另一张独立的卡。
 - 没有动 GitHub 仓库设置 / 分支保护 / `.github/workflows/` / `deploy/`。分支保护
   是另一条候选方案，不在这次范围里。
-- 平台 App 的 write token 请求的是 `contents:write` + `pull_requests:write` +
-  `metadata:read`（`github_app._WRITE_PERMISSIONS`），**不含 `workflows`**。所以
-  一次改到 `.github/workflows/` 的重推仍可能被 GitHub 拒（落在
-  `⚠️ 平台自动重推失败` 上，卡面看得见）。`push_topic_branch_for_github_pr` 里
-  那次「同步默认分支后重试一次」是为这个准备的。要根治得改
-  `_WRITE_PERMISSIONS`，而那个集合是**不做 narrow 直接送给 GitHub** 的——加一项
-  没被授予的权限会让整次铸 token 以 422 失败，属于另一件事。
+- **write token 不含 `workflows`**（`_WRITE_PERMISSIONS` 只有 `contents:write` +
+  `pull_requests:write` + `metadata:read`）。所以一次改到 `.github/workflows/` 的
+  重推仍可能被 GitHub 拒，落在 `⚠️ 平台自动重推失败` 上（卡面看得见，不是静默）。
+  `push_topic_branch_for_github_pr` 里那次「同步默认分支后重试一次」就是为这个
+  准备的。要根治得改 `_WRITE_PERMISSIONS`，而那个集合是**不做 narrow 直接送给
+  GitHub** 的——加一项没被授予的权限会让整次铸 token 以 422 失败，属于另一件事。
 
 测试：`backend/tests/integration/test_accept_app_waits_for_ci.py`。

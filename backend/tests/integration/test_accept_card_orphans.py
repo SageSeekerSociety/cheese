@@ -354,7 +354,10 @@ def test_poll_pause_note_is_cleared_once_the_token_works_again(client, monkeypat
 
         holder["reason"] = None  # 重新连了账号
         _poll(client)  # CI 还在跑（fake 默认 pending）
-        assert _cards(client, tid)[0]["note"] == ""
+        note = _cards(client, tid)[0]["note"]
+        assert "轮询暂停" not in note  # 骗人的那句没了
+        # 取而代之的是如实描述当下的那句：还在等 CI（App 采纳等 CI 再合）。
+        assert note.startswith("⏳ 等 CI")
         assert _cards(client, tid)[0]["status"] == "pr_open"
     finally:
         _reset_client()

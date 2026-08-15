@@ -123,6 +123,10 @@ class FakeGitHubPrClient:
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
         self.head_sha_calls: list[int] = []
+        # Which credential each check-runs read was made with. It matters on
+        # the App lane: the write mint carries no `checks` permission, so a
+        # read made with it is a 403 that the poller retries forever.
+        self.check_state_tokens: list[str] = []
 
     async def open_pull_request(
         self, *, owner, repo, head, base, title, body, token
@@ -221,6 +225,7 @@ class FakeGitHubPrClient:
         return new_sha
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
+        self.check_state_tokens.append(token)
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
 
     async def compare_files(
@@ -237,6 +242,7 @@ class FakeGitHubPrClient:
                 "number": number,
                 "commit_title": commit_title,
                 "commit_message": commit_message,
+                "token": token,
             }
         )
         blocked = self.merge_blocked_by_number.get(number)

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, NoReturn
 
@@ -92,6 +93,25 @@ FORCE_MERGED_PREFIX = "🔨 人工放行"
 #: 都变一次（等于每分钟一次无意义的写 + UI 抖动）；按 5 分钟分档，一次等待里它
 #: 最多每 5 分钟变一次，而人想知道的「等很久了没有」照样看得出来。
 _WAIT_BUCKET_MINUTES = 5
+
+
+@dataclass(frozen=True)
+class _GitHubCredentials:
+    """驱动一张 `pr_open` 卡所需的 GitHub 凭据 —— **两把钥匙，不是一把**。
+
+    个人 token 那条路上它们是同一个字符串（一个 OAuth token 什么都能干）。App
+    这条路上它们不是，而且分不开就会坏：`GitHubAppTokens.write_token()` 请求的是
+    `contents:write` + `pull_requests:write` + `metadata:read`，**没有 `checks`**
+    （`_WRITE_PERMISSIONS`，故意的：写权限不该顺带把「读检查」也捆进去；
+    `GitHubPRClient.check_runs` 早就为此改用只读 mint 了）。拿写 token 去读
+    `/commits/{ref}/check-runs` 会 403 —— 而轮询器把它当成一次 GitHub 抖动，下一
+    轮再来，于是卡永远停在 `pr_open`，卡面上什么都不会写。
+
+    所以：GET 用 `read`，推分支和合并用 `write`。
+    """
+
+    write: str
+    read: str
 
 
 def _nudge_note_prefix(stage: str) -> str:
@@ -1279,24 +1299,27 @@ class AcceptService:
         )
         return card
 
-    async def _pr_poll_token(
+    async def _pr_poll_credentials(
         self, card: AcceptCard, topic: Topic
-    ) -> tuple[str | None, str]:
-        """Whose GitHub credential drives THIS card's poll — paired with a
-        human-readable reason when there is none (empty when there is).
+    ) -> tuple[_GitHubCredentials | None, str]:
+        """Whose GitHub credentials drive THIS card's poll — paired with a
+        human-readable reason when there are none (empty when there are).
 
         The two lanes answer differently, and picking the wrong one is how a
         card stalls forever:
 
-        - **App forge**: the platform's own installation token. The approver is
+        - **App forge**: the platform's own installation tokens. The approver is
           not necessarily connected to GitHub at all, and — the part that
           actually bites — is not necessarily allowed to write to `main`; the
           App is. Binding an already-authorized card's progress to someone's
           personal account state means a card that no one can move and no one
           can see why. Attribution does not need their token either: it rides
-          the merge commit's `Reviewed-by` trailer.
+          the merge commit's `Reviewed-by` trailer. Two mints, not one: see
+          `_GitHubCredentials` for why reading the checks with the write token
+          is a 403 that presents as a card frozen at `pr_open`.
         - **personal-token forge**: unchanged (pre-#296 behaviour). Attribution
-          IS the point there — the PR was opened as that human.
+          IS the point there — the PR was opened as that human, and one OAuth
+          token covers both roles.
 
         Never raises: `_resolve_forge` fails closed with a ValidationError when
         it cannot judge the binding, and a poll tick must degrade to "pause and
@@ -1307,18 +1330,7 @@ class AcceptService:
         except Exception as exc:  # noqa: BLE001 — pause this tick, retry the next
             return None, f"判定不了项目的 GitHub 绑定状态（{type(exc).__name__}）"
         if forge.kind is forge_mod.ForgeKind.github_app:
-            from app.domain.agent.github_app import github_app_tokens_for_project
-
-            tokens = await github_app_tokens_for_project(
-                topic.project_id, self._session
-            )
-            if tokens is None:
-                return None, "平台 GitHub App 对这个项目不可用"
-            try:
-                token, _ = await tokens.write_token()
-            except Exception as exc:  # noqa: BLE001 — same: pause, don't crash
-                return None, f"平台 GitHub App 取 token 失败（{type(exc).__name__}）"
-            return token, ""
+            return await self._app_credentials(topic)
 
         from app.domain.oauth.services import (
             get_github_user_token_for_handle_with_reason,
@@ -1329,7 +1341,23 @@ class AcceptService:
         )
         if not token:
             return None, _describe_token_unavailable(reason)
-        return token, ""
+        return _GitHubCredentials(write=token, read=token), ""
+
+    async def _app_credentials(
+        self, topic: Topic
+    ) -> tuple[_GitHubCredentials | None, str]:
+        """The platform App's installation tokens for this project's repo."""
+        from app.domain.agent.github_app import github_app_tokens_for_project
+
+        tokens = await github_app_tokens_for_project(topic.project_id, self._session)
+        if tokens is None:
+            return None, "平台 GitHub App 对这个项目不可用"
+        try:
+            write, _ = await tokens.write_token()
+            read, _ = await tokens.readonly_token()
+        except Exception as exc:  # noqa: BLE001 — pause this tick, don't crash
+            return None, f"平台 GitHub App 取 token 失败（{type(exc).__name__}）"
+        return _GitHubCredentials(write=write, read=read), ""
 
     async def advance_pr_card(
         self, card_id: uuid.UUID, *, chat_service, runner
@@ -1348,8 +1376,8 @@ class AcceptService:
         topic = await self._topic_or_404(card.topic_id)
         owner, _, repo = card.pr_repo.partition("/")
 
-        token, reason = await self._pr_poll_token(card, topic)
-        if not token:
+        creds, reason = await self._pr_poll_credentials(card, topic)
+        if creds is None:
             logger.warning(
                 "pr_open card %s has no usable GitHub token anymore (%s); "
                 "skipping this poll (will retry next tick)",
@@ -1387,7 +1415,7 @@ class AcceptService:
                 topic=topic,
                 owner=owner,
                 repo=repo,
-                token=token,
+                creds=creds,
                 client=client,
                 chat_service=chat_service,
                 runner=runner,
@@ -1406,7 +1434,7 @@ class AcceptService:
         topic: Topic,
         owner: str,
         repo: str,
-        token: str,
+        creds: _GitHubCredentials,
         client,
         chat_service,
         runner,
@@ -1425,7 +1453,7 @@ class AcceptService:
         # hand while its checks were red (exactly what happened to #210/#211)
         # that 405 never arrives and the card polls at `pr_open` forever.
         status = await client.pull_request_status(
-            owner=owner, repo=repo, number=number, token=token
+            owner=owner, repo=repo, number=number, token=creds.read
         )
         if status.merged:
             await self._settle_external_merge(card=card, topic=topic, status=status)
@@ -1453,7 +1481,7 @@ class AcceptService:
             topic=topic,
             owner=owner,
             repo=repo,
-            token=token,
+            token=creds.write,
             remote_head=status.head_sha,
             # The branch THIS PR is open on, from the PR itself. It used to be
             # derived from the topic id, which is right for one lane and wrong
@@ -1469,7 +1497,7 @@ class AcceptService:
         # before the merged-check was added.
         live_head = (
             await client.pull_request_head_sha(
-                owner=owner, repo=repo, number=number, token=token
+                owner=owner, repo=repo, number=number, token=creds.read
             )
             if pushed
             else status.head_sha
@@ -1485,7 +1513,7 @@ class AcceptService:
             await self._session.flush()
 
         state, tail = await client.check_state(
-            owner=owner, repo=repo, ref=card.pr_head_sha, token=token
+            owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
         )
         if state == "pending":
             self._note_waiting_on_checks(card=card, tail=tail)
@@ -1512,7 +1540,7 @@ class AcceptService:
             topic=topic,
             owner=owner,
             repo=repo,
-            token=token,
+            token=creds.read,
             client=client,
             state=state,
             tail=tail,
@@ -1529,7 +1557,7 @@ class AcceptService:
             owner=owner,
             repo=repo,
             number=card.pr_number,
-            token=token,
+            token=creds.write,
             commit_title=_pr_merge_commit_title(topic, number),
             commit_message=_pr_merge_commit_message(topic, card.decided_by or ""),
         )
@@ -2071,7 +2099,6 @@ class AcceptService:
         已经合了 → 照单收下；PR 被关掉没合 → 采纳停下（forge 说了不，绝不改走
         本地合并直推）。GitHub 不可达同样停下、可重试。
         """
-        from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review import github_pr
         from app.domain.review.github_pr import parse_github_repo
         from app.domain.workspace import service as ws
@@ -2079,21 +2106,22 @@ class AcceptService:
         number = card.pr_number
         assert number is not None  # caller checked; keeps the type checker honest
 
-        tokens = await github_app_tokens_for_project(topic.project_id, self._session)
+        creds, why = await self._app_credentials(topic)
         upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
         parsed = parse_github_repo(upstream)
-        if tokens is None or parsed is None:
+        if creds is None or parsed is None:
             # `_github_bound` said yes moments ago, so this is config changing
             # under us. Stop rather than guess where the PR should land.
             await self._stop_accept_pr_unavailable(
-                card, topic, f"读不到 PR #{number} 该合进哪个仓库（App 或上游配置已变）"
+                card,
+                topic,
+                f"读不到 PR #{number} 该合进哪个仓库（{why or 'App 或上游配置已变'}）",
             )
         owner, repo_name = parsed
         client = github_pr.default_client()
         try:
-            token, _ = await tokens.write_token()
             status = await client.pull_request_status(
-                owner=owner, repo=repo_name, number=number, token=token
+                owner=owner, repo=repo_name, number=number, token=creds.read
             )
         except Exception as exc:  # noqa: BLE001 — stop visibly; never local-merge
             logger.warning(
@@ -2120,10 +2148,10 @@ class AcceptService:
         # 那个 commit 冻结成授权基线。
         try:
             await asyncio.to_thread(
-                ws.push_topic_branch, topic.project_id, topic.id, token
+                ws.push_topic_branch, topic.project_id, topic.id, creds.write
             )
             head_sha = await client.pull_request_head_sha(
-                owner=owner, repo=repo_name, number=number, token=token
+                owner=owner, repo=repo_name, number=number, token=creds.read
             )
         except Exception as exc:  # noqa: BLE001 — stop visibly; never local-merge
             logger.warning(
@@ -2485,8 +2513,8 @@ class AcceptService:
                 "只有这张卡的验收人、授权人或项目 owner / 组长能人工放行"
             )
 
-        token, why = await self._pr_poll_token(card, topic)
-        if not token:
+        creds, why = await self._pr_poll_credentials(card, topic)
+        if creds is None:
             raise ValidationError(f"暂时拿不到合并这个 PR 用的 GitHub 凭据（{why}）")
 
         from app.domain.review import github_pr
@@ -2496,7 +2524,7 @@ class AcceptService:
         # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
         try:
             state, tail = await client.check_state(
-                owner=owner, repo=repo, ref=card.pr_head_sha, token=token
+                owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
             )
             checks_at_merge = f"{state}（{tail.splitlines()[0] if tail else ''}）"
         except Exception as exc:  # noqa: BLE001 — a broken read must not lock a human out
@@ -2510,7 +2538,7 @@ class AcceptService:
             owner=owner,
             repo=repo,
             number=number,
-            token=token,
+            token=creds.write,
             commit_title=_pr_merge_commit_title(topic, number),
             commit_message=_pr_merge_commit_message(topic, card.decided_by or ""),
         )
