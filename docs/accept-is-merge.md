@@ -82,6 +82,21 @@ which was `False` when this was written. It has since been switched on
 > behind or diverged from `main` is rebased via the update-branch API (capped at
 > three rounds per card) and re-checked before merging, so green earned against
 > an older main is never treated as green against today's.
+>
+> **Correction (2026-08-16, same day).** The roster shipped as bare names, which
+> made every entry unconditional — and `test` lives in a workflow that only
+> triggers on `backend/**`, so on a frontend-only PR it never appears at all.
+> Three fully-green PRs (#483/#485/#486) waited until a human merged them by
+> hand. A roster entry now carries the diff scope that makes it required
+> (`test:backend/**;.github/workflows/test.yml`), and the platform asks GitHub
+> for the PR's file list — only when something is missing, so the steady-state
+> poll costs the same as before. Two rules keep it a valve rather than a
+> formality: an unresolvable scope (compare truncated, base branch unreadable)
+> keeps the check required, and a check still missing after
+> `accept_required_check_grace_minutes` (30) stops waiting and asks a human —
+> **the timeout's exit is a person, never an auto-merge**. Without that backstop
+> a renamed workflow, a disabled one, or an Actions billing lapse (this org had
+> one on 2026-08-13) hangs a card forever with nobody told.
 
 ### Principles
 
@@ -145,8 +160,13 @@ but on a free-plan private repository the forge cannot be *told* to require any
 (the branch-protection API answers 403 "Upgrade to Pro"), so with the forge
 alone a red or unstarted check never blocks a merge. The accept entrance
 therefore carries that tier itself: the poller merges only when every name in
-`accept_required_check_names` has reported green on a head that is current with
-`main` (#468). The boundary is deliberate — **these semantics guard the accept
+`accept_required_check_names` that this diff can actually trigger has reported
+green on a head that is current with `main` (#468). "That this diff can
+trigger" is not a loophole but the difference between a valve and a deadlock:
+GitHub workflows carry their own `paths:` filters, so a check the change cannot
+possibly start is absent for a reason, and a roster that cannot tell those two
+absences apart blocks green PRs forever instead of blocking untested ones.
+The boundary is deliberate — **these semantics guard the accept
 entrance only**. A human merging directly on GitHub bypasses them, and the
 platform's answer to that stays "mirror, don't gate": the poller reconciles the
 card to whatever the forge says happened. One entrance is governed; the forge
