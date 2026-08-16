@@ -408,6 +408,7 @@ class TopicService:
         if topic.kind == TopicKind.root:
             raise ValidationError("项目本体不能归档")
         if topic.status == TopicStatus.archived:
+            await self._release_cloud_machine(topic.id)
             return topic
         await self._archive_one(topic, by=by)
         await self._archive_children(topic, by=by)
@@ -418,6 +419,7 @@ class TopicService:
         children = await self._repo.list_children(topic.id)
         for child in children:
             if child.status == TopicStatus.archived:
+                await self._release_cloud_machine(child.id)
                 continue
             await self._archive_one(child, by=by, cascaded_from=topic.title)
             await self._archive_children(child, by=by)
@@ -427,6 +429,7 @@ class TopicService:
     ) -> None:
         topic.status = TopicStatus.archived
         topic.archived_at = datetime.now(UTC)
+        await self._release_cloud_machine(topic.id)
         # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
         # 一张 `pr_open` 的卡不是"停着"——轮询器每 60 秒还在用当初批准人的
         # GitHub token 推进它。去向与理由见 review/archive.py 的模块 docstring。
@@ -453,6 +456,12 @@ class TopicService:
             kind=BlockKind.event,
             meta={"platform": True},
         )
+
+    async def _release_cloud_machine(self, topic_id: uuid.UUID) -> None:
+        """Archive is the Cloud VM's sole reclamation lifecycle (#442 decision 3)."""
+        from app.domain.machine.services import MachineService
+
+        await MachineService(self._session).release_topic_machine(topic_id)
 
     async def unarchive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
         """Bring an archived topic back to active (idempotent). Accept markers

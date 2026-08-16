@@ -4,6 +4,7 @@ tmux-backed topic leaked its `cheesex-tmux-*` container forever."""
 
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -63,8 +64,10 @@ async def test_accept_release_frees_both_the_container_and_the_device_screen(
     topic = SimpleNamespace(id=tid, project_id=pid)
     # The method needs no DB — exercise it on a bare instance.
     svc = AcceptService.__new__(AcceptService)
+    svc._machines = AsyncMock()
     await svc._release_topic_compute(topic)
 
+    svc._machines.release_topic_machine.assert_awaited_once_with(tid)
     assert containers == [tid]  # the sandbox container is freed
     assert screens == [(pid, tid)]  # AND the device screen (project, topic)
 
@@ -87,4 +90,20 @@ async def test_accept_release_never_fails_the_accept(monkeypatch):
 
     topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
     svc = AcceptService.__new__(AcceptService)
+    svc._machines = AsyncMock()
     await svc._release_topic_compute(topic)  # must not raise
+
+
+@pytest.mark.anyio
+async def test_accept_release_propagates_cloud_deletion_failure():
+    from app.domain.review.services import AcceptService
+
+    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    svc = AcceptService.__new__(AcceptService)
+    svc._machines = AsyncMock()
+    svc._machines.release_topic_machine.side_effect = RuntimeError(
+        "MicroCloud refused deletion"
+    )
+
+    with pytest.raises(RuntimeError, match="refused deletion"):
+        await svc._release_topic_compute(topic)

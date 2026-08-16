@@ -51,6 +51,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._topics.get.return_value = topic
     service._projects = AsyncMock()
     service._projects.get.return_value = project
+    service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
     return service, card, topic
 
@@ -207,6 +208,7 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
     assert returned is card
     assert card.status == AcceptStatus.accepted
     assert topic.status == TopicStatus.archived
+    service._machines.release_topic_machine.assert_awaited_once_with(topic.id)
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
