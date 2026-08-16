@@ -98,10 +98,17 @@ const { item } = toRefs(navBarProps)
   }
 
   &.app-rail-item-cheese {
-    // a clearly visible light-grey rounded-square tile (iOS-app-icon style, per
-    // Image #63) so 知是's home icon reads as a 方块 — the 4 corners must show grey
-    // around the round logo, not let the logo fill the slot into a circle.
-    background-color: #e2e4ea;
+    // a clearly visible rounded-square tile (iOS-app-icon style, per Image #63)
+    // so 知是's home icon reads as a 方块 — the 4 corners must show fill around
+    // the round logo, not let the logo fill the slot into a circle.
+    //
+    // Ink-at-low-alpha instead of the old literal #e2e4ea, which was a fixed
+    // near-white and turned into a glaring bright patch on the dark rail. 12% of
+    // --on-surface over the rail's --background reproduces the light tile almost
+    // exactly (#E0E1E3 vs the old #E2E4EA, 1.20:1 against the canvas) and gives
+    // the dark theme its own ≈#2B2C2E tile at 1.31:1 — so the 方块 stays legible
+    // in both, which a single literal cannot do.
+    background-color: rgba(var(--v-theme-on-surface), 0.12);
 
     .cheese-icon {
       // logo size set via CSS (the width/height props on the ?component SVG don't
@@ -115,20 +122,20 @@ const { item } = toRefs(navBarProps)
       transition: all 0.2s ease;
     }
 
-    &:hover {
-      background: linear-gradient(to bottom, #ff9500, #ffe600);
-
-      .cheese-icon {
-        fill: rgb(var(--v-theme-on-primary));
-        opacity: var(--v-high-emphasis-opacity);
-      }
-    }
-
+    // Brand paint. These two literals are deliberate and identical in both
+    // themes: the 知是 mark is the brand, not a surface, so it must not shift
+    // with the theme any more than a printed logo would. What DID have to
+    // change is the ink on top — it used to be `on-primary`, a value Vuetify
+    // derives from `primary`, which differs between the themes (#F57F17 vs the
+    // lightened #FFA733) and could flip the glyph to white on this bright
+    // yellow. Pinning it to the same dark ink the flyout uses keeps the logo at
+    // 7.0:1 against the #ff9500 stop and 12.2:1 against #ffe600, in BOTH themes.
+    &:hover,
     &[aria-current] {
       background: linear-gradient(to bottom, #ff9500, #ffe600);
 
       .cheese-icon {
-        fill: rgb(var(--v-theme-on-primary));
+        fill: #23242a;
         opacity: var(--v-high-emphasis-opacity);
       }
     }
@@ -181,9 +188,12 @@ const { item } = toRefs(navBarProps)
     transition: box-shadow 0.2s ease;
   }
   &[aria-current] .v-img {
+    // `primary`, not the #f57f17 literal: identical in light (primary IS
+    // #F57F17) and correctly lightened to #FFA733 on dark, where the original
+    // amber only reaches 3.1:1.
     box-shadow:
       0 0 0 3px rgb(var(--v-theme-surface)),
-      0 0 0 5px #f57f17;
+      0 0 0 5px rgb(var(--v-theme-primary));
   }
 }
 
@@ -215,7 +225,8 @@ const { item } = toRefs(navBarProps)
 }
 
 /* active indicator — a soft amber pill on the left edge, in our brand accent
-   (not Discord's white), so the selected rail tile reads at a glance */
+   (not Discord's white), so the selected rail tile reads at a glance.
+   `primary` rather than the #f57f17 literal — same reason as the ring above. */
 .app-rail-item[aria-current]::before {
   content: '';
   position: absolute;
@@ -225,7 +236,7 @@ const { item } = toRefs(navBarProps)
   width: 4px;
   height: 22px;
   border-radius: 0 3px 3px 0;
-  background: #f57f17;
+  background: rgb(var(--v-theme-primary));
 }
 
 /* project tiles use the amber RING (above) as their active indicator, so drop
@@ -241,14 +252,33 @@ const { item } = toRefs(navBarProps)
   padding: 0;
   box-shadow: none;
   opacity: 1;
+
+  /* This flyout is an INVERTED element: on light it is deliberately a dark chip
+     floating over a pale page. There is no `inverse-surface` token to express
+     that (surface/surface-bright are pale on light, which is the opposite), and
+     inventing one would ripple into wave 2's mapping — so the two values live
+     here as component-local custom properties instead.
+     This is the rare, legitimate `[data-theme='dark']` branch: the element is
+     not picking the wrong token, it is the one thing that must invert TWICE.
+     On dark, #23242a would sink into the #141517 canvas (1.13:1) — a floating
+     chip has to be LIGHTER than the page it floats over, hence #3a3d44 (1.68:1
+     vs canvas, 1.55:1 vs surface, plus the drop shadow below). */
+  --rail-flyout-bg: #23242a;
+  --rail-flyout-ink: #fff;
+  --rail-flyout-kbd-bg: rgba(255, 255, 255, 0.14);
+}
+:root[data-theme='dark'] .rail-flyout.rail-flyout {
+  --rail-flyout-bg: #3a3d44;
+  --rail-flyout-ink: #f3f4f6; /* 9.9:1 on #3a3d44 */
+  --rail-flyout-kbd-bg: rgba(255, 255, 255, 0.1);
 }
 .rail-flyout .rail-flyout__inner {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  background: #23242a;
-  color: #fff;
+  background: var(--rail-flyout-bg);
+  color: var(--rail-flyout-ink);
   border-radius: 10px;
   font-size: 14px;
   font-weight: 600;
@@ -262,8 +292,8 @@ const { item } = toRefs(navBarProps)
   height: 20px;
   padding: 0 5px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
+  background: var(--rail-flyout-kbd-bg);
+  color: var(--rail-flyout-ink);
   font-size: 12px;
   font-weight: 600;
   font-family: inherit;
