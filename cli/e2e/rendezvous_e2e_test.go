@@ -15,8 +15,11 @@
 package e2e
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,6 +82,7 @@ type rvFixture struct {
 	markFile  string
 	mark      string
 	configDir string
+	apiBase   string
 	sock      string
 	token     string
 	pane      func() string
@@ -105,16 +109,61 @@ func (f *rvFixture) frameCount(kind string) int {
 // delivered twice, and zero means it never became a turn at all. Counting tool
 // runs cannot answer this — one prompt can legitimately run a tool more than
 // once.
+// userTurns counts how many times a prompt became a turn the MODEL saw.
+//
+// The evidence is the mock's recorded requests, not Claude Code's transcript
+// files and not the screen. The last /v1/messages request carries the whole
+// conversation, so the number of times a marker appears in it is the number of
+// user turns that prompt produced: 0 = never delivered, 2 = delivered twice.
+// The scripted replies ("Doing it." / "done") never echo a marker, so nothing
+// else can inflate the count.
+//
+// This replaced a transcript-shape judgement that reported zero for a prompt
+// visibly on screen and already answered (CI, 2026-08-17) — a check that can
+// disagree with reality is worse than no check, because it sends you to debug
+// the wrong layer.
 func (f *rvFixture) userTurns(needle string) int {
-	n, _ := f.transcriptHits(needle)
-	return n
+	body, err := f.lastModelRequest()
+	if err != nil {
+		return 0
+	}
+	return strings.Count(body, needle)
 }
 
-// transcriptHits returns how many USER lines carry needle, plus every line that
-// mentions it at all — the second half is what a failure needs. A prompt that
-// is visibly on screen but counts zero here means the judgement is wrong, not
-// the delivery, and without the raw lines that is indistinguishable from a
-// prompt that never arrived.
+// lastModelRequest returns the body of the most recent /v1/messages the mock
+// received, as raw JSON text.
+func (f *rvFixture) lastModelRequest() (string, error) {
+	req, err := http.NewRequest(http.MethodPut,
+		f.apiBase+"/mockserver/retrieve?type=requests&format=json", nil)
+	if err != nil {
+		return "", err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(resp.Body); err != nil {
+		return "", err
+	}
+	var recorded []struct {
+		Path string          `json:"path"`
+		Body json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &recorded); err != nil {
+		return "", fmt.Errorf("decode recorded requests: %w", err)
+	}
+	last := ""
+	for _, r := range recorded {
+		if strings.Contains(r.Path, "/v1/messages") {
+			last = string(r.Body)
+		}
+	}
+	return last, nil
+}
+
+// transcriptHits is kept for diagnostics only — see dumpTranscript.
 func (f *rvFixture) transcriptHits(needle string) (int, []string) {
 	paths, _ := filepath.Glob(filepath.Join(f.configDir, "projects", "*", "*.jsonl"))
 	n := 0
@@ -148,6 +197,12 @@ func (f *rvFixture) dumpTranscript(t *testing.T, needle string) {
 	n, mentions := f.transcriptHits(needle)
 	t.Logf("transcript: %d file(s) under %s; %q → %d user-role hits, %d mentions",
 		len(paths), filepath.Join(f.configDir, "projects"), needle, n, len(mentions))
+	if body, err := f.lastModelRequest(); err == nil {
+		t.Logf("model saw %q %d time(s) in the last request (%d bytes)",
+			needle, strings.Count(body, needle), len(body))
+	} else {
+		t.Logf("could not read the mock's recorded requests: %v", err)
+	}
 	for i, m := range mentions {
 		t.Logf("  mention[%d]: %s", i, m)
 	}
@@ -249,7 +304,7 @@ func startRendezvousClaude(t *testing.T) *rvFixture {
 	}, dumpPane)
 
 	f := &rvFixture{sess: sess, markFile: markFile, mark: mark,
-		configDir: configDir, sock: sock, token: token, pane: pane}
+		configDir: configDir, apiBase: apiBase, sock: sock, token: token, pane: pane}
 
 	c, err := rendezvous.Dial(context.Background(), sock, token, rendezvous.Options{
 		WaitForSocket: 60 * time.Second,
