@@ -104,6 +104,12 @@ jobs:
           go-version-file: cli/go.mod
           cache-dependency-path: cli/go.sum
 
+      # node is NOT ambient on the ci pool (first run: `npm: command not
+      # found`) — it arrives via setup-node exactly as frontend.yml does.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
       # Same pin as upstream's green leg. NPM_CONFIG_PREFIX keeps the install
       # inside the workspace: runners are shared, and a global install would
       # fight concurrent jobs (and root-owned paths).
