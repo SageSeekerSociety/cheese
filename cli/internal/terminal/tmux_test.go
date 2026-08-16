@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,5 +105,84 @@ func TestSpawnRunsTheExactArgvItWasHanded(t *testing.T) {
 	}
 	if parts[1] != "a b c" {
 		t.Errorf("带空格的参数被重新切词了：$1=%q，要的是 %q", parts[1], "a b c")
+	}
+}
+
+// TestWriteLongMessage is upstream micro-connector's T-058: a long message is
+// never delivered to the agent. The applet hands the whole message to
+// `tmux send-keys -l -- <text>` in one go, and tmux caps how long a single
+// command may be ("command too long"). Nothing upstream is told — the error
+// goes to the connector's log, which nobody reads — so the agent simply never
+// hears what was said to it. That silence is the bug; the length limit is only
+// how it starts. Asserts both halves: the write must not fail, and the bytes
+// must actually arrive. The program runs with `stty raw` because the tty line
+// discipline has a ~4KB/line limit of its own in canonical mode that would
+// otherwise be mistaken for this one.
+func TestWriteLongMessage(t *testing.T) {
+	if _, err := findTmux(); err != nil {
+		t.Skip("no tmux available")
+	}
+	m, err := NewManager()
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer m.KillServer()
+
+	out := t.TempDir() + "/heard.txt"
+	s, err := m.Spawn("long1", []string{"sh", "-c", "stty raw -echo; cat > " + out + "; sleep 30"},
+		nil, 80, 24)
+	if err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	defer s.Close()
+	time.Sleep(500 * time.Millisecond) // let `stty raw` take effect before typing
+
+	// Comfortably past tmux's limit; half Chinese, because multi-byte runes are
+	// what a naive split corrupts and most messages here are Chinese.
+	body := strings.Repeat("The quick brown fox jumps over the lazy dog. ", 250) +
+		strings.Repeat("这是一条很长的中文消息，用来确认分片不会把一个字劈成两半。", 250)
+	if err := s.Write([]byte(body)); err != nil {
+		t.Fatalf("Write of a %d-byte message failed: %v", len(body), err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, err := os.ReadFile(out)
+		if err == nil && len(got) >= len(body) {
+			if string(got[:len(body)]) != body {
+				t.Fatalf("the program received %d bytes but they are not what was sent", len(got))
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the program received %d of %d bytes", len(got), len(body))
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// TestChunkEnd covers the boundary the long-message fix turns on: a chunk must
+// never end mid-rune, because the halves become arguments to two separate tmux
+// commands and neither is valid text.
+func TestChunkEnd(t *testing.T) {
+	han := []byte("中")            // 3 bytes
+	body := bytes.Repeat(han, 10) // 30 bytes
+	for max := 1; max <= len(body); max++ {
+		n := chunkEnd(body, max)
+		if max >= 3 && n%3 != 0 {
+			t.Errorf("chunkEnd(max=%d) = %d, which splits a rune", max, n)
+		}
+		if n > max {
+			t.Errorf("chunkEnd(max=%d) = %d, longer than asked", max, n)
+		}
+		if max >= 3 && n == 0 {
+			t.Errorf("chunkEnd(max=%d) made no progress", max)
+		}
+	}
+	if got := chunkEnd([]byte("ab"), 8); got != 2 {
+		t.Errorf("chunkEnd of a short input = %d, want 2", got)
+	}
+	if got := chunkEnd([]byte{0x80, 0x80, 0x80, 0x80}, 2); got != 2 {
+		t.Errorf("chunkEnd of invalid UTF-8 = %d, want 2 (no stall)", got)
 	}
 }
