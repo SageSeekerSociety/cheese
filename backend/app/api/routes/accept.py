@@ -33,6 +33,7 @@ from app.domain.review.schemas import (
     AcceptCardCreate,
     AcceptDecision,
     ApprovalCreate,
+    ForceMergeDecision,
     RejectDecision,
     VoidDecision,
 )
@@ -244,6 +245,35 @@ async def void_card(
         raise AuthenticationRequiredError("需要登录才能作废验收卡")
     svc = AcceptService(db)
     card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
+    return ok(await svc.describe(card))
+
+
+@router.post("/accept-cards/{card_id}/merge-anyway")
+async def merge_card_anyway(
+    card_id: uuid.UUID,
+    body: ForceMergeDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """人工放行：明知检查没全绿，仍然合并这张卡的 PR (App 采纳等 CI 再合)。
+
+    等 CI 全绿再合之后，「红着合」需要一个出口——因为红着合有时候是对的（CI 基础
+    设施抽风、与本次改动无关的既有失败）。不能接受的从来不是红着合，而是**没有人
+    做过这个决定**。所以这条路由是**默认拒绝、显式放行**的那一半：平台自己永远
+    不走它，人点一次算一次，卡面上留下谁、什么时候、当时检查什么状态、为什么。
+
+    跟 `void` 同一条线：路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS`
+    里——那是给芝士的白名单，这个动作不给芝士。但"不加白名单"本身拦不住任何东西
+    （没列进去的写路由压根不过那个中间件），真正拦住芝士的是这里的登录校验加
+    `AcceptService.merge_despite_checks` 里的 `_forbid_ai`。
+    """
+    actor = await resolver.resolve(fallback_handle=None)
+    if not actor.authenticated:
+        raise AuthenticationRequiredError("需要登录才能人工放行合并")
+    svc = AcceptService(db)
+    card = await svc.merge_despite_checks(
+        card_id=card_id, decided_by=actor.handle, reason=body.reason
+    )
     return ok(await svc.describe(card))
 
 

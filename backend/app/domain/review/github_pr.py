@@ -80,6 +80,15 @@ class PullRequestStatus:
     merged: bool
     merge_commit_sha: str | None = None
     merged_at: datetime | None = None
+    #: The PR's OWN head branch (`head.ref`), as GitHub reports it. The poller
+    #: re-pushes 芝士's fixes to this branch, and it cannot be derived from the
+    #: topic id: the two lanes name it differently (`pr_branch_name` →
+    #: `cheesex/<hex8>` for the personal-token lane, `ws.branch_for_topic` →
+    #: `topic/<hex8>` for the App lane). Deriving it pushed App cards' fixes to
+    #: a branch no PR was open on — the commit landed, the PR never saw it.
+    #: Empty only for a fake/older payload; callers fall back to the derived
+    #: name, which is what the personal-token lane always used.
+    head_ref: str = ""
 
 
 @dataclass
@@ -754,6 +763,7 @@ class HttpxGitHubPrClient:
         merged = bool(data.get("merged"))
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
+            head_ref=str(data["head"].get("ref") or ""),
             state=str(data.get("state") or ""),
             merged=merged,
             # Gated on `merged` on purpose — see PullRequestStatus's docstring
