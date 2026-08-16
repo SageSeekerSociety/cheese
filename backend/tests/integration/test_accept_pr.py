@@ -114,6 +114,10 @@ class FakeGitHubPrClient:
         self.workflow_runs: list[github_pr.WorkflowRun] = []
         self.compare_status_by_pair: dict[tuple[str, str], str] = {}
         self.compare_status_calls: list[tuple[str, str]] = []
+        # Tier-2 (#468): per-sha check-run NAME sets, and update-branch capture.
+        self.check_names_by_sha: dict[str, set[str]] = {}
+        self.update_branch_calls: list[int] = []
+        self.update_branch_result: bool = True
         # run id → 那次运行的 job 列表。默认（未登记的 run）给一个真的部署过的
         # job，因为绝大多数测试关心的不是这一层；「跳过了部署」和「挂在哪个
         # job 上」的用例自己登记。
@@ -265,6 +269,17 @@ class FakeGitHubPrClient:
     async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
+
+    async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
+        # Default: everything required is present — existing tests exercise the
+        # green/red/pending states, not the tier-2 absence valve (#468).
+        if ref in self.check_names_by_sha:
+            return set(self.check_names_by_sha[ref])
+        return {"test", "guards", "lint", "e2e"}
+
+    async def update_branch(self, *, owner, repo, number, token) -> bool:
+        self.update_branch_calls.append(number)
+        return self.update_branch_result
 
     async def workflow_run_jobs(
         self, *, owner, repo, run_id, token

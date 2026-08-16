@@ -29,6 +29,10 @@ from dataclasses import dataclass
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
+from app.domain.agent.platform_failures import (
+    PROMPT_UNDELIVERED_MESSAGE,
+    TURN_TIMEOUT_MESSAGE,
+)
 from app.domain.agent.service import (
     DISALLOWED_TOOLS,
     AgentDeliveryFailure,
@@ -150,10 +154,10 @@ exit 0
 # reported in seconds instead of being indistinguishable from "still working"
 # for fifteen minutes (dev, 2026-08-08).
 DELIVERY_TIMEOUT_S = 25.0
-UNDELIVERED_MESSAGE = (
-    "⚠️ 这条消息没能送到芝士那边（她的会话没有任何反应）。改动都还在，"
-    "再 @ 她一次就会重开会话重试。"
-)
+# The sentence itself lives in platform_failures, next to the classifier that
+# recognises it — a copy here would drift and the failure would silently go back
+# to rendering as 「AI 服务返回错误」.
+UNDELIVERED_MESSAGE = PROMPT_UNDELIVERED_MESSAGE
 
 
 @dataclass
@@ -310,7 +314,10 @@ class HooksTurnProvider[ScreenT]:
     # path and 芝士 opens it with Read (its own tool), not because we sent it.
     embeds_images = False
     _needs_topic_message = "本轮需要话题上下文"
-    _timeout_message = "轮次超时"
+    # A subclass may prefix its transport ("tmux …" / "device …") but MUST keep
+    # TURN_TIMEOUT_MARKER in the string — that marker is how the failure gets
+    # classified as a timeout rather than an AI-service error.
+    _timeout_message = TURN_TIMEOUT_MESSAGE
 
     def __init__(
         self,
@@ -325,6 +332,12 @@ class HooksTurnProvider[ScreenT]:
         # (the device backend keeps this; see DeviceProvider).
         self._idle_suspect_s = idle_suspect_s
         self._hard_ceiling_s = hard_ceiling_s
+        # The screen of the turn currently in flight, per topic — what `deliver`
+        # injects into. Written once the screen is ready and dropped in
+        # ``run_turn``'s finally, so "a topic is in here" means exactly "a turn
+        # is running on it right now", which is the only state `deliver` may act
+        # on (it must never bring a screen up).
+        self._live: dict[uuid.UUID, ScreenT] = {}
 
     @property
     def hard_ceiling_s(self) -> float:
@@ -336,6 +349,34 @@ class HooksTurnProvider[ScreenT]:
         return self._hard_ceiling_s
 
     def available(self) -> bool:
+        return True
+
+    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+        """Inject ``text`` into the screen of the turn ALREADY running on this
+        topic. True when the screen took it.
+
+        This is what lets a message posted mid-turn reach 芝士 now instead of
+        queueing behind the whole turn. It works because the thing on the other
+        end is an interactive Claude Code, which accepts input while it is
+        working and folds it into the run (measured: a prompt pasted into a busy
+        session was answered without waiting for the running command). The
+        platform used to be stricter than the tool it drives — one message per
+        topic per turn — so a long command made every later message wait it out.
+
+        Deliberately does NOT ensure a screen: with no turn in flight there is no
+        hook queue registered either, so anything the screen produced would land
+        outside every window. A False here means the caller must fall back to
+        starting a turn of its own."""
+        screen = self._live.get(topic_id)
+        if screen is None:
+            return False
+        try:
+            await self._send_prompt(screen, text)
+        except ScreenSetupError:
+            return False
+        except Exception:  # noqa: BLE001 — a failed inject is a fallback, not a crash
+            logger.exception("deliver into running turn failed (topic=%s)", topic_id)
+            return False
         return True
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
@@ -477,6 +518,10 @@ class HooksTurnProvider[ScreenT]:
                     eid = stale.get("_eid")
                     if isinstance(eid, str):
                         _park_stale_hook(project_id, topic_id, eid, stale)
+                # Publish the screen only now: from here to the finally below is
+                # exactly the window in which a hook queue is registered, which
+                # is the only window `deliver` may inject into.
+                self._live[topic_id] = screen
                 ready = await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
@@ -559,4 +604,5 @@ class HooksTurnProvider[ScreenT]:
                     except asyncio.CancelledError:
                         pass
         finally:
+            self._live.pop(topic_id, None)
             self._router.unregister(topic_key, queue)

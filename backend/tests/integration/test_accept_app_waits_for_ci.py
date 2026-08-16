@@ -721,3 +721,53 @@ def test_discussion_topic_needs_no_pr_and_still_accepts(client, app_world, monke
     assert _topic(client, tid)["status"] == "archived"
     assert app_world["opened"] == []
     assert app_world["fake"].merge_calls == []
+
+
+# ---- Tier-2 (#468)：required 按名单等；strict 落后自动换基 --------------------
+
+
+def test_a_required_check_that_never_appeared_blocks_the_merge(client, app_world):
+    """#465 的形态：path filter 让 `test` 根本没被触发，可见的检查全绿/скipped。
+    缺席必须读作「还在等」，永远不是「没失败」。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}  # test 缺席
+    _poll(client)
+
+    assert fake.merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pr_open"
+    assert "test" in card["note"]  # 卡面说清在等哪个
+
+
+def test_a_stale_base_gets_updated_not_merged(client, app_world):
+    """绿必须绿在当前基线上（8-12 三头 alembic、8-16 样式闸门叠加）。落后 →
+    自动 Update branch、不合并；换基后 head 变化，下一轮从新 CI 等起。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "绿，但绿在旧基上")
+    fake.compare_status_by_pair[("main", head_sha)] = "behind"
+    _poll(client)
+
+    assert fake.merge_calls == []
+    assert fake.update_branch_calls == [number]
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pr_open"
+    assert "落后" in card["note"]
+
+
+def test_current_base_and_full_roster_still_merge(client, app_world):
+    """正例回归：required 都在、基线不落后（identical/ahead 或 GitHub 答非所问
+    的 None）→ 照常合并归档，两道新阀不误伤。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.compare_status_by_pair[("main", head_sha)] = "ahead"
+    _poll(client)
+
+    assert [m["number"] for m in fake.merge_calls] == [number]
+    assert _topic(client, tid)["status"] == "archived"

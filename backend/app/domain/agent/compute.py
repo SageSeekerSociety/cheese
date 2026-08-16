@@ -91,6 +91,14 @@ class ComputeProvider(Protocol):
         images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
 
+    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+        """Inject text into the turn already running on this topic, if this
+        transport can. False = "I have no live screen for it" — the caller then
+        runs an ordinary turn. Only the hooks-driven backends (a long-lived
+        interactive Claude Code) can say True; a per-turn subprocess has nothing
+        to inject into once its turn is over."""
+        ...
+
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
 
 
@@ -249,6 +257,12 @@ class LocalDockerProvider:
             images=images,
         )
 
+    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+        """No live screen to inject into: this provider runs the SDK per turn, so
+        between turns there is no process to talk to and during one the turn owns
+        the stream. The caller falls back to running its own turn."""
+        return False
+
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the agent's native edits this turn into version history
         (workspace lifecycle, R2/R9). Best-effort; never fail the turn on git.
@@ -325,6 +339,12 @@ class RemoteCheesedProvider:
                 async for line in resp.aiter_lines():
                     if line.strip():
                         yield event_from_dict(json.loads(line))
+
+    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+        """Not relayed: the node's turn is an NDJSON stream this side consumes,
+        with no back-channel into the running screen. Wiring one is a node RPC
+        change, not something to fake here."""
+        return False
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         # Commit the turn's edits ON THE NODE so /git/log + /git/diff have history.
@@ -422,6 +442,17 @@ class ComputePool:
             if isinstance(provider, TmuxHooksProvider):
                 return provider.activity_status(topic_id)
         return None
+
+    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+        """Inject text into whichever provider is currently running a turn on
+        this topic. Asks every provider rather than resolving the topic's
+        configured one: only a provider that HAS a live screen for this exact
+        topic can answer True, so the first True is the right one — and it needs
+        no DB read on the hot path where a human is waiting."""
+        for provider in self._providers.values():
+            if await provider.deliver(topic_id, text):
+                return True
+        return False
 
     def has(self, provider_id: str) -> bool:
         return provider_id in self._providers

@@ -109,6 +109,7 @@ class SqlDeviceRepository:
             supply=row.supply,
             visibility=row.visibility,
             ccproxy_upstream=row.ccproxy_upstream,
+            ccproxy_machine_id=row.ccproxy_machine_id,
         )
 
     async def get_device(self, device_id: str) -> Device | None:

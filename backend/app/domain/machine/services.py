@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.device.ccproxy_tenant import CcproxyTenantError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
@@ -583,9 +584,25 @@ class MachineService:
             elif device is not None and device.owner_user_id == machine.owner_user_id:
                 # Device deletion also removes project/team/topic bindings. Do
                 # this before the machine row so a failure remains retryable.
-                await self._devices.delete_platform_provisioned(
-                    machine.device_id, actor_user_id=machine.owner_user_id
-                )
+                try:
+                    await self._devices.delete_platform_provisioned(
+                        machine.device_id, actor_user_id=machine.owner_user_id
+                    )
+                except CcproxyTenantError as exc:
+                    # #420: the device carries a ccproxy ticket and revocation
+                    # was not confirmed. `forget` runs from `list_for_project`
+                    # (a GET), so raising here would wedge machine listing for
+                    # the whole project over a ccproxy outage. Keep BOTH rows —
+                    # the machine row is what brings us back here to retry once
+                    # ccproxy answers again — and say so loudly.
+                    logger.error(
+                        "not reaping machine %s yet: ccproxy revocation for "
+                        "device %s unconfirmed (%s)",
+                        machine.hostname,
+                        machine.device_id,
+                        exc,
+                    )
+                    return
             elif device is not None:
                 # Never delete a device now owned by somebody else. This should
                 # be impossible for platform-enrolled machines, so retain an

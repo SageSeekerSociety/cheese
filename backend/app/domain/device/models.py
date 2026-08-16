@@ -79,6 +79,13 @@ class DeviceRow(Base):
     # the overwhelmingly common case, every laptop-class device — means the
     # device brings no identity and its turns use the platform pool as before.
     ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The id ccproxy knows this device by (#420) — the revocation handle. Set
+    # when cheese registers the device as a ccproxy machine; deleting the
+    # device then calls `DELETE /machine/{id}` there, killing exactly this
+    # device's ticket instead of rotating a credential every box shares. NULL =
+    # the device predates per-device tickets (or brings no ccproxy identity),
+    # and deletion has nothing to revoke.
+    ccproxy_machine_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class HostedDeviceRow(Base):
