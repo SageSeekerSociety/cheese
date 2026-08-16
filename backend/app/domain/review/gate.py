@@ -37,6 +37,13 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.domain.agent.platform_notices import (
+    EVENT_GATE_BLOCKED,
+    EVENT_GATE_FAILED,
+    SEVERITY_ERROR,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.review import pr_publish
 from app.domain.review.models import GateOutcome
 from app.domain.workspace import service as ws
@@ -173,6 +180,8 @@ async def _run(
         # 话：红了是去改代码，没跑成是去把检查环境弄起来 —— 让芝士对着一份
         # 「什么都没跑」的输出找 bug，只会浪费一整轮并且很可能原样再递一次。
         if outcome == GateOutcome.blocked:
+            event = "⚠️ 质量检查没能跑起来，卡没送出去 · 芝士在弄环境"
+            event_type = EVENT_GATE_BLOCKED
             content = (
                 "你递的验收卡没有送到验收人手上：平台的质量检查**没能跑起来**"
                 "（不是没通过——它对你的代码没有任何结论）。"
@@ -184,6 +193,8 @@ async def _run(
                 "在对话里把情况说清楚交给人处理。"
             )
         else:
+            event = "⚠️ 质量检查没通过，卡没送出去 · 芝士在修"
+            event_type = EVENT_GATE_FAILED
             content = (
                 "你递的验收卡没有通过平台的质量检查，卡片没有送到验收人手上。"
                 f"检查输出的结尾如下：\n```\n{tail[-1500:]}\n```\n"
@@ -196,6 +207,17 @@ async def _run(
             author="system",
             content=content,
             summon=True,
+            # 平台提示统一契约: 房间里只留一行，检查输出收进 meta.detail 由前端折叠。
+            # 两个 event_type 分开的理由跟上面那段中文注释一样 —— 前端要能一眼分出
+            # 「去改代码」和「去弄环境」，靠读正文分不出来。
+            nudge_event=event,
+            nudge_meta=notice(
+                event_type,
+                severity=SEVERITY_ERROR,
+                who=WHO_CHEESE,
+                detail=tail[-1500:],
+                detail_label="检查输出（结尾）",
+            ),
         )
 
 

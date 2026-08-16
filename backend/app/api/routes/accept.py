@@ -15,6 +15,12 @@ from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
+from app.domain.agent.platform_notices import (
+    EVENT_ACCEPT_CONFLICT,
+    SEVERITY_WARN,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.agent.runtime import TurnRunner
 from app.domain.review import pr_publish
 from app.domain.review.github_pr import (
@@ -168,6 +174,16 @@ async def accept_card(
                 "跑相关测试确认没破坏，然后简短汇报解决思路——验收人会重新点采纳。"
             ),
             summon=True,
+            # 平台提示统一契约: 一行给房间，冲突文件清单进 meta.detail。detail 给的
+            # 是**完整**清单（content 里那份为了可读只列前 15 个），收起来不等于删掉。
+            nudge_event=f"⚠️ 采纳时合并冲突，芝士在解（{len(files)} 个文件）",
+            nudge_meta=notice(
+                EVENT_ACCEPT_CONFLICT,
+                severity=SEVERITY_WARN,
+                who=WHO_CHEESE,
+                detail="\n".join(files) or "（见工作区冲突标记）",
+                detail_label="冲突文件",
+            ),
         )
     return ok(await svc.describe(card))
 

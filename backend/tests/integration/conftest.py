@@ -35,6 +35,28 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
 
+def room_text(blocks: list[dict]) -> str:
+    """Everything the room says, `content` **and** folded-away `meta.detail`.
+
+    平台提示统一契约: a platform notice is one line of `content` plus a
+    structured `meta`, and anything long (the CI log, the check output, the
+    provider's own words) rides in `meta.detail` for the frontend to fold. So
+    a test asking "did the platform say X" has to read both halves — joining
+    `content` alone now answers "is X on the visible line", which is a
+    different and much narrower question.
+
+    Use this for「说了什么」assertions. When you specifically mean "the visible
+    line", read `content` directly and say so.
+    """
+    parts: list[str] = []
+    for block in blocks:
+        parts.append(block.get("content") or "")
+        detail = (block.get("meta") or {}).get("detail")
+        if detail:
+            parts.append(str(detail))
+    return "\n".join(parts)
+
+
 def unique_int(min_val: int = 10000000, max_val: int = 99999999) -> int:
     """Collision-resistant random int derived from a fresh UUID4.
 
