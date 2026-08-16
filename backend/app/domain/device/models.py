@@ -1,7 +1,8 @@
 """SQLAlchemy models backing the device flow (SQL repository).
 
 Tables mirror the storage-agnostic dataclasses in ``repository.py``:
-``device`` (enrolled compute machines + durable token), ``device_auth_code``
+``device`` (shared connector identity), ``hosted_device`` (human-owned machines),
+``device_auth_code``
 (short-lived device-flow codes), ``device_project`` (device↔project assignments),
 ``device_team`` (device↔team bindings — compute belongs to the team, v4) and
 ``device_topic`` (a topic's pinned device — affinity, v4) and ``device_health``
@@ -51,15 +52,9 @@ class DeviceRow(Base):
         DateTime(timezone=True), nullable=False
     )
 
-    # #282 四轴 · 供给形式 / 可见性. Stored, never inferred: the same fact is
-    # reverse-look-up-able through `project_machines.device_id`, and that reverse
-    # lookup IS the bug — see `repository.Supply`. Each default is the SAFE reading
-    # of ITS OWN axis, and the two axes are safe in OPPOSITE directions (see the
-    # dataclass comment in `repository.Device`): supply → self_hosted keeps the
-    # destroy decision at "not the platform's to destroy", visibility → isolated
-    # keeps the access decision at the boxed room. Both `default` (ORM insert) and
-    # `server_default` (any INSERT that bypasses the ORM) carry the safe reading, so
-    # a forgetful write can never reach whole-machine `host` by omission (#358 #364).
+    # Additive #442 dual-read window. Supply remains the stored lifecycle fact.
+    # Device visibility is legacy-only now; hosted access is read from the topic
+    # binding, but the old column stays safe-by-default until final cutover.
     supply: Mapped[Supply] = mapped_column(
         Enum(Supply, native_enum=False, length=16),
         default=Supply.self_hosted,
@@ -84,6 +79,19 @@ class DeviceRow(Base):
     # the overwhelmingly common case, every laptop-class device — means the
     # device brings no identity and its turns use the platform pool as before.
     ccproxy_upstream: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class HostedDeviceRow(Base):
+    """The human-owned, persistent subtype of a connector ``device``."""
+
+    __tablename__ = "hosted_device"
+
+    device_id: Mapped[str] = mapped_column(
+        ForeignKey("device.device_id", ondelete="CASCADE"), primary_key=True
+    )
+    owner_user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
 
 
 class DeviceAuthCodeRow(Base):
@@ -136,7 +144,9 @@ class DeviceTopicRow(Base):
     turns run on, frozen on the first turn: the topic's work tree + resumable claude
     session live on that one machine, so every later turn MUST return to it — never
     drift to another online device (which would silently start from an empty tree and
-    corrupt session resume). 1:1 — ``topic_id`` is the primary key. ``project_id`` /
+    corrupt session resume). ``visibility`` is this topic's access boundary on that
+    machine, not a machine-wide grant. 1:1 — ``topic_id`` is the primary key.
+    ``project_id`` /
     ``topics.id`` are stored as bare Uuids (no cross-table FK, matching
     ``device_project.project_id``); the device FK cascades so a removed device drops
     its pins."""
@@ -146,6 +156,12 @@ class DeviceTopicRow(Base):
     topic_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     device_id: Mapped[str] = mapped_column(
         ForeignKey("device.device_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    visibility: Mapped[Visibility] = mapped_column(
+        Enum(Visibility, native_enum=False, length=16),
+        default=Visibility.isolated,
+        server_default=Visibility.isolated.value,
+        nullable=False,
     )
 
 

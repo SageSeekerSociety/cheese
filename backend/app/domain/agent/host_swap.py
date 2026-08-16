@@ -96,9 +96,10 @@ async def swap_topic_device(
         # this one. Counting it would quarantine healthy boxes for a registry
         # outage — and quarantine every box, since they all fail the same way.
         return NO_SWAP
-    old_id = await service.topic_device(topic_id)
-    if old_id is None:
+    binding = await service.topic_binding(topic_id)
+    if binding is None:
         return NO_SWAP
+    old_id = binding.device_id
     verdict = await service.record_host_failure(old_id, failure.code)
     if not verdict.quarantined:
         # First strike: stay put. One failure is a hiccup, and moving a topic
@@ -121,15 +122,13 @@ async def swap_topic_device(
     candidates = (
         []
         if project_id is None
-        else await service.healthy_devices_for_project(project_id, is_online)
+        else await service.healthy_cloud_devices_for_project(project_id, is_online)
     )
     target = next(
         (
             device
             for device in candidates
-            if device.device_id != old_id
-            and device.supply is Supply.cloud
-            and has_runnable_transport(device.visibility)
+            if device.device_id != old_id and has_runnable_transport(binding.visibility)
         ),
         None,
     )
@@ -156,7 +155,9 @@ async def swap_topic_device(
             f"consecutive {failure.code} failures; moving to {target.device_id}"
         ),
     )
-    await service.bind_topic_device(topic_id, target.device_id)
+    await service.bind_topic_device(
+        topic_id, target.device_id, visibility=binding.visibility
+    )
     logger.warning(
         "topic %s moved from device %s to %s after %s",
         topic_id,

@@ -42,7 +42,7 @@ from app.domain.agent.hooks_substrate import (
 )
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply, has_runnable_transport
+from app.domain.device.supply import Supply, Visibility, has_runnable_transport
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
@@ -63,9 +63,14 @@ DeviceResolver = Callable[
 # 「该档尚未实现」 turn error the owner resolves by opting the machine into
 # whole-machine (Hosted Machine), or by waiting for the sandbox transport (step 2).
 DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = (
-    "话题绑定的机器登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
+    "话题与机器的绑定登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
     "尚未实现（#358 第二步）；平台拒绝以裸跑代替——那等于静默把整台机器暴露给这个"
     "房间。请把这台机器改登记为『整台机器（Hosted Machine）』后再继续。"
+)
+
+DEVICE_NOT_HOSTED_MESSAGE = (
+    "话题当前绑定的是云端连接器，不是 Hosted 机器；Hosted 解析器拒绝把云端端点"
+    "当作人的机器运行。"
 )
 
 
@@ -78,13 +83,13 @@ async def resolve_pinned_device(
     """The device this topic's turn must run on (execution-architecture v4 §affinity).
 
     A topic's work tree + resumable claude session live on ONE machine. So:
-      * already pinned → return it **iff online AND still whole-machine**; an offline
+      * already pinned → return it **iff hosted, online, and runnable**; an offline
         pinned device raises (queue/retry) and an `isolated` pinned device raises the
         #358 「尚未实现」 error — NEVER fall back to another device, which would start
         from an empty tree and corrupt session resume (the original drift bug);
-      * not yet pinned (first turn) → pick an online, **non-quarantined**,
-        **whole-machine** device serving the project and **pin it** (write-once), so
-        every later turn returns to the same machine. Quarantined = judged unhealthy
+      * not yet pinned (first turn) → pick an online, **non-quarantined** hosted
+        device serving the project and create a runnable ``host`` binding (write-once),
+        so every later turn returns to the same machine. Quarantined = judged unhealthy
         by ``device.health`` (#186); a topic that is already pinned is only ever
         moved by the explicit ``agent.host_swap`` flow, never from here.
 
@@ -96,17 +101,23 @@ async def resolve_pinned_device(
 
     Returns the device id, or ``None`` when no runnable bound device is online at all
     (the caller turns that into a clean "no online device" turn error)."""
-    pinned = await service.topic_device(topic_id)
-    if pinned is not None:
+    binding = await service.topic_binding(topic_id)
+    if binding is not None:
+        pinned = binding.device_id
+        # A cloud endpoint has no `hosted_device` row BY DESIGN, and until #442
+        # step 5 gives cloud its own resolution path it still arrives here — so
+        # refusing every row without a hosted subtype would strand each cloud topic
+        # that exists today. Check the endpoint exists at all, then fall through to
+        # the checks both kinds share. Delete this branch once cloud resolves
+        # elsewhere; the `hosted_device` lookup is then the whole test.
+        if await service.get_hosted_device(pinned) is None:
+            if await service.get_device(pinned) is None:
+                raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(pinned):
             raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
-        # An ALREADY-pinned device that has since been re-enrolled as `isolated`
-        # (its owner flipped it) must refuse rather than run bare — the pin does not
+        # An isolated binding must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
-        pinned_device = await service.get_device(pinned)
-        if pinned_device is not None and not has_runnable_transport(
-            pinned_device.visibility
-        ):
+        if not has_runnable_transport(binding.visibility):
             raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
         return pinned
     # First turn: pick from the machines that are online AND not quarantined. A
@@ -118,15 +129,11 @@ async def resolve_pinned_device(
     # resolver can quietly change is the original drift bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
-        # #358 gate at the PIN: only whole-machine (`host`) devices have a transport
-        # today. An `isolated` device's per-room-container transport is #358 step 2;
-        # until it lands such a device cannot run a turn, so it must never be pinned
-        # — the pin is write-once, and a topic frozen to an unrunnable device would
-        # be bricked with no way to move it. Skipping it here (rather than pinning
-        # and failing at launch) keeps it out of the affinity freeze entirely.
-        if not has_runnable_transport(device.visibility):
-            continue
-        await service.bind_topic_device(topic_id, device.device_id)
+        # Only the host transport exists today; isolated bindings become selectable
+        # when #358 step 2 supplies their per-room container transport.
+        await service.bind_topic_device(
+            topic_id, device.device_id, visibility=Visibility.host
+        )
         return device.device_id
     return None
 

@@ -7,7 +7,10 @@ show — a field that never survives a write is the same bug as not storing it, 
 it is the failure the whole decision is meant to end.
 """
 
+import importlib.util
+import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -15,7 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError
-from app.domain.device.models import DeviceRow
+from app.domain.device.models import DeviceRow, DeviceTopicRow
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply, Visibility
@@ -23,6 +26,21 @@ from app.domain.user.models import User
 
 if TYPE_CHECKING:
     from anyio.from_thread import BlockingPortal
+
+_MIGRATION = (
+    Path(__file__).resolve().parents[2]
+    / "alembic"
+    / "versions"
+    / "d8f4a1c2e693_hosted_device_subtype.py"
+)
+
+
+def _load_hosted_backfill():
+    spec = importlib.util.spec_from_file_location("_hosted_subtype", _MIGRATION)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.backfill_hosted_subtype
 
 
 def test_both_supplies_round_trip_and_only_cloud_is_reclaimable(
@@ -180,5 +198,65 @@ def test_ccproxy_upstream_survives_the_round_trip_to_the_domain_object(
         db_session.expunge_all()
         stored_plain = await service.get_device(plain.device_id)
         assert stored_plain is not None and stored_plain.ccproxy_upstream is None
+
+    _portal.call(_run)
+
+
+def test_hosted_subtype_migration_backfills_devices_and_topic_visibility(
+    db_session: AsyncSession, _portal: "BlockingPortal"
+):
+    backfill = _load_hosted_backfill()
+    hosted_topic, cloud_topic = uuid.uuid4(), uuid.uuid4()
+
+    async def _run() -> None:
+        for device_id, supply in (
+            ("legacy-hosted", Supply.self_hosted),
+            ("legacy-cloud", Supply.cloud),
+        ):
+            db_session.add(
+                DeviceRow(
+                    device_id=device_id,
+                    name=device_id,
+                    token=f"tok-{device_id}",
+                    owner_user_id=1,
+                    created_at=datetime.now(UTC),
+                    supply=supply,
+                    visibility=Visibility.host,
+                )
+            )
+        await db_session.flush()
+        db_session.add_all(
+            [
+                DeviceTopicRow(topic_id=hosted_topic, device_id="legacy-hosted"),
+                DeviceTopicRow(topic_id=cloud_topic, device_id="legacy-cloud"),
+            ]
+        )
+        await db_session.flush()
+        report = await db_session.run_sync(
+            lambda session: backfill(session.connection())
+        )
+        hosted_ids = set(
+            (
+                await db_session.execute(text("SELECT device_id FROM hosted_device"))
+            ).scalars()
+        )
+        rows = (
+            await db_session.execute(
+                text("SELECT topic_id, visibility FROM device_topic")
+            )
+        ).all()
+
+        # Only self_hosted devices get a subtype row — that is the split. But BOTH
+        # bindings get their device's visibility copied onto them.
+        assert report == {"hosted_devices": 1, "topic_bindings": 2}
+        assert hosted_ids == {"legacy-hosted"}
+        visibility = {row.topic_id: row.visibility for row in rows}
+        assert visibility[hosted_topic] == "host"
+        # The cloud binding too, and this one is load-bearing: a backfill that
+        # joined through `hosted_device` would leave every cloud topic on the
+        # column's `isolated` default, which is the one value both
+        # `resolve_pinned_device` and `host_swap` refuse — stranding every existing
+        # cloud topic the moment this migration ran.
+        assert visibility[cloud_topic] == "host"
 
     _portal.call(_run)

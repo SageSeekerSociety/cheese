@@ -37,6 +37,7 @@ from app.domain.device.repository import (
     DeviceRepository,
     HostHealth,
     Supply,
+    TopicDevice,
     Visibility,
 )
 
@@ -107,17 +108,15 @@ class DeviceService:
         keeps the name the cli proposed at start (avoids an "unnamed" node).
         Idempotent: approving an already-approved code returns the same device.
 
-        ``supply`` and ``visibility`` have NO default on purpose (#282 决定 2 /
-        #358). This is the one place a device is minted, so both enrolment entry
-        points must name their answer here as a constant:
+        ``supply`` and the legacy ``device.visibility`` have no default. This is
+        the one place a connector identity is minted, so both enrolment entry
+        points still name their legacy values during the additive dual-read window:
           * supply — the human device flow says ``self_hosted``, the MicroCloud
             sweep says ``cloud`` (入口决定待遇: never derived from what the machine
             looks like).
-          * visibility — the human connector defaults to ``isolated`` unless the
-            approver ticks 「让它看到整台机器」, because a person's own persistent box
-            must not become whole-machine-visible by omission; MicroCloud says
-            ``host`` (a fresh disposable VM is its own empty box — #358: Cloud
-            collapses the visibility axis).
+          * visibility — the human connector writes the safe ``isolated`` legacy
+            value; MicroCloud keeps writing ``host``. Hosted resolution no longer
+            reads either value: access now belongs to ``device_topic.visibility``.
         A third entry point that forgets either is a pyright error, not a machine
         someone deletes by surprise a year later nor one silently exposed to the
         room."""
@@ -168,6 +167,9 @@ class DeviceService:
     async def get_device(self, device_id: str) -> Device | None:
         return await self._repo.get_device(device_id)
 
+    async def get_hosted_device(self, device_id: str) -> Device | None:
+        return await self._repo.get_hosted_device(device_id)
+
     async def code_device_name(self, code_value: str) -> str | None:
         """The human-proposed device name recorded on a pending code (so the approval
         page can show/prefill it). ``None`` if the code is unknown."""
@@ -178,9 +180,8 @@ class DeviceService:
         return await self._repo.list_devices_by_owner(owner_user_id)
 
     async def delete_owned(self, device_id: str, *, actor_user_id: int) -> None:
-        """The HUMAN's door: an owner removing their own machine. Always allowed
-        whatever the supply — 「我不想再把这台机器借给平台了」 is not a reclaim."""
-        await self._require_owned(device_id, actor_user_id)
+        """The HUMAN's door: an owner removing their hosted machine."""
+        await self._require_hosted_owned(device_id, actor_user_id)
         await self._repo.delete_device(device_id)
 
     async def delete_platform_provisioned(
@@ -204,14 +205,16 @@ class DeviceService:
                 f"device {device_id} 的供给形式是 {device.supply}，"
                 "平台不销毁不是自己开的机器（#282 供给形式不变量）"
             )
-        await self.delete_owned(device_id, actor_user_id=actor_user_id)
+        if device.owner_user_id != actor_user_id:
+            raise ForbiddenError("Only the device owner may manage this device")
+        await self._repo.delete_device(device_id)
 
     async def rename_owned(
         self, device_id: str, name: str, *, actor_user_id: int
     ) -> Device:
         """Rename a device the caller owns. The name is a human label only (never a
         semantic/authorization key), so a plain non-empty check is all that's needed."""
-        device = await self._require_owned(device_id, actor_user_id)
+        device = await self._require_hosted_owned(device_id, actor_user_id)
         device.name = self._require_name(name)
         await self._repo.save_device(device)
         return device
@@ -247,7 +250,7 @@ class DeviceService:
     async def unassign_from_team(
         self, device_id: str, team_id: int, *, actor_user_id: int
     ) -> None:
-        await self._require_owned(device_id, actor_user_id)
+        await self._require_hosted_owned(device_id, actor_user_id)
         await self._repo.unassign_team(device_id, team_id)
 
     async def list_teams(self, device_id: str) -> list[int]:
@@ -266,6 +269,11 @@ class DeviceService:
     async def list_devices_for_project(self, project_id: uuid.UUID) -> list[Device]:
         return await self._repo.list_devices_by_project(project_id)
 
+    async def list_cloud_devices_for_project(
+        self, project_id: uuid.UUID
+    ) -> list[Device]:
+        return await self._repo.list_cloud_devices_by_project(project_id)
+
     async def project_has_online_device(
         self, project_id: uuid.UUID, is_online: Callable[[str], bool]
     ) -> bool:
@@ -282,12 +290,18 @@ class DeviceService:
     async def topic_device(self, topic_id: uuid.UUID) -> str | None:
         """The device a topic is frozen to (``None`` before its first turn). Its work
         tree + resumable session live there; later turns must return to it."""
-        return await self._repo.topic_device(topic_id)
+        binding = await self.topic_binding(topic_id)
+        return binding.device_id if binding is not None else None
 
-    async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None:
+    async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None:
+        return await self._repo.topic_binding(topic_id)
+
+    async def bind_topic_device(
+        self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
+    ) -> None:
         """Pin a topic to the device its first turn ran on. Write-once — an existing
         pin is never overwritten (affinity is permanent for the topic's lifetime)."""
-        await self._repo.bind_topic_device(topic_id, device_id)
+        await self._repo.bind_topic_device(topic_id, device_id, visibility)
 
     async def release_topic_device(self, topic_id: uuid.UUID, *, reason: str) -> None:
         """Drop a topic's pin so it can be re-pinned to another machine (#186 换身体).
@@ -363,8 +377,27 @@ class DeviceService:
         now = self._now()
         return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
 
+    async def healthy_cloud_devices_for_project(
+        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
+    ) -> list[Device]:
+        devices = await self.list_cloud_devices_for_project(project_id)
+        online = [d for d in devices if is_online(d.device_id)]
+        if not online:
+            return []
+        health = await self._repo.list_host_health([d.device_id for d in online])
+        now = self._now()
+        return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
+
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
+        if device is None:
+            raise NotFoundError("Unknown device")
+        if device.owner_user_id != actor_user_id:
+            raise ForbiddenError("Only the device owner may manage this device")
+        return device
+
+    async def _require_hosted_owned(self, device_id: str, actor_user_id: int) -> Device:
+        device = await self._repo.get_hosted_device(device_id)
         if device is None:
             raise NotFoundError("Unknown device")
         if device.owner_user_id != actor_user_id:
