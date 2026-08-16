@@ -21,6 +21,14 @@ services:
     env_file:
       - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
     environment:
+      # "Started by this compose file" — asserted as a LITERAL, on purpose (#439).
+      # The boot guard that refuses an insecure JWT_SECRET has to know it is on a
+      # deployment, and it cannot learn that from ENVIRONMENT: that variable lives
+      # in the env_file above, alongside JWT_SECRET, so the one failure the guard
+      # exists for (the env file not applying, #342/#356) removes both at once and
+      # the guard waves itself through. Anything interpolated here would inherit
+      # the same weakness, so this must stay a constant with no ${...} in it.
+      - DEPLOYED_VIA_COMPOSE=1
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads

@@ -18,6 +18,8 @@ observing whether it accepts the value:
   it would take every DB-backed test down with it.
 """
 
+from pathlib import Path
+
 import pytest
 
 from app.core.config import Settings
@@ -74,3 +76,64 @@ def test_deployment_with_a_real_secret_boots() -> None:
         environment="production", jwt_secret="a-genuinely-random-48-char-secret-value"
     )
     assert settings.jwt_secret == "a-genuinely-random-48-char-secret-value"
+
+
+# --- #439: the guard must not depend on the file it is guarding ----------------
+#
+# ENVIRONMENT and JWT_SECRET both come from the box's env file, so the very window
+# this guard exists for — the env file not applying (#342/#356) — takes out both:
+# the secret falls back to `dev-secret` AND environment falls back to
+# `development`, so the check above waves the deployment through. The compose file
+# asserts DEPLOYED_VIA_COMPOSE as a literal, which cannot fall back with it.
+
+
+@pytest.mark.parametrize("secret", ["dev-secret", "", "   "])
+def test_compose_deployment_rejects_insecure_secret_despite_dev_environment(
+    secret: str,
+) -> None:
+    # The regression this is really about: environment reads "development" NOT
+    # because this is a dev box, but because the env file failed to load. Trusting
+    # it here is what let a deployment boot on the in-source default.
+    with pytest.raises(RuntimeError) as excinfo:
+        _build(environment="development", jwt_secret=secret, deployed_via_compose=True)
+    message = str(excinfo.value)
+    assert "JWT_SECRET" in message
+    assert "#342" in message
+
+
+def test_compose_deployment_with_a_real_secret_boots() -> None:
+    settings = _build(
+        environment="development",
+        jwt_secret="a-genuinely-random-48-char-secret-value",
+        deployed_via_compose=True,
+    )
+    assert settings.deployed_via_compose is True
+
+
+@pytest.mark.parametrize("secret", ["dev-secret", "", "   "])
+def test_local_dev_is_unaffected_by_the_compose_signal(secret: str) -> None:
+    # Nothing outside the compose file sets it, so a developer's machine and the
+    # suite keep booting on the default exactly as before.
+    settings = _build(environment="development", jwt_secret=secret)
+    assert settings.deployed_via_compose is False
+
+
+def test_compose_file_asserts_the_signal_as_a_literal() -> None:
+    # The guard above is only as good as this line existing, and being a constant.
+    # An interpolated value (${...}) would inherit the weakness it exists to
+    # remove: unset upstream, it resolves empty and the guard turns itself off.
+    compose = (
+        Path(__file__).resolve().parents[3]
+        / "deploy"
+        / "compose"
+        / "docker-compose.base.yml"
+    )
+    lines = [
+        line.strip()
+        for line in compose.read_text(encoding="utf-8").splitlines()
+        if "DEPLOYED_VIA_COMPOSE" in line and not line.strip().startswith("#")
+    ]
+    assert lines == ["- DEPLOYED_VIA_COMPOSE=1"], (
+        "the deploy compose file must assert DEPLOYED_VIA_COMPOSE as a literal; "
+        f"found {lines!r}"
+    )
