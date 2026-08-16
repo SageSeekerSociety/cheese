@@ -526,13 +526,11 @@ onBeforeUnmount(() => {
   padding: 0;
   font-size: inherit;
 }
-/* lowlight token colors — same palette as DocPanel.
-   Deliberately NOT tokenised: syntax highlighting is its own palette (there is
-   no semantic token for "keyword"), and it has to move together with DocPanel's
-   copy and CodeEditor.vue's Monaco theme. See the note in DocPanel.vue. */
+/* lowlight token colors — the --code-* palette from style.css, shared with
+   DocPanel and with CodeEditor's Monaco theme. See the note in DocPanel.vue. */
 .doc-editor :deep(.hljs-comment),
 .doc-editor :deep(.hljs-quote) {
-  color: #8a8f98;
+  color: var(--code-comment);
   font-style: italic;
 }
 .doc-editor :deep(.hljs-keyword),
@@ -540,23 +538,23 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.hljs-literal),
 .doc-editor :deep(.hljs-doctag),
 .doc-editor :deep(.hljs-meta) {
-  color: #0b5cad;
+  color: var(--code-keyword);
 }
 .doc-editor :deep(.hljs-string),
 .doc-editor :deep(.hljs-regexp),
 .doc-editor :deep(.hljs-addition) {
-  color: #a8471c;
+  color: var(--code-string);
 }
 .doc-editor :deep(.hljs-number),
 .doc-editor :deep(.hljs-symbol),
 .doc-editor :deep(.hljs-bullet) {
-  color: #0a7a52;
+  color: var(--code-number);
 }
 .doc-editor :deep(.hljs-title),
 .doc-editor :deep(.hljs-section),
 .doc-editor :deep(.hljs-name),
 .doc-editor :deep(.hljs-function) {
-  color: #8a6d1b;
+  color: var(--code-function);
 }
 .doc-editor :deep(.hljs-type),
 .doc-editor :deep(.hljs-class),
@@ -565,10 +563,10 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.hljs-attribute),
 .doc-editor :deep(.hljs-variable),
 .doc-editor :deep(.hljs-template-variable) {
-  color: #267f99;
+  color: var(--code-type);
 }
 .doc-editor :deep(.hljs-deletion) {
-  color: #b3403a;
+  color: var(--code-deletion);
 }
 .doc-editor :deep(.hljs-emphasis) {
   font-style: italic;

@@ -4092,21 +4092,13 @@ onBeforeUnmount(() => {
   padding: 0;
   font-size: inherit;
 }
-/* lowlight token colors — same palette as CodeEditor's cheesex-light Monaco
-   theme (light ground, low saturation), so 文档里的代码和文件编辑器一个气质.
-
-   DELIBERATELY NOT TOKENISED (2026-08-16, dark-mode wave 2). Syntax highlighting
-   is its own palette: there is no semantic token for "keyword" or "string", and
-   inventing a dark set here would (a) be six new colour decisions and (b) leave
-   CodeEditor.vue's Monaco theme — which only defines `cheesex-light` and is
-   deliberately kept byte-identical to these six values — light-only, so the doc
-   and the file editor would disagree about what a keyword looks like. The two
-   must be done together, as one card. Until then these stay light-tuned; on the
-   dark theme code blocks read at reduced contrast (see the report on this
-   sub-topic). */
+/* lowlight token colors — the --code-* palette from style.css, which is also
+   what CodeEditor's Monaco theme reads back out, so 文档里的代码和文件编辑器
+   一个气质 in BOTH themes. Never inline a literal here: the three consumers
+   have to move together or the same snippet looks different in each. */
 .doc-editor :deep(.hljs-comment),
 .doc-editor :deep(.hljs-quote) {
-  color: #8a8f98;
+  color: var(--code-comment);
   font-style: italic;
 }
 .doc-editor :deep(.hljs-keyword),
@@ -4114,23 +4106,23 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.hljs-literal),
 .doc-editor :deep(.hljs-doctag),
 .doc-editor :deep(.hljs-meta) {
-  color: #0b5cad;
+  color: var(--code-keyword);
 }
 .doc-editor :deep(.hljs-string),
 .doc-editor :deep(.hljs-regexp),
 .doc-editor :deep(.hljs-addition) {
-  color: #a8471c;
+  color: var(--code-string);
 }
 .doc-editor :deep(.hljs-number),
 .doc-editor :deep(.hljs-symbol),
 .doc-editor :deep(.hljs-bullet) {
-  color: #0a7a52;
+  color: var(--code-number);
 }
 .doc-editor :deep(.hljs-title),
 .doc-editor :deep(.hljs-section),
 .doc-editor :deep(.hljs-name),
 .doc-editor :deep(.hljs-function) {
-  color: #8a6d1b;
+  color: var(--code-function);
 }
 .doc-editor :deep(.hljs-type),
 .doc-editor :deep(.hljs-class),
@@ -4139,10 +4131,10 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.hljs-attribute),
 .doc-editor :deep(.hljs-variable),
 .doc-editor :deep(.hljs-template-variable) {
-  color: #267f99;
+  color: var(--code-type);
 }
 .doc-editor :deep(.hljs-deletion) {
-  color: #b3403a;
+  color: var(--code-deletion);
 }
 .doc-editor :deep(.hljs-emphasis) {
   font-style: italic;
