@@ -93,7 +93,9 @@ body,
     ),
     linear-gradient(180deg, rgba(var(--v-theme-logo-secondary), 0.06) 0%, rgba(var(--v-theme-primary), 0.04) 100%);
 
-  box-shadow: inset 0 -1px rgba(0, 0, 0, 0.06);
+  /* 页头底部的发丝线（用 inset 阴影画的）。6% 的 on-surface 在浅色下是一条极淡的
+     深线、深色下是一条极淡的浅线 —— 写死的黑在深色背景上等于没画。 */
+  box-shadow: inset 0 -1px rgba(var(--v-theme-on-surface), 0.06);
 
   /* 添加动画属性 */
   animation: flow-effect 12s infinite linear;

@@ -31,7 +31,7 @@
     <!-- 回复内容 -->
     <div v-for="reply in displayedReplies" :key="reply.id" class="reply-item pa-2 rounded-lg">
       <div class="d-flex">
-        <v-avatar size="32" color="grey-lighten-2" class="mt-1 flex-shrink-0">
+        <v-avatar size="32" color="surface-variant" class="mt-1 flex-shrink-0">
           <v-img :src="getAvatarUrl(reply.sender.avatarId)" />
         </v-avatar>
 
@@ -75,7 +75,7 @@
               <v-btn
                 variant="text"
                 size="x-small"
-                color="grey-darken-1"
+                color="on-surface-variant"
                 class="action-btn mr-2"
                 @click="$emit('reply-to-reply', { parentDiscussion, reply })"
               >
@@ -86,7 +86,7 @@
                 v-if="isCurrentUserReply(reply)"
                 variant="text"
                 size="x-small"
-                color="grey-darken-1"
+                color="on-surface-variant"
                 class="action-btn"
                 @click="$emit('delete-reply', { parentDiscussion, reply })"
               >
@@ -100,7 +100,7 @@
 
     <!-- 查看所有回复或收起 -->
     <div v-if="canToggleExpand && expanded" class="text-center my-2">
-      <v-btn variant="text" size="small" color="grey" class="collapse-replies" @click="$emit('collapse')">
+      <v-btn variant="text" size="small" color="on-surface-variant" class="collapse-replies" @click="$emit('collapse')">
         收起回复
       </v-btn>
     </div>
@@ -242,23 +242,23 @@ const downloadFile = (attachment: any) => {
 
 <style lang="scss" scoped>
 .reply-counter {
-  color: rgba(0, 0, 0, 0.7);
+  color: var(--text);
   margin-bottom: 0.5rem;
 }
 
 .border-l {
-  border-left: 2px solid rgba(0, 0, 0, 0.06);
+  border-left: 2px solid var(--line-2);
 }
 
 .border-bottom {
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid var(--line-2);
 }
 
 .reply-item {
   transition: background-color 0.2s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: var(--fill);
   }
 }
 

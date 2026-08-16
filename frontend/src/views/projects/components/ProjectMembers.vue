@@ -109,7 +109,7 @@
         <!-- 空状态 -->
         <template #no-data>
           <div class="text-center py-8">
-            <v-icon icon="mdi-account-group-outline" size="64" color="grey-lighten-2" class="mb-4"></v-icon>
+            <v-icon icon="mdi-account-group-outline" size="64" class="mb-4 empty-state-icon"></v-icon>
             <h3 class="text-h6 font-weight-medium mb-2">暂无成员</h3>
             <p class="text-body-2 text-medium-emphasis mb-4">邀请新成员加入项目</p>
             <v-btn color="primary" prepend-icon="mdi-account-plus" @click="openInviteDialog">添加成员</v-btn>
@@ -172,7 +172,7 @@
               <!-- 邀请外部成员 (暂不可用) -->
               <v-window-item value="external">
                 <div class="text-center py-6">
-                  <v-icon icon="mdi-email-outline" size="48" color="grey-lighten-2" class="mb-3"></v-icon>
+                  <v-icon icon="mdi-email-outline" size="48" class="mb-3 empty-state-icon"></v-icon>
                   <h3 class="text-subtitle-1 font-weight-medium mb-2">邀请外部成员功能开发中</h3>
                   <p class="text-body-2 text-medium-emphasis">此功能即将推出，敬请期待</p>
                 </div>
@@ -482,13 +482,18 @@ onMounted(() => {
   min-width: 140px;
 }
 
+/* 空状态的占位图标 —— design-system §1.3 的 --faint 档（“占位提示”）。 */
+.empty-state-icon {
+  color: var(--faint);
+}
+
 .members-card {
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
   overflow: hidden;
   transition: all 0.3s ease;
 
   &:hover {
-    border-color: rgba(0, 0, 0, 0.12);
+    border-color: var(--line-2);
   }
 }
 
@@ -503,8 +508,8 @@ onMounted(() => {
 
   :deep(th) {
     font-weight: 500 !important;
-    background-color: rgba(0, 0, 0, 0.015);
-    color: rgba(0, 0, 0, 0.75) !important;
+    background-color: var(--canvas);
+    color: var(--text) !important;
     white-space: nowrap;
     letter-spacing: 0.3px;
     padding: 0 16px;
@@ -512,7 +517,7 @@ onMounted(() => {
   }
 
   :deep(td) {
-    color: rgba(0, 0, 0, 0.8);
+    color: var(--text);
     padding: 0 16px;
     height: 56px;
   }
@@ -522,8 +527,8 @@ onMounted(() => {
   }
 
   :deep(.v-data-table-footer) {
-    border-top: 1px solid rgba(0, 0, 0, 0.06);
-    background-color: rgba(0, 0, 0, 0.01);
+    border-top: 1px solid var(--line);
+    background-color: var(--canvas);
   }
 }
 
@@ -547,7 +552,7 @@ onMounted(() => {
 
   &:hover {
     transform: translateY(-2px);
-    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.09);
+    box-shadow: var(--shadow-1);
   }
 }
 

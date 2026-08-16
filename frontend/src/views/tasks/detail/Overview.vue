@@ -123,7 +123,7 @@
                       <v-list
                         v-if="teamEligibility.team.memberRealNameStatus"
                         density="compact"
-                        class="bg-grey-lighten-5 rounded-lg pa-0 mb-2"
+                        class="bg-surface-light rounded-lg pa-0 mb-2"
                       >
                         <v-list-subheader class="text-caption font-weight-medium"
                           >未完成实名验证的成员：</v-list-subheader
@@ -275,7 +275,7 @@
                 <div v-else>
                   <v-rating
                     :model-value="rankStars"
-                    color="amber"
+                    color="primary"
                     half-increments
                     readonly
                     density="compact"
@@ -692,12 +692,13 @@ const goToAIAdvice = () => {
   padding: 0.5rem 1rem;
   margin: 0.75rem 0;
   background: rgba(var(--v-theme-primary), 0.04);
-  border-radius: 0 4px 4px 0;
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
 }
 .markdown-body :deep(code) {
   background: rgba(var(--v-theme-surface-variant), 0.5);
   padding: 0.125rem 0.375rem;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.9em;
 }
 .markdown-body :deep(pre) {

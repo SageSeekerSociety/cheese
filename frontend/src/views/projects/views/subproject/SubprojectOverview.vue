@@ -16,7 +16,7 @@
           </v-card-title>
           <v-card-text class="px-4 pb-4">
             <div class="text-center py-6 empty-content">
-              <v-icon icon="mdi-file-document-outline" size="48" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-file-document-outline" size="48" class="mb-3 empty-state-icon"></v-icon>
               <h3 class="text-subtitle-1 font-weight-medium mb-2">项目内容未填写</h3>
               <p class="text-body-2 text-medium-emphasis mb-4">添加子项目详细内容、目标和说明文档</p>
               <v-btn color="primary" variant="tonal" size="small" rounded="lg" prepend-icon="mdi-pencil">
@@ -34,7 +34,7 @@
           </v-card-title>
           <v-card-text class="px-4 pb-4">
             <div class="text-center py-6">
-              <v-icon icon="mdi-flag-outline" size="48" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-flag-outline" size="48" class="mb-3 empty-state-icon"></v-icon>
               <h3 class="text-subtitle-1 font-weight-medium mb-2">里程碑功能开发中</h3>
               <p class="text-body-2 text-medium-emphasis mb-4">
                 这是一个占位模块，里程碑功能将在后续版本中实现。里程碑系统将帮助您跟踪项目的关键节点和阶段性目标。
@@ -55,7 +55,7 @@
           </v-card-title>
           <v-card-text class="px-4 pb-4">
             <div class="text-center py-6">
-              <v-icon icon="mdi-history" size="40" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-history" size="40" class="mb-3 empty-state-icon"></v-icon>
               <h3 class="text-subtitle-1 font-weight-medium mb-2">活动记录功能即将推出</h3>
               <p class="text-body-2 text-medium-emphasis">您将能够查看子项目的所有最新动态</p>
             </div>
@@ -70,7 +70,7 @@
           </v-card-title>
           <v-card-text class="px-4 pb-4">
             <div class="text-center py-6">
-              <v-icon icon="mdi-account-group-outline" size="40" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-account-group-outline" size="40" class="mb-3 empty-state-icon"></v-icon>
               <h3 class="text-subtitle-1 font-weight-medium mb-2">协作功能开发中</h3>
               <p class="text-body-2 text-medium-emphasis">查看参与此子项目的团队成员及其贡献</p>
             </div>
@@ -95,24 +95,29 @@ const emit = defineEmits(['refresh'])
 </script>
 
 <style scoped lang="scss">
+/* 空状态的占位图标 —— design-system §1.3 的 --faint 档（“占位提示”）。 */
+.empty-state-icon {
+  color: var(--faint);
+}
+
 .subproject-overview {
   .content-card {
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--line);
     overflow: hidden;
     transition: all 0.3s ease;
 
     &:hover {
-      border-color: rgba(0, 0, 0, 0.12);
+      border-color: var(--line-2);
     }
   }
 
   .empty-content {
-    background-color: rgba(0, 0, 0, 0.01);
+    background-color: var(--canvas);
     border-radius: 8px;
     transition: all 0.3s ease;
 
     &:hover {
-      background-color: rgba(0, 0, 0, 0.02);
+      background-color: var(--fill);
     }
   }
 

@@ -713,6 +713,20 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
                 )
             snippet = prompt_snippet(prompt)
             for _ in range(1 + _MAX_REPASTES):
+                # Clear the composer before EVERY paste attempt (Ctrl+U —
+                # measured on 2.1.233: kills the whole input including a
+                # `[Pasted text …]` widget, is a no-op when empty, and unlike
+                # Esc/Ctrl+C carries no "press again" arming or exit
+                # semantics). The backend is this terminal's only writer, so
+                # anything already sitting in the composer is residue of a
+                # FAILED send — the poison that stacked 44 paste widgets in
+                # prod (2026-08-17): leftover garbage let the paste-verify
+                # pass on an OLD widget, and every retry appended instead of
+                # replacing. Clearing first makes each attempt idempotent and
+                # the verify unambiguous.
+                clear = await control.send("send-keys", "-t", _SESSION, "C-u")
+                if not clear.ok:
+                    raise ScreenSetupError(f"tmux 清空输入框失败：{clear.error}")
                 # load-buffer reads the prompt on stdin, so it stays a docker
                 # exec; everything with a meaningful failure mode goes over the
                 # control socket.

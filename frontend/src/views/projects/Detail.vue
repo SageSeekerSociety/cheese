@@ -283,13 +283,13 @@ onMounted(async () => {
 
 // 项目信息卡片样式
 .project-info-card {
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background-color: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--line);
+  background-color: rgba(var(--v-theme-surface), 0.8);
   backdrop-filter: blur(10px);
 }
 
 .project-description {
-  color: rgba(0, 0, 0, 0.75);
+  color: var(--text);
   line-height: 1.6;
 }
 
@@ -303,7 +303,7 @@ onMounted(async () => {
 // 状态卡片样式
 .status-overview {
   @media (min-width: 960px) {
-    border-left: 1px solid rgba(0, 0, 0, 0.08);
+    border-left: 1px solid var(--line);
     padding-left: 2rem;
   }
 }
@@ -345,14 +345,14 @@ onMounted(async () => {
 
   .status-label {
     font-size: 0.875rem;
-    color: rgba(0, 0, 0, 0.6);
+    color: var(--muted);
     letter-spacing: 0.3px;
   }
 }
 
 // 内容区域样式
 .content-area {
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
   min-height: 600px;
   overflow: hidden;
 }
@@ -396,13 +396,14 @@ onMounted(async () => {
 
 // 颜色选择器样式
 .color-selector-card {
-  border: 1px solid rgba(0, 0, 0, 0.09);
-  background-color: rgba(0, 0, 0, 0.01);
+  border: 1px solid var(--line);
+  background-color: var(--canvas);
 }
 
 .color-display {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  border: 2px solid white;
+  box-shadow: var(--shadow-1);
+  /* 这圈描边是把彩色圆点从它所在的面上分离出来，所以它跟的是“面”不是“白”。 */
+  border: 2px solid var(--surface);
 }
 
 .color-swatch {
@@ -417,16 +418,18 @@ onMounted(async () => {
 
   &:hover {
     transform: scale(1.1);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: var(--shadow-2);
     z-index: 1;
   }
 }
 
 .color-swatch-selected {
   transform: scale(1.05);
+  /* 选中的色块套两圈环：内圈同面色做间隔，外圈是半透明的对比色。
+     两圈都必须随主题走，否则深色下内圈是白环、外圈是看不见的黑环。 */
   box-shadow:
-    0 0 0 2px white,
-    0 0 0 4px rgba(0, 0, 0, 0.3);
+    0 0 0 2px var(--surface),
+    0 0 0 4px rgba(var(--v-theme-on-surface), 0.3);
   z-index: 2;
 }
 

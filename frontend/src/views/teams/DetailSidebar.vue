@@ -74,7 +74,7 @@
             v-for="admin in ownerAndAdminExamples"
             :key="admin.id"
             size="28"
-            color="grey-lighten-2"
+            color="surface-variant"
             class="admin-avatar"
           >
             <v-img :src="getAvatarUrl(admin.avatarId)" />
@@ -136,8 +136,9 @@ const ownerAndAdminsText = computed(() => {
 }
 
 .team-avatar {
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-  border: 2px solid white;
+  box-shadow: var(--shadow-1);
+  /* 头像外面那圈是把它从底上"抠"出来，所以等于它背后的面色 */
+  border: 2px solid var(--surface);
 }
 
 .team-name {
@@ -151,7 +152,7 @@ const ownerAndAdminsText = computed(() => {
   transition: all 0.2s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.04);
+    background-color: var(--fill);
   }
 }
 
@@ -161,7 +162,7 @@ const ownerAndAdminsText = computed(() => {
   overflow: hidden;
 
   .admin-avatar {
-    border: 2px solid #fff;
+    border: 2px solid var(--surface);
     transition: all 0.3s ease;
   }
 
