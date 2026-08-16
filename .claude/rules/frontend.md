@@ -7,8 +7,8 @@ paths:
 
 Full spec: [`docs/design-system.md`](../../docs/design-system.md). Read it before
 any non-trivial styling work. This file is only the part you will otherwise get
-wrong on turn one, because the tree still contains ~251 counterexamples to copy
-from.
+wrong on turn one: the backlog is down from 524 to 92 gated violations, but 92
+counterexamples are still 92 things to copy from by accident.
 
 ## The product has a dark theme. Every colour you write must survive it.
 
@@ -29,8 +29,9 @@ from.
   every page that used it. Table of replacements: `docs/design-system.md` §1.2.
   - Exception, and write the reason in the code when you take it: where the
     BACKGROUND is itself theme-invariant, the ink on it must be too. The default
-    avatar's `hsl(hue, 55%, 55%)` is the same in both themes, so its `#fff` text
-    is correct and "fixing" it to a token breaks it.
+    avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
+    OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
+    its `#fff` text is correct and "fixing" it to a token breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary)
   > `--faint` (meta), on `--surface` (cards) over `--canvas` (app bg), separated
   by `--line`. Pick by how important the information is, not by how it looks.
@@ -85,7 +86,8 @@ pnpm run lint:style:update   # after fixing some, ratchet the baseline DOWN
 Palette NAMES are a **separate** gate, because stylelint parses CSS and can
 therefore never see a `<template>` attribute or a `<script>` prop default. It
 lives in `.claude/scripts/check-repo-rules.sh` with its own frozen baseline
-(`frontend/palette-baseline.json`, 111 hits in 40 files) and runs in `task
+(`frontend/palette-baseline.json`, 10 hits in 6 files as of 2026-08-16, down
+from 111 in 40) and runs in `task
 check`, in the accept-card quality gate, and in CI's Repo Guards:
 
 ```bash

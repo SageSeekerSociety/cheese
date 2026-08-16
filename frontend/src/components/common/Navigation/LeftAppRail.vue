@@ -188,13 +188,15 @@ const userMenu = useUserMenu()
   height: 100%;
   line-height: 1;
   // Deliberately a literal, and one of the few that is CORRECT in both themes:
-  // the background here is not a theme token but `avatarColor()`'s
-  // hsl(hue, 55%, 55%) — a saturated mid-tone identical in light and dark. This
-  // is "on-avatar" ink, so it must not follow --v-theme-on-surface (that would
-  // turn it near-black on light and pale-grey on dark, over the same colour).
-  // Do not "fix" it to a token. (Known, separate issue: for yellow/green hues
-  // hsl(h,55%,55%) is light enough that white measures ~1.7:1 — an avatar-palette
-  // problem shared with the light theme, tracked outside this change.)
+  // the background here is not a theme token but the `#rrggbb` that
+  // `avatarColor()` computes — a fixed PERCEPTUAL lightness (OKLCH L = 0.54 /
+  // C = 0.12), identical in light and dark. This is "on-avatar" ink, so it must
+  // not follow --v-theme-on-surface (that would turn it near-black on light and
+  // pale-grey on dark, over the same colour). Do not "fix" it to a token.
+  // The contrast caveat this comment used to carry is gone: the old
+  // hsl(h, 55%, 55%) formula dropped to ~1.7:1 on yellow/green hues, while the
+  // OKLCH one lands every hue between 4.75:1 and 5.43:1 against this white —
+  // asserted hue-by-hue in src/utils/avatar.spec.ts.
   color: #fff;
   font-weight: 600;
   font-size: 14px;
