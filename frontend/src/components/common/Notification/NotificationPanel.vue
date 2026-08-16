@@ -29,7 +29,7 @@
         />
       </v-list>
       <div v-else class="d-flex flex-column align-center justify-center py-8">
-        <v-icon icon="mdi-bell-off-outline" size="64" color="grey-lighten-1" class="mb-3"></v-icon>
+        <v-icon icon="mdi-bell-off-outline" size="64" class="mb-3 text-medium-emphasis"></v-icon>
         <span class="text-subtitle-1 text-medium-emphasis">{{ t('notifications.common.noNotifications') }}</span>
       </div>
     </v-card-text>

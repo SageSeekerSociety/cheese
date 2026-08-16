@@ -4,9 +4,9 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-lock-reset</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: #212121; line-height: 1.2">重置账户密码</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">重置账户密码</h1>
       </div>
-      <p class="text-body-1" style="color: #757575; line-height: 1.5">通过注册邮箱验证身份</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">通过注册邮箱验证身份</p>
     </div>
 
     <!-- 错误/成功提示区域 -->
@@ -42,7 +42,7 @@
               发送重置邮件
             </v-btn>
 
-            <p class="text-body-2" style="color: #757575">
+            <p class="text-body-2" style="color: var(--muted)">
               想起密码了？
               <v-btn
                 variant="text"

@@ -253,7 +253,7 @@ onMounted(() => {
   }
 
   .privacy-stat-card {
-    background-color: #ffffff;
+    background-color: var(--surface);
     border: 1px solid rgba(var(--v-border-color), 0.12);
 
     &:hover {
@@ -269,7 +269,7 @@ onMounted(() => {
     transition: all 0.2s ease;
     cursor: pointer;
     height: 100%;
-    background-color: #ffffff;
+    background-color: var(--surface);
     border: 1px solid rgba(var(--v-border-color), 0.12);
 
     &:hover {

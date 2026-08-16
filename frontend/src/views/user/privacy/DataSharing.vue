@@ -65,8 +65,8 @@
 
               <div class="d-flex flex-wrap gap-2">
                 <v-chip size="small" variant="flat" color="primary">国家级赛事</v-chip>
-                <v-chip size="small" variant="flat" color="grey">团队赛</v-chip>
-                <v-chip size="small" variant="flat" color="grey">2学分</v-chip>
+                <v-chip size="small" variant="flat" color="secondary">团队赛</v-chip>
+                <v-chip size="small" variant="flat" color="secondary">2学分</v-chip>
               </div>
             </div>
           </div>
@@ -122,8 +122,8 @@
 
               <div class="d-flex flex-wrap gap-2">
                 <v-chip size="small" variant="flat" color="primary">校级赛事</v-chip>
-                <v-chip size="small" variant="flat" color="grey">个人赛</v-chip>
-                <v-chip size="small" variant="flat" color="grey">1学分</v-chip>
+                <v-chip size="small" variant="flat" color="secondary">个人赛</v-chip>
+                <v-chip size="small" variant="flat" color="secondary">1学分</v-chip>
               </div>
             </div>
           </div>
@@ -179,8 +179,8 @@
 
               <div class="d-flex flex-wrap gap-2">
                 <v-chip size="small" variant="flat" color="primary">校级活动</v-chip>
-                <v-chip size="small" variant="flat" color="grey">团队赛</v-chip>
-                <v-chip size="small" variant="flat" color="grey">2学分</v-chip>
+                <v-chip size="small" variant="flat" color="secondary">团队赛</v-chip>
+                <v-chip size="small" variant="flat" color="secondary">2学分</v-chip>
               </div>
             </div>
           </div>
@@ -220,7 +220,7 @@
   }
 
   .tasks-list-card {
-    background-color: #ffffff;
+    background-color: var(--surface);
     border: 1px solid rgba(var(--v-border-color), 0.12);
   }
 
