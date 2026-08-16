@@ -22,11 +22,15 @@ on:
     paths:
       - 'cli/**'
       - '.github/workflows/cli.yml'
+      # The delivery e2e drives the SHIPPED cheeselet through the cli's runtime
+      # and terminal layers, so a cheeselet change must re-run it too.
+      - 'backend/app/domain/agent/cheeselets/**'
   pull_request:
     branches: [main]
     paths:
       - 'cli/**'
       - '.github/workflows/cli.yml'
+      - 'backend/app/domain/agent/cheeselets/**'
 
 permissions:
   contents: read
@@ -79,3 +83,44 @@ jobs:
       # sessions and multiplexes screens over a bus.
       - name: go test
         run: go test -race ./...
+
+  # The delivery e2e (ported in spirit from micro-connector's testbed): a REAL
+  # Claude Code at a pinned version, driven through the real goja runtime + the
+  # SHIPPED claude_min.js cheeselet + the real tmux layer, against a MockServer
+  # Anthropic emulation. It asserts the one thing unit tests cannot — that a
+  # prompt handed to the driver is pasted, submitted, and ACTED on (the mock's
+  # scripted tool call runs), including a 30KB body that exercises the chunked
+  # write. Pinned npm version so this leg only breaks when WE change something;
+  # bump the pin deliberately, and expect intelligence (not blockage) from it
+  # when Anthropic changes the first-run flow.
+  delivery-e2e:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      # node is NOT ambient on the ci pool (first run: `npm: command not
+      # found`) — it arrives via setup-node exactly as frontend.yml does.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # Same pin as upstream's green leg. NPM_CONFIG_PREFIX keeps the install
+      # inside the workspace: runners are shared, and a global install would
+      # fight concurrent jobs (and root-owned paths).
+      - name: Install Claude Code (pinned)
+        working-directory: .
+        run: |
+          export NPM_CONFIG_PREFIX="$GITHUB_WORKSPACE/.npm-e2e"
+          npm install -g --silent @anthropic-ai/claude-code@2.1.220
+          "$NPM_CONFIG_PREFIX/bin/claude" --version
+
+      - name: Delivery e2e
+        run: |
+          export PATH="$GITHUB_WORKSPACE/.npm-e2e/bin:$PATH"
+          go test -tags claudee2e -v -timeout 20m ./e2e/
