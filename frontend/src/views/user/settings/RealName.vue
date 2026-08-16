@@ -1,5 +1,7 @@
 <template>
-  <div class="page-header">
+  <!-- 图标是可点的（切换明文/脱敏），不是 PageHeader 的 icon 那种装饰图标，
+       所以走默认插槽自己排版；组件会在插槽后面补上 v-spacer。 -->
+  <PageHeader show-on-mobile>
     <v-icon
       v-if="!loadingPrecise"
       :icon="showingPrecise ? 'mdi-eye-outline' : 'mdi-eye-off-outline'"
@@ -8,8 +10,7 @@
       @click="fetchPreciseInfo"
     ></v-icon>
     <span class="text-subtitle-1">实名信息</span>
-    <v-spacer></v-spacer>
-  </div>
+  </PageHeader>
   <v-container fluid>
     <!-- 简洁隐私提示横条 -->
     <v-card
@@ -272,6 +273,7 @@ import { z } from 'zod'
 import { vuetifyConfig } from '@/utils/form'
 import { withSudo } from '@/utils/sudo'
 
+import PageHeader from '@/components/common/PageHeader.vue'
 import { UserApi } from '@/network/api/users'
 import { ServerError } from '@/network/types/error'
 import { currentUserId } from '@/services/account'
@@ -578,7 +580,7 @@ onMounted(() => {
     display: inline-flex;
     align-items: center;
     padding: 4px 12px;
-    border-radius: 100px;
+    border-radius: var(--radius-pill);
     font-size: 0.75rem;
     font-weight: 500;
     color: rgb(var(--v-theme-primary));
