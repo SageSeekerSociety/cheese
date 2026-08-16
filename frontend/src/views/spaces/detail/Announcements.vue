@@ -240,15 +240,13 @@ const submitAnnouncement = async () => {
     width: 4px;
     height: 40px;
     background: linear-gradient(to bottom, rgb(var(--v-theme-primary)), rgba(var(--v-theme-primary), 0.4));
-    /* 只圆右侧两角。这条竖条只有 4px 宽，浏览器会按比例把 6px 压到 4px，
-       所以档位取 sm 和原来的 2px 在观感上几乎没差别。 */
     border-top-right-radius: var(--radius-sm);
     border-bottom-right-radius: var(--radius-sm);
   }
 
   &:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+    box-shadow: var(--shadow-1);
     background-color: rgba(var(--v-theme-primary), 0.02);
   }
 }
