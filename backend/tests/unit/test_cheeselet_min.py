@@ -56,6 +56,11 @@ _HAS_NODE = subprocess.run(["which", "node"], capture_output=True).returncode ==
 # fire-and-forget failure this suite exists for). A landed paste puts the body
 # on the `❯` line; a landed Enter clears it. `drop` names write indices (0-based,
 # counting every attempted write) that the "terminal" swallows silently.
+# Two optional render modes mirror the real TUI:
+#   cols > 0    — the composer soft-wraps at that display width (CJK = 2
+#                 columns) inside a `│ … │` bordered box, like a narrow pane;
+#   placeholder — a landed paste renders as Claude Code's "[Pasted text …]"
+#                 widget instead of the literal body (large pastes).
 _HARNESS = """
 const writes = [];
 const calls = [];
@@ -65,9 +70,23 @@ let dropped = new Set(__DROP__);
 let onChange = null;
 const exposed = {};
 const logs = [];
+function dw(ch) { return ch.charCodeAt(0) > 0x2e7f ? 2 : 1 }
+function wrapRows(text, width) {
+  const rows = []; let row = ""; let w = 0;
+  for (const ch of text) {
+    const c = dw(ch);
+    if (w + c > width) { rows.push(row); row = ""; w = 0; }
+    row += ch; w += c;
+  }
+  rows.push(row);
+  return rows;
+}
 function screen() {
   if (!claudeReady) return "starting…";
-  return "some scrollback\\n❯ " + composer;
+  if (!__COLS__) return "some scrollback\\n❯ " + composer;
+  // Bordered box, `│ ` + content + ` │` per row: 4 columns go to the frame.
+  const rows = wrapRows("❯ " + composer, __COLS__ - 4);
+  return "some scrollback\\n" + rows.map((r) => "│ " + r + " │").join("\\n");
 }
 globalThis.cheese = {
   term: {
@@ -77,7 +96,9 @@ globalThis.cheese = {
       writes.push(b);
       if (dropped.has(i)) return;              // swallowed: no screen effect
       if (b.indexOf("\\u001b[200~") !== -1) {
-        composer = b.replace("\\u001b[200~", "").replace("\\u001b[201~", "");
+        composer = __PLACEHOLDER__
+          ? "[Pasted text #1 +11 lines]"
+          : b.replace("\\u001b[200~", "").replace("\\u001b[201~", "");
       } else if (b === "\\r") {
         composer = "";
       }
@@ -102,13 +123,22 @@ console.log(JSON.stringify({writes, composer, logs, calls}));
 """
 
 
-def _drive(prompt: str, drop: list[int], ticks: int = 12, slow_boot: int = 0) -> dict:
+def _drive(
+    prompt: str,
+    drop: list[int],
+    ticks: int = 12,
+    slow_boot: int = 0,
+    cols: int = 0,
+    placeholder: bool = False,
+) -> dict:
     script = (
         _HARNESS.replace("__SRC__", cheeselet_source())
         .replace("__DROP__", json.dumps(drop))
         .replace("__PROMPT__", json.dumps(prompt))
         .replace("__TICKS__", str(ticks))
         .replace("__SLOWBOOT__", str(slow_boot))
+        .replace("__COLS__", str(cols))
+        .replace("__PLACEHOLDER__", "true" if placeholder else "false")
     )
     out = subprocess.run(
         ["node", "-e", script], capture_output=True, text=True, timeout=30
@@ -175,6 +205,37 @@ def test_a_slow_first_boot_does_not_burn_the_retry_budget():
         f"the held prompt was never delivered after boot: {got['logs']}"
     )
     assert got["composer"] == ""
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node not available to run the cheeselet")
+def test_cjk_prompt_in_a_46_column_pane_still_delivers():
+    """The 2026-08-16 production paste-loop: the anchor is 24 chars of the first
+    line, CJK chars take 2 display columns each, and the 现场 pane had 46 — so
+    the composer's first ROW could never show the whole anchor, verification
+    never matched, and the driver re-pasted 【平台】-prefixed prompts forever.
+    Matching must survive soft-wrap (and the box borders it interleaves)."""
+    got = _drive(
+        "【平台】以下是平台自动发出的指令，不是任何人手打的：请检查当前工作台状态并汇报。",
+        drop=[],
+        cols=46,
+    )
+    pastes = [w for w in got["writes"] if "以下是平台自动发出的指令" in w]
+    assert len(pastes) == 1, f"prompt pasted {len(pastes)}x (the paste loop is back)"
+    assert got["composer"] == ""
+    assert any("submitted" in m for m in got["logs"])
+    assert not got["calls"], f"delivery reported a failure: {got['calls']}"
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node not available to run the cheeselet")
+def test_a_placeholder_rendered_paste_is_recognized_as_delivered():
+    """Large pastes render as Claude Code's `[Pasted text #N +N lines]` widget,
+    not the literal body (claude-session-driver #20 shows it in the wild). The
+    widget must count as body-in-composer, or every long prompt re-pastes."""
+    got = _drive("line one\n" * 12, drop=[], placeholder=True)
+    pastes = [w for w in got["writes"] if "line one" in w]
+    assert len(pastes) == 1, f"prompt pasted {len(pastes)}x against the placeholder"
+    assert got["composer"] == ""
+    assert any("submitted" in m for m in got["logs"])
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node not available to run the cheeselet")
