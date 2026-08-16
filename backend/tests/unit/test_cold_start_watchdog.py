@@ -29,6 +29,8 @@ class _Backend:
 
     def __init__(self) -> None:
         self.events: list[str] = []
+        # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在 meta.detail。
+        self.notices: list[str] = []
 
     def frames(self):
         raise NotImplementedError
@@ -39,6 +41,7 @@ class _Backend:
 
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         self.events.append(text)
+        self.notices.append(text + ((meta or {}).get("detail") or ""))
         return {"id": "b1", "content": text}
 
 
@@ -101,7 +104,8 @@ async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling():
     assert "一个字都没输出" in frame["message"]
     # 而且**不能**说「已完成的改动都在」——什么都没跑，那句话是假的。
     assert "已完成的改动都在" not in frame["message"]
-    assert backend.events and "运行环境" in backend.events[0]
+    # 「按运行环境没起来处理」和那一串常见原因收进了展开区，房间里只剩一行。
+    assert backend.notices and "运行环境" in backend.notices[0]
 
 
 @pytest.mark.anyio

@@ -24,7 +24,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import gate_sweep
 from tests.conftest import wait_turns_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_text, session_auth_headers
 
 
 @pytest.fixture(autouse=True)
@@ -107,8 +107,14 @@ def _deadline_passed(monkeypatch) -> None:
 
 
 def _blocks_text(client, topic_id: str) -> str:
+    """房间里说了什么 —— 一行 content 加上折叠起来的 meta.detail。
+
+    平台提示统一契约之后，「不是检查没通过、重新递一次卡」这段说明不再铺在房间的
+    正文里，它在 `meta.detail`（前端折叠展示，芝士照样从 API 读全量）。所以断言
+    「说没说这句话」必须把两半都算上 —— 见 `tests/integration/conftest.room_text`。
+    """
     blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
-    return "\n".join(b.get("content") or "" for b in blocks)
+    return room_text(blocks)
 
 
 # --------------------------------------------------------------------------

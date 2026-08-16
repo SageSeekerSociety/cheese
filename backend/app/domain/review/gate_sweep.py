@@ -44,6 +44,12 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.agent.platform_notices import (
+    EVENT_GATE_ABANDONED,
+    SEVERITY_WARN,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.review import archive
@@ -70,6 +76,12 @@ _ABANDONED_NUDGE = (
     "**注意这不是「检查没通过」**——检查根本没跑完，没有任何证据说明你的代码有问题，"
     "所以不用去修什么。确认工作区还是你交付时的状态，然后**重新递一次验收卡**即可。"
 )
+
+#: 平台提示统一契约：房间里只留这一行，上面那段给芝士的说明收进 `meta.detail`。
+#: 「判死」和「没通过」在这里也必须分得开 —— 这正是本模块 docstring 里那一节讲的
+#: 事，只不过现在多了一个前端读得懂的码，不用再从正文里猜。
+_ABANDONED_EVENT = "⏱ 闸门结果丢了，卡判死 · 芝士重递"
+_ABANDONED_DETAIL_LABEL = "怎么回事"
 
 
 def stale_before(now: datetime | None = None) -> datetime:
@@ -127,15 +139,16 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
 async def sweep(
     session_factory: async_sessionmaker,
     *,
-    nudge: Callable[[uuid.UUID, str], None] | None = None,
+    nudge: Callable[[uuid.UUID, str, str, dict], None] | None = None,
     skip_card_ids: Iterable[uuid.UUID] | None = None,
     now: datetime | None = None,
 ) -> dict:
     """扫一轮。返回 `{"condemned": [card_id...], "errors": [...]}`。
 
     ``skip_card_ids`` 默认取 `gate.in_flight_card_ids()`；测试可以显式传 `()`。
-    ``nudge(topic_id, content)`` 用来叫醒芝士去重递；不传就只判死不叫人（启动
-    早期 runner 还没准备好时用得上）。
+    ``nudge(topic_id, content, event, meta)`` 用来叫醒芝士去重递；不传就只判死不
+    叫人（启动早期 runner 还没准备好时用得上）。`content` 是给芝士的完整说明，
+    `event` + `meta` 是房间里那一行（平台提示统一契约）。
 
     一张卡一个事务，跟 `SchedulerService.poll_open_prs` 同样的理由：一张卡出错
     不能把另一张卡已经判死的结果回滚掉。
@@ -166,5 +179,16 @@ async def sweep(
                 continue
         condemned.append(card_id)
         if nudge is not None:
-            nudge(topic_id, _ABANDONED_NUDGE)
+            nudge(
+                topic_id,
+                _ABANDONED_NUDGE,
+                _ABANDONED_EVENT,
+                notice(
+                    EVENT_GATE_ABANDONED,
+                    severity=SEVERITY_WARN,
+                    who=WHO_CHEESE,
+                    detail=_ABANDONED_NUDGE,
+                    detail_label=_ABANDONED_DETAIL_LABEL,
+                ),
+            )
     return {"condemned": condemned, "errors": errors}

@@ -31,6 +31,16 @@ from app.domain.agent.platform_failures import (
     SUBSCRIPTION_CREDENTIAL_EXPIRED,
     classify_platform_failure,
 )
+from app.domain.agent.platform_notices import (
+    EVENT_DEPLOY_INTERRUPTED,
+    EVENT_TURN_FAILED,
+    EVENT_TURN_TIMEOUT,
+    SEVERITY_ERROR,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -353,11 +363,19 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
         submit queues behind the first).
+
+        ``nudge_event`` is the ONE LINE the room sees for a platform-initiated
+        turn; ``nudge_meta`` is that event's structured payload (see
+        `platform_notices.notice`), which is where the long text goes — the CI
+        log, the check output, the provider's own words. ``content`` stays the
+        agent's prompt either way, so what 芝士 receives never changes when this
+        pair does.
 
         ``continuation_id`` names the logical unit of work. A fresh turn starts
         one (defaulting to its own turn id); an auto-resume INHERITS the
@@ -377,6 +395,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                nudge_meta=nudge_meta,
                 continuation_id=continuation_id or turn_id,
             )
         )
@@ -646,9 +665,18 @@ class TurnRunner:
                 await self._post_orphan_event(
                     chat_service,
                     topic_id,
-                    f"⚠️ 芝士上一轮{how}，{why}。"
-                    "已完成的改动都还在工作区里 —— 需要继续的话 @ 芝士，"
-                    "它会从断点接着做。",
+                    f"⚠️ 芝士上一轮{how}，{why}。",
+                    notice(
+                        EVENT_TURN_TIMEOUT,
+                        severity=SEVERITY_WARN,
+                        # 不自动续跑了 —— 要有人来 @ 它。
+                        who=WHO_HUMAN,
+                        detail=(
+                            "已完成的改动都还在工作区里 —— 需要继续的话 @ 芝士，"
+                            "它会从断点接着做。"
+                        ),
+                        detail_label="详细说明",
+                    ),
                 )
                 logger.info(
                     "orphan turn %s dropped (stale=%s chained=%s, age=%ss)",
@@ -662,7 +690,14 @@ class TurnRunner:
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
-                f"⚠️ 上一轮{how}。已完成的进度都在；马上自动接着跑。",
+                f"⚠️ 上一轮{how}，马上自动接着跑。",
+                notice(
+                    EVENT_TURN_TIMEOUT,
+                    severity=SEVERITY_WARN,
+                    who=WHO_PLATFORM,
+                    detail="已完成的进度都在；平台马上自动接着跑一次。",
+                    detail_label="详细说明",
+                ),
             )
             # A cancelled turn needs a moment to unwind before it lets go of
             # the topic lock — the resume would queue rather than fail either
@@ -767,35 +802,40 @@ class TurnRunner:
                 resend = max(candidates, key=lambda e: float(e[1].get("started_at", 0)))
 
         others = len(entries) - len(delivered) - (1 if resend else 0)
+        # 平台提示统一契约: 每一支都是「房间里一行 `text` + 展开才看的 `detail`」。
+        # 长的那几句（现场还在干什么、排队的消息怎么办）挪进 detail，不删。
+        deploy_detail = ""
+        deploy_who = WHO_PLATFORM
         if not allow_actions:
             # This topic's remedy was already taken by the wedged branch — its
             # coming resume turn picks any pending message up; just say so.
+            # 这条本来就一句话，没有可折叠的东西 —— detail 留空，别拿正文复读一遍
+            # 去填展开区（那只会让人点开一次就再也不点了）。
             text = (
                 f"⚠️ 同一次中断还波及了本话题的另外 {len(entries)} 轮；"
                 "它们的消息和进展会并入接下来的轮次。"
             )
         elif attach and resend is not None:
-            text = (
-                "⚠️ 平台部署中断了本话题的几个轮次：已送达的任务现场还在继续干，"
-                "进展和收尾会自动落回这里；没送到的消息马上原样重发一次"
-                "（排队中的消息会一并带上）。"
+            text = "⚠️ 平台部署中断了本话题的几个轮次，平台在自动收尾。"
+            deploy_detail = (
+                "已送达的任务现场还在继续干，进展和收尾会自动落回这里；"
+                "没送到的消息马上原样重发一次（排队中的消息会一并带上）。"
             )
         elif attach:
-            text = (
-                "⚠️ 上一轮被平台部署中断了。芝士在中断前已经收到任务，"
-                "现场大概率还在干活：它送回的进展和收尾会继续自动落回这里；"
-                "要是迟迟没动静，再 @ 芝士 接手。"
+            text = "⚠️ 上一轮被平台部署中断，现场大概率还在干活。"
+            deploy_detail = (
+                "芝士在中断前已经收到任务，现场大概率还在干活：它送回的进展和收尾"
+                "会继续自动落回这里；要是迟迟没动静，再 @ 芝士 接手。"
             )
             if others > 0:
-                text += (
+                deploy_detail += (
                     f"（另有 {others} 轮排队中的消息会在下一轮开始时一并交给芝士。）"
                 )
         elif resend is not None:
-            text = (
-                "⚠️ 上一轮被平台部署中断，消息还没送到芝士那边；马上原样自动重发一次。"
-            )
+            text = "⚠️ 上一轮被平台部署中断，消息马上原样重发一次。"
+            deploy_detail = "消息还没送到芝士那边；平台马上原样自动重发一次。"
             if others > 0:
-                text += f"（同批被中断的另外 {others} 轮消息也会一并带上。）"
+                deploy_detail += f"（同批被中断的另外 {others} 轮消息也会一并带上。）"
         else:
             newest = max(entries, key=lambda e: float(e[1].get("started_at", 0)))
             age_s = now - float(newest[1].get("started_at", 0))
@@ -804,11 +844,25 @@ class TurnRunner:
                 if age_s > self.ORPHAN_STALE_S
                 else "这些轮次都是平台自动发起的，不再自动连跑"
             )
-            text = (
-                f"⚠️ 上一轮被平台部署中断，且没有迹象表明消息送到了芝士那边，{why}。"
+            text = f"⚠️ 上一轮被平台部署中断，消息多半没送到，{why}。"
+            deploy_detail = (
+                "没有迹象表明消息送到了芝士那边。"
                 "需要继续的话 @ 芝士，之前的消息会一并带上。"
             )
-        await self._post_orphan_event(chat_service, topic_id, text)
+            # 平台不再自动做任何事了 —— 这条要人来。
+            deploy_who = WHO_HUMAN
+        await self._post_orphan_event(
+            chat_service,
+            topic_id,
+            text,
+            notice(
+                EVENT_DEPLOY_INTERRUPTED,
+                severity=SEVERITY_WARN,
+                who=deploy_who,
+                detail=deploy_detail or None,
+                detail_label="详细说明" if deploy_detail else None,
+            ),
+        )
         if not allow_actions:
             return 0
         if attach:
@@ -840,13 +894,20 @@ class TurnRunner:
         return 0
 
     async def _post_orphan_event(
-        self, chat_service, topic_id: uuid.UUID, text: str
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        text: str,
+        meta: dict | None = None,
     ) -> None:
         """Persist + broadcast an orphan verdict. Best-effort by design: for a
         resumed orphan the resume matters more than the notice, and for a dropped
-        one there is nothing left to fail into."""
+        one there is nothing left to fail into.
+
+        ``meta`` is the 平台提示统一契约 payload — chiefly `who`, which is what
+        lets someone decide "does this need me?" without reading the sentence."""
         try:
-            block = await chat_service.post_system_event(topic_id, text)
+            block = await chat_service.post_system_event(topic_id, text, meta=meta)
             if block is not None:
                 await self._broker.publish(
                     str(topic_id), {"type": "event_block", "block": block}
@@ -1068,6 +1129,7 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
@@ -1108,6 +1170,7 @@ class TurnRunner:
                 is_resume=is_resume,
                 resume_reason=resume_reason,
                 nudge_event=nudge_event,
+                nudge_meta=nudge_meta,
                 continuation_id=continuation_id,
                 frames=frames,
             )
@@ -1152,6 +1215,7 @@ class TurnRunner:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
@@ -1293,6 +1357,7 @@ class TurnRunner:
                         is_resume=is_resume,
                         resume_reason=resume_reason,
                         nudge_event=nudge_event,
+                        nudge_meta=nudge_meta,
                         continuation_id=continuation_id,
                     )
                 )
@@ -1431,6 +1496,9 @@ class TurnRunner:
             # platform_error classification the frontend can render; the two generic
             # branches stay a plain system event, exactly as before.
             fuse_meta: dict | None = None
+            # 平台提示统一契约的 meta，给「一个字没输出」和「超时」这两条用。
+            # 凭据已过期那条走 `fuse_meta`（它带 code）。
+            timeout_meta: dict | None = None
             if never_started and credential_expired:
                 # #388 缺陷一: the backend KNEW the credential was dead. Say so —
                 # the guessing message ("容器/磁盘/网络") is the one that cost four
@@ -1456,14 +1524,24 @@ class TurnRunner:
                     rec["tools"],
                 )
                 rec["detail"] = "no first output"
+                # 平台提示统一契约: 房间里一行，「常见原因」那一串进 meta.detail。
                 text = (
                     f"⚠️ 芝士这轮**一个字都没输出**"
-                    f"（{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
-                    "也没有任何工具调用），按运行环境没起来处理。"
-                    "常见原因：平台的模型订阅凭据过期（需要主机侧重新认证）、"
-                    "沙箱容器建不起来、磁盘满了、或者模型侧连不上"
-                    "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
-                    "会自动再试一次；再失败就先去看平台状态，反复 @ 它没有用。"
+                    f"（{round(self._first_output_timeout_s)}秒），会自动再试一次。"
+                )
+                timeout_meta = notice(
+                    EVENT_TURN_TIMEOUT,
+                    severity=SEVERITY_WARN,
+                    who=WHO_PLATFORM,
+                    detail=(
+                        f"{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
+                        "也没有任何工具调用，按运行环境没起来处理。"
+                        "常见原因：平台的模型订阅凭据过期（需要主机侧重新认证）、"
+                        "沙箱容器建不起来、磁盘满了、或者模型侧连不上"
+                        "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
+                        "再失败就先去看平台状态，反复 @ 它没有用。"
+                    ),
+                    detail_label="常见原因",
                 )
             else:
                 logger.warning(
@@ -1474,20 +1552,27 @@ class TurnRunner:
                     topic_id,
                 )
                 text = (
-                    f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限，"
-                    f"实际跑了约{rec['duration_s']}秒，可能卡在某步）。"
-                    "已完成的改动都在；马上自动接着跑一次。"
+                    f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限），"
+                    "马上自动接着跑。"
+                )
+                timeout_meta = notice(
+                    EVENT_TURN_TIMEOUT,
+                    severity=SEVERITY_WARN,
+                    who=WHO_PLATFORM,
+                    detail=(
+                        f"上限 {effective_ceiling_s} 秒，实际跑了约 "
+                        f"{rec['duration_s']} 秒，可能卡在某步。"
+                        "已完成的改动都在；马上自动接着跑一次。"
+                    ),
+                    detail_label="详细说明",
                 )
             block = None
             try:
-                if fuse_meta is not None:
-                    block = await chat_service.post_system_event(
-                        topic_id, text, turn_id, meta=fuse_meta
-                    )
-                else:
-                    block = await chat_service.post_system_event(
-                        topic_id, text, turn_id
-                    )
+                # `fuse_meta` (订阅凭据已过期) 优先：它带 code，下面的 error_frame
+                # 认这个字段。其余两条走 `timeout_meta`。
+                block = await chat_service.post_system_event(
+                    topic_id, text, turn_id, meta=fuse_meta or timeout_meta
+                )
             except Exception:  # noqa: BLE001 — best effort
                 logger.exception("failed to persist timeout event")
             if block is not None:
@@ -1529,21 +1614,24 @@ class TurnRunner:
                 text = platform_failure.content
                 event_meta = platform_failure.meta
             else:
-                text = (
-                    "⚠️ 芝士这轮中断了。已完成的改动都在；马上自动接着跑一次，"
-                    "若再失败就需要你再 @ 它。"
+                # 平台提示统一契约: 一行给房间，别的收进 detail。真正的 traceback
+                # 只进日志（这里连异常文本都不外发是刻意的 —— 见上面那段注释）。
+                text = "⚠️ 芝士这轮中断了，马上自动接着跑一次。"
+                event_meta = notice(
+                    EVENT_TURN_FAILED,
+                    severity=SEVERITY_ERROR,
+                    who=WHO_PLATFORM,
+                    detail=(
+                        "已完成的改动都在；平台会自动接着跑一次，"
+                        "若再失败就需要你再 @ 它。"
+                    ),
+                    detail_label="详细说明",
                 )
-                event_meta = None
             block = None
             try:
-                if event_meta is None:
-                    block = await chat_service.post_system_event(
-                        topic_id, text, turn_id
-                    )
-                else:
-                    block = await chat_service.post_system_event(
-                        topic_id, text, turn_id, meta=event_meta
-                    )
+                block = await chat_service.post_system_event(
+                    topic_id, text, turn_id, meta=event_meta
+                )
             except Exception:  # noqa: BLE001 — best effort, never mask the error
                 logger.exception("failed to persist turn-failure event")
             if block is not None:
