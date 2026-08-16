@@ -289,7 +289,7 @@ const scrollToSection = (sectionId: string) => {
   }
 
   .policy-card {
-    background-color: #ffffff;
+    background-color: var(--surface);
     border: 1px solid rgba(var(--v-border-color), 0.12);
 
     .policy-section {

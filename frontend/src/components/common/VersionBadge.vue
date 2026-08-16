@@ -57,9 +57,12 @@ async function copySha() {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
   line-height: 1.4;
-  color: #b45309;
-  background: rgba(251, 191, 36, 0.16);
-  border: 1px solid rgba(251, 191, 36, 0.5);
+  /* 「内测版本」是一个提示性状态，按 §1.5 的状态三件套走：文字用能读的 --warn-ink，
+     底色用 --warn-wash，边框/圆点用记号色 --warn。原来的三个琥珀字面量在深色下不变，
+     会变成浅底深字压在深色页面上。 */
+  color: var(--warn-ink);
+  background: var(--warn-wash);
+  border: 1px solid var(--warn);
   border-radius: 999px;
   cursor: pointer;
   user-select: none;
@@ -69,6 +72,6 @@ async function copySha() {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #f59e0b;
+  background: var(--warn);
 }
 </style>

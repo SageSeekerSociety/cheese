@@ -12,7 +12,8 @@ Per turn (run_turn):
   2. ensure the `cheese` tmux session exists (lazy; first-launch gates are
      pre-accepted in the image so it reaches the input prompt on its own),
   3. ready handshake: wait for the pane to show the `❯` input box,
-  4. inject the prompt (load-buffer + paste-buffer + a separate Enter),
+  4. inject the prompt (load-buffer + paste-buffer + a separate Enter, each
+     half confirmed against the screen — see _send_prompt),
   5. drain the topic's hook queue, translating each hook to an AgentEvent,
   6. on the Stop hook (→ AgentResult) end the turn stream and clean up.
 
@@ -55,6 +56,23 @@ _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
+# Fixed pane geometry (`window-size manual`). Live 现场 viewers attach through
+# ttyd as REAL tmux clients, and the default `window-size latest` handed each of
+# them the pane geometry: a 46-column drawer shrank the running claude's
+# composer, and every attach/detach/browser-resize fired a SIGWINCH re-render
+# storm into the TUI mid-turn. The mirror is read-only — it gets a cropped view,
+# not a vote on the geometry the agent actually runs in.
+_PANE_COLS = 120
+_PANE_ROWS = 40
+# Paste → verify → Enter → verify pacing (see _send_prompt). Budgeted so the
+# whole worst case ((1+_MAX_REPASTES)·_PASTE_SETTLE_S + _MAX_ENTERS·_ENTER_SETTLE_S
+# ≈ 19.5s) finishes — or fails loud — inside hooks_substrate.DELIVERY_TIMEOUT_S
+# (25s), which stays the outer authority via the UserPromptSubmit receipt.
+_PASTE_SETTLE_S = 4.0
+_ENTER_SETTLE_S = 1.5
+_SETTLE_POLL_S = 0.25
+_MAX_REPASTES = 2
+_MAX_ENTERS = 5
 
 
 def _cheese_cli_mount(session_host: str) -> list[str]:
@@ -160,6 +178,48 @@ def pane_ready(capture: str) -> bool:
     prompt) — the ready signal before injecting a prompt (spike 就绪握手). Pure so
     it can be unit-tested without a container."""
     return "❯" in capture
+
+
+# --- prompt-delivery verification (pure, unit-tested) -----------------------
+# Screen text is matched FLATTENED — whitespace and the composer's box-drawing
+# borders stripped. The composer soft-wraps at the pane width, so on screen the
+# body is interleaved with newlines, row padding and `│` borders; no single row
+# can be trusted to show a whole anchor (24 CJK chars need 48 columns, and a
+# viewer-shrunk 46-column pane never has them — the 2026-08-16 paste-loop
+# outage). Must stay in lockstep with the device driver's norm()/bodyInComposer
+# (cheeselets/claude_min.js): both backends judge "did my keystrokes take" the
+# same way.
+_BOX_CHARS = set("│╭╮╰╯─")
+
+
+def _flatten(s: str) -> str:
+    return "".join(ch for ch in s if not ch.isspace() and ch not in _BOX_CHARS)
+
+
+def prompt_snippet(prompt: str) -> str:
+    """The screen-verifiable anchor: the head of the prompt's first non-blank
+    line, flattened, capped at 24 chars. Compared against flattened screen text
+    only — never against a single row."""
+    for line in prompt.splitlines():
+        flat = _flatten(line)
+        if flat:
+            return flat[:24]
+    return ""
+
+
+def composer_holds_body(capture: str, snippet: str) -> bool:
+    """True when the pasted prompt is visibly sitting in the input box: the
+    composer is everything from the LAST `❯` on screen (history user messages
+    render with `>`), and the body shows either literally or as Claude Code's
+    `[Pasted text #N +N lines]` widget (large pastes render as that placeholder
+    instead of the text — claude-session-driver #20)."""
+    i = capture.rfind("❯")
+    if i == -1:
+        return False
+    flat = _flatten(capture[i:])
+    if "[Pastedtext" in flat:  # the placeholder, flattened like everything else
+        return True
+    return bool(snippet) and snippet in flat
 
 
 def _tmux_container_name(topic_id: uuid.UUID) -> str:
@@ -489,6 +549,11 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         a fresh topic has no transcript, so it never accidentally resumes."""
         rc, _, _ = await _docker("exec", name, "tmux", "has-session", "-t", _SESSION)
         if rc == 0:
+            # Re-pin every turn: a session created before the geometry pin (or
+            # already shrunk by a Live 现场 viewer under `window-size latest`)
+            # must be brought back to the fixed size, not locked into the
+            # viewer's — see _PANE_COLS.
+            await self._pin_window_size(name)
             return
         claude_cmd = CLAUDE_BASE_CMD
         # The platform's system prompt, written into the session mount by
@@ -509,10 +574,22 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         if model:
             claude_cmd += f" --model {model}"
         rc, _, err = await _docker(
-            "exec", name, "tmux", "new-session", "-d", "-s", _SESSION, claude_cmd
+            "exec",
+            name,
+            "tmux",
+            "new-session",
+            "-d",
+            "-x",
+            str(_PANE_COLS),
+            "-y",
+            str(_PANE_ROWS),
+            "-s",
+            _SESSION,
+            claude_cmd,
         )
         if rc != 0:
             raise RuntimeError(f"tmux new-session failed: {err.strip()}")
+        await self._pin_window_size(name)
         # ttyd (施工现场; not wired to the frontend yet): a read-only terminal
         # mirror. Best-effort — the turn does not depend on it.
         await _docker(
@@ -525,14 +602,44 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             f"ttyd -R -p {_TTYD_PORT} tmux attach -t {_SESSION}",
         )
 
+    async def _pin_window_size(self, name: str) -> None:
+        """Fix the session's geometry at `_PANE_COLS`×`_PANE_ROWS` and stop any
+        attached client (the ttyd mirror) from ever changing it again. Both
+        commands are strict: the image ships tmux 3.3a, which supports both, so
+        a failure here is a real fault, not a version gap."""
+        rc, _, err = await _docker(
+            "exec", name, "tmux", "set-option", "-g", "window-size", "manual"
+        )
+        if rc != 0:
+            raise RuntimeError(f"tmux set-option window-size failed: {err.strip()}")
+        rc, _, err = await _docker(
+            "exec",
+            name,
+            "tmux",
+            "resize-window",
+            "-t",
+            _SESSION,
+            "-x",
+            str(_PANE_COLS),
+            "-y",
+            str(_PANE_ROWS),
+        )
+        if rc != 0:
+            raise RuntimeError(f"tmux resize-window failed: {err.strip()}")
+
+    async def _capture_pane(self, name: str) -> str | None:
+        """The pane's visible text, or None on a transient docker/tmux failure."""
+        rc, out, _ = await _docker(
+            "exec", name, "tmux", "capture-pane", "-p", "-t", _SESSION
+        )
+        return out if rc == 0 else None
+
     async def _wait_ready(self, name: str) -> bool:
         """Poll capture-pane until the `❯` input box appears (spike 就绪握手)."""
         deadline = asyncio.get_event_loop().time() + _READY_TIMEOUT_S
         while asyncio.get_event_loop().time() < deadline:
-            rc, out, _ = await _docker(
-                "exec", name, "tmux", "capture-pane", "-p", "-t", _SESSION
-            )
-            if rc == 0 and pane_ready(out):
+            capture = await self._capture_pane(name)
+            if capture is not None and pane_ready(capture):
                 return True
             await asyncio.sleep(_READY_POLL_S)
         return False
@@ -561,35 +668,83 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         if client is not None:
             await client.close()
 
+    async def _await_composer(self, name: str, snippet: str, *, holds: bool) -> bool:
+        """Poll the pane until the composer visibly holds (``holds=True``, after
+        a paste) or lets go of (``holds=False``, after an Enter) the prompt body,
+        bounded by the matching settle window. A transient capture failure is
+        just another poll — never evidence either way."""
+        settle = _PASTE_SETTLE_S if holds else _ENTER_SETTLE_S
+        deadline = asyncio.get_event_loop().time() + settle
+        while True:
+            capture = await self._capture_pane(name)
+            if capture is not None and composer_holds_body(capture, snippet) == holds:
+                return True
+            if asyncio.get_event_loop().time() >= deadline:
+                return False
+            await asyncio.sleep(_SETTLE_POLL_S)
+
     async def _send_prompt(self, name: str, prompt: str) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
-        bracketed paste + independent Enter, so the prompt isn't split).
+        bracketed paste + independent Enter, so the prompt isn't split) — and
+        confirm EACH half against the screen before moving on (the device
+        cheeselet's #430 lesson, ported).
 
-        Every step's result is checked. tmux accepts a send into a pane whose
-        process has exited and reports SUCCESS — measured in
-        tests/unit/test_tmux_control.py — so a live pane is confirmed BEFORE
-        pasting rather than inferred from the send not failing. That inference
-        is what let a dead session swallow a turn silently until the 900s
-        ceiling (dev, 2026-08-08)."""
+        Two ways a "successful" send delivers nothing, both measured: tmux
+        accepts a send into a pane whose process has exited and reports SUCCESS
+        (tests/unit/test_tmux_control.py — hence the live-pane check before
+        pasting; a dead session once swallowed turns silently until the 900s
+        ceiling, dev 2026-08-08). And Claude Code itself swallows an Enter that
+        arrives while it is still ingesting the paste (claude-session-driver
+        #20) — the prompt then sits in the composer forever, which is exactly
+        what a zero-delay paste→Enter raced into whenever the TUI was busy
+        (cold start, Live 现场 resize storms). So: paste → wait until the body
+        is visibly in the composer → Enter → re-send the Enter until the
+        composer visibly lets go. Re-sending Enter is duplication-safe (a lone
+        Enter on an empty composer is a no-op); re-PASTING is not, so only the
+        body-never-appeared case pastes again, and everything after that only
+        nudges Enter. The UserPromptSubmit hook stays the delivery authority —
+        this loop exists so the 25s verdict stops firing on a swallowed
+        keystroke."""
         try:
             control = await self._control(name)
             if await control.pane_dead():
                 raise ScreenSetupError(
                     "tmux 会话的窗格已经死掉（里面的 claude 不在了），本轮未发送"
                 )
-            # load-buffer reads the prompt on stdin, so it stays a docker exec;
-            # everything with a meaningful failure mode goes over the socket.
-            rc, _, err = await _docker(
-                "exec", "-i", name, "tmux", "load-buffer", "-", stdin=prompt.encode()
+            snippet = prompt_snippet(prompt)
+            for _ in range(1 + _MAX_REPASTES):
+                # load-buffer reads the prompt on stdin, so it stays a docker
+                # exec; everything with a meaningful failure mode goes over the
+                # control socket.
+                rc, _, err = await _docker(
+                    "exec",
+                    "-i",
+                    name,
+                    "tmux",
+                    "load-buffer",
+                    "-",
+                    stdin=prompt.encode(),
+                )
+                if rc != 0:
+                    raise ScreenSetupError(f"tmux load-buffer 失败：{err.strip()}")
+                paste = await control.send("paste-buffer", "-t", _SESSION, "-d", "-p")
+                if not paste.ok:
+                    raise ScreenSetupError(f"tmux 粘贴失败：{paste.error}")
+                if await self._await_composer(name, snippet, holds=True):
+                    break
+            else:
+                raise ScreenSetupError(
+                    "提示词粘贴后始终没有出现在输入框里（终端丢弃了粘贴），本轮未发送"
+                )
+            for _ in range(_MAX_ENTERS):
+                enter = await control.send("send-keys", "-t", _SESSION, "Enter")
+                if not enter.ok:
+                    raise ScreenSetupError(f"tmux 回车失败：{enter.error}")
+                if await self._await_composer(name, snippet, holds=False):
+                    return
+            raise ScreenSetupError(
+                "回车补发多次后提示词仍留在输入框里（会话没有接受提交），本轮未发送"
             )
-            if rc != 0:
-                raise ScreenSetupError(f"tmux load-buffer 失败：{err.strip()}")
-            paste = await control.send("paste-buffer", "-t", _SESSION, "-d", "-p")
-            if not paste.ok:
-                raise ScreenSetupError(f"tmux 粘贴失败：{paste.error}")
-            enter = await control.send("send-keys", "-t", _SESSION, "Enter")
-            if not enter.ok:
-                raise ScreenSetupError(f"tmux 回车失败：{enter.error}")
         except ScreenSetupError:
             raise
         except Exception as exc:  # noqa: BLE001 — a failed send ends the turn

@@ -282,7 +282,7 @@ const formatDeadline = (deadline: number) => {
 }
 
 .edit-btn {
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   min-width: 64px;
   transition: all 0.2s ease;
 

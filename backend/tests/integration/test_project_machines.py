@@ -12,6 +12,7 @@ from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.identity.actor import Actor
 from app.domain.machine import enrollment
 from app.domain.machine.models import MachineStatus
 from app.domain.machine.repositories import ProjectMachineRepository
@@ -298,10 +299,16 @@ def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monke
 
     monkeypatch.setattr(enrollment, "generate_keypair", _keypair)
 
+    async def _authorized(_self, _project_id, _actor):
+        return None
+
+    monkeypatch.setattr(MachineService, "require_create_authority", _authorized)
+    actor = Actor("owner", 1, False, "token")
+
     async def _ensure(topic_id: str) -> tuple[int, uuid.UUID]:
         async with client.test_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
-                uuid.UUID(topic_id)
+                uuid.UUID(topic_id), actor=actor
             )
             await session.commit()
             return machine.machine_id, machine.id
@@ -381,10 +388,15 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
 
     monkeypatch.setattr(enrollment, "generate_keypair", _keypair)
 
+    async def _authorized(_self, _project_id, _actor):
+        return None
+
+    monkeypatch.setattr(MachineService, "require_create_authority", _authorized)
+
     async def _reprovision():
         async with client.test_factory() as session:
             machine = await MachineService(session, cloud).ensure_topic_machine(
-                topic_id
+                topic_id, actor=Actor("owner", 1, False, "token")
             )
             old = await ProjectMachineRepository(session).get(old_id)
             await session.commit()

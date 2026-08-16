@@ -1,3 +1,13 @@
+<!--
+  这个控件的三处固定调色板名（占位底的固定深灰 + 两处白字工具类）是**有意保留**的，
+  别换成语义 token —— 见 docs/design-system.md §1.2 的例外条款：
+  底色本身不随主题变的地方，压在上面的前景色也不该变。
+
+  它整体是「一张照片 + 一层暗色蒙版 + 白色提示文字」，和相机 App 的取景蒙版一样，
+  两套主题下都长这样。占位底 grey-darken-1(#757575) 是没传头像时垫在蒙版下面的那层，
+  它必须够暗，白字才读得出来：#757575 上叠 25% 黑得到 #585858，白字 6.8:1。
+  换成 surface-variant（浅色 #EEEFF1）的话，白字会掉到约 1.9:1，浅色主题当场就坏了。
+-->
 <template>
   <div class="avatar-upload" :class="{ 'avatar-upload--empty': !avatarFile }">
     <v-img
@@ -77,6 +87,7 @@ const onError = (error: Error) => {
     left: 0;
     bottom: 0;
     right: 0;
+    /* 同上：这两个值构成蒙版本身（暗底 + 白色虚线框），是主题无关的取景框，不 token 化 */
     border: 2px dashed rgba(255, 255, 255, 0.5);
     border-radius: 8px;
     background-color: rgba(0, 0, 0, 0.25);

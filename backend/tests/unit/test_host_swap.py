@@ -55,7 +55,9 @@ def _online(*ids: str):
     return lambda device_id: device_id in live
 
 
-async def _fail(service, topic, project, device_ids, failure, times=1):
+async def _fail(
+    service, topic, project, device_ids, failure, times=1, replace_cloud=None
+):
     outcome = None
     for _ in range(times):
         outcome = await swap_topic_device(
@@ -64,11 +66,12 @@ async def _fail(service, topic, project, device_ids, failure, times=1):
             project_id=project,
             failure=failure,
             is_online=_online(*device_ids),
+            replace_cloud=replace_cloud,
         )
     return outcome
 
 
-async def test_a_dead_machine_hands_the_topic_to_a_healthy_one_and_says_so():
+async def test_a_dead_cloud_machine_provisions_a_replacement_without_borrowing():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "老机器")
@@ -79,19 +82,23 @@ async def test_a_dead_machine_hands_the_topic_to_a_healthy_one_and_says_so():
     assert first is not None and first.new_device is None, "one strike is not a verdict"
     assert await service.topic_device(topic) == sick
 
-    swapped = await _fail(service, topic, project, (sick, well), STORAGE_EXHAUSTED)
-    assert swapped is not None
-    assert swapped.new_device == well
-    assert await service.topic_device(topic) == well, "the pin must actually move"
-
-    # visible, and honest about what a move costs
-    assert swapped.message is not None
-    assert "老机器" in swapped.message and "新机器" in swapped.message
-    assert "丢失" in swapped.message
-
-    # and the whole point: the turn continues by itself
-    assert swapped.resume_after_s is not None and swapped.resume_after_s > 0
-    assert swapped.resume_reason
+    replace = AsyncMock()
+    swapped = await _fail(
+        service,
+        topic,
+        project,
+        (sick, well),
+        STORAGE_EXHAUSTED,
+        replace_cloud=replace,
+    )
+    replace.assert_awaited_once()
+    assert swapped is not None and swapped.new_device is None
+    assert await service.topic_device(topic) == sick
+    assert swapped.resume_after_s is None
+    assert swapped.event_meta == {
+        "event_type": "cloud_provisioning",
+        "state": "waiting",
+    }
 
 
 async def test_no_healthy_machine_means_stay_put_and_say_why_never_drift():
@@ -166,7 +173,7 @@ async def test_a_swap_never_moves_an_isolated_topic_binding():
     assert await service.topic_device(topic) == sick
 
 
-async def test_a_swap_never_selects_a_self_hosted_destination():
+async def test_cloud_swap_never_selects_any_existing_destination():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "坏机器")
@@ -186,8 +193,8 @@ async def test_a_swap_never_selects_a_self_hosted_destination():
     )
 
     assert swapped is not None
-    assert swapped.new_device == well
-    assert await service.topic_device(topic) == well
+    assert swapped.new_device is None
+    assert await service.topic_device(topic) == sick
 
 
 async def test_a_failure_that_isnt_the_machines_fault_moves_nothing():

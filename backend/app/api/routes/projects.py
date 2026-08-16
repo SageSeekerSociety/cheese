@@ -23,6 +23,7 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.market import (
+    COMPUTE_CLOUD,
     compute_default_name,
     compute_selectable,
     subscription_model_default,
@@ -36,6 +37,7 @@ from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.memory.models import MemoryScope
 from app.domain.project.models import ProjectRole
@@ -414,7 +416,9 @@ async def list_compute_profiles(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.put("/{project_id}/compute-profile")
-async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def set_compute_profile(
+    project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """Set the project's compute pool. Only a deployed (available) pool is
     accepted, so a project never selects compute that isn't actually there."""
     project = await ProjectRepository(db).get(project_id)
@@ -425,6 +429,9 @@ async def set_compute_profile(project_id: uuid.UUID, body: dict, db: DbSession) 
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
     if name not in allowed:
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+    if name == COMPUTE_CLOUD:
+        actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+        await MachineService(db).require_create_authority(project_id, actor)
     project.settings = {**(project.settings or {}), "compute_profile": name}
     await db.flush()
     return ok({"current": name})

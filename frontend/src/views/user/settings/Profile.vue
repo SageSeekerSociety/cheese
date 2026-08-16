@@ -1,3 +1,10 @@
+<!--
+  头像上传区里的三处固定调色板名（占位底的固定深灰 + 两处白字工具类）和下面 .uploader 的
+  两处黑色蒙版值，都是**有意保留**的，见 docs/design-system.md §1.2 例外：
+  底色本身不随主题变的地方，压在上面的前景色也不该变。
+  它是「一张照片 + 一层暗色蒙版 + 白色提示文字」的取景框，两套主题下长得一样。
+  和 components/common/AvatarUploader.vue 是同一套写法，要改一起改。
+-->
 <template>
   <v-card title="个人资料" rounded="lg">
     <template #text>
@@ -154,6 +161,7 @@ const submit = handleSubmit(async (values) => {
     left: 0;
     bottom: 0;
     right: 0;
+    /* 蒙版本身：主题无关的取景框，不 token 化（理由见文件顶部注释） */
     border: 2px dashed rgba(0, 0, 0, 0.2);
     border-radius: 8px;
     background-color: rgba(0, 0, 0, 0.5);
