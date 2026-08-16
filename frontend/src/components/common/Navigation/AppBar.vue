@@ -1,5 +1,8 @@
 <template>
-  <v-system-bar window color="grey-lighten-5" absolute>
+  <!-- `background` (not a fixed grey): the title bar frames every page, so a
+       Material palette name like grey-lighten-5 would pin it to #FAFAFA in dark
+       theme while the text inside follows --v-theme-on-surface → unreadable. -->
+  <v-system-bar window color="background" absolute class="app-system-bar">
     <div class="position-absolute text-caption font-weight-bold title-bar w-100">
       <span class="text-caption">{{ currentTitle }}</span>
     </div>
@@ -121,6 +124,18 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+/* VSystemBar dims the WHOLE bar with `opacity: var(--v-medium-emphasis-opacity)`,
+   which lands the 12px title at 0.62 ink over the canvas — #7f8184 on #f7f8fa,
+   3.68:1, under the 4.5:1 AA needs for small text. (Pre-existing: it measured
+   3.70:1 on the old grey-lighten-5 too.) Opacity is the wrong tool anyway — it
+   fades the bar's own background as well. Restore it and reach for the token
+   that MEANS "secondary text", `on-surface-variant` (= --muted): 4.81:1 light,
+   7.11:1 dark, and it is a real colour rather than a fade. */
+.app-system-bar.app-system-bar {
+  opacity: 1;
+  color: rgb(var(--v-theme-on-surface-variant));
 }
 
 .floating-search-container {

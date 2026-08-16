@@ -148,3 +148,71 @@ def test_workspace_vcs_perms_payload_is_stable_and_sanitized():
     # both are checked.
     assert "/ws/p" not in failure.content + failure.detail
     assert "AI 服务" not in failure.content + failure.detail
+
+
+def test_prompt_undelivered_is_not_blamed_on_the_ai_service():
+    """The hooks substrate raises this itself when nothing came back from the
+    claude session. It used to fall through to chat.py's `else` and render as
+    「AI 服务返回错误」 — blaming the provider for a turn it never saw, which
+    sends whoever is debugging in exactly the wrong direction."""
+    from app.domain.agent.platform_failures import (
+        PROMPT_UNDELIVERED,
+        PROMPT_UNDELIVERED_CODE,
+        PROMPT_UNDELIVERED_MESSAGE,
+        classify_platform_failure,
+    )
+
+    failure = classify_platform_failure(PROMPT_UNDELIVERED_MESSAGE)
+    assert failure is not None
+    assert failure.code == PROMPT_UNDELIVERED_CODE
+    assert failure is PROMPT_UNDELIVERED
+    assert "AI 服务" not in failure.content
+    assert failure.retryable is True
+    # A wedged session belongs to THIS topic's screen, not to the box — counting
+    # it against the machine would quarantine a healthy host and drag unrelated
+    # topics off it.
+    assert failure.host_scoped is False
+
+
+def test_turn_timeout_is_recognised_behind_each_transport_prefix():
+    """Both hooks backends prefix their transport onto the sentence, so the
+    classifier has to match the shared tail. A backend that renamed its message
+    and lost the marker would silently go back to 「AI 服务返回错误」."""
+    from app.domain.agent.platform_failures import (
+        TURN_TIMEOUT,
+        TURN_TIMEOUT_MARKER,
+        classify_platform_failure,
+    )
+
+    for message in (
+        TURN_TIMEOUT_MARKER,
+        f"tmux {TURN_TIMEOUT_MARKER}",
+        f"device {TURN_TIMEOUT_MARKER}",
+    ):
+        assert classify_platform_failure(message) is TURN_TIMEOUT, message
+    assert "AI 服务" not in TURN_TIMEOUT.content
+    assert TURN_TIMEOUT.host_scoped is False
+
+
+def test_every_hooks_backend_keeps_the_timeout_marker():
+    """The wiring, not the copy: if a subclass hardcodes its own sentence again
+    the classification is lost, and nothing else in the suite would notice."""
+    from app.domain.agent.device_provider import DeviceProvider
+    from app.domain.agent.hooks_substrate import HooksTurnProvider
+    from app.domain.agent.platform_failures import TURN_TIMEOUT_MARKER
+    from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+    for provider in (HooksTurnProvider, TmuxHooksProvider, DeviceProvider):
+        assert TURN_TIMEOUT_MARKER in provider._timeout_message, provider.__name__
+
+
+def test_undelivered_message_is_the_classified_one():
+    """`run_hooks_turn` yields this text as the turn's result; if it drifts from
+    the sentence the classifier matches, the room shows the wrong failure."""
+    from app.domain.agent.hooks_substrate import UNDELIVERED_MESSAGE
+    from app.domain.agent.platform_failures import (
+        PROMPT_UNDELIVERED,
+        classify_platform_failure,
+    )
+
+    assert classify_platform_failure(UNDELIVERED_MESSAGE) is PROMPT_UNDELIVERED

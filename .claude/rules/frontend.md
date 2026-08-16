@@ -16,6 +16,21 @@ from.
   `hsl(...)` — use `var(--text)`, `var(--muted)`, `var(--surface)` etc. A literal
   renders the same in both themes, which means it is wrong in one of them. This
   is a lint error on new code (see the ratchet below), not a style preference.
+- **A Vuetify palette NAME is a colour literal too, and this is the one that
+  actually shipped broken.** `color="grey-lighten-5"`, `class="bg-grey-lighten-5"`,
+  `color="white"`, `class="text-grey-darken-1"` — these have no `#`, they read
+  like semantic colours, and `grey-lighten-5` is exactly `#FAFAFA` in *both*
+  themes, forever. Seven of them sat on the global shell (rail, title bar,
+  mobile bars, `v-main`), so when the dark theme landed the shell stayed
+  near-white while the text on it followed `on-surface` and went pale grey:
+  unreadable, on every page. Use `background` / `surface` / `surface-light` /
+  `surface-bright` / `on-surface-variant` / `primary` instead — including in
+  `withDefaults` prop defaults, which is how `SecondaryNavigation` handed grey to
+  every page that used it. Table of replacements: `docs/design-system.md` §1.2.
+  - Exception, and write the reason in the code when you take it: where the
+    BACKGROUND is itself theme-invariant, the ink on it must be too. The default
+    avatar's `hsl(hue, 55%, 55%)` is the same in both themes, so its `#fff` text
+    is correct and "fixing" it to a token breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary)
   > `--faint` (meta), on `--surface` (cards) over `--canvas` (app bg), separated
   by `--line`. Pick by how important the information is, not by how it looks.
@@ -55,7 +70,7 @@ avoid a white flash before first paint. Change the storage key
   10–11px and they are not a precedent to follow.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
-## The stylelint ratchet
+## The two ratchets
 
 `frontend/stylelint-baseline.json` freezes the pre-existing violations and the
 gate blocks only NEW ones — same mechanism as `tsc-baseline.json`, and for the
@@ -66,6 +81,21 @@ cd frontend
 pnpm run lint:style          # check (what CI runs — read-only)
 pnpm run lint:style:update   # after fixing some, ratchet the baseline DOWN
 ```
+
+Palette NAMES are a **separate** gate, because stylelint parses CSS and can
+therefore never see a `<template>` attribute or a `<script>` prop default. It
+lives in `.claude/scripts/check-repo-rules.sh` with its own frozen baseline
+(`frontend/palette-baseline.json`, 111 hits in 40 files) and runs in `task
+check`, in the accept-card quality gate, and in CI's Repo Guards:
+
+```bash
+bash .claude/scripts/check-repo-rules.sh                            # check
+bash .claude/scripts/check-repo-rules.sh --update-palette-baseline  # ratchet DOWN
+bash .claude/scripts/check-repo-rules.sh --self-test                # prove it still fires
+```
+
+`--update-palette-baseline` refuses to raise an entry and names the file it
+refused on, so "just regenerate the baseline" is not the escape from a red gate.
 
 **Never add `--fix` to a gate script.** It rewrites the checkout and can exit 0
 on a violation it silently repaired — the writing forms are `lint:style:fix` and

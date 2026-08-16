@@ -45,7 +45,45 @@ color: #36383c;
 
 仓库里现在还有 251 处写死的十六进制色值（分布在 46 个文件），它们就是这个问题。清理工作分批在做，你**别再新增**——CI 里的 stylelint 会拦下新增的（见第 7 节）。
 
-### 1.2 中性色阶：按"离读者多远"选
+### 1.2 不带 `#` 的写死颜色：Vuetify 固定调色板名
+
+上一节说的是 `<style>` 里的 `#36383c`。还有**第二类**写死的颜色，长得完全不像颜色，藏在模板的属性和 class 里：
+
+```vue
+<!-- 错 —— 这四种写法和写 #FAFAFA 是同一件事 -->
+<v-navigation-drawer color="grey-lighten-5">
+<v-main class="bg-grey-lighten-5">
+<v-avatar color="white">
+<span class="text-grey-darken-1">
+
+<!-- 对 -->
+<v-navigation-drawer color="background">
+<v-main class="bg-background">
+<v-avatar color="surface-bright">
+<span class="text-medium-emphasis">
+```
+
+**为什么它们是写死的**：`grey-lighten-5` 是 Material 固定灰阶里的一格，它永远等于 `#FAFAFA`——浅色下是 `#FAFAFA`，深色下还是 `#FAFAFA`。`white` 永远是纯白。这些名字来自 Vuetify 内置的 Material 调色板，**不是**我们主题里的语义色，所以主题切换时它们纹丝不动。
+
+**为什么这类特别危险**：写死的 hex 至少肉眼看得出是颜色。固定调色板名不带 `#`，代码审查时读起来像语义色，而且它躲开了所有闸门——stylelint 只解析 CSS，看不见 `<template>`；`<script>` 里的 prop 默认值更是谁都看不见。2026-08-16 上线深色模式后立刻出的事故就是这个：全局外壳（最左侧栏、顶部标题栏、移动端顶栏/底栏、`v-main`）7 处 `grey-lighten-5`，把底色钉死在近白，而**外壳里的文字用的是跟随主题的 `on-surface`，深色下变成浅灰**——于是白底浅灰字，每一个页面都读不出来。
+
+对照表：
+
+| 别写 | 写这个 | 说明 |
+|---|---|---|
+| `color="grey-lighten-5"` / `class="bg-grey-lighten-5"` | `color="background"` / `class="bg-background"` | 应用底色、外壳底色 |
+| `color="white"`（面/底） | `color="surface-bright"` | 浅色下仍是白，深色下是比 surface 更亮的一档 |
+| `color="grey-lighten-4"`（填充块） | `color="surface-light"` | 输入框底、选中行底 |
+| `class="text-grey-darken-1"` / `text-grey` | `class="text-medium-emphasis"` 或 `text-on-surface-variant` | 次要文字 |
+| `color="grey"`（图标） | `color="on-surface-variant"` | 中性图标 |
+| `color="amber"` / `color="amber-darken-2"` | `color="primary"` | 主色，深色下会自动提亮到 `#FFA733` |
+| `color="red"` | `color="error"` | 状态色走语义名 |
+
+**唯一的例外**：底色本身就不随主题变的地方，前景色也不该变。比如默认头像的底色是 `avatarColor()` 算出来的 `hsl(色相, 55%, 55%)`——两个主题下同一个值，那么它上面的白色文字就该保持写死的 `#fff`，换成 `on-surface` 反而会坏。这种地方**必须在代码里写清楚为什么**，否则下一个人会"顺手修好"它。
+
+这条现在有机器闸门了，见第 7 节。
+
+### 1.3 中性色阶：按"离读者多远"选
 
 界面上 95% 的颜色从这一条色阶里取。选哪一档不看好不好看，看**这段信息有多重要**：
 
@@ -58,7 +96,7 @@ color: #36383c;
 
 越往下越淡。**不要跳档**用（比如正文用 `--faint`）——那不是"低调"，那是让人看不清。
 
-### 1.3 面和线：按"层次"选
+### 1.4 面和线：按"层次"选
 
 | 变量 | 用在哪 |
 |---|---|
@@ -71,7 +109,7 @@ color: #36383c;
 
 **深色模式下这组的关系是反的**：浅色下 `--surface`（白）比 `--canvas`（浅灰）**亮**；深色下 `--surface`（#1B1D20）比 `--canvas`（#141517）也**亮**。也就是说"卡片永远比底更亮"这条规律两套主题都成立——你按语义选变量就自动对，不用为深色特殊处理。
 
-### 1.4 状态色：三件套，不能混用
+### 1.5 状态色：三件套，不能混用
 
 每个状态色都有三个变量，用途**不可互换**：
 
@@ -98,7 +136,7 @@ color: #36383c;
 
 状态色**只用于真实状态**。"这个标签好看" 不是状态，不要为了配色去用 `--ok`。
 
-### 1.5 琥珀的四个变量
+### 1.6 琥珀的四个变量
 
 | 变量 | 用在哪 |
 |---|---|
@@ -311,6 +349,9 @@ WCAG AA 要求正文 ≥ 4.5:1、大字号与图形 ≥ 3:1。深色主题实测
 | `color: #757575` | 深色下不变，看不见 | `color: var(--muted)` |
 | `color: var(--danger)` 写正文 | 记号色对比度不够 | `var(--danger-ink)` |
 | `background: #fff` | 深色下变成白块 | `var(--surface)` |
+| `color="grey-lighten-5"` | 不带 `#` 但同样写死（恒等于 `#FAFAFA`） | `color="background"`（见 1.2） |
+| `class="bg-white"` / `text-grey` | 同上，Material 固定调色板名 | `bg-surface-bright` / `text-medium-emphasis` |
+| prop 默认值 `color: 'grey-lighten-5'` | 一处写死，所有用它的页面一起坏 | 默认值也用语义色名 |
 | 卡片加 `box-shadow` | 违反"只描边不投影" | 用 `border: 1px solid var(--line)` |
 | `border-radius: 10px` | 不在档位里 | `var(--radius-lg)` |
 | `font-size: 10px` | 低于可读下限 | 至少 13px |
@@ -323,15 +364,18 @@ WCAG AA 要求正文 ≥ 4.5:1、大字号与图形 ≥ 3:1。深色主题实测
 
 ## 7. 规范怎么被强制执行
 
-光写文档没用——这套设计语言此前只存在于两个文件的注释里，结果本次改造前 204 个 `.vue` 文件里只有 17 个在用它。所以现在有三道机器闸门：
+光写文档没用——这套设计语言此前只存在于两个文件的注释里，结果本次改造前 204 个 `.vue` 文件里只有 17 个在用它。所以现在有四道机器闸门：
 
 | 闸门 | 拦什么 | 在哪 |
 |---|---|---|
 | stylelint 颜色规则 | 新增的写死颜色（hex / rgb / hsl 字面量） | `frontend/stylelint.config.cjs` |
 | stylelint 圆角规则 | 不在档位表里的 `border-radius` | 同上 |
-| 存量棘轮 | 只拦**新增**，存量冻结在基线里且只能减少 | `frontend/stylelint-baseline.json` |
+| **固定调色板闸门** | **模板属性和 script 里的 `color="grey-*"` / `bg-white` / `text-grey-*`（见 1.2）** | **`.claude/scripts/check-repo-rules.sh`** |
+| 存量棘轮 | 以上全部只拦**新增**，存量冻结在基线里且只能减少 | `frontend/stylelint-baseline.json`、`frontend/palette-baseline.json` |
 
-**为什么要棘轮（ratchet）**：存量有 251 处违规。规则一上线就全红的话，唯一的结局是被人关掉。棘轮把存量冻进基线，新增的一律拦下，修好了跑一次更新命令让基线单调下降。这个模式抄的是仓库里已有的 `tsc-ratchet.mjs`。
+**为什么固定调色板要单独一道闸门**：stylelint 只解析 CSS。`<template>` 的属性、`class` 里的工具类、`<script>` 里的 prop 默认值，它一个都看不见——所以 1.2 说的那一整类问题，此前没有任何闸门能发现，直到深色模式上线才暴露。这道闸门是纯文本匹配（bash + grep），跟着 `check-repo-rules.sh` 一起跑在 `task check`、验收卡的质量闸门和 CI 的 Repo Guards 里。
+
+**为什么要棘轮（ratchet）**：hex 存量有 251 处，固定调色板名存量有 111 处（40 个文件）。规则一上线就全红的话，唯一的结局是被人关掉。棘轮把存量冻进基线，新增的一律拦下，修好了跑一次更新命令让基线单调下降。这个模式抄的是仓库里已有的 `tsc-ratchet.mjs`。**基线只能降不能升**——`--update-palette-baseline` 发现你想把某个文件的额度调高时会直接拒绝并告诉你是哪个文件。
 
 日常命令：
 
@@ -340,6 +384,13 @@ cd frontend
 pnpm run lint:style          # 检查（CI 跑的就是这个，只读，绝不改文件）
 pnpm run lint:style:fix      # 自动修可修的部分（本地用）
 pnpm run lint:style:update   # 修好一批违规后，把基线降下来并提交
+
+cd ..                        # 固定调色板闸门在仓库根上跑
+bash .claude/scripts/check-repo-rules.sh                            # 检查
+bash .claude/scripts/check-repo-rules.sh --update-palette-baseline  # 修好一批后降基线
+bash .claude/scripts/check-repo-rules.sh --self-test                # 证明闸门本身没坏
 ```
+
+最后那条 `--self-test` 不是摆设：一个悄悄失效的闸门和一个干净的仓库，输出**长得一模一样**，而这正是这些闸门要防的失败模式。所以 CI 每次先让闸门自证，再让它去检查这棵树。
 
 `.claude/rules/frontend.md` 会在 AI 改 `frontend/**` 时自动加载，把上面最容易违反的几条塞进它的上下文。

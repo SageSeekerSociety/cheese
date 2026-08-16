@@ -41,7 +41,10 @@ from app.domain.agent.hooks_substrate import (
     HooksTurnProvider,
     ScreenSetupError,
 )
-from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
+from app.domain.agent.platform_failures import (
+    DEVICE_OFFLINE_MESSAGE,
+    TURN_TIMEOUT_MARKER,
+)
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility, has_runnable_transport
 from app.domain.device.wiring import sql_device_service
@@ -292,7 +295,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
     name = "device"
     _needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
-    _timeout_message = "device 轮次超时"
+    _timeout_message = f"device {TURN_TIMEOUT_MARKER}"
 
     def __init__(
         self,

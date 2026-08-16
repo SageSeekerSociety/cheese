@@ -14,10 +14,14 @@
 #
 # Usage: check-repo-rules.sh [root]        check a tree (default: repo root)
 #        check-repo-rules.sh --self-test   prove each rule fires and is scoped
+#        check-repo-rules.sh --update-palette-baseline [root]
+#                                          ratchet frontend/palette-baseline.json down
 set -euo pipefail
 
 SELF_TEST=0
+UPDATE_PALETTE=0
 [ "${1:-}" = "--self-test" ] && { SELF_TEST=1; shift; }
+[ "${1:-}" = "--update-palette-baseline" ] && { UPDATE_PALETTE=1; shift; }
 
 ROOT="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 FAILED=0
@@ -152,13 +156,122 @@ $(grep -rnE --include='*.py' \
     "$hits"
 }
 
+# Rule 6 — .claude/rules/frontend.md: "Never write a colour literal." A Vuetify
+# fixed-palette NAME is a colour literal that does not look like one:
+# `color="grey-lighten-5"` is exactly `#FAFAFA` in both themes, forever.
+#
+# WHY A SECOND GUARD, when stylelint already bans hex: stylelint parses CSS. It
+# never sees `<template>`, and it never sees a `withDefaults` value in
+# `<script>`. So the whole class was invisible to every gate — the wave-1 audit
+# counted 244 hex literals and scored zero of these, and the seven that happened
+# to sit on the global shell (rail, title bar, mobile bars, v-main) shipped a
+# dark theme where the shell stayed near-white while the text on it followed
+# --v-theme-on-surface and went pale grey. White-on-white, on every page.
+#
+# RATCHETED, deliberately: 111 pre-existing hits across 40 view/component files
+# are frozen in frontend/palette-baseline.json and only NEW ones fail. A rule
+# that goes red on 111 sites gets switched off, and then it protects nothing —
+# same reasoning, same shape, as stylelint-baseline.json and tsc-baseline.json.
+# Baselines only ever go down: `--update-palette-baseline` refuses to raise one.
+#
+# NOT matched, on purpose: `transparent` (theme-neutral), `:color="expr"`
+# bindings (the value is not visible here), and typography classes like
+# `text-h6` / `text-medium-emphasis` — only real palette names follow bg-/text-.
+palette_re() {
+  local hue='deep-purple|deep-orange|light-blue|light-green|blue-grey'
+  hue="$hue|red|pink|purple|indigo|blue|cyan|teal|green|lime|yellow|amber|orange|brown|grey"
+  # Longer names lead the alternation so `deep-orange` cannot match as `orange`.
+  local shade="((${hue})(-(lighten|darken|accent)-[1-5])?|white|black)"
+  printf '%s' "[A-Za-z-]*[Cc]olor=\"${shade}\"|[A-Za-z-]*[Cc]olor: *'${shade}'|\\b(bg|text)-${shade}\\b"
+}
+
+# "src/x.vue<TAB>N" for every file with at least one hit, paths relative to
+# frontend/ so they match the baseline keys.
+palette_counts() {
+  local fe="$1"
+  [ -d "$fe/src" ] || return 0
+  ( cd "$fe" && grep -rEno --include='*.vue' --include='*.ts' "$(palette_re)" src 2>/dev/null || true ) \
+    | sed -E 's/^([^:]+):[0-9]+:.*/\1/' | sort | uniq -c \
+    | awk '{ printf "%s\t%s\n", $2, $1 }' | sort
+}
+
+# The baseline is the same {"files": {path: count}} shape the other two ratchets
+# use, so it stays readable in a diff and needs no JSON parser here.
+palette_baseline() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  sed -n 's/^[[:space:]]*"\(src\/[^"]*\)"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1\t\2/p' "$f" | sort
+}
+
+check_fixed_palette() {
+  local fe="$ROOT/frontend" baseline="$ROOT/frontend/palette-baseline.json"
+  [ -d "$fe/src" ] || return 0
+  local cur base over hits
+  cur="$(palette_counts "$fe")"
+  base="$(palette_baseline "$baseline")"
+  # A file absent from the baseline has an allowance of 0, so a brand-new file
+  # with a violation fails even though nothing about it regressed.
+  over="$(awk -F'\t' '
+      NR == FNR { allow[$1] = $2; next }
+      { a = ($1 in allow) ? allow[$1] : 0
+        if ($2 > a) printf "%s\t%d\t%d\n", $1, $2, a }
+    ' <(printf '%s\n' "$base") <(printf '%s\n' "$cur"))"
+  [ -z "$over" ] && return 0
+  hits="$(while IFS=$'\t' read -r f now allow; do
+      [ -n "$f" ] || continue
+      echo "$f: $now fixed-palette use(s), baseline allows $allow"
+      ( cd "$fe" && grep -EnoH "$(palette_re)" "$f" 2>/dev/null || true ) | sed 's/^/    /'
+    done <<< "$over")"
+  echo "FAIL: Vuetify fixed-palette colour name (does not follow the theme)"
+  report "fixed-palette colour name in a template/script" \
+    "use a theme colour: background / surface / surface-bright / surface-light / on-surface / primary — see docs/design-system.md" \
+    "$hits"
+}
+
 run_all() {
   check_naive_datetime
   check_builtin_shadowing
   check_raw_http_exception
   check_duplicate_topic_docs
   check_supply_reverse_lookup
+  check_fixed_palette
 }
+
+# --- palette baseline update ------------------------------------------------
+# Only ever downward. Raising a baseline to make a gate green is the one move
+# that turns a ratchet back into decoration, so this refuses to do it and says
+# which file it refused on.
+if [ "$UPDATE_PALETTE" = 1 ]; then
+  fe="$ROOT/frontend"
+  baseline="$fe/palette-baseline.json"
+  cur="$(palette_counts "$fe")"
+  base="$(palette_baseline "$baseline")"
+  raised="$(awk -F'\t' '
+      NR == FNR { allow[$1] = $2; next }
+      { a = ($1 in allow) ? allow[$1] : 0; if ($2 > a) printf "  %s: %d > %d\n", $1, $2, a }
+    ' <(printf '%s\n' "$base") <(printf '%s\n' "$cur"))"
+  # Bootstrap: with no baseline on disk there is nothing to raise, and the
+  # freeze has to start somewhere. Once the file exists it may only go down —
+  # and "delete it and regenerate" is not a quiet workaround, it rewrites every
+  # line of the file and shows up as such in review.
+  [ -f "$baseline" ] || raised=""
+  if [ -n "$raised" ]; then
+    echo "refusing to raise the baseline — fix these instead:" >&2
+    printf '%s\n' "$raised" >&2
+    exit 1
+  fi
+  {
+    echo '{'
+    echo '  "_comment": "Frozen Vuetify fixed-palette colour names (color=\"grey-lighten-5\", class=\"bg-white\", …) in templates and script defaults. stylelint cannot see these — it parses CSS, not <template>. The ratchet in .claude/scripts/check-repo-rules.sh blocks any NEW one; these are pre-existing and may only go down. Regenerate with `bash .claude/scripts/check-repo-rules.sh --update-palette-baseline`. See docs/design-system.md.",'
+    echo '  "files": {'
+    printf '%s\n' "$cur" | awk -F'\t' 'NF == 2 { rows[n++] = sprintf("    \"%s\": %s", $1, $2) }
+      END { for (i = 0; i < n; i++) printf "%s%s\n", rows[i], (i < n - 1 ? "," : "") }'
+    echo '  }'
+    echo '}'
+  } > "$baseline"
+  echo "wrote $baseline ($(printf '%s\n' "$cur" | grep -c . ) files)"
+  exit 0
+fi
 
 # --- self-test -------------------------------------------------------------
 # A guard nobody has seen fail is a guard nobody knows works. Each case builds a
@@ -238,7 +351,63 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "reading device.supply must pass"
   rm "$tmp/backend/app/domain/device/ok_read.py"
 
-  echo "PASS: check-repo-rules self-test (5 rules, scoping and opt-out verified)"
+  # Rule 6. The fixture is the line that actually shipped the broken dark shell.
+  mkdir -p "$tmp/frontend/src/components"
+  shell="$tmp/frontend/src/components/AppBar.vue"
+  printf '<template>\n  <v-system-bar color="background" />\n</template>\n' > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a semantic theme colour must pass"
+  # …and the class form, next to the typography utilities it must NOT confuse
+  # itself with (text-h6 / text-medium-emphasis are not palette names).
+  printf '<template>\n  <div class="bg-background text-h6 text-medium-emphasis" />\n</template>\n' > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "semantic bg-/typography classes must pass"
+
+  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n</template>\n' > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a fixed-palette colour= must fail"
+  printf '<template>\n  <div class="bg-grey-lighten-5" />\n</template>\n' > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a fixed-palette bg- class must fail"
+  printf '<template>\n  <div class="text-white" />\n</template>\n' > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a fixed-palette text- class must fail"
+  # The prop DEFAULT in <script> is the form stylelint and eslint-plugin-vue
+  # both miss, and it is how SecondaryNavigation shipped grey to every consumer.
+  printf '<script setup lang="ts">\nwithDefaults(defineProps<P>(), { color: %s })\n</script>\n' \
+    "'grey-lighten-5'" > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a fixed-palette prop default must fail"
+
+  # The ratchet: the same violation, frozen in the baseline, must pass — and one
+  # MORE than the baseline allows must fail. Without both halves this is not a
+  # ratchet, it is a rule someone will switch off.
+  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n</template>\n' > "$shell"
+  printf '{\n  "files": {\n    "src/components/AppBar.vue": 1\n  }\n}\n' \
+    > "$tmp/frontend/palette-baseline.json"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a baselined violation must pass"
+  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n  <v-app-bar color="white" />\n</template>\n' \
+    > "$shell"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "one MORE than the baseline must fail"
+  # A brand-new file gets an allowance of 0 even while the baseline covers others.
+  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n</template>\n' > "$shell"
+  printf '<template>\n  <div class="bg-white" />\n</template>\n' \
+    > "$tmp/frontend/src/components/New.vue"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "an unbaselined file must get an allowance of 0"
+  rm "$tmp/frontend/src/components/New.vue"
+  # --update-palette-baseline must REFUSE to raise an existing baseline. This is
+  # the assertion that keeps the ratchet a ratchet: without it, the documented
+  # escape from a red gate is "just regenerate the baseline".
+  printf '<template>\n  <v-system-bar color="grey-lighten-5" />\n  <v-app-bar color="white" />\n</template>\n' \
+    > "$shell"
+  bash "$me" --update-palette-baseline "$tmp" >/dev/null 2>&1 \
+    && self_fail "--update-palette-baseline must refuse to raise a baseline"
+  grep -q '"src/components/AppBar.vue": 1' "$tmp/frontend/palette-baseline.json" \
+    || self_fail "a refused update must leave the baseline untouched"
+  # Downward it must work, and the tree must then be green.
+  printf '<template>\n  <v-system-bar color="background" />\n</template>\n' > "$shell"
+  bash "$me" --update-palette-baseline "$tmp" >/dev/null 2>&1 \
+    || self_fail "--update-palette-baseline must ratchet down"
+  grep -q 'AppBar' "$tmp/frontend/palette-baseline.json" \
+    && self_fail "a fixed file must drop out of the baseline entirely"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a tightened baseline must still pass"
+  rm -rf "$tmp/frontend"
+
+  echo "PASS: check-repo-rules self-test (6 rules, scoping, opt-out and palette ratchet verified)"
   exit 0
 fi
 
@@ -248,4 +417,4 @@ if [ "$FAILED" = 1 ]; then
   echo "These rules are stated as absolute in CLAUDE.md; this script only enforces them."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException, duplicate topic notes, supply reverse lookup)"
+echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours)"

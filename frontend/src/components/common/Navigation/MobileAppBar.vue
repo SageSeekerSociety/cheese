@@ -1,5 +1,6 @@
 <template>
-  <v-app-bar color="grey-lighten-5" :elevation="0" density="default" height="56" border="b-sm" app flat>
+  <!-- `background`, not a fixed grey — see AppBar.vue for why. -->
+  <v-app-bar color="background" :elevation="0" density="default" height="56" border="b-sm" app flat>
     <!-- 左侧抽屉按钮 -->
     <template #prepend>
       <v-app-bar-nav-icon @click="toggleDrawer" />
@@ -87,7 +88,8 @@
             <v-card variant="tonal" color="primary" class="ai-quota-card rounded-lg mb-3" elevation="0">
               <v-card-text class="pa-3">
                 <div class="d-flex align-center mb-2">
-                  <v-avatar color="white" size="28" class="me-2">
+                  <!-- surface-bright, not white — see LeftAppRail.vue. -->
+                  <v-avatar color="surface-bright" size="28" class="me-2">
                     <v-icon icon="mdi-creation" color="primary" size="small"></v-icon>
                   </v-avatar>
                   <span class="text-subtitle-2 font-weight-medium">知启星 AI</span>

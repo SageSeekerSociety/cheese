@@ -899,6 +899,12 @@ class ChatService:
         # Per-topic serial queue (spec §9.1): one agent turn per topic at a
         # time, so concurrent messages to the same topic don't race.
         self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
+        # Human blocks handed to a turn that was ALREADY RUNNING when they were
+        # posted (see `converse`). The running turn computed its `pending_ids`
+        # before these existed, so it stamps them from here instead — and only
+        # when it finishes, exactly like its own ids: a turn that dies leaves the
+        # message pending so the next one replays it (重复看得见，丢失看不见).
+        self._merged_into: dict[uuid.UUID, list[uuid.UUID]] = {}
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
         self._memory_tasks: set[asyncio.Task] = set()
@@ -998,7 +1004,31 @@ class ChatService:
             if ack is not None:
                 yield {"type": "reaction", **ack}
 
-        async with self._lock_for(topic_id):
+        # A turn is already running on this topic. Don't queue behind it —
+        # hand the message to the session that is running RIGHT NOW.
+        #
+        # The platform used to be stricter than the tool it drives: an
+        # interactive Claude Code accepts input while it works and folds it into
+        # the run, but we serialized turns on top of that, so one slow command
+        # made every later message wait the whole turn out. Injecting instead
+        # gets the message in front of 芝士 in seconds.
+        #
+        # Only the hooks-driven backends can take it (they own a live screen);
+        # `deliver` returns False everywhere else and we fall back to queueing,
+        # which is the pre-existing behaviour, not a new failure mode.
+        lock = self._lock_for(topic_id)
+        if lock.locked() and user_block_id is not None:
+            delivered = await self._merge_into_running_turn(
+                topic_id, user_block_id, content, author
+            )
+            if delivered:
+                # The answer streams out of the turn already in flight, which
+                # every client in this topic is subscribed to — this request has
+                # nothing left to yield.
+                yield {"type": "done"}
+                return
+
+        async with lock:
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1009,6 +1039,34 @@ class ChatService:
                 provision_actor=provision_actor,
             ):
                 yield frame
+
+    async def _merge_into_running_turn(
+        self,
+        topic_id: uuid.UUID,
+        user_block_id: uuid.UUID,
+        content: str,
+        author: str,
+    ) -> bool:
+        """Inject a just-posted human message into the turn already running on
+        this topic. True when the screen took it.
+
+        The text is labelled the same way `_prompt_line` labels a pending block,
+        so a message that arrives mid-turn reads identically to one that came in
+        the prompt — 芝士 must not have to tell the two apart to know who spoke.
+
+        Attachments are deliberately NOT merged (the caller only reaches here for
+        a text message): an image needs the path wording `_prompt_line` builds
+        per backend, and getting that wrong makes an agent describe a picture it
+        never opened."""
+        line = f"[{author}]: {_strip_platform_notice(content)}"
+        try:
+            delivered = await self._compute.deliver(topic_id, line)
+        except Exception:  # noqa: BLE001 — falling back to a queued turn is safe
+            logger.exception("merge into running turn failed (topic=%s)", topic_id)
+            return False
+        if delivered:
+            self._merged_into.setdefault(topic_id, []).append(user_block_id)
+        return delivered
 
     async def kickoff(
         self,
@@ -1986,6 +2044,11 @@ class ChatService:
         # explicitly to every open client (not just the submitter / late
         # re-connectors, who get it from the WS-connect in_flight check).
         yield {"type": "turn_active"}
+        # Anything still parked here belongs to a PREVIOUS turn that died before
+        # stamping it. Drop it: those blocks are unstamped, so they are in this
+        # turn's own `pending` and get stamped with this turn's id below. Keeping
+        # them would credit this turn with messages it never saw.
+        self._merged_into.pop(topic_id, None)
         # --- tx1: load topic + history, load memory ---
         async with self._sessions() as session:
             topics = TopicRepository(session)
@@ -2723,7 +2786,12 @@ class ChatService:
             # 超时 / provider 报错的路径都在上面 return 或 raise 掉了，戳没盖上，消息
             # 就留在 pending 里由续跑轮重发。宁可重复，不可丢失 —— 重复看得见，丢失
             # 看不见，而后者正是这次要修的 bug。
-            await blocks.mark_consumed(pending_ids, turn_id)
+            # Plus every message injected into this turn WHILE it ran (converse's
+            # merge path). Those blocks were posted after `pending_ids` was
+            # computed, so without this they would look unread and the next turn
+            # would say them all over again.
+            merged_ids = self._merged_into.pop(topic_id, [])
+            await blocks.mark_consumed([*pending_ids, *merged_ids], turn_id)
             await session.commit()
 
         # A hooks backend can reach here with assistant_count == 0 not because

@@ -1,5 +1,8 @@
 <template>
-  <v-navigation-drawer permanent rail :rail-width="64" class="app-rail pb-2" color="grey-lighten-5" border="none">
+  <!-- `background` (not a fixed grey): the rail is on every page, so a Material
+       palette name like grey-lighten-5 would pin it to #FAFAFA in dark theme
+       while its icons follow --v-theme-on-surface → white tile, pale icons. -->
+  <v-navigation-drawer permanent rail :rail-width="64" class="app-rail pb-2" color="background" border="none">
     <!-- <v-avatar v-tooltip="'知是'" :image="logo" size="48" /> -->
     <RailItem v-for="item in showItems" :key="item.key" :item="item"></RailItem>
     <v-spacer></v-spacer>
@@ -70,7 +73,9 @@
           <v-card variant="tonal" color="primary" class="ai-quota-card rounded-lg mb-3" elevation="0">
             <v-card-text class="pa-3">
               <div class="d-flex align-center mb-2">
-                <v-avatar color="white" size="28" class="me-2">
+                <!-- surface-bright, not white: this disc sits inside a tonal
+                     card, so a hard #FFF would be a glaring hole in dark theme. -->
+                <v-avatar color="surface-bright" size="28" class="me-2">
                   <v-icon icon="mdi-creation" color="primary" size="small"></v-icon>
                 </v-avatar>
                 <span class="text-subtitle-2 font-weight-medium">知启星 AI</span>
@@ -182,6 +187,14 @@ const userMenu = useUserMenu()
   width: 100%;
   height: 100%;
   line-height: 1;
+  // Deliberately a literal, and one of the few that is CORRECT in both themes:
+  // the background here is not a theme token but `avatarColor()`'s
+  // hsl(hue, 55%, 55%) — a saturated mid-tone identical in light and dark. This
+  // is "on-avatar" ink, so it must not follow --v-theme-on-surface (that would
+  // turn it near-black on light and pale-grey on dark, over the same colour).
+  // Do not "fix" it to a token. (Known, separate issue: for yellow/green hues
+  // hsl(h,55%,55%) is light enough that white measures ~1.7:1 — an avatar-palette
+  // problem shared with the light theme, tracked outside this change.)
   color: #fff;
   font-weight: 600;
   font-size: 14px;
