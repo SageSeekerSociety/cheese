@@ -91,6 +91,28 @@ def test_stop_reads_usage_when_present():
     assert ev.usage.output_tokens == 3
 
 
+def test_delivery_failed_becomes_a_typed_event_for_the_provider_loop():
+    """#445: the driver's give-up must reach the ACTIVE turn as a typed event
+    (the provider re-sends on it), never die in the connector's journal."""
+    from app.domain.agent.service import AgentDeliveryFailure
+
+    ev = translate_hook(
+        {"hook_event_name": "CheeseDeliveryFailed", "phase": "paste", "ticks": 41}
+    )
+    assert isinstance(ev, AgentDeliveryFailure)
+    assert ev.phase == "paste" and ev.ticks == 41
+
+
+def test_delivery_retried_surfaces_as_a_visible_message():
+    """A flaky-but-successful delivery is worth a room line before it becomes
+    a dead turn."""
+    ev = translate_hook(
+        {"hook_event_name": "CheeseDeliveryRetried", "phase": "submit", "ticks": 12}
+    )
+    assert isinstance(ev, AgentMessage)
+    assert "12" in ev.text
+
+
 def test_unknown_event_is_dropped():
     assert translate_hook({"hook_event_name": "SubagentStop"}) is None
     assert translate_hook({}) is None

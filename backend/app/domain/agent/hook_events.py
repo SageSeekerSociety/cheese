@@ -23,6 +23,7 @@ Event mapping (verified in the spike, docs/tmux-backend-spike.md):
 import asyncio
 
 from app.domain.agent.service import (
+    AgentDeliveryFailure,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -56,7 +57,7 @@ def _usage_from_hook(hook: dict) -> AgentUsage:
     )
 
 
-def translate_hook(hook: dict) -> AgentEvent | None:
+def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
     """One hook payload → one AgentEvent, or None when the hook has no
     platform-visible counterpart (e.g. PostToolUse). A returned AgentResult
     signals the end of the turn (the Stop hook)."""
@@ -103,6 +104,29 @@ def translate_hook(hook: dict) -> AgentEvent | None:
                 )
             )
         return None
+
+    if event == "CheeseDeliveryFailed":
+        # Synthetic (device_hub, from the cheeselet's server call): the prompt
+        # driver abandoned delivery. Surfaced as a typed event the provider
+        # loop intercepts for an immediate re-send (#445) — without this, the
+        # give-up lived only in the connector's journal and the room stared at
+        # silence until the 300s no-output bound.
+        return AgentDeliveryFailure(
+            phase=str(hook.get("phase") or ""),
+            ticks=int(hook.get("ticks") or 0),
+        )
+
+    if event == "CheeseDeliveryRetried":
+        # Synthetic (same channel): delivery eventually succeeded but needed
+        # noticeably many re-issues — the pane's input path is flaky. Visible
+        # so a wobbling machine is seen before it produces a dead turn.
+        tries = int(hook.get("ticks") or 0)
+        return AgentMessage(
+            text=(
+                f"⚠️ 提示词经过 {tries} 次重试才送进这台机器的会话——"
+                "机器的终端链路在抖，值得看一眼。"
+            )
+        )
 
     if event == "Stop":
         sid = hook.get("session_id")

@@ -142,6 +142,44 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
 
 
+async def test_a_reported_delivery_failure_is_resent_immediately():
+    """#445: the cheeselet's give-up (surfaced as a CheeseDeliveryFailed hook)
+    must trigger an immediate re-send of the prompt plus a visible message —
+    not leave the room waiting out the 300s no-output bound."""
+    hub = FakeHub()
+    router = HookRouter()
+    agent_id = uuid.uuid4()
+    provider = _provider(hub, router, agent_id)
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    events, task = await _run(
+        provider,
+        project_id=project_id,
+        topic_id=topic_id,
+        prompt="1+1?",
+        system_prompt="",
+        resume_session_id=None,
+    )
+    await asyncio.sleep(0.05)
+    assert hub.prompts == [["1+1?"]]
+
+    key = str(topic_id)
+    router.push(
+        key, {"hook_event_name": "CheeseDeliveryFailed", "phase": "paste", "ticks": 41}
+    )
+    await asyncio.sleep(0.05)
+    assert hub.prompts == [["1+1?"], ["1+1?"]], "the prompt was not re-sent"
+
+    router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "2"})
+    await asyncio.wait_for(task, timeout=5)
+
+    texts = [getattr(e, "text", "") for e in events]
+    assert any("重投" in t for t in texts), f"no visible re-send notice: {texts}"
+    assert not any(type(e).__name__ == "AgentDeliveryFailure" for e in events), (
+        "the internal delivery-failure event leaked to the chat layer"
+    )
+
+
 async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry():
     """The hub's registry outlives what the device actually runs (a connector
     restart kills its sessions; a create sent on a dying transport was never
