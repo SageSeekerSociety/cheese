@@ -116,7 +116,15 @@ def app_world(monkeypatch):
         def __init__(self, owner: str, repo: str, tokens, **_):
             self.owner, self.repo = owner, repo
 
-        async def open_pr(self, *, head: str, base: str, title: str, body: str) -> dict:
+        async def open_pr(
+            self,
+            *,
+            head: str,
+            base: str,
+            title: str,
+            body: str,
+            as_user_token: str | None = None,
+        ) -> dict:
             number = 21 + len(recorded["opened"])
             recorded["opened"].append({"head": head, "base": base, "number": number})
             fake.seed_pr(number, head=head, base=base)
@@ -702,7 +710,7 @@ def test_pr_already_merged_on_github_is_taken_as_the_accept(
         def __init__(self, owner, repo, tokens, **_):
             pass
 
-        async def open_pr(self, *, head, base, title, body):
+        async def open_pr(self, *, head, base, title, body, as_user_token=None):
             fake.seed_pr(21, head=head, base=base)
             fake.merge_externally(21)
             app_world["opened"].append({"head": head, "number": 21})

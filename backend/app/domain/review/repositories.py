@@ -21,12 +21,16 @@ class AcceptCardRepository:
         reviewer_handle: str,
         routing_reason: str = "",
         status: AcceptStatus = AcceptStatus.pending,
+        change_subject: str | None = None,
+        change_body: str | None = None,
     ) -> AcceptCard:
         card = AcceptCard(
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
             status=status,
+            change_subject=change_subject,
+            change_body=change_body,
         )
         self._session.add(card)
         await self._session.flush()

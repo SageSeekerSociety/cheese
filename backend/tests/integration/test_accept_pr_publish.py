@@ -93,7 +93,15 @@ class _FakeClient:
             raise type(self).merge_error
         return {"merged": True, "sha": "deadbeef"}
 
-    async def open_pr(self, *, head: str, base: str, title: str, body: str) -> dict:
+    async def open_pr(
+        self,
+        *,
+        head: str,
+        base: str,
+        title: str,
+        body: str,
+        as_user_token: str | None = None,
+    ) -> dict:
         type(self).calls.append(("open_pr", head, base, title))
         number = type(self).open_pr_number
         return {
@@ -195,8 +203,11 @@ def test_pr_card_is_accepted_by_merging_the_pr(client, pr_world):
     merges = [c for c in _FakeClient.calls if c[0] == "merge"]
     assert len(merges) == 1
     assert merges[0][1] == 7
-    assert "采纳 topic/" in merges[0][2]  # commit title keeps the platform shape
-    assert "验收人：alice" in merges[0][3]
+    # The squash commit that lands on main: a Conventional Commits subject with
+    # the PR number, and trailers instead of "验收人：alice".
+    assert merges[0][2].endswith(" (#7)")
+    assert merges[0][2].startswith("chore: ")
+    assert "Reviewed-by: alice" in merges[0][3]
     assert pr_world["local_merges"] == []
     assert len(pr_world["pushes"]) == 1  # last-minute edits re-pushed pre-merge
     assert len(pr_world["syncs"]) == 1

@@ -48,7 +48,7 @@ async def _open(client: HttpxGitHubPrClient, *, head: str = "cheesex/0bbc3403"):
         repo="widgets",
         head=head,
         base="main",
-        title="[cheesex] 做一个东西",
+        title="fix: stop the crash",
         body="Reviewed-by: alice",
         token="t",
     )

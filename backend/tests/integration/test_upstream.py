@@ -473,3 +473,122 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
     # The shared repo is untouched — an unattended sync must not half-merge.
     assert (repo / "hello.txt").read_text() == "local version\n"
     assert not (repo / ".git" / "MERGE_HEAD").exists()
+
+
+# ---- 同步上游不再堆合并提交 (2026-08-16) -------------------------------------
+#
+# The sync was an unconditional `merge --no-ff`, so every tick minted a merge
+# commit that existed only locally, nothing ever removed them, and every topic
+# branch cut from the base carried the whole pile into its PR. Measured on
+# 2026-08-16: 39 of PR #488's 40 commits were `同步上游 upstream/main → main`,
+# and this repo's own base sat 41 such commits ahead of upstream with a
+# byte-identical tree.
+
+
+def _commit_upstream(up: Path, name: str, body: str) -> None:
+    (up / name).write_text(body)
+    subprocess.run(["git", "-C", str(up), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(up), "commit", "-q", "-m", f"upstream: {name}"], check=True
+    )
+
+
+def _base_log(repo: Path) -> list[str]:
+    out = subprocess.run(
+        ["git", "-C", str(repo), "log", "--format=%s", "main"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return out.stdout.splitlines()
+
+
+def test_repeated_syncs_add_no_commits_of_their_own(client, tmp_path):
+    """The base branch is a MIRROR of the upstream's default branch. Ten syncs
+    of ten upstream commits must leave ten commits — the upstream's own — and
+    nothing the platform invented."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    client.post(f"/api/projects/{pid}/upstream/sync")
+
+    for i in range(10):
+        _commit_upstream(up, f"f{i}.txt", f"{i}\n")
+        d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+        assert d["synced"] is True, d
+
+    repo = ws.ensure_repo(_uuid.UUID(pid))
+    subjects = _base_log(repo)
+    assert not [s for s in subjects if "merge upstream" in s], subjects
+    # Byte-identical to the upstream tip, and pointing AT it.
+    assert (
+        subprocess.run(
+            ["git", "-C", str(repo), "diff", "--quiet", "main", "upstream/main"]
+        ).returncode
+        == 0
+    )
+
+
+def test_a_base_left_ahead_by_old_empty_merges_is_realigned(client, tmp_path):
+    """The migration path, and why this is not just `merge --ff-only`: existing
+    projects already carry the pile, and ff-only would refuse and mint one
+    more. A base whose extra commits change nothing gets pointed at the
+    upstream instead."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    repo = ws.ensure_repo(_uuid.UUID(pid))
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    client.post(f"/api/projects/{pid}/upstream/sync")
+
+    # Stand in for the old implementation's leftovers: commits on the base that
+    # change not one byte.
+    for i in range(3):
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", f"noop{i}"],
+            check=True,
+        )
+    assert len(_base_log(repo)) > 1
+
+    _commit_upstream(up, "next.txt", "next\n")
+    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+
+    assert d["synced"] is True
+    assert not [s for s in _base_log(repo) if s.startswith("noop")]
+    assert (
+        subprocess.run(
+            ["git", "-C", str(repo), "diff", "--quiet", "main", "upstream/main"]
+        ).returncode
+        == 0
+    )
+
+
+def test_local_content_the_upstream_lacks_is_merged_not_discarded(client, tmp_path):
+    """The one case that still needs a real merge: a project seeded with work
+    before it was bound. Fast-forwarding there would throw the work away."""
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    up = _make_upstream(tmp_path)
+    pid = _project(client)
+    repo = ws.ensure_repo(_uuid.UUID(pid))
+    (repo / "mine.txt").write_text("local work\n")
+    subprocess.run(["git", "-C", str(repo), "add", "-A"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "-m", "local: mine"], check=True
+    )
+
+    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+
+    assert d["synced"] is True, d
+    assert (repo / "mine.txt").read_text() == "local work\n"
+    assert (repo / "hello.txt").read_text() == "hi from upstream\n"

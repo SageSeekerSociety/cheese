@@ -81,6 +81,7 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.workspace import identity as ws_identity
 from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
@@ -2173,6 +2174,14 @@ class ChatService:
                     exclude_id=topic.id,
                 )
             project_id = topic.project_id
+            # Who this topic's commits are authored by. Refreshed every turn
+            # rather than once at creation: people connect GitHub after their
+            # first topic, and topics that predate this have no record at all.
+            # Best-effort by construction — see workspace/identity.py.
+            if not is_private:
+                await ws_identity.sync_for_topic(
+                    session, topic.project_id, topic.id, topic.created_by
+                )
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside

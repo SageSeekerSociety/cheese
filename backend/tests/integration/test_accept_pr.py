@@ -537,7 +537,9 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         assert "Reviewed-by: alice" in fake.merge_calls[0]["commit_message"]
         # ...and its title carries "(#N)", which GitHub only auto-appends to
         # the default title — an explicit commit_title replaces that default.
-        assert fake.merge_calls[0]["commit_title"] == f"采纳 做一个东西 (#{number})"
+        # No `--subject` on this card, so the subject is the honest fallback:
+        # `chore: <话题标题>` (提交与 PR 规范, review/pr_text.py).
+        assert fake.merge_calls[0]["commit_title"] == f"chore: 做一个东西 (#{number})"
     finally:
         _reset_client()
 

@@ -75,6 +75,16 @@ class AcceptCard(UuidPk, Timestamps, Base):
     reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)
     # Why this reviewer was suggested (最懂/没参与/有空), for transparency.
     routing_reason: Mapped[str] = mapped_column(Text, default="")
+    # What this topic CHANGED, in the words of whoever did the work — the one
+    # description that survives into permanent history. `change_subject` is a
+    # Conventional Commits subject (`fix(api): …`, imperative, ≤72 chars) and
+    # `change_body` is the why. They become the PR title/body AND the squash
+    # commit that lands on the default branch, so the project's git log stops
+    # reading "采纳 <话题标题> (#213)" — a room name, not a change description.
+    # NULL on cards filed without them (and on every card that predates the
+    # columns): review/services.py falls back to the topic title.
+    change_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    change_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[AcceptStatus] = mapped_column(
         Enum(AcceptStatus, native_enum=False, length=16),
         default=AcceptStatus.pending,

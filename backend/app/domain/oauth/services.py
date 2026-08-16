@@ -695,6 +695,37 @@ async def get_github_user_token_for_handle(
     return token
 
 
+async def get_github_profile_for_handle(
+    session: Any,
+    handle: str,
+    *,
+    provider_ids: tuple[str, ...] = ("github_app", "github"),
+) -> tuple[str, dict] | None:
+    """This handle's connected GitHub account as ``(provider_user_id, profile)``.
+
+    The read behind commit/PR attribution (``workspace/identity.py``), which
+    needs the numeric GitHub id and the login and has no business reaching into
+    this domain's repositories for them.
+
+    `github_app` is tried first because it is the connection the accept flow
+    already pushes and opens PRs with, so preferring it keeps commit authorship
+    and PR authorship pointing at the same account; `github` is the plain login
+    connection, present for people who signed in with GitHub but never
+    authorized the App.
+    """
+    from app.domain.user.repositories import UserRepository
+
+    user = await UserRepository(session).get_by_handle(handle)
+    if user is None:
+        return None
+    repo = OAuthConnectionRepository(session)
+    for provider_id in provider_ids:
+        conn = await repo.get_by_user_and_provider(user.id, provider_id)
+        if conn is not None and conn.provider_user_id:
+            return conn.provider_user_id, dict(conn.raw_profile or {})
+    return None
+
+
 async def get_github_user_token_for_handle_with_reason(
     session: Any, handle: str, *, provider_id: str = "github_app"
 ) -> tuple[str | None, str | None]:

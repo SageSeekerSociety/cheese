@@ -290,7 +290,10 @@ async def _catch_up_snapshot(task: AwaitedTask) -> None:
         checkpoint_worktree,
         task.project_id,
         task.topic_id,
-        f"芝士 edits（后台任务「{task.label}」结束后的最终态）",
+        # Subject stays a plain Conventional Commits line; WHICH task settled
+        # this tree is body material (see ws.SNAPSHOT_MESSAGE's rationale).
+        "chore: snapshot workspace after background task\n\n"
+        f"Final state after the background task {task.label!r} finished.",
     )
     logger.info("catch-up snapshot after task %s: %s", task.id, outcome)
 
