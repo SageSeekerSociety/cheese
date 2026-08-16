@@ -72,6 +72,18 @@ function ready() {
 
 function tryType() {
   if (phase === 'idle' || pending === null) return
+  const line = composerLine()
+  if (phase === 'paste' && !ready()) {
+    // Waiting for the input box costs NOTHING against the retry budget: a
+    // fresh screen's launcher + claude first boot takes well over a minute,
+    // and burning the budget on that wait made the driver abandon the prompt
+    // before claude could even accept it (measured live 2026-08-16: "giving
+    // up in phase paste after 40 ticks" while the pane was still booting;
+    // the turn then sat until the server's 300s retry and read as
+    // zero-output). The prompt is held until the box paints; the server's
+    // own turn retry remains the outer bound.
+    return
+  }
   tries += 1
   if (tries > MAX_TRIES) {
     cheese.log('claude_min: giving up in phase ' + phase + ' after ' + MAX_TRIES + ' ticks')
@@ -79,9 +91,7 @@ function tryType() {
     pending = null
     return
   }
-  const line = composerLine()
   if (phase === 'paste') {
-    if (!ready()) return
     cheese.term.write(PASTE_START + String(pending) + PASTE_END)
     // Not an advance to "submitted" — the next tick VERIFIES the body actually
     // reached the composer before the Enter goes anywhere near it.
