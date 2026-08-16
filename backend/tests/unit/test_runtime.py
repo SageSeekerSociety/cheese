@@ -791,10 +791,10 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
     from app.domain.agent import runtime as rt
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
+    topic, wedged = uuid.uuid4(), uuid.uuid4()
     rt._save_inflight(
         {
-            "wedged": {
+            str(wedged): {
                 "topic_id": str(topic),
                 "started_at": _time.time() - 8 * 3600,
                 "is_resume": False,
@@ -803,13 +803,15 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
     )
     runner = TurnRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["wedged"] = task
-    # Both signals cold: no frame for 8h, and the topic's newest block is 8h old.
-    runner._last_frame_at["wedged"] = time.monotonic() - 8 * 3600
+    runner._live[str(wedged)] = task
+    # Both signals cold: no frame for 8h, and this TURN's newest block is 8h old.
+    runner._last_frame_at[str(wedged)] = time.monotonic() - 8 * 3600
 
-    async def _last_block(topic_ids):
-        assert topic_ids == {topic}
-        return {topic: datetime.now(UTC) - timedelta(hours=8)}
+    async def _last_block(turn_ids):
+        # Probed per TURN, not per topic — a later message in the same room must
+        # not read as this turn being alive.
+        assert turn_ids == {wedged}
+        return {wedged: datetime.now(UTC) - timedelta(hours=8)}
 
     class _Chat:
         def __init__(self):
@@ -836,6 +838,58 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
 
 
 @pytest.mark.anyio
+async def test_a_later_message_does_not_keep_a_wedged_turn_alive(tmp_path, monkeypatch):
+    """房间彻底不响应 的根因：判"卡死"用的是话题最新 block，而**新消息本身就是
+    block**。于是有人越催、卡死的那一轮越判不死，锁就一直被占着，房间越来越死。
+
+    探针改成按轮次之后，别人后来说的话跟这一轮的沉默无关 —— 它照样被扫到、被
+    强制结束，锁才放得出来。"""
+    import time as _time
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic, wedged, later = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rt._save_inflight(
+        {
+            str(wedged): {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 3 * 3600,
+                "is_resume": False,
+            }
+        }
+    )
+    runner = TurnRunner(InProcessBroker())
+    task = await _park_a_task()
+    runner._live[str(wedged)] = task
+    runner._last_frame_at[str(wedged)] = time.monotonic() - 3 * 3600
+
+    async def _last_block(turn_ids):
+        # The room is NOT quiet: someone just sent another message. It belongs to
+        # its own turn, so it says nothing about the wedged one.
+        return {
+            wedged: datetime.now(UTC) - timedelta(hours=3),
+            later: datetime.now(UTC),
+        }
+
+    class _Chat:
+        def __init__(self):
+            self.texts: list[str] = []
+
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+            self.texts.append(text)
+            return {"id": "b1", "content": text}
+
+    chat = _Chat()
+    await runner.sweep_orphans(chat, last_activity=_last_block)
+    await asyncio.sleep(0)
+
+    assert task.cancelled() or task.cancelling()  # the lock is free again
+    assert chat.texts and "卡死" in chat.texts[0]
+
+
+@pytest.mark.anyio
 async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch):
     """A tool call persists no Block, so a turn deep in a tool chain can look
     silent to the DB while being perfectly alive. Cancelling that is worse than
@@ -846,10 +900,10 @@ async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch)
     from app.domain.agent import runtime as rt
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
+    topic, busy = uuid.uuid4(), uuid.uuid4()
     rt._save_inflight(
         {
-            "busy": {
+            str(busy): {
                 "topic_id": str(topic),
                 "started_at": _time.time() - 4 * 3600,
                 "is_resume": False,
@@ -858,11 +912,11 @@ async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch)
     )
     runner = TurnRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["busy"] = task
-    runner._last_frame_at["busy"] = time.monotonic() - 5  # a tool frame just now
+    runner._live[str(busy)] = task
+    runner._last_frame_at[str(busy)] = time.monotonic() - 5  # a tool frame just now
 
-    async def _last_block(topic_ids):
-        return {topic: datetime.now(UTC) - timedelta(hours=4)}  # DB says silent
+    async def _last_block(turn_ids):
+        return {busy: datetime.now(UTC) - timedelta(hours=4)}  # DB says silent
 
     class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -870,7 +924,7 @@ async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch)
 
     assert await runner.sweep_orphans(_Chat(), last_activity=_last_block) == 0
     assert not task.cancelled()
-    assert list(rt._load_inflight()) == ["busy"]  # untouched
+    assert list(rt._load_inflight()) == [str(busy)]  # untouched
     task.cancel()
 
 
@@ -885,9 +939,10 @@ async def test_sweep_spares_live_turns_when_the_activity_probe_fails(
     from app.domain.agent import runtime as rt
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    live = uuid.uuid4()
     rt._save_inflight(
         {
-            "live": {
+            str(live): {
                 "topic_id": str(uuid.uuid4()),
                 "started_at": _time.time() - 9 * 3600,
                 "is_resume": False,
@@ -896,10 +951,10 @@ async def test_sweep_spares_live_turns_when_the_activity_probe_fails(
     )
     runner = TurnRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["live"] = task
-    runner._last_frame_at["live"] = time.monotonic() - 9 * 3600
+    runner._live[str(live)] = task
+    runner._last_frame_at[str(live)] = time.monotonic() - 9 * 3600
 
-    async def _boom(topic_ids):
+    async def _boom(turn_ids):
         raise RuntimeError("PG is down")
 
     class _Chat:
@@ -908,7 +963,7 @@ async def test_sweep_spares_live_turns_when_the_activity_probe_fails(
 
     assert await runner.sweep_orphans(_Chat(), last_activity=_boom) == 0
     assert not task.cancelled()
-    assert list(rt._load_inflight()) == ["live"]
+    assert list(rt._load_inflight()) == [str(live)]
     task.cancel()
 
 
@@ -922,10 +977,10 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
     from app.domain.agent import runtime as rt
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
+    topic, wedged = uuid.uuid4(), uuid.uuid4()
     rt._save_inflight(
         {
-            "wedged": {
+            str(wedged): {
                 "topic_id": str(topic),
                 "started_at": _time.time() - 2700,  # 45 min: silent, but not stale
                 "is_resume": False,
@@ -934,8 +989,8 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
     )
     runner = TurnRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["wedged"] = task
-    runner._last_frame_at["wedged"] = time.monotonic() - 2700
+    runner._live[str(wedged)] = task
+    runner._last_frame_at[str(wedged)] = time.monotonic() - 2700
     scheduled: list[tuple[uuid.UUID, float]] = []
     monkeypatch.setattr(
         runner,
@@ -943,8 +998,8 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
         lambda _chat, tid, after, why, **_kw: scheduled.append((tid, after)),
     )
 
-    async def _last_block(topic_ids):
-        return {topic: datetime.now(UTC) - timedelta(seconds=2700)}
+    async def _last_block(turn_ids):
+        return {wedged: datetime.now(UTC) - timedelta(seconds=2700)}
 
     class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -977,9 +1032,10 @@ async def test_sweep_keeps_a_turn_that_registered_while_it_was_probing(
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     dead_topic, new_topic = uuid.uuid4(), uuid.uuid4()
+    wedged, newcomer = uuid.uuid4(), uuid.uuid4()
     rt._save_inflight(
         {
-            "wedged": {
+            str(wedged): {
                 "topic_id": str(dead_topic),
                 "started_at": _time.time() - 8 * 3600,
                 "is_resume": False,
@@ -988,20 +1044,20 @@ async def test_sweep_keeps_a_turn_that_registered_while_it_was_probing(
     )
     runner = TurnRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["wedged"] = task
-    runner._last_frame_at["wedged"] = time.monotonic() - 8 * 3600
+    runner._live[str(wedged)] = task
+    runner._last_frame_at[str(wedged)] = time.monotonic() - 8 * 3600
 
-    async def _last_block(topic_ids):
+    async def _last_block(turn_ids):
         # A fresh turn starts while the probe is in flight, exactly as a real
         # `_execute` would: load, add itself, save.
         reg = rt._load_inflight()
-        reg["newcomer"] = {
+        reg[str(newcomer)] = {
             "topic_id": str(new_topic),
             "started_at": _time.time(),
             "is_resume": False,
         }
         rt._save_inflight(reg)
-        return {dead_topic: datetime.now(UTC) - timedelta(hours=8)}
+        return {wedged: datetime.now(UTC) - timedelta(hours=8)}
 
     class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -1010,8 +1066,8 @@ async def test_sweep_keeps_a_turn_that_registered_while_it_was_probing(
     await runner.sweep_orphans(_Chat(), last_activity=_last_block)
 
     left = rt._load_inflight()
-    assert "wedged" not in left  # claimed and announced
-    assert "newcomer" in left  # never judged, so never dropped
+    assert str(wedged) not in left  # claimed and announced
+    assert str(newcomer) in left  # never judged, so never dropped
     task.cancel()
 
 
@@ -1102,8 +1158,8 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
     reg[turn_id]["started_at"] = _time.time() - 8 * 3600
     rt._save_inflight(reg)
 
-    async def _last_block(topic_ids):
-        return {topic: datetime.now(UTC) - timedelta(hours=8)}
+    async def _last_block(turn_ids):
+        return {uuid.UUID(turn_id): datetime.now(UTC) - timedelta(hours=8)}
 
     class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):

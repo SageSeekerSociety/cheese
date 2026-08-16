@@ -9,12 +9,14 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.platform_failures import PROMPT_UNDELIVERED_MESSAGE
 from app.domain.agent.service import (
     AgentDelta,
     AgentResult,
     AgentService,
     AgentSessionInfo,
 )
+from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
@@ -506,3 +508,170 @@ async def test_mid_stream_crash_saves_session_pointer(client, tmp_path, monkeypa
     async with factory() as session:
         fresh = await TopicRepository(session).get(topic_id)
     assert fresh is not None and fresh.session_id == "s-partial"
+
+
+class PlatformWordedFailureAgent(AgentService):
+    """A turn that fails with the PLATFORM's own wording rather than a provider's.
+
+    The two sentences below are produced by `hooks_substrate.run_hooks_turn`
+    itself — the model was never reached (undelivered) or never finished
+    (timeout). Both used to fall through chat.py's `else` and be announced as
+    「AI 服务返回错误」, sending whoever debugged it at the model provider."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(model="stub")
+        self.text = text
+
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        yield AgentResult(
+            text=self.text,
+            session_id=resume_session_id,
+            usage=None,
+            is_error=True,
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("text", "code", "title"),
+    [
+        (PROMPT_UNDELIVERED_MESSAGE, "prompt_undelivered", "消息没送到芝士那边"),
+        ("tmux 轮次超时", "turn_timeout", "这轮跑到时间上限，被强制结束"),
+        ("device 轮次超时", "turn_timeout", "这轮跑到时间上限，被强制结束"),
+    ],
+)
+async def test_platform_worded_failures_never_blame_the_ai_service(
+    client, tmp_path, text, code, title
+):
+    factory = client.test_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        agent=PlatformWordedFailureAgent(text),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    frames = [
+        frame
+        async for frame in svc.converse(
+            topic_id=topic_id, author="u", content="做点事", summon=True
+        )
+    ]
+
+    event = next(frame for frame in frames if frame["type"] == "event_block")
+    block = event["block"]
+    assert block["meta"]["event_type"] == "platform_error"
+    assert block["meta"]["code"] == code
+    assert block["meta"]["title"] == title
+    assert block["meta"]["retryable"] is True
+    # The whole point: the room no longer names the AI service for a failure the
+    # AI service had no part in.
+    assert "AI 服务返回错误" not in block["content"]
+    assert block["content"].count("。") == 1
+    # 信息不能丢，只能收起来：真实原因和该怎么办都在展开区里。
+    assert "不是 AI 服务" in block["meta"]["detail"]
+    error = next(frame for frame in frames if frame["type"] == "error")
+    assert error["code"] == code
+
+
+@pytest.mark.anyio
+async def test_a_message_queued_behind_a_running_turn_says_so_in_the_room(
+    client, tmp_path
+):
+    """One turn per topic is by design; a SILENT queue behind it is not.
+
+    While a turn holds the topic lock, every later message used to be posted and
+    then vanish into `Lock.acquire()` with nothing said — indistinguishable, from
+    the room, from a platform that had died. That is what「会话死掉再也无法工作」
+    looked like from the outside."""
+    factory = client.test_factory  # type: ignore[attr-defined]
+    # SlowAgent parks mid-turn and never lets go until released — from the
+    # platform's side that is exactly the shape of a wedged claude.
+    agent = SlowAgent()
+    svc = ChatService(
+        session_factory=factory,
+        agent=agent,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id = topic.id
+        await session.commit()
+
+    async def _drain(content: str, sink: list[dict]) -> None:
+        async for frame in svc.converse(
+            topic_id=topic_id, author="u", content=content, summon=True
+        ):
+            sink.append(frame)
+
+    first: list[dict] = []
+    first_task = asyncio.create_task(_drain("做点事", first))
+    await asyncio.wait_for(agent.started.wait(), 5)
+    assert svc.topic_lock_holder(topic_id) is not None
+
+    async def _wait_for(sink: list[dict], kind: str, task: asyncio.Task) -> dict | None:
+        for _ in range(500):
+            await asyncio.sleep(0.01)
+            for frame in sink:
+                if frame["type"] == kind:
+                    return frame
+            if task.done():
+                task.result()  # surface the real failure, not just "no frame"
+                return None
+        return None
+
+    second: list[dict] = []
+    second_task = asyncio.create_task(_drain("还在吗？", second))
+
+    queued = await _wait_for(second, "event_block", second_task)
+    assert queued is not None, (
+        f"a queued message must not disappear into silence; got {second}"
+    )
+    block = queued["block"]
+    assert block["meta"]["event_type"] == "turn_queued"
+    assert block["meta"]["severity"] == "info"
+    assert "上一轮还没结束" in block["content"]
+    assert "排在它后面" in block["content"]
+    # 信息不能丢，只能收起来：为什么要等、要等到什么时候、以及"别重发"都在展开区。
+    assert "不用重发" in block["meta"]["detail"]
+    # The message itself still landed instantly (现场必须实时) — the queue notice
+    # is in ADDITION to it, not instead of it.
+    assert [f["type"] for f in second][0] == "user_block"
+
+    # One holder, one notice: more people piling in behind the SAME stuck turn
+    # must not produce a wall of identical grey lines. Their messages still land.
+    third: list[dict] = []
+    third_task = asyncio.create_task(_drain("？？", third))
+    assert await _wait_for(third, "user_block", third_task) is not None
+
+    async with factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    queued_blocks = [
+        b for b in blocks if (b.meta or {}).get("event_type") == "turn_queued"
+    ]
+    assert len(queued_blocks) == 1
+
+    agent.release.set()
+    for task in (first_task, second_task, third_task):
+        await asyncio.wait_for(task, 10)

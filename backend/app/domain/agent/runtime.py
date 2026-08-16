@@ -481,22 +481,42 @@ class TurnRunner:
     ) -> set[str]:
         """Of the turns this process believes it is running, which have gone
         quiet on BOTH signals? Startup passes no `last_activity` — there is
-        nothing in `_live` to judge then, so the probe is skipped entirely."""
+        nothing in `_live` to judge then, so the probe is skipped entirely.
+
+        The block probe is scoped to THE TURN, not to its topic. Scoping it to
+        the topic made the check answer the wrong question — "has anything at all
+        happened in this room?" — and anything includes **other people's new
+        messages**. So every message someone sent to a wedged topic reset the
+        wedged turn's silence clock, and the turn was never cancelled: the more
+        someone tried to wake the room, the more certainly it stayed dead. That
+        is the 房间彻底不响应 incident. What we need to know is whether THIS TURN
+        is producing anything, and only its own blocks answer that."""
         candidates = {tid for tid in reg if tid in self._live}
         if not candidates or last_activity is None:
             return set()
-        topics = {uuid.UUID(reg[tid]["topic_id"]) for tid in candidates}
+        turn_uuids: dict[str, uuid.UUID] = {}
+        for tid in candidates:
+            try:
+                turn_uuids[tid] = uuid.UUID(tid)
+            except ValueError:
+                # A registry key that is not a turn id cannot be probed; leave it
+                # to the not-in-`_live` branch rather than judging it blind.
+                continue
+        if not turn_uuids:
+            return set()
         try:
-            blocks_at = await last_activity(topics)
+            blocks_at = await last_activity(set(turn_uuids.values()))
         except Exception:  # noqa: BLE001 — a failed probe must not cancel turns
             logger.exception("orphan sweep: last-activity probe failed")
             return set()
         mono = time.monotonic()
         wedged: set[str] = set()
         for tid in candidates:
+            if tid not in turn_uuids:
+                continue
             info = reg[tid]
-            # Wall-clock age of the newest Block in the topic...
-            last_block = blocks_at.get(uuid.UUID(info["topic_id"]))
+            # Wall-clock age of the newest Block THIS TURN produced...
+            last_block = blocks_at.get(turn_uuids[tid])
             block_quiet_s = (
                 (now - last_block.timestamp())
                 if last_block is not None
@@ -571,9 +591,12 @@ class TurnRunner:
            `turn_ceiling` can legitimately hold the deadline open for hours.
 
         Silence is judged on two signals, taking the more recent — a turn is only
-        dead if BOTH are cold. `last_activity` is the topic's newest Block (the
-        signal a human can verify from the UI, and the one that survives a wrong
-        `_live`); `_last_frame_at` is the newest frame this process published,
+        dead if BOTH are cold. `last_activity` is the newest Block THIS TURN
+        produced (the signal a human can verify from the UI, and the one that
+        survives a wrong `_live`) — deliberately not the topic's newest block,
+        which counts other people's messages and so let anyone trying to wake a
+        wedged room keep its silence clock permanently reset;
+        `_last_frame_at` is the newest frame this process published,
         which also counts tool calls — those persist no Block, so a long
         tool-only stretch is alive but invisible to the DB alone. Erring toward
         "still alive" is deliberate: resuming a live turn is worse than noticing

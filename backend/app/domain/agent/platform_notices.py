@@ -68,6 +68,9 @@ EVENT_TURN_FAILED: Final = "turn_failed"
 EVENT_TURN_TIMEOUT: Final = "turn_timeout"
 #: 部署中断了轮次（孤儿轮次扫底）。
 EVENT_DEPLOY_INTERRUPTED: Final = "deploy_interrupted"
+#: 这条消息排在同话题上一轮后面（每话题串行，锁被占着）。不是错误 —— 但没有它，
+#: 一个卡住的轮次会让后面每条消息都石沉大海，房间看起来彻底死了。
+EVENT_TURN_QUEUED: Final = "turn_queued"
 
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_swap` / `action` 是别处已有的，不在这里重复登记。
@@ -83,6 +86,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
         EVENT_DEPLOY_INTERRUPTED,
+        EVENT_TURN_QUEUED,
     }
 )
 

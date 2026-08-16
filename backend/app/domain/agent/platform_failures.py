@@ -22,6 +22,31 @@ _VCS_PERMS_MARKERS = (
 )
 HOST_UNREACHABLE_CODE = "host_unreachable"
 SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE = "subscription_credential_expired"
+PROMPT_UNDELIVERED_CODE = "prompt_undelivered"
+TURN_TIMEOUT_CODE = "turn_timeout"
+
+# The platform's OWN wording for "the prompt never reached the claude session"
+# and for "this turn hit its ceiling" — the two failures the hooks substrate
+# raises by itself (``hooks_substrate.run_hooks_turn``). They live HERE, next to
+# the classifier that recognises them, for the same reason ``DEVICE_OFFLINE_MESSAGE``
+# does: recognition is by matching the platform's own marker, never by guessing at
+# free-form text. hooks_substrate imports these rather than spelling its own copy,
+# so the sentence and the classification cannot drift apart.
+#
+# Both used to fall through to the `else` in chat.py and render as
+# 「AI 服务返回错误」 — blaming the model provider for a turn the provider never
+# saw, which sends whoever is debugging in exactly the wrong direction.
+PROMPT_UNDELIVERED_MESSAGE = (
+    "⚠️ 这条消息没能送到芝士那边（她的会话没有任何反应）。改动都还在，"
+    "再 @ 她一次就会重开会话重试。"
+)
+_PROMPT_UNDELIVERED_MARKER = "这条消息没能送到芝士那边"
+# Each hooks backend prefixes its own transport ("tmux 轮次超时" /
+# "device 轮次超时"), so the marker is the shared tail rather than the whole
+# sentence. `TURN_TIMEOUT_MESSAGE` is the base wording; subclasses build theirs
+# from `TURN_TIMEOUT_MARKER` so a renamed marker can never leave one behind.
+TURN_TIMEOUT_MARKER = "轮次超时"
+TURN_TIMEOUT_MESSAGE = TURN_TIMEOUT_MARKER
 
 # The platform's OWN wording for "the machine this topic is pinned to is not
 # answering". It lives here, not in the device provider that raises it, because
@@ -163,6 +188,44 @@ WORKSPACE_VCS_PERMS = PlatformFailure(
 )
 
 
+PROMPT_UNDELIVERED = PlatformFailure(
+    code=PROMPT_UNDELIVERED_CODE,
+    title="消息没送到芝士那边",
+    content="这轮没能开始：消息没送进芝士的会话，她那边一点反应都没有。",
+    detail=(
+        "这不是 AI 服务的问题 —— 请求根本没走到模型那一步。"
+        "消息是打进运行环境里那个 claude 会话的，而它没有接住："
+        "常见的是会话停在某个等人回答的界面上，或者它所在的终端已经不在了。"
+        "工作区里的文件和已完成的改动都没有受影响。"
+        "再 @ 一次芝士，平台会重开会话重试；若连着几次都这样，请把这条提示转给管理员。"
+    ),
+    retryable=True,
+    # NOT host-scoped: a wedged or dead claude session is a property of THIS
+    # topic's screen, not of the box. Every other topic on the same machine is
+    # usually fine, so counting this against the machine would quarantine a
+    # healthy box and drag unrelated topics onto a new one for nothing.
+    host_scoped=False,
+)
+
+TURN_TIMEOUT = PlatformFailure(
+    code=TURN_TIMEOUT_CODE,
+    title="这轮跑到时间上限，被强制结束",
+    content="这轮到了平台的时间上限还没跑完，已被强制结束。",
+    detail=(
+        "这不是 AI 服务返回的错误 —— 是这一轮在时限内没有收尾。"
+        "常见的是卡在某个一直不返回的命令上，或者会话停在了一个等人回答的界面上。"
+        "已完成的改动都还在工作区里。"
+        "再 @ 一次芝士，它会从断点接着做；如果同一件事反复超时，把它拆小一点再试。"
+    ),
+    retryable=True,
+    # NOT host-scoped, same reasoning as PROMPT_UNDELIVERED — and more sharply so:
+    # turns time out on perfectly healthy machines all the time (a long build, a
+    # command that hangs). Letting that indict the box would quarantine machines
+    # for the most ordinary failure there is.
+    host_scoped=False,
+)
+
+
 # Every classification this module can return. Keep new failures in this tuple —
 # ``HOST_SCOPED_CODES`` is derived from it, so a failure left out silently opts
 # itself out of the machine-health accounting.
@@ -171,6 +234,8 @@ ALL_FAILURES = (
     RUNTIME_IMAGE_MISSING,
     HOST_UNREACHABLE,
     WORKSPACE_VCS_PERMS,
+    PROMPT_UNDELIVERED,
+    TURN_TIMEOUT,
 )
 
 # Failure codes that indict the MACHINE rather than the turn. The turn layer reads
@@ -261,6 +326,34 @@ def is_host_unreachable(value: BaseException | str) -> bool:
     return False
 
 
+def _marker_in(value: BaseException | str, marker: str) -> bool:
+    """Does the platform's own marker appear in this value (or anywhere in its
+    exception chain)? The shared shape behind the marker-based classifications."""
+    if isinstance(value, str):
+        return marker in value
+
+    seen: set[int] = set()
+    current: BaseException | None = value
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if marker in str(current):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def is_prompt_undelivered(value: BaseException | str) -> bool:
+    """Identify "the prompt never reached the claude session" — the hooks
+    substrate's own delivery-timeout wording, not a guess at provider copy."""
+    return _marker_in(value, _PROMPT_UNDELIVERED_MARKER)
+
+
+def is_turn_timeout(value: BaseException | str) -> bool:
+    """Identify "this turn hit its ceiling" — matches the shared tail of the
+    hooks backends' timeout messages (plain / ``tmux`` / ``device``)."""
+    return _marker_in(value, TURN_TIMEOUT_MARKER)
+
+
 def classify_platform_failure(
     value: BaseException | str,
 ) -> PlatformFailure | None:
@@ -272,4 +365,11 @@ def classify_platform_failure(
         return WORKSPACE_VCS_PERMS
     if is_host_unreachable(value):
         return HOST_UNREACHABLE
+    # Checked last: the two markers below are short platform phrases, so a
+    # failure that is BOTH (a turn that timed out because the disk filled, say)
+    # must be reported as the specific cause above, not as its symptom.
+    if is_prompt_undelivered(value):
+        return PROMPT_UNDELIVERED
+    if is_turn_timeout(value):
+        return TURN_TIMEOUT
     return None

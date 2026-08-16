@@ -76,6 +76,38 @@ describe('platformErrorPresentation', () => {
     expect(out?.icon).toBe('mdi-package-variant-closed-remove')
   })
 
+  it('tells people to re-@ 芝士 instead of promising a recovery nobody is doing', () => {
+    // 未送达 / 轮次超时：平台这边没有任何"正在恢复"的动作，能救它的只有再 @ 一次。
+    // 套用通用的「平台正在恢复」就是在承诺一件没人在做的事。
+    const undelivered = platformErrorPresentation(
+      eventBlock(
+        {
+          event_type: 'platform_error',
+          code: 'prompt_undelivered',
+          title: '消息没送到芝士那边',
+          retryable: true,
+        },
+        '这轮没能开始：消息没送进芝士的会话，她那边一点反应都没有。'
+      )
+    )
+    expect(undelivered?.status).toBe('没送达 · 再 @芝士一次就重开会话')
+    expect(undelivered?.status).not.toContain('平台正在恢复')
+
+    const timedOut = platformErrorPresentation(
+      eventBlock(
+        {
+          event_type: 'platform_error',
+          code: 'turn_timeout',
+          title: '这轮跑到时间上限，被强制结束',
+          retryable: true,
+        },
+        '这轮到了平台的时间上限还没跑完，已被强制结束。'
+      )
+    )
+    expect(timedOut?.status).toBe('已强制结束 · 再 @芝士一次接着做')
+    expect(timedOut?.icon).toBe('mdi-timer-alert')
+  })
+
   it('does not turn ordinary system events into incident cards', () => {
     expect(platformErrorPresentation(eventBlock({ action: 'doc' }))).toBeNull()
     expect(platformErrorPresentation(eventBlock(null))).toBeNull()

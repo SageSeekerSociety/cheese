@@ -14,9 +14,12 @@ import asyncio
 import logging
 import re
 import shutil
+import time
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -34,7 +37,9 @@ from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
+    EVENT_TURN_QUEUED,
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     WHO_HUMAN,
     WHO_PLATFORM,
     notice,
@@ -795,6 +800,27 @@ def _is_out_of_credit(detail: str | None) -> bool:
     return any(m.lower() in lowered for m in _OUT_OF_CREDIT_MARKERS)
 
 
+# How often the room may be told "you are queued behind the running turn" for
+# ONE holder. Not once-and-for-all: someone arriving twenty minutes into a wedged
+# turn would otherwise get the same silence the notice exists to end, with the
+# only explanation scrolled far above. Not per-message either: five people
+# piling in inside a minute produce one line, not five.
+QUEUE_NOTICE_INTERVAL_S = 600.0
+
+
+@dataclass
+class _LockHolder:
+    """The turn currently holding a topic's serial lock (see `_topic_turn_lock`).
+
+    `since` is `time.monotonic()`, not the wall clock: it is only ever used as a
+    duration, and a monotonic clock is the one that cannot jump backwards."""
+
+    turn_id: uuid.UUID | None
+    since: float
+    #: When the room was last told someone is queued behind THIS holder.
+    announced_at: float | None = None
+
+
 class ChatService:
     def __init__(
         self,
@@ -835,6 +861,13 @@ class ChatService:
         # Per-topic serial queue (spec §9.1): one agent turn per topic at a
         # time, so concurrent messages to the same topic don't race.
         self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
+        # WHO holds each topic's lock, and since when. An `asyncio.Lock` can only
+        # answer "taken"; a room that is waiting needs to be told what it is
+        # waiting for and for how long — without that, a turn that wedges makes
+        # every later message vanish into a queue nothing reports (the 房间彻底
+        # 不响应 incident). Also remembers when the room was last told, so N
+        # messages piling in behind ONE holder produce one line, not N.
+        self._lock_holders: dict[uuid.UUID, _LockHolder] = {}
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
         self._memory_tasks: set[asyncio.Task] = set()
@@ -859,6 +892,91 @@ class ChatService:
             lock = asyncio.Lock()
             self._topic_locks[topic_id] = lock
         return lock
+
+    def topic_lock_holder(self, topic_id: uuid.UUID) -> dict | None:
+        """The turn currently holding this topic's serial lock, or None when the
+        topic is free. `running_s` is how long it has held it — the number the
+        queue notice quotes, and the one a human can sanity-check against the
+        turn's own start time."""
+        holder = self._lock_holders.get(topic_id)
+        if holder is None:
+            return None
+        return {
+            "turn_id": str(holder.turn_id) if holder.turn_id else None,
+            "running_s": max(0.0, time.monotonic() - holder.since),
+        }
+
+    @asynccontextmanager
+    async def _topic_turn_lock(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID | None
+    ) -> AsyncIterator[None]:
+        """Hold the topic's serial lock AND record who is holding it.
+
+        Every acquisition of `_lock_for` that belongs to a turn goes through
+        here — a holder the bookkeeping doesn't know about is exactly the
+        invisible queue this exists to end."""
+        lock = self._lock_for(topic_id)
+        await lock.acquire()
+        self._lock_holders[topic_id] = _LockHolder(
+            turn_id=turn_id, since=time.monotonic()
+        )
+        try:
+            yield
+        finally:
+            self._lock_holders.pop(topic_id, None)
+            lock.release()
+
+    async def _announce_queued_behind(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> AsyncIterator[dict]:
+        """Say, in the room, that this turn is queued behind a running one.
+
+        This is the ONLY thing standing between "the platform is working on it"
+        and "I sent a message and nothing whatsoever happened". The project-level
+        concurrency gate already posts its own 排队 event (`TurnRunner._queued_text`);
+        the per-topic lock — the one a wedged turn holds — used to post nothing at
+        all, which is what made a stuck turn look like a dead room.
+
+        Yields at most one `event_block` frame, and at most once every
+        `QUEUE_NOTICE_INTERVAL_S` per holder — see that constant for why it is
+        neither once-per-message nor once-per-holder."""
+        holder = self._lock_holders.get(topic_id)
+        if holder is None:
+            return
+        now = time.monotonic()
+        if (
+            holder.announced_at is not None
+            and now - holder.announced_at < QUEUE_NOTICE_INTERVAL_S
+        ):
+            return
+        if not self._lock_for(topic_id).locked():
+            # Released between the two reads — no queue, nothing to announce.
+            return
+        holder.announced_at = now
+        running_s = max(0.0, now - holder.since)
+        silence_min = round(settings.turn_silence_timeout_s / 60)
+        payload = await self.post_system_event(
+            topic_id,
+            "⏳ 上一轮还没结束，这条消息排在它后面，等它跑完就接着处理。",
+            turn_id,
+            meta=notice(
+                EVENT_TURN_QUEUED,
+                severity=SEVERITY_INFO,
+                # 平台自己会排到、也会在卡死时自己收拾，没人需要动手。
+                who=WHO_PLATFORM,
+                detail=(
+                    f"同一个话题的轮次是排队执行的，上一轮已经跑了 "
+                    f"{round(running_s / 60)} 分钟还没结束，所以这条消息要等它。"
+                    f"你的消息已经存下了，不会丢，也不用重发 —— "
+                    f"重发只会在后面多排一条。"
+                    f"万一上一轮是真卡死了：只要它连着 {silence_min} 分钟一个字都不"
+                    f"输出，平台的巡检就会强制结束它，并自动从断点接着跑。"
+                ),
+                detail_label="详细说明",
+            ),
+        )
+        if payload is not None:
+            yield {"type": "event_block", "block": payload}
 
     async def converse(
         self,
@@ -933,7 +1051,14 @@ class ChatService:
             if ack is not None:
                 yield {"type": "reaction", **ack}
 
-        async with self._lock_for(topic_id):
+        # 现场必须实时, part two: the message landed above, but if another turn
+        # is still running this one cannot start yet. Say so BEFORE blocking —
+        # a silent wait here is indistinguishable, from the room, from a dead
+        # platform, and that is exactly how a wedged turn used to make a topic
+        # look permanently unresponsive.
+        async for frame in self._announce_queued_behind(topic_id, turn_id):
+            yield frame
+        async with self._topic_turn_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -957,7 +1082,9 @@ class ChatService:
         posted — the instruction is prompt-only, so the visible result is only
         what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
         turn_id = turn_id or uuid.uuid4()
-        async with self._lock_for(topic_id):
+        async for frame in self._announce_queued_behind(topic_id, turn_id):
+            yield frame
+        async with self._topic_turn_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=prompt or KICKOFF_PROMPT,
@@ -1086,7 +1213,11 @@ class ChatService:
         broker = get_broker()
         channel = str(topic_id)
         landed = 0
-        async with self._lock_for(topic_id):
+        # Registered as a holder like any turn (turn_id None — this is a drain,
+        # not a turn): a message that queues behind it must still be told the
+        # topic is busy, and `_announce_queued_behind` has nothing to say about
+        # a holder the bookkeeping never saw.
+        async with self._topic_turn_lock(topic_id, None):
             async for frame in self._reconcile_spool(topic.project_id, topic_id, None):
                 await broker.publish(channel, frame)
                 landed += 1
@@ -2781,7 +2912,7 @@ class ChatService:
             if project is None or project.root_topic_id is None:
                 raise NotFoundError("Project has no root topic")
             root_topic_id = project.root_topic_id
-        async with self._lock_for(root_topic_id):
+        async with self._topic_turn_lock(root_topic_id, None):
             return await self._run_heartbeat_locked(project_id=project_id)
 
     async def _run_heartbeat_locked(self, *, project_id: uuid.UUID) -> dict:

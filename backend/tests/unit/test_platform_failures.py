@@ -1,8 +1,14 @@
 import errno
 
 from app.domain.agent.platform_failures import (
+    ALL_FAILURES,
+    HOST_SCOPED_CODES,
+    PROMPT_UNDELIVERED,
+    PROMPT_UNDELIVERED_CODE,
     RUNTIME_IMAGE_MISSING_CODE,
     STORAGE_EXHAUSTED_CODE,
+    TURN_TIMEOUT,
+    TURN_TIMEOUT_CODE,
     WORKSPACE_VCS_PERMS_CODE,
     classify_platform_failure,
     is_storage_exhausted,
@@ -148,3 +154,76 @@ def test_workspace_vcs_perms_payload_is_stable_and_sanitized():
     # both are checked.
     assert "/ws/p" not in failure.content + failure.detail
     assert "AI 服务" not in failure.content + failure.detail
+
+
+def test_undelivered_prompt_is_not_blamed_on_the_ai_service():
+    """The hooks substrate's delivery timeout: the message never reached the
+    claude session, so the model provider never saw this turn at all. It used to
+    fall through to chat.py's `else` and render as 「AI 服务返回错误」."""
+    from app.domain.agent.hooks_substrate import UNDELIVERED_MESSAGE
+
+    failure = classify_platform_failure(UNDELIVERED_MESSAGE)
+
+    assert failure is not None
+    assert failure.code == PROMPT_UNDELIVERED_CODE
+    assert failure.meta["event_type"] == "platform_error"
+    assert failure.meta["title"] == "消息没送到芝士那边"
+    # Re-@ing does work (a new session is opened), so this is retryable.
+    assert failure.retryable is True
+    # A dead screen is this topic's problem, not the box's — see the comment on
+    # PROMPT_UNDELIVERED. Indicting the machine would quarantine a healthy box.
+    assert failure.host_scoped is False
+    assert failure.code not in HOST_SCOPED_CODES
+    # 卡面一句话，解释在展开区（平台提示统一契约）。
+    assert failure.content.count("。") == 1
+    assert "不是 AI 服务的问题" in failure.detail
+    assert "再 @ 一次" in failure.detail
+
+
+def test_turn_timeout_is_classified_for_every_hooks_backend():
+    """All three timeout messages — the base one and each transport's prefixed
+    variant — must classify, or the backend that wrote its own copy silently
+    keeps blaming the AI service."""
+    from app.domain.agent.device_provider import DeviceProvider
+    from app.domain.agent.hooks_substrate import HooksTurnProvider
+    from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+    for message in (
+        HooksTurnProvider._timeout_message,
+        TmuxHooksProvider._timeout_message,
+        DeviceProvider._timeout_message,
+    ):
+        failure = classify_platform_failure(message)
+        assert failure is not None, message
+        assert failure.code == TURN_TIMEOUT_CODE, message
+
+    assert TURN_TIMEOUT.retryable is True
+    # Turns time out on perfectly healthy machines; this must never quarantine one.
+    assert TURN_TIMEOUT.host_scoped is False
+    assert TURN_TIMEOUT_CODE not in HOST_SCOPED_CODES
+    assert TURN_TIMEOUT.meta["title"] == "这轮跑到时间上限，被强制结束"
+    assert TURN_TIMEOUT.content.count("。") == 1
+    assert "不是 AI 服务返回的错误" in TURN_TIMEOUT.detail
+
+
+def test_a_more_specific_cause_still_wins_over_the_timeout_marker():
+    """A turn that timed out BECAUSE the disk filled must report the disk — the
+    symptom must never mask the cause it is checked after."""
+    failure = classify_platform_failure(
+        "tmux 轮次超时（[Errno 28] No space left on device）"
+    )
+    assert failure is not None
+    assert failure.code == STORAGE_EXHAUSTED_CODE
+
+
+def test_the_two_new_markers_do_not_fire_on_unrelated_copy():
+    assert classify_platform_failure("请求超时，请稍后再试") is None
+    assert classify_platform_failure("Read timed out. (read timeout=600)") is None
+    assert classify_platform_failure("消息发送失败") is None
+
+
+def test_every_failure_is_registered_for_host_scoped_accounting():
+    """`HOST_SCOPED_CODES` is derived from `ALL_FAILURES`, so a failure left out
+    of the tuple silently opts itself out of the machine-health accounting."""
+    for failure in (PROMPT_UNDELIVERED, TURN_TIMEOUT):
+        assert failure in ALL_FAILURES

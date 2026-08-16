@@ -64,37 +64,41 @@ class SchedulerService:
 
         return await get_turn_runner().sweep_orphans(
             self._chat,
-            last_activity=self.last_block_at,
+            last_activity=self.last_turn_block_at,
             silence_s=settings.turn_silence_timeout_s,
         )
 
-    async def last_block_at(
-        self, topic_ids: set[uuid.UUID]
+    async def last_turn_block_at(
+        self, turn_ids: set[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
-        """Newest block timestamp per topic — the liveness probe the orphan sweep
+        """Newest block timestamp per TURN — the liveness probe the orphan sweep
         judges silence on. Lives here rather than in TurnRunner because the runner
-        has no DB binding, and it is the same signal a human reads off the topic
-        (「最后一块是几点」), which is what makes a sweep verdict checkable."""
-        if not topic_ids:
+        has no DB binding, and it is still a signal a human can read off the topic
+        (「这一轮最后说话是几点」), which is what makes a sweep verdict checkable.
+
+        Per turn, not per topic. Per topic it also counted blocks the wedged turn
+        had nothing to do with — above all NEW HUMAN MESSAGES, each of which
+        carries its own turn id. Anyone poking a dead room therefore refreshed
+        the corpse's silence clock and kept it from ever being swept, which is
+        precisely the behaviour that made a stuck topic look permanently dead."""
+        if not turn_ids:
             return {}
         async with self._sessions() as session:
             rows = (
                 await session.execute(
-                    select(Block.topic_id, func.max(Block.created_at))
-                    .where(Block.topic_id.in_(topic_ids))
-                    .group_by(Block.topic_id)
+                    select(Block.turn_id, func.max(Block.created_at))
+                    .where(Block.turn_id.in_(turn_ids))
+                    .group_by(Block.turn_id)
                 )
             ).all()
         out: dict[uuid.UUID, datetime] = {}
-        for topic_id, last in rows:
-            if last is None:
+        for turn_id, last in rows:
+            if turn_id is None or last is None:
                 continue
             # Same normalization as reap_idle_containers: the column is TIMESTAMPTZ
             # but some drivers hand back a naive value, and a naive one would blow
             # up the subtraction rather than merely being wrong.
-            out[topic_id] = (
-                last if last.tzinfo is not None else last.replace(tzinfo=UTC)
-            )
+            out[turn_id] = last if last.tzinfo is not None else last.replace(tzinfo=UTC)
         return out
 
     async def reap_idle_containers(self, idle_hours: float = IDLE_REAP_HOURS) -> int:

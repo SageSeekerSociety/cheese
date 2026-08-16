@@ -29,6 +29,10 @@ from dataclasses import dataclass
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
+from app.domain.agent.platform_failures import (
+    PROMPT_UNDELIVERED_MESSAGE,
+    TURN_TIMEOUT_MESSAGE,
+)
 from app.domain.agent.service import DISALLOWED_TOOLS, AgentEvent, AgentResult
 from app.domain.workspace import service as ws
 
@@ -140,10 +144,11 @@ exit 0
 # reported in seconds instead of being indistinguishable from "still working"
 # for fifteen minutes (dev, 2026-08-08).
 DELIVERY_TIMEOUT_S = 25.0
-UNDELIVERED_MESSAGE = (
-    "⚠️ 这条消息没能送到芝士那边（她的会话没有任何反应）。改动都还在，"
-    "再 @ 她一次就会重开会话重试。"
-)
+# The wording itself lives in `platform_failures` — that module classifies this
+# failure by matching the platform's own marker, so keeping one copy is what
+# stops the sentence and its classification from drifting apart (the drift is
+# what made this render as 「AI 服务返回错误」).
+UNDELIVERED_MESSAGE = PROMPT_UNDELIVERED_MESSAGE
 
 
 @dataclass
@@ -293,7 +298,10 @@ class HooksTurnProvider[ScreenT]:
 
     name: str = "hooks"
     _needs_topic_message = "本轮需要话题上下文"
-    _timeout_message = "轮次超时"
+    # A subclass may prefix its transport ("tmux 轮次超时"), but it must keep
+    # `TURN_TIMEOUT_MARKER` in the string — that marker is how the failure gets
+    # classified as a turn timeout instead of being blamed on the AI service.
+    _timeout_message = TURN_TIMEOUT_MESSAGE
 
     def __init__(
         self,
