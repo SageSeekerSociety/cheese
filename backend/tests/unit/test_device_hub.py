@@ -142,6 +142,30 @@ async def test_screens_in_project_only_counts_online():
     assert hub.screens_in_project(project) == []
 
 
+async def test_device_disconnect_drops_its_screen_subscription():
+    from app.domain.agent.hook_events import HookRouter
+    from app.domain.agent.hooks_substrate import HooksTurnProvider
+
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev1", transport)
+    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    assert screen.project_id is not None and screen.topic_id is not None
+
+    router = HookRouter()
+    provider = HooksTurnProvider(router=router)
+    subscription = await provider.ensure_subscription(
+        screen.project_id, screen.topic_id
+    )
+    provider._live[screen.topic_id] = screen
+
+    await hub.detach_device("dev1", transport)
+
+    assert subscription.consumer_task is not None
+    assert subscription.consumer_task.done()
+    assert router.push(str(screen.topic_id), {"hook_event_name": "Stop"}) is False
+
+
 async def test_adopt_screen_reregisters_running_screen_after_restart():
     # After a server restart the device (frozen cli) re-announces the screens it kept
     # alive; adopting rebinds sid + screen token to the agent identity so viewers and

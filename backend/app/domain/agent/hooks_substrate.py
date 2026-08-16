@@ -23,12 +23,17 @@ All pure / transport-free, so it is unit-testable without Docker or a device.
 import asyncio
 import logging
 import uuid
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import event_spool
-from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
+from app.domain.agent.hook_events import (
+    HookRouter,
+    HookSink,
+    hook_router,
+    translate_hook,
+)
 from app.domain.agent.service import (
     DISALLOWED_TOOLS,
     AgentDeliveryFailure,
@@ -36,9 +41,14 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
 )
-from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
+
+# Teardown is initiated by the layers that know a screen disappeared (the
+# device hub and workspace/container lifecycle), while subscription ownership
+# stays here. Weak references avoid making test providers or rebuilt pools live
+# forever merely because they registered for lifecycle notifications.
+_PROVIDERS: weakref.WeakSet[object] = weakref.WeakSet()
 
 # How many times one turn re-sends an abandoned prompt (#445) before declaring
 # the screen's input path broken and letting the no-output bound take over.
@@ -49,18 +59,6 @@ _MAX_REDELIVERIES = 3
 # session's life, not a turn's. Topic-scoped, so a stale one still can't reach
 # another topic. Shared by both backends.
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
-
-
-def _park_stale_hook(
-    project_id: uuid.UUID, topic_id: uuid.UUID, eid: str, payload: dict
-) -> None:
-    """Durably park a hook this turn refuses to trust (see ``HookRouter.drain``)
-    into the same spool a later reconcile drains — best-effort, mirrors the
-    /sandbox/hooks endpoint's own park-on-no-listener path."""
-    try:
-        event_spool.append(ws.spool_dir(project_id, topic_id), eid, payload)
-    except Exception:  # noqa: BLE001 — parking is best-effort
-        logger.warning("stale hook park failed for topic %s", topic_id, exc_info=True)
 
 
 def hooks_settings(extra_stop: list[str] | None = None) -> dict:
@@ -173,6 +171,36 @@ class ActivityTracker:
         self.suspect_since = None
 
 
+@dataclass
+class HookDelivery:
+    """One translated hook arrival on an open turn marker.
+
+    ``event`` is nullable because an ignored hook still proves prompt delivery
+    and activity even though it has no room-visible ``AgentEvent`` counterpart.
+    """
+
+    event: AgentEvent | AgentDeliveryFailure | None
+
+
+@dataclass
+class TurnMark:
+    """The current platform turn interval on a topic's long-lived hook stream."""
+
+    turn_id: uuid.UUID | None
+    queue: asyncio.Queue[HookDelivery]
+
+
+@dataclass
+class TopicSubscription:
+    """Provider-owned state whose lifetime matches one interactive screen."""
+
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    sink: HookSink
+    current_turn: TurnMark | None = None
+    consumer_task: asyncio.Task[None] | None = None
+
+
 # How often a suspected-wedged turn re-checks liveness while it stays idle (a
 # single ``confirm_alive`` at the 5-minute mark isn't enough — the screen could
 # die at minute 6 and go unnoticed until the 3-hour hard ceiling otherwise).
@@ -183,7 +211,7 @@ CONFIRM_POLL_S = 15.0
 
 async def run_hooks_turn(
     *,
-    queue: "asyncio.Queue[dict]",
+    queue: "asyncio.Queue[dict] | asyncio.Queue[HookDelivery]",
     idle_suspect_s: float,
     hard_ceiling_s: float,
     resume_session_id: str | None,
@@ -215,9 +243,8 @@ async def run_hooks_turn(
     ``idle_suspect_s == hard_ceiling_s``, this reduces to exactly the old
     single-deadline behaviour.
 
-    The CALLER owns the queue lifecycle — it must ``router.register`` BEFORE
-    ensuring the screen / sending the prompt (so no hook is missed) and
-    ``unregister`` in a ``finally``; this loop only reads the queue."""
+    The provider owns the screen-lifetime subscription. This loop reads only one
+    turn marker's queue; finishing the marker never tears down the subscription."""
     now = asyncio.get_event_loop().time
     start = now()
     hard_deadline = start + hard_ceiling_s
@@ -244,7 +271,7 @@ async def run_hooks_turn(
         else:
             wait_for = min(hard_deadline - t, delivery_deadline - t)
         try:
-            hook = await asyncio.wait_for(queue.get(), timeout=max(wait_for, 0.01))
+            delivery = await asyncio.wait_for(queue.get(), timeout=max(wait_for, 0.01))
         except TimeoutError:
             if not delivered:
                 if now() >= delivery_deadline:
@@ -270,7 +297,11 @@ async def run_hooks_turn(
             continue
         delivered = True
         tracker.touch(now())
-        event = translate_hook(hook)
+        event = (
+            delivery.event
+            if isinstance(delivery, HookDelivery)
+            else translate_hook(delivery)
+        )
         if event is None:
             continue
         yield event
@@ -287,11 +318,11 @@ class ScreenSetupError(Exception):
 class HooksTurnProvider[ScreenT]:
     """Base for the hooks-driven backends (fusion-design §8.6, increment 2).
 
-    Owns the transport-INDEPENDENT turn — ONE flow for local and remote so they
-    can't drift: check the topic, mint the session-scoped token, register the
-    topic's hook queue BEFORE any prompt (so no hook is missed), bring up a screen
-    + inject the prompt (subclass transport), then drain hooks → ``AgentEvent``
-    until Stop, and always release the queue.
+    Owns the transport-INDEPENDENT screen subscription and turn markers — ONE
+    flow for local and remote so they can't drift: check the topic, bring up a
+    screen, ensure its long-lived hook sink + consumer, open a marker, inject the
+    prompt, and read that marker until Stop. The sink is released only when the
+    screen is known dead, never when a turn finishes.
 
     A subclass ("本地/远程只差 transport/入册") implements only the transport seam:
     ``_precheck`` (cheap fail-fast BEFORE the queue is claimed), ``_ensure_ready``
@@ -325,12 +356,11 @@ class HooksTurnProvider[ScreenT]:
         # (the device backend keeps this; see DeviceProvider).
         self._idle_suspect_s = idle_suspect_s
         self._hard_ceiling_s = hard_ceiling_s
-        # The screen of the turn currently in flight, per topic — what `deliver`
-        # injects into. Written once the screen is ready and dropped in
-        # ``run_turn``'s finally, so "a topic is in here" means exactly "a turn
-        # is running on it right now", which is the only state `deliver` may act
-        # on (it must never bring a screen up).
+        # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
+        # own the stable router sink, consumer task, and nullable current turn.
         self._live: dict[uuid.UUID, ScreenT] = {}
+        self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
+        _PROVIDERS.add(self)
 
     @property
     def hard_ceiling_s(self) -> float:
@@ -361,7 +391,8 @@ class HooksTurnProvider[ScreenT]:
         outside every window. A False here means the caller must fall back to
         starting a turn of its own."""
         screen = self._live.get(topic_id)
-        if screen is None:
+        subscription = self._subscriptions.get(topic_id)
+        if screen is None or subscription is None or subscription.current_turn is None:
             return False
         try:
             await self._send_prompt(screen, text)
@@ -371,6 +402,69 @@ class HooksTurnProvider[ScreenT]:
             logger.exception("deliver into running turn failed (topic=%s)", topic_id)
             return False
         return True
+
+    async def ensure_subscription(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> TopicSubscription:
+        """Ensure one screen-lifetime sink and consumer for ``topic_id``."""
+        subscription = self._subscriptions.get(topic_id)
+        if subscription is not None:
+            return subscription
+        sink = self._router.subscribe(str(topic_id))
+        subscription = TopicSubscription(
+            project_id=project_id,
+            topic_id=topic_id,
+            sink=sink,
+        )
+        self._subscriptions[topic_id] = subscription
+        subscription.consumer_task = asyncio.create_task(
+            self._consume_subscription(subscription),
+            name=f"hook subscription topic={topic_id}",
+        )
+        return subscription
+
+    async def drop_subscription(self, topic_id: uuid.UUID) -> None:
+        """Drop the sink and consumer after the topic's screen is known dead."""
+        subscription = self._subscriptions.pop(topic_id, None)
+        self._live.pop(topic_id, None)
+        if subscription is None:
+            return
+        subscription.current_turn = None
+        subscription.sink.accepting = False
+        self._router.unsubscribe(str(topic_id), subscription.sink)
+        task = subscription.consumer_task
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def drop_screen_subscription(self, screen: object) -> None:
+        """Drop topics whose live transport handle is this dead screen."""
+        topic_ids = [
+            topic_id
+            for topic_id, live_screen in self._live.items()
+            if live_screen is screen or live_screen == screen
+        ]
+        for topic_id in topic_ids:
+            await self.drop_subscription(topic_id)
+
+    async def _consume_subscription(self, subscription: TopicSubscription) -> None:
+        """Continuously translate the topic sink into its current turn marker."""
+        while True:
+            hook = await subscription.sink.queue.get()
+            marker = subscription.current_turn
+            if marker is None:
+                # P1 preserves the route's existing spool + settle behavior for
+                # out-of-turn hooks. The router reported this arrival as
+                # undelivered; the route has already parked its durable copy.
+                continue
+            event = translate_hook(hook)
+            marker.queue.put_nowait(HookDelivery(event))
+            if isinstance(event, AgentResult) and subscription.current_turn is marker:
+                subscription.current_turn = None
+                subscription.sink.accepting = False
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook
@@ -465,9 +559,8 @@ class HooksTurnProvider[ScreenT]:
             )
             return
 
-        # Fail-fast BEFORE claiming the topic's queue (no Docker / no online
-        # device): a turn that can't run must never evict a live queue or widen
-        # the stale-hook window (review finding — matches pre-refactor ordering).
+        # Fail-fast before screen setup (no Docker / no online device): a turn
+        # that cannot run must not create a subscription with no screen behind it.
         try:
             precheck = await self._precheck(project_id, topic_id)
         except ScreenSetupError as exc:
@@ -476,15 +569,12 @@ class HooksTurnProvider[ScreenT]:
             )
             return
 
-        topic_key = str(topic_id)
         token = mint_scoped_token(
             project_id=str(project_id),
-            topic_id=topic_key,
+            topic_id=str(topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
         )
-        # Register the queue BEFORE bringing up the screen / sending the prompt so
-        # no hook is missed.
-        queue = self._router.register(topic_key)
+        marker: TurnMark | None = None
         try:
             try:
                 screen = await self._ensure_ready(
@@ -500,21 +590,11 @@ class HooksTurnProvider[ScreenT]:
                     system_prompt=system_prompt,
                     precheck=precheck,
                 )
-                # Nothing has been sent to `claude` yet, so anything already
-                # sitting in the queue at this point is a straggler from a
-                # PREVIOUS, abandoned turn (its own late Stop included) — never
-                # this turn's own event. Park it exactly like a hook that
-                # arrived with no turn listening at all (never dropped, never
-                # mistaken for this turn's result — review finding: a stale
-                # Stop must never end the wrong turn).
-                for stale in self._router.drain(topic_key):
-                    eid = stale.get("_eid")
-                    if isinstance(eid, str):
-                        _park_stale_hook(project_id, topic_id, eid, stale)
-                # Publish the screen only now: from here to the finally below is
-                # exactly the window in which a hook queue is registered, which
-                # is the only window `deliver` may inject into.
+                subscription = await self.ensure_subscription(project_id, topic_id)
                 self._live[topic_id] = screen
+                marker = TurnMark(turn_id=turn_id, queue=asyncio.Queue())
+                subscription.current_turn = marker
+                subscription.sink.accepting = True
                 ready = await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
@@ -540,7 +620,7 @@ class HooksTurnProvider[ScreenT]:
                 # visible and the turn falls to the no-output bound as before.
                 redeliveries = 0
                 async for event in run_hooks_turn(
-                    queue=queue,
+                    queue=marker.queue,
                     idle_suspect_s=self._idle_suspect_s,
                     hard_ceiling_s=self._hard_ceiling_s,
                     resume_session_id=resume_session_id,
@@ -597,5 +677,45 @@ class HooksTurnProvider[ScreenT]:
                     except asyncio.CancelledError:
                         pass
         finally:
-            self._live.pop(topic_id, None)
-            self._router.unregister(topic_key, queue)
+            subscription = self._subscriptions.get(topic_id)
+            if (
+                marker is not None
+                and subscription is not None
+                and subscription.current_turn is marker
+            ):
+                subscription.current_turn = None
+                subscription.sink.accepting = False
+
+
+async def drop_topic_subscriptions(topic_id: uuid.UUID) -> None:
+    """Notify every live hooks provider that a topic's screen was removed."""
+    for provider in list(_PROVIDERS):
+        if isinstance(provider, HooksTurnProvider):
+            await provider.drop_subscription(topic_id)
+
+
+async def drop_screen_subscriptions(screen: object) -> None:
+    """Notify providers that one concrete transport screen disappeared."""
+    for provider in list(_PROVIDERS):
+        if isinstance(provider, HooksTurnProvider):
+            await provider.drop_screen_subscription(screen)
+
+
+def schedule_topic_subscription_drop(topic_id: uuid.UUID) -> bool:
+    """Bridge synchronous workspace teardown into provider-owned async cleanup."""
+    from app.core.background import spawn
+
+    return spawn(
+        drop_topic_subscriptions(topic_id),
+        name=f"drop hook subscription topic={topic_id}",
+    )
+
+
+def schedule_screen_subscription_drop(screen: object) -> bool:
+    """Bridge synchronous container teardown into provider-owned cleanup."""
+    from app.core.background import spawn
+
+    return spawn(
+        drop_screen_subscriptions(screen),
+        name=f"drop hook subscription screen={screen}",
+    )

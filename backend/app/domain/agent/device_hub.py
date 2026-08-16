@@ -165,6 +165,10 @@ class DeviceHub:
         device = self._devices.get(device_id)
         if device is not None and device.transport is transport:
             device.transport = None
+            from app.domain.agent.hooks_substrate import drop_screen_subscriptions
+
+            for screen in list(device.screens.values()):
+                await drop_screen_subscriptions(screen)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -310,6 +314,9 @@ class DeviceHub:
             return False
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
+        from app.domain.agent.hooks_substrate import drop_screen_subscriptions
+
+        await drop_screen_subscriptions(screen)
         await device.send(device_link.session_close(sid))
         return True
 

@@ -439,3 +439,19 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
     remaining = claims["exp"] - int(time.time())
     assert remaining > 7 * 24 * 3600  # rules out the 3600s per-turn default
     assert SESSION_TOKEN_TTL_S - 300 < remaining <= SESSION_TOKEN_TTL_S + 5
+
+
+@pytest.mark.anyio
+async def test_drop_control_also_drops_the_container_subscription():
+    router = HookRouter()
+    provider = TmuxHooksProvider(image="img:test", router=router)
+    project_id = uuid.uuid4()
+    topic_id = uuid.uuid4()
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "container"
+
+    await provider.drop_control("container")
+
+    assert subscription.consumer_task is not None
+    assert subscription.consumer_task.done()
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False

@@ -126,9 +126,10 @@ def test_camelcase_event_name_alias():
 @pytest.mark.anyio
 async def test_router_delivers_to_registered_topic():
     router = HookRouter()
-    q = router.register("t1")
+    sink = router.subscribe("t1")
+    sink.accepting = True
     assert router.push("t1", {"hook_event_name": "Stop"}) is True
-    assert (await q.get())["hook_event_name"] == "Stop"
+    assert (await sink.queue.get())["hook_event_name"] == "Stop"
 
 
 def test_router_push_without_listener_returns_false():
@@ -137,13 +138,20 @@ def test_router_push_without_listener_returns_false():
 
 
 @pytest.mark.anyio
-async def test_router_unregister_only_evicts_own_queue():
+async def test_router_subscription_is_stable_until_its_owner_unsubscribes():
     router = HookRouter()
-    q1 = router.register("t1")
-    q2 = router.register("t1")  # a second turn replaced the slot
-    # A late cleanup of the first turn must NOT evict the second turn's queue.
-    router.unregister("t1", q1)
+    sink = router.subscribe("t1")
+    assert router.subscribe("t1") is sink
+    sink.accepting = True
     assert router.push("t1", {"a": 1}) is True
-    assert (await q2.get()) == {"a": 1}
-    router.unregister("t1", q2)
+    assert (await sink.queue.get()) == {"a": 1}
+    router.unsubscribe("t1", sink)
     assert router.push("t1", {"b": 2}) is False
+
+
+@pytest.mark.anyio
+async def test_router_queues_between_turns_but_reports_undelivered_in_p1():
+    router = HookRouter()
+    sink = router.subscribe("t1")
+    assert router.push("t1", {"a": 1}) is False
+    assert (await sink.queue.get()) == {"a": 1}

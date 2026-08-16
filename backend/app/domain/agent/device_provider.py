@@ -921,6 +921,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         successful no-op, and every failure is swallowed so one topic can never break
         a reap loop. The screen is forgotten even when its device is offline, so an
         archived topic leaves no stale registry entry behind."""
+        await self.drop_subscription(topic_id)
         for screen in self._hub.screens_for_topic(topic_id):
             device_id = screen.device_id
             try:

@@ -2191,6 +2191,9 @@ def stop_topic_container(topic_id: uuid.UUID) -> None:
     recreated. Best-effort: a missing container is fine. Freeing BOTH matters
     because a topic may have run on either backend and each leaves its own box;
     reaping only the SDK one (the old behavior) leaked every tmux container forever."""
+    from app.domain.agent.hooks_substrate import schedule_topic_subscription_drop
+
+    schedule_topic_subscription_drop(topic_id)
     if not sandbox_available():
         return
     for name in (container_name(topic_id), tmux_container_name(topic_id)):
@@ -2225,6 +2228,9 @@ def list_sandbox_containers() -> list[str]:
 def remove_container(name: str) -> None:
     """Remove ONE container by exact name (the idle reaper's primitive).
     Best-effort; a missing container is fine."""
+    from app.domain.agent.hooks_substrate import schedule_screen_subscription_drop
+
+    schedule_screen_subscription_drop(name)
     if not sandbox_available():
         return
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)

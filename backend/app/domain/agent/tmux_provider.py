@@ -322,6 +322,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             None,
         )
         if cause is not None:
+            await self.drop_control(name)
             await _docker("rm", "-f", name)
             exists = False
         if not exists:
@@ -555,7 +556,8 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         return client
 
     async def drop_control(self, name: str) -> None:
-        """Forget a container's control connection (its container is going away)."""
+        """Forget a container's control and subscription before it goes away."""
+        await self.drop_screen_subscription(name)
         client = self._controls.pop(name, None)
         if client is not None:
             await client.close()

@@ -115,40 +115,35 @@ async def test_run_hooks_turn_times_out_with_message_on_silence():
     assert events[0].text == "轮次超时"
 
 
-async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
-    monkeypatch, tmp_path
-):
-    """register() claims the topic's queue BEFORE the screen is ready (so no
-    hook is missed) — but that means a straggler from a PREVIOUS, abandoned
-    turn (its own late Stop included, arriving only once its `claude` process
-    finally finishes) can land in the fresh queue before the new turn's prompt
-    is even sent. It must never be mistaken for the new turn's own result."""
+async def test_stale_stop_before_screen_ready_never_ends_the_new_turn():
+    """A straggler received before screen setup completes belongs to no new
+    marker. The router reports it undelivered so the HTTP route keeps using its
+    existing durable spool path; the new marker sees only its own hooks."""
     import uuid as _uuid
 
-    from app.core.config import settings
-    from app.domain.agent import event_spool
-    from app.domain.workspace import service as ws
-
-    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     router = HookRouter()
     project_id = _uuid.uuid4()
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
+    stale_delivered: list[bool] = []
 
     class _FakeProvider(HooksTurnProvider[str]):
         name = "fake"
 
         async def _ensure_ready(self, **kwargs):
             # While "waiting for the screen", the abandoned previous turn's
-            # `claude` process finally finishes and its late Stop arrives.
-            router.push(
-                topic_key,
-                {
-                    "hook_event_name": "Stop",
-                    "last_assistant_message": "旧turn的过期结果",
-                    "session_id": "s-old",
-                    "_eid": "stale-stop-1",
-                },
+            # `claude` process finally finishes and its late Stop arrives. In
+            # production, False makes the endpoint durably spool this payload.
+            stale_delivered.append(
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "Stop",
+                        "last_assistant_message": "旧turn的过期结果",
+                        "session_id": "s-old",
+                        "_eid": "stale-stop-1",
+                    },
+                )
             )
             return "screen"
 
@@ -188,11 +183,8 @@ async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
     result = events[-1]
     assert isinstance(result, AgentResult)
     assert result.text == "新turn的真实回复"  # NOT the stale turn's text
-
-    # The stale Stop was never dropped — it's parked for a later reconcile.
-    entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
-    eids = [eid for _path, eid, _payload in entries]
-    assert eids == ["stale-stop-1"]
+    assert stale_delivered == [False]
+    await provider.drop_subscription(topic_id)
 
 
 async def test_failed_precheck_never_touches_the_router():
@@ -209,7 +201,8 @@ async def test_failed_precheck_never_touches_the_router():
 
     router = HookRouter()
     topic_id = _uuid.uuid4()
-    live_queue = router.register(str(topic_id))  # a "running turn" holds the slot
+    live_sink = router.subscribe(str(topic_id))
+    live_sink.accepting = True
 
     provider = _NoRun(router=router, idle_suspect_s=1, hard_ceiling_s=1)
     events = [
@@ -227,7 +220,8 @@ async def test_failed_precheck_never_touches_the_router():
     assert events[0].text == "挡在门外"
     # The live turn's queue is untouched: pushes still reach it.
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is True
-    assert live_queue.qsize() == 1
+    assert live_sink.queue.qsize() == 1
+    router.unsubscribe(str(topic_id), live_sink)
 
 
 async def test_undelivered_prompt_fails_fast_instead_of_waiting_out_the_turn():
@@ -450,9 +444,10 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
     assert delivered_midturn == [True]
     assert injected == ["第一条", "[人]: 等一下"]
 
-    # The turn is over: the screen is unpublished again, so a later message
-    # cannot be injected into a window where no hook queue is listening.
+    # The screen and subscription outlive the turn, but its marker is closed,
+    # so a later message starts its own platform turn instead of being injected.
     assert await provider.deliver(topic_id, "晚") is False
+    await provider.drop_subscription(topic_id)
 
 
 async def test_deliver_reports_false_when_the_screen_refuses():
@@ -500,3 +495,51 @@ async def test_deliver_reports_false_when_the_screen_refuses():
     ]
     assert isinstance(events[-1], AgentResult)
     assert outcome == [False]
+    await provider.drop_subscription(topic_id)
+
+
+async def test_subscription_outlives_turn_and_drops_only_with_screen():
+    """Stop closes only the marker. The stable sink and consumer stay alive for
+    the screen and are released explicitly when that screen disappears."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeProvider(HooksTurnProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "done",
+                    "_eid": "stop-1",
+                },
+            )
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=_uuid.uuid4(),
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    assert isinstance(events[-1], AgentResult)
+    subscription = await provider.ensure_subscription(_uuid.uuid4(), topic_id)
+    assert subscription.current_turn is None
+    assert subscription.consumer_task is not None
+    assert not subscription.consumer_task.done()
+    assert await provider.ensure_subscription(_uuid.uuid4(), topic_id) is subscription
+
+    await provider.drop_screen_subscription("screen")
+    assert subscription.consumer_task.done()
+    assert router.push(topic_key, {"hook_event_name": "Stop"}) is False
