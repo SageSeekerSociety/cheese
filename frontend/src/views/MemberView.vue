@@ -321,7 +321,7 @@ onMounted(load)
   height: 88px;
   background: var(--fill);
 }
-/* Profile avatar — large rounded-square, solid ink + white initial. */
+/* Profile avatar — large rounded-square, solid ink + reversed-out initial. */
 .profile-avatar {
   width: 96px;
   height: 96px;
