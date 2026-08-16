@@ -124,7 +124,7 @@ async def test_merge_pr_sends_the_configured_merge_method():
         return httpx.Response(200, json={"merged": True, "sha": "abc"})
 
     result = await _client(handler).merge_pr(
-        7, title="采纳 topic/abcd1234 → main (#7)", message="验收人：alice"
+        7, title="fix: stop the crash (#7)", message="Reviewed-by: alice"
     )
 
     assert result["merged"] is True
@@ -132,8 +132,8 @@ async def test_merge_pr_sends_the_configured_merge_method():
     assert request.url.path == "/repos/acme/widgets/pulls/7/merge"
     assert json.loads(request.content) == {
         "merge_method": settings.accept_pr_merge_method,
-        "commit_title": "采纳 topic/abcd1234 → main (#7)",
-        "commit_message": "验收人：alice",
+        "commit_title": "fix: stop the crash (#7)",
+        "commit_message": "Reviewed-by: alice",
     }
     assert settings.accept_pr_merge_method == "squash"  # the repo's policy
 

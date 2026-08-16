@@ -110,29 +110,20 @@ def identity_from_profile(
 async def resolve_for_handle(session: Any, handle: str) -> GitIdentity | None:
     """The git identity of a platform user, by handle. None when they exist but
     never connected GitHub — the caller then keeps the 芝士 identity rather than
-    inventing an address."""
-    from app.domain.oauth.repositories import OAuthConnectionRepository
-    from app.domain.user.repositories import UserRepository
+    inventing an address.
+
+    The connection lookup belongs to the oauth domain and is asked for as a
+    service call, not by reaching into its repositories (the ratchet in
+    tests/unit/test_domain_import_guard.py). What stays here is the only part
+    that is about git: turning an account into an address."""
+    from app.domain.oauth.services import get_github_profile_for_handle
 
     if not handle:
         return None
-    user = await UserRepository(session).get_by_handle(handle)
-    if user is None:
+    found = await get_github_profile_for_handle(session, handle)
+    if found is None:
         return None
-    repo = OAuthConnectionRepository(session)
-    # `github_app` first: it is the connection the accept flow already pushes
-    # and opens PRs with, so preferring it keeps commit authorship and PR
-    # authorship pointing at the same account. `github` is the plain login
-    # connection, present for people who signed in with GitHub but never
-    # authorized the App.
-    for provider_id in ("github_app", "github"):
-        conn = await repo.get_by_user_and_provider(user.id, provider_id)
-        if conn is None:
-            continue
-        identity = identity_from_profile(conn.provider_user_id, conn.raw_profile)
-        if identity is not None:
-            return identity
-    return None
+    return identity_from_profile(*found)
 
 
 def read(project_id: uuid.UUID, topic_id: uuid.UUID) -> GitIdentity | None:

@@ -93,7 +93,15 @@ class _FakeClient:
             raise type(self).merge_error
         return {"merged": True, "sha": "deadbeef"}
 
-    async def open_pr(self, *, head: str, base: str, title: str, body: str) -> dict:
+    async def open_pr(
+        self,
+        *,
+        head: str,
+        base: str,
+        title: str,
+        body: str,
+        as_user_token: str | None = None,
+    ) -> dict:
         type(self).calls.append(("open_pr", head, base, title))
         number = type(self).open_pr_number
         return {

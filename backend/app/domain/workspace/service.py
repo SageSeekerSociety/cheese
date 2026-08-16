@@ -1397,11 +1397,82 @@ def _upstream_ref(repo: Path) -> str:
     raise ValidationError("上游仓库没有 main/master 分支")
 
 
+def _base_adds_nothing(repo: Path, ref: str, base: str) -> bool:
+    """Whether `base` contributes any CONTENT the upstream doesn't already have.
+
+    Not `rev-list --count ref..base`: after a merge-based sync the base is ahead
+    by a merge commit that changes not one byte. What decides whether the base
+    may simply be pointed at the upstream is the tree, so that is what gets
+    asked — is `base` identical in content to the last commit the two histories
+    share? Unrelated histories (a fresh repo whose only commit is the platform's
+    synthetic one) have no merge base at all, and answer no."""
+    try:
+        common = _git(repo, "merge-base", ref, base).strip()
+    except ValidationError:
+        return False  # unrelated histories — a real join is needed
+    if not common:
+        return False
+    result = subprocess.run(
+        ["git", "diff", "--quiet", common, base],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _fast_forward_base(project_id: uuid.UUID, repo: Path, base: str, ref: str) -> dict:
+    """Point `base` straight at `ref` — no merge commit, nothing to conflict.
+
+    Same two steps as the tail of `_merge_ref_into_base` (CAS the ref, then sync
+    the shared checkout) and the same rule about them: once the CAS lands the
+    sync is durable, and a stale shared directory afterwards is loud
+    housekeeping, not a failed sync."""
+    for _attempt in range(_MERGE_RETRY_LIMIT):
+        old_sha = _git(repo, "rev-parse", base).strip()
+        new_sha = _git(repo, "rev-parse", ref).strip()
+        if old_sha == new_sha:
+            return {"synced": True, "commits": 0, "reason": "已是最新"}
+        try:
+            _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
+        except ValidationError:
+            continue  # base moved under us — re-read and retry
+        try:
+            _sync_shared_checkout(repo, base, new_sha)
+        except ValidationError as exc:
+            logger.exception(
+                "%s advanced to %s but the shared checkout could not be synced",
+                base,
+                new_sha,
+            )
+            return {"synced": True, "fast_forward": True, "sync_failed": str(exc)}
+        return {"synced": True, "fast_forward": True}
+    return {
+        "synced": False,
+        "reason": f"同步失败：{base} 分支并发更新冲突过多，请重试",
+    }
+
+
 def sync_upstream(project_id: uuid.UUID) -> dict:
-    """同步上游: fetch the upstream remote and merge its default branch into the
-    project's base branch. The first sync of a seeded/fresh repo is an
-    unrelated-histories merge; a conflict aborts cleanly (never half-merges) and
-    reports back — same contract as merge_topic."""
+    """同步上游: bring the project's base branch up to the upstream's default
+    branch.
+
+    **For a bound project the base branch is a MIRROR of the upstream's default
+    branch, not a branch of its own.** That is the whole design, and getting it
+    wrong is what produced the mess this replaces: the sync used to be an
+    unconditional `merge --no-ff`, so every tick minted a merge commit that
+    existed only locally. Nothing ever removed them, every topic branch was cut
+    from a base carrying the whole pile, and each one showed up as a "new"
+    commit in that topic's PR — 39 of PR #488's 40 commits were
+    `同步上游 upstream/main → main`, and this repo's own base was 41 such commits
+    ahead of upstream while its tree was byte-identical (verified 2026-08-16).
+
+    So: fast-forward whenever the base has no content of its own, which after
+    采纳即合并 (#296) is always — a bound project never commits to its base
+    locally. A real merge is reserved for the case that genuinely needs one: a
+    base that HAS local content the upstream lacks (a project seeded with work
+    before it was bound), where a fast-forward would silently discard it.
+    Conflicts there abort cleanly and report, same contract as merge_topic."""
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         return {"synced": False, "reason": "未关联上游仓库"}
@@ -1412,6 +1483,14 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         return {"synced": False, "reason": str(exc)}
     base = _base_branch(repo)
     behind = int(_git(repo, "rev-list", "--count", f"{base}..{ref}").strip() or "0")
+    if _base_adds_nothing(repo, ref, base):
+        # Covers "simply behind" AND "ahead only by contentless merges left by
+        # the old implementation" — the second is why this is not just
+        # `merge --ff-only`, which would refuse and mint merge #42.
+        result = _fast_forward_base(project_id, repo, base, ref)
+        if result.get("synced"):
+            result.setdefault("commits", behind)
+        return result
     if behind == 0:
         return {"synced": True, "commits": 0, "reason": "已是最新"}
     result = _merge_ref_into_base(
