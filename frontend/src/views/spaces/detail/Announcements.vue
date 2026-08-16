@@ -1,20 +1,19 @@
 <template>
-  <div class="page-header">
-    <v-icon size="24">mdi-bullhorn</v-icon>
-    <span class="text-subtitle-1">{{ t('spaces.detail.announcements') }}</span>
-    <v-spacer></v-spacer>
-    <v-btn
-      v-if="isCurrentUserAtLeastAdmin"
-      class="text-medium-emphasis"
-      color="text"
-      size="small"
-      icon
-      variant="text"
-      @click="openAnnouncementCreating"
-    >
-      <v-icon left size="20">mdi-plus</v-icon>
-    </v-btn>
-  </div>
+  <PageHeader icon="mdi-bullhorn" :title="t('spaces.detail.announcements')" show-on-mobile>
+    <template #actions>
+      <v-btn
+        v-if="isCurrentUserAtLeastAdmin"
+        class="text-medium-emphasis"
+        color="text"
+        size="small"
+        icon
+        variant="text"
+        @click="openAnnouncementCreating"
+      >
+        <v-icon left size="20">mdi-plus</v-icon>
+      </v-btn>
+    </template>
+  </PageHeader>
   <div class="pa-4">
     <v-card
       v-if="announcements.length === 0"
@@ -123,6 +122,7 @@ import { toast } from 'vuetify-sonner'
 import dayjs from 'dayjs'
 import { storeToRefs } from 'pinia'
 
+import PageHeader from '@/components/common/PageHeader.vue'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import { useSpaceStore } from '@/stores/space'

@@ -14,7 +14,7 @@ body,
 }
 
 .page-sidebar.rounded-0 {
-  border-top-left-radius: 0px;
+  border-top-left-radius: 0;
 }
 
 :root {
@@ -22,32 +22,42 @@ body,
   --app-page-header-bg-opacity: 0;
 }
 
-.page-header {
+/* 侧栏顶栏 —— 侧边栏最上面那条（空间名 / 用户名 / “首页”）。
+ *
+ * 它以前也叫 .page-header，和 components/common/PageHeader.vue 撞名：同一个类名
+ * 同时描述两种东西，全局这份的 height 和 justify-content 就顺着级联漏进了组件。
+ * 现在改名分开。两者只是碰巧长得像（都是 48px + 底边线 + sticky），职责完全不同：
+ * 这条不需要面包屑、不需要滚动渐显、也不该去读 navigation store，所以不能塞进
+ * PageHeader 组件里。改名以外的取值一律照旧，侧栏顶栏的观感一个像素都没动。 */
+.sidebar-header {
   height: var(--app-page-header-height);
   padding: 8px 12px;
   display: flex;
   flex-direction: row;
   align-items: center;
+  /* SpaceSidebar 的非管理员分支里只有头像和空间名、没有 v-spacer，靠这条把两者
+     推到两端 —— 不是可有可无的默认值。 */
   justify-content: space-between;
   gap: 8px;
   border-block-end-width: 1px;
   border-block-end-style: solid;
   border-block-end-color: rgba(var(--v-border-color), var(--v-border-opacity));
   position: sticky;
-  top: 0px;
+  top: 0;
   z-index: 10;
   background-color: rgba(var(--v-theme-surface), var(--app-page-header-bg-opacity));
   backdrop-filter: blur(16px);
 }
 
 .page-sidebar {
-  .page-header {
+  .sidebar-header {
     border-top-left-radius: 12px;
     transition: all 0.2s ease;
   }
 
-  .page-header.page-header-menu:hover,
-  .page-header.page-header-menu.page-header-menu-active {
+  /* 可点开的那一种（SpaceSidebar 的管理员菜单） */
+  .sidebar-header.sidebar-header-menu:hover,
+  .sidebar-header.sidebar-header-menu.sidebar-header-menu-active {
     background-color: rgba(var(--v-theme-surface-light), 0.67);
   }
 }
