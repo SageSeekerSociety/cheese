@@ -273,7 +273,7 @@ const navigateToSubproject = (subprojectId: number) => {
 <style scoped lang="scss">
 // 导航菜单样式
 .navigation-menu {
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
   height: 100%;
   transition: all 0.3s ease;
   overflow: hidden;
@@ -336,7 +336,7 @@ const navigateToSubproject = (subprojectId: number) => {
   transition: all 0.2s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.04);
+    background-color: var(--fill);
   }
 
   &.active-subproject {
@@ -364,11 +364,13 @@ const navigateToSubproject = (subprojectId: number) => {
 
   &:hover {
     opacity: 1;
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--fill-2);
     transform: scale(1.1);
   }
 }
 
+/* 子项目标记色是【用户数据】（colorCode），两个主题下必须同值，模板里的兜底色
+   因此不 token 化（design-system §1.2 例外）。 */
 .subproject-nav-color {
   width: 10px;
   height: 10px;

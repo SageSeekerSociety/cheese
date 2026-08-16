@@ -329,7 +329,9 @@ onMounted(load)
   border-radius: 16px;
   border: 4px solid var(--surface);
   background: var(--ink);
-  color: #fff;
+  /* 底色是 --ink（浅色近黑 / 深色近白），所以字必须是它的反面 —— 写死的白
+     在深色下就是白底白字。--surface 正好是 --ink 的对面：17.4:1 / 15.4:1。 */
+  color: var(--surface);
   font-size: 38px;
   font-weight: 600;
   display: inline-flex;
