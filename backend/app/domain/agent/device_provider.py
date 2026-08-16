@@ -790,18 +790,23 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
 
-    async def _send_prompt(self, screen: HubScreen, prompt: str) -> None:
+    async def _send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
         """Deliver the prompt via the minimal cheeselet's `prompt` (it gates on the
-        `❯` input box first, so a fresh screen's first prompt is not dropped)."""
+        `❯` input box first, so a fresh screen's first prompt is not dropped).
+        Returns the cheeselet's readiness at delivery (`{ready: bool}`), so a
+        held prompt is a visible state in the room instead of silence (#445)."""
         try:
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
             )
-            await self._hub.await_call(screen.device_id, call_id, timeout=60)
+            result = await self._hub.await_call(screen.device_id, call_id, timeout=60)
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
             raise ScreenSetupError(
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
+        if isinstance(result, dict) and isinstance(result.get("ready"), bool):
+            return result["ready"]
+        return None
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

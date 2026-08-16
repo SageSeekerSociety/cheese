@@ -58,6 +58,7 @@ _HAS_NODE = subprocess.run(["which", "node"], capture_output=True).returncode ==
 # counting every attempted write) that the "terminal" swallows silently.
 _HARNESS = """
 const writes = [];
+const calls = [];
 let composer = "";            // text sitting in the input box
 let claudeReady = false;      // has the ❯ prompt been painted
 let dropped = new Set(__DROP__);
@@ -86,7 +87,7 @@ globalThis.cheese = {
   own: () => ({}),
   watch: () => ({}),
   expose: (name, fn) => { exposed[name] = fn; },
-  call: () => {},
+  call: (...a) => { calls.push(a); },
   log: (m) => logs.push(String(m)),
 };
 __SRC__
@@ -97,7 +98,7 @@ for (let i = 0; i < __TICKS__; i++) {
   if (slowBoot > 0 && i === slowBoot) claudeReady = true;
   onChange();   // change/heartbeat ticks
 }
-console.log(JSON.stringify({writes, composer, logs}));
+console.log(JSON.stringify({writes, composer, logs, calls}));
 """
 
 
