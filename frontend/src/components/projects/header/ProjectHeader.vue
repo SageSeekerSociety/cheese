@@ -32,7 +32,7 @@
               <div class="project-meta-item">
                 <div class="text-caption text-medium-emphasis mb-1">时间范围</div>
                 <div class="d-flex align-center">
-                  <v-icon size="small" color="grey-darken-1" class="mr-1">mdi-calendar-range</v-icon>
+                  <v-icon size="small" color="on-surface-variant" class="mr-1">mdi-calendar-range</v-icon>
                   <span class="text-body-2">{{ formatDateRange(project?.startDate, project?.endDate) }}</span>
                 </div>
               </div>
@@ -40,7 +40,7 @@
               <div class="project-meta-item">
                 <div class="text-caption text-medium-emphasis mb-1">负责人</div>
                 <div class="d-flex align-center">
-                  <v-icon size="small" color="grey-darken-1" class="mr-1">mdi-account</v-icon>
+                  <v-icon size="small" color="on-surface-variant" class="mr-1">mdi-account</v-icon>
                   <span class="text-body-2">{{ project?.leader?.nickname || '未指定' }}</span>
                 </div>
               </div>
@@ -48,7 +48,7 @@
               <div v-if="project?.githubRepo" class="project-meta-item">
                 <div class="text-caption text-medium-emphasis mb-1">GitHub 仓库</div>
                 <div class="d-flex align-center">
-                  <v-icon size="small" color="grey-darken-1" class="mr-1">mdi-github</v-icon>
+                  <v-icon size="small" color="on-surface-variant" class="mr-1">mdi-github</v-icon>
                   <a
                     :href="`https://github.com/${project.githubRepo}`"
                     target="_blank"
@@ -120,6 +120,8 @@ const formatDateRange = (startDate?: number, endDate?: number) => {
   position: relative;
 }
 
+/* 项目标记色是【用户数据】：用户给项目挑的颜色存在 colorCode 里，两个主题下
+   必须是同一个颜色，所以这个兜底值不 token 化（design-system §1.2 例外）。 */
 .project-color-indicator {
   width: 10px;
   height: 36px;
@@ -136,13 +138,13 @@ const formatDateRange = (startDate?: number, endDate?: number) => {
 
 // 项目信息卡片样式
 .project-info-card {
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  background-color: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--line);
+  background-color: rgba(var(--v-theme-surface), 0.8);
   backdrop-filter: blur(10px);
 }
 
 .project-description {
-  color: rgba(0, 0, 0, 0.75);
+  color: var(--text);
   line-height: 1.6;
 }
 
@@ -156,7 +158,7 @@ const formatDateRange = (startDate?: number, endDate?: number) => {
 // 状态卡片样式
 .status-overview {
   @media (min-width: 960px) {
-    border-left: 1px solid rgba(0, 0, 0, 0.08);
+    border-left: 1px solid var(--line);
     padding-left: 2rem;
   }
 }
@@ -173,7 +175,7 @@ const formatDateRange = (startDate?: number, endDate?: number) => {
 }
 
 .status-card {
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--fill);
   border-radius: 8px;
   padding: 12px 16px;
   min-width: 80px;
@@ -181,7 +183,7 @@ const formatDateRange = (startDate?: number, endDate?: number) => {
   transition: all 0.3s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--fill-2);
     transform: translateY(-2px);
   }
 
@@ -194,7 +196,7 @@ const formatDateRange = (startDate?: number, endDate?: number) => {
 
   .status-label {
     font-size: 14px;
-    color: rgba(0, 0, 0, 0.6);
+    color: var(--muted);
     margin-top: 4px;
   }
 }

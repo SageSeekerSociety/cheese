@@ -87,7 +87,7 @@
           @click="navigateToProjectSection(item.route)"
         >
           <template v-if="!collapsed" #append>
-            <v-icon size="x-small" color="grey-darken-1">mdi-share-variant</v-icon>
+            <v-icon size="x-small" color="on-surface-variant">mdi-share-variant</v-icon>
           </template>
           <template v-if="collapsed">
             <div class="collapsed-icon-container">
@@ -249,7 +249,7 @@ const navigateToProjectSection = (routeName: string) => {
 <style scoped lang="scss">
 // 导航菜单样式
 .navigation-menu {
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
   height: 100%;
   transition: all 0.3s ease;
   overflow: hidden;
@@ -315,11 +315,11 @@ const navigateToProjectSection = (routeName: string) => {
 .back-button {
   margin-left: 4px;
   margin-right: 4px;
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--fill);
   transition: all 0.2s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.08);
+    background-color: var(--fill-2);
     transform: translateX(-2px);
   }
 }
@@ -344,7 +344,7 @@ const navigateToProjectSection = (routeName: string) => {
 
   &:hover {
     opacity: 1;
-    background-color: rgba(0, 0, 0, 0.05);
+    background-color: var(--fill-2);
     transform: scale(1.1);
   }
 }
@@ -353,6 +353,8 @@ const navigateToProjectSection = (routeName: string) => {
   padding: 8px 12px;
 }
 
+/* 项目标记色是【用户数据】：用户挑的颜色存在 colorCode 里，两个主题下必须同值，
+   所以模板里那个兜底色不 token 化（design-system §1.2 例外）。 */
 .subproject-color-indicator {
   width: 8px;
   height: 18px;
@@ -365,11 +367,11 @@ const navigateToProjectSection = (routeName: string) => {
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-1);
 
   &:hover {
     transform: scale(1.1);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-2);
   }
 }
 

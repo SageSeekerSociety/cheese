@@ -406,7 +406,7 @@ watch([kind, () => props.projectId], load)
 
 <style scoped>
 .memory-card {
-  border: 1px solid var(--line-2, #e8e8e8);
+  border: 1px solid var(--line-2);
   border-radius: 10px;
 }
 .memory-card__content {

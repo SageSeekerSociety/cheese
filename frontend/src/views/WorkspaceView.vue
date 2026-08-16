@@ -1740,7 +1740,7 @@ onUnmounted(() => {
   overflow: auto;
   padding: 8px 10px;
   border-radius: 6px;
-  background: rgba(127, 127, 127, 0.08);
+  background: var(--fill);
   font-family: var(--mono, ui-monospace, monospace);
   font-size: 12px;
   line-height: 1.5;
@@ -1851,11 +1851,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   margin-bottom: 6px;
-  border: 1px solid var(--border, #e0e0e0);
+  border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
   background: var(--surface);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-2);
 }
 .mention-menu-item {
   display: flex;
@@ -1868,7 +1868,7 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .mention-menu-item:hover {
-  background: var(--fill, #f5f5f5);
+  background: var(--fill);
 }
 .mention-avatar {
   display: inline-flex;
@@ -1879,19 +1879,24 @@ onUnmounted(() => {
   border-radius: 50%;
   font-size: 0.7rem;
   font-weight: 700;
+  /* 通用占位头像的底漆：没有真实头像时的中性圆点。底色两个主题下同值（和
+     avatarColor() 算出来的头像同一类），所以它上面的白字也不该随主题变 ——
+     换成 token 反而会让同一个人的头像在两个主题下变成两个颜色。
+     注：白字对它只有 2.9:1，这是全仓默认头像共有的老问题，不是本次引入的，
+     要修得连 avatarColor() 一起改，属于另一张卡。 */
   color: #fff;
   background: #8a94a3;
   flex: none;
 }
 .mention-avatar--agent {
-  background: var(--accent, #f57f17);
+  background: var(--accent);
 }
 .mention-avatar--broadcast {
-  background: var(--ink, #33373d);
+  background: var(--ink);
 }
 .mention-avatar--topic {
-  background: var(--fill, #f0f1f3);
-  color: var(--muted, #6b6b6b);
+  background: var(--fill);
+  color: var(--muted);
 }
 .mention-menu-name {
   font-weight: 500;
@@ -1957,7 +1962,12 @@ onUnmounted(() => {
 }
 .summon-chip--on {
   background: var(--accent);
-  color: #fff;
+  /* 琥珀填充在两个主题下都是亮橙（#F57F17 / #FFA733），白字对它只有 2.9:1 和
+     1.9:1 —— 两边都读不出来。这里不能用 on-primary：实测 Vuetify 对浅色的
+     #F57F17 推出来的是 #fff，只有深色的 #FFA733 才推成 #000，等于浅色侧没修。
+     所以照 RailItem 的先例把墨钉死 —— 底色两个主题下都是亮橙，字就该两边都是
+     深墨：#23242a 对 #F57F17 是 5.8:1、对 #FFA733 是 8.0:1，两边都过 AA。 */
+  color: #23242a;
 }
 
 @media (max-width: 960px) {

@@ -135,7 +135,7 @@ const tabs = computed(() => [
 }
 
 .content-wrapper {
-  background-color: rgba(255, 255, 255, 0.95);
+  background-color: rgba(var(--v-theme-surface), 0.95);
   border: 1px solid rgba(var(--v-theme-primary), 0.05);
   transition: all 0.3s ease;
   overflow: hidden;

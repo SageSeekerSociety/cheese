@@ -34,7 +34,7 @@ const randomImageHeight = computed(() => {
   background-color: rgb(var(--v-theme-surface));
   overflow: hidden;
   width: 100%;
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.05); // Match xiaohongshu-card shadow
+  box-shadow: var(--shadow-1); // Match xiaohongshu-card shadow
 }
 
 // Target the actual image placeholder part of v-skeleton-loader

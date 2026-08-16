@@ -43,7 +43,9 @@
               </v-alert>
 
               <div class="d-flex justify-end">
-                <v-btn color="grey" variant="text" class="mr-2" @click="goBack">{{ t('global.cancel') }}</v-btn>
+                <v-btn color="on-surface-variant" variant="text" class="mr-2" @click="goBack">
+                  {{ t('global.cancel') }}
+                </v-btn>
                 <v-btn color="primary" type="submit" :loading="isSubmitting" :disabled="!isFormValid || isSubmitting">
                   {{ t('global.publish') }}
                 </v-btn>
@@ -164,7 +166,7 @@ const submitDiscussion = async () => {
 <style scoped lang="scss">
 .editor-boundary {
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   overflow: hidden; // Ensures TipTapEditor's own borders/focus rings are contained
 
   &:focus-within {

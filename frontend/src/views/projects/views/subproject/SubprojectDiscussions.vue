@@ -8,7 +8,7 @@
     <!-- 占位内容 -->
     <v-card variant="outlined" rounded="lg" class="mb-4 pa-6">
       <div class="text-center py-8">
-        <v-icon icon="mdi-forum-outline" size="64" color="grey-lighten-2" class="mb-3"></v-icon>
+        <v-icon icon="mdi-forum-outline" size="64" class="mb-3 empty-state-icon"></v-icon>
         <h3 class="text-h6 font-weight-medium mb-2">讨论区功能开发中</h3>
         <p class="text-body-2 text-medium-emphasis mb-4">
           这是一个占位模块，子项目讨论区功能将在后续版本中实现。讨论区将提供团队成员之间交流意见、分享进度和解决问题的空间。
@@ -38,7 +38,12 @@ const openCreateDiscussionDialog = () => {
 <style scoped lang="scss">
 .subproject-discussions {
   .v-card {
-    border: 1px solid rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--line);
   }
+}
+
+/* 空状态的占位图标 —— design-system §1.3 的 --faint 档（“占位提示”）。 */
+.empty-state-icon {
+  color: var(--faint);
 }
 </style>

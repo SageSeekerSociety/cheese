@@ -43,7 +43,10 @@
             <span class="mr-3">&copy; 2023 - 2025</span>
             <span class="mr-3">|</span>
             <span
-              >Made with <v-icon color="error" size="12" class="mx-1">mdi-heart</v-icon> by
+              >Made with
+              <!-- 这颗心是情感符号不是状态：红心在浅色和深色下都该是红的，所以它保持
+                   固定色，不走 --danger（把装饰挂到状态色上，改状态色时它会跟着变）。 -->
+              <v-icon color="red" size="12" class="mx-1">mdi-heart</v-icon> by
               <a
                 href="https://github.com/SageSeekerSociety"
                 target="_blank"
