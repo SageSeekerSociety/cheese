@@ -11,7 +11,7 @@ repository 模块，且那道守卫是对的：值类型不该住在数据访问
 
 import enum
 
-__all__ = ["Supply", "Visibility"]
+__all__ = ["Supply", "Visibility", "has_runnable_transport"]
 
 
 class Supply(enum.StrEnum):
@@ -49,3 +49,8 @@ class Visibility(enum.StrEnum):
 
     isolated = "isolated"  # one container per room — blast radius is the room
     host = "host"  # the whole machine, as its owner — 申请制, never a default
+
+
+def has_runnable_transport(visibility: Visibility) -> bool:
+    """Whether the device backend has a transport for this visibility today."""
+    return visibility is Visibility.host
