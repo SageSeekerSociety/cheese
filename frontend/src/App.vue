@@ -108,6 +108,15 @@ import VersionBadge from '@/components/common/VersionBadge.vue'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
 import AccountService from '@/services/account'
+import { useAppTheme } from '@/theme'
+
+// Activate the theme runtime app-wide. First paint is already correct without
+// this (the boot script in index.html stamps <html data-theme>, and Vuetify
+// boots on the same resolved value), but the OS-preference LISTENER lives in
+// this composable — and the only other caller, ThemeToggle, sits inside the
+// logged-in user menu. Without this line a signed-out visitor sitting on the
+// login page would not follow their machine switching to dark at sunset.
+useAppTheme()
 
 const currentRoute = useRoute()
 const router = useRouter()

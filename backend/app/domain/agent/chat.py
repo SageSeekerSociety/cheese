@@ -787,6 +787,46 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
     return [b for b in history[watermark + 1 :] if _is_human_input(b)]
 
 
+# 重放可见 (#416). The first notice fires on the third attempt: one retry is
+# ordinary (a transient provider error, an auto-resume), two is bad luck, three
+# is a pattern worth a line in the room. After that the state is known, so the
+# reminder throttles hard — a topic retrying every 5 minutes for an hour must
+# not bury the conversation under its own status.
+_REPLAY_NOTICE_AT = 3
+_REPLAY_NOTICE_EVERY = 10
+
+
+def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
+    """The 现场 line for a batch of messages that keeps being re-sent.
+
+    Returns None when there is nothing worth saying yet — the common case.
+
+    ONE line, and it stays one line at any batch size. It names the count and
+    the OLDEST message — the one stuck longest, and the one that identifies the
+    batch. "这个话题重试了 5 次" leaves the reader exactly where they started;
+    dumping all N messages back into the room turns a status line into a second
+    copy of the conversation. The messages are already in the timeline right
+    above; the notice only has to point at them.
+    """
+    if attempt < _REPLAY_NOTICE_AT:
+        return None
+    if attempt > _REPLAY_NOTICE_AT and attempt % _REPLAY_NOTICE_EVERY != 0:
+        return None
+    first = pending[0] if pending else None
+    if first is None:
+        head = ""
+    elif first.kind == BlockKind.attachment:
+        head = f"，最早的一条是 [{first.author}] 发的图片"
+    else:
+        text = " ".join((first.content or "").split())
+        clipped = f"{text[:24]}…" if len(text) > 24 else text
+        head = f"，最早的一条是 [{first.author}]「{clipped}」"
+    return (
+        f"🔁 这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
+        f"前面几次都没跑完{head}。"
+    )
+
+
 def _is_human_input(b: Block) -> bool:
     """A block that carries something a person said to 芝士 this turn."""
     return b.author_type == AuthorType.human and b.kind in (
@@ -2048,6 +2088,21 @@ class ChatService:
                 _prompt_line(b, embeds_images=getattr(provider, "embeds_images", True))
                 for b in pending
             ) or platform_prompt(content)
+            # 重放可见 (#416): count this attempt on the blocks themselves. A
+            # turn that dies stamps no `consumed_turn`, so the SAME batch is
+            # re-sent next turn, and the next — correct (a dead turn must not
+            # eat a message) but silent. From the room, "every reply fails" and
+            # "this one batch keeps failing" look identical, and the second one
+            # is the diagnosis. Counting at prompt-build time is the only place
+            # that sees a failed attempt at all.
+            replay_n = await blocks.bump_prompt_attempts(pending_ids)
+            # Committed HERE and not left to ride the conditional commit further
+            # down: that one only fires on a topic's FIRST turn (compute_profile
+            # still None), so on every later turn this session closes without a
+            # commit and the counter silently rolls back — which is the exact
+            # failure mode this counter exists to expose.
+            await session.commit()
+            replay_notice = _replay_notice(replay_n, pending)
             # turn 活跃度检测: the hooks-driven backends (LOCAL tmux + remote
             # device) run hooks_substrate's two-layer idle-suspect + hard-ceiling
             # loop and manage their own inner ceiling (which can be hours), so the
@@ -2111,6 +2166,15 @@ class ChatService:
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(project_id, provider.name)
+
+        # 重放可见 (#416): say out loud that this turn is re-sending a batch that
+        # earlier turns already failed on. Posted BEFORE the stream, because the
+        # whole point is that this turn may produce nothing either — a notice
+        # written afterwards is exactly the one that never gets written.
+        if replay_notice is not None:
+            payload = await self.post_system_event(topic_id, replay_notice, turn_id)
+            if payload is not None:
+                yield {"type": "event_block", "block": payload}
 
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by

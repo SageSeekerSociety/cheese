@@ -1,14 +1,4 @@
 {
   "_comment": "Frozen vue-tsc errors. The ratchet blocks any NEW error; these are pre-existing and may only go down. Regenerate with `pnpm run typecheck:update`.",
-  "files": {
-    "src/components/common/Editor/TipTapViewer.vue": 16,
-    "src/components/tasks/__tests__/TaskForm.test.ts": 2,
-    "src/plugins/tiptap/extensions/image/ImageActionButton.vue": 1,
-    "src/plugins/tiptap/index.ts": 2,
-    "src/stores/__tests__/space.test.ts": 1,
-    "src/views/spaces/detail/__tests__/PublishTask.test.ts": 1,
-    "src/views/spaces/detail/CreateDiscussion.vue": 1,
-    "src/views/spaces/detail/ManageDomainGroups.vue": 6,
-    "src/views/spaces/detail/PublishTask.vue": 1
-  }
+  "files": {}
 }

@@ -73,7 +73,7 @@ async def test_a_dead_machine_hands_the_topic_to_a_healthy_one_and_says_so():
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "老机器")
     well = await _device_on_project(service, project, "新机器")
-    await service.bind_topic_device(topic, sick)
+    await service.bind_topic_device(topic, sick, Visibility.host)
 
     first = await _fail(service, topic, project, (sick, well), STORAGE_EXHAUSTED)
     assert first is not None and first.new_device is None, "one strike is not a verdict"
@@ -98,7 +98,7 @@ async def test_no_healthy_machine_means_stay_put_and_say_why_never_drift():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     only = await _device_on_project(service, project, "唯一一台")
-    await service.bind_topic_device(topic, only)
+    await service.bind_topic_device(topic, only, Visibility.host)
 
     stuck = await _fail(service, topic, project, (only,), STORAGE_EXHAUSTED, times=2)
     assert stuck is not None
@@ -116,7 +116,7 @@ async def test_a_dead_self_hosted_machine_keeps_its_pin_and_waits_for_it():
         service, project, "自己的机器", supply=Supply.self_hosted
     )
     cloud = await _device_on_project(service, project, "云机器")
-    await service.bind_topic_device(topic, own)
+    await service.bind_topic_device(topic, own, Visibility.host)
 
     release = AsyncMock(wraps=service.release_topic_device)
     bind = AsyncMock(wraps=service.bind_topic_device)
@@ -144,28 +144,26 @@ async def test_a_dead_self_hosted_machine_keeps_its_pin_and_waits_for_it():
     assert "等待" in stuck.message
 
 
-async def test_a_swap_never_selects_an_isolated_device():
+async def test_a_swap_never_moves_an_isolated_topic_binding():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "坏机器")
-    isolated = await _device_on_project(
-        service, project, "隔离机器", visibility=Visibility.isolated
-    )
+    candidate = await _device_on_project(service, project, "候选机器")
     well = await _device_on_project(service, project, "可运行机器")
-    await service.bind_topic_device(topic, sick)
+    await service.bind_topic_device(topic, sick, Visibility.isolated)
 
     swapped = await _fail(
         service,
         topic,
         project,
-        (sick, isolated, well),
+        (sick, candidate, well),
         STORAGE_EXHAUSTED,
         times=2,
     )
 
     assert swapped is not None
-    assert swapped.new_device == well
-    assert await service.topic_device(topic) == well
+    assert swapped.new_device is None
+    assert await service.topic_device(topic) == sick
 
 
 async def test_a_swap_never_selects_a_self_hosted_destination():
@@ -176,7 +174,7 @@ async def test_a_swap_never_selects_a_self_hosted_destination():
         service, project, "别人的机器", supply=Supply.self_hosted
     )
     well = await _device_on_project(service, project, "云机器")
-    await service.bind_topic_device(topic, sick)
+    await service.bind_topic_device(topic, sick, Visibility.host)
 
     swapped = await _fail(
         service,
@@ -197,7 +195,7 @@ async def test_a_failure_that_isnt_the_machines_fault_moves_nothing():
     project, topic = uuid.uuid4(), uuid.uuid4()
     a = await _device_on_project(service, project, "A")
     await _device_on_project(service, project, "B")
-    await service.bind_topic_device(topic, a)
+    await service.bind_topic_device(topic, a, Visibility.host)
 
     outcome = await _fail(service, topic, project, (a,), RUNTIME_IMAGE_MISSING, times=5)
     assert outcome is not None
@@ -230,7 +228,7 @@ async def test_the_new_machine_is_never_the_one_just_judged_dead():
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "sick")
     await _device_on_project(service, project, "offline")
-    await service.bind_topic_device(topic, sick)
+    await service.bind_topic_device(topic, sick, Visibility.host)
 
     outcome = await _fail(service, topic, project, (sick,), STORAGE_EXHAUSTED, times=2)
     assert outcome is not None

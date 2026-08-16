@@ -11,7 +11,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from app.domain.device.models import DeviceRow
+from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Visibility
 from app.domain.project.repositories import ProjectRepository
@@ -68,6 +68,7 @@ def test_project_can_use_a_device_registered_for_its_team(client):
                     visibility=Visibility.isolated,
                 )
             )
+            s.add(HostedDeviceRow(device_id="devteam01", owner_user_id=user.id))
             await s.flush()
             # 为团队注册设备: bind the machine to the team (NOT to any project).
             await SqlDeviceRepository(s).assign_team("devteam01", team.id)
@@ -122,6 +123,7 @@ def test_device_team_binding_is_idempotent_and_removable(client):
                     visibility=Visibility.isolated,
                 )
             )
+            s.add(HostedDeviceRow(device_id="devteam02", owner_user_id=user.id))
             await s.flush()
             repo = SqlDeviceRepository(s)
             await repo.assign_team("devteam02", 7)
@@ -178,6 +180,7 @@ def test_personal_project_uses_owners_personal_team_devices(client):
                         visibility=Visibility.isolated,
                     )
                 )
+                s.add(HostedDeviceRow(device_id=did, owner_user_id=owner.id))
             await s.flush()
             repo = SqlDeviceRepository(s)
             await repo.assign_team("devper01", mine.id)

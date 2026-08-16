@@ -57,6 +57,7 @@ import { myHandle } from '../me'
 
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
+import DeviceLiveViewer from './DeviceLiveViewer.vue'
 
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
@@ -537,6 +538,9 @@ watch(
 // drawer embeds the real read-only terminal (ttyd) instead of the rebuilt
 // worklog. `terminalUrl` is the backend proxy the iframe loads.
 const terminalUrl = ref<string | null>(null)
+// Device-hosted topics carry no proxied ttyd URL; the probe hands back the
+// screen WebSocket path instead, and the 现场 embeds DeviceLiveViewer on it.
+const screenSid = ref<string | null>(null)
 // Live-turn elapsed seconds (ticks while `working`).
 const nowTick = ref(Date.now())
 let tickTimer: ReturnType<typeof setInterval> | null = null
@@ -746,6 +750,9 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       // container + something actually answering), so a false here means the
       // timeline below is the honest thing to show.
       terminalUrl.value = term?.available && term.url ? withSessionToken(term.url) : null
+      // The device path: no url, a ws ("/connector/session/{sid}/screen").
+      // The sid is all DeviceLiveViewer needs — it builds the socket URL itself.
+      screenSid.value = (term?.available && term.ws?.match(/\/session\/([^/]+)\/screen/)?.[1]) || null
     } else if (key === 'git') {
       // A fresh repo with no commits makes git log fail (422); tolerate it so
       // the diff still renders instead of the whole drawer showing an error.
@@ -2109,6 +2116,7 @@ watch(
     drawerOpen.value = false
     // Drop the previous topic's terminal so it can't flash in the new 现场.
     terminalUrl.value = null
+    screenSid.value = null
     // Same for the preview: a stale app frame or error would otherwise be
     // attributed to the topic just opened.
     previewAppUrl.value = null
@@ -2529,6 +2537,21 @@ onBeforeUnmount(() => {
                     实时终端（只读）
                   </div>
                   <iframe class="term-frame" :src="terminalUrl" title="实时终端（只读）" />
+                </div>
+              </template>
+
+              <!-- 现场: device-hosted topics — the machine screen's REAL terminal,
+                 byte-for-byte over the screen WebSocket, and INTERACTIVE: typing
+                 here reaches the pane (the backend gates input by the same
+                 authorization as watching). Debugging tool, not a toy — what you
+                 type lands in the agent's live claude. -->
+              <template v-else-if="openTool === 'site' && screenSid">
+                <div class="term-wrap">
+                  <div class="term-bar text-caption px-3 py-1">
+                    <span class="term-bar__dot">●</span>
+                    实时终端 · 机器上的 Claude Code（可输入，键入会直达会话）
+                  </div>
+                  <DeviceLiveViewer :sid="screenSid" />
                 </div>
               </template>
 
@@ -3298,7 +3321,7 @@ onBeforeUnmount(() => {
   border: 0;
   background: none;
   font-size: 12px;
-  color: var(--text-muted, #888);
+  color: var(--faint);
   cursor: pointer;
 }
 .site-msg__more:hover {
@@ -3490,7 +3513,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-muted, rgba(0, 0, 0, 0.6));
+  color: var(--muted);
   border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
 }
 .term-bar__dot {
@@ -3589,7 +3612,7 @@ onBeforeUnmount(() => {
   background: rgba(var(--v-theme-primary), 0.1);
 }
 .doc-editor :deep(.doc-prose th) {
-  background: var(--bg-2, #f7f8fa);
+  background: var(--canvas);
   font-weight: 600;
 }
 
@@ -4018,7 +4041,7 @@ onBeforeUnmount(() => {
    (hidden while hovered — the copy button takes that spot). */
 .doc-editor :deep(pre) {
   position: relative;
-  background: var(--bg-2, #f7f8fa);
+  background: var(--canvas);
   border: 1px solid var(--line-2, #ececec);
   padding: 13px 15px;
   border-radius: 8px;

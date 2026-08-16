@@ -6,6 +6,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.domain.avatars.models import Avatar
 from app.domain.project.models import (
     AiMode,
     Project,
@@ -137,25 +138,44 @@ class ProjectRepository:
         and to render a member's real avatar in the chat panel."""
         # Display name lives on UserProfile.nickname (main's User has only
         # username); join both, keyed by handle == username (fusion identity).
-        # ``avatar_id`` rides along from the same profile row: the column is NOT
-        # NULL, so it is None here only when the outer join found no profile
-        # (a handle with no fusion user behind it) — the caller renders the
-        # colored-initial fallback for exactly that case.
+        # ``avatar_id`` rides along from the same profile row and is None here
+        # in two cases, both of which mean "render the colored initial":
+        #
+        #   1. the outer join found no profile (a handle with no fusion user);
+        #   2. the profile still points at the *global default* avatar.
+        #
+        # Case 2 is not a choice anyone made: every registration path hardcodes
+        # ``default_avatar_id: int = 1`` (``domain/user/services.py``), as does
+        # 芝士's own profile (``domain/identity/services.py``). Reporting that id
+        # would make every member who never picked an avatar share one face —
+        # strictly worse at telling people apart than the per-handle hashed
+        # initial, which is the whole job of an avatar in a chat panel. So the
+        # roster's contract is "avatar_id = the avatar this person chose, null if
+        # they never chose one"; the join reads ``avatar_type`` rather than
+        # comparing against a literal 1, because which row is the default is
+        # seed data and differs per environment.
         stmt = (
             select(
                 ProjectMember.user_handle,
                 ProjectMember.role,
                 UserProfile.nickname,
                 UserProfile.avatar_id,
+                Avatar.avatar_type,
             )
             .join(User, User.username == ProjectMember.user_handle, isouter=True)
             .join(UserProfile, UserProfile.user_id == User.id, isouter=True)
+            .join(Avatar, Avatar.id == UserProfile.avatar_id, isouter=True)
             .where(ProjectMember.project_id == project_id)
         )
         rows = (await self._session.execute(stmt)).all()
         return [
-            {"handle": h, "role": str(role), "name": name or h, "avatar_id": avatar_id}
-            for (h, role, name, avatar_id) in rows
+            {
+                "handle": h,
+                "role": str(role),
+                "name": name or h,
+                "avatar_id": None if avatar_type == "default" else avatar_id,
+            }
+            for (h, role, name, avatar_id, avatar_type) in rows
         ]
 
     async def list_projects_for_task(self, task_id: uuid.UUID) -> list[ProjectTaskLink]:
