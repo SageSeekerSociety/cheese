@@ -95,7 +95,7 @@ jobs:
   # when Anthropic changes the first-run flow.
   delivery-e2e:
     runs-on: [self-hosted, cheese-ci]
-    timeout-minutes: 25
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -110,17 +110,23 @@ jobs:
         with:
           node-version: 22
 
-      # Same pin as upstream's green leg. NPM_CONFIG_PREFIX keeps the install
-      # inside the workspace: runners are shared, and a global install would
-      # fight concurrent jobs (and root-owned paths).
+      # MUST match device_launch.CLAUDE_PINNED_VERSION: prompt delivery rides
+      # the rendezvous socket, which is undocumented private surface whose
+      # frames moved between 2.1.220 and 2.1.224. A CI pin below the launcher's
+      # floor tests a transport production never uses (and the socket simply
+      # never binds). Raising either one means raising both, in the same PR.
+      #
+      # NPM_CONFIG_PREFIX keeps the install inside the workspace: runners are
+      # shared, and a global install would fight concurrent jobs (and
+      # root-owned paths).
       - name: Install Claude Code (pinned)
         working-directory: .
         run: |
           export NPM_CONFIG_PREFIX="$GITHUB_WORKSPACE/.npm-e2e"
-          npm install -g --silent @anthropic-ai/claude-code@2.1.220
+          npm install -g --silent @anthropic-ai/claude-code@2.1.224
           "$NPM_CONFIG_PREFIX/bin/claude" --version
 
       - name: Delivery e2e
         run: |
           export PATH="$GITHUB_WORKSPACE/.npm-e2e/bin:$PATH"
-          go test -tags claudee2e -v -timeout 20m ./e2e/
+          go test -tags claudee2e -v -timeout 35m ./e2e/

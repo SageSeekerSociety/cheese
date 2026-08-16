@@ -44,6 +44,40 @@ _CLAUDE_JSON_GATES = {
 # keep working; the source of truth is hooks_substrate.CHEESE_HOOK_SCRIPT.
 _CHEESE_HOOK_SCRIPT = CHEESE_HOOK_SCRIPT
 
+# --- the version this delivery path is pinned to -----------------------------
+# A device screen no longer types prompts into a terminal: it writes them to the
+# rendezvous socket Claude Code binds for itself, where they are enqueued as
+# `origin: {kind:"human"}`. That socket is undocumented private surface, and its
+# frames moved between 2.1.220 and 2.1.224 — so the launcher prefers ONE
+# verified build and refuses anything under the floor rather than silently
+# degrading to a paste-and-pray driver.
+#
+# Raising these is a deliberate act: re-run cli/e2e (CHEESE_RV=1) against the
+# new build first, because "it launched" is not evidence the frames still work.
+CLAUDE_PINNED_VERSION = "2.1.224"
+CLAUDE_MIN_VERSION = "2.1.224"
+
+# CLAUDE_BASE_CMD starts with the bare word `claude`; the launcher resolves a
+# specific binary (pin, then ~/.local/bin, then PATH) and needs only the flags.
+CLAUDE_BASE_ARGS = CLAUDE_BASE_CMD.removeprefix("claude")
+
+# Screen-env keys the connector reads to find a screen's rendezvous socket. The
+# token lives in a FILE, not the env: an adopted `claude` keeps the token it
+# booted with, so a freshly minted env value would never match.
+ENV_RV_SOCK = "CHEESE_RV_SOCK"
+ENV_RV_TOKEN_FILE = "CHEESE_RV_TOKEN_FILE"
+
+
+def rendezvous_paths(topic_id: str) -> tuple[str, str]:
+    """``(socket, token_file)`` for a topic, short enough to be bindable.
+
+    A unix socket path is capped near 104 bytes and an isolated home already
+    spends ~105 (`~/.cheese/home/<project-uuid>/<topic-uuid>/.claude/`), so the
+    socket cannot live beside the session it belongs to. `/tmp` plus 12 hex of
+    the topic id keeps it at ~32 bytes and still unique per topic."""
+    short = topic_id.replace("-", "")[:12]
+    return f"/tmp/cheese-rv-{short}.sock", f"/tmp/cheese-rv-{short}.token"
+
 
 def cheeselet_source() -> str:
     """The minimal cheeselet JS shipped into the screen (types the prompt only)."""
@@ -579,7 +613,57 @@ TUP=""
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"
 fi
-CLAUDE="{CLAUDE_BASE_CMD}"
+# --- prompt delivery: the rendezvous socket, and the version floor under it ---
+# Prompts reach this claude over a unix socket it binds ITSELF (three env vars
+# below), where the runtime enqueues them as `origin: {{kind:"human"}}` — the
+# same place a keystroke lands. Nothing types into the terminal any more, so
+# delivery no longer depends on pane width, TUI state, or reading the screen.
+#
+# The socket exists only from 2.1.224 on, and this launcher REFUSES to start an
+# older claude rather than fall back to pasting: a silent downgrade to send-keys
+# is exactly the failure mode this replaced (a prompt re-pasted 40 times with
+# nobody the wiser). Exiting non-zero surfaces as a screen setup error on the
+# turn, which is the honest outcome.
+#
+# The binary is pinned to a verified build when the device has it: this is
+# undocumented private surface and the frames DID move between 2.1.220 and
+# 2.1.224, so "whatever `claude` resolves to today" is not a basis for a
+# delivery path. PATH is the fallback, still gated by the floor.
+CLAUDE_BIN=""
+for _c in "$REAL_HOME/.local/share/claude/versions/{CLAUDE_PINNED_VERSION}" \\
+          "$REAL_HOME/.local/bin/claude"; do
+  if [ -x "$_c" ]; then CLAUDE_BIN="$_c"; break; fi
+done
+[ -z "$CLAUDE_BIN" ] && CLAUDE_BIN="$(command -v claude 2>/dev/null || true)"
+if [ -z "$CLAUDE_BIN" ]; then
+  echo "cheese-launch: no claude binary found" >&2
+  exit 1
+fi
+CLAUDE_V="$("$CLAUDE_BIN" --version 2>/dev/null | head -n 1 | awk '{{print $1}}')"
+if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{CLAUDE_MIN_VERSION}" "$CLAUDE_V" \\
+    | sort -V | head -n 1)" != "{CLAUDE_MIN_VERSION}" ]; then
+  echo "cheese-launch: claude ${{CLAUDE_V:-unknown}} at $CLAUDE_BIN is older than \\
+{CLAUDE_MIN_VERSION}; prompt delivery needs the rendezvous socket. Upgrade with \\
+\\`claude install stable\\`." >&2
+  exit 1
+fi
+# One token per topic, on disk rather than in the env: an ADOPTED claude keeps
+# the token it booted with, so a freshly generated value would never match. The
+# file is the single copy the connector and this launcher both read.
+if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
+  if [ ! -s "$CHEESE_RV_TOKEN_FILE" ] || [ ! -O "$CHEESE_RV_TOKEN_FILE" ]; then
+    ( umask 077
+      head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \\n' \\
+        > "$CHEESE_RV_TOKEN_FILE.tmp" ) \\
+      && mv "$CHEESE_RV_TOKEN_FILE.tmp" "$CHEESE_RV_TOKEN_FILE" \\
+      || rm -f "$CHEESE_RV_TOKEN_FILE.tmp"
+  fi
+  CLAUDE_BG_BACKEND=daemon
+  CLAUDE_BG_RENDEZVOUS_SOCK="$CHEESE_RV_SOCK"
+  CLAUDE_BG_RV_AUTH="$(cat "$CHEESE_RV_TOKEN_FILE" 2>/dev/null || true)"
+  export CLAUDE_BG_BACKEND CLAUDE_BG_RENDEZVOUS_SOCK CLAUDE_BG_RV_AUTH
+fi
+CLAUDE="\\"$CLAUDE_BIN\\"{CLAUDE_BASE_ARGS}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
 # The platform system prompt (written next to settings.json above). The path is
 # embedded QUOTED so both consumers survive a home dir with spaces: the tmux
@@ -714,6 +798,9 @@ if command -v tmux >/dev/null 2>&1; then
       "NODE_EXTRA_CA_CERTS=$NODE_EXTRA_CA_CERTS" \\
       "ANTHROPIC_CUSTOM_HEADERS=$ANTHROPIC_CUSTOM_HEADERS" \\
       "CLAUDE_MODEL=$CLAUDE_MODEL" \\
+      "CLAUDE_BG_BACKEND=$CLAUDE_BG_BACKEND" \\
+      "CLAUDE_BG_RENDEZVOUS_SOCK=$CLAUDE_BG_RENDEZVOUS_SOCK" \\
+      "CLAUDE_BG_RV_AUTH=$CLAUDE_BG_RV_AUTH" \\
       "CHEESE_TOKEN=$CHEESE_TOKEN" "CHEESE_HOOK_URL=$CHEESE_HOOK_URL" \\
       "CHEESE_API=$CHEESE_API" "CHEESE_PROJECT=$CHEESE_PROJECT" \\
       "CHEESE_TOPIC=$CHEESE_TOPIC" "CHEESE_AUTHOR=$CHEESE_AUTHOR" \\
@@ -829,6 +916,13 @@ def build_screen_launch(
         env["CHEESE_PROJECT"] = project_id
     if topic_id:
         env["CHEESE_TOPIC"] = topic_id
+        # Where this screen's prompts arrive. The launcher turns these two into
+        # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
+        # reads the same two to dial. Keyed on the topic so an adopted screen
+        # and a fresh one agree on the path.
+        sock, token_file = rendezvous_paths(topic_id)
+        env[ENV_RV_SOCK] = sock
+        env[ENV_RV_TOKEN_FILE] = token_file
     if author:
         env["CHEESE_AUTHOR"] = author
     if git_remote:
