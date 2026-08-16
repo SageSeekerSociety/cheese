@@ -121,12 +121,33 @@ class FakeRepo:
 
     async def add(self, **kwargs):
         kwargs.setdefault("last_seen_at", None)
+        kwargs.setdefault("released_at", None)
         row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
         self.rows.append(row)
         return row
 
     async def get(self, row_id):
         return next((r for r in self.rows if r.id == row_id), None)
+
+    async def lock_topic(self, _topic_id):
+        return None
+
+    async def lock_provisioning(self, _project_id, _topic_id):
+        return None
+
+    async def get_active_for_topic(self, topic_id):
+        return next(
+            (
+                row
+                for row in self.rows
+                if row.topic_id == topic_id and row.released_at is None
+            ),
+            None,
+        )
+
+    async def mark_released(self, machine, *, when):
+        machine.released_at = when
+        return machine
 
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
@@ -169,6 +190,9 @@ class FakeDevices:
 
     async def get_device(self, device_id):
         return self.devices.get(device_id)
+
+    async def topic_binding(self, _topic_id):
+        return None
 
     async def delete_owned(self, device_id, *, actor_user_id):
         device = self.devices[device_id]
@@ -232,6 +256,67 @@ async def test_provision_bills_the_project_not_the_person():
 
     assert customer_ref(project_id) in client.customers
     assert client.topups, "a fresh account must be funded before it is charged"
+
+
+async def test_topic_release_deletes_once_and_stamps_the_lease():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    topic_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=topic_id, requested_by="owner"
+    )
+
+    released = await service.release_topic_machine(topic_id)
+    repeated = await service.release_topic_machine(topic_id)
+
+    assert client.deleted == [machine.machine_id]
+    assert released is machine and released.released_at is not None
+    assert repeated is None
+
+
+async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
+    from app.domain.topic.models import TopicStatus
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    topic = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        created_by="owner",
+        status=TopicStatus.active,
+    )
+
+    class _Session:
+        async def refresh(self, _row):
+            return None
+
+    class _Identities:
+        def __init__(self, _session):
+            pass
+
+        async def ensure_topic_agent_user(self, _topic_id):
+            return SimpleNamespace(id=41)
+
+    class _Topics:
+        def __init__(self, _session):
+            pass
+
+        async def get_or_404(self, _topic_id):
+            return topic
+
+    service._session = _Session()
+    # The topic is reached through its SERVICE (the cross-domain repository guard
+    # only exempts pre-existing debt), and imported inside the method, so patch it
+    # where it is defined rather than on the machine module.
+    monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
+    monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
+
+    first = await service.ensure_topic_machine(topic.id)
+    second = await service.ensure_topic_machine(topic.id)
+
+    assert first is second
+    assert first.topic_id == topic.id
+    assert len(client.created) == 1
 
 
 async def test_provision_reuses_the_projects_existing_account():

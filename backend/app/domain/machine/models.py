@@ -11,7 +11,17 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -71,9 +81,25 @@ MAX_ENROLL_ATTEMPTS = 5
 
 class ProjectMachine(UuidPk, Timestamps, Base):
     __tablename__ = "project_machines"
+    __table_args__ = (
+        Index(
+            "uq_project_machines_active_topic",
+            "topic_id",
+            unique=True,
+            postgresql_where=text("released_at IS NULL"),
+        ),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    # NULL is a manually provisioned legacy/project machine. A Cloud-pool row is
+    # leased to exactly one topic until archive stamps released_at.
+    topic_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    )
+    released_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     # MicroCloud's own ids. Kept so a later call never has to re-resolve them by
     # listing and matching on a name.

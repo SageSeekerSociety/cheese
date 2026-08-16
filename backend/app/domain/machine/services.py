@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -31,6 +32,7 @@ from app.domain.machine.models import (
 )
 from app.domain.machine.repositories import ProjectMachineRepository
 from app.domain.project.repositories import ProjectRepository
+from app.domain.topic.models import TopicStatus
 
 # MicroCloud bills a customer, and a customer is keyed by the caller's own id.
 # Scoping it to the PROJECT (not the person) matches how compute is granted in
@@ -114,6 +116,7 @@ class MachineService:
         self,
         *,
         project_id: uuid.UUID,
+        topic_id: uuid.UUID | None = None,
         requested_by: str | None,
         ssh_pubkey: str | None = None,
         owner_user_id: int | None = None,
@@ -155,7 +158,7 @@ class MachineService:
         existing = [
             m
             for m in await self._repo.list_for_project(project_id)
-            if m.status not in GONE
+            if m.status not in GONE and m.released_at is None
         ]
         if len(existing) >= settings.microcloud_max_machines_per_project:
             raise ValidationError(
@@ -193,6 +196,7 @@ class MachineService:
         created = await self._apply_desired_ai_mode(created)
         return await self._repo.add(
             project_id=project_id,
+            topic_id=topic_id,
             machine_id=int(created["id"]),
             customer_id=customer_id,
             account_id=account_id,
@@ -210,6 +214,79 @@ class MachineService:
             owner_user_id=owner_user_id,
             bootstrap_key=bootstrap_private,
         )
+
+    async def ensure_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine:
+        """Return this topic's active Cloud VM, creating it exactly once.
+
+        The transaction-scoped locks are taken before the billed provider call:
+        the database uniqueness constraint alone would reject a duplicate row only
+        after two VMs had already been created. The project lock also serializes the
+        existing per-project quota check across different topics.
+        """
+        # Through the topic SERVICE, not its repository: the cross-domain
+        # repository guard exempts only pre-existing debt, and a new edge belongs
+        # on the service boundary. Imported here rather than at module scope
+        # because `topic.services` reaches back into this module for reclamation.
+        from app.domain.topic.services import TopicService
+
+        topic = await TopicService(self._session).get_or_404(topic_id)
+        await self._repo.lock_provisioning(topic.project_id, topic_id)
+        # The archive path takes the same topic lock. Re-read after waiting so a
+        # first turn cannot provision from the stale pre-lock `active` state.
+        await self._session.refresh(topic)
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("archived topic cannot provision cloud compute")
+
+        existing = await self._repo.get_active_for_topic(topic_id)
+        if existing is not None:
+            if _still_moving(existing) or _stale(existing):
+                await self.refresh(existing)
+            if existing.status not in GONE:
+                return existing
+            await self.forget(existing)
+
+        project = await self._projects.get(topic.project_id)
+        if project is None:
+            raise NotFoundError("project not found")
+        # Cloud endpoints are platform-owned and invisible to human device
+        # management (#457). The topic's own agent identity gives enrollment a
+        # stable integer owner without impersonating whichever human triggers the
+        # first turn (the paid choice was authorized when Cloud was selected).
+        agent = await IdentityService(self._session).ensure_topic_agent_user(topic_id)
+        return await self.provision(
+            project_id=topic.project_id,
+            topic_id=topic_id,
+            requested_by=topic.created_by or project.owner_handle,
+            owner_user_id=agent.id,
+        )
+
+    async def topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
+        return await self._repo.get_active_for_topic(topic_id)
+
+    async def release_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
+        """Destroy and release the topic's active Cloud VM, idempotently.
+
+        `released_at` is stamped only after MicroCloud accepts deletion. With no
+        cleanup timer by product decision, pretending release succeeded on a
+        provider failure would permanently hide a billed leak from later archive
+        retries.
+        """
+        await self._repo.lock_topic(topic_id)
+        machine = await self._repo.get_active_for_topic(topic_id)
+        if machine is None:
+            return None
+        if machine.status not in {MachineStatus.deleting, MachineStatus.deleted}:
+            await self.destroy(machine)
+        binding = await self._devices.topic_binding(topic_id)
+        if (
+            binding is not None
+            and machine.device_id is not None
+            and binding.device_id == machine.device_id
+        ):
+            await self._devices.release_topic_device(
+                topic_id, reason="topic cloud machine released on archive"
+            )
+        return await self._repo.mark_released(machine, when=datetime.now(UTC))
 
     async def _apply_desired_ai_mode(self, created: dict) -> dict:
         """Switch a fresh machine's built-in AI channel to the configured mode.
