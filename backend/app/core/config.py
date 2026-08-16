@@ -325,6 +325,17 @@ class Settings(BaseSettings):
     # budget on 定期巡检 and ships off, and machines must not depend on it.
     machine_enroll_interval_seconds: int = 60
 
+    # --- ccproxy tenant realm: one revocable ticket per device (#420) ---
+    # Cheese is one ccproxy tenant (micro-teams/ccproxy). Registering a device
+    # there mints it a machine identity whose fake ticket ccproxy alone can
+    # swap for real credentials — so removing the device revokes exactly that
+    # device, instead of rotating a credential every box shares. Empty secret =
+    # the feature reports itself unavailable; devices keep whatever
+    # `ccproxy_upstream` an admin set by hand.
+    ccproxy_tenant_base_url: str = ""
+    ccproxy_tenant_secret: str = ""
+    ccproxy_tenant_timeout_s: float = 30.0
+
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
     # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
     # container (native Bash/Read/Write jailed there) via the cli_path shim, and
