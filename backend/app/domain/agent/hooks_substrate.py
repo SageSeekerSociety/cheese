@@ -29,6 +29,10 @@ from dataclasses import dataclass
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
+from app.domain.agent.platform_failures import (
+    PROMPT_UNDELIVERED_MESSAGE,
+    TURN_TIMEOUT_MESSAGE,
+)
 from app.domain.agent.service import (
     DISALLOWED_TOOLS,
     AgentDeliveryFailure,
@@ -150,10 +154,10 @@ exit 0
 # reported in seconds instead of being indistinguishable from "still working"
 # for fifteen minutes (dev, 2026-08-08).
 DELIVERY_TIMEOUT_S = 25.0
-UNDELIVERED_MESSAGE = (
-    "⚠️ 这条消息没能送到芝士那边（她的会话没有任何反应）。改动都还在，"
-    "再 @ 她一次就会重开会话重试。"
-)
+# The sentence itself lives in platform_failures, next to the classifier that
+# recognises it — a copy here would drift and the failure would silently go back
+# to rendering as 「AI 服务返回错误」.
+UNDELIVERED_MESSAGE = PROMPT_UNDELIVERED_MESSAGE
 
 
 @dataclass
@@ -310,7 +314,10 @@ class HooksTurnProvider[ScreenT]:
     # path and 芝士 opens it with Read (its own tool), not because we sent it.
     embeds_images = False
     _needs_topic_message = "本轮需要话题上下文"
-    _timeout_message = "轮次超时"
+    # A subclass may prefix its transport ("tmux …" / "device …") but MUST keep
+    # TURN_TIMEOUT_MARKER in the string — that marker is how the failure gets
+    # classified as a timeout rather than an AI-service error.
+    _timeout_message = TURN_TIMEOUT_MESSAGE
 
     def __init__(
         self,
