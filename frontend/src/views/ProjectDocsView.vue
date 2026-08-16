@@ -34,7 +34,7 @@ const kind = computed<Kind>(() => {
 })
 
 const TITLES: Record<Kind, string> = {
-  charter: '章程 · 项目根文档',
+  charter: '章程',
   decisions: '决策记录',
   weeklies: '周报集',
   memory: '记忆',
@@ -197,8 +197,8 @@ watch([kind, () => props.projectId], load)
         <template v-if="kind === 'memory'">
           <div v-if="memoryEntries.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
             <v-icon size="28" class="text-disabled mb-2">mdi-brain</v-icon>
-            <div>芝士还没有记下任何事</div>
-            <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里。</div>
+            <div>暂无记忆</div>
+            <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里</div>
           </div>
           <v-card v-for="e in memoryEntries" :key="e.id" class="memory-card mb-2" variant="flat">
             <div class="d-flex align-start ga-3 pa-3">
@@ -234,13 +234,13 @@ watch([kind, () => props.projectId], load)
                 v-if="rootTopicId"
                 :topic-id="rootTopicId"
                 :editable="true"
-                placeholder="芝士还没写章程——它会在你定下项目方向后维护这份根文档。直接在这里写就行，会自动保存。"
+                placeholder="芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。"
                 @saving="onCharterSaving"
                 @saved="onCharterSaved"
                 @dirty="onCharterDirty"
                 @error="onCharterError"
               />
-              <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有根话题，暂时无法编辑章程。</div>
+              <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有可编辑的章程文档</div>
             </div>
           </v-card>
         </template>
@@ -248,7 +248,8 @@ watch([kind, () => props.projectId], load)
         <!-- ===== 决策记录 ===== -->
         <template v-else-if="kind === 'decisions'">
           <div v-if="decisions.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-            芝士还没记录决策——它在协作中定下关键决策时会记到这里。
+            <div>暂无决策记录</div>
+            <div class="text-caption mt-1">芝士在协作中定下关键决策时会记到这里</div>
           </div>
           <div v-else class="d-flex flex-column ga-3">
             <v-card v-for="d in decisions" :key="d.id" class="decision-card">
@@ -278,7 +279,8 @@ watch([kind, () => props.projectId], load)
         <!-- ===== 周报集 ===== -->
         <template v-else>
           <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-            周报由芝士定期产出，暂时还没有。
+            <div>暂无周报</div>
+            <div class="text-caption mt-1">周报由芝士定期产出</div>
           </div>
           <div v-else class="d-flex flex-column ga-3">
             <router-link v-for="t in weeklies" :key="t.id" class="weekly-link" :to="topicTo(t.id)">
@@ -387,7 +389,7 @@ watch([kind, () => props.projectId], load)
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
 .md-content :deep(pre) {
@@ -407,7 +409,7 @@ watch([kind, () => props.projectId], load)
 <style scoped>
 .memory-card {
   border: 1px solid var(--line-2);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 .memory-card__content {
   font-size: 0.9rem;

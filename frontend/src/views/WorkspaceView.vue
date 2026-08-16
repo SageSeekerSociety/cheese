@@ -241,7 +241,7 @@ const workingSince = ref<number | null>(null)
 
 // ---- 评论模式 (飞书 docs 风): the doc panel's selection CTA hands the anchor +
 // quoted span here; the SAME composer then posts a comment instead of a chat
-// message. A quote chip above the input shows the target; Esc/✕ exits. ----
+// message. A quote chip above the input shows the target; Esc / the ✕ button exits. ----
 const commentIntent = ref<{ anchorId: string | null; quote: string } | null>(null)
 const commentSending = ref(false)
 const composerInput = ref<{ focus?: () => void } | null>(null)
@@ -1171,8 +1171,9 @@ onUnmounted(() => {
                   <span class="t-title">平台检查进行中…</span>
                 </div>
                 <div class="text-caption text-medium-emphasis">
-                  正在这个话题的工作区里跑项目配置的质量检查，通过后验收卡才会 送到
-                  <strong>@{{ gateCard.reviewer_handle }}</strong> 手上。
+                  正在这个话题的工作区里运行项目配置的质量检查，通过后验收卡才会送给
+                  <strong>@{{ gateCard.reviewer_handle }}</strong
+                  >。
                 </div>
               </div>
             </v-card>
@@ -1186,7 +1187,7 @@ onUnmounted(() => {
                   <span class="t-title">平台检查未通过</span>
                 </div>
                 <div class="text-caption text-medium-emphasis mb-2">
-                  这张验收卡没有送出。芝士已收到检查结果，会修复后重新递卡。
+                  这张验收卡没有送出。芝士已收到检查结果，会修复后重新提交。
                 </div>
                 <v-btn
                   size="small"
@@ -1211,11 +1212,11 @@ onUnmounted(() => {
               <div class="pa-3">
                 <div class="d-flex align-center ga-2 mb-1">
                   <v-icon color="warning" size="19">mdi-help-circle-outline</v-icon>
-                  <span class="t-title">平台检查没跑成</span>
+                  <span class="t-title">平台检查未能执行</span>
                 </div>
                 <div class="text-caption text-medium-emphasis mb-2">
-                  检查没能在门禁环境里跑起来，所以它对这次改动<strong>没有结论</strong>（既不是通过也不是未通过）。
-                  这张验收卡没有送出。芝士已收到通知去把检查环境弄起来再重新递卡；如果它反复跑不起来，需要人看一眼。
+                  检查程序没能启动，所以它对这次改动<strong>没有结论</strong>（既不是通过也不是未通过）。
+                  这张验收卡没有送出。芝士已收到通知，会先恢复检查环境再重新提交；如果反复启动失败，需要人工介入。
                 </div>
                 <v-btn
                   size="small"
@@ -1241,8 +1242,8 @@ onUnmounted(() => {
                   </span>
                 </div>
                 <div v-if="pendingCard.status === 'conflict'" class="text-caption text-medium-emphasis mb-2">
-                  {{ pendingCard.note || '采纳时合并冲突，芝士正在工作区里解决。' }}
-                  它在对话里汇报解决完之后，点下面重试。
+                  {{ pendingCard.note || '采纳时发生合并冲突，芝士正在工作区里解决。' }}
+                  它在对话里汇报完成后即可重试。
                 </div>
                 <div class="d-flex align-center flex-wrap ga-1 text-body-2 mb-1">
                   <span>等</span>
@@ -1259,7 +1260,7 @@ onUnmounted(() => {
                         class="text-medium-emphasis"
                         :disabled="acceptBusy"
                       >
-                        改
+                        改派
                       </v-btn>
                     </template>
                     <v-list density="compact">
@@ -1295,7 +1296,7 @@ onUnmounted(() => {
                   class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2"
                 >
                   <v-icon size="15">mdi-timer-sand</v-icon>
-                  平台检查已过（只有 lint/类型，没跑测试）· 真 CI 在你授权后才开始跑
+                  平台检查已通过（只跑了 lint 和类型检查，没有跑测试）· 完整 CI 在你授权后才开始
                 </div>
                 <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
                 <div v-if="pendingCard.pr_url" class="mb-2">
@@ -1361,7 +1362,9 @@ onUnmounted(() => {
                   >
                     批准
                   </v-btn>
-                  <span v-else class="text-caption text-medium-emphasis"> 你已批准 ✓ </span>
+                  <span v-else class="d-inline-flex align-center ga-1 text-caption text-medium-emphasis">
+                    <v-icon size="14">mdi-check</v-icon>你已批准
+                  </span>
                 </div>
                 <div class="d-flex align-center ga-2">
                   <v-btn
@@ -1491,15 +1494,15 @@ onUnmounted(() => {
                     prepend-icon="mdi-alert-decagram-outline"
                     @click="showForceMergeInput = true"
                   >
-                    等不了了，人工放行合并
+                    人工放行并合并
                   </v-btn>
                   <template v-else>
                     <div class="text-caption text-medium-emphasis mb-1">
-                      明知检查没有全绿仍然合并。平台会在卡上记下是你、什么时候、当时检查是什么状态。
+                      在检查未全部通过的情况下强制合并。平台会记录操作人、时间和当时的检查状态。
                     </div>
                     <v-textarea
                       v-model="forceMergeReason"
-                      label="理由（会留在卡上）"
+                      label="理由"
                       rows="2"
                       auto-grow
                       density="compact"
@@ -1536,7 +1539,7 @@ onUnmounted(() => {
                   <span class="t-title">已采纳并归档</span>
                 </div>
                 <div class="text-body-2 c-muted mb-3">
-                  由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳。采纳可撤销。
+                  由 <strong>@{{ acceptedCard.decided_by }}</strong> 采纳
                 </div>
                 <v-btn
                   variant="outlined"
@@ -1555,7 +1558,7 @@ onUnmounted(() => {
         <div
           v-if="selectedTopic && !focusMode"
           class="pane-resizer"
-          title="拖动调整宽度（双击复位）"
+          title="拖动调整宽度，双击复位"
           @mousedown.prevent="startPaneDrag"
           @dblclick="chatPct = 50"
         />
@@ -1596,7 +1599,7 @@ onUnmounted(() => {
               type="button"
               class="summon-chip"
               :class="{ 'summon-chip--on': summon }"
-              title="@芝士 — 让芝士回复（默认不 @）"
+              title="让芝士回复"
               @click="toggleSummon"
             >
               <v-icon v-if="summon" size="13">mdi-creation</v-icon>
@@ -1608,18 +1611,13 @@ onUnmounted(() => {
             <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
           </div>
           <!-- 评论模式: quote chip above the input — what this send will
-               comment on. ✕ / Esc exits back to normal message mode. -->
+               comment on. The ✕ button / Esc exits back to normal message mode. -->
           <div v-if="commentIntent" class="comment-mode-chip">
             <v-icon size="14" class="comment-mode-chip__icon"> mdi-comment-quote-outline </v-icon>
             <span class="comment-mode-chip__label">评论</span>
             <span class="comment-mode-chip__quote">{{ commentIntent.quote }}</span>
-            <button
-              type="button"
-              class="comment-mode-chip__x"
-              title="退出评论模式（Esc）"
-              @click="commentIntent = null"
-            >
-              ✕
+            <button type="button" class="comment-mode-chip__x" title="退出评论模式" @click="commentIntent = null">
+              <v-icon size="13">mdi-close</v-icon>
             </button>
           </div>
           <!-- @-autocomplete: pick a teammate / topic while typing @ -->
@@ -1644,7 +1642,7 @@ onUnmounted(() => {
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
               <span class="mention-menu-name">{{ mm.label }}</span>
-              <span v-if="mm.agent" class="mention-agent-badge">Agent</span>
+              <span v-if="mm.agent" class="mention-agent-badge">AI</span>
               <span class="mention-menu-sub">{{ mm.sub }}</span>
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
@@ -1653,7 +1651,9 @@ onUnmounted(() => {
           <div v-if="pendingAtts.length || attsUploading" class="att-strip">
             <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
               <img :src="attachmentRawUrl(selectedTopic.id, a.path)" :alt="a.path" />
-              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">×</button>
+              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
+                <v-icon size="12">mdi-close</v-icon>
+              </button>
             </div>
             <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
           </div>
@@ -1668,13 +1668,7 @@ onUnmounted(() => {
               hide-details
               density="comfortable"
               class="composer-input flex-grow-1"
-              :placeholder="
-                commentIntent
-                  ? '写评论…（Enter 发送，Esc 退出评论模式）'
-                  : summon
-                    ? '让芝士做点什么…（Enter 发送，Shift+Enter 换行，可粘贴图片）'
-                    : '发条消息…（默认不 @ 芝士；点 @芝士 让它回复）'
-              "
+              :placeholder="commentIntent ? '输入评论…' : summon ? '告诉芝士要做什么…' : '输入消息…'"
               :disabled="!composerReady && !commentIntent"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
@@ -1784,18 +1778,20 @@ onUnmounted(() => {
   background: var(--fill);
 }
 .att-remove {
+  display: inline-flex;
   position: absolute;
   top: -6px;
   right: -6px;
   width: 18px;
   height: 18px;
-  border-radius: 50%;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--muted);
-  font-size: 13px;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
   cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
 }
 .att-remove:hover {
   color: var(--ink);
@@ -1808,7 +1804,10 @@ onUnmounted(() => {
   margin-bottom: 6px;
   padding: 5px 8px 5px 10px;
   border-left: 2px solid rgb(var(--v-theme-primary));
-  border-radius: 0 8px 8px 0;
+  /* 只圆右侧两角。写成 `0 8px 8px 0` 的简写形式过不了圆角阶梯检查（它逐值比对），
+     所以拆成长写法 —— 视觉完全一致。 */
+  border-top-right-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
   background: rgba(var(--v-theme-primary), 0.07);
 }
 .comment-mode-chip__icon {
@@ -1831,15 +1830,16 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .comment-mode-chip__x {
+  display: inline-flex;
   flex: 0 0 auto;
-  border: none;
-  background: transparent;
-  color: var(--faint);
-  font-size: 12px;
-  line-height: 1;
+  align-items: center;
   padding: 2px 4px;
-  border-radius: 4px;
+  line-height: 1;
   cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--faint);
 }
 .comment-mode-chip__x:hover {
   color: var(--muted);
@@ -1905,7 +1905,7 @@ onUnmounted(() => {
   font-size: 0.65rem;
   font-weight: 600;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.12);
 }

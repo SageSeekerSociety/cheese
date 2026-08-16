@@ -33,7 +33,7 @@ const error = ref<string | null>(null)
 // team's 「算力」 page — the chips here are read-only links into those pages.
 const myTeams = ref<MyTeam[]>([])
 function teamName(id: number): string {
-  return myTeams.value.find((t) => t.id === id)?.name ?? `小队 #${id}`
+  return myTeams.value.find((t) => t.id === id)?.name ?? `团队 #${id}`
 }
 
 // The screen whose 现场 is open in the viewer dialog.
@@ -142,7 +142,7 @@ onMounted(load)
     <v-container class="py-6" style="max-width: 900px">
       <div class="mb-6 d-flex align-center">
         <div>
-          <div class="t-eyebrow mb-1">连接器</div>
+          <div class="t-eyebrow mb-1">设备</div>
           <h1 class="t-page-title">我的设备</h1>
         </div>
         <v-spacer />
@@ -152,9 +152,7 @@ onMounted(load)
         </v-btn>
       </div>
 
-      <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4">
-        登录后即可管理接入的客户机 / Agent。
-      </v-alert>
+      <v-alert v-if="!isLoggedIn" type="info" density="comfortable" class="mb-4"> 登录后即可管理已接入的设备 </v-alert>
 
       <template v-else>
         <v-alert v-if="error" type="error" density="comfortable" class="mb-4" closable @click:close="error = null">
@@ -170,8 +168,8 @@ onMounted(load)
 
         <div v-else-if="devices.length === 0" class="empty-state text-center py-10">
           <v-icon size="34" class="mb-3 c-muted">mdi-laptop</v-icon>
-          <div class="t-body c-muted mb-1">还没有连接的设备。</div>
-          <div class="t-caption c-muted mb-5">在你的机器上运行下面这条命令，按提示批准，设备就会出现在这里。</div>
+          <div class="t-body c-muted mb-1">暂无已连接的设备</div>
+          <div class="t-caption c-muted mb-5">在你的机器上运行下面这条命令，按提示批准，设备就会出现在这里</div>
 
           <!-- Copyable install one-liner, right in the empty-state so the user can
              act without hunting for a dialog. -->
@@ -222,14 +220,14 @@ onMounted(load)
           <!-- A device is pure compute (算力节点), not an agent. Which agents run on it
              are the 现场 chips below — each screen carries its own agent identity. -->
           <div class="t-caption c-muted mt-1">
-            算力节点 · <span style="font-family: monospace">{{ d.device_id }}</span>
+            设备 ID · <span style="font-family: monospace">{{ d.device_id }}</span>
           </div>
 
           <!-- Read-only 归属 overview: which teams this machine serves (personal team
              included). Registering/removing happens on each team's 「算力」 page —
              each chip links straight there. -->
           <div class="mt-3">
-            <div class="t-caption c-muted mb-1">在为这些小队提供算力</div>
+            <div class="t-caption c-muted mb-1">正在为这些团队提供算力</div>
             <div class="d-flex flex-wrap align-center ga-2">
               <v-chip
                 v-for="tid in d.team_ids"
@@ -243,13 +241,13 @@ onMounted(load)
                 {{ teamName(tid) }}
               </v-chip>
               <span v-if="!d.team_ids.length" class="t-caption c-muted">
-                还没有小队在用 — 去小队页面的「算力」里「加机器」
+                暂无团队在用，可在团队页面的「算力」里添加
               </span>
             </div>
           </div>
 
           <div v-if="d.screens.length" class="mt-3">
-            <div class="t-caption c-muted mb-1">运行中的 agent 现场</div>
+            <div class="t-caption c-muted mb-1">运行中的现场</div>
             <div class="d-flex flex-wrap ga-2">
               <v-chip
                 v-for="s in d.screens"
@@ -277,8 +275,6 @@ onMounted(load)
           <v-spacer />
           <v-btn variant="text" icon="mdi-close" size="small" @click="addDeviceOpen = false" />
         </div>
-        <div class="t-caption c-muted mb-4">在你想接入的机器上运行下面这条命令，即可把它连接到 CheeseX。</div>
-
         <div class="install-cmd mb-5">
           <code class="install-cmd__code">{{ installCommand }}</code>
           <v-btn
@@ -295,20 +291,20 @@ onMounted(load)
         <ol class="steps">
           <li>
             <span class="steps__n">1</span>
-            <span>在你的机器上运行这条命令。</span>
+            <span>在你想接入的机器上运行这条命令</span>
           </li>
           <li>
             <span class="steps__n">2</span>
-            <span>按提示批准接入（<code>cheesehost auth login</code>）。</span>
+            <span>按提示批准接入（<code>cheesehost auth login</code>）</span>
           </li>
           <li>
             <span class="steps__n">3</span>
-            <span>设备出现在这个页面，可看现场、重命名或解绑。</span>
+            <span>设备出现在这个页面，可看现场、重命名或解绑</span>
           </li>
         </ol>
 
         <div class="d-flex justify-end mt-4">
-          <v-btn variant="flat" color="primary" @click="addDeviceOpen = false">知道了</v-btn>
+          <v-btn variant="flat" color="primary" @click="addDeviceOpen = false">确定</v-btn>
         </div>
       </v-card>
     </v-dialog>
@@ -337,7 +333,7 @@ onMounted(load)
           确定解绑设备「<strong>{{ unbindTarget.name }}</strong
           >」吗？
         </div>
-        <div class="t-caption c-muted mb-5">它的登录令牌将立即失效，该机器需重新接入才能再次连接。</div>
+        <div class="t-caption c-muted mb-5">它的登录令牌将立即失效，该机器需重新接入才能再次连接</div>
         <div class="d-flex justify-end">
           <v-btn variant="text" class="mr-2" @click="unbindTarget = null">取消</v-btn>
           <v-btn color="error" variant="flat" :loading="unbinding" @click="confirmUnbind"> 解绑 </v-btn>
@@ -359,7 +355,7 @@ onMounted(load)
   padding: 6px 6px 6px 14px;
   border: 1px solid var(--accent-wash);
   background: var(--accent-wash);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
 }
 .install-cmd__code {
   flex: 1 1 auto;
@@ -416,6 +412,6 @@ onMounted(load)
   background: var(--accent-wash);
   color: var(--accent-ink);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 </style>
