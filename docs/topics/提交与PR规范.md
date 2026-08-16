@@ -44,7 +44,17 @@
 
 ## 状态
 
-代码、测试、文档都已完成。后端 ruff + pyright 全绿；前端 lint 0 error、typecheck 0 error（ratchet 基线未变）。全量 pytest 在跑。
+已完成，等验收。后端 ruff + pyright 全绿，全量 pytest **4848 passed / 0 failed**；前端 lint 0 error、typecheck 0 error（ratchet 基线未变）。
+
+## 未决：每轮一个快照提交，这个切分本身是错的
+
+@彭文博 追问后确认的：把「芝士 edits」改成 `chore: snapshot workspace after agent turn` 只是把**看不懂的黑话**换成了**读得懂的噪音**——内容恒定的 message 等于没有 message。真正的问题是**提交的单位应该是一次改动，而「轮」是 AI 调度的单位**，它对读仓库的人没有意义，甚至不稳定（被人插一句话、被后台任务 hold 一次，边界就变了）。
+
+而且快照真正要满足的是「容器挂了别丢改动」和「给采纳一个 ref 指」，这两件事 jj 在 git 之下的一层已经给了（工作副本本身就是提交，每次快照进 operation log）。现在能忍只是因为 squash 合并把这些全删了——这是个**承重的巧合**，仓库哪天改成 merge/rebase 合并就会落到 main 上。
+
+方向：**一个话题一个提交，每轮 amend 进去**，逐轮粒度留给 `jj op log` 和平台时间线。PR 分支现在就已经是 `--force-with-lease` 强推，改写历史不额外增加成本。
+
+**动手前必须先确认的一件事**：`pr_authorized_sha`（人类授权动作前移）冻的是点采纳那一刻的 commit SHA，之后拿当前 head 跟它对 diff 来卡超范围的改动。改成 amend 后那个 SHA 在强推后远端不可达，GitHub compare 可能解析不了。**那个安全阀比干净的历史值钱**，要么先验证它还能工作，要么把锚点换成 tree hash。未拍板，未动手。
 
 ## 边界（先说清楚）
 
