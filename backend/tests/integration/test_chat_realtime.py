@@ -592,7 +592,6 @@ async def test_summon_during_a_running_turn_is_injected_not_queued(client, tmp_p
     assert len(provider.injected) == 2
     assert "跑一个很久的命令" in provider.injected[0]
     assert "等一下，先别跑" in provider.injected[1]
-    assert not hasattr(svc, "_topic_locks")
 
     async with factory() as session:
         before_stop = await BlockRepository(session).list_for_topic(topic_id)
@@ -616,8 +615,18 @@ async def test_summon_during_a_running_turn_is_injected_not_queued(client, tmp_p
 
 
 @pytest.mark.anyio
-async def test_noninteractive_provider_turns_are_not_chat_serialized(client, tmp_path):
-    """SDK-style providers may run concurrently; ChatService owns no topic lock."""
+async def test_noninteractive_provider_answers_both_messages_in_one_turn(
+    client, tmp_path
+):
+    """A backend with no live screen cannot take an injected message, so a second
+    summon waits instead of racing it. It then answers only what is genuinely
+    still unanswered — never the message the running turn already took, which is
+    what an unlocked prompt build produces, since the consumed stamp only lands
+    when the turn finishes.
+
+    This is the invariant `test_turn_message_window` guards from the other side.
+    It costs a wait only where there is nothing to inject into: on the hooks
+    backends the same lock is released as soon as the prompt is injected."""
     from app.domain.agent.compute import ComputePool
 
     factory = client.test_factory  # type: ignore[attr-defined]
@@ -630,12 +639,14 @@ async def test_noninteractive_provider_turns_are_not_chat_serialized(client, tmp
             self.started = asyncio.Event()
             self.release = asyncio.Event()
             self.turns = 0
+            self.prompts: list[str] = []
 
         def available(self) -> bool:
             return True
 
         async def run_turn(self, **kwargs):
             self.turns += 1
+            self.prompts.append(kwargs["prompt"])
             self.started.set()
             await self.release.wait()
             yield AgentResult(text="done", session_id="s1", usage=None)
@@ -675,14 +686,22 @@ async def test_noninteractive_provider_turns_are_not_chat_serialized(client, tmp
     await asyncio.wait_for(provider.started.wait(), 5)
 
     second = asyncio.create_task(summoned("user-2", "第二件事"))
-    for _ in range(20):
-        if provider.turns == 2:
-            break
-        await asyncio.sleep(0.01)
-    assert provider.turns == 2
-    assert not second.done()  # both provider turns are running, neither is queued
+    await asyncio.sleep(0.05)
+    # Nothing to inject into, so it waits for the running turn instead of
+    # starting a second one against the same topic.
+    assert provider.turns == 1
+    assert not second.done()
 
     provider.release.set()
     await asyncio.wait_for(turn, 5)
     await asyncio.wait_for(second, 5)
-    assert not hasattr(svc, "_topic_locks")
+
+    # 第二件事 was posted after the first turn had already built its prompt, so it
+    # is genuinely unanswered and does get its own turn. What must NOT happen is
+    # the first message being answered twice — which is exactly what an unlocked
+    # prompt build produces, because the consumed stamp lands at turn end.
+    assert provider.turns == 2
+    assert "第一件事" in provider.prompts[0]
+    assert "第二件事" not in provider.prompts[0]
+    assert "第二件事" in provider.prompts[1]
+    assert "第一件事" not in provider.prompts[1]

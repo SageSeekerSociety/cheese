@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
+from app.core.errors import NotFoundError
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
@@ -50,7 +51,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility, has_runnable_transport
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
-from app.domain.topic.repositories import TopicRepository
+from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
@@ -376,12 +377,20 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         scopes: list[tuple[uuid.UUID, uuid.UUID, str]] = []
         async with factory() as session:
             devices = sql_device_service(session)
-            topics = TopicRepository(session)
+            # The topic domain's SERVICE, not its repository: reaching across
+            # domains into another's repository is what `test_domain_import_guard`
+            # forbids, and that list is a ratchet — it may only shrink.
+            topics = TopicService(session)
             for connected_device_id in device_ids:
                 for binding in await devices.list_topic_bindings(connected_device_id):
-                    topic = await topics.get(binding.topic_id)
-                    if topic is not None:
-                        scopes.append((topic.project_id, topic.id, connected_device_id))
+                    try:
+                        topic = await topics.get_or_404(binding.topic_id)
+                    except NotFoundError:
+                        # A binding can outlive its topic (deleted while the
+                        # device was away); recovery skips it rather than failing
+                        # every other topic on the same device.
+                        continue
+                    scopes.append((topic.project_id, topic.id, connected_device_id))
 
         recovered: list[TopicSubscription] = []
         for project_id, topic_id, connected_device_id in scopes:

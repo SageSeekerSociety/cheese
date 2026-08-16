@@ -938,6 +938,14 @@ class ChatService:
         # messages injected while a marker is open merge their pending ids here;
         # the consumer stamps them only when Stop closes that marker.
         self._hook_turns: dict[tuple[uuid.UUID, uuid.UUID], _HookTurnState] = {}
+        # Serializes PROMPT CONSTRUCTION per topic — not a whole turn.
+        # `_pending_human_blocks` reads the unstamped blocks and the turn
+        # stamps them only when it finishes, so two summons that build their
+        # prompts concurrently both see the same pending set and answer it
+        # twice. On the hooks path the hold is milliseconds (build, inject,
+        # return); only a non-interactive backend, which has no live screen
+        # to inject into, holds it for its whole turn — the same as before.
+        self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
         self._memory_tasks: set[asyncio.Task] = set()
@@ -955,6 +963,13 @@ class ChatService:
         """`cheese status`'s idle-suspect signal (turn 活跃度检测) — see
         `ComputePool.tmux_activity_status`."""
         return self._compute.tmux_activity_status(topic_id)
+
+    def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock:
+        lock = self._topic_locks.get(topic_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._topic_locks[topic_id] = lock
+        return lock
 
     async def converse(
         self,
@@ -1030,15 +1045,16 @@ class ChatService:
             if ack is not None:
                 yield {"type": "reaction", **ack}
 
-        async for frame in self._converse_impl(
-            topic_id=topic_id,
-            content=content,
-            turn_id=turn_id,
-            user_block_id=user_block_id,
-            is_resume=is_resume,
-            continuation_id=continuation_id,
-        ):
-            yield frame
+        async with self._lock_for(topic_id):
+            async for frame in self._converse_impl(
+                topic_id=topic_id,
+                content=content,
+                turn_id=turn_id,
+                user_block_id=user_block_id,
+                is_resume=is_resume,
+                continuation_id=continuation_id,
+            ):
+                yield frame
 
     async def kickoff(
         self,
@@ -1053,13 +1069,14 @@ class ChatService:
         posted — the instruction is prompt-only, so the visible result is only
         what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
         turn_id = turn_id or uuid.uuid4()
-        async for frame in self._converse_impl(
-            topic_id=topic_id,
-            content=prompt or KICKOFF_PROMPT,
-            turn_id=turn_id,
-            user_block_id=None,
-        ):
-            yield frame
+        async with self._lock_for(topic_id):
+            async for frame in self._converse_impl(
+                topic_id=topic_id,
+                content=prompt or KICKOFF_PROMPT,
+                turn_id=turn_id,
+                user_block_id=None,
+            ):
+                yield frame
 
     async def post_system_event(
         self,

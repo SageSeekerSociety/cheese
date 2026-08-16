@@ -30,6 +30,7 @@ import pytest
 
 from app.core import sandbox_auth
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.tmux_provider import TmuxHooksProvider
 
 PROJECT = str(uuid.uuid4())
@@ -142,8 +143,13 @@ async def test_a_dead_token_actually_triggers_a_rebuild(monkeypatch):
             return 0, env_line, ""
         return 0, "", ""
 
-    provider = TmuxHooksProvider.__new__(TmuxHooksProvider)
-    provider._image = "the-current-image"  # type: ignore[attr-defined]
+    # Real construction, not `__new__`: `_ensure_container` now touches the
+    # provider's screen-lifetime state (a rebuilt container must drop the old
+    # subscription, or a dead sink outlives the screen it belonged to), and a
+    # half-built object made that surface as an AttributeError instead of a
+    # test failure. `__init__` touches nothing external, so there is no reason
+    # to skip it. Its own router keeps the process-global singleton untouched.
+    provider = TmuxHooksProvider(image="the-current-image", router=HookRouter())
     created: list[str] = []
 
     async def _create(name: str, env: dict) -> None:

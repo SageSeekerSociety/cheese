@@ -16,6 +16,7 @@ import uuid
 
 import pytest
 
+from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.sandbox_notices import REBUILD_CAUSE_TEXT, rebuild_notice_text
 from app.domain.agent.tmux_provider import TmuxHooksProvider
 
@@ -24,9 +25,13 @@ IMAGE = "the-current-image"
 
 
 def _provider() -> TmuxHooksProvider:
-    p = TmuxHooksProvider.__new__(TmuxHooksProvider)
-    p._image = IMAGE  # type: ignore[attr-defined]
-    return p
+    # Real construction, not `__new__`: `_ensure_container` now touches the
+    # provider's screen-lifetime state (a rebuilt container must drop the old
+    # subscription, or a dead sink outlives the screen it belonged to), and a
+    # half-built object made that surface as an AttributeError instead of a
+    # test failure. `__init__` touches nothing external, so there is no reason
+    # to skip it. Its own router keeps the process-global singleton untouched.
+    return TmuxHooksProvider(image=IMAGE, router=HookRouter())
 
 
 async def _false() -> bool:

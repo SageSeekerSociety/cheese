@@ -233,7 +233,6 @@ async def test_two_messages_during_one_turn_are_both_answered(client, tmp_path) 
     answer = answer_frame["block"]["content"]
     assert "先处理 A" in answer
     assert "再处理 B" in answer
-    assert not hasattr(service, "_topic_locks")
     await provider.drop_subscription(topic_id)
 
 
