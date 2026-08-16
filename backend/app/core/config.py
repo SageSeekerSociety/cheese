@@ -49,6 +49,14 @@ class Settings(BaseSettings):
     # canonical identity. jwt_secret signs/verifies the product's access tokens.
     redis_url: str = "redis://localhost:6379/0"
     environment: str = "development"
+    # "This process was started by the deploy compose file" — a fact that does NOT
+    # travel through the box's env file (#439). It is a literal in the compose
+    # `environment:` block, beside STORAGE_LOCAL_PATH and HOME, so it survives the
+    # one failure `environment` cannot report: when the env file does not apply,
+    # `environment` falls back to "development" and every deployment check that
+    # trusts it silently switches itself off. Never set this by hand; nothing but
+    # the compose file may claim it.
+    deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
     # OAuth browser-flow landing pages (must match the frontend router).
     frontend_oauth_success_path: str = "/account/oauth/success"
@@ -660,35 +668,68 @@ class Settings(BaseSettings):
           logged anywhere (24/24 401 in #342), recovering only as tokens expire.
 
         So a deployment MUST provide a real secret; there is no deployment where
-        the default is acceptable. "Deployment" is the same line the rest of the
-        app already draws — ``environment`` outside dev/test (secure cookies, the
-        X-User-Id gate). Local dev and the test suite keep the default and never
-        trip this, which is why fail-closed does not take the suite down.
+        the default is acceptable. "Deployment" is answered by TWO independent
+        signals, and needing two is the point (#439):
+
+        - ``deployed_via_compose`` — a literal in the deploy compose file, which
+          does not travel through the box's env file. This is the authority,
+          because it is the only one that survives the env-not-applied window
+          described above. Under it, ``environment`` saying "development" is
+          evidence the env file failed, not evidence this is a dev box.
+        - ``environment`` outside dev/test — the line the rest of the app already
+          draws (secure cookies, the X-User-Id gate). Still checked, for any
+          deployment that does not run through this compose file.
+
+        Local dev and the test suite set neither, keep the default secret and
+        never trip this, which is why fail-closed does not take the suite down.
 
         Mirrors #338's treatment of SANDBOX_TOKEN — make the empty/default case a
         loud, boot-time event rather than a silent runtime one — but crashes the
         boot instead of only warning: an unpinned SANDBOX_TOKEN is benign on an
         app-only box, whereas an insecure JWT_SECRET is wrong on every deployment.
         """
+        if self.jwt_secret.strip() and self.jwt_secret != "dev-secret":
+            return self
+
+        # RuntimeError, not ValueError, in both branches below: a ValueError here
+        # is wrapped by pydantic into a ValidationError whose repr dumps the whole
+        # input dict — which on a real deployment carries the DB password, API
+        # tokens and other live secrets straight into the crash log. A plain
+        # RuntimeError propagates unwrapped, so the boot dies on this one message
+        # and nothing else. (#338: keys never go into logs.)
+        generate = 'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+
+        # #439: `deployed_via_compose` is checked BEFORE `environment`, and this
+        # ordering is the whole fix. Both `ENVIRONMENT` and `JWT_SECRET` come from
+        # the box's env file, so the env-not-applied window this guard exists for
+        # takes out both at once: the secret falls back to `dev-secret` and
+        # `environment` falls back to `development`, whereupon the check below
+        # would wave it through — the fuse and the line it protects running off one
+        # supply. The compose literal cannot fall back, so when it is set we know
+        # this is a deployment no matter what `environment` claims.
+        if self.deployed_via_compose:
+            raise RuntimeError(
+                "JWT_SECRET is missing, empty, or the built-in 'dev-secret' "
+                "default, in a process started by the deploy compose file "
+                f"(ENVIRONMENT reads '{self.environment}'). If that says "
+                "'development' on a deployed box, the env file did not apply and "
+                "this is exactly the #342 window: booting on the default silently "
+                "invalidates every session on the next restart that loads the real "
+                "secret, logging every user out with no error. Fix the env file "
+                f"rather than this check. Generate a secret with: {generate}"
+            )
+
         if self.environment in ("development", "test"):
             return self
-        if not self.jwt_secret.strip() or self.jwt_secret == "dev-secret":
-            # RuntimeError, not ValueError: a ValueError here is wrapped by
-            # pydantic into a ValidationError whose repr dumps the whole input
-            # dict — which on a real deployment carries the DB password, API
-            # tokens and other live secrets straight into the crash log. A plain
-            # RuntimeError propagates unwrapped, so the boot dies on this one
-            # message and nothing else. (#338: keys never go into logs.)
-            raise RuntimeError(
-                "JWT_SECRET must be set to a real secret when ENVIRONMENT is "
-                f"'{self.environment}' (i.e. not development/test); it is "
-                "currently missing, empty, or the built-in 'dev-secret' default. "
-                "Booting on the default silently invalidates every session on the "
-                "next restart that loads the real secret — every user is logged "
-                "out with no error (#342). Generate one with: "
-                'python -c "import secrets; print(secrets.token_urlsafe(48))"'
-            )
-        return self
+
+        raise RuntimeError(
+            "JWT_SECRET must be set to a real secret when ENVIRONMENT is "
+            f"'{self.environment}' (i.e. not development/test); it is "
+            "currently missing, empty, or the built-in 'dev-secret' default. "
+            "Booting on the default silently invalidates every session on the "
+            "next restart that loads the real secret — every user is logged "
+            f"out with no error (#342). Generate one with: {generate}"
+        )
 
 
 @lru_cache
