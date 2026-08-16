@@ -144,8 +144,11 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   min-height: 240px;
+  /* Theme-invariant on purpose: this is the ground of an xterm.js terminal,
+     which paints its own dark scheme in both themes. A --surface here would
+     flash a white slab under a black terminal. */
   background: #1e1e1e;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 .device-live__term {
@@ -160,9 +163,11 @@ onBeforeUnmount(() => {
   right: 12px;
   z-index: 1;
   font-size: 12px;
+  /* Sits ON the invariant terminal ground above, so it is light-on-dark in both
+     themes — tokens here would make it dark-on-dark in the light theme. */
   color: #9aa0a6;
   background: rgba(0, 0, 0, 0.5);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 </style>

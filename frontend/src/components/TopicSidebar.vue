@@ -770,7 +770,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   gap: 5px;
   padding: 4px 9px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--fill);
   color: var(--muted);
   font-size: 12px;
@@ -867,7 +867,8 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   top: 4px;
   bottom: 4px;
   width: 2px;
-  border-radius: 0 2px 2px 0;
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
   background: var(--accent);
 }
 .topic-row.is-active :deep(.v-list-item-title),
@@ -894,7 +895,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   /* 未读计数 = 裸的琥珀数字（owner 定的醒目色），行里唯一常驻的右对齐元素。
      形态历经红圆/石墨药丸被否——干净的行 + 一个琥珀数字才是答案。 */
   background: none;
-  color: var(--accent, #f57f17);
+  color: var(--accent);
   margin-left: 6px;
   font-size: 13px;
   font-weight: 700;
@@ -907,7 +908,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   height: 6px;
   padding: 0;
   border-radius: 50%;
-  background: var(--muted, #8a8a8a);
+  background: var(--muted);
 }
 
 /* 已归档 group toggle at the bottom of the topic list. */
@@ -995,7 +996,10 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: var(--fill, #e8e8ec);
+  /* The --fill here is only the pre-paint placeholder: the real ground is
+     avatarColor() bound inline in the template, a fixed hsl that is the same in
+     both themes — so the initial on it stays a literal #fff. */
+  background: var(--fill);
   color: #fff;
   font-size: 10px;
   font-weight: 600;
@@ -1003,7 +1007,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 /* Item 感（混合版）：前置图标做行的身份锚，未读转琥珀。 */
 .row-glyph {
-  color: var(--faint, #b5b5b5);
+  color: var(--faint);
 }
 .row-glyph--dot {
   width: 6px;
@@ -1014,7 +1018,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   flex: none;
 }
 .row-glyph--unread {
-  color: var(--accent, #f57f17);
+  color: var(--accent);
 }
 .row-glyph-wrap {
   position: relative;
@@ -1031,7 +1035,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   width: 16px;
   height: 16px;
   margin-right: 2px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .subtree-toggle:hover {
@@ -1059,8 +1063,8 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--ok, #1f9d55);
-  box-shadow: 0 0 0 1.5px var(--surface, #fff);
+  background: var(--ok);
+  box-shadow: 0 0 0 1.5px var(--surface);
   animation: running-dot-pulse 1.6s ease-in-out infinite;
 }
 @keyframes running-dot-pulse {
@@ -1082,7 +1086,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   top: -3px;
   bottom: -3px;
   width: 1px;
-  background: var(--line-2, #e3e3e3);
+  background: var(--line-2);
 }
 .topic-row:hover {
   background: var(--fill);
@@ -1104,10 +1108,10 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   pointer-events: none;
   /* 有意为之的浮动工具条（Linear 手法）：白底+细边+微影，
      在任何行底色上都成立——不再试图和行底色融为一体。 */
-  background: var(--surface, #fff);
-  border: 1px solid var(--line-2, #e3e3e3);
-  border-radius: 10px;
-  box-shadow: 0 1px 4px rgba(20, 22, 26, 0.07);
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-1);
   transition: opacity 0.1s ease;
   color: var(--muted);
 }
@@ -1116,31 +1120,31 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 .row-actions :deep(.v-btn) {
   width: 25px;
   height: 25px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .row-actions :deep(.v-btn .v-icon) {
   font-size: 16px;
 }
 .row-actions :deep(.v-btn:hover) {
-  background: var(--fill, #ececec);
-  color: var(--text, #2b2b2b);
+  background: var(--fill);
+  color: var(--text);
 }
 /* 取消归档按钮与归档/拆分同属一个按钮家族：同样的 25px 方盒、7px 圆角、
    16px 图标、琥珀强调 + hover 反馈，避免归档区里出现一颗尺寸/配色不一致的按钮。 */
 .split-btn {
   width: 25px;
   height: 25px;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  color: var(--accent, #f57f17);
+  color: var(--accent);
 }
 .split-btn :deep(.v-icon) {
   font-size: 16px;
 }
 .split-btn:hover {
-  background: var(--fill, #ececec);
-  color: var(--accent, #f57f17);
+  background: var(--fill);
+  color: var(--accent);
 }
 .topic-row:hover .row-actions,
 .topic-row:focus-within .row-actions {
@@ -1156,7 +1160,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 .row-time {
   flex: none;
-  color: var(--faint, #b5b5b5);
+  color: var(--faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
   /* 纯展示元素：绝不吃鼠标——hover 时它只是隐形，曾把整个操作工具条挡成
@@ -1174,7 +1178,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 12px;
-  box-shadow: 0 12px 32px rgba(20, 22, 26, 0.14);
+  box-shadow: var(--shadow-2);
 }
 .proj-switcher__head {
   font-size: 11px;
