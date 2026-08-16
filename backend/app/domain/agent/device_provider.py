@@ -566,7 +566,15 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
-        home_dir = f"$HOME/.cheese/home/{project_id}"
+        # The home MUST be per topic, not per project: every hook event lands in
+        # a spool under $HOME/.claude, and the drainer ships that spool with the
+        # hook URL + token in $HOME/.claude/cheese-drain.env — which every screen
+        # start overwrites (deliberately, so a rotated ticket reaches a long-lived
+        # screen). With a project-shared home, all concurrent screens spool into
+        # one dir and the drainer delivers everything to whichever session started
+        # last: its topic swallows every screen's events while the other topics'
+        # turns show zero output.
+        home_dir = f"$HOME/.cheese/home/{project_id}/{topic_id}"
         co_located = await self._is_co_located(device_id)
         # checkpoint() runs after the turn, from a caller that has no device in
         # hand — remember what this device is, or the snapshot decision falls back
@@ -782,18 +790,23 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
 
-    async def _send_prompt(self, screen: HubScreen, prompt: str) -> None:
+    async def _send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
         """Deliver the prompt via the minimal cheeselet's `prompt` (it gates on the
-        `❯` input box first, so a fresh screen's first prompt is not dropped)."""
+        `❯` input box first, so a fresh screen's first prompt is not dropped).
+        Returns the cheeselet's readiness at delivery (`{ready: bool}`), so a
+        held prompt is a visible state in the room instead of silence (#445)."""
         try:
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
             )
-            await self._hub.await_call(screen.device_id, call_id, timeout=60)
+            result = await self._hub.await_call(screen.device_id, call_id, timeout=60)
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
             raise ScreenSetupError(
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
+        if isinstance(result, dict) and isinstance(result.get("ready"), bool):
+            return result["ready"]
+        return None
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

@@ -32,6 +32,13 @@ from app.domain.agent.hook_events import translate_hook
 from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
+from app.domain.agent.platform_notices import (
+    EVENT_TURN_FAILED,
+    SEVERITY_ERROR,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
@@ -866,6 +873,7 @@ class ChatService:
         is_resume: bool = False,
         resume_reason: str | None = None,
         nudge_event: str | None = None,
+        nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
@@ -884,10 +892,18 @@ class ChatService:
             # System-initiated turn (自动续跑 / 评论叫醒 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
             # instruction goes straight to the agent as the prompt.
+            #
+            # 平台提示统一契约: `nudge_event` is the one line the room sees,
+            # `nudge_meta` its structured payload — which is where a caller puts
+            # the长文 (CI 日志 / 检查输出 / 冲突文件清单) so the room stays
+            # glanceable while nothing is lost. `content` is untouched: it is
+            # still the whole instruction 芝士 gets as its prompt.
             if not nudge_event:
                 why = resume_reason or "从上一轮的断点继续"
                 nudge_event = f"⏯️ 自动续跑：{why}"
-            payload = await self.post_system_event(topic_id, nudge_event, turn_id)
+            payload = await self.post_system_event(
+                topic_id, nudge_event, turn_id, meta=nudge_meta
+            )
             if payload is None:
                 raise NotFoundError("Topic not found")
             yield {"type": "event_block", "block": payload}
@@ -2258,7 +2274,6 @@ class ChatService:
             )
             detail = final_text.strip()
             platform_failure = classify_platform_failure(detail)
-            quoted = f"（服务原话：{detail}）" if detail else ""
             # The CLI sometimes emits the SAME error string as a final
             # AssistantMessage before the error result — the discrete-message
             # path already persisted it as 芝士's reply. Exact-equality match
@@ -2284,6 +2299,13 @@ class ChatService:
             swap = NO_SWAP
             fail_meta: dict | None = None
             fail_code: str | None = None
+            # 平台提示统一契约 (未分类的那几条): `fail_text` 是房间里那一行，解释性
+            # 的话和**服务原话**进 `meta.detail`。以前原话是拼进 `fail_text` 的
+            # (`（服务原话：…）`)，于是一条朴素系统行动辄七八行 —— 而且只有
+            # `classify_platform_failure()` 命中时才有 meta，最常见的三条（座位
+            # 限流 / 余额用尽 / HTTP 错误）恰好都不命中，一个结构化字段都没有。
+            fail_hint = ""
+            fail_who = WHO_HUMAN
             if platform_failure is not None:
                 fail_text = platform_failure.content
                 fail_meta = platform_failure.meta
@@ -2314,31 +2336,48 @@ class ChatService:
                 recover = "恢复后我会自动接着跑" if not is_resume else "到点再 @ 它"
                 fail_text = (
                     f"⚠️ 芝士的 AI 座位额度用完了，北京时间 "
-                    f"{resets:%m-%d %H:%M} 恢复，{recover}。{quoted}"
+                    f"{resets:%m-%d %H:%M} 恢复，{recover}。"
                 )
                 if not is_resume:
                     # Resume ~2min after the window opens (clock skew buffer).
                     wait_s = rate_limit["resets_at"] - datetime.now(UTC).timestamp()
                     resume_after_s = max(60.0, wait_s + 120.0)
+                    # 平台自己会到点接着跑，没人需要动手。
+                    fail_who = WHO_PLATFORM
             elif _is_out_of_credit(detail):
                 # A spent balance is not a wait — no amount of retrying refills
                 # it, and telling someone to try again later sends them into a
                 # loop that cannot succeed. Say what actually has to happen.
-                fail_text = (
-                    "⚠️ 芝士这轮没能完成——AI 中继的余额用尽了。"
+                fail_text = "⚠️ 芝士这轮没跑完——AI 中继余额用尽，重试无效，要人充值。"
+                fail_hint = (
                     "这不是等一等就能好的，需要有人充值或把机器切到其他 AI 供给；"
-                    f"重试无效。{quoted}"
+                    "重试无效。"
                 )
             elif api_error_status:
                 fail_text = (
-                    f"⚠️ 芝士这轮没能完成——AI 接口错误（HTTP {api_error_status}）。"
-                    f"稍后再 @ 它重试。{quoted}"
+                    f"⚠️ 芝士这轮没跑完——AI 接口错误（HTTP {api_error_status}）。"
                 )
+                fail_hint = "稍后再 @ 它重试。"
             else:
-                fail_text = (
-                    "⚠️ 芝士这轮没能完成——AI 服务返回错误"
-                    + (f"：{detail}" if detail else "")
-                    + "。稍后再 @ 它重试。"
+                fail_text = "⚠️ 芝士这轮没跑完——AI 服务返回错误。"
+                fail_hint = "稍后再 @ 它重试。"
+            if fail_meta is None:
+                # 没被分类的那几条。原话是**唯一**的一份 —— 它没有第二个副本可以
+                # 「去别处看」，所以只能原样收进 detail，不截、不摘要。
+                fail_meta = notice(
+                    EVENT_TURN_FAILED,
+                    severity=SEVERITY_ERROR,
+                    who=fail_who,
+                    detail="\n\n".join(
+                        part
+                        for part in (
+                            fail_hint,
+                            f"服务原话：\n{detail}" if detail else "",
+                        )
+                        if part
+                    )
+                    or None,
+                    detail_label="详细说明",
                 )
             async with self._sessions() as session:
                 blocks = BlockRepository(session)

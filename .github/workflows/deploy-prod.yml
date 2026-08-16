@@ -40,11 +40,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Gate on a GitHub-hosted runner so a long approval wait never ties up the
-  # box's self-hosted runner. Waits for the release commit's CI (release events
-  # only; a manual dispatch trusts the operator's ref) and then a human approval.
+  # Gate on a CI runner, NOT ubuntu-latest: every other workflow here runs
+  # self-hosted, so an org billing lapse only ever surfaces in THIS job — and it
+  # did (2026-08-15, the 0.18.0 release: "the job was not started because recent
+  # account payments have failed", with zero failed steps to point at). The
+  # original reason for a hosted runner — a long approval wait must not tie up
+  # the PROD box's runner — still holds, and a ci-pool runner satisfies it: the
+  # wait occupies one of three, and never the box that deploys. Waits for the
+  # release commit's CI (release events only; a manual dispatch trusts the
+  # operator's ref) and then a human approval.
   gate:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cheese-ci]
     # Deliberately unbounded (GitHub's 360m default): this job blocks on a
     # human approving via manual-approval. A tight timeout here would not
     # catch a hang, it would cancel a deploy waiting on its approver.

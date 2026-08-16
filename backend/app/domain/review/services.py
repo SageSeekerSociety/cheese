@@ -17,6 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.agent.platform_notices import (
+    EVENT_CI_FAILED,
+    EVENT_MERGE_REFUSED,
+    SEVERITY_ERROR,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
@@ -1828,6 +1835,18 @@ class AcceptService:
                 "请在话题里说清楚卡在哪、需要谁做什么。"
             ),
             summon=True,
+            # 平台提示统一契约: the room gets one line; GitHub's own words ride in
+            # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
+            # the same 1500-char bound the message body always used). `content`
+            # above is unchanged and still goes to 芝士 as the prompt.
+            nudge_event=f"🚫 PR #{card.pr_number} 全绿但 GitHub 拒绝合并 · 芝士在解",
+            nudge_meta=notice(
+                EVENT_MERGE_REFUSED,
+                severity=SEVERITY_ERROR,
+                who=WHO_CHEESE,
+                detail=reason[:1500],
+                detail_label="GitHub 给的理由",
+            ),
         )
 
     def _nudge_pr_fix(
@@ -1877,6 +1896,19 @@ class AcceptService:
                 "转绿后平台会自动合并 PR。"
             ),
             summon=True,
+            # 平台提示统一契约: this used to land in the room as a message from a
+            # fake human called "system" — up to 4000 characters of job list and
+            # log excerpts in a full chat bubble. Now the room sees one line and
+            # the excerpt rides in `meta.detail`, byte-for-byte the same text
+            # under the same `_NUDGE_TAIL_LIMIT` bound.
+            nudge_event=f"⚠️ PR #{card.pr_number} 的 {stage} 检查没过 · 芝士在修",
+            nudge_meta=notice(
+                EVENT_CI_FAILED,
+                severity=SEVERITY_ERROR,
+                who=WHO_CHEESE,
+                detail=tail[:_NUDGE_TAIL_LIMIT],
+                detail_label=f"{stage} 日志",
+            ),
         )
 
     async def _finish_pr_accept(

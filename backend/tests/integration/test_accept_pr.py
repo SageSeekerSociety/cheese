@@ -26,7 +26,7 @@ from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review import github_pr
 from app.domain.workspace import service as ws
 from tests.conftest import wait_turns_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_text, session_auth_headers
 
 
 def _make_project(client) -> str:
@@ -527,7 +527,7 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         _reset_client()
 
 
-def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch):
+def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
     fake = _pr_ready(client, monkeypatch)
     try:
         pid = _make_project(client)
@@ -545,26 +545,30 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch):
         _poll(client)
         wait_turns_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
+        # 平台提示统一契约: 房间里是一行 + 折叠的 `meta.detail`（`room_text` 把两半
+        # 都算上），而**行动指引整段只进芝士的 prompt**，房间里根本不显示 —— 所以
+        # 下面这四条断言的对象是 prompt，不是块。
         assert "pytest: 3 failed" in contents
+        prompt = stub_agent.last_prompt or ""
         # 2026-08-09 fix: 芝士's sandbox can't push to GitHub — the nudge must
         # not tell it to "推送新 commit", or it goes chasing an impossible
         # instruction (see docs/topics for the incident this caused).
-        assert "推送新 commit" not in contents
-        assert "平台会自动把新提交同步到这个 PR" in contents
+        assert "推送新 commit" not in prompt
+        assert "平台会自动把新提交同步到这个 PR" in prompt
         # CI失败要把日志送到芝士眼前: the nudge must also say how to read the
         # rest. Both halves matter — the token path was documented nowhere 芝士
         # can read, and `gh api repos/:owner/:repo/...` needs a repo name the
         # workspace (not a checkout of the repo) has no way to supply.
-        assert "cheese gh-token" in contents
-        assert "repos/acme/widgets/actions/jobs/" in contents
+        assert "cheese gh-token" in prompt
+        assert "repos/acme/widgets/actions/jobs/" in prompt
         nudge_count = contents.count("pytest: 3 failed")
 
         # Polling again with the SAME failing commit must not spam a second nudge.
         _poll(client)
         wait_turns_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
         assert contents.count("pytest: 3 failed") == nudge_count
 
         card = _cards_for_topic(client, tid)[0]
@@ -578,7 +582,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch):
         _poll(client)
         wait_turns_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
         assert "pytest: 1 failed now" in contents
     finally:
         _reset_client()
@@ -1160,7 +1164,9 @@ def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
         _reset_client()
 
 
-def test_poll_merge_refusal_summons_cheese_once_per_reason(client, monkeypatch):
+def test_poll_merge_refusal_summons_cheese_once_per_reason(
+    client, monkeypatch, stub_agent
+):
     """A note nobody is looking at is not a notification (2026-08-11): a PR the
     platform can't merge — typically merge conflicts, which 芝士 can fix in its
     own workspace — must wake 芝士 up, or the card sits at pr_open forever
@@ -1185,11 +1191,12 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(client, monkeypatch):
         _poll(client)
         wait_turns_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
         assert "Pull Request has merge conflicts" in contents
         # Must be actionable from inside the sandbox: 芝士 has no GitHub
         # credentials, so the same promise the CI nudge makes has to hold here.
-        assert "平台会自动把新提交同步到这个 PR" in contents
+        # 平台提示统一契约: 这句是**给芝士的指令**，只进 prompt，房间里不显示。
+        assert "平台会自动把新提交同步到这个 PR" in (stub_agent.last_prompt or "")
         first_count = contents.count("Pull Request has merge conflicts")
         assert first_count == 1
 
@@ -1197,7 +1204,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(client, monkeypatch):
         _poll(client)
         wait_turns_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
         assert contents.count("Pull Request has merge conflicts") == first_count
 
         # A DIFFERENT refusal is new information — summon again.
@@ -1205,7 +1212,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(client, monkeypatch):
         _poll(client)
         wait_turns_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
         assert "Head branch was modified" in contents
 
         assert _cards_for_topic(client, tid)[0]["status"] == "pr_open"

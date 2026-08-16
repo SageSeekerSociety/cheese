@@ -45,9 +45,19 @@ def test_storage_failure_payload_is_stable_and_sanitized():
         "severity": "error",
         "title": "运行环境存储空间不足",
         "retryable": True,
+        # 平台提示统一契约: 卡面留一句，解释性的几句进 detail 由前端折叠。
+        "detail": (
+            "项目文件和已完成的改动都还在。平台正在清理临时空间，"
+            "请稍后再 @芝士 继续；若持续出现，请联系管理员。"
+        ),
+        "detail_label": "详细说明",
     }
-    assert "项目文件和已完成的改动都还在" in failure.content
+    # 卡面是一句话；那句解释没丢，它在展开区里。
+    assert failure.content.count("。") == 1
+    assert "项目文件和已完成的改动都还在" in failure.detail
+    # 脱敏在两处都要成立 —— 把长文挪进 detail 不是把它挪出审查范围。
     assert "/home/private" not in failure.content
+    assert "/home/private" not in failure.detail
 
 
 def test_missing_runtime_image_is_a_sanitized_platform_event():
@@ -64,9 +74,16 @@ def test_missing_runtime_image_is_a_sanitized_platform_event():
         "severity": "error",
         "title": "Agent 运行组件暂时缺失",
         "retryable": True,
+        "detail": (
+            "本轮还没有开始执行，项目文件没有受到影响。"
+            "请稍后再 @芝士 重试；若持续出现，请联系管理员。"
+        ),
+        "detail_label": "详细说明",
     }
-    assert "本轮还没有开始执行" in failure.content
+    assert failure.content.count("。") == 1
+    assert "本轮还没有开始执行" in failure.detail
     assert "pull access denied" not in failure.content
+    assert "pull access denied" not in failure.detail
 
 
 def test_workspace_vcs_perms_matches_jj_and_backend_wording():
@@ -116,9 +133,18 @@ def test_workspace_vcs_perms_payload_is_stable_and_sanitized():
         "severity": "error",
         "title": "工作区版本库权限异常",
         "retryable": True,
+        "detail": (
+            "那个文件的属主不是平台进程，平台读不到它，话题就起不来。"
+            "项目文件和已提交的改动都没有受影响，版本历史也没有动过。"
+            "平台会在下一次访问时自动清掉这个文件并恢复，"
+            "请稍后再 @芝士 重试；若反复出现，请把这条提示转给管理员。"
+        ),
+        "detail_label": "详细说明",
     }
-    assert "版本历史也没有动过" in failure.content
+    assert failure.content.count("。") == 1
+    assert "版本历史也没有动过" in failure.detail
     # No internal paths, and above all no "AI 服务" — that misdirection is the
-    # reason this classification exists.
-    assert "/ws/p" not in failure.content
-    assert "AI 服务" not in failure.content
+    # reason this classification exists. Both halves are user-facing now, so
+    # both are checked.
+    assert "/ws/p" not in failure.content + failure.detail
+    assert "AI 服务" not in failure.content + failure.detail

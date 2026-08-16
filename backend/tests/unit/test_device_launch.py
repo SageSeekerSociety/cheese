@@ -456,8 +456,21 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nsleep 3\n")
     token_out = tmp_path / "claude_token.out"
     fake_claude = tmp_path / "fakeclaude.sh"
+    # Write-then-rename: the waiter below keys on the file EXISTING, and a plain
+    # `> file` creates it empty before printenv writes — on a loaded CI runner
+    # the reader wins that race and sees ''. The rename makes it appear complete.
+    # HOME and PATH ride along: the seed server's global env froze the test
+    # runner's real values, so if -e does not carry them the inner claude leaks
+    # the first-launcher's identity (the cross-topic hook mis-routing of
+    # 2026-08-15 — topic B's claude running with topic A's HOME and PATH).
+    # CHEESE_HOOK_SPOOL stands in for the UNLISTED vars: it is not on the -e
+    # list, so only the sourced env dump can carry it — the seed server global
+    # holds another topic's spool (the exact 2026-08-16 failure, where topic
+    # E's hooks landed in topic F's spool and shipped under F's identity).
     fake_claude.write_text(
-        f'#!/bin/sh\nprintenv CLAUDE_CODE_OAUTH_TOKEN > "{token_out}"\nsleep 3\n'
+        f"#!/bin/sh\n{{ printenv CLAUDE_CODE_OAUTH_TOKEN; printenv HOME;\n"
+        f'  printenv PATH; printenv CHEESE_HOOK_SPOOL; }} > "{token_out}.tmp"\n'
+        f'mv "{token_out}.tmp" "{token_out}"\nsleep 3\n'
     )
     fake_claude.chmod(0o755)
     bindir = tmp_path / "bin"
@@ -469,7 +482,11 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     try:
         subprocess.run(
             [real_tmux, "-S", sock, "new-session", "-d", "-s", "seed", "sleep 60"],
-            env={**os.environ, "CLAUDE_CODE_OAUTH_TOKEN": "STALE-frozen-token"},
+            env={
+                **os.environ,
+                "CLAUDE_CODE_OAUTH_TOKEN": "STALE-frozen-token",
+                "CHEESE_HOOK_SPOOL": "/stale/other-topics/spool",
+            },
             check=True,
         )
         env = {
@@ -479,6 +496,7 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
             "CHEESE_WORK": str(work),
             "CLAUDE": f"sh {fake_claude}",
             "CLAUDE_CODE_OAUTH_TOKEN": "FRESH-live-token",
+            "CHEESE_HOOK_SPOOL": f"{home}/.claude/cheese-spool",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
         }
         subprocess.run(
@@ -491,9 +509,20 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
         while not token_out.exists() and time.monotonic() < deadline:
             time.sleep(0.05)
         assert token_out.exists(), "the inner claude never launched"
-        assert token_out.read_text().strip() == "FRESH-live-token", (
+        got = token_out.read_text().splitlines()
+        assert got and got[0] == "FRESH-live-token", (
             "the new claude booted on the STALE server-global token, not this "
-            "launch's fresh one — the frozen-global 407 is not fixed"
+            f"launch's fresh one — the frozen-global 407 is not fixed: {got}"
+        )
+        assert got[1:2] == [str(home)], (
+            f"the inner claude's HOME is not this launch's isolated home: {got}"
+        )
+        assert got[2:] and got[2].startswith(str(bindir)), (
+            f"the inner claude's PATH does not lead with this launch's: {got}"
+        )
+        assert got[3:] == [f"{home}/.claude/cheese-spool"], (
+            "an UNLISTED var (CHEESE_HOOK_SPOOL) did not survive into the inner "
+            f"claude — the sourced env dump is not reaching the session: {got}"
         )
     finally:
         subprocess.run([real_tmux, "-S", sock, "kill-server"], capture_output=True)
