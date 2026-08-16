@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,19 +26,51 @@ type Manager struct {
 	conf string
 }
 
+// wellKnownTmuxDirs are the places tmux actually gets installed, searched after
+// PATH fails.
+//
+// PATH is not enough for the way this binary usually RUNS. A macOS LaunchAgent
+// (and a systemd unit, for the same reason) inherits the service manager's
+// environment, not a login shell's: on macOS that PATH is
+// /usr/bin:/bin:/usr/sbin:/sbin, which contains no tmux under any package
+// manager. The connector then exits at startup, the machine simply never comes
+// online, and the only evidence is one line in the plist's stderr file — while
+// running the same binary by hand from a shell works perfectly.
+//
+// $HOME is expanded per entry rather than resolved once, so an empty HOME (also
+// possible under a service manager) skips those entries instead of searching /.
+var wellKnownTmuxDirs = []string{
+	"/opt/homebrew/bin",                // homebrew, apple silicon
+	"/usr/local/bin",                   // homebrew, intel — and the usual make-install target
+	"/opt/local/bin",                   // macports
+	"$HOME/.nix-profile/bin",           // nix, single-user
+	"/etc/profiles/per-user/$USER/bin", // nix-darwin / home-manager
+	"/run/current-system/sw/bin",       // nixos
+	"/home/linuxbrew/.linuxbrew/bin",   // linuxbrew
+}
+
 // findTmux prefers a private tmux owned by this installation over whatever the
 // host system happens to have: $CHEESE_TMUX, then <user-config>/cheese/bin/tmux
-// (placed there by an installer), then PATH as a last resort. This keeps the
-// CLI self-contained — a machine without tmux works once the installer drops
-// one in, and a machine with a quirky system tmux is never at its mercy.
+// (placed there by an installer), then PATH, then the well-known install dirs
+// above. This keeps the CLI self-contained — a machine without tmux works once
+// the installer drops one in, and a machine with a quirky system tmux is never
+// at its mercy.
+//
+// The error names every place that was searched: the previous message stated
+// one remedy and no evidence, which turned "which tmux is it not seeing?" into
+// a support round-trip.
 func findTmux() (string, error) {
+	var searched []string
+
 	if p := os.Getenv("CHEESE_TMUX"); p != "" {
+		searched = append(searched, p+" ($CHEESE_TMUX)")
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
 	}
 	if base, err := os.UserConfigDir(); err == nil {
 		p := filepath.Join(base, "cheese", "bin", "tmux")
+		searched = append(searched, p)
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
@@ -45,7 +78,30 @@ func findTmux() (string, error) {
 	if p, err := exec.LookPath("tmux"); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("terminal: no tmux found (install one, or place a private copy at <config>/cheese/bin/tmux)")
+	searched = append(searched, "PATH="+os.Getenv("PATH"))
+
+	for _, dir := range wellKnownTmuxDirs {
+		expanded := os.ExpandEnv(dir)
+		// An unset HOME/USER leaves the variable empty, which would turn
+		// "$HOME/.nix-profile/bin" into "/.nix-profile/bin" — a real path that
+		// nobody installs into. Skip rather than search it.
+		if expanded == dir && strings.Contains(dir, "$") {
+			continue
+		}
+		if strings.HasPrefix(expanded, "/.") || strings.Contains(expanded, "//") {
+			continue
+		}
+		p := filepath.Join(expanded, "tmux")
+		searched = append(searched, p)
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p, nil
+		}
+	}
+
+	return "", fmt.Errorf(
+		"terminal: no tmux found (install one, or place a private copy at "+
+			"<config>/cheese/bin/tmux, or set $CHEESE_TMUX). Looked in: %s",
+		strings.Join(searched, ", "))
 }
 
 // NewManager locates tmux and provisions a private, short-path socket dir. It
