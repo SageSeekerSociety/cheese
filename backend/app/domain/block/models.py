@@ -71,10 +71,27 @@ class AuthorType(enum.StrEnum):
 # 查询/索引，而本仓多个 agent 并发改动，一次 alembic 分叉的代价高于一列的收益。
 CONSUMED_TURN_META_KEY = "consumed_turn"
 
+# How many turns have taken this block into a prompt — INCLUDING the ones that
+# died before finishing. `consumed_turn` above is stamped only by a turn that
+# completed, which is deliberate (a dead turn must not eat the message). The
+# cost of that correctness is invisible replay: a turn that keeps failing keeps
+# re-sending the exact same blocks, forever, and from the room it is
+# indistinguishable from "this topic is broken".
+#
+# 两个键分开，不是一个计数器兼职两件事：`consumed_turn` 决定**下一轮带什么**，
+# 这个键只决定**要不要把重放说出来**。合并成一个的话，"说出来"就得改动窗口语义，
+# 而那正是原注释在防的事。
+PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
+
 
 def consumed_turn(block: "Block") -> str | None:
     """Which turn already read this block into a prompt (None = still pending)."""
     return (block.meta or {}).get(CONSUMED_TURN_META_KEY)
+
+
+def prompt_attempts(block: "Block") -> int:
+    """How many turns have put this block into a prompt, finished or not."""
+    return int((block.meta or {}).get(PROMPT_ATTEMPTS_META_KEY) or 0)
 
 
 class Block(UuidPk, Timestamps, Base):
