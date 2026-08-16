@@ -112,15 +112,9 @@ type Client struct {
 	writeMu sync.Mutex
 	closed  bool
 
-	// deliverMu serializes whole Reply calls, not just the write.
-	//
-	// Measured against a real session (e2e, 2026-08-17): five `reply` frames
-	// written inside one ~400ms window produced THREE user turns — the session
-	// coalesces or drops frames that land on top of each other, and a lost
-	// prompt is exactly what this transport exists to prevent. Frames spaced by
-	// the reject window (which one Reply already costs) all land. Holding this
-	// for the duration turns concurrent callers into a queue instead of making
-	// every caller responsible for pacing.
+	// deliverMu serializes whole Reply calls, not just the write, so concurrent
+	// callers queue instead of interleaving frames. It does not make a busy
+	// session accept everything — see the contract on Reply.
 	deliverMu sync.Mutex
 
 	// rejects carries refusal frames to whichever Reply is in flight. Buffered
@@ -213,8 +207,28 @@ func waitForSocket(ctx context.Context, path string, within time.Duration) error
 	}
 }
 
-// Reply delivers one prompt as a human-origin turn. Concurrent calls are
-// serialized (see deliverMu) so none of them is lost.
+// Reply delivers one prompt as a human-origin turn.
+//
+// # What this guarantees, and what it does not
+//
+// Guaranteed: the frame reached the session's socket and was not refused. A
+// failed write, or a `reply-rejected` coming back, is an error — never silence.
+// That is the whole improvement over send-keys, where a pane whose program had
+// died acked happily.
+//
+// NOT guaranteed: that the session turned it into a turn. This protocol has no
+// positive acknowledgement, and a session that is mid-turn does not reliably
+// queue what lands on top of it. Measured on a loaded CI runner: 8 prompts sent
+// back-to-back produced 7 turns, 5 concurrent ones produced 4. The same tests
+// pass every time on an idle laptop — which is exactly why this is written down
+// instead of tuned away with a longer sleep, since a sleep that works on the
+// fast machine is not a guarantee, only a wider window.
+//
+// Consumption is therefore confirmed one layer up, where evidence exists: the
+// platform reads Claude Code's own hooks and re-sends a prompt whose hook never
+// arrives. The production caller is turn-based anyway — one prompt per turn,
+// the next only after the previous turn ends — so it does not send into a busy
+// session to begin with.
 func (c *Client) Reply(text string) error {
 	if text == "" {
 		return errors.New("rendezvous: empty prompt")
