@@ -741,3 +741,35 @@ async def test_reconcile_is_off_without_a_desired_mode(monkeypatch):
 
     assert await service.reconcile_ai_mode() == 0
     assert client.ai_switches == []
+
+
+async def test_forgetting_waits_when_ccproxy_revocation_is_unconfirmed(caplog):
+    """#420: `forget` fires from a GET, so an unconfirmed ticket revocation must
+    neither wedge the listing nor reap the machine row — the row is what brings
+    the sweep back to retry once ccproxy answers again."""
+    from unittest.mock import AsyncMock
+
+    from app.domain.device.ccproxy_tenant import CcproxyTenantError
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=project_id, requested_by="andy", owner_user_id=42
+    )
+    machine.device_id = "ticketed-device"
+    service._devices.devices[machine.device_id] = SimpleNamespace(
+        owner_user_id=42, supply=Supply.cloud
+    )
+    service._devices.delete_platform_provisioned = AsyncMock(
+        side_effect=CcproxyTenantError("engine unreachable", status=502)
+    )
+
+    client.machines.clear()
+    listed = await service.list_for_project(project_id)
+
+    assert listed == []  # the vanished machine is not shown...
+    assert "ticketed-device" in service._devices.devices
+    # ...but its row survives for the retry.
+    assert machine in await service._repo.list_for_project(project_id)
+    assert any("revocation" in r.getMessage() for r in caplog.records)
