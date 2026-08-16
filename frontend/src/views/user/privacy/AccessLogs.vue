@@ -261,7 +261,7 @@ onMounted(() => {
 <style scoped lang="scss">
 .access-logs {
   .access-table {
-    background-color: #ffffff;
+    background-color: var(--surface);
     border: 1px solid rgba(var(--v-border-color), 0.12);
     border-radius: 8px;
     overflow: hidden;

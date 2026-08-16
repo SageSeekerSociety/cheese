@@ -14,13 +14,14 @@
               variant="plain"
               hide-details
               density="compact"
-              color="white"
               bg-color="transparent"
               placeholder="编辑您的问题..."
             ></v-textarea>
             <div class="d-flex justify-end gap-2 mt-2">
-              <v-btn size="small" variant="text" color="white" @click="cancelEdit">取消</v-btn>
-              <v-btn size="small" variant="tonal" color="white" @click="submitEdit">提交</v-btn>
+              <!-- 不指定 color：气泡是 bg-primary，Vuetify 会把 on-primary 作为前景色往下传 —— 浅色仍是白字，
+                   深色主色提亮到 #FFA733 后自动翻成深墨（白字在它上面只有 1.9:1，读不出来） -->
+              <v-btn size="small" variant="text" @click="cancelEdit">取消</v-btn>
+              <v-btn size="small" variant="tonal" @click="submitEdit">提交</v-btn>
             </div>
           </v-card-text>
         </v-card>
@@ -43,7 +44,8 @@
           </v-btn>
         </div>
         <v-card max-width="80%" color="primary" class="user-message">
-          <v-card-text class="pa-3 text-white">
+          <!-- 同上：前景色由 bg-primary 的 on-primary 决定，不再写死白字 -->
+          <v-card-text class="pa-3">
             {{ finalMessage.question }}
           </v-card-text>
         </v-card>
@@ -494,20 +496,16 @@ onBeforeUnmount(() => {
   transform: translateY(-1px) translateZ(0);
 }
 
+/* 投影原来是三层写死的黑色。黑影在深色底上等于不存在，而 --shadow-1/2 两套主题各有一组值
+   （深色下加重 alpha），是规范里专门给浮层准备的那两档。 */
 .ai-message {
   border-bottom-left-radius: 4px;
-  box-shadow:
-    0 6px 16px -8px rgba(0, 0, 0, 0.08),
-    0 9px 28px 0 rgba(0, 0, 0, 0.05),
-    0 12px 48px 16px rgba(0, 0, 0, 0.03);
+  box-shadow: var(--shadow-1);
   transform: translateZ(0);
 }
 
 .ai-message:hover {
-  box-shadow:
-    0 8px 20px -8px rgba(0, 0, 0, 0.1),
-    0 12px 32px 0 rgba(0, 0, 0, 0.07),
-    0 16px 52px 16px rgba(0, 0, 0, 0.04);
+  box-shadow: var(--shadow-2);
   transform: translateY(-1px) translateZ(0);
 }
 
@@ -542,7 +540,7 @@ onBeforeUnmount(() => {
 }
 
 .ai-message :deep(pre) {
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--fill);
   border-radius: 8px;
   padding: 12px;
   overflow-x: auto;
@@ -551,7 +549,7 @@ onBeforeUnmount(() => {
 
 .ai-message :deep(code) {
   font-family: 'Roboto Mono', monospace;
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--fill);
   padding: 2px 4px;
   border-radius: 4px;
   font-size: 0.9em;
@@ -624,7 +622,7 @@ onBeforeUnmount(() => {
 }
 
 .ai-message :deep(tr:nth-child(even)) {
-  background-color: rgba(0, 0, 0, 0.015);
+  background-color: var(--fill);
 }
 
 .ai-message :deep(.katex-display) {
@@ -650,16 +648,17 @@ onBeforeUnmount(() => {
 }
 
 .reasoning-text :deep(pre) {
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--fill);
   border-radius: 4px;
   padding: 8px;
   overflow-x: auto;
   font-family: monospace;
 }
 
+/* code 原本比同级 pre 重一档（.04 vs .03），用 --fill-2 保住这个层次关系 */
 .reasoning-text :deep(code) {
   font-family: monospace;
-  background-color: rgba(0, 0, 0, 0.04);
+  background-color: var(--fill-2);
   padding: 2px 4px;
   border-radius: 4px;
 }
@@ -729,7 +728,7 @@ onBeforeUnmount(() => {
 
 .reference-card:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-1);
 }
 
 .reference-icon {
@@ -771,7 +770,7 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   max-width: 250px;
   z-index: 1000;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-2);
 }
 
 .reference-detail-dialog :deep(.v-card) {
@@ -802,7 +801,7 @@ onBeforeUnmount(() => {
   max-height: 400px;
   background-color: rgb(var(--v-theme-surface));
   border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-2);
   z-index: 100;
   margin-top: 8px;
   overflow: hidden;
@@ -892,7 +891,7 @@ onBeforeUnmount(() => {
 .usage-info {
   font-size: 0.7rem;
   opacity: 0.7;
-  border-top: 1px dashed rgba(0, 0, 0, 0.08);
+  border-top: 1px dashed var(--line-2);
 }
 
 .usage-tokens,

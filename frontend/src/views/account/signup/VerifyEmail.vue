@@ -4,10 +4,10 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-email-check</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: #212121; line-height: 1.2">验证邮箱地址</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">验证邮箱地址</h1>
       </div>
-      <p class="text-body-1" style="color: #757575; line-height: 1.5">
-        我们已向 <strong style="color: #424242">{{ signupStore.email }}</strong> 发送了验证码
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
+        我们已向 <strong style="color: var(--text)">{{ signupStore.email }}</strong> 发送了验证码
       </p>
     </div>
 
@@ -41,7 +41,7 @@
             </v-btn>
 
             <div class="d-flex align-center justify-space-between">
-              <p class="text-body-2" style="color: #757575">
+              <p class="text-body-2" style="color: var(--muted)">
                 没有收到验证码？
                 <v-btn
                   variant="text"

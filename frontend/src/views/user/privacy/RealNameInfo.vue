@@ -92,15 +92,15 @@
 
           <!-- 右侧：信息安全状态卡片 -->
           <v-col cols="12" md="4">
-            <v-card class="status-info-card h-100" rounded="lg" color="grey-lighten-4" variant="flat">
+            <v-card class="status-info-card h-100" rounded="lg" color="surface-light" variant="flat">
               <v-card-text>
                 <div class="d-flex flex-column justify-space-between h-100">
                   <div>
                     <div class="text-subtitle-2 font-weight-medium mb-4">信息安全状态</div>
 
                     <div class="status-item d-flex align-start mb-3">
-                      <v-avatar size="24" class="mr-2 success-bg">
-                        <v-icon icon="mdi-lock" size="14" color="white"></v-icon>
+                      <v-avatar size="24" color="success" class="mr-2">
+                        <v-icon icon="mdi-lock" size="14"></v-icon>
                       </v-avatar>
                       <div>
                         <div class="text-body-2 font-weight-medium">端到端加密</div>
@@ -109,8 +109,8 @@
                     </div>
 
                     <div class="status-item d-flex align-start mb-3">
-                      <v-avatar size="24" class="mr-2 success-bg">
-                        <v-icon icon="mdi-account-key" size="14" color="white"></v-icon>
+                      <v-avatar size="24" color="success" class="mr-2">
+                        <v-icon icon="mdi-account-key" size="14"></v-icon>
                       </v-avatar>
                       <div>
                         <div class="text-body-2 font-weight-medium">访问控制</div>
@@ -119,8 +119,8 @@
                     </div>
 
                     <div class="status-item d-flex align-start">
-                      <v-avatar size="24" class="mr-2 success-bg">
-                        <v-icon icon="mdi-history" size="14" color="white"></v-icon>
+                      <v-avatar size="24" color="success" class="mr-2">
+                        <v-icon icon="mdi-history" size="14"></v-icon>
                       </v-avatar>
                       <div>
                         <div class="text-body-2 font-weight-medium">访问记录</div>
@@ -320,7 +320,7 @@
           </v-row>
         </div>
 
-        <div class="d-flex align-center bg-grey-lighten-5 pa-3 rounded">
+        <div class="d-flex align-center bg-surface-light pa-3 rounded">
           <v-icon icon="mdi-information-outline" color="primary" class="mr-2"></v-icon>
           <p class="text-body-2 mb-0">
             所有对您实名信息的访问都会被记录，您可以随时在<router-link
@@ -375,7 +375,7 @@ onMounted(() => {
   }
 
   .info-card {
-    background-color: #ffffff;
+    background-color: var(--surface);
     border: 1px solid rgba(var(--v-border-color), 0.12);
   }
 
@@ -384,14 +384,14 @@ onMounted(() => {
   }
 
   .usage-card {
-    background-color: #ffffff;
+    background-color: var(--surface);
     border: 1px solid rgba(var(--v-border-color), 0.12);
   }
 
   .usage-scenario-card {
     transition: all 0.2s ease;
     border: 1px solid rgba(var(--v-border-color), 0.12);
-    background-color: #ffffff;
+    background-color: var(--surface);
 
     &:hover {
       border-color: rgba(var(--v-theme-primary), 0.15);
@@ -417,16 +417,12 @@ onMounted(() => {
     background-color: rgba(var(--v-theme-primary), 0.08);
   }
 
-  .success-bg {
-    background-color: #4caf50;
-  }
-
   .privacy-feature-card {
     height: 100%;
     padding: 16px;
     border-radius: 8px;
     border: 1px solid rgba(var(--v-border-color), 0.12);
-    background-color: #ffffff;
+    background-color: var(--surface);
     transition: all 0.2s ease;
 
     &:hover {

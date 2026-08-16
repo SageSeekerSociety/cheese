@@ -188,7 +188,7 @@ watch(
 .manual-load-button {
   display: block;
   width: 100%;
-  background-color: #f0f0f0;
+  background-color: var(--fill);
   border: none;
   cursor: pointer;
 }

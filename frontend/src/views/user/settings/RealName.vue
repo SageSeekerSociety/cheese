@@ -16,7 +16,7 @@
       class="mb-6 privacy-banner"
       variant="flat"
       rounded="lg"
-      color="grey-lighten-5"
+      color="surface-light"
       elevation="0"
       @click="showPrivacyDialog = true"
     >
@@ -71,7 +71,7 @@
               </template>
             </v-text-field>
             <div v-if="hasRealNameInfo" class="text-caption mt-1 ms-2">
-              <span v-if="!isRealNameEdited && !showingPrecise" class="text-grey">点击输入框编辑信息</span>
+              <span v-if="!isRealNameEdited && !showingPrecise" class="text-medium-emphasis">点击输入框编辑信息</span>
               <span v-else-if="showingPrecise" class="text-primary">已显示完整信息</span>
               <span v-else class="text-primary">已编辑，可点击恢复按钮还原</span>
             </div>
@@ -101,7 +101,7 @@
               </template>
             </v-text-field>
             <div v-if="hasRealNameInfo" class="text-caption mt-1 ms-2">
-              <span v-if="!isStudentIdEdited && !showingPrecise" class="text-grey">点击输入框编辑信息</span>
+              <span v-if="!isStudentIdEdited && !showingPrecise" class="text-medium-emphasis">点击输入框编辑信息</span>
               <span v-else-if="showingPrecise" class="text-primary">已显示完整信息</span>
               <span v-else class="text-primary">已编辑，可点击恢复按钮还原</span>
             </div>
