@@ -64,7 +64,7 @@ _HAS_NODE = subprocess.run(["which", "node"], capture_output=True).returncode ==
 _HARNESS = """
 const writes = [];
 const calls = [];
-let composer = "";            // text sitting in the input box
+let composer = __INITIAL__;   // text sitting in the input box at start
 let claudeReady = false;      // has the ❯ prompt been painted
 let dropped = new Set(__DROP__);
 let onChange = null;
@@ -95,10 +95,12 @@ globalThis.cheese = {
       const i = writes.length;
       writes.push(b);
       if (dropped.has(i)) return;              // swallowed: no screen effect
+      if (b.indexOf("\\u0015") !== -1) composer = "";   // Ctrl+U: kill line
       if (b.indexOf("\\u001b[200~") !== -1) {
         composer = __PLACEHOLDER__
-          ? "[Pasted text #1 +11 lines]"
-          : b.replace("\\u001b[200~", "").replace("\\u001b[201~", "");
+          ? "[Pasted text #" + (i + 1) + " +11 lines]"
+          : b.replace("\\u0015", "").replace("\\u001b[200~", "")
+              .replace("\\u001b[201~", "");
       } else if (b === "\\r") {
         composer = "";
       }
@@ -130,6 +132,7 @@ def _drive(
     slow_boot: int = 0,
     cols: int = 0,
     placeholder: bool = False,
+    initial: str = "",
 ) -> dict:
     script = (
         _HARNESS.replace("__SRC__", cheeselet_source())
@@ -139,6 +142,7 @@ def _drive(
         .replace("__SLOWBOOT__", str(slow_boot))
         .replace("__COLS__", str(cols))
         .replace("__PLACEHOLDER__", "true" if placeholder else "false")
+        .replace("__INITIAL__", json.dumps(initial))
     )
     out = subprocess.run(
         ["node", "-e", script], capture_output=True, text=True, timeout=30
@@ -234,6 +238,31 @@ def test_a_placeholder_rendered_paste_is_recognized_as_delivered():
     got = _drive("line one\n" * 12, drop=[], placeholder=True)
     pastes = [w for w in got["writes"] if "line one" in w]
     assert len(pastes) == 1, f"prompt pasted {len(pastes)}x against the placeholder"
+    assert got["composer"] == ""
+    assert any("submitted" in m for m in got["logs"])
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node not available to run the cheeselet")
+def test_a_poisoned_composer_is_cleared_not_stacked():
+    """Widgets left by FAILED earlier sends must be cleared (Ctrl+U) before
+    pasting — the prod pile-up reached [Pasted text #44] because every retry
+    pasted on top (2026-08-17). And when this turn's own paste is dropped, the
+    OLD widget must not satisfy the verification: the Enter may only follow a
+    paste that actually landed."""
+    got = _drive(
+        "hello world",
+        drop=[1],  # write 0 = the residue clear; write 1 = the first paste
+        initial="[Pasted text #9 +40 lines]",
+    )
+    pastes = [w for w in got["writes"] if "hello world" in w]
+    enters = [w for w in got["writes"] if w == "\r"]
+    assert got["writes"][0] == "\x15", f"residue was not cleared first: {got['writes']}"
+    assert len(pastes) == 2, f"expected drop + one landed repaste: {got['writes']}"
+    assert len(enters) == 1
+    landed = got["writes"].index(pastes[1])
+    assert got["writes"].index(enters[0]) > landed, (
+        f"the old widget was verified as this paste: {got['writes']}"
+    )
     assert got["composer"] == ""
     assert any("submitted" in m for m in got["logs"])
 
