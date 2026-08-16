@@ -71,6 +71,8 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 async def create_topic(
     body: TopicCreate, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    actor = await resolver.resolve(fallback_handle=None, project_id=body.project_id)
+    await resolver.authorize_project(actor, project_id=body.project_id)
     # The creator becomes the topic's roster owner (fusion-design §3). Resolve
     # them at the trust boundary (P1): the token's actor wins over any body
     # value, so the roster owner is who's really logged in — and body.created_by
@@ -111,6 +113,7 @@ async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
@@ -122,6 +125,8 @@ async def list_topics(
     active at or after it — "最近活跃的话题". Neither reads `updated_at`, which
     only moves when the topic's own fields change.
     """
+    actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
     service = TopicService(db)
     topics, total = await service.list_for_project(
         project_id, sort=sort, order=order, active_since=active_since
@@ -232,9 +237,20 @@ async def list_topic_blocks(
 
 
 @router.get("/{topic_id}/transcript")
-async def topic_transcript(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def topic_transcript(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """施工现场 (spec §7.1): the topic's AI session record — 芝士's messages and
     tool/event actions, read-only."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     await TopicService(db).get_or_404(topic_id)
     blocks = await BlockRepository(db).list_for_topic(topic_id)
     # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
@@ -245,8 +261,19 @@ async def topic_transcript(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/{topic_id}/usage")
-async def topic_usage(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def topic_usage(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """资源用量 (spec §9.1): token/cost for this topic."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     await TopicService(db).get_or_404(topic_id)
     return ok(await UsageRepository(db).for_topic(topic_id))
 
@@ -295,6 +322,7 @@ async def topic_status(
     db: DbSession,
     runner: Annotated[TurnRunner, Depends(get_turn_runner)],
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """盲飞防护: one snapshot of "what is going on" for this topic — accept
     cards with their gate output, the current/last turn's state, and the
@@ -311,6 +339,13 @@ async def topic_status(
     die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
     so it is empty after a restart and says `running` about a turn killed with
     the process. See ``TopicService.stall_signal``."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     topics = TopicService(db)
     topic = await topics.get_or_404(topic_id)
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
@@ -350,16 +385,38 @@ async def topic_status(
 
 
 @router.get("/{topic_id}/children")
-async def list_topic_children(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def list_topic_children(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     children = await TopicService(db).list_children(topic_id)
     items = [TopicOut.model_validate(t).model_dump(mode="json") for t in children]
     return ok(page(items, len(items)))
 
 
 @router.get("/{topic_id}/docs")
-async def list_topic_docs(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def list_topic_docs(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """Document-tree view of a topic: the living doc's structured node tree
     (B1, spec §5) in document order."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     await TopicService(db).get_or_404(topic_id)
     nodes = await BlockRepository(db).list_doc_nodes(topic_id)
     items = [BlockOut.model_validate(b).model_dump(mode="json") for b in nodes]
@@ -367,9 +424,20 @@ async def list_topic_docs(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/{topic_id}/comments")
-async def list_comments(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def list_comments(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """段落评论 (eval B4): inline comments, each anchored to a doc node via
     reply_to."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     await TopicService(db).get_or_404(topic_id)
     comments = await BlockRepository(db).list_comments_for_topic(topic_id)
     items = [BlockOut.model_validate(c).model_dump(mode="json") for c in comments]
@@ -443,10 +511,21 @@ async def add_comment(
 
 
 @router.get("/{topic_id}/progress")
-async def get_topic_progress(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def get_topic_progress(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
     touch it. Read on topic open — between turns there is no WS stream to carry
     it, and "做到哪了" has to be visible without summoning anyone."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     items, updated_at = await TopicService(db).get_progress(topic_id)
     return ok(
         {
@@ -457,8 +536,19 @@ async def get_topic_progress(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/{topic_id}/doc")
-async def get_topic_doc(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def get_topic_doc(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """The topic's single living doc (spec §2.2 docs-out)."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     doc = await TopicService(db).get_doc(topic_id)
     if doc is None:
         return ok(None)
@@ -496,7 +586,11 @@ async def edit_topic_doc(
 
 
 @router.get("/{topic_id}/compute-profile")
-async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def get_topic_compute_profile(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """The compute this topic runs on (execution-architecture v4 会话级选择).
 
     `current` is the effective pool
@@ -506,6 +600,12 @@ async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
     choice for a new topic (project memory, then team default); `profiles` include
     unavailable targets so a locked offline device still has a readable label."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     project = await ProjectRepository(db).get(topic.project_id)
     sticky = (project.settings or {}).get("compute_profile") if project else None
     team_default = None
@@ -557,13 +657,19 @@ async def get_topic_compute_profile(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 @router.put("/{topic_id}/compute-profile")
 async def set_topic_compute_profile(
-    topic_id: uuid.UUID, body: dict, db: DbSession
+    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Pick the topic's compute pool. Allowed only before the first turn
     (session_id NULL); once the topic has run the pin is frozen so its work tree /
     session never move. The choice also updates the project's sticky default, so
     the next new topic inherits it (spec v4: 选了之后持久化，除非新 session 又改)."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     if topic.session_id is not None:
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
@@ -741,9 +847,20 @@ async def finish_background_task(
 
 
 @router.post("/{topic_id}/decision")
-async def record_decision(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def record_decision(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     decision = (body.get("decision") or "").strip()
     if not decision:
         raise ValidationError("decision 不能为空")
@@ -807,6 +924,13 @@ async def mark_topic_read(
     The cursor is per person, so whose it is comes from the verified
     credential — ``handle`` in the body is only an assertion checked against
     it (it used to BE the identity, letting anyone move anyone's cursor)."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     handle = await resolver.resolve_recipient(
         requested=(body.get("handle") or "").strip() or None,
         project_id=await resolver.project_of_topic(topic_id),
@@ -817,16 +941,40 @@ async def mark_topic_read(
 
 
 @router.post("/{topic_id}/archive")
-async def archive_topic(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def archive_topic(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """手动归档 (归档去向): explicit archive, independent of 采纳."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     by = (body.get("by") or "anonymous").strip() or "anonymous"
     topic = await TopicService(db).archive(topic_id, by=by)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
 @router.post("/{topic_id}/unarchive")
-async def unarchive_topic(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def unarchive_topic(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """取消归档: bring an archived topic back to active."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     by = (body.get("by") or "anonymous").strip() or "anonymous"
     topic = await TopicService(db).unarchive(topic_id, by=by)
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
@@ -944,11 +1092,19 @@ async def return_conclusion(
     body: ConclusionIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
+    resolver: ActorResolverDep,
 ) -> dict:
     """结论回流：write a sub-topic's conclusion back to its parent — then WAKE
     the parent to digest it (the return leg of the subagent loop: in Claude
     Code the parent resumes when the Task result arrives; here the parent 芝士
     runs a turn to weave the conclusion in and decide what's next)."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     service = TopicService(db)
     topic = await service.get_or_404(topic_id)
     # Friendly "@名字/@话题名" in the conclusion → structured tokens BEFORE it
@@ -1009,10 +1165,21 @@ def _clean_artifact_path(raw: str) -> str:
 
 
 @router.post("/{topic_id}/artifact")
-async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def set_artifact(
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
     `cheese artifact`. With no anchor it becomes the topic's current preview."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     as_ = (body.get("as") or "html").strip().lower()
     # An app artifact points at the running server, not a file — the stored
     # content is a human note ("Vue dev server"), not a path.
@@ -1038,10 +1205,21 @@ async def set_artifact(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
 
 
 @router.get("/{topic_id}/preview")
-async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def get_preview(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """The topic's current preview (spec §7.1): the artifact 芝士 last pointed at,
     as {path, mime}. Null when none is set — the client may fall back to scanning
     the worktree. Content is fetched separately via the guarded file reader."""
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     await TopicService(db).get_or_404(topic_id)
     art = await BlockRepository(db).latest_artifact(topic_id)
     if art is None:
@@ -1070,11 +1248,19 @@ async def get_preview(topic_id: uuid.UUID, db: DbSession) -> dict:
 
 
 @router.get("/{topic_id}/preview/raw")
-async def get_preview_raw(topic_id: uuid.UUID, db: DbSession) -> Response:
+async def get_preview_raw(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Response:
     """The current file artifact served as a real page — 在新窗口打开 (Claude
     Artifacts style). CSP `sandbox allow-scripts` keeps it an opaque origin so
     artifact JS can't call our API as the user."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     art = await BlockRepository(db).latest_artifact(topic_id)
     if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
         raise NotFoundError("没有可打开的文件 artifact")
@@ -1111,11 +1297,17 @@ MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024  # 10MB per image
 
 @router.post("/{topic_id}/attachments")
 async def upload_attachment(
-    topic_id: uuid.UUID, file: UploadFile, db: DbSession
+    topic_id: uuid.UUID, file: UploadFile, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Upload a chat image into the topic's worktree (uploads/…). Returns the
     {path, mime} the client then references when sending the message."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     mime = (file.content_type or "").split(";")[0].strip().lower()
     ext = _IMAGE_MIME_EXT.get(mime)
     if ext is None:
@@ -1133,10 +1325,18 @@ async def upload_attachment(
 
 
 @router.get("/{topic_id}/attachments/raw")
-async def attachment_raw(topic_id: uuid.UUID, path: str, db: DbSession) -> Response:
+async def attachment_raw(
+    topic_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> Response:
     """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
     to images so this can never serve executable HTML from the worktree."""
     topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     clean = _clean_artifact_path(path)
     suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
     mime = _EXT_IMAGE_MIME.get(suffix)
