@@ -40,14 +40,20 @@ func isolateConfigDir(t *testing.T) {
 }
 
 // The regression: a LaunchAgent runs with PATH=/usr/bin:/bin:/usr/sbin:/sbin,
-// where no package manager puts tmux. Before this, the connector exited at
-// startup and the machine just never came online.
+// where no MACOS package manager puts tmux. Before this, the connector exited
+// at startup and the machine just never came online.
+//
+// The PATH here is empty of tmux rather than literally launchd's, because the
+// Linux CI runner ships /usr/bin/tmux — so the real service-manager PATH would
+// resolve there and the test would pass without exercising anything (it did,
+// exactly once). What is under test is "PATH came up empty, look further",
+// which is the situation macOS is permanently in.
 func TestFindTmuxLooksBeyondAServiceManagersPath(t *testing.T) {
 	isolateConfigDir(t)
 	dir := t.TempDir()
 	want := fakeTmuxIn(t, dir)
 	withWellKnown(t, dir)
-	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "empty-bin"))
 	t.Setenv("CHEESE_TMUX", "")
 
 	got, err := findTmux()
