@@ -481,7 +481,24 @@ class Settings(BaseSettings):
     # APPEARED (and be green) before the poller may merge. Absence is pending,
     # never pass — #465 merged on a run where `test` was never triggered and
     # everything visible was skipped/green. Comma-separated; empty disables.
-    accept_required_check_names: str = "test"
+    #
+    # Each entry may carry the diff scope that makes it required:
+    # `name:glob;glob` (globs are GitHub's path-filter syntax — `**` crosses
+    # directories, `*` does not). A bare name is required unconditionally.
+    # **Mirror the workflow's own `paths:` filter here.** `test` lives in
+    # .github/workflows/test.yml, which only triggers on `backend/**` — so on a
+    # frontend-only PR that check never appears, and demanding it unconditionally
+    # is an infinite wait, not a safety valve (2026-08-16: #483/#485/#486 sat
+    # fully green until a human merged them by hand). Getting the scope too
+    # NARROW is the mild failure: a check that does run still has to go green,
+    # because `check_state` sees it — only the not-yet-created window reopens.
+    accept_required_check_names: str = "test:backend/**;.github/workflows/test.yml"
+    # Backstop for the roster above: how long a required check may stay MISSING
+    # before the card stops waiting and asks a human. Waiting with no timeout is
+    # how a renamed/disabled workflow — or an Actions billing lapse, which this
+    # org had on 2026-08-13 — turns into a card that hangs forever with nobody
+    # told. The exit is 交给人, never an auto-merge. 0 disables (wait forever).
+    accept_required_check_grace_minutes: int = 30
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
