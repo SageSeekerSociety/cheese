@@ -15,6 +15,7 @@ import importlib
 import logging
 import pkgutil
 import re
+import uuid
 
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
@@ -197,10 +198,37 @@ async def lifespan(_: FastAPI):
     # Enrolling provisioned machines is platform plumbing, so it runs on its own
     # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
     from app.core.db import async_session_factory
+    from app.domain.agent.device_hub import device_hub
+    from app.domain.agent.runtime import get_broker
     from app.domain.machine.runner import MachineEnrollmentRunner
 
+    async def resume_ready_cloud_topics(
+        ready: list[tuple[uuid.UUID, str]],
+    ) -> None:
+        chat = get_chat_service()
+        topic_ids = [
+            topic_id for topic_id, device_id in ready if device_hub.is_online(device_id)
+        ]
+        for topic_id in await chat.cloud_waiting_topics(topic_ids):
+            get_turn_runner().submit_kickoff(
+                chat,
+                topic_id,
+                prompt="Cloud machine is ready; continue the pending input.",
+            )
+            block = await chat.post_system_event(
+                topic_id,
+                "✅ Cloud 机器已接入，正在继续刚才的消息。",
+                meta={"event_type": "cloud_provisioning", "state": "ready"},
+            )
+            if block is not None:
+                await get_broker().publish(
+                    str(topic_id), {"type": "event_block", "block": block}
+                )
+
     machines = MachineEnrollmentRunner(
-        async_session_factory, settings.machine_enroll_interval_seconds
+        async_session_factory,
+        settings.machine_enroll_interval_seconds,
+        on_ready=resume_ready_cloud_topics,
     )
     machines.start()
     # Subscription turns are metered at the proxy; this tails its log into

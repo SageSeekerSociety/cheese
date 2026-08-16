@@ -122,6 +122,24 @@ def test_build_pool_registers_device_alongside_local():
     assert pool.select(provider_id="device").name == "device"
 
 
+def test_build_pool_registers_the_concrete_cloud_provider():
+    from unittest.mock import AsyncMock
+
+    from app.domain.agent.cloud_provider import CloudProvider
+    from app.domain.agent.compute import build_compute_pool
+
+    cloud = CloudProvider(
+        configured=False,
+        ensure_topic_cloud=AsyncMock(),
+        read_topic_cloud=AsyncMock(),
+    )
+    pool = build_compute_pool(_RecordingAgent(), cloud_provider=cloud)
+
+    assert pool.has("cloud")
+    assert pool.select(provider_id="cloud") is cloud
+    assert cloud.available() is False
+
+
 def test_resolve_compute_id_topic_then_project_then_team_default():
     from app.domain.agent.chat import _resolve_compute_id
 

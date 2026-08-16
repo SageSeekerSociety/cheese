@@ -7,7 +7,7 @@
 // the user switch pools.
 import type { PoolListing, TopicComputeProfile } from '../cx_types'
 
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import { getTopicComputeProfile, setTopicComputeProfile } from '../api'
 
@@ -18,6 +18,18 @@ const loading = ref(false)
 const saving = ref<string | null>(null)
 const error = ref<string | null>(null)
 const menuOpen = ref(false)
+
+// Only pools that can actually be picked, plus whichever one this topic is
+// already on. A row that is permanently unavailable teaches the reader that
+// connecting something would light it up, and for a retired pool (local-docker,
+// #358) that is simply false — so it is not shown at all rather than greyed out.
+// The current pool stays listed even when unselectable, because a topic frozen on
+// a retired pool still has to render a readable label for what it is running on.
+const visibleProfiles = computed<PoolListing[]>(() => {
+  const profiles = state.value?.profiles ?? []
+  const current = state.value?.current
+  return profiles.filter((p) => p.available || p.id === current)
+})
 
 // A glyph per pool so the chip reads at a glance — platform container vs. your own
 // machine vs. GPU. Unknown ids fall back to a generic compute icon.
@@ -108,7 +120,7 @@ watch(
         <div class="cp-menu__head">选择本话题的算力</div>
         <div class="cp-menu__hint">发出第一条消息后锁定，新建话题可再选。</div>
         <button
-          v-for="p in state.profiles"
+          v-for="p in visibleProfiles"
           :key="p.id"
           type="button"
           class="cp-row"

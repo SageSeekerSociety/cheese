@@ -112,6 +112,19 @@ class ProjectMachineRepository:
         )
         return result.scalars().one_or_none()
 
+    async def list_ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
+        """Cloud leases whose two provider lifecycles and enrolment have settled."""
+        rows = await self._session.execute(
+            select(ProjectMachine.topic_id, ProjectMachine.device_id).where(
+                ProjectMachine.topic_id.is_not(None),
+                ProjectMachine.released_at.is_(None),
+                ProjectMachine.status == MachineStatus.running,
+                ProjectMachine.ai_status == AiStatus.ready,
+                ProjectMachine.device_id.is_not(None),
+            )
+        )
+        return [(topic_id, device_id) for topic_id, device_id in rows.all()]
+
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         result = await self._session.execute(
             select(ProjectMachine)

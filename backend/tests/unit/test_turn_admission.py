@@ -31,7 +31,11 @@ class FakeChat:
         return self.policy
 
     async def post_system_event(
-        self, topic_id: uuid.UUID, content: str, turn_id: uuid.UUID | None = None
+        self,
+        topic_id: uuid.UUID,
+        content: str,
+        turn_id: uuid.UUID | None = None,
+        meta: dict | None = None,
     ) -> dict:
         self.system_events.append(content)
         return {"content": content}

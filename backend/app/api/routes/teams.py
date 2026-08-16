@@ -17,10 +17,13 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.agent.market import (
+    COMPUTE_CLOUD,
     compute_default_name,
     compute_listings,
     compute_selectable,
 )
+from app.domain.identity.actor import Actor
+from app.domain.machine.services import MachineService
 from app.domain.team.membership_services import TeamMembershipService
 from app.domain.team.models import (
     ApplicationStatus,
@@ -562,6 +565,16 @@ async def put_team_compute_profile(
     }
     if name not in allowed:
         raise ValidationError(f"Compute pool {name!r} is not available")
+    if name == COMPUTE_CLOUD:
+        await MachineService(db).require_team_create_authority(
+            team_id,
+            Actor(
+                handle=str(auth_user.user_id),
+                user_id=auth_user.user_id,
+                is_agent=False,
+                via="token",
+            ),
+        )
     team.compute_profile = name
     team.updated_at = datetime.now(UTC)
     await db.flush()

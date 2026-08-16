@@ -7,7 +7,10 @@ project default and freezes once the topic has run (session_id set).
 import asyncio
 import uuid
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
+from app.core.config import settings
+from app.domain.machine.services import MachineService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import Team
 from app.domain.topic.repositories import TopicRepository
@@ -42,10 +45,13 @@ def test_new_topic_inherits_default_and_is_unlocked(client):
     pid = _project(client)
     tid = _topic(client, pid)
     body = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
-    assert body["current"] == "local-docker"  # the always-on default
+    # Nothing selected anywhere, so the fallback applies: Cloud, not the retired
+    # local pool (#358). Last selection would win if there were one.
+    assert body["current"] == "cloud"
     assert body["locked"] is False
     assert body["inherited"] is True
-    assert "local-docker" in {p["id"] for p in body["profiles"]}
+    # ...and the retired pool is no longer offered as a choice.
+    assert "local-docker" not in {p["id"] for p in body["profiles"]}
 
 
 def test_fresh_project_inherits_its_team_default(client):
@@ -77,19 +83,31 @@ def test_fresh_project_inherits_its_team_default(client):
     assert body["inherited"] is True
 
 
-def test_select_persists_to_topic_and_project_sticky(client):
+async def _online(*_args, **_kwargs) -> bool:
+    return True
+
+
+def test_select_persists_to_topic_and_project_sticky(client, monkeypatch):
     pid = _project(client)
     tid = _topic(client, pid)
+    # `device` is the carrier: local-docker is retired (#358) and Cloud demands a
+    # verified human caller (it provisions a billed VM — see the authorization test
+    # below). What is under test here is sticky propagation, not either of those.
+    monkeypatch.setattr("app.api.routes.topics.project_device_online", _online)
+    monkeypatch.setattr("app.api.routes.projects.project_device_online", _online)
 
     # An undeployed pool can't be selected.
     bad = client.put(f"/api/topics/{tid}/compute-profile", json={"profile": "gpu"})
     assert bad.status_code == 422
-
-    r = client.put(
+    # A retired one cannot either — no silent fallback to it.
+    retired = client.put(
         f"/api/topics/{tid}/compute-profile", json={"profile": "local-docker"}
     )
+    assert retired.status_code == 422
+
+    r = client.put(f"/api/topics/{tid}/compute-profile", json={"profile": "device"})
     assert r.status_code == 200
-    assert r.json()["data"]["current"] == "local-docker"
+    assert r.json()["data"]["current"] == "device"
     assert r.json()["data"]["inherited"] is False
 
     # Persisted on the topic (no longer inheriting)...
@@ -97,7 +115,25 @@ def test_select_persists_to_topic_and_project_sticky(client):
     assert tbody["inherited"] is False
     # ...and remembered as the project's sticky default for the next new topic.
     pbody = client.get(f"/api/projects/{pid}/compute-profiles").json()["data"]
-    assert pbody["current"] == "local-docker"
+    assert pbody["current"] == "device"
+
+
+def test_selecting_cloud_without_machine_create_authority_is_refused(
+    client, monkeypatch
+):
+    pid = _project(client)
+    tid = _topic(client, pid)
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://cloud.example")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
+    provision = AsyncMock()
+    monkeypatch.setattr(MachineService, "provision", provision)
+
+    response = client.put(
+        f"/api/topics/{tid}/compute-profile", json={"profile": "cloud"}
+    )
+
+    assert response.status_code == 401
+    provision.assert_not_awaited()
 
 
 def test_visibility_block_is_present_non_default_and_carries_the_notice(client):

@@ -41,6 +41,7 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.identity.actor import Actor
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -195,6 +196,7 @@ class TurnRunner:
         first_output_timeout_s: float = 300.0,
         credential_expiry_of: Callable[[uuid.UUID], int | None] | None = None,
         credential_expired_fuse_s: float = 15.0,
+        replace_cloud_machine: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         self._broker = broker
         self._timeout = turn_timeout_s
@@ -213,6 +215,7 @@ class TurnRunner:
         # with no such signal) leaves the fuse byte-for-byte unchanged.
         self._credential_expiry_of = credential_expiry_of
         self._credential_expired_fuse_s = credential_expired_fuse_s
+        self._replace_cloud_machine = replace_cloud_machine
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
@@ -365,6 +368,7 @@ class TurnRunner:
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
@@ -397,6 +401,7 @@ class TurnRunner:
                 nudge_event=nudge_event,
                 nudge_meta=nudge_meta,
                 continuation_id=continuation_id or turn_id,
+                provision_actor=provision_actor,
             )
         )
         self._tasks.add(task)
@@ -1001,12 +1006,20 @@ class TurnRunner:
         return f"⏳ 项目同时进行的轮次已满，这轮先排队，前面还有 {ahead} 个在等。"
 
     async def _post_event(
-        self, chat_service, topic_id: uuid.UUID, turn_id: uuid.UUID, text: str
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        text: str,
+        *,
+        meta: dict | None = None,
     ) -> bool:
         """Persist + broadcast a platform system event (queue/refusal). Reuses
         the post_system_event + broker path the nudge mechanism uses."""
         try:
-            block = await chat_service.post_system_event(topic_id, text, turn_id)
+            block = await chat_service.post_system_event(
+                topic_id, text, turn_id, meta=meta
+            )
         except Exception:  # noqa: BLE001 — visibility is best-effort
             logger.exception("failed to post admission event for %s", topic_id)
             return False
@@ -1131,6 +1144,7 @@ class TurnRunner:
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
@@ -1172,6 +1186,7 @@ class TurnRunner:
                 nudge_event=nudge_event,
                 nudge_meta=nudge_meta,
                 continuation_id=continuation_id,
+                provision_actor=provision_actor,
                 frames=frames,
             )
         finally:
@@ -1217,6 +1232,7 @@ class TurnRunner:
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
@@ -1359,6 +1375,7 @@ class TurnRunner:
                         nudge_event=nudge_event,
                         nudge_meta=nudge_meta,
                         continuation_id=continuation_id,
+                        provision_actor=provision_actor,
                     )
                 )
                 async for frame in turn_frames:
@@ -1396,6 +1413,9 @@ class TurnRunner:
                         resume_why = str(frame.get("reason") or resume_why)
                         rec["detail"] = resume_why
                         continue
+                    if kind == "waiting":
+                        rec["status"] = "waiting"
+                        rec["detail"] = "Cloud machine provisioning"
                     if (
                         kind in ("tool", "assistant_block")
                         and rec["first_output_s"] is None
@@ -1657,11 +1677,17 @@ class TurnRunner:
                 host_failed = True
                 self._host_failed_topics.add(str(topic_id))
                 swap = await handle_host_failure(
-                    topic_id=topic_id, failure=platform_failure
+                    topic_id=topic_id,
+                    failure=platform_failure,
+                    replace_cloud_machine=self._replace_cloud_machine,
                 )
                 if swap.message:
                     await self._post_event(
-                        chat_service, topic_id, turn_id, swap.message
+                        chat_service,
+                        topic_id,
+                        turn_id,
+                        swap.message,
+                        meta=swap.event_meta,
                     )
                 if swap.resume_after_s is not None and not is_resume:
                     resume_after = swap.resume_after_s
