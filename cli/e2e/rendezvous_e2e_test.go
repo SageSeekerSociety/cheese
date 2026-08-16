@@ -106,20 +106,61 @@ func (f *rvFixture) frameCount(kind string) int {
 // runs cannot answer this — one prompt can legitimately run a tool more than
 // once.
 func (f *rvFixture) userTurns(needle string) int {
+	n, _ := f.transcriptHits(needle)
+	return n
+}
+
+// transcriptHits returns how many USER lines carry needle, plus every line that
+// mentions it at all — the second half is what a failure needs. A prompt that
+// is visibly on screen but counts zero here means the judgement is wrong, not
+// the delivery, and without the raw lines that is indistinguishable from a
+// prompt that never arrived.
+func (f *rvFixture) transcriptHits(needle string) (int, []string) {
 	paths, _ := filepath.Glob(filepath.Join(f.configDir, "projects", "*", "*.jsonl"))
 	n := 0
+	var mentions []string
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
 		for _, line := range strings.Split(string(b), "\n") {
-			if strings.Contains(line, needle) && strings.Contains(line, `"role":"user"`) {
+			if !strings.Contains(line, needle) {
+				continue
+			}
+			if len(line) > 400 {
+				line = line[:400] + "…"
+			}
+			mentions = append(mentions, line)
+			if strings.Contains(line, `"role":"user"`) {
 				n++
 			}
 		}
 	}
-	return n
+	return n, mentions
+}
+
+// dumpTranscript reports what the transcript actually holds for a marker, and
+// how many .jsonl files were even found.
+func (f *rvFixture) dumpTranscript(t *testing.T, needle string) {
+	t.Helper()
+	paths, _ := filepath.Glob(filepath.Join(f.configDir, "projects", "*", "*.jsonl"))
+	n, mentions := f.transcriptHits(needle)
+	t.Logf("transcript: %d file(s) under %s; %q → %d user-role hits, %d mentions",
+		len(paths), filepath.Join(f.configDir, "projects"), needle, n, len(mentions))
+	for i, m := range mentions {
+		t.Logf("  mention[%d]: %s", i, m)
+	}
+	if len(mentions) == 0 {
+		for _, p := range paths {
+			b, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+			t.Logf("  %s: %d lines; last line: %.400s", filepath.Base(p), len(lines), lines[len(lines)-1])
+		}
+	}
 }
 
 // startRendezvousClaude boots a real Claude Code with the three env vars that
@@ -286,7 +327,10 @@ func TestRendezvousDeliversEveryPromptInATurnBasedSequence(t *testing.T) {
 		mk := markers[i]
 		waitFor(t, fmt.Sprintf("prompt %d to become a user turn", i+1), 120*time.Second,
 			func() bool { return f.userTurns(mk) > 0 },
-			func() { t.Logf("--- pane ---\n%s", f.pane()) })
+			func() {
+				t.Logf("--- pane ---\n%s", f.pane())
+				f.dumpTranscript(t, mk)
+			})
 	}
 
 	time.Sleep(3 * time.Second) // let a stray duplicate show up before we judge
