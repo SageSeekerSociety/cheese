@@ -357,3 +357,144 @@ async def test_late_hook_opens_a_fresh_unsolicited_turn(client, tmp_path) -> Non
     assert uuid.UUID(frame["block"]["turn_id"]) != platform_turn_id
     assert frame["block"]["meta"]["platform_unsolicited"] is True
     await provider.drop_subscription(topic_id)
+
+
+async def test_slow_boot_marker_waits_past_delivery_bound(client, tmp_path) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+
+    class _SlowBootProvider(_IdleHooksProvider):
+        async def _send_prompt(self, screen: str, prompt: str) -> bool:
+            del screen, prompt
+            return False
+
+    provider = _SlowBootProvider(
+        router=router,
+        delivery_timeout_s=0.03,
+        idle_suspect_s=0.5,
+        hard_ceiling_s=0.5,
+    )
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    turn_id = uuid.uuid4()
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        frames = await _drain(
+            service.converse(
+                topic_id=topic_id,
+                author="u1",
+                content="慢慢启动",
+                summon=True,
+                turn_id=turn_id,
+            )
+        )
+        assert any(frame["type"] == "event_block" for frame in frames)
+        await asyncio.sleep(0.08)  # beyond delivery_timeout_s, below held-prompt bound
+        assert room.empty()
+        subscription = await provider.ensure_subscription(project_id, topic_id)
+        assert subscription.current_turn is not None
+
+        router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "终于启动好了",
+                "_eid": "slow-message-1",
+            },
+        )
+        router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "终于启动好了",
+                "_eid": "slow-stop-1",
+            },
+        )
+        answer = await asyncio.wait_for(room.get(), 1)
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    assert uuid.UUID(answer["block"]["turn_id"]) == turn_id
+    assert "platform_unsolicited" not in answer["block"]["meta"]
+    await provider.drop_subscription(topic_id)
+
+
+async def test_marker_timeout_keeps_subscription_for_late_output(
+    client, tmp_path
+) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = _IdleHooksProvider(
+        router=router,
+        delivery_timeout_s=0.03,
+        idle_suspect_s=0.5,
+        hard_ceiling_s=0.5,
+    )
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+    # Traffic seen before injection belongs to the unsolicited interval and
+    # must not satisfy this platform marker's delivery check.
+    router.push(
+        str(topic_id),
+        {
+            "hook_event_name": "SessionStart",
+            "session_id": "before-platform-marker",
+            "_eid": "before-marker-1",
+        },
+    )
+    await asyncio.sleep(0)
+    platform_turn_id = uuid.uuid4()
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        await _drain(
+            service.converse(
+                topic_id=topic_id,
+                author="u1",
+                content="没有回执",
+                summon=True,
+                turn_id=platform_turn_id,
+            )
+        )
+        assert (await asyncio.wait_for(room.get(), 1))["type"] == "event_block"
+        assert (await asyncio.wait_for(room.get(), 1))["type"] == "error"
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+        assert subscription.current_turn is None
+        assert subscription.consumer_task is not None
+        assert not subscription.consumer_task.done()
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "超时后仍然到达",
+                "_eid": "after-timeout-message",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "超时后仍然到达",
+                "_eid": "after-timeout-stop",
+            },
+        )
+        late = await asyncio.wait_for(room.get(), 1)
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    assert late["block"]["meta"]["platform_unsolicited"] is True
+    assert uuid.UUID(late["block"]["turn_id"]) != platform_turn_id
+    await provider.drop_subscription(topic_id)

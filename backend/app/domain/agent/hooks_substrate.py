@@ -192,6 +192,7 @@ class TurnMark:
     platform_unsolicited: bool = False
     consumer_owned: bool = False
     seen_messages: set[str] | None = None
+    timeout_task: asyncio.Task[None] | None = None
 
 
 @dataclass
@@ -367,6 +368,7 @@ class HooksTurnProvider[ScreenT]:
         router: HookRouter | None = None,
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
+        delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
         self._router = router or hook_router
         # Equal by default → run_hooks_turn's idle-suspect check and hard-ceiling
@@ -374,6 +376,7 @@ class HooksTurnProvider[ScreenT]:
         # (the device backend keeps this; see DeviceProvider).
         self._idle_suspect_s = idle_suspect_s
         self._hard_ceiling_s = hard_ceiling_s
+        self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
         # own the stable router sink, consumer task, and nullable current turn.
         self._live: dict[uuid.UUID, ScreenT] = {}
@@ -452,8 +455,15 @@ class HooksTurnProvider[ScreenT]:
         self._live.pop(topic_id, None)
         if subscription is None:
             return
+        marker = subscription.current_turn
         subscription.current_turn = None
         self._router.unsubscribe(str(topic_id), subscription.sink)
+        if marker is not None and marker.timeout_task is not None:
+            marker.timeout_task.cancel()
+            try:
+                await marker.timeout_task
+            except asyncio.CancelledError:
+                pass
         task = subscription.consumer_task
         if task is not None:
             task.cancel()
@@ -490,6 +500,8 @@ class HooksTurnProvider[ScreenT]:
             eid = eid_value if isinstance(eid_value, str) else None
             if isinstance(event, AgentMessage) and marker.seen_messages is not None:
                 marker.seen_messages.add(event.text.strip())
+            if marker.consumer_owned:
+                marker.queue.put_nowait(HookDelivery(event, eid=eid))
             if marker.platform_unsolicited or marker.consumer_owned:
                 consumer = self._event_consumer
                 if event is not None and consumer is not None:
@@ -518,6 +530,65 @@ class HooksTurnProvider[ScreenT]:
                 marker.queue.put_nowait(HookDelivery(event, eid=eid))
             if isinstance(event, AgentResult) and subscription.current_turn is marker:
                 subscription.current_turn = None
+                timeout_task = marker.timeout_task
+                if (
+                    timeout_task is not None
+                    and timeout_task is not asyncio.current_task()
+                ):
+                    timeout_task.cancel()
+
+    async def _watch_turn_marker(
+        self,
+        subscription: TopicSubscription,
+        marker: TurnMark,
+        screen: ScreenT,
+        prompt: str,
+        ready: bool | None,
+    ) -> None:
+        """Apply delivery, idle, and ceiling bounds to one platform marker."""
+        tracker = ActivityTracker(last_at=asyncio.get_event_loop().time())
+        monitor_task = await self._start_activity_monitor(screen, tracker)
+        redeliveries = 0
+        try:
+            async for event in run_hooks_turn(
+                queue=marker.queue,
+                idle_suspect_s=self._idle_suspect_s,
+                hard_ceiling_s=self._hard_ceiling_s,
+                resume_session_id=None,
+                timeout_message=self._timeout_message,
+                tracker=tracker,
+                confirm_alive=lambda: self._confirm_alive(screen),
+                delivery_timeout_s=(
+                    self._idle_suspect_s if ready is False else self._delivery_timeout_s
+                ),
+            ):
+                if isinstance(event, AgentDeliveryFailure):
+                    redeliveries += 1
+                    if redeliveries <= _MAX_REDELIVERIES:
+                        await self._send_prompt(screen, prompt)
+                    continue
+                if not isinstance(event, AgentResult) or not event.is_error:
+                    continue
+                consumer = self._event_consumer
+                if consumer is not None:
+                    await consumer(
+                        subscription.project_id,
+                        subscription.topic_id,
+                        marker.turn_id,
+                        event,
+                        None,
+                        False,
+                        marker.platform_unsolicited,
+                    )
+                if subscription.current_turn is marker:
+                    subscription.current_turn = None
+        finally:
+            if monitor_task is not None:
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
 
     async def inject_turn(
         self,
@@ -568,8 +639,15 @@ class HooksTurnProvider[ScreenT]:
                 seen_messages=set(),
             )
             subscription.current_turn = marker
+        marker.consumer_owned = True
         on_mark(marker.turn_id)
-        return await self._send_prompt(screen, prompt)
+        ready = await self._send_prompt(screen, prompt)
+        if marker.timeout_task is None and subscription.current_turn is marker:
+            marker.timeout_task = asyncio.create_task(
+                self._watch_turn_marker(subscription, marker, screen, prompt, ready),
+                name=f"hook turn timeout topic={topic_id} turn={marker.turn_id}",
+            )
+        return ready
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook
@@ -741,7 +819,9 @@ class HooksTurnProvider[ScreenT]:
                     # own give-up (#445 deliveryFailed) and the no-output bound
                     # keep a genuinely dead screen from waiting forever.
                     delivery_timeout_s=(
-                        self._idle_suspect_s if ready is False else DELIVERY_TIMEOUT_S
+                        self._idle_suspect_s
+                        if ready is False
+                        else self._delivery_timeout_s
                     ),
                 ):
                     if isinstance(event, AgentDeliveryFailure):

@@ -35,7 +35,9 @@ from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
+    EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
+    SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
     notice,
@@ -1595,7 +1597,22 @@ class ChatService:
         elif isinstance(event, AgentResult):
             if event.session_id:
                 await self._save_session_pointer(topic_id, event.session_id)
-            if event.text.strip() and not result_text_seen:
+            if event.is_error and state is not None:
+                payload = await self.post_system_event(
+                    topic_id,
+                    event.text,
+                    turn_id,
+                    meta=notice(
+                        EVENT_TURN_TIMEOUT,
+                        severity=SEVERITY_WARN,
+                        who=WHO_HUMAN,
+                        detail="本轮标记已关闭；屏幕订阅仍在监听后续输出。",
+                        detail_label="详细说明",
+                    ),
+                )
+                if payload is not None:
+                    frame = {"type": "event_block", "block": payload}
+            elif event.text.strip() and not result_text_seen:
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -1621,8 +1638,19 @@ class ChatService:
                 try:
                     for close_frame in await self._close_hook_turn(state, event):
                         await broker.publish(channel, close_frame)
+                except Exception:  # noqa: BLE001 — Stop must still close the room
+                    logger.exception(
+                        "hook turn close failed (topic=%s, turn=%s)",
+                        topic_id,
+                        turn_id,
+                    )
                 finally:
                     self._hook_turns.pop((topic_id, turn_id), None)
+            if event.is_error:
+                await broker.publish(
+                    channel,
+                    {"type": "error", "message": event.text, "persisted": True},
+                )
             await broker.publish(channel, {"type": "done"})
 
     async def _close_hook_turn(
