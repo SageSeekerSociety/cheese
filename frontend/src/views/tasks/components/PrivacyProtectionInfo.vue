@@ -136,7 +136,7 @@
 
 .privacy-usage-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
-  background-color: #ffffff;
+  background-color: var(--surface);
   transition: all 0.2s ease;
 }
 

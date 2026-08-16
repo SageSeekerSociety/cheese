@@ -451,13 +451,13 @@ watch(
   border-radius: 12px;
   overflow: hidden;
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-1);
   cursor: pointer;
   animation: fade-in 0.5s ease-in;
 
   &:hover {
     transform: translateY(-4px);
-    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-2);
   }
 }
 
@@ -532,7 +532,7 @@ watch(
   padding: 80px 20px;
   min-height: 400px;
   background-color: rgba(var(--v-theme-surface), 0.6);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   backdrop-filter: blur(5px);
 }
 

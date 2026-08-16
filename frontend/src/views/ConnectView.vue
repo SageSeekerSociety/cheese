@@ -126,7 +126,7 @@ async function approve() {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 13px;
   word-break: break-all;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--fill);
   padding: 8px 10px;
   border-radius: 6px;
 }

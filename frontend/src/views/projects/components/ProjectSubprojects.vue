@@ -19,7 +19,7 @@
 
     <div v-else-if="subprojects.length === 0" class="empty-state">
       <div class="text-center py-12">
-        <v-icon icon="mdi-view-grid-outline" size="64" color="grey-lighten-2" class="mb-4"></v-icon>
+        <v-icon icon="mdi-view-grid-outline" size="64" class="mb-4 empty-state-icon"></v-icon>
         <h3 class="text-h6 font-weight-medium mb-2">暂无子项目</h3>
         <p class="text-body-2 text-medium-emphasis mb-6">
           为您的项目创建子项目，将工作分解为较小的模块，并分配给团队成员
@@ -84,7 +84,7 @@
               <p class="text-body-2 description-text">{{ subproject.description }}</p>
 
               <div class="d-flex align-center mt-4">
-                <v-icon size="16" color="grey-darken-1" class="mr-2">mdi-account</v-icon>
+                <v-icon size="16" color="on-surface-variant" class="mr-2">mdi-account</v-icon>
                 <span class="text-body-2">{{ subproject.leader?.nickname || '未指定负责人' }}</span>
               </div>
             </v-card-text>
@@ -289,7 +289,9 @@ const deleteDialog = ref(false)
 const projectToDelete = ref<Project | null>(null)
 const deleting = ref(false)
 
-// 项目颜色选项 - 更柔和的色彩
+// 项目颜色选项 - 更柔和的色彩。
+// 这十个值是【用户数据】不是界面样式：用户给子项目挑的标记色会存进 colorCode 落库，
+// 两个主题下必须是同一个颜色，所以它们不该 token 化（design-system §1.2 的例外条款）。
 const projectColors = [
   '#6366f1', // 主题蓝
   '#818cf8', // 淡蓝色
@@ -425,13 +427,13 @@ onMounted(() => {
 
 <style scoped lang="scss">
 .empty-state {
-  border: 1px dashed rgba(0, 0, 0, 0.1);
+  border: 1px dashed var(--line-2);
   border-radius: 12px;
-  background-color: rgba(0, 0, 0, 0.01);
+  background-color: var(--canvas);
   transition: all 0.3s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: var(--fill);
   }
 }
 
@@ -447,13 +449,13 @@ onMounted(() => {
   position: relative;
   overflow: hidden;
   transition: all 0.3s ease;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
 }
 
 .subproject-header {
   position: relative;
   overflow: hidden;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid var(--line);
 }
 
 .subproject-color-dot {
@@ -472,10 +474,10 @@ onMounted(() => {
   justify-content: center;
   width: 38px;
   height: 38px;
-  background-color: rgba(0, 0, 0, 0.05);
+  background-color: var(--fill-2);
   border-radius: 8px;
   font-weight: 500;
-  color: rgba(0, 0, 0, 0.7);
+  color: var(--text);
 }
 
 .description-text {
@@ -484,13 +486,13 @@ onMounted(() => {
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: rgba(0, 0, 0, 0.7);
+  color: var(--text);
   line-height: 1.5;
   min-height: 4.5em;
 }
 
 .card-hover {
-  border-color: rgba(0, 0, 0, 0.15);
+  border-color: var(--line-2);
   transform: translateY(-2px);
 
   .view-details-btn {
@@ -526,7 +528,9 @@ onMounted(() => {
   flex-wrap: nowrap;
 
   .member-avatar {
-    border: 2px solid #fff;
+    /* 头像重叠时用来分隔的描边：它要和卡片底色一致，不是“白色” —— 深色下
+       写死的白会变成一圈刺眼亮环。 */
+    border: 2px solid var(--surface);
     transition: all 0.3s ease;
 
     &:not(:first-child) {
@@ -535,9 +539,14 @@ onMounted(() => {
   }
 
   .more-members {
-    background-color: rgba(0, 0, 0, 0.05);
-    color: rgba(0, 0, 0, 0.6);
+    background-color: var(--fill-2);
+    color: var(--muted);
   }
+}
+
+/* 空状态的占位图标 —— design-system §1.3 的 --faint 档（“占位提示”）。 */
+.empty-state-icon {
+  color: var(--faint);
 }
 
 .color-select-btn {

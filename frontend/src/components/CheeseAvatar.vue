@@ -19,7 +19,9 @@ withDefaults(defineProps<{ size?: number | string }>(), { size: 28 })
   flex: 0 0 auto;
   border-radius: 8px;
   background: var(--ink);
-  color: #fff;
+  /* --ink inverts with the theme (near-black → near-white), so the glyph on it
+     must invert too: --surface is #fff in light (unchanged), #1B1D20 in dark. */
+  color: var(--surface);
   user-select: none;
 }
 .cheese-avatar__glyph {

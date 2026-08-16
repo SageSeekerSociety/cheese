@@ -72,6 +72,25 @@
   --logo-primary: #f9b233;
   --logo-secondary: #e85d2c;
 
+  /* ---- Syntax highlighting ----
+     Its own small palette, because the neutral ramp has no name for "keyword"
+     or "string": these are categories, not levels of emphasis, so --ink/--muted
+     cannot express them. They live here rather than in a component because
+     THREE consumers have to agree or the same snippet looks different in each:
+     DocPanel/DocEditor (lowlight classes .hljs-*) and CodeEditor (Monaco,
+     which reads these back out through getComputedStyle).
+
+     Light values are the ones the tree has always used — unchanged. Dark is
+     new; every value clears 4.9:1 against all three code grounds the app uses
+     (--canvas #141517, --surface #1B1D20, --fill #212429). */
+  --code-comment: #8a8f98;
+  --code-keyword: #0b5cad;
+  --code-string: #a8471c;
+  --code-number: #0a7a52;
+  --code-type: #267f99;
+  --code-function: #8a6d1b;
+  --code-deletion: #b3403a;
+
   /* ---- Plumbing: chrome that is not part of the semantic ramp ----
      These exist so the rules at the bottom of this file stop hardcoding
      rgba(25, 26, 28, …), which is --ink at low alpha and therefore invisible
@@ -155,6 +174,19 @@
   --danger: #f0625c;
   --danger-ink: #f79490;
   --danger-wash: #2e1a1a;
+
+  /* ---- Syntax highlighting (see the light block for why these exist) ----
+     Same hues, lifted into readable range on a dark ground. Measured against
+     --fill (#212429), the lightest of the three grounds code sits on, so they
+     hold on --surface and --canvas too: comment 4.96, keyword 7.06, string
+     6.62, number 7.77, type 8.32, function 8.44, deletion 4.90. */
+  --code-comment: #8b929c;
+  --code-keyword: #7fb2f0;
+  --code-string: #e0996a;
+  --code-number: #5fcb98;
+  --code-type: #6fcbd9;
+  --code-function: #d9bc72;
+  --code-deletion: #f0625c;
 
   /* ---- Plumbing ---- */
   --scrollbar-thumb: rgba(243, 244, 246, 0.16);

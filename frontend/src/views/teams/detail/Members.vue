@@ -80,7 +80,7 @@
           <v-list>
             <v-list-item v-for="member in teamMembers" :key="member.user.id" class="member-item">
               <template #prepend>
-                <v-avatar size="40" color="grey-lighten-2" class="mr-3">
+                <v-avatar size="40" color="surface-variant" class="mr-3">
                   <v-img :src="getAvatarUrl(member.user.avatarId)" />
                 </v-avatar>
               </template>
@@ -142,7 +142,7 @@
 
         <!-- 无成员时的提示 -->
         <div v-if="teamMembers.length === 0" class="text-center py-12">
-          <v-icon icon="mdi-account-group" size="64" color="grey-lighten-2" class="mb-4"></v-icon>
+          <v-icon icon="mdi-account-group" size="64" class="mb-4 empty-state-icon"></v-icon>
           <h3 class="text-h6 font-weight-medium mb-2">暂无成员</h3>
           <p class="text-body-2 text-medium-emphasis mb-6">邀请成员加入小队，开始协作</p>
         </div>
@@ -155,7 +155,7 @@
         </v-card>
 
         <v-card v-else-if="joinRequests.length === 0" flat class="text-center py-12">
-          <v-icon icon="mdi-account-arrow-right" size="64" color="grey-lighten-2" class="mb-4"></v-icon>
+          <v-icon icon="mdi-account-arrow-right" size="64" class="mb-4 empty-state-icon"></v-icon>
           <h3 class="text-h6 font-weight-medium mb-2">暂无加入申请</h3>
           <p class="text-body-2 text-medium-emphasis">没有用户申请加入小队</p>
         </v-card>
@@ -169,7 +169,7 @@
               :class="{ 'pending-request': request.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" color="grey-lighten-2" class="mr-3">
+                <v-avatar size="40" color="surface-variant" class="mr-3">
                   <v-img :src="getAvatarUrl(request.user.avatarId)" />
                 </v-avatar>
               </template>
@@ -227,7 +227,7 @@
         </v-card>
 
         <v-card v-else-if="teamInvitations.length === 0" flat class="text-center py-12">
-          <v-icon icon="mdi-email-outline" size="64" color="grey-lighten-2" class="mb-4"></v-icon>
+          <v-icon icon="mdi-email-outline" size="64" class="mb-4 empty-state-icon"></v-icon>
           <h3 class="text-h6 font-weight-medium mb-2">暂无发出的邀请</h3>
           <p class="text-body-2 text-medium-emphasis">点击右上角的"邀请成员"发送邀请</p>
         </v-card>
@@ -241,7 +241,7 @@
               :class="{ 'pending-invitation': invitation.status === 'PENDING' }"
             >
               <template #prepend>
-                <v-avatar size="40" color="grey-lighten-2" class="mr-3">
+                <v-avatar size="40" color="surface-variant" class="mr-3">
                   <v-img :src="getAvatarUrl(invitation.user.avatarId)" />
                 </v-avatar>
               </template>
@@ -590,13 +590,19 @@ const getStatusText = (status: string) => {
 </script>
 
 <style scoped lang="scss">
+/* 空状态插图：元信息级别的装饰。--line-2 浅色 #E2E3E6（和原来的
+   grey-lighten-2 #E0E0E0 几乎同值），深色 #3A3E45（在深色页面上仍看得出形状）。 */
+.empty-state-icon {
+  color: var(--line-2);
+}
+
 .member-item {
   transition: background-color 0.2s ease;
   border-radius: 8px;
   margin-bottom: 2px;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
   }
 }
 
@@ -608,7 +614,7 @@ const getStatusText = (status: string) => {
   border-left: 3px solid transparent;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
   }
 }
 

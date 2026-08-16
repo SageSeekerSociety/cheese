@@ -29,6 +29,10 @@
 
 const ESC = '\x1b'
 const ENTER = '\r'
+// Ctrl+U: clears the whole composer, including a `[Pasted text …]` widget.
+// Measured on 2.1.233: a no-op when the box is empty, and unlike Esc/Ctrl+C it
+// carries no "press again" arming or exit semantics — safe to send blind.
+const KILL_LINE = '\x15'
 // Bracketed-paste markers so the TUI ingests a multiline body as one atomic paste
 // (embedded newlines are not interpreted as submits); the Enter is sent separately.
 const PASTE_START = ESC + '[200~'
@@ -117,7 +121,18 @@ function tryType() {
     return
   }
   if (phase === 'paste') {
-    cheese.term.write(PASTE_START + String(pending) + PASTE_END)
+    if (bodyInComposer()) {
+      // Residue of a FAILED earlier send is visibly in the box (this driver is
+      // the screen's only writer). Clear it as its OWN write and re-check next
+      // tick: pasting on top would stack bodies (44 widgets deep in prod,
+      // 2026-08-17), and the `sent` verification could then match an OLD
+      // widget instead of this paste.
+      cheese.term.write(KILL_LINE)
+      return
+    }
+    // The KILL_LINE prefix still rides along for residue the check above
+    // cannot see (literal text of a different message) — no-op when empty.
+    cheese.term.write(KILL_LINE + PASTE_START + String(pending) + PASTE_END)
     // Not an advance to "submitted" — the next tick VERIFIES the body actually
     // reached the composer before the Enter goes anywhere near it.
     phase = 'sent'

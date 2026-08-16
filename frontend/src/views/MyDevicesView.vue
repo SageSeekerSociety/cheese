@@ -357,8 +357,8 @@ onMounted(load)
   gap: 8px;
   max-width: 480px;
   padding: 6px 6px 6px 14px;
-  border: 1px solid var(--accent-wash, #fdf1e2);
-  background: var(--accent-wash, #fdf1e2);
+  border: 1px solid var(--accent-wash);
+  background: var(--accent-wash);
   border-radius: 10px;
 }
 .install-cmd__code {
@@ -368,7 +368,7 @@ onMounted(load)
   white-space: nowrap;
   font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   font-size: 13px;
-  color: var(--accent-ink, #9a5413);
+  color: var(--accent-ink);
   background: transparent;
   text-align: left;
 }
@@ -386,7 +386,7 @@ onMounted(load)
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  color: var(--ink, #191a1c);
+  color: var(--ink);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -400,14 +400,19 @@ onMounted(load)
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
-  color: #fff;
-  background: var(--accent, #f57f17);
+  /* 琥珀填充在两个主题下都是亮橙（#F57F17 / #FFA733），白字对它只有 2.9:1 和
+     1.9:1 —— 两边都读不出来。这里不能用 on-primary：实测 Vuetify 对浅色的
+     #F57F17 推出来的是 #fff，只有深色的 #FFA733 才推成 #000，等于浅色侧没修。
+     所以照 RailItem 的先例把墨钉死 —— 底色两个主题下都是亮橙，字就该两边都是
+     深墨：#23242a 对 #F57F17 是 5.8:1、对 #FFA733 是 8.0:1，两边都过 AA。 */
+  color: #23242a;
+  background: var(--accent);
 }
 .steps code {
   font-family: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
   font-size: 12.5px;
-  background: var(--accent-wash, #fdf1e2);
-  color: var(--accent-ink, #9a5413);
+  background: var(--accent-wash);
+  color: var(--accent-ink);
   padding: 1px 5px;
   border-radius: 4px;
 }

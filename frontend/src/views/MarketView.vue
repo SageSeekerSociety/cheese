@@ -190,7 +190,7 @@ onMounted(load)
 }
 .pool-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.5);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-1);
 }
 .pool-card--soon {
   opacity: 0.72;
@@ -240,7 +240,8 @@ onMounted(load)
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: #35b37e;
+  /* “可用”是真实状态 → 状态色的文字档（§1.5）。原来那个 #35b37e 是外来绿。 */
+  color: var(--ok-ink);
 }
 .pool-card__soon-tag {
   color: var(--faint);

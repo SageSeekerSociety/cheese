@@ -83,11 +83,17 @@ class _FakeScreenControl:
     configured to swallow it) — the two silent failures _send_prompt exists to
     catch."""
 
-    def __init__(self, drop_pastes: int = 0, swallow_enters: int = 0) -> None:
-        self.composer = ""
+    def __init__(
+        self,
+        drop_pastes: int = 0,
+        swallow_enters: int = 0,
+        initial_composer: str = "",
+    ) -> None:
+        self.composer = initial_composer
         self.body = ""
         self.pastes = 0
         self.enters = 0
+        self.kills = 0
         self._drop_pastes = drop_pastes
         self._swallow_enters = swallow_enters
 
@@ -101,6 +107,9 @@ class _FakeScreenControl:
             self.pastes += 1
             if self.pastes > self._drop_pastes:
                 self.composer = self.body
+        elif "C-u" in args:
+            self.kills += 1
+            self.composer = ""
         elif "Enter" in args:
             self.enters += 1
             if self.enters > self._swallow_enters:
@@ -168,6 +177,30 @@ async def test_send_prompt_fails_loud_when_the_paste_never_lands(
 
     assert screen.pastes == 1 + tp._MAX_REPASTES
     assert screen.enters == 0, "an Enter was fired at a body-less composer"
+
+
+@pytest.mark.anyio
+async def test_send_prompt_clears_a_poisoned_composer_before_pasting(
+    _fast_settle, monkeypatch
+):
+    """A composer already stacked with widgets from FAILED earlier sends (44
+    deep in prod, 2026-08-17) must be cleared before every paste attempt.
+    Without the Ctrl+U, the OLD widget makes the paste-verify pass even when
+    this turn's paste was dropped — and the Enter then submits pure garbage."""
+    from app.domain.agent.hooks_substrate import ScreenSetupError
+
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    screen = _FakeScreenControl(
+        drop_pastes=999,
+        initial_composer="[Pasted text #9 +40 lines][Pasted text #10 +42 lines]",
+    )
+    _wire(monkeypatch, provider, screen)
+
+    with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
+        await provider._send_prompt("box", "帮我看下这个问题")
+
+    assert screen.kills == 1 + tp._MAX_REPASTES, "no Ctrl+U before each paste"
+    assert screen.enters == 0, "the old garbage widget was verified as this paste"
 
 
 def test_resume_ready_only_when_transcript_present(tmp_path):

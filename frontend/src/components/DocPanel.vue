@@ -3039,7 +3039,7 @@ onBeforeUnmount(() => {
   position: absolute;
   z-index: 3;
   pointer-events: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   margin: -3px -8px;
   padding: 3px 8px;
   box-sizing: content-box;
@@ -3059,7 +3059,7 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.mention) {
   color: rgb(var(--v-theme-primary));
   background: var(--fill);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0 3px;
   font-weight: 500;
   cursor: pointer;
@@ -3083,9 +3083,9 @@ onBeforeUnmount(() => {
   padding: 3px 10px;
   border-radius: 8px;
   font-size: 0.74rem;
-  color: #fff;
+  color: rgb(var(--v-theme-on-primary));
   background: rgb(var(--v-theme-primary));
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--shadow-2);
   cursor: pointer;
   border: none;
   white-space: nowrap;
@@ -3136,7 +3136,7 @@ onBeforeUnmount(() => {
   /* width set inline (= toolWidth, shared with pinned) so pinning is seamless */
   max-width: 86%;
   border-left: 1px solid var(--line);
-  box-shadow: -10px 0 28px rgba(16, 18, 22, 0.08);
+  box-shadow: var(--shadow-2);
   z-index: 6;
 }
 /* Pinned (钉住): in-flow column at the same width — the doc shrinks to make room. */
@@ -3243,9 +3243,9 @@ onBeforeUnmount(() => {
   gap: 6px;
   margin-top: 8px;
   padding-top: 6px;
-  border-top: 1px dashed var(--line-2, #e3e3e3);
+  border-top: 1px dashed var(--line-2);
   font-size: 12px;
-  color: var(--muted, #777);
+  color: var(--muted);
 }
 @keyframes site-pulse {
   0%,
@@ -3394,7 +3394,7 @@ onBeforeUnmount(() => {
   font-size: 0.72rem;
   color: var(--muted);
   border: 1px solid rgba(var(--v-border-color), 0.6);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 1px 6px;
   flex: 0 0 auto;
 }
@@ -3514,16 +3514,19 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   color: var(--muted);
-  border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-bottom: 1px solid var(--line);
 }
 .term-bar__dot {
-  color: #3fb950;
+  color: var(--ok);
   font-size: 10px;
 }
 .term-frame {
   flex: 1 1 auto;
   width: 100%;
   border: none;
+  /* Theme-invariant on purpose: this is the backing behind the ttyd iframe,
+     whose terminal paints its own black ground in both themes. A token here
+     would flash a light slab under a black terminal during load. */
   background: #000;
 }
 .preview-wrap {
@@ -3544,6 +3547,10 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   width: 100%;
   border: none;
+  /* Theme-invariant on purpose: the iframe renders arbitrary user HTML that
+     assumes a white page (its own text is near-black). Painting the backing
+     dark would leave black text on a dark ground wherever that document is
+     transparent — the page controls its own colours, we only back it. */
   background: #fff;
 }
 .md-content :deep(p) {
@@ -3556,7 +3563,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
 .md-content :deep(pre) {
@@ -3593,7 +3600,7 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(.doc-prose th),
 .doc-editor :deep(.doc-prose td) {
-  border: 1px solid var(--line, #dcdfe6);
+  border: 1px solid var(--line);
   padding: 6px 10px;
   text-align: left;
   vertical-align: top;
@@ -3641,7 +3648,7 @@ onBeforeUnmount(() => {
   color: var(--faint);
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   user-select: none;
   transition:
     background 0.12s ease,
@@ -3665,14 +3672,14 @@ onBeforeUnmount(() => {
   z-index: 2400;
   display: flex;
   flex-direction: column;
-  background: var(--surface, #fff);
+  background: var(--surface);
 }
 .preview-full__bar {
   display: flex;
   align-items: center;
   gap: 4px;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--line-2, #e5e5e5);
+  border-bottom: 1px solid var(--line-2);
 }
 .preview-full__title {
   font-size: 0.85rem;
@@ -3699,8 +3706,11 @@ onBeforeUnmount(() => {
   max-width: 95%;
   max-height: 95%;
   object-fit: contain;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
-  background: white;
+  box-shadow: var(--shadow-1);
+  /* The container's checkerboard is what says "transparent"; the image itself
+     sits on the panel surface so a PNG with alpha is not slammed onto a white
+     slab in the dark theme (GitHub's image viewer does the same). */
+  background: var(--surface);
 }
 
 /* Feishu-style comment anchor: quiet dashed amber underline; hover lifts. */
@@ -3732,7 +3742,7 @@ onBeforeUnmount(() => {
   z-index: 30;
   max-width: min(560px, calc(100% - 32px));
   overflow-wrap: anywhere;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-2);
 }
 
 /* A2: in-place live-ref badge — a subtopic spawned from this paragraph. It's a
@@ -3747,14 +3757,14 @@ onBeforeUnmount(() => {
   margin-left: 8px;
   max-width: 240px;
   padding: 1px 9px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   font-size: 0.72rem;
   line-height: 1.6;
   white-space: nowrap;
   color: rgb(var(--v-theme-primary));
   background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, var(--surface));
   border: 1px solid rgba(var(--v-theme-primary), 0.3);
-  box-shadow: 0 1px 3px rgba(16, 18, 22, 0.06);
+  box-shadow: var(--shadow-1);
   cursor: pointer;
   user-select: none;
   transition:
@@ -3763,7 +3773,7 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(.doc-liveref:hover) {
   background: rgba(var(--v-theme-primary), 0.1);
-  box-shadow: 0 2px 8px rgba(16, 18, 22, 0.1);
+  box-shadow: var(--shadow-2);
 }
 .doc-editor :deep(.doc-liveref__label) {
   overflow: hidden;
@@ -3774,11 +3784,11 @@ onBeforeUnmount(() => {
   height: 7px;
   border-radius: 50%;
   flex: 0 0 auto;
-  background: #f5a623; /* 进行中 default (amber) */
+  background: var(--warn); /* 进行中 */
 }
 .doc-editor :deep(.doc-liveref__dot.is-archived),
 .doc-editor :deep(.doc-liveref__dot.is-completed) {
-  background: #35b37e; /* 已完成 (green) */
+  background: var(--ok); /* 已完成 */
 }
 .doc-editor :deep(.doc-liveref__status) {
   color: var(--muted);
@@ -3790,7 +3800,7 @@ onBeforeUnmount(() => {
   max-width: 720px;
   margin: 40px auto 0;
   padding-top: 14px;
-  border-top: 1px solid var(--line-2, #ececec);
+  border-top: 1px solid var(--line-2);
 }
 .doc-comments__head {
   display: flex;
@@ -3813,10 +3823,9 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid var(--line-2, #ececec);
-  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: 0 1px 3px rgba(16, 18, 22, 0.04);
   margin-bottom: 8px;
 }
 .doc-comments__avatar {
@@ -3829,6 +3838,10 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
   font-size: 0.7rem;
   font-weight: 700;
+  /* Theme-invariant pair, kept literal on purpose (same reasoning as the
+     default avatar in LeftAppRail): the slate ground does not shift with the
+     theme, so the ink on it must not either — a token would put --text on a
+     mid-grey disc in one theme and lose the initial. */
   color: #fff;
   background: #8a94a3;
 }
@@ -3861,9 +3874,10 @@ onBeforeUnmount(() => {
   max-width: 100%;
   text-align: left;
   border: none;
-  border-left: 2px solid var(--accent, #f57f17);
-  background: rgba(245, 127, 23, 0.06);
-  border-radius: 0 6px 6px 0;
+  border-left: 2px solid var(--accent);
+  background: rgba(var(--v-theme-primary), 0.06);
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
   padding: 3px 8px;
   margin: 2px 0 4px;
   font-size: 12px;
@@ -3876,7 +3890,7 @@ onBeforeUnmount(() => {
   transition: background 0.15s;
 }
 .doc-comments__chip:hover {
-  background: rgba(245, 127, 23, 0.13);
+  background: rgba(var(--v-theme-primary), 0.13);
 }
 /* The anchor node no longer exists — the paragraph was edited away. */
 .doc-comments__stale {
@@ -3895,7 +3909,7 @@ onBeforeUnmount(() => {
   min-width: 0;
   height: 34px;
   padding: 0 12px;
-  border: 1px solid var(--line-2, #ececec);
+  border: 1px solid var(--line-2);
   border-radius: 8px;
   background: var(--fill);
   font-size: 13.5px;
@@ -4019,7 +4033,8 @@ onBeforeUnmount(() => {
   margin: 0.7em 0;
   padding: 6px 14px;
   border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  border-radius: 0 6px 6px 0;
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: rgba(var(--v-theme-on-surface), 0.72);
 }
@@ -4034,7 +4049,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.87em;
 }
 /* 代码块: light ground + hairline, language tag in the top-right corner
@@ -4042,7 +4057,7 @@ onBeforeUnmount(() => {
 .doc-editor :deep(pre) {
   position: relative;
   background: var(--canvas);
-  border: 1px solid var(--line-2, #ececec);
+  border: 1px solid var(--line-2);
   padding: 13px 15px;
   border-radius: 8px;
   overflow-x: auto;
@@ -4077,11 +4092,13 @@ onBeforeUnmount(() => {
   padding: 0;
   font-size: inherit;
 }
-/* lowlight token colors — same palette as CodeEditor's cheesex-light Monaco
-   theme (light ground, low saturation), so 文档里的代码和文件编辑器一个气质. */
+/* lowlight token colors — the --code-* palette from style.css, which is also
+   what CodeEditor's Monaco theme reads back out, so 文档里的代码和文件编辑器
+   一个气质 in BOTH themes. Never inline a literal here: the three consumers
+   have to move together or the same snippet looks different in each. */
 .doc-editor :deep(.hljs-comment),
 .doc-editor :deep(.hljs-quote) {
-  color: #8a8f98;
+  color: var(--code-comment);
   font-style: italic;
 }
 .doc-editor :deep(.hljs-keyword),
@@ -4089,23 +4106,23 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.hljs-literal),
 .doc-editor :deep(.hljs-doctag),
 .doc-editor :deep(.hljs-meta) {
-  color: #0b5cad;
+  color: var(--code-keyword);
 }
 .doc-editor :deep(.hljs-string),
 .doc-editor :deep(.hljs-regexp),
 .doc-editor :deep(.hljs-addition) {
-  color: #a8471c;
+  color: var(--code-string);
 }
 .doc-editor :deep(.hljs-number),
 .doc-editor :deep(.hljs-symbol),
 .doc-editor :deep(.hljs-bullet) {
-  color: #0a7a52;
+  color: var(--code-number);
 }
 .doc-editor :deep(.hljs-title),
 .doc-editor :deep(.hljs-section),
 .doc-editor :deep(.hljs-name),
 .doc-editor :deep(.hljs-function) {
-  color: #8a6d1b;
+  color: var(--code-function);
 }
 .doc-editor :deep(.hljs-type),
 .doc-editor :deep(.hljs-class),
@@ -4114,10 +4131,10 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.hljs-attribute),
 .doc-editor :deep(.hljs-variable),
 .doc-editor :deep(.hljs-template-variable) {
-  color: #267f99;
+  color: var(--code-type);
 }
 .doc-editor :deep(.hljs-deletion) {
-  color: #b3403a;
+  color: var(--code-deletion);
 }
 .doc-editor :deep(.hljs-emphasis) {
   font-style: italic;
@@ -4127,7 +4144,7 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(hr) {
   border: none;
-  border-top: 1px solid var(--line-2, #ececec);
+  border-top: 1px solid var(--line-2);
   margin: 1.6em 0;
 }
 /* 链接: 主题琥珀 ink, quiet until hover. */
@@ -4296,7 +4313,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-2);
   padding: 4px;
   min-width: 120px;
 }
@@ -4308,7 +4325,7 @@ onBeforeUnmount(() => {
   font-family: ui-monospace, monospace;
   color: var(--ink);
   padding: 5px 9px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .doc-codelang__item:hover {
@@ -4329,7 +4346,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 8px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-2);
   padding: 4px;
 }
 .doc-slash__item {
@@ -4342,7 +4359,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
   color: var(--ink);
   padding: 6px 9px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -4371,12 +4388,12 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 26px;
   height: 24px;
-  border: 1px solid var(--line-2, #ececec);
+  border: 1px solid var(--line-2);
   border-radius: 6px;
   background: var(--surface);
   color: var(--muted);
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(16, 18, 22, 0.08);
+  box-shadow: var(--shadow-1);
   transition:
     color 0.12s ease,
     border-color 0.12s ease;
@@ -4386,7 +4403,7 @@ onBeforeUnmount(() => {
   border-color: var(--line);
 }
 .doc-codecopy--done {
-  color: #35b37e;
-  border-color: color-mix(in srgb, #35b37e 40%, transparent);
+  color: var(--ok-ink);
+  border-color: color-mix(in srgb, var(--ok) 40%, transparent);
 }
 </style>

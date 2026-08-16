@@ -9,7 +9,7 @@
       rounded="lg"
       class="border-0"
       icon="mdi-alert"
-      color="amber-darken-2"
+      color="warning"
       text="本建议由 AI 生成，仅供参考。请结合实际情况二次验证内容准确性，如有疑问请咨询领域专家。"
     ></v-alert>
 
@@ -118,7 +118,9 @@
                   >
                     <template #icon>
                       <v-avatar color="primary" size="22" class="path-step-number">
-                        <span class="text-caption text-white">{{ index + 1 }}</span>
+                        <!-- 琥珀底上的反白字走 surface：深色主题的琥珀是 #FFA733（更亮），
+                             纯白压上去只有 1.9:1；surface 在深色下是深墨，8.6:1。 -->
+                        <span class="text-caption text-surface">{{ index + 1 }}</span>
                       </v-avatar>
                     </template>
                     <div class="d-flex flex-column">
@@ -180,7 +182,8 @@
                   >
                     <template #icon>
                       <v-avatar color="primary" size="22" class="step-number">
-                        <span class="text-caption text-white">{{ index + 1 }}</span>
+                        <!-- 同上：琥珀底上的反白字用 surface，不用固定的 white -->
+                        <span class="text-caption text-surface">{{ index + 1 }}</span>
                       </v-avatar>
                     </template>
                     <div class="d-flex flex-column">
@@ -256,7 +259,8 @@
                           class="team-role-number position-absolute"
                           style="top: 0.75rem; right: 0.75rem"
                         >
-                          <span class="text-caption text-white">{{ index + 1 }}</span>
+                          <!-- 同上：琥珀底上的反白字用 surface，不用固定的 white -->
+                          <span class="text-caption text-surface">{{ index + 1 }}</span>
                         </v-avatar>
                       </div>
                     </v-card>
@@ -380,22 +384,25 @@ const handleOpenChat = (section: TaskAIAdviceConversationContext['section'], ind
 
 .learning-timeline::-webkit-scrollbar-track,
 .methodology-timeline::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
+  background: var(--fill);
+  border-radius: var(--radius-sm);
 }
 
 .learning-timeline::-webkit-scrollbar-thumb,
 .methodology-timeline::-webkit-scrollbar-thumb {
   background-color: rgba(var(--v-theme-primary), 0.3);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
+/* 这圈 2px 描边是把序号徽章从时间线的竖线上"抠"出来，所以它必须等于徽章背后
+   那张卡片的底色 —— 浅色下是白，深色下是 #1B1D20。写死 white 的话深色下会变成
+   一圈亮环。 */
 .path-step-number,
 .step-number {
-  box-shadow: 0 0 0 2px white;
+  box-shadow: 0 0 0 2px var(--surface);
 }
 
 .team-role-number {
-  box-shadow: 0 0 0 2px white;
+  box-shadow: 0 0 0 2px var(--surface);
 }
 </style>
