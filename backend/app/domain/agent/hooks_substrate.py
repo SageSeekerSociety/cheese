@@ -814,6 +814,25 @@ class HooksTurnProvider[ScreenT]:
                 )
                 subscription = await self.ensure_subscription(project_id, topic_id)
                 self._live[topic_id] = screen
+                if subscription.current_turn is not None:
+                    # A turn is already open on this topic's ONE screen. This
+                    # path owns its marker (it is the sole reader of that
+                    # queue), so it cannot adopt the open one the way
+                    # `inject_turn` does — and overwriting would orphan the
+                    # live turn: its watcher would wait on a queue nothing
+                    # feeds again and eventually report a timeout for a turn
+                    # that was fine, while the running session's hooks were
+                    # attributed to this one instead.
+                    #
+                    # The per-topic lock used to make this unreachable. It is
+                    # gone, and `converse` no longer comes through here at all,
+                    # so the only callers left are the parked flows in
+                    # `activities.py` (no route mounted). Refusing keeps that
+                    # true for whoever re-mounts them: a periodic inspection
+                    # can skip a cycle, it must never corrupt someone's turn.
+                    raise ScreenSetupError(
+                        "这个话题上已经有一轮在跑了，本轮跳过（一个话题同一时刻只有一块屏幕）"
+                    )
                 marker = TurnMark(
                     turn_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
                 )

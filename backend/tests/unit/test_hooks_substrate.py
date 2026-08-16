@@ -15,6 +15,7 @@ from app.domain.agent.hooks_substrate import (
     ActivityTracker,
     HooksTurnProvider,
     ScreenSetupError,
+    TurnMark,
     hooks_settings,
     run_hooks_turn,
 )
@@ -542,3 +543,52 @@ async def test_subscription_outlives_turn_and_drops_only_with_screen():
     await provider.drop_screen_subscription("screen")
     assert subscription.consumer_task.done()
     assert router.push(topic_key, {"hook_event_name": "Stop"}) is False
+
+
+async def test_run_turn_refuses_to_clobber_a_turn_already_open():
+    """One topic has ONE screen, so two turns cannot run on it. `converse` folds
+    a second message into the open turn; this path cannot (it is the sole reader
+    of its own marker queue), so it must refuse rather than overwrite.
+
+    Overwriting is silent and doubly wrong: the live turn's watcher would wait
+    on a queue nothing feeds again and eventually report a timeout for a turn
+    that was fine, while the running session's hooks were attributed to the new
+    one. The per-topic lock used to make this unreachable; it is gone.
+    """
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+
+    class _FakeProvider(HooksTurnProvider[str]):
+        name = "fake"
+
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            return None
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    open_marker = TurnMark(turn_id=_uuid.uuid4(), queue=asyncio.Queue())
+    subscription.current_turn = open_marker
+
+    events = [
+        e
+        async for e in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="巡检",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    assert len(events) == 1
+    result = events[0]
+    assert isinstance(result, AgentResult)
+    assert result.is_error is True
+    # The live turn is untouched — that is the whole point.
+    assert subscription.current_turn is open_marker
