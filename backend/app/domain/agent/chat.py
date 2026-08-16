@@ -730,15 +730,35 @@ def _strip_platform_notice(text: str) -> str:
     return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
 
 
-def _prompt_line(b) -> str:
-    """One speaker-labelled prompt line per pending human block. An attachment
-    block is a worktree image — embedded NATIVELY in this turn's user message
-    (base64 image block, see service.build_query_input), so the line just says
-    who sent it and where the file lives."""
+def _prompt_line(b, *, embeds_images: bool) -> str:
+    """One speaker-labelled prompt line per pending human block.
+
+    An attachment block is a worktree image, and the line has to describe how it
+    actually arrives THIS turn — which is not the same on every backend:
+
+    - ``embeds_images`` (SDK / relayed node): the bytes ride the user message as
+      a native base64 image block (``service.build_query_input``), so 芝士 has
+      already seen it by the time it reads this line.
+    - hooks-driven backends (local tmux, remote device): the prompt is injected
+      as TEXT into a live Claude Code screen and ``images=`` is dropped on the
+      floor. The file is still in the worktree, so the line must send 芝士 to
+      open it instead of claiming it is attached.
+
+    The wording is load-bearing, not cosmetic. Told "图片内容已附在本条消息里"
+    and handed nothing, an agent does not raise — it writes a confident answer
+    about a picture it never saw, and nothing downstream marks that answer as
+    invented. Saying "去打开这个文件" fails safe: worst case it reports it could
+    not read the path."""
     if b.kind == BlockKind.attachment:
+        if embeds_images:
+            return (
+                f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
+                f"它同时存在你工作目录的 {b.content}）"
+            )
         return (
-            f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
-            f"它同时存在你工作目录的 {b.content}）"
+            f"[{b.author}] 发来一张图片：**它没有附在本条消息里**，"
+            f"文件在你工作目录的 {b.content}，需要你自己用 Read 打开它。"
+            f"（打不开就直说打不开，不要猜图里是什么。）"
         )
     return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
@@ -1924,15 +1944,11 @@ class ChatService:
                 # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
                 yield {"type": "done"}
                 return
-            # No pending human block ⇒ nobody spoke: this is a resume nudge,
-            # a kickoff or a returned conclusion. Say so, rather than handing
-            # 芝士 bare text that looks like a person's message.
-            prompt_text = "\n".join(
-                _prompt_line(b) for b in pending
-            ) or platform_prompt(content)
-            # 图片输入: every pending image rides this turn's user message as a
-            # NATIVE base64 image block (Claude Code native image input) — the
-            # provider side that has the file does the embedding.
+            # 图片输入: every pending image is offered to the provider as
+            # {"path", "media_type"}. Whether it actually reaches the model as a
+            # native base64 block depends on the provider (`embeds_images`), and
+            # the prompt is built below — AFTER the provider is picked — so its
+            # wording can match what this backend really does.
             turn_images = [
                 {"path": b.content, "media_type": b.mime_type or "image/png"}
                 for b in pending
@@ -2018,6 +2034,20 @@ class ChatService:
                 await _team_compute_profile(session, project),
             )
             provider = self._compute.select(provider_id=compute_id)
+            # The prompt is built HERE, not where `pending` was computed: an
+            # attachment line has to describe how the image reaches 芝士 on THIS
+            # backend, and that is only knowable once the provider is picked.
+            # `getattr` default True: a provider from outside this repo that
+            # never declared the capability keeps the old wording rather than
+            # being told, wrongly, that it drops images.
+            #
+            # No pending human block ⇒ nobody spoke: this is a resume nudge,
+            # a kickoff or a returned conclusion. Say so, rather than handing
+            # 芝士 bare text that looks like a person's message.
+            prompt_text = "\n".join(
+                _prompt_line(b, embeds_images=getattr(provider, "embeds_images", True))
+                for b in pending
+            ) or platform_prompt(content)
             # turn 活跃度检测: the hooks-driven backends (LOCAL tmux + remote
             # device) run hooks_substrate's two-layer idle-suspect + hard-ceiling
             # loop and manage their own inner ceiling (which can be hours), so the
