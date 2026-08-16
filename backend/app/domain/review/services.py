@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, NoReturn
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.background import spawn
+from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.platform_notices import (
@@ -61,6 +62,8 @@ _REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
 #: 具名 note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
 _REPUSH_DIVERGED_PREFIX = "🌿 本地分支与 PR 分支已分叉"
 _POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
+# One occurrence per automatic base-update (#468) — counted to cap rebase loops.
+_REBASE_NOTE_MARK = "⟲"
 #: 采纳现场补开 App PR 失败（存量无 PR 卡，#296 stage 1 的回归修复）。开不出 PR
 #: 时采纳停下、原因亮在卡上——绑定 GitHub 的项目绝不静默本地合并直推 main
 #: （all commits go through PR）。卡保持 pending，人处理后可直接重试采纳。
@@ -1539,6 +1542,69 @@ class AcceptService:
                 runner=runner,
                 repo_full_name=f"{owner}/{repo}",
             )
+            await self._session.flush()
+            return
+
+        # Tier-2 阀一 (#468): required 检查按名单等——**缺席是 pending，不是
+        # 通过**。#465 那次 `test` 因 path filter 根本没被触发，可见的检查全
+        # skipped/绿，"看见的都绿" 就这么放行了从没跑过测试的合并。名单里的
+        # 名字必须出现在 check-runs 里，没出现就继续等（真正"什么都不会跑"的
+        # 情形由 no_checks 阀负责，走的是 needs-human，不是这里）。
+        required = {
+            n.strip()
+            for n in settings.accept_required_check_names.split(",")
+            if n.strip()
+        }
+        if required:
+            seen = await client.check_run_names(
+                owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
+            )
+            missing = required - seen
+            if missing:
+                self._note_waiting_on_checks(
+                    card=card,
+                    tail="required 检查还没出现：" + ", ".join(sorted(missing)),
+                )
+                await self._session.flush()
+                return
+
+        # Tier-2 阀二 (#468): strict up-to-date——绿必须绿在**当前基线**上。
+        # 各自绿在旧基上的两个 PR 合并相加可以是红的（2026-08-12 三头 alembic、
+        # 2026-08-16 样式闸门叠加，都拦住过全队）。落后就自动换基（GitHub 的
+        # Update branch），换基后 head 变化，下一轮从新 CI 重新等起。None（
+        # GitHub 答非所问）不拦：ancestry 读不到不该冻结整条采纳路。
+        ancestry = await client.compare_status(
+            owner=owner,
+            repo=repo,
+            base="main",
+            head=card.pr_head_sha,
+            token=creds.read,
+        )
+        if ancestry in ("behind", "diverged"):
+            rebases = card.note.count(_REBASE_NOTE_MARK)
+            if rebases >= 3:
+                self._note_needs_human(
+                    card=card,
+                    topic=topic,
+                    reason=(
+                        "分支反复落后于 main（已自动换基 3 次仍未赶上）——"
+                        "main 移动太快或换基没生效，请人工处理"
+                    ),
+                )
+                await self._session.flush()
+                return
+            updated = await client.update_branch(
+                owner=owner, repo=repo, number=card.pr_number or 0, token=creds.read
+            )
+            outcome = (
+                "已自动更新分支，等新一轮 CI。"
+                if updated
+                else "自动更新分支被拒，下一轮重试。"
+            )
+            card.note = (
+                f"{_REBASE_NOTE_MARK}基线落后于 main（{ancestry}），"
+                f"{outcome}{card.note}"
+            )[:2000]
             await self._session.flush()
             return
 

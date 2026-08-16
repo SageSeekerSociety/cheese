@@ -476,6 +476,11 @@ class Settings(BaseSettings):
     # card's stored pr_number, so flipping this never strands a card, and a
     # deployment can still switch it off via .env (dev override) if needed.
     accept_via_pr: bool = True
+    # Tier-2 semantics for the accept poller (#468): check names that must have
+    # APPEARED (and be green) before the poller may merge. Absence is pending,
+    # never pass — #465 merged on a run where `test` was never triggered and
+    # everything visible was skipped/green. Comma-separated; empty disables.
+    accept_required_check_names: str = "test"
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
