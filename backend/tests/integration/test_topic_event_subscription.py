@@ -36,44 +36,45 @@ class _ImmediateAgent(AgentService):
         yield AgentResult(text="完成", session_id="session-1", usage=None)
 
 
-class _AnsweringLiveScreenProvider:
+class _AnsweringLiveScreenProvider(HooksTurnProvider[str]):
     """A hooks-shaped provider that folds an injected message into its reply."""
 
     name = "answering-live-screen"
-    embeds_images = False
 
     def __init__(self) -> None:
+        self.router = HookRouter()
+        super().__init__(router=self.router)
         self.started = asyncio.Event()
-        self.injected = asyncio.Event()
-        self.delivered: list[str] = []
-        self.turns = 0
+        self.injected: list[str] = []
 
-    def available(self) -> bool:
-        return True
+    async def _ensure_ready(self, **_: object) -> str:
+        return "screen"
 
-    async def run_turn(
-        self,
-        *,
-        prompt: str,
-        **_: object,
-    ) -> AsyncIterator[AgentEvent]:
-        self.turns += 1
+    async def _send_prompt(self, screen: str, prompt: str) -> None:
+        del screen
+        self.injected.append(prompt)
         self.started.set()
-        await self.injected.wait()
-        yield AgentResult(
-            text=f"第一条收到：{prompt}\n第二条收到：{self.delivered[-1]}",
-            session_id="session-live",
-            usage=None,
+        if len(self.injected) < 2:
+            return
+        answer = "第一条和第二条都收到：先处理 A；再处理 B"
+        topic_id = next(iter(self._subscriptions))
+        self.router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": answer,
+                "_eid": "two-messages-answer",
+            },
         )
-
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
-        del topic_id
-        self.delivered.append(text)
-        self.injected.set()
-        return True
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        del project_id, topic_id
+        self.router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": answer,
+                "session_id": "session-live",
+                "_eid": "two-messages-stop",
+            },
+        )
 
 
 class _IdleHooksProvider(HooksTurnProvider[str]):
@@ -184,8 +185,9 @@ async def test_two_messages_during_one_turn_are_both_answered(client, tmp_path) 
         compute=ComputePool([provider], provider.name),
     )
 
-    first = asyncio.create_task(
-        _drain(
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        first_frames = await _drain(
             service.converse(
                 topic_id=topic_id,
                 author="u1",
@@ -193,31 +195,29 @@ async def test_two_messages_during_one_turn_are_both_answered(client, tmp_path) 
                 summon=True,
             )
         )
-    )
-    await asyncio.wait_for(provider.started.wait(), 1)
-    second_frames = await asyncio.wait_for(
-        _drain(
+        await asyncio.wait_for(provider.started.wait(), 1)
+        second_frames = await _drain(
             service.converse(
                 topic_id=topic_id,
                 author="u2",
                 content="再处理 B",
                 summon=True,
             )
-        ),
-        1,
-    )
-    first_frames = await asyncio.wait_for(first, 1)
+        )
+        answer_frame = await asyncio.wait_for(room.get(), 1)
+        done_frame = await asyncio.wait_for(room.get(), 1)
 
-    assert second_frames[-1]["type"] == "done"
-    assert provider.turns == 1
-    assert provider.delivered == ["[u2]: 再处理 B"]
-    answer = next(
-        frame["block"]["content"]
-        for frame in first_frames
-        if frame["type"] == "assistant_block"
-    )
+    assert first_frames and second_frames
+    assert len(provider.injected) == 2
+    assert "先处理 A" in provider.injected[0]
+    assert "再处理 B" in provider.injected[1]
+    assert answer_frame["type"] == "assistant_block"
+    assert done_frame == {"type": "done"}
+    answer = answer_frame["block"]["content"]
     assert "先处理 A" in answer
     assert "再处理 B" in answer
+    assert not hasattr(service, "_topic_locks")
+    await provider.drop_subscription(topic_id)
 
 
 async def test_session_initiated_turn_is_persisted_and_broadcast(

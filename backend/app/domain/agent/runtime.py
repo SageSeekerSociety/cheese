@@ -8,9 +8,7 @@ running and persisting (invariant 2: the job does not depend on who is watching)
 
 Today's Broker is in-process (single backend instance). Multi-instance needs a
 cross-process broker (Valkey/PG) + a durable per-topic lease + a per-turn replay
-buffer/cursor for seamless mid-turn reconnect — see design v2 R1/R3. The current
-single-writer guarantee is ChatService's per-topic asyncio lock (process-local);
-the durable lease is the documented multi-instance upgrade.
+buffer/cursor for seamless mid-turn reconnect — see design v2 R1/R3.
 """
 
 import asyncio
@@ -231,8 +229,8 @@ class TurnRunner:
         # It holds the TASK, not just the id, because "not running it" is only
         # half the orphan set: a turn can also be in here and wedged (the child
         # container died, the stream never ends). Claiming one of those means
-        # cancelling it — a resume would otherwise queue behind the zombie on
-        # ChatService's per-topic lock and never run. See sweep_orphans.
+        # cancelling it so the dead platform request is not reported as live.
+        # See sweep_orphans.
         self._live: dict[str, asyncio.Task] = {}
         # Monotonic timestamp of the last frame each live turn published. Frames
         # include tool calls, which persist no Block — so this sees activity the
@@ -366,9 +364,10 @@ class TurnRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
     ) -> uuid.UUID:
-        """Start a turn in the background; return its turn_id immediately. Turns
-        on the same topic serialize on ChatService's per-topic lock (so a second
-        submit queues behind the first).
+        """Start a platform request in the background and return its turn id.
+
+        Hooks-backed requests inject into the topic's current screen marker;
+        they do not serialize behind another request on the same topic.
 
         ``nudge_event`` is the ONE LINE the room sees for a platform-initiated
         turn; ``nudge_meta`` is that event's structured payload (see
@@ -644,9 +643,7 @@ class TurnRunner:
             age_s = now - float(info.get("started_at", 0))
             stale = age_s > self.ORPHAN_STALE_S
             chained = bool(info.get("is_resume"))
-            # A wedged turn still owns the topic lock. Cancelling is not tidiness
-            # — a resume would queue behind it forever, and even a turn we refuse
-            # to resume must let the next human message through.
+            # Cancel the dead platform request before scheduling its replacement.
             self._cancel_wedged(turn_id, topic_id)
             how = f"卡死了：{round(age_s / 60)} 分钟里一个字都没输出，已强制结束"
             # One remedy per topic: a queued turn parked behind a wedged one
@@ -699,9 +696,8 @@ class TurnRunner:
                     detail_label="详细说明",
                 ),
             )
-            # A cancelled turn needs a moment to unwind before it lets go of
-            # the topic lock — the resume would queue rather than fail either
-            # way, this just avoids the queue.
+            # Give cancellation a moment to finish its bookkeeping before the
+            # replacement request starts.
             self._schedule_resume(
                 chat_service,
                 topic_id,
@@ -1281,10 +1277,8 @@ class TurnRunner:
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
         )
         try:
-            # Wall-clock ceiling (R8): a wedged turn must not hold the topic lock
-            # forever. On timeout the async-for exits, closing the converse
-            # generator → its `async with` blocks unwind → the topic lock releases
-            # and the in-container claude process is torn down.
+            # Wall-clock ceiling (R8) for request-owned streams. Hooks-backed
+            # requests return after injection; their marker owns its own timeout.
             #
             # This wrap is transport-INDEPENDENT — one TurnRunner singleton, same
             # `self._timeout` for every backend (SDK / tmux / device). Most

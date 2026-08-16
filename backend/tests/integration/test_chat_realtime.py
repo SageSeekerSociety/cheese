@@ -1,7 +1,4 @@
-"""现场必须实时 (协作软件语义): a human post persists + broadcasts INSTANTLY,
-never queued behind a running agent turn — the per-topic lock serializes only
-the AI part of a turn. Pre-fix, the second converse() below deadlocks until the
-slow agent finishes; the wait_for(2s) would blow up."""
+"""现场必须实时: posts and summons never queue behind a topic-wide turn lock."""
 
 import asyncio
 import uuid
@@ -9,6 +6,8 @@ import uuid
 import pytest
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.hooks_substrate import HooksTurnProvider
 from app.domain.agent.service import (
     AgentDelta,
     AgentResult,
@@ -508,34 +507,43 @@ async def test_mid_stream_crash_saves_session_pointer(client, tmp_path, monkeypa
     assert fresh is not None and fresh.session_id == "s-partial"
 
 
-class _SlowLiveScreenProvider:
+class _SlowLiveScreenProvider(HooksTurnProvider[str]):
     """A hooks-style backend: one long-lived screen per topic, so a message that
     arrives mid-turn can be injected into the turn already running."""
 
     name = "fake-live"
-    embeds_images = False
 
     def __init__(self) -> None:
+        self.router = HookRouter()
+        super().__init__(router=self.router)
         self.started = asyncio.Event()
-        self.release = asyncio.Event()
-        self.delivered: list[str] = []
-        self.turns = 0
+        self.injected: list[str] = []
 
-    def available(self) -> bool:
-        return True
+    async def _ensure_ready(self, **kwargs):
+        return "screen"
 
-    async def run_turn(self, **kwargs):
-        self.turns += 1
+    async def _send_prompt(self, screen, prompt):
+        self.injected.append(prompt)
         self.started.set()
-        await self.release.wait()
-        yield AgentResult(text="done", session_id="s1", usage=None)
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
-        self.delivered.append(text)
-        return True
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        return
+    def finish(self, topic_id: uuid.UUID) -> None:
+        self.router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "done",
+                "_eid": "done-message",
+            },
+        )
+        self.router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "done",
+                "session_id": "s1",
+                "_eid": "done-stop",
+            },
+        )
 
 
 @pytest.mark.anyio
@@ -574,18 +582,28 @@ async def test_summon_during_a_running_turn_is_injected_not_queued(client, tmp_p
             )
         ]
 
-    turn = asyncio.create_task(summoned("user-1", "跑一个很久的命令"))
+    from app.domain.agent.runtime import get_broker
+
+    first = await summoned("user-1", "跑一个很久的命令")
     await asyncio.wait_for(provider.started.wait(), 5)
 
-    # Pre-fix this blocked until the first turn finished.
-    frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), 2)
-    assert frames[-1]["type"] == "done"
-    assert provider.delivered == ["[user-2]: 等一下，先别跑"]
-    # Injected, not queued: still exactly one turn.
-    assert provider.turns == 1
+    second = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), 2)
+    assert first and second
+    assert len(provider.injected) == 2
+    assert "跑一个很久的命令" in provider.injected[0]
+    assert "等一下，先别跑" in provider.injected[1]
+    assert not hasattr(svc, "_topic_locks")
 
-    provider.release.set()
-    await asyncio.wait_for(turn, 5)
+    async with factory() as session:
+        before_stop = await BlockRepository(session).list_for_topic(topic_id)
+    pending_second = [b for b in before_stop if b.content == "等一下，先别跑"]
+    assert len(pending_second) == 1
+    assert consumed_turn(pending_second[0]) is None
+
+    async with get_broker().subscribe(str(topic_id)) as room:
+        provider.finish(topic_id)
+        assert (await asyncio.wait_for(room.get(), 2))["type"] == "assistant_block"
+        assert await asyncio.wait_for(room.get(), 2) == {"type": "done"}
 
     # The injected message counts as read by the turn that took it, so the next
     # turn does not say it all over again.
@@ -594,24 +612,39 @@ async def test_summon_during_a_running_turn_is_injected_not_queued(client, tmp_p
     merged = [b for b in history if b.content == "等一下，先别跑"]
     assert len(merged) == 1
     assert consumed_turn(merged[0]) is not None
+    await provider.drop_subscription(topic_id)
 
 
 @pytest.mark.anyio
-async def test_a_backend_with_no_live_screen_still_queues_the_turn(client, tmp_path):
-    """`deliver` returning False is the pre-existing behaviour, not a new
-    failure mode: the message must fall back to a turn of its own rather than be
-    dropped. Guards the SDK / remote-node providers, which have nothing to
-    inject into."""
+async def test_noninteractive_provider_turns_are_not_chat_serialized(client, tmp_path):
+    """SDK-style providers may run concurrently; ChatService owns no topic lock."""
     from app.domain.agent.compute import ComputePool
 
     factory = client.test_factory  # type: ignore[attr-defined]
 
-    class _NoScreen(_SlowLiveScreenProvider):
+    class _NoScreen:
         name = "fake-noscreen"
+        embeds_images = True
+
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.turns = 0
+
+        def available(self) -> bool:
+            return True
+
+        async def run_turn(self, **kwargs):
+            self.turns += 1
+            self.started.set()
+            await self.release.wait()
+            yield AgentResult(text="done", session_id="s1", usage=None)
 
         async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
-            self.delivered.append(text)
             return False
+
+        def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+            return
 
     provider = _NoScreen()
     svc = ChatService(
@@ -642,10 +675,14 @@ async def test_a_backend_with_no_live_screen_still_queues_the_turn(client, tmp_p
     await asyncio.wait_for(provider.started.wait(), 5)
 
     second = asyncio.create_task(summoned("user-2", "第二件事"))
-    await asyncio.sleep(0.1)
-    assert not second.done()  # queued behind the lock, exactly as before
+    for _ in range(20):
+        if provider.turns == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert provider.turns == 2
+    assert not second.done()  # both provider turns are running, neither is queued
 
     provider.release.set()
     await asyncio.wait_for(turn, 5)
     await asyncio.wait_for(second, 5)
-    assert provider.turns == 2
+    assert not hasattr(svc, "_topic_locks")

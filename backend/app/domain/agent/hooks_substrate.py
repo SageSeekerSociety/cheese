@@ -190,6 +190,7 @@ class TurnMark:
     turn_id: uuid.UUID
     queue: asyncio.Queue[HookDelivery]
     platform_unsolicited: bool = False
+    consumer_owned: bool = False
     seen_messages: set[str] | None = None
 
 
@@ -211,6 +212,7 @@ HookEventConsumer = Callable[
         uuid.UUID,
         AgentEvent | AgentDeliveryFailure,
         str | None,
+        bool,
         bool,
     ],
     Awaitable[None],
@@ -488,7 +490,7 @@ class HooksTurnProvider[ScreenT]:
             eid = eid_value if isinstance(eid_value, str) else None
             if isinstance(event, AgentMessage) and marker.seen_messages is not None:
                 marker.seen_messages.add(event.text.strip())
-            if marker.platform_unsolicited:
+            if marker.platform_unsolicited or marker.consumer_owned:
                 consumer = self._event_consumer
                 if event is not None and consumer is not None:
                     result_text_seen = (
@@ -504,6 +506,7 @@ class HooksTurnProvider[ScreenT]:
                             event,
                             eid,
                             result_text_seen,
+                            marker.platform_unsolicited,
                         )
                     except Exception:  # noqa: BLE001 — keep the subscription alive
                         logger.exception(
@@ -515,6 +518,58 @@ class HooksTurnProvider[ScreenT]:
                 marker.queue.put_nowait(HookDelivery(event, eid=eid))
             if isinstance(event, AgentResult) and subscription.current_turn is marker:
                 subscription.current_turn = None
+
+    async def inject_turn(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        prompt: str,
+        system_prompt: str,
+        resume_session_id: str | None,
+        turn_id: uuid.UUID,
+        on_mark: Callable[[uuid.UUID], None],
+        model: str | None = None,
+        env: dict[str, str] | None = None,
+        memory_scope: str | None = None,
+        owner: str | None = None,
+        sandbox_image: str | None = None,
+        images: list[dict] | None = None,
+    ) -> bool | None:
+        """Open or join a consumer-owned marker, inject, and return immediately."""
+        del sandbox_image, images
+        precheck = await self._precheck(project_id, topic_id)
+        token = mint_scoped_token(
+            project_id=str(project_id),
+            topic_id=str(topic_id),
+            ttl_s=SESSION_TOKEN_TTL_S,
+        )
+        screen = await self._ensure_ready(
+            project_id=project_id,
+            topic_id=topic_id,
+            token=token,
+            model=model,
+            env=env,
+            memory_scope=memory_scope,
+            owner=owner,
+            turn_id=turn_id,
+            resume_session_id=resume_session_id,
+            system_prompt=system_prompt,
+            precheck=precheck,
+        )
+        subscription = await self.ensure_subscription(project_id, topic_id)
+        self._live[topic_id] = screen
+        marker = subscription.current_turn
+        if marker is None:
+            marker = TurnMark(
+                turn_id=turn_id,
+                queue=asyncio.Queue(),
+                consumer_owned=True,
+                seen_messages=set(),
+            )
+            subscription.current_turn = marker
+        on_mark(marker.turn_id)
+        return await self._send_prompt(screen, prompt)
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook
