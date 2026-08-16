@@ -207,6 +207,24 @@ def _give_card_a_pr(client, app_world, topic_id: str, card_id: str, number: int 
     return branch
 
 
+def _age_decision(client, card_id: str, *, minutes: int) -> None:
+    """把「人点采纳」的时刻往前挪 —— 等待类兜底超时的时钟就是它。"""
+    import asyncio
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(card_id))
+            assert card is not None
+            card.decided_at = datetime.now(UTC) - timedelta(minutes=minutes)
+            await session.commit()
+
+    asyncio.run(_do())
+
+
 def _authorized(client, app_world) -> tuple[str, str, int, str]:
     """走到「人点了采纳、卡在 pr_open 等 CI」这一步。
 
@@ -727,19 +745,74 @@ def test_discussion_topic_needs_no_pr_and_still_accepts(client, app_world, monke
 
 
 def test_a_required_check_that_never_appeared_blocks_the_merge(client, app_world):
-    """#465 的形态：path filter 让 `test` 根本没被触发，可见的检查全绿/скipped。
+    """#465 的形态：改动确实碰了后端，`test` 却没报到，可见的检查全绿/skipped。
     缺席必须读作「还在等」，永远不是「没失败」。"""
     fake = app_world["fake"]
     tid, cid, number, head_sha = _authorized(client, app_world)
 
     fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
     fake.check_names_by_sha[head_sha] = {"guards", "lint"}  # test 缺席
+    fake.files_by_sha[head_sha] = [("modified", "backend/app/domain/x.py")]
     _poll(client)
 
     assert fake.merge_calls == []
     card = _cards(client, tid)[0]
     assert card["status"] == "pr_open"
     assert "test" in card["note"]  # 卡面说清在等哪个
+
+
+def test_a_required_check_the_diff_cannot_trigger_is_not_required(client, app_world):
+    """2026-08-16 的真实故障：纯前端 PR 上 `test` 永远不会出现（test.yml 只在
+    `backend/**` 上触发），名单却无条件等它 —— #483/#485/#486 全绿却卡到人工去
+    GitHub 合。改动没碰名单项的路径，这项就不是必需的，照常合并。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    # 线上纯前端 PR 的真实检查集合，没有 `test`
+    fake.check_names_by_sha[head_sha] = {"e2e", "scope", "check", "guards", "guard"}
+    fake.files_by_sha[head_sha] = [
+        ("modified", "frontend/src/components/ChatPanel.vue"),
+        ("modified", "docs/topics/深色适配.md"),
+    ]
+    _poll(client)
+
+    assert [m["number"] for m in fake.merge_calls] == [number]
+    assert _topic(client, tid)["status"] == "archived"
+
+
+def test_a_required_check_missing_too_long_goes_to_a_human(client, app_world):
+    """兜底：没有超时的等待会静默卡死（workflow 改名 / 被禁用 / Actions 额度断
+    供）。等过头就交给人 —— 出口是 ✋，不是自动合并。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}
+    fake.files_by_sha[head_sha] = [("modified", "backend/app/domain/x.py")]
+    _age_decision(client, cid, minutes=999)
+    _poll(client)
+
+    assert fake.merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pr_open"
+    assert card["note"].startswith("✋")
+    assert "test" in card["note"]
+
+
+def test_scope_unknown_keeps_a_required_check_required(client, app_world):
+    """GitHub 给不出文件列表（diff 太大）时不知道有没有碰后端 —— 保守：照样等。
+    放行等于用一次 API 失败换掉整道阀。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}
+    fake.files_by_sha[head_sha] = None  # compare 截断
+    _poll(client)
+
+    assert fake.merge_calls == []
+    assert _cards(client, tid)[0]["status"] == "pr_open"
 
 
 def test_a_stale_base_gets_updated_not_merged(client, app_world):
