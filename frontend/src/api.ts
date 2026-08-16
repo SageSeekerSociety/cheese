@@ -928,6 +928,9 @@ export interface TerminalInfo {
   available: boolean
   backend: string
   url?: string
+  // Device-hosted topics: no proxied ttyd, but a live screen WebSocket
+  // ("/connector/session/{sid}/screen") the 现场 renders with DeviceLiveViewer.
+  ws?: string
 }
 export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)

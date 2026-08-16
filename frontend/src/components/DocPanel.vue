@@ -57,6 +57,7 @@ import { myHandle } from '../me'
 
 import CheeseAvatar from './CheeseAvatar.vue'
 import CodeEditor from './CodeEditor.vue'
+import DeviceLiveViewer from './DeviceLiveViewer.vue'
 
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
@@ -537,6 +538,9 @@ watch(
 // drawer embeds the real read-only terminal (ttyd) instead of the rebuilt
 // worklog. `terminalUrl` is the backend proxy the iframe loads.
 const terminalUrl = ref<string | null>(null)
+// Device-hosted topics carry no proxied ttyd URL; the probe hands back the
+// screen WebSocket path instead, and the 现场 embeds DeviceLiveViewer on it.
+const screenSid = ref<string | null>(null)
 // Live-turn elapsed seconds (ticks while `working`).
 const nowTick = ref(Date.now())
 let tickTimer: ReturnType<typeof setInterval> | null = null
@@ -746,6 +750,9 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       // container + something actually answering), so a false here means the
       // timeline below is the honest thing to show.
       terminalUrl.value = term?.available && term.url ? withSessionToken(term.url) : null
+      // The device path: no url, a ws ("/connector/session/{sid}/screen").
+      // The sid is all DeviceLiveViewer needs — it builds the socket URL itself.
+      screenSid.value = (term?.available && term.ws?.match(/\/session\/([^/]+)\/screen/)?.[1]) || null
     } else if (key === 'git') {
       // A fresh repo with no commits makes git log fail (422); tolerate it so
       // the diff still renders instead of the whole drawer showing an error.
@@ -2109,6 +2116,7 @@ watch(
     drawerOpen.value = false
     // Drop the previous topic's terminal so it can't flash in the new 现场.
     terminalUrl.value = null
+    screenSid.value = null
     // Same for the preview: a stale app frame or error would otherwise be
     // attributed to the topic just opened.
     previewAppUrl.value = null
@@ -2529,6 +2537,19 @@ onBeforeUnmount(() => {
                     实时终端（只读）
                   </div>
                   <iframe class="term-frame" :src="terminalUrl" title="实时终端（只读）" />
+                </div>
+              </template>
+
+              <!-- 现场: device-hosted topics — the machine screen's REAL terminal,
+                 byte-for-byte over the screen WebSocket. Same read-only stance as
+                 the ttyd embed; DeviceLiveViewer never forwards keystrokes. -->
+              <template v-else-if="openTool === 'site' && screenSid">
+                <div class="term-wrap">
+                  <div class="term-bar text-caption px-3 py-1">
+                    <span class="term-bar__dot">●</span>
+                    实时终端（只读）· 机器上的 Claude Code
+                  </div>
+                  <DeviceLiveViewer :sid="screenSid" />
                 </div>
               </template>
 
