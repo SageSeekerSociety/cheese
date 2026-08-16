@@ -374,6 +374,23 @@ def _topic(client, project_id: str, title: str = "T") -> str:
     return r.json()["data"]["id"]
 
 
+def _add_member(client, project_id: str, handle: str) -> None:
+    """Membership for the guard added 2026-08-16: these tests' handles are
+    participants by intent, and the topic routes now deny outsiders."""
+    import uuid as _uuid
+
+    from app.domain.project.models import ProjectMember
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                ProjectMember(project_id=_uuid.UUID(project_id), user_handle=handle)
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
 def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
     async def _run() -> None:
         async with client.test_factory() as session:
@@ -444,6 +461,8 @@ def test_topic_read_cursor_belongs_to_the_verified_caller(client):
     could silently clear anyone else's unread badge."""
     pid = _project(client)
     tid = _topic(client, pid)
+    for h in ("alice", "bob"):
+        _add_member(client, pid, h)
     _seed_message(client, pid, tid, "cheese")
     assert _topic_unread(client, pid, "bob").get(tid) == 1
 

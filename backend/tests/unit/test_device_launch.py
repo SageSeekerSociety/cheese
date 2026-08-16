@@ -156,7 +156,9 @@ def test_drainer_lives_inside_the_claude_tmux_session():
     )
     assert m, "new-session lost its command string"
     wrapper = m.group(1)
-    assert "cheese-drain" in wrapper
+    # The drainer may appear inline or via the $DRAINCMD variable the script
+    # defines right above (both expand to `sh .../cheese-drain`).
+    assert "cheese-drain" in wrapper or "$DRAINCMD" in wrapper
     assert wrapper.endswith("& exec $CLAUDE")
     proc = subprocess.run(["sh", "-n"], input=script, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
@@ -875,3 +877,91 @@ def test_the_launcher_exports_the_config_dir_and_passes_it_into_tmux():
     # And the stale handoff from a previous launch is cleared before the
     # extraction runs, so an old ticket can never be exported by mistake.
     assert 'rm -f "$HOME/.claude/cheese-machine.token"' in script
+
+
+def test_a_transient_create_failure_fails_loudly_not_into_the_fallback(tmp_path):
+    """#427: the no-`-e` fallback is for pre-3.0 tmux ONLY. Any other create
+    failure must surface as a launcher failure (→ a visible screen-setup error
+    on the turn), never silently retry without per-session env."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    work = home / "work"
+    work.mkdir()
+    (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nexit 0\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    calls = tmp_path / "tmux.calls"
+    stub = bindir / "tmux"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> "{calls}"\n'
+        'case "$1" in\n'
+        "  has-session) exit 1 ;;\n"
+        '  new-session) echo "create failed: server error" >&2; '
+        "exit 1 ;;\n"
+        "esac\nexit 0\n"
+    )
+    stub.chmod(0o755)
+    result = subprocess.run(
+        ["sh", "-c", _tmux_hosting_block()],
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin",
+            "HOME": str(home),
+            "CHEESE_WORK": str(work),
+            "CLAUDE": "true",
+            "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0, "a non-version create failure must fail the launch"
+    assert "cheese-launch: tmux new-session failed" in result.stderr
+    body = calls.read_text()
+    assert body.count("new-session") == 1, (
+        f"the no--e fallback ran on a non-version failure: {body}"
+    )
+
+
+def test_an_old_tmux_without_dash_e_still_gets_the_fallback(tmp_path):
+    """The one failure the fallback exists for: a pre-3.0 tmux rejecting `-e`
+    (usage/unknown-flag output) still launches the screen, with the sourced env
+    file carrying the full environment (#434)."""
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    work = home / "work"
+    work.mkdir()
+    (home / ".claude" / "cheese-drain").write_text("#!/bin/sh\nexit 0\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    calls = tmp_path / "tmux.calls"
+    stub = bindir / "tmux"
+    stub.write_text(
+        "#!/bin/sh\n"
+        f'echo "$@" >> "{calls}"\n'
+        'case "$1" in\n'
+        "  has-session) exit 1 ;;\n"
+        "  new-session)\n"
+        f'    if ! grep -q "fallback-done" "{calls}" 2>/dev/null '
+        '&& echo "$@" | grep -q -- " -e "; then\n'
+        '      echo "usage: new-session [-AdDEPX] ..." >&2; exit 1\n'
+        "    fi\n"
+        f'    echo fallback-done >> "{calls}"\n'
+        "    exit 0 ;;\n"
+        "  attach) exit 0 ;;\n"
+        "esac\nexit 0\n"
+    )
+    stub.chmod(0o755)
+    result = subprocess.run(
+        ["sh", "-c", _tmux_hosting_block()],
+        env={
+            "PATH": f"{bindir}:/usr/bin:/bin",
+            "HOME": str(home),
+            "CHEESE_WORK": str(work),
+            "CLAUDE": "true",
+            "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "fallback-done" in calls.read_text()

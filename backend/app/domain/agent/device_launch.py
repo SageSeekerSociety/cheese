@@ -747,11 +747,24 @@ for k, v in os.environ.items():
     [ -s "$ENVF" ] && SRCENV=". \\"$ENVF\\"; "
     DRAINCMD="sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1"
     set -- "$@" "$SRCENV$TUP $DRAINCMD & exec $CLAUDE"
-    # Fall back to a plain create if this tmux predates -e (< 3.0): the screen
-    # still launches — and the sourced env file carries the full environment
-    # even here, so the fallback no longer boots on another topic's globals.
-    tmux "$@" || tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
-      "$SRCENV$TUP sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1 & exec $CLAUDE"
+    # Fall back to a plain create ONLY when this tmux predates -e (< 3.0 says
+    # "unknown flag" / prints usage). Any OTHER create failure fails LOUDLY:
+    # the old catch-everything fallback turned a transient server error into a
+    # silent degradation (#427) — and even though the sourced env file now
+    # carries the full environment either way (#434), a masked failure still
+    # costs its diagnosis. The launcher exiting non-zero surfaces as a screen
+    # setup error on the turn, which is the honest outcome.
+    if ! _ERR=$(tmux "$@" 2>&1); then
+      case "$_ERR" in
+        *"unknown flag"*|*"usage:"*|*"invalid option"*)
+          tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
+            "$SRCENV$TUP $DRAINCMD & exec $CLAUDE"
+          ;;
+        *)
+          echo "cheese-launch: tmux new-session failed: $_ERR" >&2
+          exit 1 ;;
+      esac
+    fi
   fi
   exec tmux attach -t "$SESSION"
 else

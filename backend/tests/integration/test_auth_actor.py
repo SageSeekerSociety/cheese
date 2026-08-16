@@ -2,6 +2,8 @@
 resolved from the verified token (not the body), the Phase-0 handle fallback
 still works, and a token-authenticated outsider is denied (越权)."""
 
+import pytest
+
 from app.core.tokens import verify_session_token
 from tests.integration.conftest import session_token
 
@@ -167,3 +169,57 @@ def test_project_member_allowed_even_if_not_in_roster(client):
         headers=_bearer(token),
     )
     assert r.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/topics/{tid}/doc",
+        "/api/topics/{tid}/docs",
+        "/api/topics/{tid}/comments",
+        "/api/topics/{tid}/transcript",
+        "/api/topics/{tid}/status",
+        "/api/topics/{tid}/progress",
+        "/api/topics/{tid}/children",
+    ],
+)
+def test_read_surfaces_deny_the_outsider(client, path):
+    """越权 (2026-08-16): a logged-in non-member could read a topic's living doc,
+    comments and transcript verbatim — only /blocks was guarded, so the UI
+    rendered a whole foreign project around one 403. Every read surface must
+    answer 403 to the outsider, exactly like /blocks."""
+    _, tid = _project_topic(client, owner="alice")
+    outsider = _login(client, "mallory")
+    r = client.get(path.format(tid=tid), headers=_bearer(outsider))
+    assert r.status_code == 403, f"{path}: {r.status_code} {r.text[:120]}"
+
+
+def test_topic_list_denies_the_outsider(client):
+    """The project sidebar (titles, activity, participants) is member-only —
+    it was readable by ANY logged-in caller holding the project id."""
+    pid, _ = _project_topic(client, owner="alice")
+    outsider = _login(client, "mallory")
+    r = client.get(f"/api/topics?project_id={pid}", headers=_bearer(outsider))
+    assert r.status_code == 403, r.text[:120]
+
+
+def test_archive_denies_the_outsider(client):
+    """Write side of the same hole: a non-member could archive someone else's
+    topic."""
+    _, tid = _project_topic(client, owner="alice")
+    outsider = _login(client, "mallory")
+    r = client.post(f"/api/topics/{tid}/archive", json={}, headers=_bearer(outsider))
+    assert r.status_code == 403, r.text[:120]
+
+
+def test_member_still_reads_everything(client):
+    """The guard must not lock the door on the people who belong inside."""
+    token = _login(client, "alice")
+    pid, tid = _project_topic(client, owner="alice")
+    for path in (
+        f"/api/topics/{tid}/doc",
+        f"/api/topics/{tid}/comments",
+        f"/api/topics?project_id={pid}",
+    ):
+        r = client.get(path, headers=_bearer(token))
+        assert r.status_code == 200, f"{path}: {r.status_code} {r.text[:120]}"

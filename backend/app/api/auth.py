@@ -386,6 +386,26 @@ class ActorResolver:
             _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
             raise ForbiddenError("你不是这个话题的成员，无权在此操作")
 
+    async def authorize_project(self, actor: Actor, *, project_id: uuid.UUID) -> None:
+        """Enforce project access for authenticated humans (no-op for the handle
+        fallback / agents, mirroring ``authorize_topic``). Raises ForbiddenError
+        on an outsider. This is the guard for project-scoped listings — the
+        topic list was readable by ANY logged-in caller holding a project id
+        (titles, activity, participants), which is how a non-member saw a whole
+        project's sidebar (2026-08-16)."""
+        if not settings.authz_enforce_topic_access:
+            return
+        if not actor.authenticated or actor.is_agent:
+            return
+        project_members = MemberRepository(self._session)
+        if await project_members.get(project_id=project_id, user_handle=actor.handle):
+            return
+        project = await ProjectRepository(self._session).get(project_id)
+        if project is not None and project.owner_handle == actor.handle:
+            return
+        _log.info("project_access_denied", handle=actor.handle, project=str(project_id))
+        raise ForbiddenError("你不是这个项目的成员，无权查看")
+
     async def project_of_topic(self, topic_id: uuid.UUID) -> uuid.UUID | None:
         topic = await TopicRepository(self._session).get(topic_id)
         return topic.project_id if topic is not None else None

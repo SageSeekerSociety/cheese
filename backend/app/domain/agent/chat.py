@@ -2453,7 +2453,21 @@ class ChatService:
                 )
                 fail_hint = "稍后再 @ 它重试。"
             else:
-                fail_text = "⚠️ 芝士这轮没跑完——AI 服务返回错误。"
+                # #450 rule 2: an unclassified failure shows the SERVICE'S OWN
+                # WORDS in the room line, not a generic label — 「AI 服务返回
+                # 错误」 with the reason buried in meta.detail is what sent a
+                # whole room hunting a \"mystery bug\" twice in one night
+                # (2026-08-16, topic ee17b136: the real text was the delivery
+                # timeout all along). One line's worth here; the untruncated
+                # original still goes into detail below.
+                first_line = detail.splitlines()[0].strip() if detail else ""
+                if len(first_line) > 160:
+                    first_line = first_line[:160] + "…"
+                fail_text = (
+                    f"⚠️ 芝士这轮没跑完——{first_line}"
+                    if first_line
+                    else "⚠️ 芝士这轮没跑完——AI 服务返回错误。"
+                )
                 fail_hint = "稍后再 @ 它重试。"
             if fail_meta is None:
                 # 没被分类的那几条。原话是**唯一**的一份 —— 它没有第二个副本可以
