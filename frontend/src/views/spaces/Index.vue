@@ -47,18 +47,20 @@
                 <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4">
                   <v-card flat rounded="lg" class="space-card elevation-0 border" :to="`/spaces/${space.id}`">
                     <v-card-item>
+                      <!-- 首字母走 text-surface 而不是 text-white：底色是琥珀，深色主题下
+                           它会提亮到 #FFA733，白字只有 1.9:1；surface 在深色下是深墨。 -->
                       <v-avatar size="60" color="primary" class="mt-2 mb-4">
                         <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)">
                           <!-- seed avatars may be invalid; fall back to the initial.
                                The #error slot fills the v-img, so the char must be a
                                flex-centered fill or it sits top-left, not centered. -->
                           <template #error>
-                            <span class="space-avatar-char text-h5 text-white font-weight-medium">{{
+                            <span class="space-avatar-char text-h5 text-surface font-weight-medium">{{
                               (space.name || '·').trim().charAt(0)
                             }}</span>
                           </template>
                         </v-img>
-                        <span v-else class="space-avatar-char text-h5 text-white font-weight-medium">{{
+                        <span v-else class="space-avatar-char text-h5 text-surface font-weight-medium">{{
                           (space.name || '·').trim().charAt(0)
                         }}</span>
                       </v-avatar>

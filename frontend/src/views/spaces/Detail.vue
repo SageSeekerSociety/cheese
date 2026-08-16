@@ -403,7 +403,8 @@ const confirmRemoveAdmin = async (userId: number, nickname: string) => {
   overflow: hidden;
 
   .admin-avatar {
-    border: 2px solid white;
+    /* 叠放头像之间的分隔环 = 它们背后的面色 */
+    border: 2px solid var(--surface);
     transition: margin-left 0.3s ease;
 
     &:not(:first-child) {
@@ -455,7 +456,7 @@ const confirmRemoveAdmin = async (userId: number, nickname: string) => {
   right: 16px;
   z-index: 10;
   border-radius: 50%;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-1);
 }
 
 .cursor-pointer {

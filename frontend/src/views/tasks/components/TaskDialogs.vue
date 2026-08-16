@@ -29,12 +29,13 @@
           class="mb-4 info-alert-card"
           variant="flat"
           rounded="lg"
-          color="grey-lighten-4"
+          color="surface-light"
         >
           <v-card-text class="pa-3">
             <div class="d-flex align-start">
               <v-avatar size="36" color="info" class="mr-3 info-avatar">
-                <v-icon icon="mdi-account-details" color="white" size="20"></v-icon>
+                <!-- 状态色底上的反白图标一律用 surface：这些底色深色下会提亮，白色会糊住 -->
+                <v-icon icon="mdi-account-details" color="surface" size="20"></v-icon>
               </v-avatar>
               <div>
                 <div class="text-subtitle-2 font-weight-medium mb-1">实名信息确认</div>
@@ -52,13 +53,13 @@
               class="mb-4 info-alert-card cursor-pointer"
               variant="flat"
               rounded="lg"
-              color="grey-lighten-4"
+              color="surface-light"
               v-bind="props"
             >
               <v-card-text class="pa-3">
                 <div class="d-flex align-center">
                   <v-avatar size="36" color="warning" class="mr-3 warning-avatar">
-                    <v-icon icon="mdi-lock-check" color="white" size="18"></v-icon>
+                    <v-icon icon="mdi-lock-check" color="surface" size="18"></v-icon>
                   </v-avatar>
                   <div class="flex-grow-1">
                     <span class="text-body-2"
@@ -86,13 +87,13 @@
               class="mb-4 info-alert-card cursor-pointer"
               variant="flat"
               rounded="lg"
-              color="grey-lighten-4"
+              color="surface-light"
               v-bind="props"
             >
               <v-card-text class="pa-3">
                 <div class="d-flex align-center">
                   <v-avatar size="36" color="info" class="mr-3 info-avatar">
-                    <v-icon icon="mdi-account-group" color="white" size="18"></v-icon>
+                    <v-icon icon="mdi-account-group" color="surface" size="18"></v-icon>
                   </v-avatar>
                   <span class="text-body-2">系统将记录审核通过时的队伍成员名单，用于最终评估和证书发放</span>
                   <v-icon size="small" color="info" class="ms-auto">mdi-information-outline</v-icon>

@@ -184,8 +184,11 @@ const formatDate = (date: string | Date | number) => {
   left: 0;
   right: 0;
   height: 40%;
+  /* 同 views/tasks/Detail.vue：琥珀按钮上的高光，两个主题下都必须是"提亮"，
+     所以这层白保持写死；换成跟随主题的 token 在深色下会变成压暗。 */
   background: linear-gradient(to bottom, rgba(255, 255, 255, 0.15), transparent);
-  border-radius: 6px 6px 0 0;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
 }
 
 .join-btn:hover {

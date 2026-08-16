@@ -261,8 +261,12 @@ onMounted(() => {
   left: 0;
   right: 0;
   height: 40%;
+  /* 按钮的高光：底下是琥珀填充（浅色 #F57F17 / 深色 #FFA733），两个主题下都要
+     "从上往下提亮"，所以这层白必须保持写死 —— 换成任何跟随主题的 token，深色下
+     都会变成压暗，高光方向就反了。stylelint 基线里保留这一条。 */
   background: linear-gradient(to bottom, rgba(255, 255, 255, 0.15), transparent);
-  border-radius: 6px 6px 0 0;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
 }
 
 .join-btn:hover {
@@ -329,7 +333,8 @@ onMounted(() => {
   width: 80%;
   height: 2px;
   background-color: rgb(var(--v-theme-primary));
-  border-radius: 2px 2px 0 0;
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
 }
 
 .fade-enter-active,
@@ -367,7 +372,7 @@ onMounted(() => {
 
 .privacy-usage-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
-  background-color: #ffffff;
+  background-color: var(--surface);
   transition: all 0.2s ease;
 }
 
@@ -461,7 +466,7 @@ onMounted(() => {
   bottom: 0;
   left: 0;
   z-index: 3;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(var(--v-theme-surface), 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -473,7 +478,7 @@ onMounted(() => {
   align-items: center;
   padding: 6px 12px;
   background-color: rgba(var(--v-theme-error), 0.08);
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   border: 1px solid rgba(var(--v-theme-error), 0.2);
   color: rgb(var(--v-theme-error));
   font-weight: 500;
