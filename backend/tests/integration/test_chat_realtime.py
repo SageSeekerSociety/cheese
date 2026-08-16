@@ -506,3 +506,146 @@ async def test_mid_stream_crash_saves_session_pointer(client, tmp_path, monkeypa
     async with factory() as session:
         fresh = await TopicRepository(session).get(topic_id)
     assert fresh is not None and fresh.session_id == "s-partial"
+
+
+class _SlowLiveScreenProvider:
+    """A hooks-style backend: one long-lived screen per topic, so a message that
+    arrives mid-turn can be injected into the turn already running."""
+
+    name = "fake-live"
+    embeds_images = False
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.delivered: list[str] = []
+        self.turns = 0
+
+    def available(self) -> bool:
+        return True
+
+    async def run_turn(self, **kwargs):
+        self.turns += 1
+        self.started.set()
+        await self.release.wait()
+        yield AgentResult(text="done", session_id="s1", usage=None)
+
+    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+        self.delivered.append(text)
+        return True
+
+    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        return
+
+
+@pytest.mark.anyio
+async def test_summon_during_a_running_turn_is_injected_not_queued(client, tmp_path):
+    """The platform used to be stricter than the tool it drives: an interactive
+    Claude Code takes input while it works, but we serialized turns on top, so a
+    long command made every later @ wait the whole turn out. A second summon now
+    goes INTO the running turn — one turn, message delivered in milliseconds."""
+    from app.domain.agent.compute import ComputePool
+    from app.domain.block.models import consumed_turn
+    from app.domain.block.repositories import BlockRepository
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+    provider = _SlowLiveScreenProvider()
+    svc = ChatService(
+        session_factory=factory,
+        agent=InstantAgent(model="stub"),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),  # type: ignore[list-item]
+    )
+
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="user-1")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="讨论", created_by="user-1"
+        )
+        topic_id: uuid.UUID = topic.id
+        await session.commit()
+
+    async def summoned(author: str, content: str) -> list[dict]:
+        return [
+            f
+            async for f in svc.converse(
+                topic_id=topic_id, author=author, content=content, summon=True
+            )
+        ]
+
+    turn = asyncio.create_task(summoned("user-1", "跑一个很久的命令"))
+    await asyncio.wait_for(provider.started.wait(), 5)
+
+    # Pre-fix this blocked until the first turn finished.
+    frames = await asyncio.wait_for(summoned("user-2", "等一下，先别跑"), 2)
+    assert frames[-1]["type"] == "done"
+    assert provider.delivered == ["[user-2]: 等一下，先别跑"]
+    # Injected, not queued: still exactly one turn.
+    assert provider.turns == 1
+
+    provider.release.set()
+    await asyncio.wait_for(turn, 5)
+
+    # The injected message counts as read by the turn that took it, so the next
+    # turn does not say it all over again.
+    async with factory() as session:
+        history = await BlockRepository(session).list_for_topic(topic_id)
+    merged = [b for b in history if b.content == "等一下，先别跑"]
+    assert len(merged) == 1
+    assert consumed_turn(merged[0]) is not None
+
+
+@pytest.mark.anyio
+async def test_a_backend_with_no_live_screen_still_queues_the_turn(client, tmp_path):
+    """`deliver` returning False is the pre-existing behaviour, not a new
+    failure mode: the message must fall back to a turn of its own rather than be
+    dropped. Guards the SDK / remote-node providers, which have nothing to
+    inject into."""
+    from app.domain.agent.compute import ComputePool
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+
+    class _NoScreen(_SlowLiveScreenProvider):
+        name = "fake-noscreen"
+
+        async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+            self.delivered.append(text)
+            return False
+
+    provider = _NoScreen()
+    svc = ChatService(
+        session_factory=factory,
+        agent=InstantAgent(model="stub"),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),  # type: ignore[list-item]
+    )
+
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="user-1")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="讨论", created_by="user-1"
+        )
+        topic_id: uuid.UUID = topic.id
+        await session.commit()
+
+    async def summoned(author: str, content: str) -> list[dict]:
+        return [
+            f
+            async for f in svc.converse(
+                topic_id=topic_id, author=author, content=content, summon=True
+            )
+        ]
+
+    turn = asyncio.create_task(summoned("user-1", "第一件事"))
+    await asyncio.wait_for(provider.started.wait(), 5)
+
+    second = asyncio.create_task(summoned("user-2", "第二件事"))
+    await asyncio.sleep(0.1)
+    assert not second.done()  # queued behind the lock, exactly as before
+
+    provider.release.set()
+    await asyncio.wait_for(turn, 5)
+    await asyncio.wait_for(second, 5)
+    assert provider.turns == 2
