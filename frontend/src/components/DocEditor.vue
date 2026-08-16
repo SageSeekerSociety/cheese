@@ -321,7 +321,7 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(.doc-prose th),
 .doc-editor :deep(.doc-prose td) {
-  border: 1px solid var(--line, #dcdfe6);
+  border: 1px solid var(--line);
   padding: 6px 10px;
   text-align: left;
   vertical-align: top;
@@ -362,7 +362,7 @@ onBeforeUnmount(() => {
   color: var(--faint);
   background: transparent;
   border: none;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   user-select: none;
   transition:
     background 0.12s ease,
@@ -474,7 +474,8 @@ onBeforeUnmount(() => {
   margin: 0.7em 0;
   padding: 6px 14px;
   border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  border-radius: 0 6px 6px 0;
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: rgba(var(--v-theme-on-surface), 0.72);
 }
@@ -489,14 +490,14 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.87em;
 }
 /* 代码块. */
 .doc-editor :deep(pre) {
   position: relative;
   background: var(--canvas);
-  border: 1px solid var(--line-2, #ececec);
+  border: 1px solid var(--line-2);
   padding: 13px 15px;
   border-radius: 8px;
   overflow-x: auto;
@@ -525,7 +526,10 @@ onBeforeUnmount(() => {
   padding: 0;
   font-size: inherit;
 }
-/* lowlight token colors — same palette as DocPanel. */
+/* lowlight token colors — same palette as DocPanel.
+   Deliberately NOT tokenised: syntax highlighting is its own palette (there is
+   no semantic token for "keyword"), and it has to move together with DocPanel's
+   copy and CodeEditor.vue's Monaco theme. See the note in DocPanel.vue. */
 .doc-editor :deep(.hljs-comment),
 .doc-editor :deep(.hljs-quote) {
   color: #8a8f98;
@@ -574,7 +578,7 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(hr) {
   border: none;
-  border-top: 1px solid var(--line-2, #ececec);
+  border-top: 1px solid var(--line-2);
   margin: 1.6em 0;
 }
 .doc-editor :deep(a) {

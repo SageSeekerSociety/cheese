@@ -123,8 +123,8 @@ onBeforeUnmount(() => {
   border-radius: 50%;
 }
 .node-dot--on {
-  background: #35b37e;
-  box-shadow: 0 0 0 3px rgba(53, 179, 126, 0.18);
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
 }
 .node-dot--off {
   background: var(--faint);
@@ -139,14 +139,14 @@ onBeforeUnmount(() => {
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.1);
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 .node-card__current {
   font-size: 0.66rem;
   color: var(--muted);
   border: 1px solid rgba(var(--v-border-color), 0.7);
   padding: 0 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 .node-card__title {
   font-size: 1rem;

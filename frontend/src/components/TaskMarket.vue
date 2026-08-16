@@ -291,7 +291,7 @@ onMounted(() => {
 }
 .task-card:hover {
   border-color: rgba(var(--v-theme-primary), 0.5);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-1);
 }
 .task-card__space {
   display: inline-flex;
@@ -327,7 +327,7 @@ onMounted(() => {
 .task-chip {
   font-size: 0.7rem;
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.08);
 }

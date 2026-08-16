@@ -1471,7 +1471,7 @@ onBeforeUnmount(() => {
   z-index: 30;
   max-width: min(560px, calc(100% - 32px));
   overflow-wrap: anywhere;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--shadow-2);
 }
 .action-link {
   border: none;
@@ -1488,7 +1488,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: var(--muted, #666);
+  color: var(--muted);
 }
 .action-verb::before {
   content: '';
@@ -1502,16 +1502,16 @@ onBeforeUnmount(() => {
    Between turns the same list shows the stored 进度层 (#187) under a label. */
 .todo-label {
   font-size: 12px;
-  color: var(--muted, #666);
+  color: var(--muted);
   margin: 2px 0 0;
 }
 .todo-list {
   list-style: none;
   margin: 2px 0 6px;
   padding: 6px 10px;
-  border-left: 2px solid var(--v-theme-primary, #6750a4);
-  background: rgba(103, 80, 164, 0.05);
-  border-radius: 4px;
+  border-left: 2px solid var(--accent);
+  background: rgba(var(--v-theme-primary), 0.05);
+  border-radius: var(--radius-sm);
 }
 .todo-item {
   display: flex;
@@ -1529,7 +1529,7 @@ onBeforeUnmount(() => {
   color: var(--faint);
 }
 .todo-in_progress {
-  color: var(--v-theme-primary, #6750a4);
+  color: var(--accent-ink);
   font-weight: 600;
 }
 .todo-completed {
@@ -1559,11 +1559,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   margin-bottom: 6px;
-  border: 1px solid var(--border, #e0e0e0);
+  border: 1px solid var(--line-2);
   border-radius: 8px;
   overflow: hidden;
   background: var(--surface);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-2);
 }
 .mention-menu-item {
   display: flex;
@@ -1576,7 +1576,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .mention-menu-item:hover {
-  background: var(--fill, #f5f5f5);
+  background: var(--fill);
 }
 .mention-avatar {
   display: inline-flex;
@@ -1587,19 +1587,25 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   font-size: 0.7rem;
   font-weight: 700;
+  /* Theme-invariant pair (same call as the default avatar in LeftAppRail): the
+     slate disc is one value in both themes, so its ink must be too. */
   color: #fff;
   background: #8a94a3;
   flex: none;
 }
 .mention-avatar--agent {
-  background: var(--accent, #f57f17);
+  color: rgb(var(--v-theme-on-primary)); /* see .summon-chip--on */
+  background: var(--accent);
 }
 .mention-avatar--broadcast {
-  background: var(--ink, #33373d);
+  /* --ink inverts with the theme (near-black → near-white), so the ink on it
+     has to invert too; --surface is #fff in light (unchanged) and #1B1D20 dark. */
+  color: var(--surface);
+  background: var(--ink);
 }
 .mention-avatar--topic {
-  background: var(--fill, #f0f1f3);
-  color: var(--muted, #6b6b6b);
+  background: var(--fill);
+  color: var(--muted);
 }
 .mention-menu-name {
   font-weight: 500;
@@ -1608,7 +1614,7 @@ onBeforeUnmount(() => {
   font-size: 0.65rem;
   font-weight: 600;
   padding: 0 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.12);
 }
@@ -1639,7 +1645,9 @@ onBeforeUnmount(() => {
 }
 .summon-chip--on {
   background: var(--accent);
-  color: #fff;
+  /* on-primary, not #fff: light resolves to #fff (unchanged), dark resolves to
+     near-black — white on the lightened amber (#FFA733) measures 1.9:1. */
+  color: rgb(var(--v-theme-on-primary));
 }
 
 /* ---- GitHub PR header ---- */
@@ -1663,7 +1671,13 @@ onBeforeUnmount(() => {
   border-radius: 6px;
 }
 .pr-state--open {
-  color: #fff;
+  /* --surface, not #fff: the ground (--ok) lightens on dark (#3FBF7F), where
+     white ink drops to 2.34:1. --surface IS #fff in light, so the badge looks
+     exactly as it does today, and flips to near-black ink on dark. (§1.5's
+     canonical chip is --ok-ink on --ok-wash, which would also lift the light
+     side above AA, but that changes how the badge looks — a call for the
+     design owner, not this pass.) */
+  color: var(--surface);
   background: var(--ok);
 }
 .pr-state--merged {
@@ -1678,7 +1692,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-weight: 500;
   color: var(--muted);
 }
@@ -1712,6 +1726,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: var(--fill);
+  /* Literal on purpose: the real ground is avatarColor() (a fixed hsl bound
+     inline in the template), identical in both themes — so is the initial. */
   color: #fff;
   font-size: 12px;
   font-weight: 600;
@@ -1813,9 +1829,9 @@ onBeforeUnmount(() => {
   margin-bottom: 3px;
   padding: 1px 6px;
   font-size: 12px;
-  color: var(--ink-3, #8a8f98);
+  color: var(--muted);
   background: var(--fill);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1830,7 +1846,7 @@ onBeforeUnmount(() => {
   gap: 2px;
   padding: 4px 12px;
   font-size: 12px;
-  color: var(--ink-2, #656a72);
+  color: var(--muted);
   background: var(--fill);
   border-top: 1px solid var(--line);
 }
@@ -1859,9 +1875,9 @@ onBeforeUnmount(() => {
 }
 /* @mention: neutral inset, ink text — not amber. */
 .im-text :deep(.mention) {
-  color: var(--v-theme-primary, #6750a4);
+  color: var(--accent-ink);
   background: var(--fill);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0 3px;
   font-weight: 500;
   cursor: pointer;
@@ -1887,7 +1903,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 8px;
-  box-shadow: 0 3px 10px rgba(25, 26, 28, 0.09);
+  box-shadow: var(--shadow-1);
   opacity: 0;
   transition: opacity 0.12s ease;
   pointer-events: none;
@@ -1935,7 +1951,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(25, 26, 28, 0.12);
+  box-shadow: var(--shadow-2);
   z-index: 5;
 }
 .rx-pick {
@@ -2000,7 +2016,7 @@ onBeforeUnmount(() => {
   height: 22px;
   padding: 0 8px;
   border: 1px solid var(--line-2);
-  border-radius: 11px;
+  border-radius: var(--radius-pill);
   background: var(--fill);
   font-size: 12px;
   line-height: 1;
@@ -2146,9 +2162,9 @@ onBeforeUnmount(() => {
 .backend-error {
   margin: 8px 16px;
   padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, var(--line));
   border-radius: 8px;
-  background: color-mix(in srgb, #c65a1e 5%, transparent);
+  background: color-mix(in srgb, var(--warn) 5%, transparent);
   font-size: 12px;
 }
 .backend-error__line {
@@ -2168,7 +2184,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 0 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, #c65a1e 16%, transparent);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
   font-variant-numeric: tabular-nums;
 }
 .backend-error__meta {
@@ -2184,7 +2200,7 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 8px;
   border-radius: 6px;
-  background: var(--surface-sunken, rgb(0 0 0 / 4%));
+  background: var(--fill);
   color: var(--faint);
   font-size: 11px;
   line-height: 1.5;
@@ -2196,9 +2212,9 @@ onBeforeUnmount(() => {
 .notice-fold {
   margin: 8px 16px;
   padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, var(--line));
   border-radius: 8px;
-  background: color-mix(in srgb, #c65a1e 5%, transparent);
+  background: color-mix(in srgb, var(--warn) 5%, transparent);
   font-size: 12px;
 }
 .notice-fold__line {
@@ -2206,7 +2222,7 @@ onBeforeUnmount(() => {
   align-items: baseline;
   gap: 8px;
   cursor: pointer;
-  color: var(--text-muted, var(--faint));
+  color: var(--faint);
   list-style: none;
 }
 .notice-fold__text {
@@ -2218,7 +2234,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 0 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, #c65a1e 16%, transparent);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
   font-variant-numeric: tabular-nums;
 }
 /* 谁在管这件事 —— 不点开就能决定跟不跟自己有关。 */
@@ -2246,7 +2262,7 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 8px;
   border-radius: 6px;
-  background: var(--surface-sunken, rgb(0 0 0 / 4%));
+  background: var(--fill);
   color: var(--faint);
   font-size: 11px;
   line-height: 1.5;
@@ -2319,7 +2335,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
 .md-content :deep(pre) {
