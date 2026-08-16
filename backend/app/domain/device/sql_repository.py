@@ -15,8 +15,10 @@ from app.domain.device.models import (
     DeviceRow,
     DeviceTeamRow,
     DeviceTopicRow,
+    HostedDeviceRow,
 )
-from app.domain.device.repository import AuthCode, Device, HostHealth
+from app.domain.device.repository import AuthCode, Device, HostHealth, TopicDevice
+from app.domain.device.supply import Supply, Visibility
 from app.domain.project.models import Project
 from app.domain.team.models import Team
 from app.domain.user.models import User
@@ -69,6 +71,12 @@ class SqlDeviceRepository:
         row.owner_user_id = device.owner_user_id
         row.supply = device.supply
         row.visibility = device.visibility
+        if device.supply is Supply.self_hosted:
+            hosted = await self._session.get(HostedDeviceRow, device.device_id)
+            if hosted is None:
+                hosted = HostedDeviceRow(device_id=device.device_id)
+                self._session.add(hosted)
+            hosted.owner_user_id = device.owner_user_id
         await self._session.flush()
 
     async def _to_device(self, row: DeviceRow) -> Device:
@@ -107,6 +115,14 @@ class SqlDeviceRepository:
         row = await self._session.get(DeviceRow, device_id)
         return await self._to_device(row) if row is not None else None
 
+    async def get_hosted_device(self, device_id: str) -> Device | None:
+        row = await self._session.scalar(
+            select(DeviceRow)
+            .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
+            .where(DeviceRow.device_id == device_id)
+        )
+        return await self._to_device(row) if row is not None else None
+
     async def get_device_by_token(self, token: str) -> Device | None:
         row = await self._session.scalar(
             select(DeviceRow).where(DeviceRow.token == token)
@@ -131,12 +147,14 @@ class SqlDeviceRepository:
     async def list_devices_by_owner(self, owner_user_id: int) -> list[Device]:
         rows = (
             await self._session.scalars(
-                select(DeviceRow).where(DeviceRow.owner_user_id == owner_user_id)
+                select(DeviceRow)
+                .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
+                .where(HostedDeviceRow.owner_user_id == owner_user_id)
             )
         ).all()
         return [await self._to_device(r) for r in rows]
 
-    async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
+    async def _device_ids_by_project(self, project_id: uuid.UUID) -> list[str]:
         """Machines a project may run on = explicit per-project assignments UNION the
         devices bound to the project's TEAM (execution-architecture v4: compute
         belongs to the team — 为团队注册设备). Bind a machine to a team once and every
@@ -173,11 +191,24 @@ class SqlDeviceRepository:
                 )
             )
         ).all()
-        combined = [*explicit, *team_bound, *personal_bound]
+        return list(dict.fromkeys([*explicit, *team_bound, *personal_bound]))
+
+    async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]:
+        """Human-hosted machines assigned directly or through the project's team."""
         out: list[Device] = []
-        for did in dict.fromkeys(combined):  # de-dup, keep order
-            device = await self.get_device(did)
+        for did in await self._device_ids_by_project(project_id):
+            device = await self.get_hosted_device(did)
             if device is not None:
+                out.append(device)
+        return out
+
+    async def list_cloud_devices_by_project(
+        self, project_id: uuid.UUID
+    ) -> list[Device]:
+        out: list[Device] = []
+        for did in await self._device_ids_by_project(project_id):
+            device = await self.get_device(did)
+            if device is not None and device.supply is Supply.cloud:
                 out.append(device)
         return out
 
@@ -189,7 +220,7 @@ class SqlDeviceRepository:
         ).all()
         out: list[Device] = []
         for did in device_ids:
-            device = await self.get_device(did)
+            device = await self.get_hosted_device(did)
             if device is not None:
                 out.append(device)
         return out
@@ -267,16 +298,27 @@ class SqlDeviceRepository:
 
     # -- topic→device pin (affinity, v4) -----------------------------------
 
-    async def topic_device(self, topic_id: uuid.UUID) -> str | None:
-        return await self._session.scalar(
-            select(DeviceTopicRow.device_id).where(DeviceTopicRow.topic_id == topic_id)
+    async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None:
+        row = await self._session.get(DeviceTopicRow, topic_id)
+        if row is None:
+            return None
+        return TopicDevice(
+            topic_id=row.topic_id,
+            device_id=row.device_id,
+            visibility=row.visibility,
         )
 
-    async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None:
+    async def bind_topic_device(
+        self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
+    ) -> None:
         # write-once: never overwrite an existing pin (affinity is permanent).
         if await self._session.get(DeviceTopicRow, topic_id) is not None:
             return
-        self._session.add(DeviceTopicRow(topic_id=topic_id, device_id=device_id))
+        self._session.add(
+            DeviceTopicRow(
+                topic_id=topic_id, device_id=device_id, visibility=visibility
+            )
+        )
         await self._session.flush()
 
     async def release_topic_device(self, topic_id: uuid.UUID) -> None:

@@ -122,16 +122,13 @@ def test_visibility_block_is_present_non_default_and_carries_the_notice(client):
     assert "整台机器" in vis["notice"]  # badge / tooltip copy is present
 
 
-def test_a_topic_pinned_to_a_whole_machine_device_reports_machine_access(client):
-    """The visible safety signal (#358 原则八): once a topic is frozen to a
-    whole-machine (`host`) device, the room's compute-profile reports
-    `machine_access=True` and `effective="host"` — the exact hook the frontend badge
-    keys on, so "this agent can see and operate the whole machine" is shown, not
-    hidden."""
+def test_two_topics_on_one_machine_report_their_own_visibility(client):
+    """Visibility belongs to each topic↔machine binding, not to the device."""
     pid = _project(client)
-    tid = _topic(client, pid)
+    host_tid = _topic(client, pid)
+    isolated_tid = _topic(client, pid)
 
-    async def _pin_host_device() -> None:
+    async def _pin_both_topics() -> None:
         from app.domain.device.service import DeviceService
         from app.domain.device.sql_repository import SqlDeviceRepository
         from app.domain.device.supply import Supply, Visibility
@@ -143,46 +140,27 @@ def test_a_topic_pinned_to_a_whole_machine_device_reports_machine_access(client)
                 code,
                 owner_user_id=1,
                 supply=Supply.self_hosted,
-                visibility=Visibility.host,
-            )
-            await svc.bind_topic_device(uuid.UUID(tid), device.device_id)
-            await session.commit()
-
-    asyncio.run(_pin_host_device())
-    vis = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]["visibility"]
-    assert vis["effective"] == "host"
-    assert vis["machine_access"] is True
-
-
-def test_a_topic_pinned_to_a_boxed_device_does_not_report_machine_access(client):
-    """The mirror: a topic pinned to an `isolated` device is not a whole-machine
-    turn, so no badge — `machine_access` stays False even though a device is pinned.
-    (Such a device cannot actually run a turn yet; this only asserts the surfacing
-    never over-claims whole-machine access.)"""
-    pid = _project(client)
-    tid = _topic(client, pid)
-
-    async def _pin_boxed_device() -> None:
-        from app.domain.device.service import DeviceService
-        from app.domain.device.sql_repository import SqlDeviceRepository
-        from app.domain.device.supply import Supply, Visibility
-
-        async with client.test_factory() as session:
-            svc = DeviceService(SqlDeviceRepository(session))
-            code = await svc.start("boxed")
-            device = await svc.approve(
-                code,
-                owner_user_id=1,
-                supply=Supply.self_hosted,
                 visibility=Visibility.isolated,
             )
-            await svc.bind_topic_device(uuid.UUID(tid), device.device_id)
+            await svc.bind_topic_device(
+                uuid.UUID(host_tid), device.device_id, Visibility.host
+            )
+            await svc.bind_topic_device(
+                uuid.UUID(isolated_tid), device.device_id, Visibility.isolated
+            )
             await session.commit()
 
-    asyncio.run(_pin_boxed_device())
-    vis = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]["visibility"]
-    assert vis["effective"] == "isolated"
-    assert vis["machine_access"] is False
+    asyncio.run(_pin_both_topics())
+    host_visibility = client.get(f"/api/topics/{host_tid}/compute-profile").json()[
+        "data"
+    ]["visibility"]
+    isolated_visibility = client.get(
+        f"/api/topics/{isolated_tid}/compute-profile"
+    ).json()["data"]["visibility"]
+    assert host_visibility["effective"] == "host"
+    assert host_visibility["machine_access"] is True
+    assert isolated_visibility["effective"] == "isolated"
+    assert isolated_visibility["machine_access"] is False
 
 
 def test_locked_once_topic_has_run(client):

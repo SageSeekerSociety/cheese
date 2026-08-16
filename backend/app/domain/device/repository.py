@@ -33,19 +33,9 @@ class Device:
     # Teams this device is bound to (为团队注册设备, v4): every project of these
     # teams may run on it. Empty = personal (usable only via explicit project assign).
     team_ids: list[int] = field(default_factory=list)
-    # #282 四轴. Each default is the SAFE reading of ITS OWN axis — and the two axes
-    # are safe in opposite directions, so they are NOT both the "conservative for
-    # destroy" value:
-    #   * supply → self_hosted: the destroy decision reads THIS field, and the safe
-    #     reading is "not the platform's to destroy".
-    #   * visibility → isolated: the destroy decision does NOT read this field, so
-    #     #318's original `host` default bought no destroy-safety — it only handed a
-    #     mis-classified row whole-machine access. The safe reading of the ACCESS
-    #     axis is the boxed one; `host` (see the whole machine, exec into other
-    #     rooms) is 申请制 and must never be reached by omission (#358).
-    # `DeviceService.approve` takes BOTH with no default, so neither enrolment entry
-    # point can fall into either by omission — a forgetful new door is a pyright
-    # error, not a machine deleted by surprise nor one silently exposed.
+    # Supply remains the stored lifecycle fact. Visibility is the legacy device
+    # column retained for the additive #442 dual-read window; hosted resolution uses
+    # TopicDevice.visibility instead.
     supply: Supply = Supply.self_hosted
     visibility: Visibility = Visibility.isolated
     # The device's own ccproxy identity (`user:password`), or None. Mirrors the
@@ -85,6 +75,15 @@ class HostHealth:
     quarantined_until: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class TopicDevice:
+    """A topic's machine binding, including that topic's access boundary."""
+
+    topic_id: uuid.UUID
+    device_id: str
+    visibility: Visibility
+
+
 class DeviceRepository(Protocol):
     """Data access for the device flow. Both the in-memory and SQL repos satisfy it."""
 
@@ -93,10 +92,14 @@ class DeviceRepository(Protocol):
 
     async def save_device(self, device: Device) -> None: ...
     async def get_device(self, device_id: str) -> Device | None: ...
+    async def get_hosted_device(self, device_id: str) -> Device | None: ...
     async def get_device_by_token(self, token: str) -> Device | None: ...
     async def delete_device(self, device_id: str) -> None: ...
     async def list_devices_by_owner(self, owner_user_id: int) -> list[Device]: ...
     async def list_devices_by_project(self, project_id: uuid.UUID) -> list[Device]: ...
+    async def list_cloud_devices_by_project(
+        self, project_id: uuid.UUID
+    ) -> list[Device]: ...
     async def list_devices_by_team(self, team_id: int) -> list[Device]: ...
 
     async def assign_project(self, device_id: str, project_id: uuid.UUID) -> None: ...
@@ -112,8 +115,10 @@ class DeviceRepository(Protocol):
 
     # topic→device pin (affinity, v4): the device a topic is frozen to on its
     # first turn. ``bind`` is write-once — an existing pin is never overwritten.
-    async def topic_device(self, topic_id: uuid.UUID) -> str | None: ...
-    async def bind_topic_device(self, topic_id: uuid.UUID, device_id: str) -> None: ...
+    async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None: ...
+    async def bind_topic_device(
+        self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
+    ) -> None: ...
     # Drop a topic's pin so it can be re-pinned elsewhere. The ONLY way past
     # write-once: an explicit, reasoned release (#186 换身体), never a silent
     # fallback inside the resolver — that was the original drift bug.

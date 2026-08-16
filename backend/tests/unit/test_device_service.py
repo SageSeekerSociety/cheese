@@ -167,3 +167,51 @@ async def test_project_binding_and_ownership_guard():
 
     await service.unassign_from_project(device.device_id, project, actor_user_id=owner)
     assert not await service.serves_project(device.device_id, project)
+
+
+async def test_human_management_never_lists_or_mutates_a_cloud_endpoint():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.api.routes.connector import BindTeamRequest, register_device_for_team
+
+    service, _ = _service()
+    owner, team_id = uuid.uuid4(), 7
+
+    async def _enroll(supply: Supply):
+        return await service.approve(
+            await service.start(supply.value),
+            owner_user_id=owner,
+            supply=supply,
+            visibility=Visibility.isolated,
+        )
+
+    hosted = await _enroll(Supply.self_hosted)
+    cloud = await _enroll(Supply.cloud)
+    for device in (hosted, cloud):
+        await service.assign_to_team(device.device_id, team_id, actor_user_id=owner)
+
+    assert [d.device_id for d in await service.list_owned(owner)] == [hosted.device_id]
+    assert [d.device_id for d in await service.list_devices_for_team(team_id)] == [
+        hosted.device_id
+    ]
+    with pytest.raises(NotFoundError):
+        await service.rename_owned(cloud.device_id, "no", actor_user_id=owner)
+    with pytest.raises(NotFoundError):
+        await service.delete_owned(cloud.device_id, actor_user_id=owner)
+    with pytest.raises(NotFoundError):
+        await service.unassign_from_team(cloud.device_id, team_id, actor_user_id=owner)
+
+    resolver = SimpleNamespace(
+        resolve=AsyncMock(
+            return_value=SimpleNamespace(authenticated=True, user_id=owner)
+        )
+    )
+    with pytest.raises(NotFoundError):
+        await register_device_for_team(
+            cloud.device_id,
+            BindTeamRequest(team_id=team_id),
+            resolver,
+            service,
+            MagicMock(),
+        )
