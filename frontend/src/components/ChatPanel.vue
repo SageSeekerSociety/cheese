@@ -2034,12 +2034,12 @@ onBeforeUnmount(() => {
   margin: 12px 16px;
   padding: 13px 15px 13px 14px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, #c65a1e 28%, var(--line));
-  border-radius: 10px;
-  background: linear-gradient(105deg, rgb(198 90 30 / 9%), transparent 38%), var(--surface);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, var(--line));
+  border-radius: 12px;
+  background: linear-gradient(105deg, color-mix(in srgb, var(--warn) 9%, transparent), transparent 38%), var(--surface);
   box-shadow:
-    inset 3px 0 0 #c65a1e,
-    0 6px 20px rgb(73 35 16 / 6%);
+    inset 3px 0 0 var(--warn),
+    0 6px 20px color-mix(in srgb, var(--warn-ink) 6%, transparent);
 }
 .platform-incident::after {
   position: absolute;
@@ -2047,8 +2047,8 @@ onBeforeUnmount(() => {
   right: -12px;
   width: 76px;
   height: 76px;
-  border: 1px solid rgb(198 90 30 / 10%);
-  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: 999px;
   content: '';
 }
 .platform-incident__icon {
@@ -2060,10 +2060,10 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 34px;
   height: 34px;
-  border: 1px solid rgb(198 90 30 / 22%);
-  border-radius: 9px;
-  color: #b64717;
-  background: rgb(198 90 30 / 10%);
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  border-radius: 8px;
+  color: var(--warn-ink);
+  background: var(--warn-wash);
 }
 .platform-incident__content {
   position: relative;
@@ -2072,7 +2072,7 @@ onBeforeUnmount(() => {
 }
 .platform-incident__eyebrow {
   margin-bottom: 2px;
-  color: #a84417;
+  color: var(--warn-ink);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
@@ -2097,7 +2097,7 @@ onBeforeUnmount(() => {
 }
 .platform-incident__more > summary {
   cursor: pointer;
-  color: #9a4a1f;
+  color: var(--warn-ink);
   list-style: none;
 }
 .platform-incident__status {
@@ -2105,21 +2105,21 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   margin-top: 8px;
-  color: #9a4a1f;
+  color: var(--warn-ink);
   font-size: 11px;
   font-weight: 600;
 }
 .platform-incident__pulse {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: #d97706;
-  box-shadow: 0 0 0 3px rgb(217 119 6 / 14%);
+  border-radius: 999px;
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 14%, transparent);
   animation: incident-pulse 1.8s ease-out infinite;
 }
 @keyframes incident-pulse {
   50% {
-    box-shadow: 0 0 0 6px rgb(217 119 6 / 0%);
+    box-shadow: 0 0 0 6px transparent;
   }
 }
 @media (prefers-reduced-motion: reduce) {
