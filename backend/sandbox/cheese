@@ -9,8 +9,8 @@
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
 
 例:
-  cheese doc set DOC.md            # 把 DOC.md 设为本话题活文档
-  cheese doc get                   # 打印本话题活文档
+  cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
+  cheese doc get                   # 打印本话题实况文档
   cheese split "数据清洗"           # 拆出子话题
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
@@ -428,16 +428,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     pd = sub.add_parser(
         "doc",
-        help="活文档",
+        help="实况文档",
         description=(
-            "活文档 = 本话题的状态摘要,也是你跨轮的记忆。"
+            "实况文档 = 本话题的状态摘要,也是你跨轮的记忆。"
             "话题标题会被渲染成文档大标题,正文别再用一级标题重复一遍。"
         ),
     )
     pdsub = pd.add_subparsers(dest="doccmd", required=True)
     pdset = pdsub.add_parser(
         "set",
-        help="把文件设为本话题活文档",
+        help="把文件设为本话题实况文档",
         description=(
             "整块覆盖,没有版本历史,也没有并发控制。人在文档面板上编辑是 2.5 秒"
             "自动保存的,你 set 上去就把人刚写的东西盖掉了、且捞不回来。"
@@ -450,8 +450,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pdsub.add_parser(
         "get",
-        help="打印本话题活文档",
-        description="打印当前活文档原文。set 之前先跑一次,免得覆盖掉别人的改动。",
+        help="打印本话题实况文档",
+        description="打印当前实况文档原文。set 之前先跑一次,免得覆盖掉别人的改动。",
     )
 
     ps = sub.add_parser(
@@ -462,7 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
             "\n"
             "分身开工时能看到的只有两样东西,都来自本命令:\n"
             "  1. --brief 的原文(标题为「拆分意图」)\n"
-            "  2. 本话题当前活文档的快照(平台自动附上,不用你复制)\n"
+            "  2. 本话题当前实况文档的快照(平台自动附上,不用你复制)\n"
             "它看不到本话题的对话历史。简报里没写的前提,它就是不知道。\n"
             "\n"
             "分身跑在一个独立沙箱里,工作区是从 main 新建的 jj workspace:\n"
@@ -483,7 +483,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "任务简报,分身的全部起点:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
             "验收标准(做到什么程度算完)、已知但未核实的事实要标出来。"
-            "不用重复父话题活文档(平台会自动附快照)。"
+            "不用重复父话题实况文档(平台会自动附快照)。"
             "不填的话分身只有标题和那份快照,基本等于让它自己猜。"
         ),
     )
@@ -764,7 +764,7 @@ def main() -> None:
         with open(a.file, encoding="utf-8") as f:
             content = f.read()
         _call("PUT", f"/topics/{topic}/doc", {"content": content, "author": AUTHOR})
-        print("已更新活文档。")
+        print("已更新实况文档。")
     elif a.cmd == "doc" and a.doccmd == "get":
         topic = _need("CHEESE_TOPIC", TOPIC)
         d = _call("GET", f"/topics/{topic}/doc").get("data")

@@ -245,7 +245,7 @@ class ConclusionCardService:
         self, topic_id: uuid.UUID, *, by: str
     ) -> list[ConclusionCard]:
         """归档是级联的：直接 archive 一个还挂着未结算下级结论卡的话题，会把孙子
-        连人带卡一起冻住（归档后活文档定格，卡再也没人能结算）。规则是「有未结算
+        连人带卡一起冻住（归档后实况文档定格，卡再也没人能结算）。规则是「有未结算
         下级结论卡时先结算再归档」——这里就是那个「先结算」。"""
         descendants = await self._descendant_ids(topic_id)
         cards = await self._repo.list_live_under(descendants)
