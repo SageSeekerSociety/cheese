@@ -55,7 +55,13 @@ from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_ski
 from app.domain.agent.stages import resolve_stage, stage_scenario
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
-from app.domain.block.models import AuthorType, Block, BlockKind, consumed_turn
+from app.domain.block.models import (
+    CONSUMED_TURN_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+    consumed_turn,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
@@ -774,20 +780,28 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
     切掉就再也捡不回来了（那个下标只会往前走）。这里改成挑「没被任何一轮盖过
     consumed 戳」的块，戳由跑完的轮次自己盖上（BlockRepository.mark_consumed）。
 
+    New inputs carry an explicit ``consumed_turn: null`` marker while pending.
+    That presence matters: a newer mid-turn input can be receipted before an
+    older queued attachment, so no consumed block may act as a positional
+    watermark over another tracked input. Legacy blocks have no marker and keep
+    the old "after the latest AI message" fallback.
+
     `history` 已按 created_at 升序。
     """
-    watermark = -1  # 最后一个已被消费的人类块的位置
+    legacy_watermark = -1
     for i, b in enumerate(history):
-        if _is_human_input(b) and consumed_turn(b) is not None:
-            watermark = i
-    if watermark < 0:
-        # 兼容老数据：戳是这次改动才有的，改动之前的块一个都没有。一个戳都没有
-        # 的话题退回旧语义（最后一条 AI 消息之前的算已读），否则上线后每个老话题
-        # 的第一轮都会把整段历史重放一遍。盖过一次戳之后就永远走上面那条线。
-        for i, b in enumerate(history):
-            if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
-                watermark = i
-    return [b for b in history[watermark + 1 :] if _is_human_input(b)]
+        if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
+            legacy_watermark = i
+    return [
+        b
+        for i, b in enumerate(history)
+        if _is_human_input(b)
+        and consumed_turn(b) is None
+        and (
+            CONSUMED_TURN_META_KEY in (b.meta or {})
+            or i > legacy_watermark
+        )
+    ]
 
 
 # 重放可见 (#416). The first notice fires on the third attempt: one retry is

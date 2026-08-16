@@ -57,6 +57,15 @@ class BlockRepository:
         # ambient turn id set from the X-Cheese-Turn header (R4).
         if turn_id is None:
             turn_id = current_turn_id.get()
+        # Explicit null means "tracked and still pending". Without that marker,
+        # legacy compatibility has to infer consumption from the last AI block;
+        # a newer, receipted mid-turn message could then move that positional
+        # watermark past an older pending attachment and lose it forever.
+        if author_type == AuthorType.human and kind in (
+            BlockKind.message,
+            BlockKind.attachment,
+        ):
+            meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
         block = Block(
             project_id=project_id,
             topic_id=topic_id,
