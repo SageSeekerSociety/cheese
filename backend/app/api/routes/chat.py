@@ -42,7 +42,7 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 from app.api.auth import ActorResolver
 from app.api.deps import get_broker, get_chat_service, get_turn_runner
 from app.core.config import settings
-from app.core.errors import ForbiddenError
+from app.core.errors import AppError, ForbiddenError
 from app.core.obs import get_logger
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import InProcessBroker, TurnRunner
@@ -106,69 +106,72 @@ async def chat(
         await websocket.close(code=1008)
         return
 
-    async def relay() -> None:
-        # Subscribe BEFORE the first submit so no frame is missed (R10). replay=True
-        # catches up the in-progress turn on a mid-turn (re)connect (R3); between
-        # turns the buffer is empty, so a fresh connection replays nothing.
-        async with broker.subscribe(channel, replay=True) as queue:
-            while True:
-                await send(await queue.get())
-
-    # A turn already mid-stream? Tell the client BEFORE the replay starts, so
-    # re-entering a topic during the silent thinking phase (no deltas yet)
-    # still shows 正在思考 instead of nothing.
-    if broker.in_flight(channel):
-        await send({"type": "turn_active"})
-
-    relay_task = asyncio.create_task(relay())
-    try:
+    async def relay(queue: asyncio.Queue[dict]) -> None:
         while True:
-            payload = await websocket.receive_json()
-            if payload.get("type") != "message":
-                await send({"type": "error", "message": "unsupported message type"})
-                continue
-            content = (payload.get("content") or "").strip()
-            # Authorship comes from the connection, never from the frame: an
-            # authenticated socket is pinned to its verified handle, and the only
-            # sockets that reach here without one are the local harnesses
-            # `chat_ws_allow_anonymous` deliberately admits (config.py). Trimmed
-            # and capped so that legacy path cannot stuff control chars or an
-            # unbounded string into a stored block — hygiene, not authenticity.
-            author = (
-                conn_actor.handle
-                if conn_actor.authenticated
-                else (payload.get("author") or "anonymous").strip()[:64] or "anonymous"
-            )
-            # @芝士 toggle: summon the AI, or just post (spec C3, default post).
-            summon = bool(payload.get("summon", False))
-            # B3: replying to a specific message threads under it.
-            reply_to = payload.get("reply_to") or None
-            # 图片输入: previously-uploaded worktree files this message carries.
-            # Structural validation only; the path was produced by the upload
-            # route, and block creation re-checks nothing content-wise.
-            attachments = [
-                {"path": a["path"], "mime": str(a.get("mime") or "")}
-                for a in (payload.get("attachments") or [])[:9]
-                if isinstance(a, dict) and isinstance(a.get("path"), str) and a["path"]
-            ]
-            if not content and not attachments:
-                await send({"type": "error", "message": "empty content"})
-                continue
-            # Fire-and-forget: the turn runs in the background and streams back
-            # over the broker; this loop stays free to accept more messages.
-            runner.submit(
-                chat_service,
-                topic_id,
-                author=author,
-                content=content,
-                summon=summon,
-                reply_to=reply_to,
-                attachments=attachments,
-                provision_actor=conn_actor,
-            )
-    except WebSocketDisconnect:
-        pass
-    finally:
-        relay_task.cancel()
-        with contextlib.suppress(BaseException):
-            await relay_task
+            await send(await queue.get())
+
+    # Register first, then snapshot active ids. If a turn ends while the
+    # turn_active frame is in flight, its turn_finished frame is already queued;
+    # the client can never be left permanently "working" by that race.
+    async with broker.subscribe(channel, replay=True) as queue:
+        active_turn_ids = broker.active_turn_ids(channel)
+        if active_turn_ids:
+            await send({"type": "turn_active", "turn_ids": active_turn_ids})
+
+        relay_task = asyncio.create_task(relay(queue))
+        try:
+            while True:
+                payload = await websocket.receive_json()
+                if payload.get("type") != "message":
+                    await send({"type": "error", "message": "unsupported message type"})
+                    continue
+                content = (payload.get("content") or "").strip()
+                # Authorship comes from the connection, never from the frame: an
+                # authenticated socket is pinned to its verified handle, and the
+                # only sockets that reach here without one are local harnesses
+                # `chat_ws_allow_anonymous` deliberately admits (config.py).
+                author = (
+                    conn_actor.handle
+                    if conn_actor.authenticated
+                    else (payload.get("author") or "anonymous").strip()[:64]
+                    or "anonymous"
+                )
+                # @芝士 toggle: summon the AI, or just post (spec C3).
+                summon = bool(payload.get("summon", False))
+                # B3: replying to a specific message threads under it.
+                reply_to = payload.get("reply_to") or None
+                # 图片输入: previously-uploaded worktree files this message carries.
+                attachments = [
+                    {"path": a["path"], "mime": str(a.get("mime") or "")}
+                    for a in (payload.get("attachments") or [])[:9]
+                    if isinstance(a, dict)
+                    and isinstance(a.get("path"), str)
+                    and a["path"]
+                ]
+                if not content and not attachments:
+                    await send({"type": "error", "message": "empty content"})
+                    continue
+                # Await only the short durable receive. Any model work is still
+                # background-owned by TurnRunner and survives this socket.
+                try:
+                    await runner.submit_message(
+                        chat_service,
+                        topic_id,
+                        author=author,
+                        content=content,
+                        summon=summon,
+                        reply_to=reply_to,
+                        attachments=attachments,
+                        provision_actor=conn_actor,
+                    )
+                except AppError as exc:
+                    await send({"type": "error", "message": exc.message})
+                except Exception:  # noqa: BLE001 — keep the socket usable
+                    _log.exception("chat_message_receive_failed", topic=str(topic_id))
+                    await send({"type": "error", "message": "消息未能保存，请重新发送"})
+        except WebSocketDisconnect:
+            pass
+        finally:
+            relay_task.cancel()
+            with contextlib.suppress(BaseException):
+                await relay_task

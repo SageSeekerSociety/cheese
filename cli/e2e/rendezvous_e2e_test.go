@@ -263,15 +263,15 @@ func TestRendezvousDeliversA30KBPrompt(t *testing.T) {
 		func() { t.Logf("--- pane ---\n%s", f.pane()) })
 }
 
-// The production shape: one prompt per turn, the next only after the previous
-// one became a turn. Every prompt must arrive, exactly once — a re-send that
-// the old screen-scraping driver would have made (its verification could never
-// succeed) shows up here as a second copy.
+// The turn-opener production shape: one prompt per turn, the next only after the
+// previous one became a turn. Every prompt must arrive, exactly once — a re-send
+// that the old screen-scraping driver would have made (its verification could
+// never succeed) shows up here as a second copy.
 //
 // Deliberately NOT a back-to-back burst. That measures how a busy session
 // handles frames landing on top of it — a real limit, documented on Reply and
-// covered by the platform's hook-receipt re-send, but not this transport's
-// contract and not something the platform ever does.
+// covered by the platform's hook-receipt fallback for mid-turn supplements, but
+// not this transport's contract and therefore not the property of this test.
 func TestRendezvousDeliversEveryPromptInATurnBasedSequence(t *testing.T) {
 	const n = 6
 	f := startRendezvousClaude(t)

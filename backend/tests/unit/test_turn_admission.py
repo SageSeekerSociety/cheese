@@ -40,6 +40,13 @@ class FakeChat:
         self.system_events.append(content)
         return {"content": content}
 
+    async def post_user_message(self, topic_id, **kwargs):
+        self.converse_calls.append({"received": True, **kwargs})
+        return ([{"content": kwargs["content"]}], uuid.uuid4())
+
+    async def merge_into_running_turn(self, *args):
+        return False
+
     async def converse(self, **kwargs):
         self.converse_calls.append(kwargs)
         if not kwargs.get("summon", True):
@@ -171,3 +178,90 @@ async def test_unknown_policy_admits_ungated():
     chat.release.set()
     await _until(lambda: runner.active_turns() == 0)
     assert len(chat.converse_calls) == 1
+
+
+@pytest.mark.anyio
+async def test_received_message_lands_before_credit_refusal():
+    chat = FakeChat(
+        {
+            "project_id": "proj-4",
+            "max_concurrent_turns": 1,
+            "credits_exhausted": True,
+        }
+    )
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.submit_message(
+            chat, topic, author="u", content="这条必须先落库", summon=True
+        )
+        frames = []
+        async with asyncio.timeout(2):
+            while True:
+                frame = await queue.get()
+                frames.append(frame)
+                if frame["type"] == "error":
+                    break
+
+    assert [frame["type"] for frame in frames] == [
+        "user_block",
+        "event_block",
+        "error",
+    ]
+    # One receive operation, no summon=False second pass and no model turn.
+    assert len(chat.converse_calls) == 1
+    assert chat.converse_calls[0]["received"] is True
+    assert chat.converse_calls[0]["content"] == "这条必须先落库"
+    assert "summon" not in chat.converse_calls[0]
+
+
+@pytest.mark.anyio
+async def test_unsummoned_message_never_touches_turn_admission():
+    class PostOnly(FakeChat):
+        async def turn_policy(self, topic_id):
+            raise AssertionError("plain messages do not enter the turn gate")
+
+    chat = PostOnly(None)
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.submit_message(
+            chat, topic, author="u", content="只发消息", summon=False
+        )
+        assert (await queue.get())["type"] == "user_block"
+        assert (await queue.get())["type"] == "done"
+    assert runner.active_turns() == 0
+
+
+@pytest.mark.anyio
+async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
+    class MergeIntoLive(FakeChat):
+        async def turn_policy(self, topic_id):
+            raise AssertionError("a delivered mid-turn message needs no new turn")
+
+        async def merge_into_running_turn(self, *args):
+            return True
+
+        async def ack_summon(self, block_id, topic_id):
+            return {"block_id": str(block_id), "reactions": []}
+
+    chat = MergeIntoLive(None)
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+    await broker.publish(
+        str(topic), {"type": "turn_started", "turn_id": "already-running"}
+    )
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.submit_message(
+            chat, topic, author="u", content="补充一条", summon=True
+        )
+        frames = []
+        async with asyncio.timeout(2):
+            while len(frames) < 3:
+                frames.append(await queue.get())
+
+    assert [frame["type"] for frame in frames] == ["user_block", "reaction", "done"]
+    assert broker.active_turn_ids(str(topic)) == ["already-running"]
+    await _until(lambda: runner.active_turns() == 0)

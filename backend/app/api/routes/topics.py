@@ -487,7 +487,7 @@ async def add_comment(
         project_id=topic.project_id,
         topic_id=topic_id,
         author=author,
-        author_type=AuthorType.human,
+        author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
         content=content,
         kind=BlockKind.comment,
         reply_to=reply_to,
@@ -497,19 +497,20 @@ async def add_comment(
     await db.commit()  # the comment must be visible before the turn reads it
     # 评论即反馈：文档是芝士维护的界面，人评论了就叫它来处理（回应/改文档）。
 
-    where = f"「{quote[:80]}」" if quote else "整篇"
-    runner.submit(
-        chat,
-        topic_id,
-        author="system",
-        content=(
-            f"{author} 在活文档 {where} 处评论：{content}\n"
-            "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
-        ),
-        summon=True,
-        nudge_event=f"💬 {author} 在文档上留了评论，芝士来处理",
-        provision_actor=actor,
-    )
+    if not actor.is_agent:
+        where = f"「{quote[:80]}」" if quote else "整篇"
+        runner.submit(
+            chat,
+            topic_id,
+            author="system",
+            content=(
+                f"{author} 在活文档 {where} 处评论：{content}\n"
+                "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
+            ),
+            summon=True,
+            nudge_event=f"💬 {author} 在文档上留了评论，芝士来处理",
+            provision_actor=actor,
+        )
     return ok(payload)
 
 
@@ -765,7 +766,7 @@ async def answer_options(
         str(blk.topic_id), {"type": "block_updated", "block": updated}
     )
     # The choice lands as the answerer's own message + summons 芝士 to continue.
-    runner.submit(
+    await runner.submit_message(
         chat,
         blk.topic_id,
         author=author,

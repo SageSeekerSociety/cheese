@@ -360,6 +360,7 @@ class ActorResolver:
         members = TopicMembershipRepository(self._session)
         project_members = MemberRepository(self._session)
         projects = ProjectRepository(self._session)
+        topic = await TopicRepository(self._session).get(topic_id)
 
         async def topic_role(tid: uuid.UUID, handle: str) -> TopicRole | None:
             row = await members.get(topic_id=tid, member_handle=handle)
@@ -381,6 +382,7 @@ class ActorResolver:
             topic_role=topic_role,
             roster_exists=roster_exists,
             is_project_member=is_project_member,
+            is_private=bool(topic and topic.is_private),
         )
         if not allowed:
             _log.info("topic_access_denied", handle=actor.handle, topic=str(topic_id))
