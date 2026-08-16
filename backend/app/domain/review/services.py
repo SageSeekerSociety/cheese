@@ -10,6 +10,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import TYPE_CHECKING, NoReturn
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -370,6 +371,65 @@ def _drift_reasons(
         elif _is_migration_path(path):
             reasons.append(f"动了数据库迁移 {path}")
     return reasons
+
+
+#: Tier-2 required 名单 (#468) 的一条：检查名 + 「什么样的改动才要求它出现」。
+#:
+#: `paths` 为空 = 无条件要求。非空 = 只有当 PR 的改动命中其中某条 glob 时才要求
+#: ——因为 workflow 自己就带路径过滤：本仓库的 `test` 只在改动碰 `backend/**` 时
+#: 触发，一个纯前端 PR 上它**永远不会出现**，把缺席一律读作「还在等」就是让这类
+#: 卡片无限等下去（2026-08-16 实测：#483/#485/#486 全绿却等到人工去 GitHub 合）。
+@dataclass(frozen=True)
+class _RequiredCheck:
+    name: str
+    paths: tuple[str, ...] = ()
+
+
+def _parse_required_checks(spec: str) -> list[_RequiredCheck]:
+    """`"test:backend/**;.github/workflows/test.yml,lint"` → 名单。
+
+    逗号分条目，条目里 `名字:glob;glob` —— 冒号后面是「这条检查对哪些改动有效」，
+    不写冒号就是无条件要求。glob 用 GitHub Actions 路径过滤那一套的子集：`**`
+    跨目录、`*` 不跨目录、`?` 单字符。"""
+    out: list[_RequiredCheck] = []
+    for entry in spec.split(","):
+        name, sep, globs = entry.strip().partition(":")
+        name = name.strip()
+        if not name:
+            continue
+        paths = tuple(g.strip() for g in globs.split(";") if g.strip()) if sep else ()
+        out.append(_RequiredCheck(name=name, paths=paths))
+    return out
+
+
+@lru_cache(maxsize=256)
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    """GitHub Actions 路径过滤那套 glob 编译成正则。
+
+    只实现 workflow `paths:` 里真正会写的三个通配：`**`（跨目录）、`*`（不跨
+    目录）、`?`（单字符）。`fnmatch` 不能用 —— 它的 `*` 会跨 `/`，那样
+    `frontend/*.ts` 会把 `backend/a/b.ts` 也算命中，等于把这道阀关掉。"""
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        if pattern.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif pattern[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif pattern[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(pattern[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def _diff_touches(paths: tuple[str, ...], changed: list[tuple[str, str]]) -> bool:
+    """这次改动里有没有文件命中 `paths` 里的任何一条 glob。"""
+    return any(_glob_regex(p).match(path) for _, path in changed for p in paths)
 
 
 def approvals_required_of(project: Project | None) -> int:
@@ -1550,20 +1610,56 @@ class AcceptService:
         # skipped/绿，"看见的都绿" 就这么放行了从没跑过测试的合并。名单里的
         # 名字必须出现在 check-runs 里，没出现就继续等（真正"什么都不会跑"的
         # 情形由 no_checks 阀负责，走的是 needs-human，不是这里）。
-        required = {
-            n.strip()
-            for n in settings.accept_required_check_names.split(",")
-            if n.strip()
-        }
+        #
+        # 但「缺席」有两种，2026-08-16 才分清（#470 上线当天就卡住了一批卡）：
+        # workflow 自己带路径过滤，一个纯前端 PR 上 `test` **本来就不该出现**。
+        # 所以名单项带上「对哪些改动有效」，只有 PR 真碰了那些路径才要求它——
+        # 否则 #483/#485/#486 那样全绿的卡会永远等一个永远不会来的检查。
+        required = _parse_required_checks(settings.accept_required_check_names)
         if required:
             seen = await client.check_run_names(
                 owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
             )
-            missing = required - seen
-            if missing:
-                self._note_waiting_on_checks(
+            absent = [r for r in required if r.name not in seen]
+            # 只有真有缺席时才去问改动范围：正常情况（名单全在）零额外 API 调用，
+            # 每 60 秒一轮的稳态开销和以前一样。
+            missing = (
+                await self._required_and_absent(
+                    absent=absent,
                     card=card,
-                    tail="required 检查还没出现：" + ", ".join(sorted(missing)),
+                    topic=topic,
+                    owner=owner,
+                    repo=repo,
+                    token=creds.read,
+                    client=client,
+                )
+                if absent
+                else []
+            )
+            if missing:
+                shown = ", ".join(sorted(missing))
+                # 兜底：没有超时的等待会静默卡死。workflow 改名、被禁用、Actions
+                # 额度断供（2026-08-13 真的断过一次）都会让一个该出现的检查永远
+                # 不出现——等过头就交给人，**绝不因为等腻了就自动合并**。
+                if self._required_check_grace_expired(card):
+                    self._note_needs_human(
+                        card=card,
+                        topic=topic,
+                        reason=(
+                            f"required 检查 {shown} 迟迟没有出现"
+                            f"（已等约 {settings.accept_required_check_grace_minutes} "
+                            "分钟）——多半是 workflow 没被触发、被改名或被禁用，"
+                            "平台不会替人判定它可以不跑"
+                        ),
+                        explain=(
+                            "这不是检查红了，是它根本没报到：平台只能确认「没人跑过"
+                            "这项检查」，不能替人认定它不需要跑。"
+                        ),
+                    )
+                    await self._session.flush()
+                    return
+                self._note_waiting_on_checks(
+                    card=card, tail="required 检查还没出现：" + shown
                 )
                 await self._session.flush()
                 return
@@ -1653,6 +1749,72 @@ class AcceptService:
         card.pr_merged_at = datetime.now(UTC)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         await self._finish_pr_accept(card=card, topic=topic)
+
+    async def _required_and_absent(
+        self,
+        *,
+        absent: list[_RequiredCheck],
+        card: AcceptCard,
+        topic: Topic,
+        owner: str,
+        repo: str,
+        token: str,
+        client,
+    ) -> list[str]:
+        """名单里没有出现的那几项检查，哪些对**这次改动**确实是必需的。
+
+        带路径条件的项要跟 PR 的实际 diff 对一次：一个纯前端 PR 上 `test`
+        （`.github/workflows/test.yml` 只在 `backend/**` 上触发）没出现是正常的，
+        不是「还没跑」。不带路径条件的项照旧无条件必需。
+
+        算不出改动范围时**保守处理**（照样算必需）：拿不到 diff 就不知道这次有没有
+        碰后端，此时放行等于用一次 API 失败换掉整道阀。等下去不会误合，超时兜底会
+        把它交给人。"""
+        from app.domain.workspace import service as ws
+
+        names = [r.name for r in absent if not r.paths]
+        scoped = [r for r in absent if r.paths]
+        if not scoped:
+            return names
+        try:
+            base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
+        except Exception as exc:  # noqa: BLE001 — 认不出基线就按"仍然必需"处理
+            logger.warning(
+                "card %s: cannot resolve PR base branch (%s) — "
+                "keeping every required check mandatory",
+                card.id,
+                exc,
+            )
+            return names + [r.name for r in scoped]
+        changed = await client.compare_files(
+            owner=owner, repo=repo, base=base, head=card.pr_head_sha, token=token
+        )
+        if changed is None:
+            logger.warning(
+                "card %s: GitHub gave no file list for %s...%s — "
+                "keeping every required check mandatory",
+                card.id,
+                base,
+                card.pr_head_sha,
+            )
+            return names + [r.name for r in scoped]
+        return names + [r.name for r in scoped if _diff_touches(r.paths, changed)]
+
+    def _required_check_grace_expired(self, card: AcceptCard) -> bool:
+        """这张卡等一个没出现的 required 检查，是不是已经等过头了。
+
+        时钟用 `decided_at`（人点采纳的那一刻）——卡上没有"当前 head 第一次被看见"
+        的时间戳，而这里宁可偏早交给人也不要偏晚：超时的出口是找人，不是合并，早
+        一点只是多问一句。"""
+        minutes = settings.accept_required_check_grace_minutes
+        if minutes <= 0:  # 0 = 关掉兜底，无限等（旧行为）
+            return False
+        since = card.decided_at
+        if since is None:
+            return False
+        if since.tzinfo is None:
+            since = since.replace(tzinfo=UTC)
+        return (datetime.now(UTC) - since).total_seconds() >= minutes * 60
 
     async def _authorization_exception(
         self,
@@ -1763,9 +1925,22 @@ class AcceptService:
             return
         card.note = note
 
-    def _note_needs_human(self, *, card: AcceptCard, topic: Topic, reason: str) -> None:
+    def _note_needs_human(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        reason: str,
+        explain: str | None = None,
+    ) -> None:
         """One of the three exceptions fired: say so on the card and in the
         room, and stop — never merge.
+
+        `explain` is the room message's middle sentence — WHY the machine is
+        declining. It defaults to the authorization-drift wording because that
+        is what the three original exceptions are; a caller that is withholding
+        for another reason (a required check that never reported) must pass its
+        own, or the room gets told a confident falsehood about what happened.
 
         The ✋ prefix is deliberately none of the existing ones: `⚠️` is
         `_nudge_pr_fix`'s "已经叫过芝士了" marker (reusing it would silence the
@@ -1788,14 +1963,17 @@ class AcceptService:
             return  # already said once — the 60s poll must not repeat it
         card.note = note
         logger.warning("card %s: auto-merge withheld — %s", card.id, reason)
+        why = explain or (
+            f"这是「人类授权动作前移」的安全阀之一：{card.decided_by} 当初授权的是"
+            "另一份改动，机器不替他把这一份也签下去。"
+        )
         self._notify_merge_result(
             topic,
             f"✋ PR #{card.pr_number} 的检查没有拦住它，"
             f"但平台不会自动合并：{reason}。\n"
-            f"这是「人类授权动作前移」的安全阀之一：{card.decided_by} 当初授权的是"
-            "另一份改动，机器不替他把这一份也签下去。需要人来定：在卡片上「人工"
-            "放行」（明知如此仍合并，平台会记名留痕），自己在 GitHub 上合并，"
-            f"或者作废这张卡。\n{card.pr_url}",
+            f"{why}需要人来定：在卡片上「人工放行」（明知如此仍合并，平台会记名"
+            "留痕），自己在 GitHub 上合并，或者作废这张卡。"
+            f"\n{card.pr_url}",
         )
 
     async def _settle_external_merge(

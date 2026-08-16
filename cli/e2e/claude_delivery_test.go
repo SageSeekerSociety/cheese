@@ -142,7 +142,7 @@ func TestRealClaudeActsOnDeliveredPrompts(t *testing.T) {
 		t.Skip("no `claude` on PATH")
 	}
 
-	work := t.TempDir()
+	work := realTempDir(t)
 	markFile := filepath.Join(work, "heard.txt")
 	mark := fmt.Sprintf("claude-acted-%d", time.Now().UnixNano())
 	apiBase := startMockAPI(t, markFile, mark)
@@ -152,7 +152,7 @@ func TestRealClaudeActsOnDeliveredPrompts(t *testing.T) {
 	// that these no longer satisfy hangs the readiness wait below. That hang
 	// IS the intelligence this test exists to produce when Anthropic changes
 	// the first-run flow.
-	home := t.TempDir()
+	home := realTempDir(t)
 	configDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatal(err)

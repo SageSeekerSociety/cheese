@@ -38,7 +38,9 @@ def test_build_screen_launch_shapes_command_and_env():
     # hosts claude in a persistent tmux session (direct exec if tmux is absent).
     assert 'cat > "$HOME/.claude/settings.json"' in script
     assert "cheese-hook" in script
-    assert "claude --dangerously-skip-permissions" in script
+    # The binary is resolved (pin → ~/.local/bin → PATH) rather than taken from
+    # PATH blindly, so the flags ride on $CLAUDE_BIN.
+    assert '\\"$CLAUDE_BIN\\" --dangerously-skip-permissions' in script
     # A remote screen is just as unreachable for AskUserQuestion's in-terminal
     # picker as the local pane is — same deny, carried on the launch line.
     assert "--disallowedTools AskUserQuestion" in script

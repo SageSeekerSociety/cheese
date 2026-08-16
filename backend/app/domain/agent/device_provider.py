@@ -267,6 +267,14 @@ _ALIVE_PROBE_TIMEOUT_S = 8.0
 # re-minted at most once per margin rather than on every turn.
 _CREDENTIAL_EXPIRY_MARGIN_S = 300
 
+# How long to wait for the connector's delivery verdict. It must exceed the
+# connector's own budget for a COLD screen — dial the socket a booting claude has
+# not bound yet (120s) plus the launcher's token file (20s) — or the backend
+# gives up first and reports a failure while delivery is still in flight, which
+# is a false alarm indistinguishable from a real one. Warm screens answer in
+# milliseconds; this ceiling only ever costs anything on the first turn.
+_PROMPT_DELIVERY_TIMEOUT_S = 180
+
 
 def _credential_expiry(token: str) -> int:
     """The UNIX expiry the device screen stamps for the model credential it is
@@ -814,18 +822,29 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             ) from exc
 
     async def _send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
-        """Deliver the prompt via the minimal cheeselet's `prompt` (it gates on the
-        `❯` input box first, so a fresh screen's first prompt is not dropped).
-        Returns the cheeselet's readiness at delivery (`{ready: bool}`), so a
-        held prompt is a visible state in the room instead of silence (#445)."""
+        """Deliver the prompt over the screen's rendezvous socket, where Claude
+        Code enqueues it as `origin: {kind:"human"}` — the same place a keystroke
+        lands, with none of a keystroke's blindness.
+
+        The call name and result shape are unchanged from the cheeselet era on
+        purpose (`{ready: bool}`), so only the transport moved. What IS new is
+        that a failure here is a real failure: the connector answers with an
+        error when the socket never bound, the token never appeared, or the
+        session refused the frame — instead of a driver silently re-pasting into
+        a composer nobody was reading (2026-08-16)."""
         try:
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
             )
-            result = await self._hub.await_call(screen.device_id, call_id, timeout=60)
+            result = await self._hub.await_call(
+                screen.device_id, call_id, timeout=_PROMPT_DELIVERY_TIMEOUT_S
+            )
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
+            # NOT "启动失败": by this point the screen is up. Saying what actually
+            # failed is the difference between someone re-@ing the agent and
+            # someone going to look at the machine.
             raise ScreenSetupError(
-                f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
+                f"提示词没能送进机器上的会话：{str(exc) or exc.__class__.__name__}"
             ) from exc
         if isinstance(result, dict) and isinstance(result.get("ready"), bool):
             return result["ready"]
