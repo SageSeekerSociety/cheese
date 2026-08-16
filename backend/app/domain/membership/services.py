@@ -27,7 +27,7 @@ class MemberService:
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
 
-    async def _require_manager(self, project_id: uuid.UUID, actor: Actor) -> None:
+    async def require_manager(self, project_id: uuid.UUID, actor: Actor) -> None:
         """Only the project's owner or a lead (verified by token) may write the
         roster. Called AFTER ``_ensure_project`` so a missing project still reads
         as 404 rather than 403 for everyone."""
@@ -58,7 +58,7 @@ class MemberService:
         actor: Actor,
     ) -> ProjectMember:
         await self._ensure_project(project_id)
-        await self._require_manager(project_id, actor)
+        await self.require_manager(project_id, actor)
         existing = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if existing is not None:
             raise ValidationError("User is already a member of this project")
@@ -84,7 +84,7 @@ class MemberService:
         actor: Actor,
     ) -> ProjectMember:
         await self._ensure_project(project_id)
-        await self._require_manager(project_id, actor)
+        await self.require_manager(project_id, actor)
         member = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if member is None:
             raise NotFoundError("Member not found")
@@ -94,7 +94,7 @@ class MemberService:
         self, *, project_id: uuid.UUID, user_handle: str, actor: Actor
     ) -> None:
         await self._ensure_project(project_id)
-        await self._require_manager(project_id, actor)
+        await self.require_manager(project_id, actor)
         member = await self._repo.get(project_id=project_id, user_handle=user_handle)
         if member is None:
             raise NotFoundError("Member not found")

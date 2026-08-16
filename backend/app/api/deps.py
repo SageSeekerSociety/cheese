@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import async_session_factory, get_db
 from app.domain.agent.chat import ChatService
+from app.domain.agent.cloud_provider import CloudLease, CloudProvider
 from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
@@ -18,6 +19,9 @@ from app.domain.agent.runtime import TurnRunner, get_broker
 from app.domain.agent.service import AgentService
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.identity.actor import Actor
+from app.domain.machine.models import AiStatus, MachineStatus, ProjectMachine
+from app.domain.machine.services import MachineService
 from app.domain.scheduler.service import SchedulerService
 
 __all__ = [
@@ -53,6 +57,46 @@ def get_profile_registry() -> ProfileRegistry:
     return build_registry(settings)
 
 
+def _cloud_lease(machine: ProjectMachine) -> CloudLease:
+    error = None
+    if machine.status == MachineStatus.error:
+        error = "Cloud machine provisioning failed"
+    elif machine.ai_status == AiStatus.error:
+        error = "Cloud machine AI access provisioning failed"
+    return CloudLease(
+        project_id=machine.project_id,
+        device_id=machine.device_id,
+        machine_ready=machine.status == MachineStatus.running,
+        ai_ready=machine.ai_status == AiStatus.ready,
+        error=error,
+    )
+
+
+async def _ensure_topic_cloud(topic_id: uuid.UUID, actor: Actor | None) -> CloudLease:
+    async with async_session_factory() as session:
+        service = MachineService(session)
+        if not service.available:
+            from app.core.errors import ValidationError
+
+            raise ValidationError(
+                "machine provisioning is not configured for this deployment"
+            )
+        machine = await service.ensure_topic_machine(topic_id, actor=actor)
+        await session.commit()
+        return _cloud_lease(machine)
+
+
+async def _read_topic_cloud(topic_id: uuid.UUID) -> CloudLease | None:
+    async with async_session_factory() as session:
+        machine = await MachineService(session).topic_machine(topic_id)
+        await session.commit()
+        return None if machine is None else _cloud_lease(machine)
+
+
+async def _replace_topic_cloud(topic_id: uuid.UUID, session: AsyncSession) -> None:
+    await MachineService(session).replace_topic_machine(topic_id)
+
+
 @lru_cache
 def get_chat_service() -> ChatService:
     agent = AgentService(model=settings.agent_model, env=settings.agent_env())
@@ -63,6 +107,15 @@ def get_chat_service() -> ChatService:
         gateway = LlmGateway(
             settings.llm_gateway_admin_base, settings.llm_gateway_admin_key
         )
+    cloud = CloudProvider(
+        configured=bool(
+            settings.microcloud_base_url and settings.microcloud_tenant_secret
+        ),
+        ensure_topic_cloud=_ensure_topic_cloud,
+        read_topic_cloud=_read_topic_cloud,
+        idle_suspect_s=settings.agent_idle_suspect_s,
+        hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
+    )
     return ChatService(
         session_factory=async_session_factory,
         agent=agent,
@@ -70,8 +123,9 @@ def get_chat_service() -> ChatService:
         workspace_root=settings.workspace_root,
         sandbox_enabled=settings.agent_sandbox_enabled,
         profiles=get_profile_registry(),
-        compute=build_compute_pool(agent),
+        compute=build_compute_pool(agent, cloud_provider=cloud),
         gateway=gateway,
+        replace_cloud_machine=_replace_topic_cloud,
     )
 
 
@@ -95,4 +149,5 @@ def get_turn_runner() -> TurnRunner:
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
+        replace_cloud_machine=_replace_topic_cloud,
     )

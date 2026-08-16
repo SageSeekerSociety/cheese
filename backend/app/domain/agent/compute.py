@@ -442,7 +442,9 @@ class ComputePool:
         return self.default()
 
 
-def build_compute_pool(agent: AgentService) -> ComputePool:
+def build_compute_pool(
+    agent: AgentService, *, cloud_provider: ComputeProvider | None = None
+) -> ComputePool:
     """Build the ComputePool from settings.
 
     ``agent_backend`` picks the LOCAL transport — how a turn reaches a container
@@ -494,6 +496,8 @@ def build_compute_pool(agent: AgentService) -> ComputePool:
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
     )
+    if cloud_provider is not None:
+        providers.append(cloud_provider)
     if settings.cheesed_url:
         providers.append(
             RemoteCheesedProvider(

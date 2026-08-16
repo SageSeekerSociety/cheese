@@ -33,7 +33,7 @@ drift bug wearing a new hat.
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from sqlalchemy import select
@@ -65,6 +65,7 @@ class SwapOutcome:
     message: str | None = None
     resume_after_s: float | None = None
     resume_reason: str | None = None
+    event_meta: dict | None = None
 
 
 NO_SWAP = SwapOutcome()
@@ -83,6 +84,7 @@ async def swap_topic_device(
     project_id: uuid.UUID | None,
     failure: PlatformFailure,
     is_online: Callable[[str], bool],
+    replace_cloud: Callable[[], Awaitable[None]] | None = None,
 ) -> SwapOutcome:
     """Account for one host-scoped turn failure and, if the machine is now judged
     dead, move the topic to a healthy one. The whole decision, with no session
@@ -118,6 +120,28 @@ async def swap_topic_device(
                 "本话题仍留在这台机器上，平台会等待它恢复，不会迁移到别的机器。"
                 "请在机器恢复后再 @芝士。"
             ),
+        )
+    if old is not None and old.supply is Supply.cloud:
+        if replace_cloud is None:
+            return SwapOutcome(
+                quarantined=True,
+                old_device=old_id,
+                message=(
+                    f"⚠️ Cloud 机器「{old_name}」连续 "
+                    f"{verdict.consecutive_failures} 轮因「{failure.title}」失败；"
+                    "本话题不会借用另一话题的机器。"
+                ),
+            )
+        await replace_cloud()
+        return SwapOutcome(
+            quarantined=True,
+            old_device=old_id,
+            message=(
+                f"🔁 Cloud 机器「{old_name}」连续 "
+                f"{verdict.consecutive_failures} 轮因「{failure.title}」失败，"
+                "正在为本话题创建替代机器；消息会保留，就绪后自动继续。"
+            ),
+            event_meta={"event_type": "cloud_provisioning", "state": "waiting"},
         )
     candidates = (
         []
@@ -188,6 +212,7 @@ async def handle_host_failure(
     session_factory: Callable | None = None,
     is_online: Callable[[str], bool] | None = None,
     project_id: uuid.UUID | None = None,
+    replace_cloud_machine: Callable[..., Awaitable[None]] | None = None,
 ) -> SwapOutcome:
     """``swap_topic_device`` against the real database. Never raises — a failure in
     the failure handler must not replace the error the user needs to see."""
@@ -207,12 +232,21 @@ async def handle_host_failure(
 
         async with factory() as session:
             service = device_service_for_session(session)
+
+            async def replace_cloud() -> None:
+                if replace_cloud_machine is None:
+                    raise RuntimeError("cloud replacement is not wired")
+                await replace_cloud_machine(topic_id, session)
+
             outcome = await swap_topic_device(
                 service,
                 topic_id=topic_id,
                 project_id=project_id or await _project_of_topic(session, topic_id),
                 failure=failure,
                 is_online=online,
+                replace_cloud=(
+                    replace_cloud if replace_cloud_machine is not None else None
+                ),
             )
             await session.commit()
             return outcome

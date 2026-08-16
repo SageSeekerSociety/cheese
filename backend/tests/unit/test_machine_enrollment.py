@@ -337,6 +337,55 @@ async def test_the_sweep_is_a_no_op_when_microcloud_is_not_configured(monkeypatc
     assert await runner.sweep() == {"enrolled": 0, "failed": 0}
 
 
+async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
+    """The lifecycle sweep is the sole wake source; it hands settled candidates
+    to the connector-presence gate without creating a per-topic retry timer."""
+    from unittest.mock import AsyncMock
+
+    from app.domain.machine.runner import MachineEnrollmentRunner
+    from app.domain.machine.services import MachineService
+
+    topic_id = uuid.uuid4()
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def commit(self):
+            return None
+
+    class Service:
+        available = True
+
+        def __init__(self, _session):
+            pass
+
+        async def refresh_unsettled(self):
+            return None
+
+        async def reconcile_ai_mode(self):
+            return None
+
+        async def enroll_pending(self):
+            return {"enrolled": 1, "failed": 0}
+
+        async def ready_topic_devices(self):
+            return [(topic_id, "cloud-1")]
+
+    monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
+    on_ready = AsyncMock()
+    runner = MachineEnrollmentRunner(Session, 60, on_ready=on_ready)
+
+    assert await runner.sweep() == {"enrolled": 1, "failed": 0}
+    on_ready.assert_awaited_once_with([(topic_id, "cloud-1")])
+
+    # Keep the imported name live so the monkeypatch target is checked by linters.
+    assert MachineService is not Service
+
+
 def test_enrollment_does_not_ride_the_ai_scheduler():
     """Machines must not require 定期巡检 to be switched on.
 

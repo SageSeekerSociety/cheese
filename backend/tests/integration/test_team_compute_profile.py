@@ -4,6 +4,7 @@ from anyio.from_thread import BlockingPortal
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.repositories import TeamRepository
 from tests.integration.conftest import UserCreator, unique_int
@@ -33,7 +34,13 @@ def test_team_default_is_member_visible_and_admin_managed(
     user_client: UserCreator,
     db_session: AsyncSession,
     _portal: BlockingPortal,
+    monkeypatch,
 ) -> None:
+    # Cloud is the carrier for the writes below; local-docker was retired from
+    # selection (#358) so it can no longer stand in. What is under test is the
+    # permission rule — member reads, only owner/admin writes — not the pool.
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://cloud.example")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
     owner = user_client.create_user()
     owner.token = user_client.login(api_client, owner.username, owner.password)
     member = user_client.create_user()
@@ -55,26 +62,26 @@ def test_team_default_is_member_visible_and_admin_managed(
         f"/teams/{team_id}/compute-profile", headers=_headers(member.token)
     )
     assert initial.status_code == 200
-    assert initial.json()["data"]["current"] == "local-docker"
+    assert initial.json()["data"]["current"] == "cloud"  # the fallback
 
     denied = api_client.put(
         f"/teams/{team_id}/compute-profile",
-        json={"profile": "local-docker"},
+        json={"profile": "cloud"},
         headers=_headers(member.token),
     )
     assert denied.status_code == 403
 
     saved = api_client.put(
         f"/teams/{team_id}/compute-profile",
-        json={"profile": "local-docker"},
+        json={"profile": "cloud"},
         headers=_headers(owner.token),
     )
     assert saved.status_code == 200
-    assert saved.json()["data"]["current"] == "local-docker"
+    assert saved.json()["data"]["current"] == "cloud"
 
     admin_saved = api_client.put(
         f"/teams/{team_id}/compute-profile",
-        json={"profile": "local-docker"},
+        json={"profile": "cloud"},
         headers=_headers(admin.token),
     )
     assert admin_saved.status_code == 200

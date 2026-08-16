@@ -118,20 +118,14 @@ async def test_an_isolated_binding_refuses_rather_than_running_bare():
 
 
 async def test_the_hosted_picker_never_places_a_topic_on_cloud():
-    """Cloud gets its own resolution path in #442 step 5. Until then a cloud topic
-    still arrives HERE, so an existing cloud pin must keep resolving — refusing it
-    would strand every cloud topic on the box. What this resolver must not do is
-    CHOOSE cloud for a fresh topic, or let cloud capacity advertise the self-hosted
-    pool as available."""
+    """The hosted resolver rejects cloud for both pinned and fresh topics."""
     service = _service()
     project, pinned_topic, fresh_topic = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     cloud = await _device_on_project(service, project, "cloud", supply=Supply.cloud)
     await service.bind_topic_device(pinned_topic, cloud, Visibility.host)
 
-    assert (
+    with pytest.raises(ScreenSetupError):
         await resolve_pinned_device(service, _online(cloud), project, pinned_topic)
-        == cloud
-    )
     assert (
         await resolve_pinned_device(service, _online(cloud), project, fresh_topic)
         is None

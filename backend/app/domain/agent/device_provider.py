@@ -105,15 +105,8 @@ async def resolve_pinned_device(
     binding = await service.topic_binding(topic_id)
     if binding is not None:
         pinned = binding.device_id
-        # A cloud endpoint has no `hosted_device` row BY DESIGN, and until #442
-        # step 5 gives cloud its own resolution path it still arrives here — so
-        # refusing every row without a hosted subtype would strand each cloud topic
-        # that exists today. Check the endpoint exists at all, then fall through to
-        # the checks both kinds share. Delete this branch once cloud resolves
-        # elsewhere; the `hosted_device` lookup is then the whole test.
         if await service.get_hosted_device(pinned) is None:
-            if await service.get_device(pinned) is None:
-                raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
+            raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(pinned):
             raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
         # An isolated binding must refuse rather than run bare — the pin does not

@@ -16,9 +16,15 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
@@ -31,7 +37,9 @@ from app.domain.machine.models import (
     ProjectMachine,
 )
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.services import team_service
 from app.domain.topic.models import TopicStatus
 
 # MicroCloud bills a customer, and a customer is keyed by the caller's own id.
@@ -76,6 +84,50 @@ class MachineService:
     @property
     def available(self) -> bool:
         return self._client.configured
+
+    async def require_team_create_authority(
+        self, team_id: int, actor: Actor, *, conceal_nonmember: bool = False
+    ) -> None:
+        """Apply the paid machine-create rule to a team-scoped Cloud choice."""
+        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+            raise AuthenticationRequiredError("Login required to create cloud machines")
+        teams = team_service(self._session)
+        if not await teams.is_team_member(team_id, actor.user_id):
+            if conceal_nonmember:
+                raise NotFoundError("Project not found")
+            raise ForbiddenError(
+                "Only team owners and admins can create cloud machines"
+            )
+        if not await teams.is_team_at_least_admin(team_id, actor.user_id):
+            raise ForbiddenError(
+                "Only team owners and admins can create cloud machines"
+            )
+
+    async def require_create_authority(
+        self, project_id: uuid.UUID, actor: Actor
+    ) -> None:
+        """The one authorization rule for every path that can create a billed VM."""
+        if actor.via != "token" or actor.is_agent:
+            raise AuthenticationRequiredError("Login required to create cloud machines")
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        if project.team_id is not None:
+            await self.require_team_create_authority(
+                project.team_id, actor, conceal_nonmember=True
+            )
+            return
+        # Legacy team-less project. An outsider must not learn that it exists, let
+        # alone that it has a machine inventory — so a non-member is concealed as
+        # 404 here, the same as the team branch above. `require_manager` alone
+        # answers 403, which is right for roster writes (you can see the project,
+        # you just may not manage it) and wrong here.
+        members = MemberService(self._session)
+        if project.owner_handle != actor.handle:
+            roster, _ = await members.list_for_project(project_id)
+            if not any(m.user_handle == actor.handle for m in roster):
+                raise NotFoundError("Project not found")
+        await members.require_manager(project_id, actor)
 
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
@@ -215,18 +267,10 @@ class MachineService:
             bootstrap_key=bootstrap_private,
         )
 
-    async def ensure_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine:
-        """Return this topic's active Cloud VM, creating it exactly once.
-
-        The transaction-scoped locks are taken before the billed provider call:
-        the database uniqueness constraint alone would reject a duplicate row only
-        after two VMs had already been created. The project lock also serializes the
-        existing per-project quota check across different topics.
-        """
-        # Through the topic SERVICE, not its repository: the cross-domain
-        # repository guard exempts only pre-existing debt, and a new edge belongs
-        # on the service boundary. Imported here rather than at module scope
-        # because `topic.services` reaches back into this module for reclamation.
+    async def ensure_topic_machine(
+        self, topic_id: uuid.UUID, *, actor: Actor | None = None
+    ) -> ProjectMachine:
+        """Return/create one locked lease; the project lock serializes quota."""
         from app.domain.topic.services import TopicService
 
         topic = await TopicService(self._session).get_or_404(topic_id)
@@ -245,18 +289,20 @@ class MachineService:
                 return existing
             await self.forget(existing)
 
+        if actor is None:
+            raise AuthenticationRequiredError(
+                "Cloud provisioning requires an authorized human caller"
+            )
+        await self.require_create_authority(topic.project_id, actor)
+
         project = await self._projects.get(topic.project_id)
         if project is None:
             raise NotFoundError("project not found")
-        # Cloud endpoints are platform-owned and invisible to human device
-        # management (#457). The topic's own agent identity gives enrollment a
-        # stable integer owner without impersonating whichever human triggers the
-        # first turn (the paid choice was authorized when Cloud was selected).
         agent = await IdentityService(self._session).ensure_topic_agent_user(topic_id)
         return await self.provision(
             project_id=topic.project_id,
             topic_id=topic_id,
-            requested_by=topic.created_by or project.owner_handle,
+            requested_by=actor.handle,
             owner_user_id=agent.id,
         )
 
@@ -287,6 +333,38 @@ class MachineService:
                 topic_id, reason="topic cloud machine released on archive"
             )
         return await self._repo.mark_released(machine, when=datetime.now(UTC))
+
+    async def replace_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine:
+        """Replace one authorized topic lease without borrowing another's VM."""
+        from app.domain.topic.services import TopicService
+
+        topic = await TopicService(self._session).get_or_404(topic_id)
+        await self._repo.lock_provisioning(topic.project_id, topic_id)
+        await self._session.refresh(topic)
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("archived topic cannot replace cloud compute")
+        old = await self._repo.get_active_for_topic(topic_id)
+        if old is None:
+            raise ValidationError("cloud replacement requires an active topic lease")
+        requested_by = old.requested_by
+        owner_user_id = old.owner_user_id
+        if old.status not in {MachineStatus.deleting, MachineStatus.deleted}:
+            await self.destroy(old)
+        binding = await self._devices.topic_binding(topic_id)
+        if binding is not None and old.device_id == binding.device_id:
+            await self._devices.release_topic_device(
+                topic_id, reason="replacing failed topic cloud machine"
+            )
+        await self._repo.mark_released(old, when=datetime.now(UTC))
+        return await self.provision(
+            project_id=topic.project_id,
+            topic_id=topic_id,
+            requested_by=requested_by,
+            owner_user_id=owner_user_id,
+        )
+
+    async def ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
+        return await self._repo.list_ready_topic_devices()
 
     async def _apply_desired_ai_mode(self, created: dict) -> dict:
         """Switch a fresh machine's built-in AI channel to the configured mode.

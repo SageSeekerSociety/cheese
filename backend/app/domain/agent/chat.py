@@ -16,7 +16,7 @@ import re
 import shutil
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -26,6 +26,7 @@ from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent import event_spool
+from app.domain.agent.cloud_provider import CloudProvider
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
@@ -58,6 +59,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.identity.actor import Actor
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
@@ -867,6 +869,7 @@ class ChatService:
         profiles: ProfileRegistry | None = None,
         compute: ComputePool | None = None,
         gateway: LlmGateway | None = None,
+        replace_cloud_machine: Callable[..., Awaitable[None]] | None = None,
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
@@ -889,6 +892,7 @@ class ChatService:
         # The lock serializes key-mint and usage-drain read-modify-writes on
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
+        self._replace_cloud_machine = replace_cloud_machine
         self._gateway_lock = asyncio.Lock()
         # Load the conversation skills once (spec §8.3 product "soul").
         self._skills = load_skills(DEFAULT_CHAT_SKILLS)
@@ -935,6 +939,7 @@ class ChatService:
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
     ) -> AsyncIterator[dict]:
         """Post the human message instantly, then (if summoned) run the agent
         turn serialized per topic (spec §9.1 串行队列). 现场必须实时: the human
@@ -1001,6 +1006,7 @@ class ChatService:
                 user_block_id=user_block_id,
                 is_resume=is_resume,
                 continuation_id=continuation_id,
+                provision_actor=provision_actor,
             ):
                 yield frame
 
@@ -1056,6 +1062,25 @@ class ChatService:
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
         return payload
+
+    async def cloud_waiting_topics(self, topic_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+        """Topics whose latest durable Cloud lifecycle event is still waiting."""
+        waiting: list[uuid.UUID] = []
+        async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            for topic_id in topic_ids:
+                history = await blocks.list_for_topic(topic_id)
+                cloud_events = [
+                    block
+                    for block in history
+                    if (block.meta or {}).get("event_type") == "cloud_provisioning"
+                ]
+                if (
+                    cloud_events
+                    and (cloud_events[-1].meta or {}).get("state") == "waiting"
+                ):
+                    waiting.append(topic_id)
+        return waiting
 
     async def turn_policy(self, topic_id: uuid.UUID) -> dict | None:
         """Admission facts the TurnRunner gates on BEFORE running a turn
@@ -1950,6 +1975,7 @@ class ChatService:
         user_block_id: uuid.UUID | None,
         is_resume: bool = False,
         continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
         _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
@@ -2074,6 +2100,47 @@ class ChatService:
                 await _team_compute_profile(session, project),
             )
             provider = self._compute.select(provider_id=compute_id)
+            if isinstance(provider, CloudProvider):
+                ready, waiting_text = await provider.prepare_topic(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    actor=provision_actor,
+                )
+                if topic.compute_profile is None:
+                    topic.compute_profile = provider.name
+                if not ready:
+                    cloud_events = [
+                        block
+                        for block in history
+                        if (block.meta or {}).get("event_type") == "cloud_provisioning"
+                    ]
+                    waiting_payload = None
+                    if (
+                        not cloud_events
+                        or (cloud_events[-1].meta or {}).get("state") != "waiting"
+                    ):
+                        waiting_block = await blocks.add(
+                            project_id=project_id,
+                            topic_id=topic_id,
+                            author="system",
+                            author_type=AuthorType.system,
+                            content=waiting_text,
+                            kind=BlockKind.event,
+                            turn_id=turn_id,
+                            meta={
+                                "event_type": "cloud_provisioning",
+                                "state": "waiting",
+                            },
+                        )
+                        waiting_payload = _block_payload(
+                            BlockOut.model_validate(waiting_block)
+                        )
+                    await session.commit()
+                    if waiting_payload is not None:
+                        yield {"type": "event_block", "block": waiting_payload}
+                    yield {"type": "waiting", "state": "cloud_provisioning"}
+                    yield {"type": "done"}
+                    return
             # The prompt is built HERE, not where `pending` was computed: an
             # attachment line has to describe how the image reaches 芝士 on THIS
             # backend, and that is only knowable once the provider is picked.
@@ -2415,6 +2482,7 @@ class ChatService:
                         project_id=project_id,
                         failure=platform_failure,
                         session_factory=self._sessions,
+                        replace_cloud_machine=self._replace_cloud_machine,
                     )
                     if swap.resume_after_s is not None and not is_resume:
                         resume_after_s = swap.resume_after_s
@@ -2548,9 +2616,14 @@ class ChatService:
                         kind=BlockKind.event,
                         turn_id=turn_id,
                         meta={
-                            "event_type": "host_swap",
-                            "from_device": swap.old_device,
-                            "to_device": swap.new_device,
+                            **(
+                                swap.event_meta
+                                or {
+                                    "event_type": "host_swap",
+                                    "from_device": swap.old_device,
+                                    "to_device": swap.new_device,
+                                }
+                            )
                         },
                     )
                     swap_payload = _block_payload(BlockOut.model_validate(swap_block))

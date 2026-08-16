@@ -337,16 +337,6 @@ class Settings(BaseSettings):
     compute_provider: str = "local"
     cheesed_url: str = "http://localhost:8100"
     cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
-    # Whether the built-in "local-docker" compute pool may be picked for a NEW
-    # topic/project (#22 收敛 to self-hosted device compute; #218 model-supply, #358
-    # device visibility). Turning this OFF retires local-docker from selection ONLY:
-    # `compute_selectable` stops offering it, so no new topic can pin to it — while
-    # it stays in `compute_listings` (a topic already frozen on it keeps a readable
-    # label), stays registered in the ComputePool (execution never consults this
-    # flag, so existing pins still run), and remains the always-on runtime fallback
-    # (`compute_default_name`). Default True preserves today's behavior; a deployment
-    # whose projects all run on enrolled devices (dogfood) flips it to converge.
-    compute_local_docker_selectable: bool = True
     sandbox_image: str = "cheesex-agent-sandbox:latest"
     # Machine quality gates use a disposable sibling container and never the
     # backend process. Keep this explicit so operators can ship a test-toolchain

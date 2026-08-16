@@ -164,6 +164,7 @@ async def chat(
                 summon=summon,
                 reply_to=reply_to,
                 attachments=attachments,
+                provision_actor=conn_actor,
             )
     except WebSocketDisconnect:
         pass

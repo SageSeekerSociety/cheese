@@ -10,15 +10,20 @@ def test_market_lists_ai_and_compute_pools(client):
     # Both axes are present.
     assert {p["kind"] for p in data["ai"]} == {"ai"}
     assert {p["kind"] for p in data["compute"]} == {"compute"}
-    # The default AI pool and local compute are available; each listing carries a
-    # price + description for the browse view.
     ai_default = next(p for p in data["ai"] if p["default"])
     assert ai_default["available"] and ai_default["price"] and ai_default["description"]
-    local = next(p for p in data["compute"] if p["id"] == "local-docker")
-    assert local["available"] and local["default"]
-    # Undeployed pools show in the catalog but are marked unavailable.
-    gpu = next(p for p in data["compute"] if p["id"] == "gpu")
-    assert gpu["available"] is False
+    # The catalog carries only pools that exist. `local-docker` is retired (#358);
+    # `remote-cheesed` and `gpu` never had a provider, a resolution path, or a
+    # registration in the ComputePool at all. A permanently greyed row teaches the
+    # reader that connecting something would light it up — for all three that was
+    # false, so none of them is listed.
+    ids = {p["id"] for p in data["compute"]}
+    assert ids == {"device", "cloud"}
+    # Cloud is where a topic lands when nothing was selected anywhere.
+    cloud = next(p for p in data["compute"] if p["id"] == "cloud")
+    assert cloud["default"] is True
+    # Every listing still carries the browse-view fields.
+    assert all(p["price"] and p["description"] for p in data["compute"])
 
 
 def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(client):
@@ -44,17 +49,20 @@ def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(cl
 def test_compute_profiles_default_and_reject_undeployed(client):
     pid = _project(client)
     body = client.get(f"/api/projects/{pid}/compute-profiles").json()["data"]
-    assert body["current"] == "local-docker"
-    assert [p["id"] for p in body["profiles"]] == ["local-docker"]
+    # Nothing selected anywhere → Cloud, the fallback (#358 retired local-docker,
+    # which used to be this answer).
+    assert body["current"] == "cloud"
+    # With no device online and MicroCloud unconfigured in this test, nothing is
+    # actually deployed, so there is nothing to offer.
+    assert [p["id"] for p in body["profiles"]] == []
 
-    # Selecting a pool that isn't deployed is rejected (no silent fallback).
-    r = client.put(f"/api/projects/{pid}/compute-profile", json={"profile": "gpu"})
-    assert r.status_code == 422
-
-    # Selecting the deployed local pool persists.
+    # Selecting a pool that isn't deployed is rejected — no silent fallback. That
+    # is the property this test exists for; the retired pool is a natural sample.
     r = client.put(
         f"/api/projects/{pid}/compute-profile", json={"profile": "local-docker"}
     )
-    assert r.status_code == 200
-    cur = client.get(f"/api/projects/{pid}/compute-profiles").json()["data"]["current"]
-    assert cur == "local-docker"
+    assert r.status_code == 422
+
+    # An id that never existed is rejected the same way.
+    r = client.put(f"/api/projects/{pid}/compute-profile", json={"profile": "gpu"})
+    assert r.status_code == 422

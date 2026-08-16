@@ -11,7 +11,8 @@ autonomous patrols. They are separate concerns with separate switches.
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+import uuid
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,9 +24,12 @@ class MachineEnrollmentRunner:
         self,
         session_factory: Callable[[], AsyncSession],
         interval_seconds: int,
+        on_ready: Callable[[list[tuple[uuid.UUID, str]]], Awaitable[None]]
+        | None = None,
     ) -> None:
         self._sessions = session_factory
         self._interval = interval_seconds
+        self._on_ready = on_ready
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
@@ -73,7 +77,10 @@ class MachineEnrollmentRunner:
             await service.refresh_unsettled()
             await service.reconcile_ai_mode()
             result = await service.enroll_pending()
+            ready = await service.ready_topic_devices()
             await session.commit()
+        if self._on_ready is not None and ready:
+            await self._on_ready(ready)
         if result["enrolled"] or result["failed"]:
             logger.info(
                 "enrollment sweep: %s enrolled, %s failed",
