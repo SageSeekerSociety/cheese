@@ -19,7 +19,7 @@ async function load() {
   try {
     board.value = await getMarketNodes()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载节点状态失败'
+    error.value = e instanceof Error ? e.message : '加载机器状态失败'
   } finally {
     loading.value = false
   }
@@ -39,7 +39,7 @@ onBeforeUnmount(() => {
   <div class="node-board">
     <div class="node-board__head">
       <v-icon size="20" class="me-2 c-muted">mdi-lan</v-icon>
-      <h2 class="node-board__title">节点状态</h2>
+      <h2 class="node-board__title">机器状态</h2>
       <span class="node-board__hint c-faint">算力池背后的机器，在线状态与当前负载</span>
       <v-spacer />
       <span v-if="board" class="node-board__total c-faint"> 全平台进行中 {{ board.active_turns_total }} 轮 </span>
@@ -58,7 +58,7 @@ onBeforeUnmount(() => {
           <span class="node-dot" :class="n.online ? 'node-dot--on' : 'node-dot--off'" />
           <span class="node-card__status">{{ n.online ? '在线' : '离线' }}</span>
           <span class="node-card__kind">{{ n.kind === 'local' ? '本地' : '远程' }}</span>
-          <span v-if="n.current" class="node-card__current">当前执行节点</span>
+          <span v-if="n.current" class="node-card__current">当前执行的机器</span>
         </div>
         <h3 class="node-card__title">{{ n.label }}</h3>
         <p class="node-card__desc c-muted">{{ n.description }}</p>

@@ -118,7 +118,7 @@ watch(
 
       <v-card min-width="272" class="cp-menu">
         <div class="cp-menu__head">选择本话题的算力</div>
-        <div class="cp-menu__hint">发出第一条消息后锁定，新建话题可再选。</div>
+        <div class="cp-menu__hint">发出第一条消息后锁定，新建话题可再选</div>
         <button
           v-for="p in visibleProfiles"
           :key="p.id"
@@ -138,7 +138,7 @@ watch(
               <span class="cp-row__price">{{ p.price }}</span>
             </div>
             <div class="cp-row__desc">{{ p.description }}</div>
-            <div v-if="!p.available" class="cp-row__off">尚未接入，暂不可选</div>
+            <div v-if="!p.available" class="cp-row__off">暂未接入，不可选</div>
           </div>
           <v-progress-circular v-if="saving === p.id" indeterminate size="15" width="2" />
           <v-icon v-else-if="state.current === p.id && !state.inherited" size="17" color="primary"> mdi-check </v-icon>

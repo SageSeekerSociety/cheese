@@ -235,13 +235,21 @@ function liveRefWidget(topicId: string): HTMLElement {
   el.title = `子话题「${sub?.title ?? '子话题'}」· ${statusLabel(status)} — 点击打开`
   const dot = document.createElement('span')
   dot.className = `doc-liveref__dot is-${status}`
+  // 图标而不是 🧩：emoji 在不同系统上是彩色位图，尺寸和基线都不跟随字号，混在
+  // 正文里显得很脏。用 puzzle 而不是 mdi-source-branch，是因为后者在本组件里
+  // 已经代表 Git 标签页和「磁盘版本分叉」提示，一个图标不该同时是三件事。
+  // (ProseMirror widget 是裸 DOM，用不了 <v-icon>；@mdi/font 是全局 CSS，
+  //  所以这里直接写 mdi 的字体类。)
+  const icon = document.createElement('i')
+  icon.className = 'mdi mdi-puzzle-outline doc-liveref__icon'
+  icon.setAttribute('aria-hidden', 'true')
   const label = document.createElement('span')
   label.className = 'doc-liveref__label'
-  label.textContent = `🧩 ${sub?.title ?? '子话题'}`
+  label.textContent = sub?.title ?? '子话题'
   const st = document.createElement('span')
   st.className = 'doc-liveref__status'
   st.textContent = statusLabel(status)
-  el.append(dot, label, st)
+  el.append(dot, icon, label, st)
   return el
 }
 
@@ -1177,7 +1185,12 @@ function tokenWidget(kind: '@' | '#' | '&', id: string, lookupTopic: (tid: strin
     el.className = 'mention file-ref'
     el.dataset.file = id
     el.title = id
-    el.textContent = `📄 ${id.split('/').pop() || id}`
+    // mdi 图标而不是 📄，理由同 doc-liveref：emoji 是彩色位图，不跟随字号和
+    // 前景色。mdi-file-document-outline 是本仓库既有的「文件」图标。
+    const icon = document.createElement('i')
+    icon.className = 'mdi mdi-file-document-outline file-ref__icon'
+    icon.setAttribute('aria-hidden', 'true')
+    el.append(icon, document.createTextNode(id.split('/').pop() || id))
   }
   return el
 }
@@ -1195,7 +1208,7 @@ function tokenDecorations(doc: PMNode, lookupTopic: (tid: string) => string | un
       const kind = m[1] ? '@' : m[2] ? '#' : '&'
       const id = (m[1] ?? m[2] ?? m[3]) as string
       // hide the raw token (inline display:none) + widget(show the chip):
-      // the doc keeps `<&path>` verbatim, the reader sees 「📄 name」.
+      // the doc keeps `<&path>` verbatim, the reader sees 「(文件图标) name」.
       // (prosemirror-view has no Decoration.replace — widget/inline/node only.)
       decos.push(
         Decoration.widget(from, () => tokenWidget(kind, id, lookupTopic), {
@@ -2239,7 +2252,7 @@ onBeforeUnmount(() => {
       <div v-if="hasPendingEdits" class="doc-notice">
         <v-icon size="16" class="doc-notice__icon">mdi-content-save-alert-outline</v-icon>
         <div class="doc-notice__text">
-          有未保存的改动没有带入当前编辑器（编辑器显示的是磁盘上的版本）。改动仍然保留着，可以随时取回。
+          有未保存的改动没有带入当前编辑器，编辑器显示的是磁盘上的版本。改动仍然保留，可以随时取回。
           <template v-if="pendingEdits.length > 1">共 {{ pendingEdits.length }} 份，先取回最近一份。</template>
         </div>
         <button type="button" class="doc-notice__btn" @click="applyPendingEdits">恢复我的改动</button>
@@ -2282,7 +2295,7 @@ onBeforeUnmount(() => {
             <div v-if="lossy" class="doc-lossy-banner">
               <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
               <div class="doc-lossy-banner__text">
-                此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。 自动保存已暂停——建议用源码模式编辑。
+                此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。自动保存已暂停，建议用源码模式编辑。
               </div>
               <button type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">源码模式</button>
             </div>
@@ -2369,8 +2382,8 @@ onBeforeUnmount(() => {
                  rendered in the document flow at the end of their paragraph by
                  the LiveRefBadges extension (no overlay, no cursor dead zone).
                  Clicks are delegated through onDocClick above. -->
-              <!-- Real block handles: 🧩 splits the block into a subtopic, ⠿ drags to
-                 reorder, ＋ inserts a block below. Only in edit mode. -->
+              <!-- Real block handles: 拆出子话题、拖动重排、在下方插入一块。
+                 Only in edit mode. -->
               <DragHandle
                 v-if="editor && editable"
                 :editor="editor"
@@ -2533,7 +2546,7 @@ onBeforeUnmount(() => {
                  CSP/cross-origin friction. Read-only mirror (ttyd -R). -->
                 <div class="term-wrap">
                   <div class="term-bar text-caption px-3 py-1">
-                    <span class="term-bar__dot">●</span>
+                    <v-icon class="term-bar__dot" size="10">mdi-circle</v-icon>
                     实时终端（只读）
                   </div>
                   <iframe class="term-frame" :src="terminalUrl" title="实时终端（只读）" />
@@ -2548,29 +2561,34 @@ onBeforeUnmount(() => {
               <template v-else-if="openTool === 'site' && screenSid">
                 <div class="term-wrap">
                   <div class="term-bar text-caption px-3 py-1">
-                    <span class="term-bar__dot">●</span>
-                    实时终端 · 机器上的 Claude Code（可输入，键入会直达会话）
+                    <v-icon class="term-bar__dot" size="10">mdi-circle</v-icon>
+                    实时终端 · 机器上的 Claude Code，可直接输入
                   </div>
                   <DeviceLiveViewer :sid="screenSid" />
                 </div>
               </template>
 
-              <!-- 现场: read-only transcript timeline (芝士 messages + 🔧 events) -->
+              <!-- 现场: read-only transcript timeline (芝士 messages + tool events) -->
               <template v-else-if="openTool === 'site'">
                 <div
                   v-if="transcript.length === 0 && worklog.length === 0"
                   class="text-center text-medium-emphasis py-6"
                 >
-                  本话题暂无施工记录
+                  暂无现场记录
                 </div>
                 <div v-else class="site-log pa-3">
                   <template v-for="b in transcript" :key="b.id">
-                    <!-- Tool action — Claude Code style: ● verb + ⎿ arg preview -->
+                    <!-- Tool action — Claude Code style: 圆点 + 动作 + 参数预览 -->
                     <div v-if="b.kind === 'event'" class="site-act">
-                      <span class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }">●</span>
+                      <v-icon class="site-act__dot" :class="{ 'site-act__dot--platform': eventPlatform(b) }" size="8"
+                        >mdi-circle</v-icon
+                      >
                       <div class="site-act__body">
                         <span class="site-act__verb">{{ eventVerb(b) }}</span>
-                        <div v-if="eventArg(b)" class="site-act__arg">⎿ {{ eventArg(b) }}</div>
+                        <div v-if="eventArg(b)" class="site-act__arg">
+                          <v-icon class="site-act__argicon" size="12">mdi-subdirectory-arrow-right</v-icon>
+                          <span class="site-act__argtext" data-testid="site-act-arg">{{ eventArg(b) }}</span>
+                        </div>
                       </div>
                       <span class="site-act__time">{{ fmtTime(b.created_at) }}</span>
                     </div>
@@ -2613,22 +2631,23 @@ onBeforeUnmount(() => {
                    the persisted transcript above becomes the record. -->
                   <template v-for="(act, i) in worklog" :key="'live-' + i">
                     <div class="site-act">
-                      <span
+                      <v-icon
                         class="site-act__dot"
                         :class="{
                           'site-act__dot--platform': act.platform,
                           'site-act__dot--live': working && i === worklog.length - 1,
                         }"
-                        >●</span
+                        size="8"
+                        >mdi-circle</v-icon
                       >
                       <div class="site-act__body">
                         <span class="site-act__verb">{{ act.text }}</span>
                       </div>
                     </div>
                   </template>
-                  <!-- 本轮聚合摘要 (Claude Code 风): deterministic counts + ⏱ -->
+                  <!-- 本轮聚合摘要 (Claude Code 风): deterministic counts + 耗时 -->
                   <div v-if="working && worklog.length" class="site-summary">
-                    <span class="site-act__dot site-act__dot--live">●</span>
+                    <v-icon class="site-act__dot site-act__dot--live" size="8">mdi-circle</v-icon>
                     <span>
                       {{ liveSummary }}
                       <template v-if="liveElapsed !== null"> （{{ liveElapsed }}s） </template>
@@ -2644,7 +2663,7 @@ onBeforeUnmount(() => {
                 <div class="pa-3">
                   <div class="t-eyebrow mb-2">本话题提交</div>
                   <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2 mb-3">
-                    本话题还没有自己的提交（采纳后它们会并入主干）
+                    暂无提交，采纳后会并入主干
                   </div>
                   <v-list v-else density="compact" class="py-0 mb-3">
                     <v-list-item v-for="c in gitCommits" :key="c.hash" class="px-0">
@@ -2663,7 +2682,7 @@ onBeforeUnmount(() => {
                   <v-divider class="mb-3" />
                   <div class="t-eyebrow mb-2">本话题改动（相对主干）</div>
                   <pre v-if="gitDiff.trim()" class="code-pre">{{ gitDiff }}</pre>
-                  <div v-else class="text-medium-emphasis text-body-2">本话题还没有改动</div>
+                  <div v-else class="text-medium-emphasis text-body-2">暂无改动</div>
                 </div>
               </template>
 
@@ -2708,9 +2727,9 @@ onBeforeUnmount(() => {
                   <div v-if="fileConflict" class="file-conflict">
                     <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
                     <span class="file-conflict__text">
-                      这个文件在你编辑期间被改过（多半是芝士写的）。直接保存会盖掉那些改动。
+                      这个文件在你编辑期间被改过，多半是芝士写的。直接保存会覆盖那些改动。
                     </span>
-                    <v-btn size="x-small" variant="text" @click="reloadOpenFile">放弃我的修改，看最新的</v-btn>
+                    <v-btn size="x-small" variant="text" @click="reloadOpenFile">放弃我的改动，载入最新版本</v-btn>
                     <v-btn size="x-small" variant="text" color="error" :loading="fileSaving" @click="overwriteFile">
                       仍然覆盖保存
                     </v-btn>
@@ -2765,11 +2784,11 @@ onBeforeUnmount(() => {
                           {{ fileTooLarge ? 'mdi-weight' : 'mdi-file-code-outline' }}
                         </v-icon>
                         <div class="file-blob__title">
-                          {{ fileTooLarge ? '文件太大，不在浏览器里打开' : '二进制文件，不能当文本编辑' }}
+                          {{ fileTooLarge ? '文件太大，不在浏览器里打开' : '二进制文件，不能按文本编辑' }}
                         </div>
                         <div class="file-blob__note">
                           {{ openPath }} · {{ fmtBytes(fileBytes) }}
-                          <template v-if="!fileTooLarge"> —— 按文本打开会改坏它，所以这里只读。 </template>
+                          <template v-if="!fileTooLarge"> —— 按文本打开会损坏它，因此这里只读 </template>
                         </div>
                         <v-btn
                           size="small"
@@ -2789,7 +2808,7 @@ onBeforeUnmount(() => {
                         class="d-flex align-center justify-center fill-height c-faint"
                         style="font-size: 0.85rem"
                       >
-                        选择左侧文件查看 / 编辑
+                        选择左侧文件查看或编辑
                       </div>
                     </div>
                   </div>
@@ -2860,11 +2879,11 @@ onBeforeUnmount(() => {
                 <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
                   <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
                   <div>预览加载失败</div>
-                  <div class="text-caption mt-1">后端没能返回这个话题的预览：{{ previewError }}</div>
+                  <div class="text-caption mt-1">平台没能返回这个话题的预览：{{ previewError }}</div>
                 </div>
                 <div v-else-if="previewReadError" class="text-center text-medium-emphasis py-8">
                   <v-icon size="32" class="text-warning mb-2">mdi-file-alert-outline</v-icon>
-                  <div>指定的产物读不到</div>
+                  <div>指定的文件读不到</div>
                   <div class="text-caption mt-1">
                     芝士指定了 {{ previewNamedPath || '一个文件' }}，但它现在读不出来：{{ previewReadError }}
                   </div>
@@ -2873,11 +2892,10 @@ onBeforeUnmount(() => {
                   <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
                   <div>应用暂时不在线</div>
                   <div v-if="previewContainerUp" class="text-caption mt-1">
-                    容器还在，但约定端口上没有服务在应答——芝士声明过的那个 dev server 大概已经退出了，再 @
-                    它一次拉起来。
+                    运行环境还在，但应用没有响应。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
                   </div>
                   <div v-else class="text-caption mt-1">
-                    芝士声明过一个运行中的应用，但它的容器当前没在跑——再 @ 它一次即可拉起。
+                    芝士登记过一个运行中的应用，但它的运行环境当前没在跑。再 @ 它一次即可拉起。
                   </div>
                 </div>
                 <div v-else-if="previewFile" class="preview-wrap">
@@ -2897,10 +2915,9 @@ onBeforeUnmount(() => {
                 </div>
                 <div v-else class="text-center text-medium-emphasis py-8">
                   <v-icon size="32" class="text-disabled mb-2">mdi-eye-off-outline</v-icon>
-                  <div>芝士还没有指定预览</div>
+                  <div>暂无预览</div>
                   <div class="text-caption mt-1">
-                    它做出网页 / 图表等可看的产物时，会把成果放到这里。 单文件产物直接渲染；整个应用（如 Vue
-                    工程）走"运行环境预览"——芝士把 dev server 跑起来再声明一次即可。
+                    芝士做出网页、图表等可看的成果时，会放到这里。单个文件直接渲染；完整的应用需要芝士先把它跑起来，再登记一次。
                   </div>
                 </div>
               </template>
@@ -2953,8 +2970,8 @@ onBeforeUnmount(() => {
             确认覆盖保存？
           </v-card-title>
           <v-card-text class="text-body-2 pt-0">
-            此文档包含可视化编辑器暂不完全支持的语法。直接保存会按编辑器的理解重写文件，
-            不支持的格式将丢失。用源码模式编辑可以完整保留原文——你刚才的改动会被暂存， 切过去之后可以一键取回。
+            此文档包含可视化编辑器暂不完全支持的语法。直接保存会按编辑器的理解重写文件，不支持的格式将丢失。
+            用源码模式编辑可以完整保留原文，你刚才的改动会被暂存，切过去之后可以一键取回。
           </v-card-text>
           <v-card-actions>
             <v-spacer />
@@ -3065,13 +3082,18 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 /* @person handle reads as a link: persistent accent underline. File/topic
-   refs (📄/#) keep their chip look and only underline on hover, below. */
+   refs (file icon / #) keep their chip look and only underline on hover. */
 .doc-editor :deep(.mention:not(.file-ref):not(.topic-ref)) {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .doc-editor :deep(.mention:hover) {
   text-decoration: underline;
+}
+/* 文件 chip 前的 mdi 图标（正文里的 <&path> 装饰，以及评论区的同款 chip）。 */
+:deep(.file-ref__icon) {
+  margin-right: 3px;
+  font-size: 0.92em;
 }
 /* B4 Feishu-style: floating "评论" CTA over a text selection. */
 .doc-comment-cta {
@@ -3200,7 +3222,7 @@ onBeforeUnmount(() => {
 }
 
 /* 施工现场 timeline: 芝士 speaks (avatar + text), tools render as Claude-Code
-   action lines (● verb, ⎿ argument preview). */
+   action lines (圆点 + 动作, 缩进箭头 + 参数预览). */
 .site-log {
   display: flex;
   flex-direction: column;
@@ -3263,9 +3285,20 @@ onBeforeUnmount(() => {
 }
 /* 圆点分级: neutral = plain work (read/search/run), amber = platform action
    (cheese tool / cheese CLI / doc edit). --live (pulse) overrides both. */
+/* 图标盒子没有文字基线，行改成顶对齐后要手动把 8px 圆点压到第一行的中线上
+   ((12.5px × 1.5 − 8px) / 2 ≈ 5px)。摘要行是 align-items: center，不用补。 */
 .site-act__dot {
-  color: var(--faint);
   flex: 0 0 auto;
+  margin-top: 5px;
+  color: var(--faint);
+}
+.site-summary .site-act__dot {
+  margin-top: 0;
+}
+.site-act__argicon {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  color: var(--faint);
 }
 .site-act__dot--platform {
   color: var(--accent);
@@ -3282,11 +3315,19 @@ onBeforeUnmount(() => {
 .site-act__verb {
   color: var(--text);
 }
+/* 图标和文字分成两个 flex 子项（而不是把图标塞进 pre-wrap 的文本流里）：
+   pre-wrap 会把模板里的换行和缩进照样画出来，而 flex 布局顺带给了折行时的
+   悬挂缩进 —— 第二行对齐到箭头右边，正是那个箭头本来的意思。 */
 .site-act__arg {
+  display: flex;
+  gap: 3px;
+  margin-top: 1px;
   color: var(--faint);
+}
+.site-act__argtext {
+  min-width: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  margin-top: 1px;
 }
 .site-act__time {
   flex: 0 0 auto;
@@ -3518,7 +3559,6 @@ onBeforeUnmount(() => {
 }
 .term-bar__dot {
   color: var(--ok);
-  font-size: 10px;
 }
 .term-frame {
   flex: 1 1 auto;
@@ -3774,6 +3814,11 @@ onBeforeUnmount(() => {
 .doc-editor :deep(.doc-liveref:hover) {
   background: rgba(var(--v-theme-primary), 0.1);
   box-shadow: var(--shadow-2);
+}
+.doc-editor :deep(.doc-liveref__icon) {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
 }
 .doc-editor :deep(.doc-liveref__label) {
   overflow: hidden;

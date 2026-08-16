@@ -48,6 +48,6 @@ export function costNote(u: UsageStats): string {
   if (!u.unpriced_tokens) return ''
   const tokens = fmtNum(u.unpriced_tokens)
   return u.cost_usd > 0
-    ? `另有 ${tokens} token 走订阅计费，按月付费、无单价`
-    : `${tokens} token 走订阅计费，按月付费、无单价——不是没花钱，是没有逐 token 的价`
+    ? `另有 ${tokens} token 走订阅计费，按月付费，不逐 token 计价`
+    : `${tokens} token 走订阅计费，按月付费，不逐 token 计价，因此这里不显示金额`
 }

@@ -162,12 +162,13 @@ const awaitingReply = ref(false)
 // "做到哪了" is visible in the room without summoning anyone.
 const todoItems = ref<TodoItem[]>([])
 // The list on screen is a previous turn's leftovers, not this turn's live
-// progress — labelled differently so nobody reads a stale ◐ as "running now".
+// progress — labelled differently so nobody reads a stale half-circle as
+// "running now".
 const todoRestored = ref(false)
 // Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
 // event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
 const ACTION_META: Record<string, { verb: string; btn: string }> = {
-  doc: { verb: '更新了活文档', btn: '看活文档' },
+  doc: { verb: '更新了实况文档', btn: '看实况文档' },
   decision: { verb: '记录了一条决策', btn: '查看决策记录' },
   topics: { verb: '更新了子话题', btn: '' },
   milestone: { verb: '钉了一个里程碑', btn: '看日历' },
@@ -175,8 +176,13 @@ const ACTION_META: Record<string, { verb: string; btn: string }> = {
   notify: { verb: '发了通知', btn: '' },
 }
 
-function todoMark(status: string): string {
-  return status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
+// 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
+// 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
+// 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
+function todoIcon(status: string): string {
+  if (status === 'completed') return 'mdi-check-circle'
+  if (status === 'in_progress') return 'mdi-circle-slice-4'
+  return 'mdi-circle-outline'
 }
 
 // ---- 选项问题 (cheese ask): buttons under the message; one click answers
@@ -1294,11 +1300,12 @@ onBeforeUnmount(() => {
 
               <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
                  turn; between turns this is the topic's stored 进度层 (#187),
-                 labelled so a leftover ◐ is not read as "running right now". -->
+                 labelled so a leftover 进行中 row is not read as "running right
+                 now". -->
               <div v-if="todoItems.length && todoRestored" class="todo-label">进度（上次做到这里）</div>
               <ul v-if="todoItems.length" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
-                  <span class="todo-mark">{{ todoMark(t.status) }}</span>
+                  <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
                   <span class="todo-text">{{ t.subject }}</span>
                 </li>
               </ul>
@@ -1346,7 +1353,7 @@ onBeforeUnmount(() => {
               type="button"
               class="summon-chip"
               :class="{ 'summon-chip--on': summon }"
-              title="@芝士 — 让芝士回复"
+              :title="summon ? '已开启：这条消息会 @ 芝士' : '开启后，这条消息会 @ 芝士'"
               @click="toggleSummon"
             >
               <v-icon v-if="summon" size="13">mdi-creation</v-icon>
@@ -1385,7 +1392,9 @@ onBeforeUnmount(() => {
           <div v-if="pendingAtts.length || attsUploading" class="att-strip">
             <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
               <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
-              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">×</button>
+              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
+                <v-icon size="12">mdi-close</v-icon>
+              </button>
             </div>
             <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
           </div>
@@ -1400,7 +1409,8 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input flex-grow-1"
-              placeholder="发条消息…（Enter 发送，Shift+Enter 换行，可直接粘贴图片）"
+              placeholder="输入消息…"
+              title="Enter 发送，Shift+Enter 换行，可直接粘贴图片"
               :disabled="!connected"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
@@ -1516,14 +1526,15 @@ onBeforeUnmount(() => {
 .todo-item {
   display: flex;
   gap: 6px;
-  align-items: baseline;
+  align-items: flex-start;
   font-size: 0.85rem;
   line-height: 1.5;
 }
+/* 图标盒子没有文字基线，所以整行改成顶对齐，再把图标压到第一行文字的中线上
+   ((13.6px × 1.5 − 14px) / 2 ≈ 3px)——否则多行标题会把图标顶到最后一行。 */
 .todo-mark {
-  width: 1em;
   flex: none;
-  text-align: center;
+  margin-top: 3px;
 }
 .todo-pending {
   color: var(--faint);
@@ -1803,16 +1814,18 @@ onBeforeUnmount(() => {
   background: var(--fill);
 }
 .att-remove {
+  display: inline-flex;
   position: absolute;
   top: -6px;
   right: -6px;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
-  font-size: 13px;
   line-height: 1;
   cursor: pointer;
 }
@@ -1883,13 +1896,19 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 /* @person handle reads as a link: persistent accent underline. File/topic
-   refs (📄/#) keep their chip look and only underline on hover, below. */
+   refs (file icon / #) keep their chip look and only underline on hover. */
 .im-text :deep(.mention:not(.file-ref):not(.topic-ref)) {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .im-text :deep(.mention:hover) {
   text-decoration: underline;
+}
+/* 文件 chip 前的 mdi 图标。不挂在 .im-text 下：同样的 chip 也出现在动作卡
+   (.action-verb) 和系统事件行里，那两处不在 .im-text 里面。 */
+:deep(.file-ref__icon) {
+  margin-right: 3px;
+  font-size: 0.92em;
 }
 
 /* per-row hover action bar (Feishu), floats at the row's top-right */

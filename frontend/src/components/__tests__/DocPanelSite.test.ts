@@ -148,4 +148,28 @@ describe('现场面板', () => {
 
     expect(scrollBox(container).scrollTop).toBe(0)
   })
+
+  // 参数预览那一行是 white-space: pre-wrap 的，所以模板里的换行和缩进会被原样
+  // 画出来。图标从文字符号 ⎿ 换成 <v-icon> 之后，只要图标和文字待在同一个文本流
+  // 里，前面就会多出一截空白。这条钉住"参数文字自己一个盒子、前后不带空白"。
+  it('工具动作的参数预览：图标独立成块，文字不带模板缩进', async () => {
+    getTranscript.mockResolvedValue({
+      data: [
+        {
+          ...block('e1', '读文件\nbackend/app/main.py'),
+          kind: 'event',
+          meta: { tool: 'Read', arg: 'backend/app/main.py' },
+        } as Block,
+      ],
+      total: 1,
+    })
+    const { container } = mountPanel('topic-A')
+    await flush()
+    await openTool(container, '现场')
+
+    const arg = container.querySelector('[data-testid="site-act-arg"]')
+    expect(arg, '找不到参数预览').toBeTruthy()
+    expect(arg!.textContent).toBe('backend/app/main.py')
+    expect(container.querySelector('.site-act__argicon')).toBeTruthy()
+  })
 })

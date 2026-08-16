@@ -164,7 +164,7 @@ onMounted(() => {
     </div>
     <v-alert v-else-if="error" type="error" density="comfortable">{{ error }}</v-alert>
     <v-alert v-else-if="tasks.length === 0" type="info" variant="tonal" density="comfortable">
-      市场上还没有发布中的题目。机构在 Space 里把 Task Template 发布后会出现在这里。
+      暂无发布中的题目。机构在空间里发布任务模板后，会出现在这里。
     </v-alert>
 
     <div v-else class="task-grid">
@@ -206,7 +206,7 @@ onMounted(() => {
           <div v-if="appsLoading[t.id]" class="py-2 d-flex justify-center">
             <v-progress-circular indeterminate size="18" width="2" />
           </div>
-          <div v-else-if="!applications[t.id]?.length" class="c-faint task-card__apps-empty">还没有团队应征。</div>
+          <div v-else-if="!applications[t.id]?.length" class="c-faint task-card__apps-empty">暂无团队应征</div>
           <div v-for="a in applications[t.id] ?? []" v-else :key="a.id" class="app-row">
             <div class="app-row__main">
               <div class="app-row__head">
@@ -244,13 +244,14 @@ onMounted(() => {
           <v-select
             v-model="applyProjectId"
             :items="projectOptions"
-            label="用哪个项目应征"
+            label="应征项目"
             density="comfortable"
             variant="outlined"
           />
           <v-textarea
             v-model="applyPitch"
-            label="团队自荐（为什么我们合适）"
+            label="团队自荐"
+            placeholder="说明你的团队为什么适合这个题目"
             rows="3"
             density="comfortable"
             variant="outlined"
