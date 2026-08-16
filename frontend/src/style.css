@@ -1,13 +1,29 @@
 /* ===========================================================================
    CheeseX 知是 — design language foundation.
 
-   THE ONE PRINCIPLE: ~95% of every screen is NEUTRAL. Amber (#F57F17) is a rare
-   accent — primary action button, active nav indicator, brand mark. Nothing
-   else. Restraint = professional (Linear / Notion grade).
+   THE ONE PRINCIPLE: ~95% of every screen is NEUTRAL. Amber is a rare accent —
+   primary action button, active nav indicator, brand mark. Nothing else.
+   Restraint = professional (Linear / Notion grade).
 
    Tokens below are the single source of truth for the neutral ramp + accent +
    status. Vuetify theme colors (plugins/vuetify.ts) mirror these so component
    styling and hand-rolled CSS agree. Reference these vars; never hardcode hex.
+
+   TWO THEMES, ONE SET OF NAMES. `:root` carries the light values; the
+   `[data-theme='dark']` block below re-declares the SAME names with dark
+   values. Consumers never branch on theme — they write `var(--ink)` and get
+   the right colour. Never introduce a `--ink-dark`: a name that only exists in
+   one theme is a name that will be hardcoded back to hex the first time
+   somebody needs the other one.
+
+   The attribute is stamped on <html> by the boot script in index.html before
+   first paint (see src/composables/useAppTheme.ts for the runtime side). There
+   is deliberately no `@media (prefers-color-scheme)` fallback here: this is a
+   Vue SPA that renders nothing at all without JS, so a no-JS path would be
+   dead code that can only drift out of sync with the block below.
+
+   Full rationale, usage rules and the contrast measurements behind every value
+   live in docs/design-system.md.
    =========================================================================== */
 
 :root {
@@ -33,10 +49,54 @@
   --accent-ink: #9a5413; /* amber text on light */
   --accent-wash: #fdf1e2; /* rare tint */
 
-  /* ---- Status (ONLY for real status; dot + neutral text) ---- */
+  /* ---- Status (ONLY for real status; dot + neutral text) ----
+     Each status has three parts, and they are NOT interchangeable:
+       --x       the mark  — 6px dot, 1px border, icon fill. Never body text.
+       --x-ink   the text  — AA-contrast against --surface AND --x-wash.
+       --x-wash  the tint  — background for a status chip / callout only.
+     `--ok`/`--warn`/`--danger` on their own are too low-contrast for text in
+     light theme (2.3–4.8:1); that is what the -ink variants are for. */
   --ok: #1f9d55;
+  --ok-ink: #12703a;
+  --ok-wash: #e8f6ee;
   --warn: #e8901c;
+  --warn-ink: #8f5406;
+  --warn-wash: #faf0dc;
   --danger: #dc2626;
+  --danger-ink: #b91c1c;
+  --danger-wash: #fdecec;
+
+  /* ---- Brand glow (header corner gradient in styles/common.scss) ----
+     Only ever composited at 4–8% alpha, so these are deliberately brighter
+     than anything allowed as a flat fill. */
+  --logo-primary: #f9b233;
+  --logo-secondary: #e85d2c;
+
+  /* ---- Plumbing: chrome that is not part of the semantic ramp ----
+     These exist so the rules at the bottom of this file stop hardcoding
+     rgba(25, 26, 28, …), which is --ink at low alpha and therefore invisible
+     on a dark canvas. Light values are byte-identical to what they replaced. */
+  --scrollbar-thumb: rgba(25, 26, 28, 0.14);
+  --scrollbar-thumb-hover: rgba(25, 26, 28, 0.28);
+  --scrollbar-track: rgba(25, 26, 28, 0.16); /* Firefox `scrollbar-color` */
+  --focus-ring: rgba(245, 127, 23, 0.55);
+  --selection-bg: rgba(245, 127, 23, 0.18);
+  --overlay: rgba(25, 26, 28, 0.44); /* dialog scrim */
+  --shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
+  --shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
+
+  /* ---- Radius ladder ----
+     Theme-independent (a corner does not change shape in the dark), so these
+     live only here and are NOT repeated in the dark block below.
+
+     Three steps plus a pill. The tree currently holds FIFTEEN distinct radii
+     (3/4/5/6/7/8/9/10/11/12/16/20/100/999px) — most of them one-offs adjusted
+     by hand at the keyboard. The stylelint rule enforces this ladder for new
+     code; docs/design-system.md carries the fold-map for the existing ones. */
+  --radius-sm: 6px; /* chips, tags, small badges */
+  --radius-md: 8px; /* buttons, inputs, list items */
+  --radius-lg: 12px; /* cards, panels, dialogs */
+  --radius-pill: 999px; /* pills, circular avatars */
 
   /* ---- Type ---- */
   --font-sans:
@@ -45,6 +105,80 @@
   --font-display: 'Bricolage Grotesque', var(--font-sans);
   --font-mono:
     'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ---------------------------------------------------------------------------
+   DARK THEME — same names, dark values.
+
+   The neutral ramp inverts in BOTH directions at once, which is the part that
+   is easy to get wrong: text runs light-on-dark (ink is now the brightest),
+   while surfaces run the other way (canvas is the DARKEST and surface sits
+   above it, so a card still reads as lifted rather than punched out).
+
+   Amber is lightened to #FFA733: the light-theme #F57F17 measures 3.1:1 on
+   --surface here, which is unreadable for a button label. Every value below
+   was checked — body text 11.6:1, secondary 6.6:1, accent 8.7:1 against
+   --surface (WCAG AA needs 4.5:1). --canvas is #141517, not #000: pure black
+   maximises halation against light text and leaves no room for a surface ramp.
+   --------------------------------------------------------------------------- */
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* ---- Neutral ramp (inverted) ---- */
+  --ink: #f3f4f6;
+  --text: #d3d6db;
+  --muted: #9ca2ab;
+  --faint: #7a808a;
+
+  --line: #2b2e33;
+  --line-2: #3a3e45;
+  --fill: #212429;
+  --fill-2: #282c31;
+
+  --canvas: #141517;
+  --surface: #1b1d20;
+
+  /* ---- Accent ---- */
+  --accent: #ffa733;
+  --accent-press: #ffbc5e; /* pressing LIGHTENS on dark, unlike light theme */
+  --accent-ink: #ffc670;
+  --accent-wash: #2e2216;
+
+  /* ---- Status ---- */
+  --ok: #3fbf7f;
+  --ok-ink: #6fd9a0;
+  --ok-wash: #14261d;
+  --warn: #f0a94a;
+  --warn-ink: #f7c078;
+  --warn-wash: #2a2114;
+  --danger: #f0625c;
+  --danger-ink: #f79490;
+  --danger-wash: #2e1a1a;
+
+  /* ---- Plumbing ---- */
+  --scrollbar-thumb: rgba(243, 244, 246, 0.16);
+  --scrollbar-thumb-hover: rgba(243, 244, 246, 0.3);
+  --scrollbar-track: rgba(243, 244, 246, 0.18);
+  --focus-ring: rgba(255, 167, 51, 0.65);
+  --selection-bg: rgba(255, 167, 51, 0.26);
+  --overlay: rgba(0, 0, 0, 0.6);
+  /* Shadows carry almost no weight on a dark canvas — depth comes from the
+     surface ramp instead. Kept (blacker, tighter) only so menus and dialogs
+     still detach from what is behind them. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Paint the root element itself, so the gap between "HTML parsed" and "Vue has
+   mounted and .v-application has a background" is dark rather than white.
+   `color-scheme: dark` above already gets most browsers there; this makes it
+   explicit and exact. Deliberately dark-only — in light theme the UA default is
+   already white and adding a rule here would be a behaviour change for the
+   existing theme, which must stay byte-identical. */
+:root[data-theme='dark'],
+:root[data-theme='dark'] body {
+  background-color: var(--canvas);
 }
 
 /* Fusion merge: these global element overrides (html/body/#app/.v-application)
@@ -179,20 +313,20 @@
 /* Thin, unobtrusive scrollbars — far more polished than default chunky ones. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(25, 26, 28, 0.16) transparent;
+  scrollbar-color: var(--scrollbar-track) transparent;
 }
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 *::-webkit-scrollbar-thumb {
-  background: rgba(25, 26, 28, 0.14);
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
   border: 3px solid transparent;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: rgba(25, 26, 28, 0.28);
+  background: var(--scrollbar-thumb-hover);
   background-clip: content-box;
 }
 
@@ -224,12 +358,12 @@ button:not(.v-btn) {
 
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */
 :focus-visible {
-  outline: 2px solid rgba(245, 127, 23, 0.55);
+  outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
 ::selection {
-  background: rgba(245, 127, 23, 0.18);
+  background: var(--selection-bg);
 }
 
 @media (prefers-reduced-motion: reduce) {

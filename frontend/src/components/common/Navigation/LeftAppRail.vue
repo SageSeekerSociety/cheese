@@ -118,6 +118,7 @@
               </template>
               <v-list-item-title>我的设备</v-list-item-title>
             </v-list-item>
+            <ThemeToggle />
             <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
               <template #prepend>
                 <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
@@ -141,6 +142,7 @@ import RailItem from './RailItem.vue'
 import { NavBarProps } from './types'
 
 import logo from '@/assets/logo.svg?url'
+import ThemeToggle from '@/components/common/ThemeToggle.vue'
 
 const navBarProps = withDefaults(defineProps<NavBarProps>(), {
   items: () => [],

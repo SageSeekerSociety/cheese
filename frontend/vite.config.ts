@@ -64,8 +64,25 @@ export default defineConfig({
         display: 'standalone',
         start_url: '/',
         scope: '/',
-        // Theme/background mirror the Vuetify light theme (src/plugins/vuetify.ts):
-        // primary amber #F57F17, canvas #F7F8FA.
+        // Both mirror the LIGHT theme (src/plugins/vuetify.ts): amber #F57F17,
+        // canvas #F7F8FA. The app gained a dark theme, but a web app manifest
+        // has exactly one value for each of these and no media-query form, so
+        // "follow the OS" is not expressible here. Where a choice existed we
+        // took it elsewhere instead:
+        //
+        //   * address bar — `<meta name="theme-color">` in index.html IS
+        //     per-theme, and src/theme.ts rewrites it on every switch. That
+        //     tag also outranks this field in browsers, so the amber below is
+        //     effectively the installed-PWA title bar only.
+        //   * first paint — the boot script in index.html removes the white
+        //     flash for the browser path.
+        //
+        // What is left is `background_color`, the splash screen behind the icon
+        // while an INSTALLED app boots: a dark-theme user still gets one pale
+        // frame there. Left light on purpose — the alternative is a dark splash
+        // for the light majority, and a mid-grey compromise looks broken in
+        // both. Fixing it properly needs a per-theme manifest (or dropping the
+        // splash), which belongs to the PWA workstream, not the design system.
         theme_color: '#F57F17',
         background_color: '#F7F8FA',
         icons: [

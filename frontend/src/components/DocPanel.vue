@@ -3321,7 +3321,7 @@ onBeforeUnmount(() => {
   border: 0;
   background: none;
   font-size: 12px;
-  color: var(--text-muted, #888);
+  color: var(--faint);
   cursor: pointer;
 }
 .site-msg__more:hover {
@@ -3513,7 +3513,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-muted, rgba(0, 0, 0, 0.6));
+  color: var(--muted);
   border-bottom: 1px solid var(--border, rgba(0, 0, 0, 0.08));
 }
 .term-bar__dot {
@@ -3612,7 +3612,7 @@ onBeforeUnmount(() => {
   background: rgba(var(--v-theme-primary), 0.1);
 }
 .doc-editor :deep(.doc-prose th) {
-  background: var(--bg-2, #f7f8fa);
+  background: var(--canvas);
   font-weight: 600;
 }
 
@@ -4041,7 +4041,7 @@ onBeforeUnmount(() => {
    (hidden while hovered — the copy button takes that spot). */
 .doc-editor :deep(pre) {
   position: relative;
-  background: var(--bg-2, #f7f8fa);
+  background: var(--canvas);
   border: 1px solid var(--line-2, #ececec);
   padding: 13px 15px;
   border-radius: 8px;
