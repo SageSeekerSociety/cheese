@@ -203,3 +203,87 @@ def test_roster_carries_nickname_and_avatar(client, bearer):
     # 名册上有、但背后没有用户档案：名字退回 handle，头像为 null。
     assert rows["nobody"]["name"] == "nobody"
     assert rows["nobody"]["avatar_id"] is None
+
+
+def test_roster_reports_the_global_default_avatar_as_no_avatar(client, bearer):
+    """指向全局默认头像的成员，名册要报 avatar_id=null。
+
+    注册的每条路径都写死 ``default_avatar_id=1``，所以「档案指向 default 类型的
+    头像」意味着这个人从来没设过头像，不是他选了这张脸。照原样报出去，所有没设过
+    头像的人在聊天面板里会共用同一张脸 —— 比按 handle 哈希、每人一色的彩色首字母
+    更难分辨谁是谁，而认人正是头像在聊天面板里唯一的用处。自己挑的 predefined 和
+    自己传的 upload 照常报原 id。
+    """
+    import asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.avatars.models import Avatar
+    from app.domain.user.models import User, UserProfile
+
+    picks: dict[str, str] = {
+        "default_dan": "default",
+        "predefined_pat": "predefined",
+        "upload_uma": "upload",
+    }
+    avatar_ids: dict[str, int] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as s:
+            now = datetime.now(UTC)
+            for handle, avatar_type in picks.items():
+                avatar = Avatar(
+                    url="",
+                    name=f"{avatar_type}.png",
+                    avatar_type=avatar_type,
+                    created_at=now,
+                    usage_count=0,
+                )
+                s.add(avatar)
+                await s.flush()
+                avatar_ids[handle] = avatar.id
+                u = User(
+                    username=handle,
+                    email=f"{handle}@example.com",
+                    created_at=now,
+                    updated_at=now,
+                )
+                s.add(u)
+                await s.flush()
+                s.add(
+                    UserProfile(
+                        user_id=u.id,
+                        nickname=handle.upper(),
+                        intro="",
+                        avatar_id=avatar.id,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            await s.commit()
+
+    asyncio.run(_seed())
+
+    project_id = _create_project(client)
+    for handle in picks:
+        assert (
+            client.post(
+                f"/api/projects/{project_id}/members",
+                json={"user_handle": handle},
+                headers=bearer(OWNER),
+            ).status_code
+            == 200
+        )
+
+    rows = {
+        m["user_handle"]: m
+        for m in client.get(f"/api/projects/{project_id}/members").json()["data"][
+            "data"
+        ]
+    }
+    # 没设过头像 → null，前端退回彩色首字母。
+    assert rows["default_dan"]["avatar_id"] is None
+    # 自己挑的 / 自己传的 → 照常给出图片 id。
+    assert rows["predefined_pat"]["avatar_id"] == avatar_ids["predefined_pat"]
+    assert rows["upload_uma"]["avatar_id"] == avatar_ids["upload_uma"]
+    # 名字不受影响：三个人都还是自己的昵称。
+    assert rows["default_dan"]["name"] == "DEFAULT_DAN"

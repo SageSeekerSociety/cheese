@@ -52,8 +52,10 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     members, total = await MemberService(db).list_for_project(project_id)
     # Attach display names (User.name) so the UI can resolve @名字 → handle, and
     # the profile's avatar_id so the chat panel can render the real avatar
-    # instead of a colored initial. Both come off the same roster row; a handle
-    # with no fusion profile behind it has avatar_id None (→ initial fallback).
+    # instead of a colored initial. Both come off the same roster row; avatar_id
+    # is None (→ initial fallback) both for a handle with no fusion profile
+    # behind it and for anyone still on the global default avatar, i.e. anyone
+    # who never picked one — see ``ProjectRepository.list_members``.
     profiles = {
         m["handle"]: m for m in await ProjectRepository(db).list_members(project_id)
     }
