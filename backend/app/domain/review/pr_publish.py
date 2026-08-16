@@ -191,7 +191,7 @@ async def _pr_text(
     --subject/--body`), falling back to the topic title when the card was filed
     without one.
 
-    Same builders the merge path uses (`review/services.py`), on purpose: the
+    Same builders the merge path uses (`review/pr_text.py`), on purpose: the
     PR a reviewer reads and the squash commit that lands on main must not be
     able to say two different things about the same change.
 
@@ -199,8 +199,8 @@ async def _pr_text(
     验收卡即合并本 PR" — is gone. It described the platform's workflow to people
     who were already inside it, while the reviewer opening the PR on GitHub
     wanted to know what changed and why."""
+    from app.domain.review import pr_text
     from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.review.services import _change_subject, _pr_body
     from app.domain.topic.repositories import TopicRepository
     from app.domain.workspace import identity
 
@@ -214,7 +214,7 @@ async def _pr_text(
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.
-    return _change_subject(card, topic), _pr_body(topic, "", card, author)
+    return pr_text.change_subject(card, topic), pr_text.pr_body(topic, "", card, author)
 
 
 async def record_pr(

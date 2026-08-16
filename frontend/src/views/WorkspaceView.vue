@@ -1285,6 +1285,15 @@ onUnmounted(() => {
                   推荐理由：{{ pendingCard.routing_reason }}
                 </div>
                 <!--
+                  提交与 PR 规范: 采纳会把整个分支压成一个提交，标题就是这一行。
+                  采纳前是最后一次能反对它的机会，所以它必须在按钮上方可见，而不是
+                  等它进了 git 历史才有人发现写的是话题标题。
+                -->
+                <div v-if="pendingCard.change_subject" class="mb-3">
+                  <div class="text-caption text-medium-emphasis">合并后的提交标题</div>
+                  <code class="text-caption">{{ pendingCard.change_subject }}</code>
+                </div>
+                <!--
                   机器闸门 (eval C2) + 人类授权动作前移 (2026-08-10): 闸门跑的是
                   check.sh --no-tests——lint 和类型，没有测试。真 CI 只在 PR 上跑，
                   而 PR 是你点下去之后才开的。所以这一格绝不能是绿勾：那等于让卡面

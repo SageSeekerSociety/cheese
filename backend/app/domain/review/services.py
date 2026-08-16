@@ -35,7 +35,7 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review import archive, commit_message, delivery, pr_publish
+from app.domain.review import archive, commit_message, delivery, pr_publish, pr_text
 from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
@@ -135,91 +135,6 @@ _MERGE_FAILED_MESSAGE = (
     "The card remains pending and the topic stays active; repair the workspace "
     "and retry."
 )
-
-
-def _fallback_subject(topic: Topic) -> str:
-    """The subject for a card filed without one — every card that predates
-    `change_subject`, and any client that still doesn't send it.
-
-    It is deliberately ugly. `chore: <话题标题>` is a truthful admission that
-    nobody wrote a commit subject for this change, and it reads as clearly
-    wrong in `git log`, which is the point: the fix is to file the card with
-    `--subject`, not to make the fallback look presentable."""
-    room = commit_message.MAX_SUBJECT - len("chore: ") - len(" (#0000)")
-    title = topic.title or "untitled topic"
-    trimmed = title if len(title) <= room else f"{title[: room - 1]}…"
-    return f"chore: {trimmed}"
-
-
-def _change_subject(card: AcceptCard | None, topic: Topic) -> str:
-    subject = commit_message.valid_subject(
-        getattr(card, "change_subject", None) if card is not None else None
-    )
-    return subject or _fallback_subject(topic)
-
-
-def _pr_trailers(
-    topic: Topic, decided_by: str, author: identity.GitIdentity | None = None
-) -> str:
-    """Who this change belongs to, in the machine-readable form git and GitHub
-    both already understand. Requested-by = 话题发起人 (Topic.created_by),
-    Reviewed-by = 批准人 (AcceptCard.decided_by), Cheese-Topic = the room it
-    came out of.
-
-    `Co-authored-by` is the load-bearing one: squash-merging collapses the
-    branch into ONE commit whose author GitHub picks, and a trailer is the only
-    way to make sure the human who asked for the change is attached to it on
-    GitHub — with an avatar, a link, and contribution credit — instead of the
-    unlinkable `cheese@zhishi.local` the platform commits under."""
-    lines = []
-    if topic.created_by:
-        lines.append(f"Requested-by: {topic.created_by}")
-    if decided_by:
-        # Empty when the PR is being OPENED (pr_publish): nobody has accepted
-        # yet, and `Reviewed-by:` with a blank or a merely-routed name would
-        # claim a review that has not happened.
-        lines.append(f"Reviewed-by: {decided_by}")
-    lines.append(f"Cheese-Topic: {topic.id}")
-    coauthor = identity.coauthored_by(author)
-    if coauthor:
-        lines.append("")  # blank line: git wants trailers in one block, and
-        lines.append(coauthor)  # Co-authored-by is read from the LAST block
-    return "\n".join(lines)
-
-
-def _pr_body(
-    topic: Topic,
-    decided_by: str,
-    card: AcceptCard | None = None,
-    author: identity.GitIdentity | None = None,
-) -> str:
-    """The PR description: what the change is for, then the trailers.
-
-    The old body said only that 芝士 opened this on someone's behalf — true,
-    and useless to a reviewer, who can see that from the PR's own metadata. The
-    body a reviewer needs is the WHY, which is why `change_body` exists."""
-    body = (getattr(card, "change_body", None) or "").strip() if card else ""
-    parts = [body] if body else []
-    parts.append(_pr_trailers(topic, decided_by, author))
-    return "\n\n".join(parts)
-
-
-def _pr_merge_commit_title(card: AcceptCard | None, topic: Topic, number: int) -> str:
-    """The squash commit's title line — the subject of the ONE commit this
-    topic leaves in the project's history."""
-    return commit_message.merge_subject(_change_subject(card, topic), number)
-
-
-def _pr_merge_commit_message(
-    topic: Topic,
-    decided_by: str,
-    card: AcceptCard | None = None,
-    author: identity.GitIdentity | None = None,
-) -> str:
-    """The squash commit's BODY: the why, then the trailers. The subject lives
-    in `_pr_merge_commit_title`; repeating it here would put it in the commit
-    twice."""
-    return _pr_body(topic, decided_by, card, author)
 
 
 #: How much of the failure detail rides in the nudge message. The detail is
@@ -1346,8 +1261,10 @@ class AcceptService:
             repo=repo,
             head=remote_branch,
             base=base,
-            title=_change_subject(card, topic),
-            body=_pr_body(topic, decided_by, card, await self._change_author(topic)),
+            title=pr_text.change_subject(card, topic),
+            body=pr_text.pr_body(
+                topic, decided_by, card, await self._change_author(topic)
+            ),
             token=token,
         )
 
@@ -1711,8 +1628,8 @@ class AcceptService:
             repo=repo,
             number=card.pr_number,
             token=creds.write,
-            commit_title=_pr_merge_commit_title(card, topic, number),
-            commit_message=_pr_merge_commit_message(
+            commit_title=pr_text.merge_commit_title(card, topic, number),
+            commit_message=pr_text.merge_commit_message(
                 topic, card.decided_by or "", card, await self._change_author(topic)
             ),
         )
@@ -2482,8 +2399,8 @@ class AcceptService:
             # all about what changed.
             await client.merge_pr(
                 number,
-                title=_pr_merge_commit_title(card, topic, number),
-                message=_pr_merge_commit_message(
+                title=pr_text.merge_commit_title(card, topic, number),
+                message=pr_text.merge_commit_message(
                     topic, decided_by, card, await self._change_author(topic)
                 ),
             )
@@ -2725,8 +2642,8 @@ class AcceptService:
             repo=repo,
             number=number,
             token=creds.write,
-            commit_title=_pr_merge_commit_title(card, topic, number),
-            commit_message=_pr_merge_commit_message(
+            commit_title=pr_text.merge_commit_title(card, topic, number),
+            commit_message=pr_text.merge_commit_message(
                 topic, card.decided_by or "", card, await self._change_author(topic)
             ),
         )

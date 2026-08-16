@@ -425,6 +425,11 @@ export interface AcceptCard {
   topic_id: string
   reviewer_handle: string
   routing_reason: string
+  // 提交与 PR 规范: the Conventional Commits subject + body this topic will be
+  // squash-merged under. Null on a card filed without them (the platform then
+  // falls back to `chore: <话题标题>`).
+  change_subject: string | null
+  change_body: string | null
   status: AcceptStatus
   decided_by: string | null
   decided_at: string | null
