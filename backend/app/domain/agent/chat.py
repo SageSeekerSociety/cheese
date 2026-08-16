@@ -797,10 +797,7 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
         for i, b in enumerate(history)
         if _is_human_input(b)
         and consumed_turn(b) is None
-        and (
-            CONSUMED_TURN_META_KEY in (b.meta or {})
-            or i > legacy_watermark
-        )
+        and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
     ]
 
 
