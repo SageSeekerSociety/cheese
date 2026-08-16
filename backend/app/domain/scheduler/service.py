@@ -279,9 +279,15 @@ class SchedulerService:
 
         runner = get_turn_runner()
 
-        def nudge(topic_id: uuid.UUID, content: str) -> None:
+        def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
             runner.submit(
-                self._chat, topic_id, author="system", content=content, summon=True
+                self._chat,
+                topic_id,
+                author="system",
+                content=content,
+                summon=True,
+                nudge_event=event,
+                nudge_meta=meta,
             )
 
         return await gate_sweep.sweep(self._sessions, nudge=nudge)

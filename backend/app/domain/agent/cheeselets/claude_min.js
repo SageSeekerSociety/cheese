@@ -6,15 +6,26 @@
 // It exposes a single server-callable function, `prompt(text)`, that types one turn's
 // prompt into the interactive `claude` running in this screen.
 //
-// It reads the terminal for ONE mechanical purpose — a readiness gate: type only once
-// Claude Code's input box (the `❯` prompt) is painted, so the paste is never dropped
-// into a splash/onboarding frame. This mirrors the tmux backend's `pane_ready`
-// handshake; it infers no agent state and drives no platform behavior.
+// It reads the terminal for TWO mechanical purposes. First, a readiness gate: type
+// only once Claude Code's input box (the `❯` prompt) is painted, so the paste is
+// never dropped into a splash/onboarding frame. Second — and this is the #430
+// lesson — VERIFICATION: `cheese.term.write` is fire-and-forget (a failed
+// send-keys is logged connector-side and never surfaces here), so an open-loop
+// paste-then-Enter can silently lose either half. A lost paste made the driver
+// "submit" an empty composer and report success while claude sat idle (the
+// 300s zero-output turns); a swallowed Enter left the prompt sitting in the
+// composer forever. So every write is CONFIRMED against the screen before the
+// state machine advances, and re-issued until it visibly took effect.
 //
-// The runtime does not await a Promise returned from an exposed function, so `prompt`
-// is synchronous: it records the pending text and returns immediately; the actual
-// typing happens on the next terminal change once the input box is ready (a `sent`
-// guard makes it fire exactly once). Hot-reload safe (fresh VM each load).
+// The runtime has NO timers (setTimeout is not defined — using one threw here
+// every tick, which both skipped the Enter AND left the guards unset, so every
+// tick re-pasted the prompt). The terminal's change/heartbeat cadence is the
+// clock: the poller fires on every screen change and at least every ~1.2s even
+// on a static screen, so each retry below is at most a heartbeat away.
+//
+// The runtime does not await a Promise returned from an exposed function, so
+// `prompt` is synchronous: it records the pending text and returns immediately;
+// the driving happens on subsequent ticks. Hot-reload safe (fresh VM each load).
 
 const ESC = '\x1b'
 const ENTER = '\r'
@@ -24,8 +35,27 @@ const PASTE_START = ESC + '[200~'
 const PASTE_END = ESC + '[201~'
 
 let pending = null // the prompt text waiting to be typed
-let sent = false // becomes true once we have SUBMITTED the pending prompt
-let pasted = false // the body is in the composer; Enter goes on a LATER tick
+let snippet = '' // screen-verifiable fragment of the prompt (first line's head)
+// idle -> paste (need to write the body) -> sent (body written, confirm it's in
+// the composer) -> submit (Enter written, confirm the composer let go) -> idle
+let phase = 'idle'
+let tries = 0
+// Heartbeat guarantees a tick at least every ~1.2s, so this bounds the whole
+// delivery at well under the server's own turn-delivery timeout; past it we
+// stop touching the terminal and let the server-side retry re-drive us.
+const MAX_TRIES = 40
+
+function composerLine() {
+  // The composer is the LAST `❯` line on screen: Claude Code renders history
+  // user messages with `>`, menus are excluded by ready(), so the last `❯` is
+  // the input box. Returns null when no input box is painted (splash, or the
+  // TUI replaced it while running a turn).
+  const s = cheese.term.read()
+  const i = s.lastIndexOf('❯')
+  if (i === -1) return null
+  const nl = s.indexOf('\n', i)
+  return nl === -1 ? s.slice(i) : s.slice(i, nl)
+}
 
 function ready() {
   // The `❯` input box means Claude Code is at the prompt and will accept a paste.
@@ -40,44 +70,86 @@ function ready() {
   return true
 }
 
-// Paste and submit are split across TWO terminal ticks. The Enter must not ride
-// the same instant as the paste — while the TUI is still ingesting the bracketed
-// body it swallows the submit, and the prompt sits in the composer forever
-// (observed live on the dev box). The runtime has NO timers (setTimeout is not
-// defined — using one threw here every tick, which both skipped the Enter AND
-// left the guards unset, so every tick re-pasted the prompt), so the terminal's
-// own change/heartbeat cadence is the clock: paste on one tick, submit on the next.
 function tryType() {
-  if (sent || pending === null) return
-  if (pasted) {
-    // A tick has passed since the paste, so the TUI has ingested it — submit.
-    // Deliberately NOT re-checking ready(): the composer now holds our text, and
-    // a transient non-ready frame must not strand an already-pasted prompt.
-    cheese.term.write(ENTER)
-    sent = true
-    pending = null
-    pasted = false
-    cheese.log('claude_min: prompt submitted')
+  if (phase === 'idle' || pending === null) return
+  const line = composerLine()
+  if (phase === 'paste' && !ready()) {
+    // Waiting for the input box costs NOTHING against the retry budget: a
+    // fresh screen's launcher + claude first boot takes well over a minute,
+    // and burning the budget on that wait made the driver abandon the prompt
+    // before claude could even accept it (measured live 2026-08-16: "giving
+    // up in phase paste after 40 ticks" while the pane was still booting;
+    // the turn then sat until the server's 300s retry and read as
+    // zero-output). The prompt is held until the box paints; the server's
+    // own turn retry remains the outer bound.
     return
   }
-  if (!ready()) return
-  // Set the guard BEFORE the write: if the write throws, the next tick must not
-  // paste a second copy (that pile-up is exactly what the setTimeout bug caused).
-  pasted = true
-  cheese.term.write(PASTE_START + String(pending) + PASTE_END)
-  cheese.log('claude_min: prompt pasted')
+  tries += 1
+  if (tries > MAX_TRIES) {
+    cheese.log('claude_min: giving up in phase ' + phase + ' after ' + MAX_TRIES + ' ticks')
+    phase = 'idle'
+    pending = null
+    return
+  }
+  if (phase === 'paste') {
+    cheese.term.write(PASTE_START + String(pending) + PASTE_END)
+    // Not an advance to "submitted" — the next tick VERIFIES the body actually
+    // reached the composer before the Enter goes anywhere near it.
+    phase = 'sent'
+    return
+  }
+  if (phase === 'sent') {
+    if (line !== null && line.indexOf(snippet) !== -1) {
+      // The body is visibly in the composer. A tick has passed since the paste,
+      // so the TUI has ingested it — submit.
+      cheese.term.write(ENTER)
+      phase = 'submit'
+      cheese.log('claude_min: prompt pasted, submitting')
+      return
+    }
+    // The write was lost (send-keys failures never surface here) — repaste on
+    // the next ready tick instead of "confirming" a blank composer.
+    phase = 'paste'
+    return
+  }
+  if (phase === 'submit') {
+    if (line === null || line.indexOf(snippet) === -1) {
+      // The composer let go of the body (or the input box gave way to a running
+      // turn) — the submit took.
+      phase = 'idle'
+      pending = null
+      cheese.log('claude_min: prompt submitted')
+      return
+    }
+    // The composer still holds the body: the Enter was swallowed (it rode too
+    // close to the paste, or the write was lost) — send it again. An extra
+    // Enter on an already-empty composer is a no-op, so over-sending is safe.
+    cheese.term.write(ENTER)
+    return
+  }
 }
 
-// Type when the screen reaches the input box (or right away if already there).
+// Drive on every screen change and on the poller's static-screen heartbeat.
 cheese.term.onChange(tryType)
 
 // The one server→cheeselet function: record the turn's prompt and try immediately.
-// Returns synchronously (the runtime does not await a returned Promise); typing is
-// gated on readiness via onChange above.
+// Returns synchronously (the runtime does not await a returned Promise); driving
+// is gated on readiness via onChange above.
 cheese.expose('prompt', (text) => {
   pending = String(text)
-  sent = false
-  pasted = false
+  // The verification anchor: the head of the first non-blank line, short enough
+  // to survive the composer's soft-wrap at any sane pane width.
+  const lines = pending.split('\n')
+  let first = ''
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].replace(/\s/g, '') !== '') {
+      first = lines[i]
+      break
+    }
+  }
+  snippet = first.slice(0, 24)
+  phase = 'paste'
+  tries = 0
   tryType()
   return { ok: true, ready: ready() }
 })

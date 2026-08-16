@@ -15,7 +15,7 @@ import asyncio
 import uuid
 
 from tests.conftest import wait_turns_idle
-from tests.integration.conftest import session_auth_headers
+from tests.integration.conftest import room_text, session_auth_headers
 
 # Reuse the 两阶段采纳 harness instead of rebuilding it — see
 # .claude/rules/backend-tests.md.
@@ -138,7 +138,7 @@ def test_archiving_a_stage_one_card_revokes_it_and_leaves_the_pr_open(
 
         # 留痕：话题里有一条系统消息说清 PR 被放手了。
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
         assert f"停止推进 PR #{number}" in contents
 
         # 通知：强提醒发给当初授权的人（alice），而不是归档的人（bob）。
@@ -319,7 +319,7 @@ def test_poll_pause_note_does_not_swallow_a_later_ci_failure(client, monkeypatch
 
         # 芝士必须被叫到，note 必须换成 CI 失败
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-        contents = "\n".join(b.get("content") or "" for b in blocks)
+        contents = room_text(blocks)
         assert "pytest: 7 failed" in contents
         note = _cards(client, tid)[0]["note"]
         assert "CI 检查未通过" in note

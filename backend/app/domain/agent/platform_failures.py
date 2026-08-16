@@ -58,8 +58,14 @@ _RUNTIME_IMAGE_FAILURES = (
 class PlatformFailure:
     code: str
     title: str
+    #: 卡面上那一句。**一句**，不是一段 —— 事故卡 = 眉标 + 标题 + 正文 + 状态，
+    #: 正文写成 3-5 句，卡就是 5-6 行，房间里连着几张就没法看了。
     content: str
     retryable: bool
+    #: 展开才看的那部分：常见原因、该找谁、为什么反复重试没用。以前这些都挤在
+    #: `content` 里。收起来 ≠ 删掉 —— 它照样进 `meta`，前端折叠展示，芝士从 API
+    #: 读到的也还是全量（平台提示统一契约：信息不能丢，只能收起来）。
+    detail: str = ""
     severity: str = "error"
     # Is this failure a property of THIS TURN, or of THE MACHINE the turn ran on?
     # Only host-scoped failures count towards "this machine is dead" — retrying a
@@ -75,15 +81,18 @@ class PlatformFailure:
             "severity": self.severity,
             "title": self.title,
             "retryable": self.retryable,
+            "detail": self.detail or None,
+            "detail_label": "详细说明" if self.detail else None,
         }
 
 
 STORAGE_EXHAUSTED = PlatformFailure(
     code=STORAGE_EXHAUSTED_CODE,
     title="运行环境存储空间不足",
-    content=(
-        "这轮因运行环境存储空间不足而暂停，项目文件和已完成的改动都还在。"
-        "平台正在清理临时空间，请稍后再 @芝士 继续；若持续出现，请联系管理员。"
+    content="这轮因运行环境存储空间不足而暂停，平台正在清理，稍后可继续。",
+    detail=(
+        "项目文件和已完成的改动都还在。平台正在清理临时空间，"
+        "请稍后再 @芝士 继续；若持续出现，请联系管理员。"
     ),
     retryable=True,
     # The disk belongs to the machine. Another container on the same box hits the
@@ -94,8 +103,9 @@ STORAGE_EXHAUSTED = PlatformFailure(
 RUNTIME_IMAGE_MISSING = PlatformFailure(
     code=RUNTIME_IMAGE_MISSING_CODE,
     title="Agent 运行组件暂时缺失",
-    content=(
-        "平台正在重新准备 Agent 运行组件，本轮还没有开始执行，项目文件没有受到影响。"
+    content="平台正在重新准备 Agent 运行组件，本轮没能开始执行。",
+    detail=(
+        "本轮还没有开始执行，项目文件没有受到影响。"
         "请稍后再 @芝士 重试；若持续出现，请联系管理员。"
     ),
     retryable=True,
@@ -108,8 +118,9 @@ RUNTIME_IMAGE_MISSING = PlatformFailure(
 HOST_UNREACHABLE = PlatformFailure(
     code=HOST_UNREACHABLE_CODE,
     title="算力机器连不上",
-    content=(
-        "这轮没能开始——本话题绑定的算力机器连不上，项目文件和已提交的改动都还在。"
+    content="这轮没能开始——本话题绑定的算力机器连不上。",
+    detail=(
+        "项目文件和已提交的改动都还在。"
         "请检查该机器是否在线；若它持续联系不上，平台会把本话题换到别的机器上继续。"
     ),
     retryable=True,
@@ -120,10 +131,11 @@ HOST_UNREACHABLE = PlatformFailure(
 SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
     code=SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE,
     title="平台的模型订阅凭据已过期",
-    content=(
-        "这轮没能开始：平台的 Claude 订阅凭据已过期，需要有主机权限的人在盒子上"
-        "重新认证（claude setup-token，或恢复 .credentials.json）。这不是容器、"
-        "磁盘或网络的问题，也不是芝士卡在某一步——所以这里没有「已完成的改动」。"
+    content="这轮没能开始：平台的模型订阅凭据已过期，要人在主机上重新认证。",
+    detail=(
+        "需要有主机权限的人在盒子上重新认证（claude setup-token，或恢复 "
+        ".credentials.json）。这不是容器、磁盘或网络的问题，也不是芝士卡在某一步"
+        "——所以这里没有「已完成的改动」。"
         "反复 @芝士 不会有用；凭据在主机侧刷新后，下一次 @ 它就会自动恢复。"
     ),
     # Not retried automatically: another turn against the same dead credential just
@@ -140,10 +152,11 @@ SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
 WORKSPACE_VCS_PERMS = PlatformFailure(
     code=WORKSPACE_VCS_PERMS_CODE,
     title="工作区版本库权限异常",
-    content=(
-        "这轮没能开始：工作区版本库里有一个元数据文件的属主不是平台进程，"
-        "平台读不到它，话题就起不来。项目文件和已提交的改动都没有受影响，"
-        "版本历史也没有动过。平台会在下一次访问时自动清掉这个文件并恢复，"
+    content="这轮没能开始：工作区版本库有个元数据文件平台读不到，话题起不来。",
+    detail=(
+        "那个文件的属主不是平台进程，平台读不到它，话题就起不来。"
+        "项目文件和已提交的改动都没有受影响，版本历史也没有动过。"
+        "平台会在下一次访问时自动清掉这个文件并恢复，"
         "请稍后再 @芝士 重试；若反复出现，请把这条提示转给管理员。"
     ),
     retryable=True,

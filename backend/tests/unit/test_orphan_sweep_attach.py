@@ -31,11 +31,14 @@ class _Chat:
         self._spool = spool
         self._probe_error = probe_error
         self.events: list[tuple[uuid.UUID, str]] = []
+        # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在 meta.detail。
+        self.notices: list[tuple[uuid.UUID, str]] = []
         self.settled: list[uuid.UUID] = []
         self.converse_calls: list[dict] = []
 
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         self.events.append((topic_id, text))
+        self.notices.append((topic_id, text + ((meta or {}).get("detail") or "")))
         return {"id": "b1", "content": text}
 
     async def orphan_turn_evidence(self, topic_id, turn_ids):
@@ -151,7 +154,7 @@ async def test_zero_evidence_resends_the_original_prompt_once(tmp_path, monkeypa
     assert call["author"] == "system"
     assert call["is_resume"] is True
     assert chat.settled == []  # nothing to attach to
-    assert any("重发" in text for _tid, text in chat.events)
+    assert any("重发" in text for _tid, text in chat.notices)
 
 
 @pytest.mark.anyio
@@ -174,7 +177,8 @@ async def test_five_orphans_one_topic_get_at_most_one_action(tmp_path, monkeypat
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["content"] == "任务4"  # the newest one
     assert len(chat.events) == 1  # one verdict, not five
-    assert "4" in chat.events[0][1]  # the other four are named, not silent
+    # 另外四轮没被吞掉：数目在展开区里说清楚了（房间那一行只放"出了什么事"）。
+    assert "4" in chat.notices[0][1]
 
 
 @pytest.mark.anyio

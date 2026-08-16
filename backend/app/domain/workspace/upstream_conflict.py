@@ -27,6 +27,12 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.chat import ChatService
+from app.domain.agent.platform_notices import (
+    EVENT_UPSTREAM_CONFLICT,
+    SEVERITY_WARN,
+    WHO_CHEESE,
+    notice,
+)
 from app.domain.agent.runtime import TurnRunner
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
@@ -103,5 +109,21 @@ async def dispatch(
         await db.flush()
         return None
 
-    runner.submit(chat, task.id, author="system", content=_prompt(files), summon=True)
+    runner.submit(
+        chat,
+        task.id,
+        author="system",
+        content=_prompt(files),
+        summon=True,
+        # 平台提示统一契约: 一行给房间，完整冲突文件清单进 meta.detail
+        # （`_prompt` 里那份为了可读只列前 15 个）。给芝士的 content 一字未动。
+        nudge_event=f"⚠️ 同步上游时合并冲突，芝士在解（{len(files)} 个文件）",
+        nudge_meta=notice(
+            EVENT_UPSTREAM_CONFLICT,
+            severity=SEVERITY_WARN,
+            who=WHO_CHEESE,
+            detail="\n".join(files) or "（见工作区冲突标记）",
+            detail_label="冲突文件",
+        ),
+    )
     return {"topic_id": str(task.id), "files": files}
