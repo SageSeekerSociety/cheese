@@ -23,7 +23,7 @@
           icon
           variant="text"
           size="small"
-          color="grey-darken-1"
+          color="on-surface-variant"
           class="add-reaction-btn ml-1 mb-1"
           density="comfortable"
         >
@@ -108,7 +108,7 @@ const handleToggleReaction = (reactionTypeId: number) => {
 
   &:hover {
     transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: var(--shadow-1);
   }
 }
 

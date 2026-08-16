@@ -571,7 +571,7 @@ watch([filterStatus, searchQuery], () => {
 .participant-item:hover {
   background-color: var(--v-theme-surface-light);
   transform: translateY(-2px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-1);
 }
 
 .border-pending {
