@@ -82,6 +82,18 @@ class BlockRepository:
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
 
+    async def has_eid(self, topic_id: uuid.UUID, eid: str) -> bool:
+        """Whether this topic already materialized a hook event id."""
+        stmt = (
+            select(Block.id)
+            .where(
+                Block.topic_id == topic_id,
+                Block.meta["eid"].as_string() == eid,
+            )
+            .limit(1)
+        )
+        return await self._session.scalar(stmt) is not None
+
     async def delete(self, block: Block) -> None:
         await self._session.delete(block)
         await self._session.flush()

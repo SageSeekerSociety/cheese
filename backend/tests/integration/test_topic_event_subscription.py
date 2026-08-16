@@ -89,6 +89,23 @@ class _IdleHooksProvider(HooksTurnProvider[str]):
         del screen, prompt
 
 
+class _RecoveringHooksProvider(_IdleHooksProvider):
+    """A provider that rediscovers one surviving screen after process restart."""
+
+    def __init__(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        self.project_id = project_id
+        self.topic_id = topic_id
+        super().__init__(router=HookRouter())
+
+    async def recover_subscriptions(self, device_id: str | None = None):
+        del device_id
+        subscription = await self.ensure_subscription(
+            self.project_id, self.topic_id, paused=True
+        )
+        self._live[self.topic_id] = "surviving-screen"
+        return [subscription]
+
+
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
     async with factory() as session:  # type: ignore[operator]
         project = await ProjectService(session).create(name="P", owner_handle="u1")
@@ -497,4 +514,164 @@ async def test_marker_timeout_keeps_subscription_for_late_output(
 
     assert late["block"]["meta"]["platform_unsolicited"] is True
     assert uuid.UUID(late["block"]["turn_id"]) != platform_turn_id
+    await provider.drop_subscription(topic_id)
+
+
+async def test_restart_replays_spool_into_an_unsolicited_turn(
+    client, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "restart-message-1",
+        {
+            "hook_event_name": "MessageDisplay",
+            "delta": "重启期间完成了",
+        },
+    )
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "restart-stop-1",
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "重启期间完成了",
+            "session_id": "session-after-restart",
+        },
+    )
+    provider = _RecoveringHooksProvider(project_id, topic_id)
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert await service.recover_hook_subscriptions() == 1
+        message = await asyncio.wait_for(room.get(), 1)
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    assert message["type"] == "assistant_block"
+    assert message["block"]["meta"] == {
+        "eid": "restart-message-1",
+        "platform_unsolicited": True,
+    }
+    assert message["block"]["turn_id"] is not None
+    assert event_spool.spool_entries(ws.spool_dir(project_id, topic_id)) == []
+    await provider.drop_subscription(topic_id)
+
+    # A second restart begins at the latest persisted eid, inclusively. Replaying
+    # that cursor is safe (D5), primes the Stop text-dedup state, and the later
+    # event still lands in a fresh correctly-attributed interval.
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "restart-message-1",
+        {
+            "hook_event_name": "MessageDisplay",
+            "delta": "重启期间完成了",
+        },
+    )
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "restart-message-2",
+        {
+            "hook_event_name": "MessageDisplay",
+            "delta": "恢复后又完成了一步",
+        },
+    )
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "restart-stop-2",
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "恢复后又完成了一步",
+        },
+    )
+    provider = _RecoveringHooksProvider(project_id, topic_id)
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    async with broker.subscribe(str(topic_id)) as room:
+        assert await service.recover_hook_subscriptions() == 1
+        recovered_message = await asyncio.wait_for(room.get(), 1)
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    assert recovered_message["block"]["meta"]["eid"] == "restart-message-2"
+    assert recovered_message["block"]["turn_id"] != message["block"]["turn_id"]
+    async with factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    assert [
+        block.meta.get("eid")
+        for block in blocks
+        if isinstance(block.meta, dict) and block.meta.get("eid")
+    ].count("restart-message-1") == 1
+    assert event_spool.spool_entries(ws.spool_dir(project_id, topic_id)) == []
+    await provider.drop_subscription(topic_id)
+
+
+async def test_repeated_hook_eid_is_a_persistence_noop(client, tmp_path) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    provider = _IdleHooksProvider(router=HookRouter())
+    ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+    payload = {
+        "hook_event_name": "MessageDisplay",
+        "delta": "只应该出现一次",
+        "_eid": "same-message-eid",
+    }
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        tool = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo once"},
+            "_eid": "same-tool-eid",
+        }
+        assert provider._router.push(str(topic_id), dict(tool))
+        assert provider._router.push(str(topic_id), dict(tool))
+        assert provider._router.push(str(topic_id), dict(payload))
+        assert provider._router.push(str(topic_id), dict(payload))
+        assert provider._router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "只应该出现一次",
+                "_eid": "same-message-stop",
+            },
+        )
+        assert (await asyncio.wait_for(room.get(), 1))["type"] == "event_block"
+        assert (await asyncio.wait_for(room.get(), 1))["type"] == "assistant_block"
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    async with factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    matches = [
+        block
+        for block in blocks
+        if isinstance(block.meta, dict) and block.meta.get("eid") == "same-message-eid"
+    ]
+    assert len(matches) == 1
+    tool_matches = [
+        block
+        for block in blocks
+        if isinstance(block.meta, dict) and block.meta.get("eid") == "same-tool-eid"
+    ]
+    assert len(tool_matches) == 1
     await provider.drop_subscription(topic_id)

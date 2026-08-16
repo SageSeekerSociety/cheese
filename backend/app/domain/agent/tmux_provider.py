@@ -23,6 +23,7 @@ continuous inside it (no --resume needed — the session IS the continuity).
 import asyncio
 import hashlib
 import json
+import logging
 import uuid
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from app.domain.agent.hooks_substrate import (
     ActivityTracker,
     HooksTurnProvider,
     ScreenSetupError,
+    TopicSubscription,
     hooks_settings,
 )
 from app.domain.agent.sandbox_notices import warn_container_rebuilt
@@ -54,6 +56,8 @@ _APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
+
+logger = logging.getLogger(__name__)
 
 
 def _cheese_cli_mount(session_host: str) -> list[str]:
@@ -275,6 +279,58 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
 
     def available(self) -> bool:
         return ws.sandbox_available()
+
+    async def recover_subscriptions(
+        self, device_id: str | None = None
+    ) -> list[TopicSubscription]:
+        """Subscribe every still-running topic container after a backend restart."""
+        if device_id is not None:
+            return []
+        rc, out, err = await _docker(
+            "ps", "--filter", "label=cheesex-tmux=1", "--format", "{{.Names}}"
+        )
+        if rc != 0:
+            logger.warning(
+                "tmux subscription recovery could not list containers: %s", err
+            )
+            return []
+
+        recovered: list[TopicSubscription] = []
+        for name in (line.strip() for line in out.splitlines()):
+            if not name:
+                continue
+            env_rc, env_out, env_err = await _docker(
+                "inspect",
+                "-f",
+                "{{range .Config.Env}}{{println .}}{{end}}",
+                name,
+            )
+            if env_rc != 0:
+                logger.warning(
+                    "tmux subscription recovery could not inspect %s: %s",
+                    name,
+                    env_err,
+                )
+                continue
+            env: dict[str, str] = {}
+            for line in env_out.splitlines():
+                key, separator, value = line.partition("=")
+                if separator:
+                    env[key] = value
+            try:
+                project_id = uuid.UUID(env["CHEESE_PROJECT"])
+                topic_id = uuid.UUID(env["CHEESE_TOPIC"])
+            except (KeyError, ValueError):
+                logger.warning(
+                    "tmux subscription recovery skipped %s with invalid scope", name
+                )
+                continue
+            subscription = await self.ensure_subscription(
+                project_id, topic_id, paused=True
+            )
+            self._live[topic_id] = name
+            recovered.append(subscription)
+        return recovered
 
     # --- container / session lifecycle -------------------------------------
 

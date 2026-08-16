@@ -19,6 +19,7 @@ from collections import Counter
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,6 +31,7 @@ from app.domain.agent import event_spool
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.hooks_substrate import TopicSubscription
 from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
@@ -86,6 +88,19 @@ PRIVATE_SKILLS = ["private-chat", "conversation-style"]
 CHEESE_AUTHOR = "cheese"
 
 logger = logging.getLogger(__name__)
+
+
+def _persisted_eids(blocks: list[Block]) -> set[str]:
+    """Event ids already materialized in the topic timeline.
+
+    This is the spool backfill's existing durable cursor, shared with live hook
+    persistence so replay and a repeated POST use one idempotency rule.
+    """
+    return {
+        block.meta["eid"]
+        for block in blocks
+        if isinstance(block.meta, dict) and isinstance(block.meta.get("eid"), str)
+    }
 
 
 @dataclass
@@ -1174,6 +1189,82 @@ class ChatService:
             await broker.publish(channel, {"type": "done"})
         return landed
 
+    async def recover_hook_subscriptions(self, device_id: str | None = None) -> int:
+        """Reattach live hooks screens and replay their crash-recovery logs.
+
+        Providers discover the surviving transport; this room-side owner supplies
+        the durable `_eid` cursor and queues the replay before the paused consumer
+        starts. A reconnect narrows device recovery while startup checks all
+        transports.
+        """
+        subscriptions = await self._compute.recover_hook_subscriptions(device_id)
+        unique = {subscription.topic_id: subscription for subscription in subscriptions}
+        for subscription in unique.values():
+            try:
+                await self._replay_hook_subscription(subscription)
+            except Exception:  # noqa: BLE001 — one topic must not block startup
+                logger.exception(
+                    "hook subscription recovery failed for topic %s",
+                    subscription.topic_id,
+                )
+                subscription.ready.set()
+        return len(unique)
+
+    async def _replay_hook_subscription(self, subscription: TopicSubscription) -> None:
+        """Replay one topic spool from its latest persisted event id, inclusively."""
+        entries = event_spool.spool_entries(
+            ws.spool_dir(subscription.project_id, subscription.topic_id)
+        )
+        if not entries:
+            subscription.ready.set()
+            return
+
+        async with self._sessions() as session:
+            blocks = await BlockRepository(session).list_for_topic(
+                subscription.topic_id
+            )
+        spool_eids = {eid for _path, eid, _payload in entries}
+        persisted_order = [
+            block.meta["eid"]
+            for block in blocks
+            if isinstance(block.meta, dict) and isinstance(block.meta.get("eid"), str)
+        ]
+        cursor = next(
+            (eid for eid in reversed(persisted_order) if eid in spool_eids), None
+        )
+        start = (
+            next(i for i, (_path, eid, _payload) in enumerate(entries) if eid == cursor)
+            if cursor is not None
+            else 0
+        )
+        event_spool.remove(path for path, _eid, _payload in entries[:start])
+
+        paths_by_eid: dict[str, list[Path]] = {}
+        payloads: dict[str, dict] = {}
+        for path, eid, payload in entries[start:]:
+            paths_by_eid.setdefault(eid, []).append(path)
+            if payload is not None and eid not in payloads:
+                payloads[eid] = payload
+
+        known_texts = {
+            (block.content or "").strip()
+            for block in blocks
+            if block.kind == BlockKind.message and block.author_type == AuthorType.ai
+        }
+        if payloads:
+            subscription.replay_seen_messages.update(known_texts)
+        for eid, paths in paths_by_eid.items():
+            payload = payloads.get(eid)
+            if payload is None:
+                event_spool.remove(paths)
+                continue
+            subscription.replay_files.setdefault(eid, []).extend(paths)
+            replay = dict(payload)
+            replay["_eid"] = eid
+            subscription.sink.queue.put_nowait(replay)
+        subscription.ready.set()
+        await asyncio.wait_for(subscription.sink.queue.join(), timeout=30)
+
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
         """Debounced background ``settle_spool``. Two callers: the hooks
         endpoint when it parks an event with no turn listening (so a working
@@ -1400,6 +1491,9 @@ class ChatService:
         if platform_unsolicited:
             meta = {**(meta or {}), "platform_unsolicited": True}
         async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            if eid and await blocks.has_eid(topic_id, eid):
+                return None
             # Claim BEFORE writing, in the SAME session: the key and the block
             # commit together, so "key present" and "message posted" cannot
             # disagree no matter where the process dies.
@@ -1410,7 +1504,6 @@ class ChatService:
                 scope_id=str(topic_id),
             ):
                 return None
-            blocks = BlockRepository(session)
             topic = await TopicRepository(session).get(topic_id)
             if roster is None:
                 # The reconcile/backfill caller holds no roster. Load it here
@@ -1493,7 +1586,7 @@ class ChatService:
         eid: str | None = None,
         backfilled: bool = False,
         platform_unsolicited: bool = False,
-    ) -> dict:
+    ) -> dict | None:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
         a mid-turn restart/crash never loses the 现场 timeline already produced.
@@ -1509,7 +1602,10 @@ class ChatService:
         if platform_unsolicited:
             meta = {**meta, "platform_unsolicited": True}
         async with self._sessions() as session:
-            block = await BlockRepository(session).add(
+            blocks = BlockRepository(session)
+            if eid and await blocks.has_eid(topic_id, eid):
+                return None
+            block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
                 author=await self._agent_handle(session, topic_id),
@@ -1589,7 +1685,8 @@ class ChatService:
                     eid=eid or event.eid,
                     platform_unsolicited=platform_unsolicited,
                 )
-                frame = {"type": "event_block", "block": payload}
+                if payload is not None:
+                    frame = {"type": "event_block", "block": payload}
                 if state is not None and name == "Bash":
                     resource = _cheese_resource(str(args.get("command", "")))
                     if resource in _ACTION_LABEL and resource not in state.actions:
@@ -1760,11 +1857,7 @@ class ChatService:
             # prior turns): event-ids stamped on this topic's blocks (any kind).
             async with self._sessions() as session:
                 blocks = await BlockRepository(session).list_for_topic(topic_id)
-            seen = {
-                b.meta["eid"]
-                for b in blocks
-                if isinstance(b.meta, dict) and isinstance(b.meta.get("eid"), str)
-            }
+            seen = _persisted_eids(blocks)
             # Text-level dedup for the Stop's final message (it has its OWN eid,
             # so eid dedup can never match it against the MessageDisplay twin).
             known_texts = {
@@ -1847,6 +1940,8 @@ class ChatService:
                     backfilled=True,
                 )
                 seen.add(eid)
+                if block_payload is None:
+                    continue
                 recovered += 1
                 yield {"type": "event_block", "block": block_payload}
             event_spool.remove(path for path, _eid, _payload in entries)

@@ -25,9 +25,11 @@ import logging
 import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import event_spool
 from app.domain.agent.hook_events import (
     HookRouter,
     HookSink,
@@ -204,6 +206,9 @@ class TopicSubscription:
     sink: HookSink
     current_turn: TurnMark | None = None
     consumer_task: asyncio.Task[None] | None = None
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    replay_files: dict[str, list[Path]] = field(default_factory=dict)
+    replay_seen_messages: set[str] = field(default_factory=set)
 
 
 HookEventConsumer = Callable[
@@ -430,7 +435,11 @@ class HooksTurnProvider[ScreenT]:
         return True
 
     async def ensure_subscription(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        *,
+        paused: bool = False,
     ) -> TopicSubscription:
         """Ensure one screen-lifetime sink and consumer for ``topic_id``."""
         subscription = self._subscriptions.get(topic_id)
@@ -442,12 +451,30 @@ class HooksTurnProvider[ScreenT]:
             topic_id=topic_id,
             sink=sink,
         )
+        if not paused:
+            subscription.ready.set()
         self._subscriptions[topic_id] = subscription
         subscription.consumer_task = asyncio.create_task(
             self._consume_subscription(subscription),
             name=f"hook subscription topic={topic_id}",
         )
         return subscription
+
+    async def recover_subscriptions(
+        self, device_id: str | None = None
+    ) -> list[TopicSubscription]:
+        """Recreate subscriptions for live screens discovered after a restart.
+
+        Transport providers override this because only they can enumerate their
+        surviving screens. ``device_id`` narrows a reconnect-triggered recovery;
+        the startup call leaves it unset.
+        """
+        del device_id
+        return []
+
+    async def drop_device_subscriptions(self, device_id: str) -> None:
+        """Drop recovered subscriptions associated with one disconnected device."""
+        del device_id
 
     async def drop_subscription(self, topic_id: uuid.UUID) -> None:
         """Drop the sink and consumer after the topic's screen is known dead."""
@@ -484,58 +511,70 @@ class HooksTurnProvider[ScreenT]:
 
     async def _consume_subscription(self, subscription: TopicSubscription) -> None:
         """Continuously translate the topic sink into its current turn marker."""
+        await subscription.ready.wait()
         while True:
             hook = await subscription.sink.queue.get()
-            marker = subscription.current_turn
-            if marker is None:
-                marker = TurnMark(
-                    turn_id=uuid.uuid4(),
-                    queue=asyncio.Queue(),
-                    platform_unsolicited=True,
-                    seen_messages=set(),
-                )
-                subscription.current_turn = marker
-            event = translate_hook(hook)
-            eid_value = hook.get("_eid")
-            eid = eid_value if isinstance(eid_value, str) else None
-            if isinstance(event, AgentMessage) and marker.seen_messages is not None:
-                marker.seen_messages.add(event.text.strip())
-            if marker.consumer_owned:
-                marker.queue.put_nowait(HookDelivery(event, eid=eid))
-            if marker.platform_unsolicited or marker.consumer_owned:
-                consumer = self._event_consumer
-                if event is not None and consumer is not None:
-                    result_text_seen = (
-                        isinstance(event, AgentResult)
-                        and marker.seen_messages is not None
-                        and event.text.strip() in marker.seen_messages
+            try:
+                marker = subscription.current_turn
+                if marker is None:
+                    marker = TurnMark(
+                        turn_id=uuid.uuid4(),
+                        queue=asyncio.Queue(),
+                        platform_unsolicited=True,
+                        seen_messages=set(subscription.replay_seen_messages),
                     )
-                    try:
-                        await consumer(
-                            subscription.project_id,
-                            subscription.topic_id,
-                            marker.turn_id,
-                            event,
-                            eid,
-                            result_text_seen,
-                            marker.platform_unsolicited,
+                    subscription.replay_seen_messages.clear()
+                    subscription.current_turn = marker
+                event = translate_hook(hook)
+                eid_value = hook.get("_eid")
+                eid = eid_value if isinstance(eid_value, str) else None
+                if isinstance(event, AgentMessage) and marker.seen_messages is not None:
+                    marker.seen_messages.add(event.text.strip())
+                if marker.consumer_owned:
+                    marker.queue.put_nowait(HookDelivery(event, eid=eid))
+                replay_processed = event is None
+                if marker.platform_unsolicited or marker.consumer_owned:
+                    consumer = self._event_consumer
+                    if event is not None and consumer is not None:
+                        result_text_seen = (
+                            isinstance(event, AgentResult)
+                            and marker.seen_messages is not None
+                            and event.text.strip() in marker.seen_messages
                         )
-                    except Exception:  # noqa: BLE001 — keep the subscription alive
-                        logger.exception(
-                            "unsolicited hook persist failed (topic=%s, eid=%s)",
-                            subscription.topic_id,
-                            eid,
-                        )
-            else:
-                marker.queue.put_nowait(HookDelivery(event, eid=eid))
-            if isinstance(event, AgentResult) and subscription.current_turn is marker:
-                subscription.current_turn = None
-                timeout_task = marker.timeout_task
+                        try:
+                            await consumer(
+                                subscription.project_id,
+                                subscription.topic_id,
+                                marker.turn_id,
+                                event,
+                                eid,
+                                result_text_seen,
+                                marker.platform_unsolicited,
+                            )
+                            replay_processed = True
+                        except Exception:  # noqa: BLE001 — keep subscription alive
+                            logger.exception(
+                                "unsolicited hook persist failed (topic=%s, eid=%s)",
+                                subscription.topic_id,
+                                eid,
+                            )
+                else:
+                    marker.queue.put_nowait(HookDelivery(event, eid=eid))
+                if replay_processed and eid is not None:
+                    event_spool.remove(subscription.replay_files.pop(eid, []))
                 if (
-                    timeout_task is not None
-                    and timeout_task is not asyncio.current_task()
+                    isinstance(event, AgentResult)
+                    and subscription.current_turn is marker
                 ):
-                    timeout_task.cancel()
+                    subscription.current_turn = None
+                    timeout_task = marker.timeout_task
+                    if (
+                        timeout_task is not None
+                        and timeout_task is not asyncio.current_task()
+                    ):
+                        timeout_task.cancel()
+            finally:
+                subscription.sink.queue.task_done()
 
     async def _watch_turn_marker(
         self,
@@ -884,6 +923,13 @@ async def drop_screen_subscriptions(screen: object) -> None:
     for provider in list(_PROVIDERS):
         if isinstance(provider, HooksTurnProvider):
             await provider.drop_screen_subscription(screen)
+
+
+async def drop_device_subscriptions(device_id: str) -> None:
+    """Notify providers that a device and its recovered topics went offline."""
+    for provider in list(_PROVIDERS):
+        if isinstance(provider, HooksTurnProvider):
+            await provider.drop_device_subscriptions(device_id)
 
 
 def schedule_topic_subscription_drop(topic_id: uuid.UUID) -> bool:

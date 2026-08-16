@@ -37,7 +37,7 @@ from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
 
 if TYPE_CHECKING:
-    from app.domain.agent.hooks_substrate import HookEventConsumer
+    from app.domain.agent.hooks_substrate import HookEventConsumer, TopicSubscription
 
 # Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
 # chat.py, which imports this module).
@@ -464,6 +464,18 @@ class ComputePool:
         for provider in self._providers.values():
             if isinstance(provider, HooksTurnProvider):
                 provider.bind_event_consumer(consumer)
+
+    async def recover_hook_subscriptions(
+        self, device_id: str | None = None
+    ) -> list["TopicSubscription"]:
+        """Recover subscriptions for screens that survived this process."""
+        from app.domain.agent.hooks_substrate import HooksTurnProvider
+
+        recovered: list[TopicSubscription] = []
+        for provider in self._providers.values():
+            if isinstance(provider, HooksTurnProvider):
+                recovered.extend(await provider.recover_subscriptions(device_id))
+        return recovered
 
     def has(self, provider_id: str) -> bool:
         return provider_id in self._providers

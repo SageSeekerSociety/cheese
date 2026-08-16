@@ -132,7 +132,11 @@ async def receive_hook(
                 x_cheese_event_id,
                 payload,
             )
-            chat.schedule_spool_settle(uuid.UUID(topic_id))
+            # Recovery gets the first claim after a process restart: device links
+            # reconnect with a capped 5s backoff, then subscribe and replay this
+            # WAL through the normal consumer. Reconcile remains a delayed
+            # backstop for a screen that never returns, not the primary path.
+            chat.schedule_spool_settle(uuid.UUID(topic_id), delay_s=10.0)
         except Exception:  # noqa: BLE001 — parking is best-effort, reply stays 200
             logger.warning("hook park failed for topic %s", topic_id, exc_info=True)
     # Still 200 either way so claude doesn't treat it as a hook failure.

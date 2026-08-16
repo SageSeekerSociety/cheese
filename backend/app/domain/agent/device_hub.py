@@ -165,10 +165,14 @@ class DeviceHub:
         device = self._devices.get(device_id)
         if device is not None and device.transport is transport:
             device.transport = None
-            from app.domain.agent.hooks_substrate import drop_screen_subscriptions
+            from app.domain.agent.hooks_substrate import (
+                drop_device_subscriptions,
+                drop_screen_subscriptions,
+            )
 
             for screen in list(device.screens.values()):
                 await drop_screen_subscriptions(screen)
+            await drop_device_subscriptions(device_id)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
