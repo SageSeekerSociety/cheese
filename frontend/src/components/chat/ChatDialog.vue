@@ -597,7 +597,7 @@ defineExpose({
 }
 
 .chat-history::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--scrollbar-track);
   border-radius: 4px;
 }
 

@@ -8,6 +8,7 @@ import uuid
 import pytest
 
 from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.identity.actor import Actor
 
 
 async def _park_a_task() -> asyncio.Task:
@@ -29,9 +30,11 @@ class _FakeChat:
     def __init__(self, frames):
         self._frames = frames
         self.ran = False
+        self.kwargs: dict = {}
 
-    async def converse(self, **_):
+    async def converse(self, **kwargs):
         self.ran = True
+        self.kwargs = kwargs
         for f in self._frames:
             await asyncio.sleep(0)  # yield control, like a real streaming turn
             yield f
@@ -105,6 +108,42 @@ async def test_runner_publishes_turn_frames_to_subscribers():
             if f["type"] == "done":
                 break
     assert seen == ["user_block", "delta", "done"]
+
+
+@pytest.mark.anyio
+async def test_cloud_wait_is_terminal_without_spending_a_retry(tmp_path, monkeypatch):
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+    chat = _FakeChat(
+        [
+            {"type": "waiting", "state": "cloud_provisioning"},
+            {"type": "done"},
+        ]
+    )
+    actor = Actor("owner", 1, False, "token")
+    scheduled: list[object] = []
+    monkeypatch.setattr(
+        runner, "_schedule_resume", lambda *args, **kwargs: scheduled.append(args)
+    )
+
+    runner.submit(
+        chat,
+        uuid.uuid4(),
+        author="owner",
+        content="保留这条消息",
+        summon=True,
+        provision_actor=actor,
+    )
+    async with asyncio.timeout(1):
+        while not chat.ran or runner.active_turns():
+            await asyncio.sleep(0.01)
+
+    assert runner.recent_turns()[0]["status"] == "waiting"
+    assert chat.kwargs["provision_actor"] is actor
+    assert scheduled == []
 
 
 class _FakeKickoffChat:

@@ -127,7 +127,7 @@ defineExpose({
 .reply-input-container {
   // Add styling as needed
   border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 12px;
   background-color: rgb(var(--v-theme-surface));
 

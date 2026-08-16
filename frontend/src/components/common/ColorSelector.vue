@@ -64,6 +64,8 @@
                   :style="{ backgroundColor: color }"
                   @click="$emit('update:modelValue', color)"
                 >
+                  <!-- 这个勾的白色是有意保留的（§1.2 例外）：它压在**用户选中的那个颜色**上，
+                       色块底色是数据不是主题色，两套主题下同一个值，所以勾也不该随主题变 -->
                   <v-icon v-if="modelValue === color" size="x-small" color="white"> mdi-check </v-icon>
                 </div>
               </template>
@@ -122,13 +124,15 @@ const updateColor = (color: string) => {
 
 <style scoped lang="scss">
 .color-selector-card {
-  border: 1px solid rgba(0, 0, 0, 0.09);
-  background-color: rgba(0, 0, 0, 0.01);
+  border: 1px solid var(--line);
+  background-color: var(--fill);
 }
 
+/* 色块外面那一圈原本是纯白，作用是把色块和页面隔开。用 --surface 才能在两套主题下
+   都保持"和页面同色的一道缝"，深色下不会变成一圈刺眼的白边。 */
 .color-display {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  border: 2px solid white;
+  box-shadow: var(--shadow-1);
+  border: 2px solid var(--surface);
 }
 
 .color-swatch {
@@ -143,16 +147,18 @@ const updateColor = (color: string) => {
 
   &:hover {
     transform: scale(1.1);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: var(--shadow-1);
     z-index: 1;
   }
 }
 
+/* 选中环：内圈是和页面同色的一道缝（--surface），外圈是最强的中性色（--ink）。
+   浅色下 --ink 近黑、深色下近白，两边都能从各自的底色里跳出来。 */
 .color-swatch-selected {
   transform: scale(1.05);
   box-shadow:
-    0 0 0 2px white,
-    0 0 0 4px rgba(0, 0, 0, 0.3);
+    0 0 0 2px var(--surface),
+    0 0 0 4px var(--ink);
   z-index: 2;
 }
 
@@ -163,7 +169,7 @@ const updateColor = (color: string) => {
 .color-picker-overlay {
   .v-overlay__content {
     border-radius: 8px;
-    box-shadow: 0 4px 25px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-2);
   }
 }
 

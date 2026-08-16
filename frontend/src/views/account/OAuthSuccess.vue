@@ -4,11 +4,11 @@
     <div class="mb-10">
       <div class="d-flex align-center mb-3">
         <v-icon color="success" size="28" class="mr-3">mdi-check-circle</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: #212121">登录成功</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink)">登录成功</h1>
       </div>
 
       <template v-if="processing">
-        <p class="text-body-1 font-weight-regular mb-8" style="color: #757575">
+        <p class="text-body-1 font-weight-regular mb-8" style="color: var(--muted)">
           欢迎使用 {{ providerName }} 登录，正在处理登录信息...
         </p>
 
@@ -16,7 +16,7 @@
       </template>
 
       <template v-else-if="!error">
-        <p class="text-body-1 font-weight-regular mb-8" style="color: #757575">登录成功，正在跳转到主页...</p>
+        <p class="text-body-1 font-weight-regular mb-8" style="color: var(--muted)">登录成功，正在跳转到主页...</p>
 
         <v-progress-linear indeterminate color="primary" height="2" class="mb-4" />
       </template>

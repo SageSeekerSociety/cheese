@@ -311,7 +311,7 @@ onBeforeUnmount(() => {
           先在团队里创建一个项目，云机器会以该项目作为费用与审计归属。
         </v-alert>
         <div v-else-if="!cloudMachines.length" class="empty-panel">
-          <v-icon size="38" color="grey-lighten-1">mdi-cloud-outline</v-icon>
+          <v-icon size="38" class="empty-panel-icon">mdi-cloud-outline</v-icon>
           <div>
             <div class="text-body-2 font-weight-medium">还没有云机器</div>
             <div class="text-caption text-medium-emphasis">
@@ -407,7 +407,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div v-if="!selfHostedDevices.length" class="empty-panel">
-          <v-icon size="38" color="grey-lighten-1">mdi-laptop-off</v-icon>
+          <v-icon size="38" class="empty-panel-icon">mdi-laptop-off</v-icon>
           <div>
             <div class="text-body-2 font-weight-medium">还没有自有设备</div>
             <div class="text-caption text-medium-emphasis">接入后，团队内所有项目都可以使用。</div>
@@ -526,7 +526,7 @@ onBeforeUnmount(() => {
   min-height: 76px;
   padding: 12px 14px;
   border: 1px solid rgba(var(--v-border-color), 0.18);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: rgb(var(--v-theme-surface));
   text-align: left;
 }
@@ -563,7 +563,11 @@ onBeforeUnmount(() => {
   min-height: 94px;
   padding: 18px;
   border: 1px dashed rgba(var(--v-border-color), 0.24);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
+}
+/* 空面板里陪着文字的图标属于元信息一档（§1.3），不是插图 */
+.empty-panel-icon {
+  color: var(--faint);
 }
 .machine-meta {
   display: flex;
@@ -572,7 +576,7 @@ onBeforeUnmount(() => {
 }
 .machine-meta span {
   padding: 2px 7px;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: rgba(var(--v-theme-on-surface), 0.05);
   font-size: 0.72rem;
 }

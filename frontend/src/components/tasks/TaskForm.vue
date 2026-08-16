@@ -305,7 +305,8 @@
         >
           <div class="d-flex align-start">
             <v-avatar color="primary" class="mr-3 mt-1" size="28">
-              <v-icon icon="mdi-shield-check" color="white" size="18"></v-icon>
+              <!-- 琥珀底上的反白图标：surface 在深色下是深墨，white 会糊在 #FFA733 上 -->
+              <v-icon icon="mdi-shield-check" color="surface" size="18"></v-icon>
             </v-avatar>
             <div>
               <div class="text-subtitle-2 font-weight-medium mb-1">您已选择要求实名信息</div>
@@ -965,7 +966,7 @@ const handleCancel = () => {
 
 .privacy-usage-card {
   border: 1px solid rgba(var(--v-border-color), 0.12);
-  background-color: #ffffff;
+  background-color: var(--surface);
   transition: all 0.2s ease;
 }
 

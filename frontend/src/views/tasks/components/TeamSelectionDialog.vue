@@ -19,7 +19,8 @@
 
         <div v-else-if="eligibleTeams.length === 0" class="text-center py-8 px-4">
           <v-avatar color="warning" class="mb-4" size="64">
-            <v-icon icon="mdi-alert-circle-outline" color="white" size="36"></v-icon>
+            <!-- 状态色底上的反白图标：warning 深色下是 #F0A94A（更亮），白色压不住 -->
+            <v-icon icon="mdi-alert-circle-outline" color="surface" size="36"></v-icon>
           </v-avatar>
           <div class="text-h6 font-weight-medium mb-2">暂无可用小队</div>
           <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">
@@ -38,12 +39,12 @@
             class="mb-4 info-alert-card"
             variant="flat"
             rounded="lg"
-            color="grey-lighten-4"
+            color="surface-light"
           >
             <v-card-text class="pa-3">
               <div class="d-flex align-start">
                 <v-avatar size="36" color="primary" class="mr-3 info-avatar">
-                  <v-icon icon="mdi-shield-account" color="white" size="20"></v-icon>
+                  <v-icon icon="mdi-shield-account" color="surface" size="20"></v-icon>
                 </v-avatar>
                 <div>
                   <div class="text-subtitle-2 font-weight-medium mb-1">实名认证要求</div>
@@ -285,7 +286,7 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
   bottom: 0;
   left: 0;
   z-index: 3;
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(var(--v-theme-surface), 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -297,7 +298,7 @@ const getTeamDisabledText = (teamEligibility: TeamTaskEligibility): string => {
   align-items: center;
   padding: 6px 12px;
   background-color: rgba(var(--v-theme-error), 0.08);
-  border-radius: 20px;
+  border-radius: var(--radius-lg);
   border: 1px solid rgba(var(--v-theme-error), 0.2);
   color: rgb(var(--v-theme-error));
   font-weight: 500;

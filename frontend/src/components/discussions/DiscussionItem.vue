@@ -3,7 +3,7 @@
     <!-- 主消息 -->
     <div class="message-container pa-2 rounded-lg">
       <div class="d-flex">
-        <v-avatar size="40" color="grey-lighten-2" class="mt-1 flex-shrink-0">
+        <v-avatar size="40" color="surface-variant" class="mt-1 flex-shrink-0">
           <v-img :src="getAvatarUrl(discussion.sender.avatarId)" />
         </v-avatar>
 
@@ -83,7 +83,7 @@
                     variant="tonal"
                     size="x-small"
                     rounded="pill"
-                    color="grey-darken-1"
+                    color="on-surface-variant"
                     class="add-reaction-btn"
                   >
                     <v-icon>mdi-emoticon-outline</v-icon>
@@ -115,7 +115,7 @@
                 <v-btn
                   variant="text"
                   size="x-small"
-                  color="grey-darken-1"
+                  color="on-surface-variant"
                   class="action-btn ml-4"
                   rounded="pill"
                   @click="$emit('reply', discussion)"
@@ -127,7 +127,7 @@
                   v-if="isCurrentUserOwner"
                   variant="text"
                   size="x-small"
-                  color="grey-darken-1"
+                  color="on-surface-variant"
                   class="action-btn ml-2"
                   rounded="pill"
                   @click="$emit('delete', discussion)"
@@ -285,7 +285,7 @@ const getDomain = (url: string) => {
   margin-bottom: 4px;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: var(--fill);
   }
 }
 
@@ -323,7 +323,7 @@ const getDomain = (url: string) => {
 
   &:hover {
     opacity: 1;
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
   }
 }
 
@@ -375,7 +375,7 @@ const getDomain = (url: string) => {
   height: 80px;
   background-size: cover;
   background-position: center;
-  border-right: 1px solid rgba(0, 0, 0, 0.03);
+  border-right: 1px solid var(--line);
 }
 
 .link-description {

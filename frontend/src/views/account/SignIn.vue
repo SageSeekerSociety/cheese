@@ -2,8 +2,8 @@
   <div>
     <!-- 标题区域 - 美观大气 -->
     <div class="mb-12">
-      <h1 class="text-h3 font-weight-light mb-3" style="color: #212121; line-height: 1.2">登录</h1>
-      <p class="text-body-1" style="color: #757575; line-height: 1.5">欢迎回到知是社区</p>
+      <h1 class="text-h3 font-weight-light mb-3" style="color: var(--ink); line-height: 1.2">登录</h1>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">欢迎回到知是社区</p>
     </div>
 
     <!-- 错误/成功提示区域 -->
@@ -41,7 +41,7 @@
               <div class="d-flex justify-space-between align-center">
                 <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
                   <template #label>
-                    <span class="text-body-2" style="color: #616161; line-height: 1.4">
+                    <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
                       同意<a href="#" class="text-primary text-decoration-none ml-1">用户协议</a>和<a
                         href="#"
                         class="text-primary text-decoration-none"
@@ -70,7 +70,7 @@
             </v-btn>
 
             <!-- 注册链接 - 自然文本流 -->
-            <p class="text-body-2" style="color: #757575">
+            <p class="text-body-2" style="color: var(--muted)">
               还没有账号？<v-btn
                 variant="text"
                 color="primary"
@@ -89,7 +89,7 @@
           <!-- 优雅的分割线 -->
           <div class="d-flex align-center mb-6">
             <v-divider class="flex-grow-1" />
-            <span class="px-4 text-body-2" style="color: #9e9e9e">或</span>
+            <span class="px-4 text-body-2" style="color: var(--faint)">或</span>
             <v-divider class="flex-grow-1" />
           </div>
 
@@ -108,12 +108,14 @@
               <v-icon start icon="mdi-key-chain" size="20" />
               通行密钥登录
             </v-btn>
-            <p v-if="!webAuthnSupported" class="text-body-2 mt-2" style="color: #9e9e9e">当前环境暂不支持通行密钥</p>
+            <p v-if="!webAuthnSupported" class="text-body-2 mt-2" style="color: var(--faint)">
+              当前环境暂不支持通行密钥
+            </p>
           </div>
 
           <!-- 第三方登录 -->
           <div v-if="oAuthProviders.length > 0">
-            <div class="text-body-1 font-weight-medium mb-4" style="color: #424242">第三方登录</div>
+            <div class="text-body-1 font-weight-medium mb-4" style="color: var(--text)">第三方登录</div>
             <div class="d-flex flex-column" style="gap: 12px">
               <v-btn
                 v-for="provider in oAuthProviders"
@@ -126,7 +128,7 @@
                   text-transform: none;
                   font-weight: 500;
                   height: 48px;
-                  border-color: #e0e0e0;
+                  border-color: var(--line-2);
                   justify-content: flex-start;
                   padding-left: 16px;
                 "

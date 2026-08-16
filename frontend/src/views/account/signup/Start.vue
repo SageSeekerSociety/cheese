@@ -21,9 +21,9 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-account-plus</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: #212121; line-height: 1.2">加入知是社区</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">加入知是社区</h1>
       </div>
-      <p class="text-body-1" style="color: #757575; line-height: 1.5">开启您的知识共享之旅</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">开启您的知识共享之旅</p>
     </div>
 
     <!-- 错误提示区域 -->
@@ -108,7 +108,7 @@
           <div class="d-flex justify-space-between align-center mb-6">
             <v-checkbox v-model="agree" density="compact" v-bind="agreeProps" hide-details>
               <template #label>
-                <span class="text-body-2" style="color: #616161; line-height: 1.4">
+                <span class="text-body-2" style="color: var(--muted); line-height: 1.4">
                   同意 <a href="#" class="text-primary text-decoration-none">用户协议</a>和
                   <a href="#" class="text-primary text-decoration-none">隐私政策</a>
                 </span>
@@ -132,7 +132,7 @@
             立即注册
           </v-btn>
 
-          <p class="text-body-2" style="color: #757575">
+          <p class="text-body-2" style="color: var(--muted)">
             已经有账号了？
             <v-btn
               variant="text"

@@ -6,9 +6,15 @@ project's settings (pick which pool this project runs on). Two kinds of pool:
   - ``ai``      — which model/provider a turn runs on (ExecutionProfile / AIPool)
   - ``compute`` — which machine runs the sandbox (ComputeProvider / ComputePool)
 
-`available` is the honest flag: a listing that isn't deployed/credentialed shows
-in the market but can't be selected, so a project never silently runs on
-something that isn't there.
+`available` is the honest flag: a listing that isn't deployed/credentialed can't
+be selected, so a project never silently runs on something that isn't there.
+
+The catalog carries only pools that EXIST. A permanently unavailable row teaches
+the reader that connecting something would light it up — so `remote-cheesed` and
+`gpu`, which had no provider and no resolution path, were removed rather than
+shown greyed out, and `local-docker` went with the #358 retirement. `available`
+is for a pool that is real but not reachable right now (no machine online, no
+provisioning configured), not for one that does not exist.
 """
 
 from dataclasses import dataclass
@@ -19,6 +25,7 @@ from app.domain.agent.profiles import ProfileRegistry
 COMPUTE_LOCAL = "local-docker"
 COMPUTE_REMOTE = "remote-cheesed"
 COMPUTE_DEVICE = "device"
+COMPUTE_CLOUD = "cloud"
 COMPUTE_GPU = "gpu"
 
 
@@ -78,15 +85,20 @@ def compute_listings(
     *,
     device_online: bool | None = None,
 ) -> list[PoolListing]:
-    """Every compute pool in the catalog. Local is always on; the self-hosted
-    device pool is on when a relevant machine is connected; remote is on only when
-    a cheesed node is wired; GPU is request-only for now.
+    """Every compute pool in the catalog — self-hosted and Cloud. The device pool
+    is on when a relevant machine is connected; Cloud is on when provisioning is
+    configured.
 
     ``device_online`` scopes the device pool's availability to a CONTEXT: a route
     that knows the project passes whether THAT project has an online enrolled
     machine (compute belongs to the project/team, not globally). Left as ``None``
     (the global 市场 catalog) it falls back to 'is any device connected at all'."""
-    remote_ready = bool(settings.cheesed_url) and settings.compute_provider == "remote"
+    # Cloud is available when cheese can PROVISION it. Connector presence belongs
+    # to an individual topic machine's later boot/enrolment state; using it here
+    # would make a configured empty pool impossible to select.
+    cloud_ready = bool(
+        settings.microcloud_base_url and settings.microcloud_tenant_secret
+    )
     # A device is real compute the moment a relevant machine is connected (DeviceHub
     # presence) — the honest `available` flag. Per-project when the caller knows the
     # context; else the global 'any device online'.
@@ -95,24 +107,14 @@ def compute_listings(
 
         device_online = bool(device_hub.online_device_ids())
     device_ready = device_online
-    # #22 收敛: local-docker can be retired from NEW selection per deployment. When
-    # off, its `available` goes False so `compute_selectable` no longer offers it —
-    # yet it stays LISTED (a topic already frozen on it keeps a readable label) and
-    # stays registered in the ComputePool (execution never consults `available`, so
-    # existing pins still run). `default` stays True: it remains the always-on
-    # runtime fallback (`compute_default_name`), just not a pick for new topics.
-    local_selectable = getattr(settings, "compute_local_docker_selectable", True)
-    return [
-        PoolListing(
-            kind="compute",
-            id=COMPUTE_LOCAL,
-            label="知是本地算力",
-            tier="included",
-            price="包含",
-            description="平台托管的容器算力（CPU 级），适合代码、文档与数据分析。",
-            available=local_selectable,
-            default=True,
-        ),
+    # local-docker is GONE from the catalog (#358 "retire local"): not listed, not
+    # selectable, not the fallback. It stays registered in the ComputePool — the
+    # execution layer never consults this catalog — so a topic whose stored profile
+    # still says `local-docker` keeps running there until its row is cleared. What
+    # is removed is the CHOICE, and with it the last way for a new topic to land on
+    # it. `remote-cheesed` and `gpu` are gone for a different reason: they never had
+    # a provider at all.
+    listings = [
         PoolListing(
             kind="compute",
             id=COMPUTE_DEVICE,
@@ -124,23 +126,19 @@ def compute_listings(
         ),
         PoolListing(
             kind="compute",
-            id=COMPUTE_REMOTE,
-            label="远程节点（cheesed）",
-            tier="byo",
-            price="自备 / 接入报价",
-            description="把算力接到你自己的 cheesed 节点，数据不出你的环境。",
-            available=remote_ready,
-        ),
-        PoolListing(
-            kind="compute",
-            id=COMPUTE_GPU,
-            label="GPU 算力",
+            id=COMPUTE_CLOUD,
+            label="Cloud",
             tier="premium",
-            price="按需报价",
-            description="带 GPU 的算力，用于训练 / 推理类赛题，按小时计费，按需申请。",
-            available=False,
+            price="按量计费",
+            description="为这个话题创建一台独占云端机器；首次启动需要等待几分钟。",
+            available=cloud_ready,
+            # The fallback when nothing was selected — see `compute_default_name`.
+            # Last selection still wins; this is only where a topic lands with no
+            # topic choice, no project sticky and no team default.
+            default=True,
         ),
     ]
+    return listings
 
 
 def compute_selectable(
@@ -158,7 +156,14 @@ def compute_selectable(
 
 
 def compute_default_name() -> str:
-    return COMPUTE_LOCAL
+    """What a topic runs on when nothing was chosen: last selection first (the
+    topic's own, then the project's sticky memory, then the team default — see
+    `_resolve_compute_id`), and Cloud when there is none.
+
+    It used to be local-docker. That made the retired pool the destination of
+    every unconfigured topic, which is the opposite of retiring it (#358).
+    """
+    return COMPUTE_CLOUD
 
 
 # --- Visibility (#282 §四 / #358): the whole-machine question -------------------

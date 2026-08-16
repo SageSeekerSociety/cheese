@@ -26,6 +26,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
 from app.domain.agent.market import (
+    COMPUTE_CLOUD,
     MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
     compute_default_name,
@@ -39,6 +40,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
@@ -506,6 +508,7 @@ async def add_comment(
         ),
         summon=True,
         nudge_event=f"💬 {author} 在文档上留了评论，芝士来处理",
+        provision_actor=actor,
     )
     return ok(payload)
 
@@ -677,6 +680,8 @@ async def set_topic_compute_profile(
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
     if name not in allowed:
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
+    if name == COMPUTE_CLOUD:
+        await MachineService(db).require_create_authority(topic.project_id, actor)
     topic.compute_profile = name
     project = await ProjectRepository(db).get(topic.project_id)
     if project is not None:
@@ -766,6 +771,7 @@ async def answer_options(
         author=author,
         content=option,
         summon=True,
+        provision_actor=actor,
     )
     return ok(updated)
 

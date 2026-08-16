@@ -34,15 +34,19 @@ const online = useOnline()
   font-size: 13px;
   font-weight: 500;
   line-height: 1.4;
-  color: #fff;
+  /* 实心的警告色横幅，前景色必须跟着底色翻面：浅色下 --warn 是 #E8901C，白字；深色下
+     它提亮到 #F0A94A，白字只剩 1.7:1。on-warning 是 Vuetify 按主题各自推导出来的
+     前景色（浅色 #fff、深色 #000），只在 Vuetify 那一侧存在，所以这里写 --v-theme-*
+     而不是自研 token —— 见 docs/design-system.md §5。 */
+  color: rgb(var(--v-theme-on-warning));
   white-space: nowrap;
-  background: #e8901c; /* --warn (Vuetify `warning`) */
+  background: rgb(var(--v-theme-warning));
   border-radius: 0 0 10px 10px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 18%);
+  box-shadow: var(--shadow-1);
   transform: translateX(-50%);
 }
 .offline-banner__icon {
-  color: #fff;
+  color: rgb(var(--v-theme-on-warning));
 }
 .offline-slide-enter-active,
 .offline-slide-leave-active {
