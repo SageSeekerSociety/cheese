@@ -1541,14 +1541,14 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 .todo-pending {
-  color: var(--text-muted, #888);
+  color: var(--faint);
 }
 .todo-in_progress {
   color: var(--v-theme-primary, #6750a4);
   font-weight: 600;
 }
 .todo-completed {
-  color: var(--text-muted, #999);
+  color: var(--faint);
 }
 .todo-completed .todo-text {
   text-decoration: line-through;
@@ -1629,12 +1629,12 @@ onBeforeUnmount(() => {
 }
 .mention-menu-sub {
   font-size: 0.75rem;
-  color: var(--text-muted, #999);
+  color: var(--faint);
 }
 .mention-menu-hint {
   margin-left: auto;
   font-size: 0.7rem;
-  color: var(--text-muted, #aaa);
+  color: var(--faint);
 }
 
 /* The ONE amber chip allowed: @芝士 toggle when ON. OFF = neutral. */
@@ -2161,7 +2161,7 @@ onBeforeUnmount(() => {
   align-items: baseline;
   gap: 8px;
   cursor: pointer;
-  color: var(--text-muted, var(--faint));
+  color: var(--faint);
   list-style: none;
 }
 .backend-error__line > span:first-child {

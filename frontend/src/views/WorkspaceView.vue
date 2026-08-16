@@ -1838,12 +1838,12 @@ onUnmounted(() => {
 }
 .mention-menu-sub {
   font-size: 0.75rem;
-  color: var(--text-muted, #999);
+  color: var(--faint);
 }
 .mention-menu-hint {
   margin-left: auto;
   font-size: 0.7rem;
-  color: var(--text-muted, #aaa);
+  color: var(--faint);
 }
 .composer-input :deep(textarea) {
   font-size: 14px;

@@ -85,6 +85,19 @@
   --shadow-1: 0 1px 2px rgba(25, 26, 28, 0.06), 0 2px 8px rgba(25, 26, 28, 0.06);
   --shadow-2: 0 4px 12px rgba(25, 26, 28, 0.1), 0 12px 32px rgba(25, 26, 28, 0.1);
 
+  /* ---- Radius ladder ----
+     Theme-independent (a corner does not change shape in the dark), so these
+     live only here and are NOT repeated in the dark block below.
+
+     Three steps plus a pill. The tree currently holds FIFTEEN distinct radii
+     (3/4/5/6/7/8/9/10/11/12/16/20/100/999px) — most of them one-offs adjusted
+     by hand at the keyboard. The stylelint rule enforces this ladder for new
+     code; docs/design-system.md carries the fold-map for the existing ones. */
+  --radius-sm: 6px; /* chips, tags, small badges */
+  --radius-md: 8px; /* buttons, inputs, list items */
+  --radius-lg: 12px; /* cards, panels, dialogs */
+  --radius-pill: 999px; /* pills, circular avatars */
+
   /* ---- Type ---- */
   --font-sans:
     'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
@@ -155,6 +168,17 @@
      still detach from what is behind them. */
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 2px 8px rgba(0, 0, 0, 0.3);
   --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5), 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Paint the root element itself, so the gap between "HTML parsed" and "Vue has
+   mounted and .v-application has a background" is dark rather than white.
+   `color-scheme: dark` above already gets most browsers there; this makes it
+   explicit and exact. Deliberately dark-only — in light theme the UA default is
+   already white and adding a rule here would be a behaviour change for the
+   existing theme, which must stay byte-identical. */
+:root[data-theme='dark'],
+:root[data-theme='dark'] body {
+  background-color: var(--canvas);
 }
 
 /* Fusion merge: these global element overrides (html/body/#app/.v-application)

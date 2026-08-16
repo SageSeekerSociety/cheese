@@ -336,7 +336,7 @@ onBeforeUnmount(() => {
   background: rgba(var(--v-theme-primary), 0.1);
 }
 .doc-editor :deep(.doc-prose th) {
-  background: var(--bg-2, #f7f8fa);
+  background: var(--canvas);
   font-weight: 600;
 }
 .doc-editor :deep(.doc-prose tbody tr:hover td) {
@@ -495,7 +495,7 @@ onBeforeUnmount(() => {
 /* 代码块. */
 .doc-editor :deep(pre) {
   position: relative;
-  background: var(--bg-2, #f7f8fa);
+  background: var(--canvas);
   border: 1px solid var(--line-2, #ececec);
   padding: 13px 15px;
   border-radius: 8px;
