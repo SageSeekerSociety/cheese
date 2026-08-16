@@ -113,12 +113,41 @@ async def _screen_ready(hub: "DeviceHub", screen: "HubScreen", args: list[Any]) 
     return {"ok": True}
 
 
+def _delivery_hook(name: str) -> "ScreenFn":
+    """A cheeselet-originated delivery report (#445), re-published into the
+    topic's hook stream so the ACTIVE turn hears it. Without this bridge the
+    driver's give-up existed only in the connector's local journal while the
+    room stared at silence until the 300s no-output bound."""
+
+    async def fn(hub: "DeviceHub", screen: "HubScreen", args: list[Any]) -> Any:
+        # Local import: hook_events imports nothing from this module, so the
+        # edge stays one-directional at runtime while avoiding a module-load
+        # cycle through the agent package's wiring.
+        from app.domain.agent.hook_events import hook_router
+
+        if screen.topic_id is None:
+            return {"ok": False}
+        phase = str(args[0]) if args else ""
+        ticks = int(args[1]) if len(args) > 1 and str(args[1]).isdigit() else 0
+        delivered = hook_router.push(
+            str(screen.topic_id),
+            {"hook_event_name": name, "phase": phase, "ticks": ticks},
+        )
+        return {"ok": delivered}
+
+    return fn
+
+
 class DeviceHub:
     def __init__(self, screen_fns: dict[str, ScreenFn] | None = None) -> None:
         self._devices: dict[str, HubDevice] = {}
         self._screens: dict[str, HubScreen] = {}  # sid -> screen (across devices)
         self._by_screen_token: dict[str, HubScreen] = {}
-        self._fns: dict[str, ScreenFn] = {"screenReady": _screen_ready}
+        self._fns: dict[str, ScreenFn] = {
+            "screenReady": _screen_ready,
+            "deliveryFailed": _delivery_hook("CheeseDeliveryFailed"),
+            "deliveryRetried": _delivery_hook("CheeseDeliveryRetried"),
+        }
         if screen_fns:
             self._fns.update(screen_fns)
 

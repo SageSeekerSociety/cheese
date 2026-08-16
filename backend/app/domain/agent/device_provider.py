@@ -42,7 +42,7 @@ from app.domain.agent.hooks_substrate import (
 )
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import Supply, has_runnable_transport
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.workspace import service as ws
@@ -104,9 +104,8 @@ async def resolve_pinned_device(
         # (its owner flipped it) must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
         pinned_device = await service.get_device(pinned)
-        if (
-            pinned_device is not None
-            and pinned_device.visibility is not Visibility.host
+        if pinned_device is not None and not has_runnable_transport(
+            pinned_device.visibility
         ):
             raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
         return pinned
@@ -125,7 +124,7 @@ async def resolve_pinned_device(
         # — the pin is write-once, and a topic frozen to an unrunnable device would
         # be bricked with no way to move it. Skipping it here (rather than pinning
         # and failing at launch) keeps it out of the affinity freeze entirely.
-        if device.visibility is not Visibility.host:
+        if not has_runnable_transport(device.visibility):
             continue
         await service.bind_topic_device(topic_id, device.device_id)
         return device.device_id
@@ -790,18 +789,23 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
 
-    async def _send_prompt(self, screen: HubScreen, prompt: str) -> None:
+    async def _send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
         """Deliver the prompt via the minimal cheeselet's `prompt` (it gates on the
-        `❯` input box first, so a fresh screen's first prompt is not dropped)."""
+        `❯` input box first, so a fresh screen's first prompt is not dropped).
+        Returns the cheeselet's readiness at delivery (`{ready: bool}`), so a
+        held prompt is a visible state in the room instead of silence (#445)."""
         try:
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
             )
-            await self._hub.await_call(screen.device_id, call_id, timeout=60)
+            result = await self._hub.await_call(screen.device_id, call_id, timeout=60)
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
             raise ScreenSetupError(
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
+        if isinstance(result, dict) and isinstance(result.get("ready"), bool):
+            return result["ready"]
+        return None
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

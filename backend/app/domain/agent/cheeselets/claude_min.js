@@ -72,16 +72,30 @@ function ready() {
 
 function tryType() {
   if (phase === 'idle' || pending === null) return
+  const line = composerLine()
+  if (phase === 'paste' && !ready()) {
+    // Waiting for the input box costs NOTHING against the retry budget: a
+    // fresh screen's launcher + claude first boot takes well over a minute,
+    // and burning the budget on that wait made the driver abandon the prompt
+    // before claude could even accept it (measured live 2026-08-16: "giving
+    // up in phase paste after 40 ticks" while the pane was still booting;
+    // the turn then sat until the server's 300s retry and read as
+    // zero-output). The prompt is held until the box paints; the server's
+    // own turn retry remains the outer bound.
+    return
+  }
   tries += 1
   if (tries > MAX_TRIES) {
     cheese.log('claude_min: giving up in phase ' + phase + ' after ' + MAX_TRIES + ' ticks')
+    // Report the give-up to the SERVER (#445), not just the local journal:
+    // the backend re-sends immediately and shows the room what happened,
+    // instead of everyone waiting out the 300s no-output bound.
+    cheese.call('deliveryFailed', phase, tries)
     phase = 'idle'
     pending = null
     return
   }
-  const line = composerLine()
   if (phase === 'paste') {
-    if (!ready()) return
     cheese.term.write(PASTE_START + String(pending) + PASTE_END)
     // Not an advance to "submitted" — the next tick VERIFIES the body actually
     // reached the composer before the Enter goes anywhere near it.
@@ -106,6 +120,14 @@ function tryType() {
     if (line === null || line.indexOf(snippet) === -1) {
       // The composer let go of the body (or the input box gave way to a running
       // turn) — the submit took.
+      if (tries > 8) {
+        // Delivery succeeded but needed a conspicuous number of re-issues —
+        // the pane's input path is flaky. Tell the server (#445) so a
+        // wobbling machine is seen before it produces a dead turn. The
+        // threshold is above any healthy delivery (paste + verify + submit
+        // + verify = 4 ticks) with margin for a slow TUI.
+        cheese.call('deliveryRetried', 'submit', tries)
+      }
       phase = 'idle'
       pending = null
       cheese.log('claude_min: prompt submitted')

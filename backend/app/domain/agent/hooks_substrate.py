@@ -29,10 +29,20 @@ from dataclasses import dataclass
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
 from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
-from app.domain.agent.service import DISALLOWED_TOOLS, AgentEvent, AgentResult
+from app.domain.agent.service import (
+    DISALLOWED_TOOLS,
+    AgentDeliveryFailure,
+    AgentEvent,
+    AgentMessage,
+    AgentResult,
+)
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
+
+# How many times one turn re-sends an abandoned prompt (#445) before declaring
+# the screen's input path broken and letting the no-output bound take over.
+_MAX_REDELIVERIES = 3
 
 # The interactive session's hook token outlives a single turn (the screen / tmux
 # session is reused across turns), so it needs a lifetime measured in the
@@ -183,7 +193,7 @@ async def run_hooks_turn(
     tracker: ActivityTracker | None = None,
     confirm_alive: Callable[[], Awaitable[bool]] | None = None,
     confirm_poll_s: float = CONFIRM_POLL_S,
-) -> AsyncIterator[AgentEvent]:
+) -> AsyncIterator[AgentEvent | AgentDeliveryFailure]:
     """Drain the topic's hook queue, translating each hook to an ``AgentEvent``,
     until the ``Stop`` hook (→ ``AgentResult``) ends the turn. Transport-independent:
     both the tmux and device backends run this identical loop after their
@@ -292,6 +302,13 @@ class HooksTurnProvider[ScreenT]:
     (remote link.Msg)."""
 
     name: str = "hooks"
+    # 图片输入: this transport injects a TEXT prompt into a live Claude Code
+    # screen — there is no user-message content array to hang a base64 image
+    # block off, so `images=` reaches `run_turn` and goes nowhere. Declaring
+    # that here is what stops the prompt from promising the opposite; the
+    # picture is still reachable, but only because the prompt now names its
+    # path and 芝士 opens it with Read (its own tool), not because we sent it.
+    embeds_images = False
     _needs_topic_message = "本轮需要话题上下文"
     _timeout_message = "轮次超时"
 
@@ -354,8 +371,13 @@ class HooksTurnProvider[ScreenT]:
         that is merely reused keeps the prompt it was started with."""
         raise NotImplementedError
 
-    async def _send_prompt(self, screen: ScreenT, prompt: str) -> None:
-        """Deliver the turn's prompt to the ready screen. Transport-specific."""
+    async def _send_prompt(self, screen: ScreenT, prompt: str) -> bool | None:
+        """Deliver the turn's prompt to the ready screen. Transport-specific.
+
+        Returns the driver's readiness at delivery time when the transport can
+        know it (the device cheeselet answers ``{ready: bool}``): ``False``
+        means the prompt is HELD until the input box paints — worth a visible
+        line in the room instead of silence (#445). ``None`` = unknown."""
         raise NotImplementedError
 
     async def _start_activity_monitor(
@@ -455,15 +477,30 @@ class HooksTurnProvider[ScreenT]:
                     eid = stale.get("_eid")
                     if isinstance(eid, str):
                         _park_stale_hook(project_id, topic_id, eid, stale)
-                await self._send_prompt(screen, prompt)
+                ready = await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
                     text=str(exc), session_id=resume_session_id, is_error=True
                 )
                 return
+            if ready is False:
+                # The driver is HOLDING the prompt until claude's input box
+                # paints (a fresh screen's launcher + first boot takes over a
+                # minute). Say so — the wait used to be indistinguishable from
+                # a dead turn (#445).
+                yield AgentMessage(
+                    text=(
+                        "⏳ 机器上的会话正在启动，提示词已就位，"
+                        "输入框一出现就会自动发送。"
+                    )
+                )
             tracker = ActivityTracker(last_at=asyncio.get_event_loop().time())
             monitor_task = await self._start_activity_monitor(screen, tracker)
             try:
+                # Bounded so a screen whose terminal genuinely eats every write
+                # cannot ping-pong forever: past the cap the failure stays
+                # visible and the turn falls to the no-output bound as before.
+                redeliveries = 0
                 async for event in run_hooks_turn(
                     queue=queue,
                     idle_suspect_s=self._idle_suspect_s,
@@ -472,7 +509,47 @@ class HooksTurnProvider[ScreenT]:
                     timeout_message=self._timeout_message,
                     tracker=tracker,
                     confirm_alive=lambda: self._confirm_alive(screen),
+                    # ready=False means the driver HOLDS the prompt until the
+                    # input box paints — a queued prompt is not an undelivered
+                    # one, so the 25s dead-session verdict does not apply (it
+                    # misfired exactly when a wake-up summon landed while the
+                    # previous turn still ran, 2026-08-16 09:21). The driver's
+                    # own give-up (#445 deliveryFailed) and the no-output bound
+                    # keep a genuinely dead screen from waiting forever.
+                    delivery_timeout_s=(
+                        self._idle_suspect_s if ready is False else DELIVERY_TIMEOUT_S
+                    ),
                 ):
+                    if isinstance(event, AgentDeliveryFailure):
+                        # The driver gave up (#445) — re-send NOW instead of
+                        # letting the room wait out the 300s bound. The event
+                        # itself never reaches the chat layer.
+                        redeliveries += 1
+                        if redeliveries <= _MAX_REDELIVERIES:
+                            yield AgentMessage(
+                                text=(
+                                    "⚠️ 提示词没能送进机器上的会话"
+                                    f"（{event.phase} 阶段，{event.ticks} 次尝试）"
+                                    "，正在自动重投…"
+                                )
+                            )
+                            try:
+                                await self._send_prompt(screen, prompt)
+                            except ScreenSetupError as exc:
+                                yield AgentResult(
+                                    text=str(exc),
+                                    session_id=resume_session_id,
+                                    is_error=True,
+                                )
+                                return
+                        else:
+                            yield AgentMessage(
+                                text=(
+                                    "⚠️ 提示词多次重投仍未送达——这台机器的"
+                                    "终端链路有问题，本轮将按超时处理。"
+                                )
+                            )
+                        continue
                     yield event
             finally:
                 if monitor_task is not None:

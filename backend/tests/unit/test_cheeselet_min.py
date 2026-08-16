@@ -58,6 +58,7 @@ _HAS_NODE = subprocess.run(["which", "node"], capture_output=True).returncode ==
 # counting every attempted write) that the "terminal" swallows silently.
 _HARNESS = """
 const writes = [];
+const calls = [];
 let composer = "";            // text sitting in the input box
 let claudeReady = false;      // has the ❯ prompt been painted
 let dropped = new Set(__DROP__);
@@ -86,23 +87,28 @@ globalThis.cheese = {
   own: () => ({}),
   watch: () => ({}),
   expose: (name, fn) => { exposed[name] = fn; },
-  call: () => {},
+  call: (...a) => { calls.push(a); },
   log: (m) => logs.push(String(m)),
 };
 __SRC__
-claudeReady = true;
+const slowBoot = __SLOWBOOT__;   // ticks before the ❯ prompt paints (0 = already up)
+claudeReady = slowBoot === 0;
 exposed.prompt(__PROMPT__);
-for (let i = 0; i < __TICKS__; i++) onChange();   // change/heartbeat ticks
-console.log(JSON.stringify({writes, composer, logs}));
+for (let i = 0; i < __TICKS__; i++) {
+  if (slowBoot > 0 && i === slowBoot) claudeReady = true;
+  onChange();   // change/heartbeat ticks
+}
+console.log(JSON.stringify({writes, composer, logs, calls}));
 """
 
 
-def _drive(prompt: str, drop: list[int], ticks: int = 12) -> dict:
+def _drive(prompt: str, drop: list[int], ticks: int = 12, slow_boot: int = 0) -> dict:
     script = (
         _HARNESS.replace("__SRC__", cheeselet_source())
         .replace("__DROP__", json.dumps(drop))
         .replace("__PROMPT__", json.dumps(prompt))
         .replace("__TICKS__", str(ticks))
+        .replace("__SLOWBOOT__", str(slow_boot))
     )
     out = subprocess.run(
         ["node", "-e", script], capture_output=True, text=True, timeout=30
@@ -152,6 +158,23 @@ def test_a_swallowed_enter_is_resent_until_the_composer_lets_go():
     assert len(enters) >= 2, f"swallowed Enter was never re-sent: {got['writes']}"
     assert got["composer"] == ""
     assert any("submitted" in m for m in got["logs"])
+
+
+@pytest.mark.skipif(not _HAS_NODE, reason="node not available to run the cheeselet")
+def test_a_slow_first_boot_does_not_burn_the_retry_budget():
+    """A fresh screen's launcher + claude first boot takes well over a minute —
+    far more ticks than the retry budget. Waiting for the ❯ prompt must cost
+    nothing: the prompt is held and delivered the moment the box paints
+    (measured live 2026-08-16: the driver gave up in phase paste while the
+    pane was still booting, and the turn died as 300s zero-output)."""
+    got = _drive("run the tool", drop=[], ticks=140, slow_boot=120)
+    assert not any("giving up" in m for m in got["logs"]), (
+        f"the boot wait burned the budget: {got['logs']}"
+    )
+    assert any("submitted" in m for m in got["logs"]), (
+        f"the held prompt was never delivered after boot: {got['logs']}"
+    )
+    assert got["composer"] == ""
 
 
 @pytest.mark.skipif(not _HAS_NODE, reason="node not available to run the cheeselet")
