@@ -45,16 +45,38 @@ let tries = 0
 // stop touching the terminal and let the server-side retry re-drive us.
 const MAX_TRIES = 40
 
-function composerLine() {
-  // The composer is the LAST `❯` line on screen: Claude Code renders history
-  // user messages with `>`, menus are excluded by ready(), so the last `❯` is
-  // the input box. Returns null when no input box is painted (splash, or the
-  // TUI replaced it while running a turn).
+function norm(s) {
+  // Whitespace AND the composer's box-drawing borders stripped. The composer
+  // soft-wraps at the pane width, so on screen the body is interleaved with
+  // newlines, row padding and `│` borders — and CJK chars take 2 columns each,
+  // so a 24-char CJK snippet needs 48 columns of one row. The production 现场
+  // pane had 46: any check that reads a single row can NEVER match it, which
+  // made every 【平台】-prefixed prompt re-paste forever (2026-08-16 outage).
+  // All matching therefore happens on this flattened text. Must stay in
+  // lockstep with tmux_provider's _flatten/composer_holds_body — both backends
+  // judge "did my keystrokes take" the same way.
+  return s.replace(/[\s│╭╮╰╯─]+/g, '')
+}
+
+function composerRegion() {
+  // The composer is everything from the LAST `❯` on screen to the end: Claude
+  // Code renders history user messages with `>`, menus are excluded by ready(),
+  // so the last `❯` opens the input box. Returns null when no input box is
+  // painted (splash, or the TUI replaced it while running a turn).
   const s = cheese.term.read()
   const i = s.lastIndexOf('❯')
   if (i === -1) return null
-  const nl = s.indexOf('\n', i)
-  return nl === -1 ? s.slice(i) : s.slice(i, nl)
+  return s.slice(i)
+}
+
+function bodyInComposer() {
+  const r = composerRegion()
+  if (r === null) return false
+  const flat = norm(r)
+  // Large pastes render as a "[Pasted text #N +N lines]" widget instead of the
+  // literal body — the widget is just as much proof the paste arrived.
+  if (flat.indexOf('[Pastedtext') !== -1) return true
+  return snippet !== '' && flat.indexOf(snippet) !== -1
 }
 
 function ready() {
@@ -72,7 +94,6 @@ function ready() {
 
 function tryType() {
   if (phase === 'idle' || pending === null) return
-  const line = composerLine()
   if (phase === 'paste' && !ready()) {
     // Waiting for the input box costs NOTHING against the retry budget: a
     // fresh screen's launcher + claude first boot takes well over a minute,
@@ -103,7 +124,7 @@ function tryType() {
     return
   }
   if (phase === 'sent') {
-    if (line !== null && line.indexOf(snippet) !== -1) {
+    if (bodyInComposer()) {
       // The body is visibly in the composer. A tick has passed since the paste,
       // so the TUI has ingested it — submit.
       cheese.term.write(ENTER)
@@ -117,7 +138,7 @@ function tryType() {
     return
   }
   if (phase === 'submit') {
-    if (line === null || line.indexOf(snippet) === -1) {
+    if (!bodyInComposer()) {
       // The composer let go of the body (or the input box gave way to a running
       // turn) — the submit took.
       if (tries > 8) {
@@ -149,17 +170,18 @@ cheese.term.onChange(tryType)
 // is gated on readiness via onChange above.
 cheese.expose('prompt', (text) => {
   pending = String(text)
-  // The verification anchor: the head of the first non-blank line, short enough
-  // to survive the composer's soft-wrap at any sane pane width.
+  // The verification anchor: the head of the first non-blank line, flattened
+  // the same way the screen is (norm) so soft-wrap and pane width can never
+  // break the match.
   const lines = pending.split('\n')
   let first = ''
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].replace(/\s/g, '') !== '') {
+    if (norm(lines[i]) !== '') {
       first = lines[i]
       break
     }
   }
-  snippet = first.slice(0, 24)
+  snippet = norm(first).slice(0, 24)
   phase = 'paste'
   tries = 0
   tryType()

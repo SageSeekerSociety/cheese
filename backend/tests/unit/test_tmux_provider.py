@@ -29,6 +29,147 @@ def test_pane_ready_detects_prompt_box():
     assert pane_ready("Welcome to Claude Code\nloading...\n") is False
 
 
+# --- prompt-delivery verification (the 2026-08-16 paste-loop / swallowed-Enter
+# family): matching must survive soft-wrap, box borders, CJK widths and the
+# `[Pasted text …]` placeholder. Mirrors the cheeselet's norm()/bodyInComposer.
+
+_CJK_PROMPT = (
+    "【平台】以下是平台自动发出的指令，不是任何人手打的：请检查当前工作台状态并汇报。"
+)
+
+
+def test_prompt_snippet_flattens_and_caps():
+    from app.domain.agent.tmux_provider import prompt_snippet
+
+    assert prompt_snippet("hello world\nmore") == "helloworld"
+    # Leading blank lines are skipped; the cap is 24 flattened chars.
+    assert prompt_snippet("\n  \n" + _CJK_PROMPT) == _CJK_PROMPT.replace(" ", "")[:24]
+    assert prompt_snippet("   \n\t\n") == ""
+
+
+def test_composer_holds_body_across_soft_wrap_and_borders():
+    """A 46-column pane shows at most ~21 CJK chars per bordered row — the
+    24-char anchor can never sit on one row, only in the flattened region."""
+    from app.domain.agent.tmux_provider import composer_holds_body, prompt_snippet
+
+    snippet = prompt_snippet(_CJK_PROMPT)
+    capture = (
+        "some scrollback\n"
+        "╭──────────────────────────────────────────╮\n"
+        "│ ❯ 【平台】以下是平台自动发出的指令，不是任 │\n"
+        "│ 何人手打的：请检查当前工作台状态并汇报。 │\n"
+        "╰──────────────────────────────────────────╯\n"
+    )
+    assert composer_holds_body(capture, snippet) is True
+    # An empty composer must not count, and neither must a different body.
+    assert composer_holds_body("junk\n│ ❯  │\n", snippet) is False
+    assert composer_holds_body("junk\n│ ❯ 完全不同的内容 │\n", snippet) is False
+    # No input box painted at all → nothing can be verified.
+    assert composer_holds_body("still booting", snippet) is False
+
+
+def test_composer_holds_body_accepts_the_pasted_text_placeholder():
+    """Large pastes render as `[Pasted text #N +N lines]` instead of the body
+    (claude-session-driver #20) — the widget proves delivery just the same."""
+    from app.domain.agent.tmux_provider import composer_holds_body
+
+    capture = "history\n│ ❯ [Pasted text #1 +11 lines] │\n"
+    assert composer_holds_body(capture, "anysnippet") is True
+
+
+class _FakeScreenControl:
+    """Control client + pane model in one: a paste puts the body into the
+    composer (unless configured to drop it), an Enter clears it (unless
+    configured to swallow it) — the two silent failures _send_prompt exists to
+    catch."""
+
+    def __init__(self, drop_pastes: int = 0, swallow_enters: int = 0) -> None:
+        self.composer = ""
+        self.body = ""
+        self.pastes = 0
+        self.enters = 0
+        self._drop_pastes = drop_pastes
+        self._swallow_enters = swallow_enters
+
+    async def pane_dead(self) -> bool:
+        return False
+
+    async def send(self, *args: str):
+        from types import SimpleNamespace
+
+        if "paste-buffer" in args:
+            self.pastes += 1
+            if self.pastes > self._drop_pastes:
+                self.composer = self.body
+        elif "Enter" in args:
+            self.enters += 1
+            if self.enters > self._swallow_enters:
+                self.composer = ""
+        return SimpleNamespace(ok=True, error=None)
+
+    def capture(self) -> str:
+        return f"scrollback\n│ ❯ {self.composer} │\n"
+
+
+@pytest.fixture
+def _fast_settle(monkeypatch):
+    monkeypatch.setattr(tp, "_PASTE_SETTLE_S", 0.05)
+    monkeypatch.setattr(tp, "_ENTER_SETTLE_S", 0.05)
+    monkeypatch.setattr(tp, "_SETTLE_POLL_S", 0.01)
+
+
+def _wire(monkeypatch, provider, screen: _FakeScreenControl) -> None:
+    async def fake_control(_name: str):
+        return screen
+
+    async def fake_docker(*args: str, stdin: bytes | None = None):
+        if "load-buffer" in args and stdin is not None:
+            screen.body = stdin.decode()
+        if "capture-pane" in args:
+            return 0, screen.capture(), ""
+        return 0, "", ""
+
+    monkeypatch.setattr(provider, "_control", fake_control)
+    monkeypatch.setattr(tp, "_docker", fake_docker)
+
+
+@pytest.mark.anyio
+async def test_send_prompt_resends_a_swallowed_enter(_fast_settle, monkeypatch):
+    """Claude Code swallows an Enter that rides too close to the paste
+    (claude-session-driver #20) — the prompt then sat in the composer until the
+    25s undelivered verdict. The sender must see the composer still holding the
+    body and nudge Enter again; it must NOT re-paste (that duplicates)."""
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    screen = _FakeScreenControl(swallow_enters=1)
+    _wire(monkeypatch, provider, screen)
+
+    await provider._send_prompt("box", "帮我看下这个问题")
+
+    assert screen.pastes == 1, "re-pasting duplicates the prompt"
+    assert screen.enters == 2, "the swallowed Enter was never re-sent"
+    assert screen.composer == ""
+
+
+@pytest.mark.anyio
+async def test_send_prompt_fails_loud_when_the_paste_never_lands(
+    _fast_settle, monkeypatch
+):
+    """Every paste dropped (the #430 fire-and-forget shape): bounded re-pastes,
+    then a clean error — never an Enter fired at a composer that visibly never
+    received the body, and never a silent 25s wait."""
+    from app.domain.agent.hooks_substrate import ScreenSetupError
+
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    screen = _FakeScreenControl(drop_pastes=999)
+    _wire(monkeypatch, provider, screen)
+
+    with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
+        await provider._send_prompt("box", "帮我看下这个问题")
+
+    assert screen.pastes == 1 + tp._MAX_REPASTES
+    assert screen.enters == 0, "an Enter was fired at a body-less composer"
+
+
 def test_resume_ready_only_when_transcript_present(tmp_path):
     from app.domain.agent import clone
 
