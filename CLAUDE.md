@@ -247,7 +247,7 @@ Don't spend time re-diagnosing them:
 
 - Communicate in Chinese (user preference).
 - Bug auditing: focus on real runtime bugs (crashes, data corruption, security, incorrect behavior). Do not report style issues or theoretical concerns.
-- Commit messages in English, concise, focused on "why".
+- Commit messages, PR titles and PR bodies in English, Conventional Commits — see **Commits and PRs** below.
 - After making changes, always run `task check` to verify.
 - After `git pull`, run `bash .claude/scripts/post-pull.sh`.
 - **All commits go through PR**: never commit directly to main.
@@ -255,6 +255,69 @@ Don't spend time re-diagnosing them:
 - **Green that ran against an older main proves nothing about merging today.** Before merging any PR that adds a migration or touches symbols another open PR also touches: update the branch (`gh pr update-branch`), wait for the fresh run, then merge. GitHub re-evaluates CONFLICTING continuously but never re-runs your checks — on 2026-08-12 four individually-green PRs merged into a three-headed alembic chain and a duplicated function that 500'd the topic list. Migrations also move `backend/alembic/HEAD` (one line, see `.claude/rules/migrations.md`) precisely so concurrent migration PRs collide in git instead of merging cleanly into a fork.
 - **Never `git stash` in a worktree.** Worktrees share one `.git`, so they share one stash stack: a `pop` returns whichever session pushed last, not yours. Two sessions collided this way on 2026-08-12 and each popped the other's diff — recoverable only via `git fsck --unreachable`, and the stack already held several `recovered:` entries from earlier collisions. To set changes aside, write a patch (`git diff > /tmp/x.patch`) or add another worktree.
 - Box operations (env changes, container recreation) go through `deploy/deploy-docker.sh` only — see the runbook in `docs/infrastructure.md`. Hand-rolled `docker compose up` drops the deploy script's image-pin exports and has broken dev before.
+
+## Commits and PRs
+
+The repository's history is read by people who were never in the room. Write for
+them: **English, Conventional Commits, no in-house jargon, no filler.**
+
+### The one line that matters
+
+On this platform a topic is squash-merged, so a whole topic becomes **one
+commit**, and its subject is whatever you filed the accept card with:
+
+```bash
+cheese accept-request lisi "最懂这块" \
+  --subject 'fix(accept): open the PR as the requester, not the bot' \
+  --body 'PRs opened with the App token belong to the bot on GitHub, so the
+person whose work it is gets no attribution and cannot filter for it.'
+```
+
+`--subject` is the PR title **and** the squash commit subject. Skip it and the
+platform falls back to `chore: <话题标题>` — a room name in `git log`, which is
+the thing this convention exists to stop. The backend rejects a malformed
+subject at the card (`domain/review/commit_message.py`), so you find out in the
+same breath, not next month.
+
+### Subject
+
+`type(scope): description` — types are `feat fix docs style refactor perf test
+build ci chore revert`, `!` before the colon marks a breaking change.
+
+- Imperative mood, ≤72 characters, no trailing period.
+- Say what the change *does*, not which files moved. The diff already lists files.
+- One commit, one thing. If the subject needs an "and", it is two commits.
+
+### Body
+
+Only when the subject is not self-explanatory. Then it explains **why** — the
+root cause, why this is a bug, why this fix and not another. Never:
+
+- a numbered list of what you did (that is the diff);
+- "all tests pass", "build succeeds" (a commit that exists passed CI);
+- how to build or run the project (that is documentation);
+- differences between drafts of your own patch ("v2 fixes X") — describe the
+  final state relative to the parent commit, nothing else.
+
+Assume a competent reader who already knows this project. Non-obvious commands,
+non-standard configuration needed to reproduce, and genuinely surprising
+constraints DO belong; anything they could have guessed does not.
+
+### What goes in a commit
+
+- Atomic and buildable. Every commit compiles and passes its own tests.
+- Never patch up the previous commit with a new one. In jj the working copy IS
+  the commit, so amend by editing and re-describing (`jj describe -m …`) rather
+  than stacking a "fix the last one" commit.
+- Exploratory work stays on a scratch branch; clean it into atomic commits
+  before it goes anywhere.
+
+### Attribution
+
+Commits and PRs are attributed to the human whose topic it is, via their GitHub
+no-reply address (`backend/app/domain/workspace/identity.py`) — that requires
+them to have connected GitHub in 设置. Nothing to do by hand; if a PR shows up
+as the bot's, the account is not connected.
 
 ## Documentation Map
 

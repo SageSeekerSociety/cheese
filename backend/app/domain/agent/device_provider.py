@@ -60,6 +60,17 @@ DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
 ]
 
+
+def _git_author(project_id: uuid.UUID, topic_id: uuid.UUID) -> tuple[str, str] | None:
+    """Who this topic's commits belong to, for a machine that owns its own tree
+    and commits with plain git (the in-repo path reads the same sidecar in
+    `ws.snapshot_worktree`). None → the launcher's 芝士 default."""
+    from app.domain.workspace import identity as ws_identity
+
+    found = ws_identity.read(project_id, topic_id)
+    return None if found is None else (found.name, found.email)
+
+
 # #358 · what a turn gets when its only/pinned machine is enrolled as the boxed
 # `isolated` 档: a clean, actionable refusal, NOT a silent bare-on-host launch. It
 # is deliberately NOT one of platform_failures' host-scoped classifications — an
@@ -716,6 +727,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             project_id=str(project_id),
             topic_id=str(topic_id),
             author=agent_handle,
+            git_author=_git_author(project_id, topic_id),
             # A machine on its own host has no worktree to edit, so it clones the
             # project and pushes the topic branch back. Same origin + same scoped
             # token the platform CLI already uses from this machine — one

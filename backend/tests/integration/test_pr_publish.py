@@ -24,10 +24,10 @@ def _make_topic(client, project_id: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _make_card(client, topic_id: str) -> str:
+def _make_card(client, topic_id: str, **extra) -> str:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        json={"reviewer_handle": "alice", "routing_reason": "最懂", **extra},
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -44,8 +44,22 @@ class _FakeClient:
     def __init__(self, owner: str, repo: str, tokens, **_):
         pass
 
-    async def open_pr(self, *, head: str, base: str, title: str, body: str) -> dict:
-        record = {"head": head, "base": base, "title": title, "body": body}
+    async def open_pr(
+        self,
+        *,
+        head: str,
+        base: str,
+        title: str,
+        body: str,
+        as_user_token: str | None = None,
+    ) -> dict:
+        record = {
+            "head": head,
+            "base": base,
+            "title": title,
+            "body": body,
+            "as_user_token": as_user_token,
+        }
         type(self).opened.append(record)
         return {"number": 42, "html_url": "https://github.com/acme/widgets/pull/42"}
 
@@ -94,9 +108,14 @@ def test_publication_records_the_pr_on_the_card(client, monkeypatch):
     )
 
     [opened] = _FakeClient.opened
-    assert opened["title"] == "做一个东西"  # the topic titles the PR
+    # No `--subject` on the card, so the PR admits it: `chore: <话题标题>` is
+    # the fallback, and it is meant to look wrong in a git log.
+    assert opened["title"] == "chore: 做一个东西"
     assert opened["base"] == "main"
-    assert "验收人：alice" in opened["body"]
+    # Routing bookkeeping is gone from the body — a GitHub reviewer needs the
+    # change, not the platform's internal handoff.
+    assert "验收人" not in opened["body"]
+    assert f"Cheese-Topic: {tid}" in opened["body"]
 
     card = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["pr_number"] == 42
@@ -241,3 +260,90 @@ def test_submit_route_stays_quiet_when_app_not_configured(client, monkeypatch):
     _make_card(client, tid)
 
     assert dispatched == []
+
+
+# ---- 提交与 PR 规范 (2026-08-16) --------------------------------------------
+#
+# Before this: the PR was titled with the topic's Chinese room name and bodied
+# with routing bookkeeping, the squash commit inherited both, and the whole
+# thing was opened by the App — so on GitHub none of it belonged to the person
+# whose work it was.
+
+
+def _publish(client, pid: str, tid: str, cid: str) -> dict:
+    from app.domain.review import pr_publish
+
+    asyncio.run(
+        pr_publish._run(
+            client.test_factory,
+            card_id=uuid.UUID(cid),
+            topic_id=uuid.UUID(tid),
+            project_id=uuid.UUID(pid),
+        )
+    )
+    [opened] = _FakeClient.opened
+    return opened
+
+
+def test_the_card_s_subject_titles_the_pr(client, monkeypatch):
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(
+        client,
+        tid,
+        change_subject="fix(accept): open the PR as the requester",
+        change_body="App-opened PRs belong to the bot, so nobody gets credit.",
+    )
+
+    opened = _publish(client, pid, tid, cid)
+
+    assert opened["title"] == "fix(accept): open the PR as the requester"
+    assert opened["body"].startswith(
+        "App-opened PRs belong to the bot, so nobody gets credit."
+    )
+
+
+def test_the_pr_body_claims_no_review_that_has_not_happened(client, monkeypatch):
+    """The PR opens when the card is FILED; 采纳 is what merges it. A
+    `Reviewed-by:` written at open time would name someone who has not looked
+    at it yet."""
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid, change_subject="fix: stop the crash")
+
+    opened = _publish(client, pid, tid, cid)
+
+    assert "Reviewed-by:" not in opened["body"]
+    assert f"Cheese-Topic: {tid}" in opened["body"]
+
+
+def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
+    """Rejected where it can still be fixed cheaply — not silently normalised
+    into history, and not discovered by a human reading `git log` next month."""
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+
+    r = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "alice", "change_subject": "做完了分页"},
+    )
+
+    assert r.status_code == 422
+    assert "Conventional Commits" in r.text
+    assert client.get(f"/api/topics/{tid}/accept-card").json()["data"]["total"] == 0
+
+
+def test_the_subject_is_visible_on_the_card_before_anyone_accepts(client, monkeypatch):
+    """The reviewer is the last person who can object to the line that is about
+    to enter the project's permanent history."""
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    _make_card(client, tid, change_subject="fix: stop the crash", change_body="why")
+
+    [card] = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    assert card["change_subject"] == "fix: stop the crash"
+    assert card["change_body"] == "why"

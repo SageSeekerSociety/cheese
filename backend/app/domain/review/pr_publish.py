@@ -145,11 +145,39 @@ async def open_pr_for_card(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
     client = GitHubPRClient(owner, repo_name, tokens)
-    pr = await client.open_pr(head=branch, base=base, title=title, body=body)
+    pr = await client.open_pr(
+        head=branch,
+        base=base,
+        title=title,
+        body=body,
+        # Open it as the person whose work it is, not as the bot — see
+        # `GitHubPRClient.open_pr`. Push above still uses the App token: pushing
+        # is not attributed to anyone, and the App's write access is the one
+        # thing here that is guaranteed to work.
+        as_user_token=await _requester_token(session, topic_id),
+    )
     logger.info(
         "PR #%s ready for card %s (%s)", pr.get("number"), card_id, pr.get("html_url")
     )
     return pr
+
+
+async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
+    """The topic opener's own GitHub credential, so the PR is opened in their
+    name. None whenever they have not connected GitHub, their token cannot be
+    refreshed, or anything at all goes wrong — this is an attribution nicety
+    and must never be the reason a PR fails to open."""
+    from app.domain.oauth.services import get_github_user_token_for_handle
+    from app.domain.topic.repositories import TopicRepository
+
+    try:
+        topic = await TopicRepository(session).get(topic_id)
+        if topic is None or not topic.created_by:
+            return None
+        return await get_github_user_token_for_handle(session, topic.created_by)
+    except Exception:  # noqa: BLE001
+        logger.info("no requester token for topic %s", topic_id, exc_info=True)
+        return None
 
 
 async def _pr_text(
@@ -159,23 +187,34 @@ async def _pr_text(
     topic_id: uuid.UUID,
     branch: str,
 ) -> tuple[str, str]:
-    """PR title/body from the topic and card. Falls back to the branch name."""
-    from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.topic.repositories import TopicRepository
+    """PR title/body from the card's change summary (`cheese accept-request
+    --subject/--body`), falling back to the topic title when the card was filed
+    without one.
 
-    title = branch
-    lines: list[str] = []
+    Same builders the merge path uses (`review/services.py`), on purpose: the
+    PR a reviewer reads and the squash commit that lands on main must not be
+    able to say two different things about the same change.
+
+    The routing bookkeeping the old body carried — 验收人, 路由理由, "采纳这张
+    验收卡即合并本 PR" — is gone. It described the platform's workflow to people
+    who were already inside it, while the reviewer opening the PR on GitHub
+    wanted to know what changed and why."""
+    from app.domain.review.repositories import AcceptCardRepository
+    from app.domain.review.services import _change_subject, _pr_body
+    from app.domain.topic.repositories import TopicRepository
+    from app.domain.workspace import identity
+
     topic = await TopicRepository(session).get(topic_id)
-    if topic is not None and topic.title:
-        title = topic.title
     card = await AcceptCardRepository(session).get(card_id)
-    if card is not None:
-        lines.append(f"验收人：{card.reviewer_handle}")
-        if card.routing_reason:
-            lines.append(f"路由理由：{card.routing_reason}")
-    lines.append(f"话题分支 `{branch}`，由平台递验收卡时自动创建（#188 采纳 PR 化）。")
-    lines.append("采纳这张验收卡即合并本 PR。")
-    return title, "\n\n".join(lines)
+    if topic is None:
+        return branch, f"Cheese-Topic: {topic_id}"
+    author = None
+    if topic.created_by:
+        author = await identity.resolve_for_handle(session, topic.created_by)
+    # No approver yet — the PR opens when the card is FILED, and 采纳 is what
+    # merges it. `Reviewed-by` is written onto the squash commit at merge time,
+    # by whoever actually clicks.
+    return _change_subject(card, topic), _pr_body(topic, "", card, author)
 
 
 async def record_pr(

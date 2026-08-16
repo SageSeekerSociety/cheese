@@ -193,3 +193,80 @@ async def test_check_runs_use_the_readonly_token_and_simplify():
     # Display path rides the sandbox-grade read-only mint, not the write one.
     assert request.headers["authorization"] == "Bearer ghs_read"
     assert request.url.path == "/repos/acme/widgets/commits/abc123/check-runs"
+
+
+# ---- open_pr: whose PR is it (2026-08-16) -----------------------------------
+#
+# GitHub attributes a PR to whoever's credential created it, so opening every
+# PR with the App's token made every PR on the platform belong to the bot —
+# no avatar, no "opened by you", no filter-by-author for the person whose work
+# it is. An App cannot impersonate a user; their own token is the only way.
+
+
+def _pull_recorder(*, user_status: int = 201, app_status: int = 201):
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        seen.append((request.method, token))
+        if request.method != "POST":
+            return httpx.Response(200, json=[{"number": 9}])
+        status = user_status if token == "ghu_alice" else app_status
+        if status == 201:
+            return httpx.Response(201, json={"number": 42})
+        return httpx.Response(status, json={"message": "already exist"})
+
+    return handler, seen
+
+
+@pytest.mark.anyio
+async def test_open_pr_uses_the_requester_s_own_token():
+    handler, seen = _pull_recorder()
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
+    )
+
+    assert pr["number"] == 42
+    assert seen == [("POST", "ghu_alice")]  # the App token never gets a turn
+
+
+@pytest.mark.anyio
+async def test_open_pr_falls_back_to_the_app_when_the_user_cannot():
+    """Their authorization may be revoked, or they may have left the org. A PR
+    under the wrong name beats no PR at all — the accept depends on it."""
+    handler, seen = _pull_recorder(user_status=403)
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
+    )
+
+    assert pr["number"] == 42
+    assert seen == [("POST", "ghu_alice"), ("POST", "ghs_write")]
+
+
+@pytest.mark.anyio
+async def test_open_pr_adopts_an_existing_pr_without_a_second_create():
+    """Re-filing a card for the same topic hits "a pull request already exists"
+    — the existing PR IS this topic's PR. Retrying the create with the App
+    token would just earn the same 422."""
+    handler, seen = _pull_recorder(user_status=422)
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
+    )
+
+    assert pr["number"] == 9
+    assert [method for method, _ in seen] == ["POST", "GET"]
+
+
+@pytest.mark.anyio
+async def test_open_pr_still_works_with_no_user_token_at_all():
+    handler, seen = _pull_recorder()
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body=""
+    )
+
+    assert pr["number"] == 42
+    assert seen == [("POST", "ghs_write")]

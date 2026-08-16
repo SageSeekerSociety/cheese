@@ -11,6 +11,12 @@ from app.domain.review.models import AcceptStatus
 class AcceptCardCreate(BaseModel):
     reviewer_handle: str = Field(min_length=1, max_length=64)
     routing_reason: str = ""
+    # What the change IS, in Conventional Commits form — becomes the PR title
+    # and the squash commit subject. Optional so a discussion-only card (and
+    # every pre-existing client) still files; review/services.py falls back to
+    # the topic title when it is absent.
+    change_subject: str | None = Field(default=None, max_length=255)
+    change_body: str | None = None
 
 
 class AcceptDecision(BaseModel):
@@ -51,6 +57,11 @@ class AcceptCardOut(BaseModel):
     topic_id: uuid.UUID
     reviewer_handle: str
     routing_reason: str
+    # The commit this card will become, as filed — so the reviewer can see the
+    # subject that is about to enter the project's history BEFORE accepting,
+    # which is the last moment anyone can object to it.
+    change_subject: str | None = None
+    change_body: str | None = None
     status: AcceptStatus
     decided_by: str | None
     decided_at: datetime | None
