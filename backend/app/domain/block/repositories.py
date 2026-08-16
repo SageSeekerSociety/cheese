@@ -9,10 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.turn_context import current_turn_id
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
+    PROMPT_ATTEMPTS_META_KEY,
     AuthorType,
     Block,
     BlockKind,
     BlockReaction,
+    prompt_attempts,
 )
 
 
@@ -110,6 +112,29 @@ class BlockRepository:
         for block in (await self._session.scalars(stmt)).all():
             block.meta = {**(block.meta or {}), CONSUMED_TURN_META_KEY: str(turn_id)}
         await self._session.flush()
+
+    async def bump_prompt_attempts(self, block_ids: list[uuid.UUID]) -> int:
+        """Record that these blocks went into a prompt AGAIN, and return the
+        highest attempt count in the batch.
+
+        Called when the prompt is built, not when the turn ends — that is the
+        whole point. `mark_consumed` runs only on a turn that finished, so a
+        turn that dies leaves no trace at all and the next turn re-sends the
+        identical batch. This counter is the trace.
+
+        Same `meta` replacement rule as `mark_consumed`: in-place mutation of a
+        JSON column is invisible to SQLAlchemy and would silently not save.
+        """
+        if not block_ids:
+            return 0
+        highest = 0
+        stmt = select(Block).where(Block.id.in_(block_ids))
+        for block in (await self._session.scalars(stmt)).all():
+            n = prompt_attempts(block) + 1
+            block.meta = {**(block.meta or {}), PROMPT_ATTEMPTS_META_KEY: n}
+            highest = max(highest, n)
+        await self._session.flush()
+        return highest
 
     async def update_node(
         self, block: Block, *, node_type: str, struct_order: float
