@@ -127,7 +127,6 @@ def test_camelcase_event_name_alias():
 async def test_router_delivers_to_registered_topic():
     router = HookRouter()
     sink = router.subscribe("t1")
-    sink.accepting = True
     assert router.push("t1", {"hook_event_name": "Stop"}) is True
     assert (await sink.queue.get())["hook_event_name"] == "Stop"
 
@@ -142,7 +141,6 @@ async def test_router_subscription_is_stable_until_its_owner_unsubscribes():
     router = HookRouter()
     sink = router.subscribe("t1")
     assert router.subscribe("t1") is sink
-    sink.accepting = True
     assert router.push("t1", {"a": 1}) is True
     assert (await sink.queue.get()) == {"a": 1}
     router.unsubscribe("t1", sink)
@@ -150,8 +148,8 @@ async def test_router_subscription_is_stable_until_its_owner_unsubscribes():
 
 
 @pytest.mark.anyio
-async def test_router_queues_between_turns_but_reports_undelivered_in_p1():
+async def test_router_delivers_between_platform_turns():
     router = HookRouter()
     sink = router.subscribe("t1")
-    assert router.push("t1", {"a": 1}) is False
+    assert router.push("t1", {"a": 1}) is True
     assert (await sink.queue.get()) == {"a": 1}

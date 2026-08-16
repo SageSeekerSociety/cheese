@@ -143,15 +143,9 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
 
 @dataclass(eq=False)
 class HookSink:
-    """One screen-lifetime hook inbox.
-
-    ``accepting`` is transitional P1 behavior: hooks outside an open turn still
-    report undelivered to the route, which preserves its existing spool + settle
-    path. P2 removes that fallback by giving every such hook an unattributed turn.
-    """
+    """One screen-lifetime hook inbox."""
 
     queue: asyncio.Queue[dict] = field(default_factory=asyncio.Queue)
-    accepting: bool = False
 
 
 class HookRouter:
@@ -179,16 +173,12 @@ class HookRouter:
             self._sinks.pop(topic_id, None)
 
     def push(self, topic_id: str, hook: dict) -> bool:
-        """Enqueue a hook payload for the topic's active turn. Returns False when
-        no screen is subscribed, or when the subscribed screen has no open turn
-        during P1. The hook is still queued in the latter case so the long-lived
-        consumer continuously drains its sink; the endpoint's existing fallback
-        persists it to the spool."""
+        """Enqueue a hook payload for the topic's subscribed screen."""
         sink = self._sinks.get(topic_id)
         if sink is None:
             return False
         sink.queue.put_nowait(hook)
-        return sink.accepting
+        return True
 
 
 # Shared singleton: the endpoint and the provider import this same instance.

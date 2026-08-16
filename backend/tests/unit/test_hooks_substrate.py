@@ -202,7 +202,6 @@ async def test_failed_precheck_never_touches_the_router():
     router = HookRouter()
     topic_id = _uuid.uuid4()
     live_sink = router.subscribe(str(topic_id))
-    live_sink.accepting = True
 
     provider = _NoRun(router=router, idle_suspect_s=1, hard_ceiling_s=1)
     events = [

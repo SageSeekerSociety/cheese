@@ -30,7 +30,6 @@ def test_hook_accepted_but_undelivered_without_listener(client):
 def test_hook_routed_to_subscribed_sink(client):
     topic = str(uuid.uuid4())
     sink = hook_router.subscribe(topic)
-    sink.accepting = True
     try:
         r = client.post(
             f"/sandbox/hooks/{topic}",

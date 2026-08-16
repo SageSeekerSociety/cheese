@@ -180,14 +180,17 @@ class HookDelivery:
     """
 
     event: AgentEvent | AgentDeliveryFailure | None
+    eid: str | None = None
 
 
 @dataclass
 class TurnMark:
     """The current platform turn interval on a topic's long-lived hook stream."""
 
-    turn_id: uuid.UUID | None
+    turn_id: uuid.UUID
     queue: asyncio.Queue[HookDelivery]
+    platform_unsolicited: bool = False
+    seen_messages: set[str] | None = None
 
 
 @dataclass
@@ -199,6 +202,19 @@ class TopicSubscription:
     sink: HookSink
     current_turn: TurnMark | None = None
     consumer_task: asyncio.Task[None] | None = None
+
+
+HookEventConsumer = Callable[
+    [
+        uuid.UUID,
+        uuid.UUID,
+        uuid.UUID,
+        AgentEvent | AgentDeliveryFailure,
+        str | None,
+        bool,
+    ],
+    Awaitable[None],
+]
 
 
 # How often a suspected-wedged turn re-checks liveness while it stays idle (a
@@ -360,6 +376,7 @@ class HooksTurnProvider[ScreenT]:
         # own the stable router sink, consumer task, and nullable current turn.
         self._live: dict[uuid.UUID, ScreenT] = {}
         self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
+        self._event_consumer: HookEventConsumer | None = None
         _PROVIDERS.add(self)
 
     @property
@@ -373,6 +390,10 @@ class HooksTurnProvider[ScreenT]:
 
     def available(self) -> bool:
         return True
+
+    def bind_event_consumer(self, consumer: HookEventConsumer) -> None:
+        """Bind the room persistence/broadcast callback owned by ChatService."""
+        self._event_consumer = consumer
 
     async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
         """Inject ``text`` into the screen of the turn ALREADY running on this
@@ -430,7 +451,6 @@ class HooksTurnProvider[ScreenT]:
         if subscription is None:
             return
         subscription.current_turn = None
-        subscription.sink.accepting = False
         self._router.unsubscribe(str(topic_id), subscription.sink)
         task = subscription.consumer_task
         if task is not None:
@@ -456,15 +476,45 @@ class HooksTurnProvider[ScreenT]:
             hook = await subscription.sink.queue.get()
             marker = subscription.current_turn
             if marker is None:
-                # P1 preserves the route's existing spool + settle behavior for
-                # out-of-turn hooks. The router reported this arrival as
-                # undelivered; the route has already parked its durable copy.
-                continue
+                marker = TurnMark(
+                    turn_id=uuid.uuid4(),
+                    queue=asyncio.Queue(),
+                    platform_unsolicited=True,
+                    seen_messages=set(),
+                )
+                subscription.current_turn = marker
             event = translate_hook(hook)
-            marker.queue.put_nowait(HookDelivery(event))
+            eid_value = hook.get("_eid")
+            eid = eid_value if isinstance(eid_value, str) else None
+            if isinstance(event, AgentMessage) and marker.seen_messages is not None:
+                marker.seen_messages.add(event.text.strip())
+            if marker.platform_unsolicited:
+                consumer = self._event_consumer
+                if event is not None and consumer is not None:
+                    result_text_seen = (
+                        isinstance(event, AgentResult)
+                        and marker.seen_messages is not None
+                        and event.text.strip() in marker.seen_messages
+                    )
+                    try:
+                        await consumer(
+                            subscription.project_id,
+                            subscription.topic_id,
+                            marker.turn_id,
+                            event,
+                            eid,
+                            result_text_seen,
+                        )
+                    except Exception:  # noqa: BLE001 — keep the subscription alive
+                        logger.exception(
+                            "unsolicited hook persist failed (topic=%s, eid=%s)",
+                            subscription.topic_id,
+                            eid,
+                        )
+            else:
+                marker.queue.put_nowait(HookDelivery(event, eid=eid))
             if isinstance(event, AgentResult) and subscription.current_turn is marker:
                 subscription.current_turn = None
-                subscription.sink.accepting = False
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook
@@ -592,9 +642,10 @@ class HooksTurnProvider[ScreenT]:
                 )
                 subscription = await self.ensure_subscription(project_id, topic_id)
                 self._live[topic_id] = screen
-                marker = TurnMark(turn_id=turn_id, queue=asyncio.Queue())
+                marker = TurnMark(
+                    turn_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
+                )
                 subscription.current_turn = marker
-                subscription.sink.accepting = True
                 ready = await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
@@ -684,7 +735,6 @@ class HooksTurnProvider[ScreenT]:
                 and subscription.current_turn is marker
             ):
                 subscription.current_turn = None
-                subscription.sink.accepting = False
 
 
 async def drop_topic_subscriptions(topic_id: uuid.UUID) -> None:

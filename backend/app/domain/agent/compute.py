@@ -19,7 +19,7 @@ import subprocess
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
@@ -35,6 +35,9 @@ from app.domain.agent.service import (
 )
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
+
+if TYPE_CHECKING:
+    from app.domain.agent.hooks_substrate import HookEventConsumer
 
 # Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
 # chat.py, which imports this module).
@@ -453,6 +456,14 @@ class ComputePool:
             if await provider.deliver(topic_id, text):
                 return True
         return False
+
+    def bind_hook_event_consumer(self, consumer: "HookEventConsumer") -> None:
+        """Give hooks providers the room-side owner of event persistence."""
+        from app.domain.agent.hooks_substrate import HooksTurnProvider
+
+        for provider in self._providers.values():
+            if isinstance(provider, HooksTurnProvider):
+                provider.bind_event_consumer(consumer)
 
     def has(self, provider_id: str) -> bool:
         return provider_id in self._providers

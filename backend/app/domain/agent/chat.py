@@ -42,6 +42,8 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
+    AgentDeliveryFailure,
+    AgentEvent,
     AgentMessage,
     AgentResult,
     AgentService,
@@ -882,6 +884,7 @@ class ChatService:
             workspace_root=workspace_root,
             sandbox_enabled=sandbox_enabled,
         )
+        self._compute.bind_hook_event_consumer(self._consume_unsolicited_hook)
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -1418,6 +1421,7 @@ class ChatService:
         topic_refs: list[dict],
         eid: str | None = None,
         backfilled: bool = False,
+        platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
     ) -> dict | None:
         """Persist ONE discrete 芝士 message (Slack-style): committed the moment
@@ -1436,6 +1440,8 @@ class ChatService:
             meta = {"eid": eid}
         if backfilled:
             meta = {**(meta or {}), "backfilled": True}
+        if platform_unsolicited:
+            meta = {**(meta or {}), "platform_unsolicited": True}
         async with self._sessions() as session:
             # Claim BEFORE writing, in the SAME session: the key and the block
             # commit together, so "key present" and "message posted" cannot
@@ -1529,6 +1535,7 @@ class ChatService:
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         backfilled: bool = False,
+        platform_unsolicited: bool = False,
     ) -> dict:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
@@ -1542,6 +1549,8 @@ class ChatService:
             meta = {**meta, "eid": eid}
         if backfilled:
             meta = {**meta, "backfilled": True}
+        if platform_unsolicited:
+            meta = {**meta, "platform_unsolicited": True}
         async with self._sessions() as session:
             block = await BlockRepository(session).add(
                 project_id=project_id,
@@ -1556,6 +1565,79 @@ class ChatService:
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
         return payload
+
+    async def _consume_unsolicited_hook(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        event: AgentEvent | AgentDeliveryFailure,
+        eid: str | None,
+        result_text_seen: bool,
+    ) -> None:
+        """Persist and broadcast one hook from a session-initiated turn.
+
+        No request owns this stream. The provider's screen-lifetime consumer
+        calls here directly, and the process broker fans the resulting block to
+        every connected room subscriber.
+        """
+        from app.domain.agent.runtime import get_broker
+
+        broker = get_broker()
+        channel = str(topic_id)
+        frame: dict | None = None
+        if isinstance(event, AgentSessionInfo):
+            await self._save_session_pointer(topic_id, event.session_id)
+        elif isinstance(event, AgentMessage):
+            payload = await self._persist_assistant_message(
+                project_id=project_id,
+                topic_id=topic_id,
+                text=event.text,
+                turn_id=turn_id,
+                reply_to=None,
+                roster=None,
+                topic_refs=[],
+                eid=eid or event.eid,
+                platform_unsolicited=True,
+            )
+            if payload is not None:
+                frame = {"type": "assistant_block", "block": payload}
+        elif isinstance(event, AgentToolUse):
+            name = event.name.replace("mcp__cheese__", "")
+            if name not in _TASK_TOOLS:
+                args = event.input or {}
+                payload = await self._persist_tool_event(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    name=name,
+                    tool_input=args,
+                    platform=_is_platform_tool(event.name, args),
+                    turn_id=turn_id,
+                    eid=eid or event.eid,
+                    platform_unsolicited=True,
+                )
+                frame = {"type": "event_block", "block": payload}
+        elif isinstance(event, AgentResult):
+            if event.session_id:
+                await self._save_session_pointer(topic_id, event.session_id)
+            if event.text.strip() and not result_text_seen:
+                payload = await self._persist_assistant_message(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    text=event.text,
+                    turn_id=turn_id,
+                    reply_to=None,
+                    roster=None,
+                    topic_refs=[],
+                    eid=eid,
+                    platform_unsolicited=True,
+                )
+                if payload is not None:
+                    frame = {"type": "assistant_block", "block": payload}
+        if frame is not None:
+            await broker.publish(channel, frame)
+        if isinstance(event, AgentResult):
+            await broker.publish(channel, {"type": "done"})
 
     async def _reconcile_spool(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None

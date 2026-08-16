@@ -14,11 +14,14 @@ from app.core.config import settings
 from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.hooks_substrate import HooksTurnProvider
 from app.domain.agent.runtime import get_broker
 from app.domain.agent.service import AgentEvent, AgentResult, AgentService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
@@ -71,6 +74,18 @@ class _AnsweringLiveScreenProvider:
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         del project_id, topic_id
+
+
+class _IdleHooksProvider(HooksTurnProvider[str]):
+    """A live screen whose hooks can arrive without a platform request."""
+
+    name = "idle-hooks"
+
+    async def _ensure_ready(self, **_: object) -> str:
+        return "screen"
+
+    async def _send_prompt(self, screen: str, prompt: str) -> None:
+        del screen, prompt
 
 
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
@@ -203,3 +218,142 @@ async def test_two_messages_during_one_turn_are_both_answered(client, tmp_path) 
     )
     assert "先处理 A" in answer
     assert "再处理 B" in answer
+
+
+async def test_session_initiated_turn_is_persisted_and_broadcast(
+    client, tmp_path
+) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = _IdleHooksProvider(router=router)
+    ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "session-autonomous",
+                "_eid": "session-autonomous-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "后台任务已经完成",
+                "_eid": "message-autonomous-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "后台任务已经完成",
+                "session_id": "session-autonomous",
+                "_eid": "stop-autonomous-1",
+            },
+        )
+        message_frame = await asyncio.wait_for(room.get(), 1)
+        done_frame = await asyncio.wait_for(room.get(), 1)
+
+    assert message_frame["type"] == "assistant_block"
+    assert done_frame == {"type": "done"}
+    block = message_frame["block"]
+    assert block["turn_id"] is not None
+    assert block["meta"] == {
+        "eid": "message-autonomous-1",
+        "platform_unsolicited": True,
+    }
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+        topic = await TopicRepository(session).get(topic_id)
+    ai_messages = [
+        row
+        for row in rows
+        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+    ]
+    assert [row.content for row in ai_messages] == ["后台任务已经完成"]
+    assert topic is not None and topic.session_id == "session-autonomous"
+
+    await provider.drop_subscription(topic_id)
+    assert subscription.consumer_task is not None
+    assert subscription.consumer_task.done()
+
+
+async def test_late_hook_opens_a_fresh_unsolicited_turn(client, tmp_path) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    topic_key = str(topic_id)
+
+    class _PlatformTurnProvider(_IdleHooksProvider):
+        async def _send_prompt(self, screen: str, prompt: str) -> None:
+            del screen, prompt
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "平台轮完成",
+                    "_eid": "platform-stop-1",
+                },
+            )
+
+    provider = _PlatformTurnProvider(router=router)
+    ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    platform_turn_id = uuid.uuid4()
+    platform_events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+            turn_id=platform_turn_id,
+        )
+    ]
+    assert isinstance(platform_events[-1], AgentResult)
+
+    broker = get_broker()
+    async with broker.subscribe(topic_key) as room:
+        assert router.push(
+            topic_key,
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "这是 Stop 后才到的消息",
+                "_eid": "late-message-1",
+            },
+        )
+        assert router.push(
+            topic_key,
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "这是 Stop 后才到的消息",
+                "_eid": "late-stop-1",
+            },
+        )
+        frame = await asyncio.wait_for(room.get(), 1)
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    assert frame["type"] == "assistant_block"
+    assert uuid.UUID(frame["block"]["turn_id"]) != platform_turn_id
+    assert frame["block"]["meta"]["platform_unsolicited"] is True
+    await provider.drop_subscription(topic_id)
