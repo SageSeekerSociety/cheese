@@ -71,7 +71,13 @@ def test_blocks_empty_then_populated_after_chat(client):
     # Slack-style: no token deltas — the platform ✅-acks the summoning message,
     # announces the working turn (正在思考 for every open client), then 芝士's
     # reply lands as one complete message block.
-    assert types == ["user_block", "reaction", "turn_active", "assistant_block", "done"]
+    assert types == [
+        "user_block",
+        "turn_started",
+        "reaction",
+        "assistant_block",
+        "done",
+    ]
 
     ack = next(f for f in frames if f["type"] == "reaction")
     agent = topic_agent_handle(uuid.UUID(topic_id))

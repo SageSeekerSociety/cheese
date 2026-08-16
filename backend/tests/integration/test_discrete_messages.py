@@ -77,8 +77,8 @@ def test_each_message_boundary_lands_as_own_block(client):
     assert "delta" not in types
     assert types == [
         "user_block",
+        "turn_started",  # explicit lifecycle for every open client
         "reaction",  # the platform's ✅ receipt on the summoning message
-        "turn_active",  # working indicator for every open client
         "assistant_block",
         "tool",
         "assistant_block",

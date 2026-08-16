@@ -15,7 +15,11 @@ the durable lease is the documented multi-instance upgrade.
 
 import asyncio
 import contextlib
+import json
 import logging
+import os
+import tempfile
+import threading
 import time
 import uuid
 from collections import deque
@@ -45,6 +49,8 @@ from app.domain.identity.actor import Actor
 
 logger = logging.getLogger("cheesex.runtime")
 
+_inflight_lock = threading.Lock()
+
 
 def _inflight_path():
     from pathlib import Path
@@ -54,24 +60,67 @@ def _inflight_path():
     return Path(settings.workspace_root) / ".turns-inflight.json"
 
 
-def _load_inflight() -> dict:
-    import json
-
+def _load_inflight_unlocked() -> dict:
     try:
         return json.loads(_inflight_path().read_text())
-    except Exception:  # noqa: BLE001 — missing/corrupt file = empty registry
+    except FileNotFoundError:
+        return {}
+    except Exception:  # noqa: BLE001 — registry recovery must not kill the app
+        logger.exception("failed to read in-flight turn registry; treating as empty")
         return {}
 
 
-def _save_inflight(reg: dict) -> None:
-    import json
+def _load_inflight() -> dict:
+    with _inflight_lock:
+        return _load_inflight_unlocked()
 
+
+def _save_inflight_unlocked(reg: dict) -> None:
+    tmp_path: str | None = None
     try:
         path = _inflight_path()
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(reg))
+        # Same-directory temp + replace: readers see either the old complete
+        # registry or the new complete registry, never a half-written JSON file.
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp_path = tmp.name
+            json.dump(reg, tmp, separators=(",", ":"))
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.replace(tmp_path, path)
+        tmp_path = None
     except Exception:  # noqa: BLE001 — registry is best-effort
         logger.exception("failed to persist in-flight turn registry")
+    finally:
+        if tmp_path is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
+
+
+def _save_inflight(reg: dict) -> None:
+    with _inflight_lock:
+        _save_inflight_unlocked(reg)
+
+
+def _mutate_inflight(mutator: Callable[[dict], object]) -> dict:
+    """Atomically load, mutate, and replace the durable turn registry.
+
+    The file replace prevents torn JSON; this process-local mutex prevents two
+    concurrent turns from both reading the same snapshot and erasing each
+    other's update with last-writer-wins.
+    """
+    with _inflight_lock:
+        reg = _load_inflight_unlocked()
+        mutator(reg)
+        _save_inflight_unlocked(reg)
+        return reg
 
 
 def _continuation_of(turn_id: str, info: dict) -> uuid.UUID:
@@ -106,14 +155,18 @@ class InProcessBroker:
     """Fan-out pub/sub for one process, with a per-channel replay buffer of the
     IN-PROGRESS turn's ephemeral frames (R3). A connection that subscribes mid-turn
     gets those frames immediately (catch-up), then the live continuation — so a
-    reconnect (after `GET /blocks` for persisted history) is seamless. The buffer
-    is dropped when the turn ends (done/error), since its result is now persisted
-    as blocks; between turns the buffer is empty, so a fresh submit replays nothing.
+    reconnect (after `GET /blocks` for persisted history) is seamless.
+
+    Turn lifetime is explicit and keyed by turn id. ``done`` / ``error`` finish a
+    request stream, not necessarily the topic's running turn: a message merged
+    into a live Claude session has its own ``done`` while the original turn keeps
+    working. Only ``turn_started`` / ``turn_finished`` mutate active state.
     """
 
     def __init__(self, replay_size: int = 512) -> None:
         self._subs: dict[str, set[asyncio.Queue[Frame]]] = {}
         self._buffer: dict[str, list[Frame]] = {}
+        self._active: dict[str, set[str]] = {}
         self._replay_size = replay_size
 
     def reset(self) -> None:
@@ -124,34 +177,55 @@ class InProcessBroker:
         reused channel. Called between tests by the client/python_client fixtures."""
         self._subs.clear()
         self._buffer.clear()
+        self._active.clear()
 
     async def publish(self, channel: str, frame: Frame) -> None:
+        kind = frame.get("type")
         # Reaction frames are standalone state updates, not turn progress: they
         # can fire on an idle channel (a human reacting between turns) and are
         # rebuilt from GET /blocks on (re)connect — so they are fanned out live
         # but never buffered (buffering would also make an idle channel look
         # in_flight forever).
-        if frame.get("type") == "reaction":
+        if kind == "reaction":
             for q in list(self._subs.get(channel, ())):
                 q.put_nowait(frame)
             return
-        buf = self._buffer.setdefault(channel, [])
-        buf.append(frame)
-        if frame.get("type") in ("done", "error"):
-            # Turn finished — its output is persisted as blocks now; drop the
-            # in-progress buffer so a later subscriber doesn't replay a dead turn.
-            self._buffer.pop(channel, None)
-        elif len(buf) > self._replay_size:
-            del buf[: len(buf) - self._replay_size]
+
+        if kind == "turn_started":
+            turn_id = str(frame.get("turn_id") or "")
+            if turn_id:
+                self._active.setdefault(channel, set()).add(turn_id)
+
+        # Idle state changes and persisted blocks are fanned out live but never
+        # retained. This is what stops a queue notice or other system event from
+        # making a reconnect look like an agent turn is still running.
+        if self._active.get(channel):
+            buf = self._buffer.setdefault(channel, [])
+            buf.append(frame)
+            if len(buf) > self._replay_size:
+                del buf[: len(buf) - self._replay_size]
+
+        if kind == "turn_finished":
+            turn_id = str(frame.get("turn_id") or "")
+            active = self._active.get(channel)
+            if active is not None:
+                active.discard(turn_id)
+                if not active:
+                    self._active.pop(channel, None)
+                    self._buffer.pop(channel, None)
+
         for q in list(self._subs.get(channel, ())):
             q.put_nowait(frame)
 
     def in_flight(self, channel: str) -> bool:
-        """True while a turn is mid-stream on this channel: the replay buffer
-        holds frames from turn start until its done/error clears it. Lets a
+        """True while at least one explicitly-started turn is active. Lets a
         (re)connecting client rebuild the 正在思考 indicator instead of showing
         a silent, seemingly-dead topic."""
-        return bool(self._buffer.get(channel))
+        return bool(self._active.get(channel))
+
+    def active_turn_ids(self, channel: str) -> list[str]:
+        """Stable snapshot for a reconnecting client."""
+        return sorted(self._active.get(channel, ()))
 
     @contextlib.asynccontextmanager
     async def subscribe(
@@ -408,6 +482,62 @@ class TurnRunner:
         task.add_done_callback(self._tasks.discard)
         return turn_id
 
+    async def submit_message(
+        self,
+        chat_service,
+        topic_id: uuid.UUID,
+        *,
+        author: str,
+        content: str,
+        summon: bool,
+        reply_to: str | None = None,
+        attachments: list[dict] | None = None,
+        provision_actor: Actor | None = None,
+    ) -> uuid.UUID:
+        """Persist one human message now, then schedule AI work if requested.
+
+        Receiving a message is free collaboration state; running a model turn is
+        metered work. Keeping those as two operations makes the ordering real:
+        the project queue and credit gate can delay/refuse only the latter.
+        """
+        turn_id = uuid.uuid4()
+        payloads, user_block_id = await chat_service.post_user_message(
+            topic_id,
+            author=author,
+            content=content,
+            turn_id=turn_id,
+            reply_to=reply_to,
+            attachments=attachments,
+        )
+        channel = str(topic_id)
+        for payload in payloads:
+            await self._broker.publish(
+                channel, {"type": "user_block", "block": payload}
+            )
+        if not summon:
+            # Request completion, not turn completion: no turn was started.
+            await self._broker.publish(channel, {"type": "done"})
+            return turn_id
+
+        task = asyncio.create_task(
+            self._run(
+                chat_service,
+                topic_id,
+                turn_id,
+                author=author,
+                content=content,
+                summon=True,
+                reply_to=reply_to,
+                attachments=attachments,
+                continuation_id=turn_id,
+                provision_actor=provision_actor,
+                landed_user_block_id=user_block_id,
+            )
+        )
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return turn_id
+
     def submit_kickoff(
         self, chat_service, topic_id: uuid.UUID, *, prompt: str | None = None
     ) -> uuid.UUID:
@@ -628,6 +758,7 @@ class TurnRunner:
         }
         if not orphans:
             return 0
+
         # Keep what we did not claim (live turns, entries too young to judge);
         # their own completion path removes them. Re-read rather than writing
         # back the snapshot from the top of this method: the activity probe
@@ -635,8 +766,11 @@ class TurnRunner:
         # but not in `reg`. Writing the stale copy would delete its entry — and
         # a running turn with no registry entry is invisible to every future
         # sweep, i.e. the next death is silent again, which is the whole bug.
-        surviving = _load_inflight()
-        _save_inflight({k: v for k, v in surviving.items() if k not in orphans})
+        def drop_claimed(surviving: dict) -> None:
+            for key in orphans:
+                surviving.pop(key, None)
+
+        _mutate_inflight(drop_claimed)
         resumed = 0
         # --- wedged turns: cancel + (maybe) resume, the pre-#316 treatment.
         # Their claude died WITH whatever they were driving, so a resumed
@@ -1084,6 +1218,7 @@ class TurnRunner:
         reply_to: str | None,
         attachments: list[dict] | None,
         is_message_turn: bool,
+        message_landed: bool = False,
     ) -> None:
         """Refuse a turn for exhausted credits. A human's message still lands
         (speaking is free — only the AI turn is metered): it goes through a
@@ -1092,7 +1227,7 @@ class TurnRunner:
         from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
 
         channel = str(topic_id)
-        if is_message_turn and (content or attachments):
+        if is_message_turn and not message_landed and (content or attachments):
             try:
                 async for frame in chat_service.converse(
                     topic_id=topic_id,
@@ -1145,9 +1280,26 @@ class TurnRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        # Human message already persisted by ``submit_message``. Its AI work is
+        # still pending admission and may instead merge into a live turn.
+        landed_user_block_id: uuid.UUID | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
+        channel = str(topic_id)
+        if landed_user_block_id is not None and content and not attachments:
+            delivered = await chat_service.merge_into_running_turn(
+                topic_id, landed_user_block_id, content, author
+            )
+            if delivered:
+                ack = await chat_service.ack_summon(landed_user_block_id, topic_id)
+                if ack is not None:
+                    await self._broker.publish(channel, {"type": "reaction", **ack})
+                # This request is complete; the already-active turn remains live
+                # until its own turn_finished marker arrives.
+                await self._broker.publish(channel, {"type": "done"})
+                return
+
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
         # project's concurrent-turn ceiling is reached. Both states are posted
         # into the topic as platform system events, so people SEE why nothing
@@ -1169,9 +1321,25 @@ class TurnRunner:
                 is_message_turn=(
                     frames is None and not is_resume and nudge_event is None
                 ),
+                message_landed=landed_user_block_id is not None,
             )
             return
+        lifecycle_started = False
         try:
+            if landed_user_block_id is not None:
+                frames = chat_service.converse_prepared(
+                    topic_id=topic_id,
+                    author=author,
+                    content=content,
+                    turn_id=turn_id,
+                    user_block_id=landed_user_block_id,
+                    continuation_id=continuation_id,
+                    provision_actor=provision_actor,
+                )
+            await self._broker.publish(
+                channel, {"type": "turn_started", "turn_id": str(turn_id)}
+            )
+            lifecycle_started = True
             await self._execute(
                 chat_service,
                 topic_id,
@@ -1190,6 +1358,10 @@ class TurnRunner:
                 frames=frames,
             )
         finally:
+            if lifecycle_started:
+                await self._broker.publish(
+                    channel, {"type": "turn_finished", "turn_id": str(turn_id)}
+                )
             # Drop the liveness mark here, not in `_execute`: a turn killed by
             # task cancellation (CancelledError is a BaseException — it misses
             # every `except` inside `_execute`, including the registry cleanup)
@@ -1270,8 +1442,7 @@ class TurnRunner:
         # Durable in-flight registry: if the PROCESS dies (deploy past the drain
         # ceiling, crash), startup finds the orphan and auto-resumes it — a
         # killed turn must never just vanish.
-        reg = _load_inflight()
-        reg[str(turn_id)] = {
+        entry = {
             "topic_id": str(topic_id),
             "started_at": rec["started_at"],
             "is_resume": is_resume,
@@ -1285,7 +1456,7 @@ class TurnRunner:
             "author": author,
             "content": content,
         }
-        _save_inflight(reg)
+        _mutate_inflight(lambda reg: reg.__setitem__(str(turn_id), entry))
         # Same instant, no await in between: a sweep can never observe this turn
         # on disk but not in `_live` and mistake a just-started turn for a corpse.
         current = asyncio.current_task()
@@ -1476,10 +1647,10 @@ class TurnRunner:
                 topic_id,
                 rec["duration_s"],
             )
-            # An `error` frame is also what drops the broker's replay buffer, so
-            # a client reconnecting after the kill stops being told the dead turn
-            # is still streaming. Publishing never suspends (it is queue writes
-            # only), so it is safe on an already-cancelled task.
+            # Surface the request failure before `_run` publishes the explicit
+            # turn_finished marker that retires this turn's broker state.
+            # Publishing never suspends (it is queue writes only), so it is safe
+            # on an already-cancelled task.
             await self._broker.publish(
                 channel,
                 {
@@ -1546,20 +1717,29 @@ class TurnRunner:
                 rec["detail"] = "no first output"
                 # 平台提示统一契约: 房间里一行，「常见原因」那一串进 meta.detail。
                 text = (
-                    f"⚠️ 芝士这轮**一个字都没输出**"
-                    f"（{round(self._first_output_timeout_s)}秒），会自动再试一次。"
+                    "⚠️ 芝士自动续跑仍然**一个字都没输出**，需要人来处理。"
+                    if is_resume
+                    else (
+                        f"⚠️ 芝士这轮**一个字都没输出**"
+                        f"（{round(self._first_output_timeout_s)}秒），"
+                        "会自动再试一次。"
+                    )
                 )
                 timeout_meta = notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
-                    who=WHO_PLATFORM,
+                    who=WHO_HUMAN if is_resume else WHO_PLATFORM,
                     detail=(
                         f"{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
                         "也没有任何工具调用，按运行环境没起来处理。"
                         "常见原因：平台的模型订阅凭据过期（需要主机侧重新认证）、"
                         "沙箱容器建不起来、磁盘满了、或者模型侧连不上"
                         "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
-                        "再失败就先去看平台状态，反复 @ 它没有用。"
+                        + (
+                            "自动重试已经用完，请检查平台状态后再决定是否重新 @。"
+                            if is_resume
+                            else "再失败就先去看平台状态，反复 @ 它没有用。"
+                        )
                     ),
                     detail_label="常见原因",
                 )
@@ -1572,17 +1752,25 @@ class TurnRunner:
                     topic_id,
                 )
                 text = (
-                    f"⚠️ 芝士这轮超时被中断了（{effective_ceiling_s}秒的上限），"
-                    "马上自动接着跑。"
+                    "⚠️ 芝士自动续跑再次超时，需要人来处理。"
+                    if is_resume
+                    else (
+                        f"⚠️ 芝士这轮超时被中断了"
+                        f"（{effective_ceiling_s}秒的上限），马上自动接着跑。"
+                    )
                 )
                 timeout_meta = notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
-                    who=WHO_PLATFORM,
+                    who=WHO_HUMAN if is_resume else WHO_PLATFORM,
                     detail=(
                         f"上限 {effective_ceiling_s} 秒，实际跑了约 "
                         f"{rec['duration_s']} 秒，可能卡在某步。"
-                        "已完成的改动都在；马上自动接着跑一次。"
+                        + (
+                            "已完成的改动都在；自动重试已经用完，请检查后再继续。"
+                            if is_resume
+                            else "已完成的改动都在；马上自动接着跑一次。"
+                        )
                     ),
                     detail_label="详细说明",
                 )
@@ -1636,14 +1824,22 @@ class TurnRunner:
             else:
                 # 平台提示统一契约: 一行给房间，别的收进 detail。真正的 traceback
                 # 只进日志（这里连异常文本都不外发是刻意的 —— 见上面那段注释）。
-                text = "⚠️ 芝士这轮中断了，马上自动接着跑一次。"
+                text = (
+                    "⚠️ 芝士自动续跑再次中断，需要人来处理。"
+                    if is_resume
+                    else "⚠️ 芝士这轮中断了，马上自动接着跑一次。"
+                )
                 event_meta = notice(
                     EVENT_TURN_FAILED,
                     severity=SEVERITY_ERROR,
-                    who=WHO_PLATFORM,
+                    who=WHO_HUMAN if is_resume else WHO_PLATFORM,
                     detail=(
-                        "已完成的改动都在；平台会自动接着跑一次，"
-                        "若再失败就需要你再 @ 它。"
+                        "已完成的改动都在；自动重试已经用完，请检查后再继续。"
+                        if is_resume
+                        else (
+                            "已完成的改动都在；平台会自动接着跑一次，"
+                            "若再失败就需要你再 @ 它。"
+                        )
                     ),
                     detail_label="详细说明",
                 )
@@ -1724,7 +1920,5 @@ class TurnRunner:
                     )
             except Exception:  # noqa: BLE001 — a turn must never fail on this
                 logger.exception("conclusion settle failed for topic %s", topic_id)
-        reg = _load_inflight()
-        if reg.pop(str(turn_id), None) is not None:
-            _save_inflight(reg)
+        _mutate_inflight(lambda reg: reg.pop(str(turn_id), None))
         clear_context("turn", "topic")

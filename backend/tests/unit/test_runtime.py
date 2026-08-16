@@ -40,6 +40,17 @@ class _FakeChat:
             yield f
 
 
+async def _next_frame(
+    queue: asyncio.Queue[dict], kind: str, *, timeout: float = 1.0
+) -> dict:
+    """Read through lifecycle/control frames until the requested frame lands."""
+    async with asyncio.timeout(timeout):
+        while True:
+            frame = await queue.get()
+            if frame["type"] == kind:
+                return frame
+
+
 @pytest.mark.anyio
 async def test_broker_fans_out_then_stops_on_unsubscribe():
     broker = InProcessBroker()
@@ -71,12 +82,13 @@ async def test_reaction_frames_fan_out_but_never_buffer():
 async def test_replay_catches_up_a_mid_turn_subscriber():
     # R3: a connection that subscribes mid-turn gets the in-progress frames.
     broker = InProcessBroker()
+    await broker.publish("c", {"type": "turn_started", "turn_id": "t1"})
     await broker.publish("c", {"type": "user_block"})
     await broker.publish("c", {"type": "delta", "text": "a"})
     async with broker.subscribe("c", replay=True) as q:  # joins mid-turn
         await broker.publish("c", {"type": "delta", "text": "b"})
-        got = [q.get_nowait()["type"] for _ in range(3)]
-    assert got == ["user_block", "delta", "delta"]  # 2 replayed + 1 live
+        got = [q.get_nowait()["type"] for _ in range(4)]
+    assert got == ["turn_started", "user_block", "delta", "delta"]
 
 
 @pytest.mark.anyio
@@ -84,8 +96,11 @@ async def test_buffer_drops_after_turn_so_fresh_subscriber_replays_nothing():
     # Between turns the buffer is empty (the result is persisted as blocks), so a
     # subscriber that connects to start a new turn doesn't replay the dead one.
     broker = InProcessBroker()
+    await broker.publish("c", {"type": "turn_started", "turn_id": "t1"})
     await broker.publish("c", {"type": "user_block"})
     await broker.publish("c", {"type": "done"})
+    assert broker.in_flight("c") is True  # request done != turn done
+    await broker.publish("c", {"type": "turn_finished", "turn_id": "t1"})
     async with broker.subscribe("c", replay=True) as q:
         assert q.empty()
     assert broker._buffer == {}
@@ -105,9 +120,15 @@ async def test_runner_publishes_turn_frames_to_subscribers():
         while True:
             f = await asyncio.wait_for(q.get(), 1)
             seen.append(f["type"])
-            if f["type"] == "done":
+            if f["type"] == "turn_finished":
                 break
-    assert seen == ["user_block", "delta", "done"]
+    assert seen == [
+        "turn_started",
+        "user_block",
+        "delta",
+        "done",
+        "turn_finished",
+    ]
 
 
 @pytest.mark.anyio
@@ -178,7 +199,7 @@ async def test_submit_kickoff_runs_first_turn_without_user_block():
             if f["type"] == "done":
                 break
     assert chat.ran is True
-    assert seen == ["delta", "done"]
+    assert seen == ["turn_started", "delta", "done"]
     assert "user_block" not in seen
 
 
@@ -219,12 +240,12 @@ async def test_wedged_turn_times_out_and_is_cancelled():
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_Hang(), topic, author="u", content="hi", summon=True)
         kinds = []
-        for _ in range(3):
+        for _ in range(4):
             f = await asyncio.wait_for(q.get(), 1)
             kinds.append(f["type"])
             if f["type"] == "error":
                 break
-    assert kinds == ["user_block", "error"]
+    assert kinds == ["turn_started", "user_block", "error"]
     await asyncio.wait_for(cancelled.wait(), 1)  # the wedged turn was cancelled
 
 
@@ -254,7 +275,7 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout():
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_LongTmuxTurn(), topic, author="u", content="hi", summon=True)
-        f = await asyncio.wait_for(q.get(), 2)
+        f = await _next_frame(q, "done", timeout=2)
     # Never timed out, and the internal control frame never leaked to subscribers.
     assert f["type"] == "done"
 
@@ -272,7 +293,7 @@ async def test_topic_turn_reports_the_rescheduled_ceiling():
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_Turn(), topic, author="u", content="hi", summon=True)
-        await asyncio.wait_for(q.get(), 2)
+        await _next_frame(q, "done", timeout=2)
     rec = runner.topic_turn(topic)
     assert rec is not None
     assert rec["ceiling_s"] == 123
@@ -312,10 +333,7 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
-        for _ in range(3):
-            frame = await asyncio.wait_for(q.get(), 3)
-            if frame["type"] == "event_block":
-                break
+        await _next_frame(q, "event_block", timeout=3)
     assert svc.posted is not None
     assert "1秒的上限" in svc.posted
     # 平台提示统一契约: 房间里一行，"实际跑了约 N 秒"收进 meta.detail 由前端折叠。
@@ -357,10 +375,7 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
-        for _ in range(3):
-            frame = await asyncio.wait_for(q.get(), 5)
-            if frame["type"] == "event_block":
-                break
+        await _next_frame(q, "event_block", timeout=5)
     assert svc.posted is not None
     assert "2秒的上限" in svc.posted
     assert "0.05" not in svc.posted
@@ -389,8 +404,7 @@ async def test_running_topic_ids_reports_only_in_flight_turns():
             content="hi",
             summon=True,
         )
-        await asyncio.wait_for(q.get(), 1)
-    await asyncio.sleep(0.05)  # let the post-loop status flip to "done" land
+        await _next_frame(q, "turn_finished")
 
     runner.submit(_SlowTurn(), running_topic, author="u", content="hi", summon=True)
     await asyncio.sleep(0.05)  # started, but its 0.2s sleep hasn't resolved yet
@@ -413,7 +427,7 @@ async def test_runner_publishes_friendly_error_on_failure():
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_Boom(), topic, author="u", content="hi", summon=True)
-        frame = await asyncio.wait_for(q.get(), 1)
+        frame = await _next_frame(q, "error")
     assert frame["type"] == "error"
 
 
@@ -443,8 +457,8 @@ async def test_turn_failure_lands_in_the_timeline():
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
-        first = await asyncio.wait_for(q.get(), 1)
-        second = await asyncio.wait_for(q.get(), 1)
+        first = await _next_frame(q, "event_block")
+        second = await _next_frame(q, "error")
     assert first["type"] == "event_block"
     assert "中断" in first["block"]["content"]
     assert second["type"] == "error" and second["persisted"] is True
@@ -498,8 +512,8 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
-        event = await asyncio.wait_for(q.get(), 1)
-        error = await asyncio.wait_for(q.get(), 1)
+        event = await _next_frame(q, "event_block")
+        error = await _next_frame(q, "error")
 
     assert event["type"] == "event_block"
     assert event["block"]["meta"]["code"] == expected_code
@@ -555,6 +569,47 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
     assert "断" in resumed["content"]  # the continuation instruction
     # The failure surfaced first, then the resumed turn's reply.
     assert "error" in seen and seen[-1] == "assistant_block"
+
+
+@pytest.mark.anyio
+async def test_second_failure_explicitly_hands_control_to_a_human(monkeypatch):
+    broker = InProcessBroker()
+    runner = TurnRunner(broker)
+
+    class _BoomAgain:
+        def __init__(self) -> None:
+            self.events: list[tuple[str, dict]] = []
+
+        async def converse(self, **_):
+            raise RuntimeError("still broken")
+            yield  # pragma: no cover
+
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
+            self.events.append((content, meta))
+            return {"id": "sys", "kind": "event", "content": content, "meta": meta}
+
+    def unexpected_resume(*_args, **_kwargs):
+        pytest.fail("a failed automatic retry must not schedule a third turn")
+
+    monkeypatch.setattr(runner, "_schedule_resume", unexpected_resume)
+    svc = _BoomAgain()
+    topic = uuid.uuid4()
+    async with broker.subscribe(str(topic)) as queue:
+        runner.submit(
+            svc,
+            topic,
+            author="system",
+            content="continue",
+            summon=True,
+            is_resume=True,
+        )
+        error = await _next_frame(queue, "error")
+
+    text, meta = svc.events[0]
+    assert "需要人来处理" in text
+    assert meta["who"] == "human"
+    assert "自动重试已经用完" in meta["detail"]
+    assert error["message"] == text
 
 
 @pytest.mark.anyio
@@ -806,15 +861,48 @@ async def test_turn_registers_and_clears_inflight(tmp_path, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_concurrent_inflight_mutations_do_not_lose_updates(tmp_path, monkeypatch):
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    rt._save_inflight({"count": 0})
+
+    def increment(_index: int) -> None:
+        def mutate(reg: dict) -> None:
+            current = int(reg["count"])
+            time.sleep(0.005)
+            reg["count"] = current + 1
+
+        rt._mutate_inflight(mutate)
+
+    await asyncio.gather(*(asyncio.to_thread(increment, i) for i in range(12)))
+    assert rt._load_inflight() == {"count": 12}
+
+
+@pytest.mark.anyio
 async def test_in_flight_reflects_replay_buffer():
-    """in_flight is true from first published frame until done/error clears
-    the buffer — the WS route uses it to tell re-entering clients a turn is
-    mid-stream (rebuild 正在思考 instead of showing a dead topic)."""
+    """Only explicit lifecycle markers mutate in_flight state."""
     broker = InProcessBroker()
     assert broker.in_flight("t") is False
-    await broker.publish("t", {"type": "delta", "text": "hi"})
+    await broker.publish("t", {"type": "event_block", "block": {}})
+    assert broker.in_flight("t") is False  # idle system event
+    await broker.publish("t", {"type": "turn_started", "turn_id": "one"})
     assert broker.in_flight("t") is True
     await broker.publish("t", {"type": "done"})
+    assert broker.in_flight("t") is True  # request completion is not lifecycle
+    await broker.publish("t", {"type": "turn_finished", "turn_id": "one"})
+    assert broker.in_flight("t") is False
+
+
+@pytest.mark.anyio
+async def test_finishing_one_turn_does_not_clear_another_turns_state():
+    broker = InProcessBroker()
+    await broker.publish("t", {"type": "turn_started", "turn_id": "one"})
+    await broker.publish("t", {"type": "turn_started", "turn_id": "two"})
+    await broker.publish("t", {"type": "turn_finished", "turn_id": "one"})
+    assert broker.in_flight("t") is True
+    assert broker.active_turn_ids("t") == ["two"]
+    await broker.publish("t", {"type": "turn_finished", "turn_id": "two"})
     assert broker.in_flight("t") is False
 
 

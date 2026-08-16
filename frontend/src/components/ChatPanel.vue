@@ -153,8 +153,9 @@ const errorMsg = ref<string | null>(null)
 
 // Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
 // message lands as an `assistant_block` frame. `awaitingReply` drives the
-// 正在看… indicator from summon until the FIRST message of the turn arrives.
+// 正在看… indicator from summon until every active turn explicitly finishes.
 const awaitingReply = ref(false)
+const activeTurnIds = ref<Set<string>>(new Set())
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
 // Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between
@@ -552,10 +553,9 @@ function handleFrame(frame: WsServerFrame) {
       break
     case 'assistant_block':
       // One complete 芝士 message (Slack-style) — a turn may land several.
-      // The first one retires the 正在看… indicator; the working-log todo
-      // stays visible until the turn actually finishes.
       pushBlock(frame.block)
-      awaitingReply.value = false
+      // Compatibility with an older backend that has no lifecycle markers.
+      if (activeTurnIds.value.size === 0) awaitingReply.value = false
       autoScroll()
       break
     case 'error':
@@ -570,27 +570,46 @@ function handleFrame(frame: WsServerFrame) {
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
-      awaitingReply.value = false
+      if (activeTurnIds.value.size === 0) awaitingReply.value = false
       // A failed turn is exactly when the checklist matters most — it is what
       // whoever picks this up next (person or new machine) works from. Keep it.
       todoRestored.value = true
       break
     case 'done':
-      awaitingReply.value = false
-      // Kept, not cleared: the checklist is the topic's 进度层 now, not just
-      // this turn's working log, and it is what the next turn resumes from.
-      todoRestored.value = true
-      emit('turn-done')
+      // `done` closes one request stream. A mid-turn merged message has its own
+      // done while the original turn remains active, so lifecycle markers own
+      // the running indicator whenever they are present.
+      if (activeTurnIds.value.size === 0) {
+        awaitingReply.value = false
+        todoRestored.value = true
+        emit('turn-done')
+      }
       autoScroll()
       break
     case 'retract_block':
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
     case 'turn_active':
-      // Re-entered a topic whose turn is mid-stream: show 正在思考 until the
-      // replayed/live frames take over (cleared by assistant_block/done).
+      if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
       awaitingReply.value = true
       break
+    case 'turn_started': {
+      const next = new Set(activeTurnIds.value)
+      next.add(frame.turn_id)
+      activeTurnIds.value = next
+      awaitingReply.value = true
+      break
+    }
+    case 'turn_finished': {
+      const next = new Set(activeTurnIds.value)
+      next.delete(frame.turn_id)
+      activeTurnIds.value = next
+      awaitingReply.value = next.size > 0
+      todoRestored.value = true
+      emit('turn-done')
+      autoScroll()
+      break
+    }
   }
 }
 
@@ -598,6 +617,7 @@ async function loadTopic(topic: Topic) {
   errorMsg.value = null
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
+  activeTurnIds.value = new Set()
   todoItems.value = []
   todoRestored.value = false
   // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
@@ -1281,7 +1301,7 @@ onBeforeUnmount(() => {
           />
 
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
-             from summon until the turn's FIRST message lands; the live
+             from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
           <div v-if="awaitingReply || todoItems.length" class="im-row">
             <div class="im-gutter">

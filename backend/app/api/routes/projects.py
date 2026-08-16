@@ -20,7 +20,7 @@ from app.api.deps import (
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
@@ -49,6 +49,7 @@ from app.domain.project.schemas import (
     TaskLinkOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.topic.models import Topic
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -261,8 +262,31 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(page(items, len(items)))
 
 
+async def _authorized_memory_topic(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
+    topic_raw: str,
+) -> Topic | None:
+    """Resolve and authorize the body-carried topic, when present."""
+    if not topic_raw:
+        return None
+    try:
+        topic_id = uuid.UUID(topic_raw)
+    except ValueError as exc:
+        raise ValidationError("topic 不是合法的话题 id") from exc
+    topic = await TopicService(db).get_or_404(topic_id)
+    if topic.project_id != project_id:
+        raise ForbiddenError("这个话题不属于 URL 中的项目")
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=project_id
+    )
+    await resolver.authorize_topic(actor, project_id=project_id, topic_id=topic_id)
+    return topic
+
+
 async def _agent_memory_scope(
-    db: DbSession, project_id: uuid.UUID, topic_raw: str
+    db: DbSession, project_id: uuid.UUID, topic: Topic | None
 ) -> tuple[MemoryScope, str] | None:
     """Resolve ``topic`` into the acting 芝士's own memory scope in this project.
 
@@ -273,16 +297,27 @@ async def _agent_memory_scope(
     """
     from app.domain.memory.models import agent_project_scope_id
 
-    try:
-        topic_id = uuid.UUID(topic_raw)
-    except ValueError:
+    if topic is None:
         return None
-    handle = await TopicMemberService(db).resolve_agent_handle(topic_id)
+    handle = await TopicMemberService(db).resolve_agent_handle(topic.id)
     return MemoryScope.agent_project, agent_project_scope_id(project_id, handle)
 
 
+def _authorize_personal_memory_owner(topic: Topic | None, owner: str) -> None:
+    if topic is None:
+        return
+    participants = {topic.private_owner, topic.private_peer} - {None}
+    if not topic.is_private or owner not in participants:
+        raise ForbiddenError("只能在该成员自己的私聊中读写个人记忆")
+
+
 @router.post("/{project_id}/memory")
-async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def add_memory(
+    project_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
     the acting 芝士's own memory for this project; with scope="user"+owner it
     writes that member's personal memory (private chat, spec §8.4 个人记忆跟着
@@ -291,6 +326,9 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
+    topic = await _authorized_memory_topic(
+        db, resolver, project_id, (body.get("topic") or "").strip()
+    )
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("content 不能为空")
@@ -298,9 +336,10 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
+        _authorize_personal_memory_owner(topic, owner)
         await memory_store(db).remember(MemoryScope.user, owner, content)
         return ok({"remembered": True})
-    agent_scope = await _agent_memory_scope(db, project_id, body.get("topic") or "")
+    agent_scope = await _agent_memory_scope(db, project_id, topic)
     if agent_scope is not None:
         await memory_store(db).remember(*agent_scope, content)
     else:
@@ -309,7 +348,12 @@ async def add_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
 
 
 @router.post("/{project_id}/memory/search")
-async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
+async def search_memory(
+    project_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
     """记忆检索 — used by the `cheese recall` CLI. Defaults to project memory;
     with scope="user"+owner it searches that member's personal memory. On the
     OpenViking backend this is semantic search returning L0 abstracts; the flat
@@ -319,6 +363,9 @@ async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dic
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
+    topic = await _authorized_memory_topic(
+        db, resolver, project_id, (body.get("topic") or "").strip()
+    )
     query = (body.get("query") or "").strip()
     if not query:
         raise ValidationError("query 不能为空")
@@ -327,6 +374,7 @@ async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dic
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
+        _authorize_personal_memory_owner(topic, owner)
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
     # The agent's own memory plus the shared pool — the latter a read-only tail
@@ -334,7 +382,7 @@ async def search_memory(project_id: uuid.UUID, body: dict, db: DbSession) -> dic
     # concatenated by pool: which pool a fact happens to sit in says nothing
     # about how well it answers the question, and the caller reads top-down.
     hits = []
-    agent_scope = await _agent_memory_scope(db, project_id, body.get("topic") or "")
+    agent_scope = await _agent_memory_scope(db, project_id, topic)
     if agent_scope is not None:
         hits.extend(await store.search(*agent_scope, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
@@ -347,6 +395,7 @@ async def get_private_chat(
     project_id: uuid.UUID,
     user_handle: str,
     db: DbSession,
+    resolver: ActorResolverDep,
     peer_handle: str | None = None,
 ) -> dict:
     """Get-or-create a 1:1 private chat (spec §1).
@@ -355,6 +404,12 @@ async def get_private_chat(
     ``peer_handle`` it is a person-to-person DM between the two humans, shared
     by both regardless of who opens it first.
     """
+    actor = await resolver.require_verified_caller(project_id=project_id)
+    if actor.authenticated:
+        await resolver.authorize_project(actor, project_id=project_id)
+        participants = {user_handle, peer_handle} - {None}
+        if actor.is_agent or actor.handle not in participants:
+            raise ForbiddenError("只能打开自己参与的私聊")
     topic = await TopicService(db).get_or_create_private(
         project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
     )
