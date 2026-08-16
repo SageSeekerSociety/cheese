@@ -31,6 +31,15 @@ class VoidDecision(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+class ForceMergeDecision(BaseModel):
+    """人工放行 (App 采纳等 CI 再合)。No `decided_by`, same reason as 作废: this
+    is an authorization action and the signature is the entire point — the
+    actor comes from the session token only, never from the body, or "谁明知红
+    仍合并" would be whatever the caller typed."""
+
+    reason: str = Field(default="", max_length=2000)
+
+
 class ApprovalCreate(BaseModel):
     approver_handle: str = Field(min_length=1, max_length=64)
 

@@ -65,6 +65,24 @@ which was `False` when this was written. It has since been switched on
                   → archive the topic
 ```
 
+> **Update (2026-08-15).** "only when green" is now enforced by the platform,
+> not left to whoever is looking at the card: 采纳 on the App forge marks the
+> card `pr_open` and the poller calls the merge API once the forge's checks are
+> actually green. The escape hatch for merging a red PR is an explicit, signed
+> action (`POST /accept-cards/{id}/merge-anyway`). See
+> [`docs/topics/App采纳等CI再合.md`](topics/App采纳等CI再合.md) — including why
+> this is still "mirror, don't gate" and not a revival of `review/gate.py`.
+>
+> **Update (2026-08-16, #468).** The poller now also carries the two guarantees
+> GitHub's branch protection would give if the plan allowed it (free-plan
+> private repos 403 on the protection API): a **required-check roster**
+> (`accept_required_check_names`, default `test`) — a check that has not
+> *reported* on the head SHA blocks the merge, closing the window where "no
+> failures" meant "nothing ran yet" — and **strict up-to-date**: a head that is
+> behind or diverged from `main` is rebased via the update-branch API (capped at
+> three rounds per card) and re-checked before merging, so green earned against
+> an older main is never treated as green against today's.
+
 ### Principles
 
 - **The platform never runs checks.** A repository declares its checks in
@@ -122,9 +140,17 @@ a degraded mode and is labelled as one on the card — not a silent second-class
 path. A self-hosted checker that reports into the same interface is the way out,
 and is out of scope here.
 
-**Which checks must pass.** Whichever ones the forge requires. If a repository
-configures no protection, the forge will merge a red PR and that is the
-repository's decision to make, not the platform's to override.
+**Which checks must pass.** In principle, whichever ones the forge requires —
+but on a free-plan private repository the forge cannot be *told* to require any
+(the branch-protection API answers 403 "Upgrade to Pro"), so with the forge
+alone a red or unstarted check never blocks a merge. The accept entrance
+therefore carries that tier itself: the poller merges only when every name in
+`accept_required_check_names` has reported green on a head that is current with
+`main` (#468). The boundary is deliberate — **these semantics guard the accept
+entrance only**. A human merging directly on GitHub bypasses them, and the
+platform's answer to that stays "mirror, don't gate": the poller reconciles the
+card to whatever the forge says happened. One entrance is governed; the forge
+itself is not re-implemented.
 
 ## What is deleted
 

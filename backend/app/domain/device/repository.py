@@ -46,6 +46,10 @@ class Device:
     # attribute off a dataclass that lacked it silently returned None, so the
     # signal was never sent and the dev box looped on the swap path (2026-08-15).
     ccproxy_upstream: str | None = None
+    # The id ccproxy knows this device by (#420), or None. The revocation
+    # handle: deleting a device that carries one must first get ccproxy's
+    # confirmed `DELETE /machine/{id}` — see `DeviceService._revoke_ccproxy`.
+    ccproxy_machine_id: int | None = None
 
 
 @dataclass

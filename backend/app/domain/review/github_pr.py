@@ -80,6 +80,15 @@ class PullRequestStatus:
     merged: bool
     merge_commit_sha: str | None = None
     merged_at: datetime | None = None
+    #: The PR's OWN head branch (`head.ref`), as GitHub reports it. The poller
+    #: re-pushes 芝士's fixes to this branch, and it cannot be derived from the
+    #: topic id: the two lanes name it differently (`pr_branch_name` →
+    #: `cheesex/<hex8>` for the personal-token lane, `ws.branch_for_topic` →
+    #: `topic/<hex8>` for the App lane). Deriving it pushed App cards' fixes to
+    #: a branch no PR was open on — the commit landed, the PR never saw it.
+    #: Empty only for a fake/older payload; callers fall back to the derived
+    #: name, which is what the personal-token lane always used.
+    head_ref: str = ""
 
 
 @dataclass
@@ -305,6 +314,25 @@ class GitHubPrClient(Protocol):
         Same endpoint as `compare_files`, different field: this one is about
         ancestry, not the file list. With `base` = another commit and `head` =
         ours, `behind`/`identical` means that other commit CONTAINS ours."""
+        ...
+
+    async def check_run_names(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> set[str]:
+        """Names of every check-run that EXISTS on `ref` (#468 tier-2). The
+        poller compares this against the required list: a required name not in
+        this set has never reported, and its absence blocks the merge — a
+        path-filtered or broken workflow must read as "still waiting", never
+        as "nothing failed"."""
+        ...
+
+    async def update_branch(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> bool:
+        """Merge the base branch into the PR's head (GitHub's Update branch
+        button; #468 strict up-to-date). True = accepted (202); False = GitHub
+        declined non-fatally (already up to date, or the head moved — 422),
+        which the poller just retries next tick."""
         ...
 
 
@@ -754,6 +782,7 @@ class HttpxGitHubPrClient:
         merged = bool(data.get("merged"))
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
+            head_ref=str(data["head"].get("ref") or ""),
             state=str(data.get("state") or ""),
             merged=merged,
             # Gated on `merged` on purpose — see PullRequestStatus's docstring
@@ -917,6 +946,46 @@ class HttpxGitHubPrClient:
             )
         status = resp.json().get("status")
         return status if isinstance(status, str) else None
+
+    async def check_run_names(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> set[str]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝列出 check-runs（HTTP {resp.status_code}）："
+                f"{resp.text[:300]}"
+            )
+        runs = resp.json().get("check_runs") or []
+        return {
+            str(run.get("name"))
+            for run in runs
+            if isinstance(run, dict) and run.get("name")
+        }
+
+    async def update_branch(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> bool:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.put(
+                f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/update-branch",
+                headers=self._headers(token),
+            )
+        if resp.status_code == 202:
+            return True
+        if resp.status_code == 422:
+            # Already up to date, or the head moved under us — both are
+            # non-fatal; the next poll re-evaluates from scratch.
+            return False
+        raise GitHubPrError(
+            f"GitHub 拒绝更新 PR #{number} 的分支"
+            f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+        )
 
 
 def _summarize_runs(runs: list[dict]) -> tuple[CheckState, str]:

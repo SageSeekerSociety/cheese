@@ -114,6 +114,10 @@ class FakeGitHubPrClient:
         self.workflow_runs: list[github_pr.WorkflowRun] = []
         self.compare_status_by_pair: dict[tuple[str, str], str] = {}
         self.compare_status_calls: list[tuple[str, str]] = []
+        # Tier-2 (#468): per-sha check-run NAME sets, and update-branch capture.
+        self.check_names_by_sha: dict[str, set[str]] = {}
+        self.update_branch_calls: list[int] = []
+        self.update_branch_result: bool = True
         # run id → 那次运行的 job 列表。默认（未登记的 run）给一个真的部署过的
         # job，因为绝大多数测试关心的不是这一层；「跳过了部署」和「挂在哪个
         # job 上」的用例自己登记。
@@ -123,6 +127,10 @@ class FakeGitHubPrClient:
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
         self.head_sha_calls: list[int] = []
+        # Which credential each check-runs read was made with. It matters on
+        # the App lane: the write mint carries no `checks` permission, so a
+        # read made with it is a 403 that the poller retries forever.
+        self.check_state_tokens: list[str] = []
 
     async def open_pull_request(
         self, *, owner, repo, head, base, title, body, token
@@ -167,11 +175,31 @@ class FakeGitHubPrClient:
         self.status_calls.append(number)
         return github_pr.PullRequestStatus(
             head_sha=pr["head_sha"],
+            # The branch the PR is actually open on. Fed back to the poller so
+            # a re-push goes to THIS PR's branch instead of one derived from
+            # the topic id — the two lanes name it differently.
+            head_ref=pr["head"],
             state=pr["state"],
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
             merged_at=pr["merged_at"],
         )
+
+    def seed_pr(self, number: int, *, head: str, base: str = "main") -> str:
+        """Register a PR this fake did not open itself — the App lane opens its
+        PR through a different client (`GitHubPRClient.open_pr`), so the poller
+        side has to be told the PR exists. Returns its head sha."""
+        head_sha = f"sha-{head}-1"
+        self.prs[number] = {
+            "head": head,
+            "base": base,
+            "head_sha": head_sha,
+            "state": "open",
+            "merged": False,
+            "merge_commit_sha": None,
+            "merged_at": None,
+        }
+        return head_sha
 
     def merge_externally(
         self,
@@ -201,6 +229,7 @@ class FakeGitHubPrClient:
         return new_sha
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
+        self.check_state_tokens.append(token)
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
 
     async def compare_files(
@@ -217,6 +246,7 @@ class FakeGitHubPrClient:
                 "number": number,
                 "commit_title": commit_title,
                 "commit_message": commit_message,
+                "token": token,
             }
         )
         blocked = self.merge_blocked_by_number.get(number)
@@ -239,6 +269,17 @@ class FakeGitHubPrClient:
     async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
+
+    async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
+        # Default: everything required is present — existing tests exercise the
+        # green/red/pending states, not the tier-2 absence valve (#468).
+        if ref in self.check_names_by_sha:
+            return set(self.check_names_by_sha[ref])
+        return {"test", "guards", "lint", "e2e"}
+
+    async def update_branch(self, *, owner, repo, number, token) -> bool:
+        self.update_branch_calls.append(number)
+        return self.update_branch_result
 
     async def workflow_run_jobs(
         self, *, owner, repo, run_id, token

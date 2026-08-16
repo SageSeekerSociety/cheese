@@ -1615,9 +1615,14 @@ def test_tunnel_port_is_per_topic_and_stable():
         tunnel_port_for_topic,
     )
 
-    a, b = uuid.uuid4(), uuid.uuid4()
+    # FIXED ids, not uuid4(): the port space is 2000 wide (base + sha1 % 2000),
+    # so two random topics collide on ~1 run in 2000 and the assertion below has
+    # no way to tell that apart from the bug it guards. It flaked exactly that
+    # way on CI (both drew 10339). These two are checked to land apart.
+    a = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    b = uuid.UUID("22222222-2222-4222-8222-222222222222")
     pa, pb = tunnel_port_for_topic(a), tunnel_port_for_topic(b)
     assert pa == tunnel_port_for_topic(a), "not stable for the same topic"
-    assert pa != pb or a == b  # distinct topics, distinct ports (mod collisions)
+    assert pa != pb, "distinct topics must not share a port"
     url = connect_transport(session_token="t", via_tunnel=True, tunnel_port=pa)
     assert url == f"http://127.0.0.1:{pa}"

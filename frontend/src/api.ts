@@ -1091,6 +1091,19 @@ export function revokeCard(cardId: string, decidedBy: string): Promise<AcceptCar
   })
 }
 
+// 人工放行 (App 采纳等 CI 再合): merge a pr_open card's PR even though its
+// checks are not all green. The platform never does this on its own —红着合
+// 有时候是对的，不能接受的是没有人做过这个决定。So the actor is taken from the
+// session server-side (never the body) and the card records who / when / what
+// the checks said / why. Only the reviewer, the authorizer, or an owner/lead
+// may call it, and 芝士 is refused outright.
+export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/merge-anyway`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+}
+
 // 改验收人 (spec §4.4: 任何成员都可以改推荐/加人). Reassign a pending card to
 // another reviewer. The backend reuses the create schema, so we pass an empty
 // routing_reason to keep the recommendation neutral on a manual reassign.
