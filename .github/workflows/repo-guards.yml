@@ -20,12 +20,17 @@ name: Repo Guards
 # the workflows themselves (action pinning) — filtering on this file alone would
 # let an unpinned action land in any other workflow without ever running it.
 # `deploy/**` is there for the same reason: the metering-proxy guard judges the
-# deployment config, so a change under deploy/ must be able to trip it.
+# deployment config, so a change under deploy/ must be able to trip it. And
+# `frontend/**`, for the same reason again: the fixed-palette guard judges .vue
+# templates, and the change it exists to catch — a new `color="grey-lighten-5"`
+# on a component — is by definition a frontend-only diff, which without this
+# line would sail past without the guard ever starting.
 on:
   push:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'frontend/**'
       - 'deploy/**'
       - '.claude/scripts/**'
       - '.github/workflows/**'
@@ -33,6 +38,7 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'frontend/**'
       - 'deploy/**'
       - '.claude/scripts/**'
       - '.github/workflows/**'
@@ -65,7 +71,7 @@ jobs:
           bash .claude/scripts/check-metering-proxy.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
 
-      - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException)
+      - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException, fixed-palette colours)
         run: bash .claude/scripts/check-repo-rules.sh
 
       # Third-party actions run on the dev and prod boxes themselves (build.yml,

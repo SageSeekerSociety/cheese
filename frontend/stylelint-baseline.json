@@ -11,7 +11,7 @@
     "src/components/common/ColorSelector.vue": 8,
     "src/components/common/InfiniteScroll.vue": 1,
     "src/components/common/Navigation/LeftAppRail.vue": 1,
-    "src/components/common/Navigation/RailItem.vue": 16,
+    "src/components/common/Navigation/RailItem.vue": 14,
     "src/components/common/OfflineBanner.vue": 5,
     "src/components/common/UserAvatar.vue": 1,
     "src/components/common/VersionBadge.vue": 4,

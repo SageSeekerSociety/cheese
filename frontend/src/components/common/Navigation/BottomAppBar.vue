@@ -1,5 +1,5 @@
 <template>
-  <v-bottom-navigation :elevation="0" bg-color="grey-lighten-5" grow>
+  <v-bottom-navigation :elevation="0" bg-color="background" grow>
     <v-btn v-for="item in showItems" :key="item.key" :to="item.to">
       <template v-if="item.icon">
         <v-icon>{{ item.icon }}</v-icon>

@@ -27,7 +27,7 @@
       </keep-alive>
     </template>
 
-    <v-main class="bg-grey-lighten-5 h-100">
+    <v-main class="bg-background h-100">
       <div class="border-t-sm bg-background h-100 overflow-hidden">
         <div id="app-scrollable" class="app-content h-100">
           <router-view />
