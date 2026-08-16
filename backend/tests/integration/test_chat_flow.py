@@ -71,7 +71,13 @@ def test_blocks_empty_then_populated_after_chat(client):
     # Slack-style: no token deltas — the platform ✅-acks the summoning message,
     # announces the working turn (正在思考 for every open client), then 芝士's
     # reply lands as one complete message block.
-    assert types == ["user_block", "reaction", "turn_active", "assistant_block", "done"]
+    assert types == [
+        "user_block",
+        "turn_started",
+        "reaction",
+        "assistant_block",
+        "done",
+    ]
 
     ack = next(f for f in frames if f["type"] == "reaction")
     agent = topic_agent_handle(uuid.UUID(topic_id))
@@ -84,11 +90,15 @@ def test_blocks_empty_then_populated_after_chat(client):
     user = next(f for f in frames if f["type"] == "user_block")["block"]
     assert user["content"] == "你好芝士"
     assert user["author_type"] == "human"
+    # Explicit null distinguishes a new pending input from an unmarked legacy
+    # block. A later exact receipt replaces it with the consuming turn id.
+    assert user["meta"]["consumed_turn"] is None
 
     # Persisted: two blocks now exist in timeline order.
     r = client.get(f"/api/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
     assert [b["author_type"] for b in blocks] == ["human", "ai"]
+    assert blocks[0]["meta"]["consumed_turn"]
 
 
 def test_session_id_persisted_for_resume(client):

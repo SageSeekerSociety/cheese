@@ -59,8 +59,10 @@ class AuthorType(enum.StrEnum):
     system = "system"
 
 
-# `meta` key stamped on a human block once an agent turn has actually read it
-# into its prompt (BlockRepository.mark_consumed). Value = that turn's id.
+# `meta` key carried by every new human message/attachment. Its value is null
+# while the input is pending, then the id of the agent turn that actually read
+# it (BlockRepository.mark_consumed). Presence of the null key distinguishes a
+# tracked pending input from a legacy block created before turn accounting.
 #
 # 为什么是运行时事实而不是位置：一轮的 prompt 窗口是在**拿到锁的那一刻**按当时
 # 的 history 算的，而消息是无锁落库的 —— 于是"这条被哪一轮读进去了"根本不可能
