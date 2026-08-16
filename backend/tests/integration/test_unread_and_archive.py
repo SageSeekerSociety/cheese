@@ -16,6 +16,24 @@ def _create_project_and_topic(client, title: str = "话题A") -> tuple[str, str]
     return project_id, topic_id
 
 
+def _add_member(client, project_id: str, handle: str) -> None:
+    """Make `handle` a project member directly — the topic-route guards
+    (2026-08-16) deny read/act to logged-in outsiders, and these tests'
+    handles are participants by intent."""
+    import uuid as _uuid
+
+    from app.domain.project.models import ProjectMember
+
+    async def _run() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                ProjectMember(project_id=_uuid.UUID(project_id), user_handle=handle)
+            )
+            await session.commit()
+
+    asyncio.run(_run())
+
+
 def _seed_message(client, project_id: str, topic_id: str, author: str) -> None:
     """Drop a message block directly (the WS chat path is covered elsewhere)."""
     import uuid
@@ -48,6 +66,8 @@ def _unread(client, project_id: str, handle: str) -> dict:
 
 def test_topic_unread_counts_and_read_cursor(client):
     project_id, topic_id = _create_project_and_topic(client)
+    for h in ("user-1", "mentor-1"):
+        _add_member(client, project_id, h)
 
     # No messages yet → no unread entries at all.
     assert _unread(client, project_id, "user-1") == {}
@@ -82,7 +102,8 @@ def test_topic_unread_counts_and_read_cursor(client):
 def test_mark_read_requires_a_verified_caller(client):
     # The handle used to be required in the body BECAUSE it was the identity;
     # now identity comes from the credential, so the missing piece is a login.
-    _, topic_id = _create_project_and_topic(client)
+    project_id, topic_id = _create_project_and_topic(client)
+    _add_member(client, project_id, "user-1")
     r = client.post(f"/api/topics/{topic_id}/read", json={})
     assert r.status_code == 401
     # A signed-in caller needs no body handle at all — the cursor is theirs.

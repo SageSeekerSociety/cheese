@@ -222,6 +222,9 @@ async def test_write_token_is_sent_unnarrowed(rsa_key_pem):
             "contents": "write",
             "metadata": "read",
             "pull_requests": "write",
+            # Without workflows:write GitHub rejects pushing any branch that
+            # touches .github/workflows/* — the accept-blocking 422 of ee17b136.
+            "workflows": "write",
         }
     }
     assert lookups == []  # nothing to intersect against

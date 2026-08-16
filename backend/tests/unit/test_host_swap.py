@@ -10,6 +10,7 @@ that did nothing.
 """
 
 import uuid
+from unittest.mock import AsyncMock, patch
 
 from app.domain.agent.host_swap import swap_topic_device
 from app.domain.agent.platform_failures import (
@@ -28,18 +29,22 @@ def _service() -> DeviceService:
 
 
 async def _device_on_project(
-    service: DeviceService, project_id: uuid.UUID, name: str
+    service: DeviceService,
+    project_id: uuid.UUID,
+    name: str,
+    *,
+    supply: Supply = Supply.cloud,
+    visibility: Visibility = Visibility.host,
 ) -> str:
     code = await service.start(name)
     # `supply`/`visibility` are required with no default (#282 决定 2 / #358): every
-    # enrolment site states its own answer. Host swap moves a topic BETWEEN machines
-    # that actually run turns, so these enrol as whole-machine (host) — the only
-    # transport built today.
+    # enrolment site states its own answer. These fixtures default to runnable cloud
+    # machines because only platform-provisioned topics may move between hosts.
     device = await service.approve(
         code,
         owner_user_id=OWNER,
-        supply=Supply.self_hosted,
-        visibility=Visibility.host,
+        supply=supply,
+        visibility=visibility,
     )
     await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
     return device.device_id
@@ -68,7 +73,7 @@ async def test_a_dead_machine_hands_the_topic_to_a_healthy_one_and_says_so():
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "老机器")
     well = await _device_on_project(service, project, "新机器")
-    await service.bind_topic_device(topic, sick)
+    await service.bind_topic_device(topic, sick, Visibility.host)
 
     first = await _fail(service, topic, project, (sick, well), STORAGE_EXHAUSTED)
     assert first is not None and first.new_device is None, "one strike is not a verdict"
@@ -93,7 +98,7 @@ async def test_no_healthy_machine_means_stay_put_and_say_why_never_drift():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     only = await _device_on_project(service, project, "唯一一台")
-    await service.bind_topic_device(topic, only)
+    await service.bind_topic_device(topic, only, Visibility.host)
 
     stuck = await _fail(service, topic, project, (only,), STORAGE_EXHAUSTED, times=2)
     assert stuck is not None
@@ -104,12 +109,93 @@ async def test_no_healthy_machine_means_stay_put_and_say_why_never_drift():
     assert stuck.resume_after_s is None, "nothing to resume onto"
 
 
+async def test_a_dead_self_hosted_machine_keeps_its_pin_and_waits_for_it():
+    service = _service()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    own = await _device_on_project(
+        service, project, "自己的机器", supply=Supply.self_hosted
+    )
+    cloud = await _device_on_project(service, project, "云机器")
+    await service.bind_topic_device(topic, own, Visibility.host)
+
+    release = AsyncMock(wraps=service.release_topic_device)
+    bind = AsyncMock(wraps=service.bind_topic_device)
+    with (
+        patch.object(service, "release_topic_device", release),
+        patch.object(service, "bind_topic_device", bind),
+    ):
+        stuck = await _fail(
+            service,
+            topic,
+            project,
+            (own, cloud),
+            STORAGE_EXHAUSTED,
+            times=2,
+        )
+
+    assert stuck is not None
+    assert stuck.quarantined
+    assert stuck.new_device is None
+    assert await service.topic_device(topic) == own
+    release.assert_not_awaited()
+    bind.assert_not_awaited()
+    assert stuck.message is not None
+    assert "自己的机器" in stuck.message
+    assert "等待" in stuck.message
+
+
+async def test_a_swap_never_moves_an_isolated_topic_binding():
+    service = _service()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    sick = await _device_on_project(service, project, "坏机器")
+    candidate = await _device_on_project(service, project, "候选机器")
+    well = await _device_on_project(service, project, "可运行机器")
+    await service.bind_topic_device(topic, sick, Visibility.isolated)
+
+    swapped = await _fail(
+        service,
+        topic,
+        project,
+        (sick, candidate, well),
+        STORAGE_EXHAUSTED,
+        times=2,
+    )
+
+    assert swapped is not None
+    assert swapped.new_device is None
+    assert await service.topic_device(topic) == sick
+
+
+async def test_a_swap_never_selects_a_self_hosted_destination():
+    service = _service()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    sick = await _device_on_project(service, project, "坏机器")
+    own = await _device_on_project(
+        service, project, "别人的机器", supply=Supply.self_hosted
+    )
+    well = await _device_on_project(service, project, "云机器")
+    await service.bind_topic_device(topic, sick, Visibility.host)
+
+    swapped = await _fail(
+        service,
+        topic,
+        project,
+        (sick, own, well),
+        STORAGE_EXHAUSTED,
+        times=2,
+    )
+
+    assert swapped is not None
+    assert swapped.new_device == well
+    assert await service.topic_device(topic) == well
+
+
 async def test_a_failure_that_isnt_the_machines_fault_moves_nothing():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
     a = await _device_on_project(service, project, "A")
     await _device_on_project(service, project, "B")
-    await service.bind_topic_device(topic, a)
+    await service.bind_topic_device(topic, a, Visibility.host)
 
     outcome = await _fail(service, topic, project, (a,), RUNTIME_IMAGE_MISSING, times=5)
     assert outcome is not None
@@ -142,7 +228,7 @@ async def test_the_new_machine_is_never_the_one_just_judged_dead():
     project, topic = uuid.uuid4(), uuid.uuid4()
     sick = await _device_on_project(service, project, "sick")
     await _device_on_project(service, project, "offline")
-    await service.bind_topic_device(topic, sick)
+    await service.bind_topic_device(topic, sick, Visibility.host)
 
     outcome = await _fail(service, topic, project, (sick,), STORAGE_EXHAUSTED, times=2)
     assert outcome is not None

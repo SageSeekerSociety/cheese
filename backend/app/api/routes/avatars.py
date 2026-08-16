@@ -6,7 +6,6 @@ from urllib.parse import quote
 
 import aiofiles
 import aiofiles.os
-import aiofiles.ospath
 from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
 
 from app.auth.checker import require_auth_user
@@ -22,6 +21,70 @@ router = APIRouter(prefix="/avatars", tags=["Avatars"])
 AVATAR_STORAGE_DIR = os.path.join(
     os.path.abspath(settings.storage_local_path), "avatars"
 )
+
+# Avatars are stored as opaque blobs and no content type is recorded anywhere,
+# so the only honest source for one is the file's own magic bytes.
+_MAGIC_MEDIA_TYPES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _sniff_media_type(content: bytes) -> str:
+    """Guess a media type from the leading bytes of a stored avatar.
+
+    Anything we cannot recognise is served as an opaque download rather than
+    mislabelled: claiming ``image/png`` for bytes that are not a PNG is what
+    made a broken avatar look like a working one.
+    """
+    for magic, media_type in _MAGIC_MEDIA_TYPES:
+        if content.startswith(magic):
+            return media_type
+    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
+        return "image/webp"
+    return "application/octet-stream"
+
+
+async def _read_avatar_file(avatar_id: int) -> bytes | None:
+    """Return the stored bytes for ``avatar_id``, or ``None`` if there is no file.
+
+    Read-and-catch rather than exists-then-read: the two-step version answers a
+    question that may already be stale by the time the file is opened.
+    """
+    file_path = os.path.join(AVATAR_STORAGE_DIR, f"{avatar_id}")
+    try:
+        async with aiofiles.open(file_path, "rb") as f:
+            return await f.read()
+    except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
+        return None
+
+
+def _stored_avatar_response(
+    content: bytes, *, name: str, created_at: datetime | None
+) -> Response:
+    """Build the cacheable response for an avatar we actually have on disk.
+
+    The one-year ``max-age`` lives here and only here: a client that caches a
+    placeholder or an error for a year cannot be fixed by fixing the server.
+    """
+    etag = hashlib.md5(content).hexdigest()
+    last_modified = (
+        created_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
+        if created_at
+        else datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    )
+    return Response(
+        content=content,
+        media_type=_sniff_media_type(content),
+        headers={
+            "Cache-Control": "public, max-age=31536000",
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(name, safe='')}",
+            "ETag": f'"{etag}"',
+            "Last-Modified": last_modified,
+        },
+    )
 
 
 async def get_avatar_service(db=Depends(get_db)) -> AvatarService:
@@ -84,29 +147,15 @@ async def get_default_avatar(
     if avatar is None:
         raise NotFoundError("No default avatar found")
 
-    file_path = os.path.join(AVATAR_STORAGE_DIR, f"{avatar.id}")
-    if await aiofiles.ospath.exists(file_path):
-        async with aiofiles.open(file_path, "rb") as f:
-            content = await f.read()
-    else:
-        content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    content = await _read_avatar_file(avatar.id)
+    if content is None:
+        raise NotFoundError(
+            "Default avatar file is missing from storage",
+            data={"id": avatar.id},
+        )
 
-    etag = hashlib.md5(content).hexdigest()
-    last_modified = (
-        avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
-        if avatar.created_at
-        else datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S GMT")
-    )
-
-    return Response(
-        content=content,
-        media_type="image/png",
-        headers={
-            "Cache-Control": "public, max-age=31536000",
-            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",  # noqa: E501
-            "ETag": f'"{etag}"',
-            "Last-Modified": last_modified,
-        },
+    return _stored_avatar_response(
+        content, name=avatar.name, created_at=avatar.created_at
     )
 
 
@@ -146,27 +195,12 @@ async def get_avatar_by_id(
     if avatar is None:
         raise NotFoundError("Avatar not found", data={"id": avatar_id})
 
-    file_path = os.path.join(AVATAR_STORAGE_DIR, f"{avatar_id}")
-    if await aiofiles.ospath.exists(file_path):
-        async with aiofiles.open(file_path, "rb") as f:
-            content = await f.read()
-    else:
-        content = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    content = await _read_avatar_file(avatar_id)
+    if content is None:
+        raise NotFoundError(
+            "Avatar file is missing from storage", data={"id": avatar_id}
+        )
 
-    etag = hashlib.md5(content).hexdigest()
-    last_modified = (
-        avatar.created_at.strftime("%a, %d %b %Y %H:%M:%S GMT")
-        if avatar.created_at
-        else datetime.now(UTC).strftime("%a, %d %b %Y %H:%M:%S GMT")
-    )
-
-    return Response(
-        content=content,
-        media_type="image/png",
-        headers={
-            "Cache-Control": "public, max-age=31536000",
-            "Content-Disposition": f"inline; filename*=UTF-8''{quote(avatar.name, safe='')}",  # noqa: E501
-            "ETag": f'"{etag}"',
-            "Last-Modified": last_modified,
-        },
+    return _stored_avatar_response(
+        content, name=avatar.name, created_at=avatar.created_at
     )

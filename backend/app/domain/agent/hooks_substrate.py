@@ -302,6 +302,13 @@ class HooksTurnProvider[ScreenT]:
     (remote link.Msg)."""
 
     name: str = "hooks"
+    # 图片输入: this transport injects a TEXT prompt into a live Claude Code
+    # screen — there is no user-message content array to hang a base64 image
+    # block off, so `images=` reaches `run_turn` and goes nowhere. Declaring
+    # that here is what stops the prompt from promising the opposite; the
+    # picture is still reachable, but only because the prompt now names its
+    # path and 芝士 opens it with Read (its own tool), not because we sent it.
+    embeds_images = False
     _needs_topic_message = "本轮需要话题上下文"
     _timeout_message = "轮次超时"
 

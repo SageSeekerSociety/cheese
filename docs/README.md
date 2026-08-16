@@ -9,6 +9,7 @@
 | [`feishu-lark.md`](feishu-lark.md) | lark-cli 团队配置：飞书操作走 `--profile cheese`，含踩坑速查 |
 | [`accept-is-merge.md`](accept-is-merge.md) | 采纳=合并 PR 的设计（未实施）：PR 先开、平台不自己跑检查、闸门退役 |
 | [`api-conventions.md`](api-conventions.md) | 调 API 该发什么 URL：`/api` 挂载点、2.0 为何是 `/api/api`、为什么不能拍平 |
+| [`design-system.md`](design-system.md) | 前端视觉唯一规范：亮/暗双色板、圆角/字号/间距档位、琥珀用在哪、深色模式怎么工作 |
 
 约定：产品/方向类文档住飞书（多人评论）；改代码时需要同步改的文档住 repo。
 飞书文档不留本地副本（防陈旧）；需要时 `lark-cli markdown +fetch` 拉临时工作副本，改完 `+patch` 推回，副本勿提交（已 gitignore 兜底）。

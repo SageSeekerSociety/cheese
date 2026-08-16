@@ -36,10 +36,9 @@ import {
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
-import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
-import { platformErrorPresentation } from '../lib/platformEvents'
+import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
   renderMarkdown as renderMarkdownWith,
@@ -232,22 +231,8 @@ async function onReact(m: Block, emoji: string) {
   }
 }
 
-// A system event block tagged refs=["action:<resource>"] is a clickable action
-// card (decision/doc/...); returns the resource, or null for a plain event line.
-function actionResource(b: Block): string | null {
-  // Structured meta.action (shared events like 编辑了文档) wins; legacy
-  // action:<resource> refs (cheese-only cards) still resolve.
-  const metaAction = (b.meta as Record<string, unknown> | null)?.action
-  if (typeof metaAction === 'string') return metaAction
-  const r = (b.refs || []).find((x) => x.startsWith('action:'))
-  return r ? r.slice('action:'.length) : null
-}
-// meta.action events carry the actor in their content (张衡/芝士 编辑了文档);
-// legacy cards need the 芝士 prefix prepended.
-function actionText(b: Block): string {
-  const metaAction = (b.meta as Record<string, unknown> | null)?.action
-  return typeof metaAction === 'string' ? b.content : `芝士${b.content}`
-}
+// 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块
+// (refs=["action:<resource>"] / meta.action)。这里只剩按钮文案和 emit 接线。
 
 // @mention chips are rendered via v-html; delegate clicks so the parent can
 // resolve the name (person → member page, topic/doc → open it).
@@ -742,31 +727,12 @@ defineExpose({ send, connected })
 // The conversation stream shows messages + lightweight system lines only.
 // doc/decision blocks are document state (they live in the doc panel), and AI
 // tool/巡检 events belong in 现场 — neither belongs in the group chat (spec §7.1).
-const visible = computed<Block[]>(() => {
-  const out: Block[] = []
-  // Historical SDK turns can contain one fenced Markdown block split across
-  // consecutive message rows. Repair those rows before hiding event blocks,
-  // because an event is a hard boundary and must prevent an accidental merge.
-  for (const m of coalesceSplitFencedCodeBlocks(messages.value)) {
-    if (m.kind === 'message' || m.kind === 'attachment') {
-      out.push(m)
-    } else if (m.kind === 'event' && m.author_type === 'system') {
-      // 前端报错 events belong to the 现场 drawer (debugging surface), not the
-      // group chat — same rule as tool events (frontend_log.py).
-      if ((m.meta as Record<string, unknown> | null)?.event_type === 'frontend_error') {
-        continue
-      }
-      // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
-      // a burst of edits shows as one line, not a wall.
-      const prev = out[out.length - 1]
-      if (prev && prev.kind === 'event' && prev.author_type === 'system' && prev.content === m.content) {
-        continue
-      }
-      out.push(m)
-    }
-  }
-  return out
-})
+// Historical SDK turns can contain one fenced Markdown block split across
+// consecutive message rows. Repair those rows before collapseNotices hides
+// event blocks, because an event is a hard boundary and must prevent an
+// accidental merge.
+const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(messages.value)))
+const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
 
 // 「已派出」标记 (issue #314): 本房间拆出去的子话题，在时间线上它被拆出去的那个
 // 时刻标一行，点进去就是那边。库里没有这行 —— split 不往父话题写任何 block，所以
@@ -1088,7 +1054,7 @@ onBeforeUnmount(() => {
             {{ loadingOlder ? '加载更早的消息…' : '向上滚动查看更早的消息' }}
           </div>
 
-          <template v-for="(m, i) in visible" :key="m.id">
+          <template v-for="({ block: m, notice }, i) in rows" :key="m.id">
             <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
                这一行是按子话题的 parent_id + created_at 现算出来的，插在它被拆出
                去的那个时刻上。它不是消息，但会像 event 一样把消息分组打断。 -->
@@ -1098,79 +1064,98 @@ onBeforeUnmount(() => {
               :marker="marker"
               @open="emit('open-topic', $event)"
             />
-            <!-- Infrastructure incidents are facts in the conversation, but they
-               are neither 芝士 messages nor faint activity lines. Structured
-               metadata selects this persistent, accessible recovery card. -->
+            <!-- 平台自己说的每一句都走 lib/platformNotice.ts 分档；下面这几支只管画。
+               Infrastructure incidents are facts in the conversation, but they
+               are neither 芝士 messages nor faint activity lines: 卡面只留一句，
+               剩下的正文和原话收进展开区（信息不能丢，只能收起来）。 -->
             <div
-              v-if="platformErrorPresentation(m)"
+              v-if="notice?.mode === 'incident'"
               class="platform-incident"
               role="alert"
-              :data-error-code="platformErrorPresentation(m)!.code"
+              :data-error-code="notice.incident.code"
               data-testid="platform-error-card"
             >
               <div class="platform-incident__icon" aria-hidden="true">
-                <v-icon :icon="platformErrorPresentation(m)!.icon" size="20" />
+                <v-icon :icon="notice.incident.icon" size="20" />
               </div>
               <div class="platform-incident__content">
                 <div class="platform-incident__eyebrow">平台资源</div>
                 <div class="platform-incident__title">
-                  {{ platformErrorPresentation(m)!.title }}
+                  {{ notice.incident.title }}
                 </div>
                 <div class="platform-incident__body">
-                  {{ platformErrorPresentation(m)!.body }}
+                  {{ notice.lead }}
                 </div>
+                <details v-if="notice.rest" class="platform-incident__more">
+                  <summary>{{ notice.detailLabel || '展开原话' }}</summary>
+                  <pre class="notice-fold__detail">{{ notice.rest }}</pre>
+                </details>
                 <div class="platform-incident__status">
                   <span class="platform-incident__pulse" aria-hidden="true" />
-                  {{ platformErrorPresentation(m)!.status }}
+                  {{ notice.incident.status }}
                 </div>
               </div>
             </div>
             <!-- action row: 芝士's cheese action this turn — a quiet system line
                (amber dot = platform act) with an inline amber link, no box. -->
-            <div v-else-if="m.kind === 'event' && actionResource(m)" class="action-card">
-              <!-- actionText may carry a <@handle> actor token (编辑了文档): render
+            <div v-else-if="notice?.mode === 'action'" class="action-card">
+              <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
                  through the shared token→chip path so the actor is clickable. -->
-              <span class="action-verb" v-html="renderPlain(actionText(m))" />
+              <span class="action-verb" v-html="renderPlain(notice.text)" />
               <button
-                v-if="ACTION_META[actionResource(m)!]?.btn"
+                v-if="ACTION_META[notice.resource]?.btn"
                 type="button"
                 class="action-link"
-                @click="emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)"
+                @click="emit('open-resource', notice.resource, m.turn_id ?? undefined)"
               >
-                {{ ACTION_META[actionResource(m)!].btn }}
+                {{ ACTION_META[notice.resource].btn }}
               </button>
             </div>
             <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
                person needs to know it happened. So the line shows by default
                and the stack is one click away — a room is a conversation, not
-               a monitoring dashboard. -->
-            <details v-else-if="backendErrorPresentation(m)" class="backend-error" data-testid="backend-error-event">
+               a monitoring dashboard. 这一档是整套折叠行的样板，原样保留。 -->
+            <details
+              v-else-if="notice?.mode === 'backend-error'"
+              class="backend-error"
+              data-testid="backend-error-event"
+            >
               <summary class="backend-error__line">
-                <span>{{ backendErrorPresentation(m)!.line }}</span>
-                <span v-if="backendErrorPresentation(m)!.count" class="backend-error__count">
-                  ×{{ backendErrorPresentation(m)!.count }}
-                </span>
+                <span>{{ notice.error.line }}</span>
+                <span v-if="notice.error.count" class="backend-error__count"> ×{{ notice.error.count }} </span>
               </summary>
               <div class="backend-error__meta">
-                <span v-if="backendErrorPresentation(m)!.where">{{ backendErrorPresentation(m)!.where }}</span>
-                <span v-if="backendErrorPresentation(m)!.requestId">
-                  req {{ backendErrorPresentation(m)!.requestId }}
-                </span>
+                <span v-if="notice.error.where">{{ notice.error.where }}</span>
+                <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
               </div>
-              <pre v-if="backendErrorPresentation(m)!.stack" class="backend-error__stack">{{
-                backendErrorPresentation(m)!.stack
-              }}</pre>
+              <pre v-if="notice.error.stack" class="backend-error__stack">{{ notice.error.stack }}</pre>
+            </details>
+            <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
+               什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
+               条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
+            <details v-else-if="notice?.mode === 'fold'" class="notice-fold" data-testid="platform-notice">
+              <summary class="notice-fold__line">
+                <span class="notice-fold__text">{{ notice.line }}</span>
+                <span v-if="notice.count > 1" class="notice-fold__count"> ×{{ notice.count }} </span>
+                <span v-if="notice.whoLabel" class="notice-fold__who">{{ notice.whoLabel }}</span>
+              </summary>
+              <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="notice-fold__occurrence">
+                <div class="notice-fold__label">
+                  {{ occ.label || '原话' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+                </div>
+                <pre class="notice-fold__detail">{{ occ.detail }}</pre>
+              </div>
             </details>
             <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
                Content may carry a <@handle> actor token (归档/编辑…): render it
                through the SAME token→chip path as messages so the actor is a
                clickable mention, not raw text. -->
-            <div v-else-if="m.kind === 'event'" class="im-event text-caption">
+            <div v-else-if="notice?.mode === 'plain'" class="im-event text-caption">
               <span v-html="renderPlain(m.content)" />
             </div>
 
             <!-- message row -->
-            <div v-else class="im-row" :class="{ 'im-row--cont': !isRunStart(i) }" :data-mid="m.id">
+            <div v-else-if="!notice" class="im-row" :class="{ 'im-row--cont': !isRunStart(i) }" :data-mid="m.id">
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
@@ -1541,14 +1526,14 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 .todo-pending {
-  color: var(--text-muted, #888);
+  color: var(--faint);
 }
 .todo-in_progress {
   color: var(--v-theme-primary, #6750a4);
   font-weight: 600;
 }
 .todo-completed {
-  color: var(--text-muted, #999);
+  color: var(--faint);
 }
 .todo-completed .todo-text {
   text-decoration: line-through;
@@ -1629,12 +1614,12 @@ onBeforeUnmount(() => {
 }
 .mention-menu-sub {
   font-size: 0.75rem;
-  color: var(--text-muted, #999);
+  color: var(--faint);
 }
 .mention-menu-hint {
   margin-left: auto;
   font-size: 0.7rem;
-  color: var(--text-muted, #aaa);
+  color: var(--faint);
 }
 
 /* The ONE amber chip allowed: @芝士 toggle when ON. OFF = neutral. */
@@ -2049,12 +2034,12 @@ onBeforeUnmount(() => {
   margin: 12px 16px;
   padding: 13px 15px 13px 14px;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, #c65a1e 28%, var(--line));
-  border-radius: 10px;
-  background: linear-gradient(105deg, rgb(198 90 30 / 9%), transparent 38%), var(--surface);
+  border: 1px solid color-mix(in srgb, var(--warn) 28%, var(--line));
+  border-radius: 12px;
+  background: linear-gradient(105deg, color-mix(in srgb, var(--warn) 9%, transparent), transparent 38%), var(--surface);
   box-shadow:
-    inset 3px 0 0 #c65a1e,
-    0 6px 20px rgb(73 35 16 / 6%);
+    inset 3px 0 0 var(--warn),
+    0 6px 20px color-mix(in srgb, var(--warn-ink) 6%, transparent);
 }
 .platform-incident::after {
   position: absolute;
@@ -2062,8 +2047,8 @@ onBeforeUnmount(() => {
   right: -12px;
   width: 76px;
   height: 76px;
-  border: 1px solid rgb(198 90 30 / 10%);
-  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--warn) 10%, transparent);
+  border-radius: 999px;
   content: '';
 }
 .platform-incident__icon {
@@ -2075,10 +2060,10 @@ onBeforeUnmount(() => {
   justify-content: center;
   width: 34px;
   height: 34px;
-  border: 1px solid rgb(198 90 30 / 22%);
-  border-radius: 9px;
-  color: #b64717;
-  background: rgb(198 90 30 / 10%);
+  border: 1px solid color-mix(in srgb, var(--warn) 22%, transparent);
+  border-radius: 8px;
+  color: var(--warn-ink);
+  background: var(--warn-wash);
 }
 .platform-incident__content {
   position: relative;
@@ -2087,7 +2072,7 @@ onBeforeUnmount(() => {
 }
 .platform-incident__eyebrow {
   margin-bottom: 2px;
-  color: #a84417;
+  color: var(--warn-ink);
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
@@ -2105,26 +2090,36 @@ onBeforeUnmount(() => {
   font-size: 12.5px;
   line-height: 1.55;
 }
+/* 卡面只留第一句；被切下来的正文和原话在这一层后面，点开才有。 */
+.platform-incident__more {
+  margin-top: 6px;
+  font-size: 11.5px;
+}
+.platform-incident__more > summary {
+  cursor: pointer;
+  color: var(--warn-ink);
+  list-style: none;
+}
 .platform-incident__status {
   display: flex;
   align-items: center;
   gap: 6px;
   margin-top: 8px;
-  color: #9a4a1f;
+  color: var(--warn-ink);
   font-size: 11px;
   font-weight: 600;
 }
 .platform-incident__pulse {
   width: 6px;
   height: 6px;
-  border-radius: 50%;
-  background: #d97706;
-  box-shadow: 0 0 0 3px rgb(217 119 6 / 14%);
+  border-radius: 999px;
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 14%, transparent);
   animation: incident-pulse 1.8s ease-out infinite;
 }
 @keyframes incident-pulse {
   50% {
-    box-shadow: 0 0 0 6px rgb(217 119 6 / 0%);
+    box-shadow: 0 0 0 6px transparent;
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -2161,7 +2156,7 @@ onBeforeUnmount(() => {
   align-items: baseline;
   gap: 8px;
   cursor: pointer;
-  color: var(--text-muted, var(--faint));
+  color: var(--faint);
   list-style: none;
 }
 .backend-error__line > span:first-child {
@@ -2194,6 +2189,68 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.5;
   white-space: pre;
+}
+
+/* 平台提示的折叠行 (lib/platformNotice.ts)。和 .backend-error 同一副长相 —— 那条
+   已经是目标形态，这里把它推广到全部平台提示，只多一个 who 尾标。 */
+.notice-fold {
+  margin: 8px 16px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
+  border-radius: 8px;
+  background: color-mix(in srgb, #c65a1e 5%, transparent);
+  font-size: 12px;
+}
+.notice-fold__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-muted, var(--faint));
+  list-style: none;
+}
+.notice-fold__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notice-fold__count {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #c65a1e 16%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+/* 谁在管这件事 —— 不点开就能决定跟不跟自己有关。 */
+.notice-fold__who {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.notice-fold__occurrence + .notice-fold__occurrence {
+  margin-top: 8px;
+}
+.notice-fold__label {
+  margin-top: 6px;
+  overflow: hidden;
+  color: var(--faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notice-fold__detail {
+  margin: 4px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-sunken, rgb(0 0 0 / 4%));
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .caret {

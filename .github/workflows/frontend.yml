@@ -109,6 +109,7 @@ jobs:
           test -x node_modules/.bin/eslint || { echo "::error::eslint not installed"; exit 1; }
           test -x node_modules/.bin/vue-tsc || { echo "::error::vue-tsc not installed"; exit 1; }
           test -x node_modules/.bin/vitest || { echo "::error::vitest not installed"; exit 1; }
+          test -x node_modules/.bin/stylelint || { echo "::error::stylelint not installed"; exit 1; }
           node_modules/.bin/vue-tsc --version
 
       # Errors block; the 288 pre-existing warnings do not. `--max-warnings=0`
@@ -121,6 +122,23 @@ jobs:
       # violation it silently repaired.
       - name: ESLint
         run: pnpm run lint
+
+      # Design system: no hardcoded colours, radii on the 6/8/12/999 ladder.
+      # Enforced through a ratchet (stylelint-baseline.json) because the tree
+      # starts at 537 violations across 88 files — a rule that goes red
+      # everywhere on day one gets switched off, not fixed. Only NEW violations
+      # fail. Spec and paydown map: docs/design-system.md.
+      #
+      # Note this gates FOUR rules, not everything stylelint reports: the config
+      # also carries property-order and class-naming rules that have never run
+      # in CI (stylelint appeared in no workflow before this step) and sit at
+      # 2842 findings. Widening the gate to those is a separate decision — see
+      # DESIGN_RULES in scripts/stylelint-ratchet-core.mjs.
+      #
+      # Same read-only discipline as the ESLint step above: this script never
+      # passes --fix. Measured on this tree: ~22s.
+      - name: Design tokens (stylelint ratchet)
+        run: pnpm run lint:style
 
       # Via the package script, not a bare `node --test scripts/`: passing a
       # DIRECTORY resolves as a module entry point on node 22 while node 20

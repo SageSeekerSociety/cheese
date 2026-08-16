@@ -730,15 +730,35 @@ def _strip_platform_notice(text: str) -> str:
     return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
 
 
-def _prompt_line(b) -> str:
-    """One speaker-labelled prompt line per pending human block. An attachment
-    block is a worktree image — embedded NATIVELY in this turn's user message
-    (base64 image block, see service.build_query_input), so the line just says
-    who sent it and where the file lives."""
+def _prompt_line(b, *, embeds_images: bool) -> str:
+    """One speaker-labelled prompt line per pending human block.
+
+    An attachment block is a worktree image, and the line has to describe how it
+    actually arrives THIS turn — which is not the same on every backend:
+
+    - ``embeds_images`` (SDK / relayed node): the bytes ride the user message as
+      a native base64 image block (``service.build_query_input``), so 芝士 has
+      already seen it by the time it reads this line.
+    - hooks-driven backends (local tmux, remote device): the prompt is injected
+      as TEXT into a live Claude Code screen and ``images=`` is dropped on the
+      floor. The file is still in the worktree, so the line must send 芝士 to
+      open it instead of claiming it is attached.
+
+    The wording is load-bearing, not cosmetic. Told "图片内容已附在本条消息里"
+    and handed nothing, an agent does not raise — it writes a confident answer
+    about a picture it never saw, and nothing downstream marks that answer as
+    invented. Saying "去打开这个文件" fails safe: worst case it reports it could
+    not read the path."""
     if b.kind == BlockKind.attachment:
+        if embeds_images:
+            return (
+                f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
+                f"它同时存在你工作目录的 {b.content}）"
+            )
         return (
-            f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
-            f"它同时存在你工作目录的 {b.content}）"
+            f"[{b.author}] 发来一张图片：**它没有附在本条消息里**，"
+            f"文件在你工作目录的 {b.content}，需要你自己用 Read 打开它。"
+            f"（打不开就直说打不开，不要猜图里是什么。）"
         )
     return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
@@ -765,6 +785,46 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
             if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
                 watermark = i
     return [b for b in history[watermark + 1 :] if _is_human_input(b)]
+
+
+# 重放可见 (#416). The first notice fires on the third attempt: one retry is
+# ordinary (a transient provider error, an auto-resume), two is bad luck, three
+# is a pattern worth a line in the room. After that the state is known, so the
+# reminder throttles hard — a topic retrying every 5 minutes for an hour must
+# not bury the conversation under its own status.
+_REPLAY_NOTICE_AT = 3
+_REPLAY_NOTICE_EVERY = 10
+
+
+def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
+    """The 现场 line for a batch of messages that keeps being re-sent.
+
+    Returns None when there is nothing worth saying yet — the common case.
+
+    ONE line, and it stays one line at any batch size. It names the count and
+    the OLDEST message — the one stuck longest, and the one that identifies the
+    batch. "这个话题重试了 5 次" leaves the reader exactly where they started;
+    dumping all N messages back into the room turns a status line into a second
+    copy of the conversation. The messages are already in the timeline right
+    above; the notice only has to point at them.
+    """
+    if attempt < _REPLAY_NOTICE_AT:
+        return None
+    if attempt > _REPLAY_NOTICE_AT and attempt % _REPLAY_NOTICE_EVERY != 0:
+        return None
+    first = pending[0] if pending else None
+    if first is None:
+        head = ""
+    elif first.kind == BlockKind.attachment:
+        head = f"，最早的一条是 [{first.author}] 发的图片"
+    else:
+        text = " ".join((first.content or "").split())
+        clipped = f"{text[:24]}…" if len(text) > 24 else text
+        head = f"，最早的一条是 [{first.author}]「{clipped}」"
+    return (
+        f"🔁 这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
+        f"前面几次都没跑完{head}。"
+    )
 
 
 def _is_human_input(b: Block) -> bool:
@@ -1924,15 +1984,11 @@ class ChatService:
                 # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
                 yield {"type": "done"}
                 return
-            # No pending human block ⇒ nobody spoke: this is a resume nudge,
-            # a kickoff or a returned conclusion. Say so, rather than handing
-            # 芝士 bare text that looks like a person's message.
-            prompt_text = "\n".join(
-                _prompt_line(b) for b in pending
-            ) or platform_prompt(content)
-            # 图片输入: every pending image rides this turn's user message as a
-            # NATIVE base64 image block (Claude Code native image input) — the
-            # provider side that has the file does the embedding.
+            # 图片输入: every pending image is offered to the provider as
+            # {"path", "media_type"}. Whether it actually reaches the model as a
+            # native base64 block depends on the provider (`embeds_images`), and
+            # the prompt is built below — AFTER the provider is picked — so its
+            # wording can match what this backend really does.
             turn_images = [
                 {"path": b.content, "media_type": b.mime_type or "image/png"}
                 for b in pending
@@ -2018,6 +2074,35 @@ class ChatService:
                 await _team_compute_profile(session, project),
             )
             provider = self._compute.select(provider_id=compute_id)
+            # The prompt is built HERE, not where `pending` was computed: an
+            # attachment line has to describe how the image reaches 芝士 on THIS
+            # backend, and that is only knowable once the provider is picked.
+            # `getattr` default True: a provider from outside this repo that
+            # never declared the capability keeps the old wording rather than
+            # being told, wrongly, that it drops images.
+            #
+            # No pending human block ⇒ nobody spoke: this is a resume nudge,
+            # a kickoff or a returned conclusion. Say so, rather than handing
+            # 芝士 bare text that looks like a person's message.
+            prompt_text = "\n".join(
+                _prompt_line(b, embeds_images=getattr(provider, "embeds_images", True))
+                for b in pending
+            ) or platform_prompt(content)
+            # 重放可见 (#416): count this attempt on the blocks themselves. A
+            # turn that dies stamps no `consumed_turn`, so the SAME batch is
+            # re-sent next turn, and the next — correct (a dead turn must not
+            # eat a message) but silent. From the room, "every reply fails" and
+            # "this one batch keeps failing" look identical, and the second one
+            # is the diagnosis. Counting at prompt-build time is the only place
+            # that sees a failed attempt at all.
+            replay_n = await blocks.bump_prompt_attempts(pending_ids)
+            # Committed HERE and not left to ride the conditional commit further
+            # down: that one only fires on a topic's FIRST turn (compute_profile
+            # still None), so on every later turn this session closes without a
+            # commit and the counter silently rolls back — which is the exact
+            # failure mode this counter exists to expose.
+            await session.commit()
+            replay_notice = _replay_notice(replay_n, pending)
             # turn 活跃度检测: the hooks-driven backends (LOCAL tmux + remote
             # device) run hooks_substrate's two-layer idle-suspect + hard-ceiling
             # loop and manage their own inner ceiling (which can be hours), so the
@@ -2081,6 +2166,15 @@ class ChatService:
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(project_id, provider.name)
+
+        # 重放可见 (#416): say out loud that this turn is re-sending a batch that
+        # earlier turns already failed on. Posted BEFORE the stream, because the
+        # whole point is that this turn may produce nothing either — a notice
+        # written afterwards is exactly the one that never gets written.
+        if replay_notice is not None:
+            payload = await self.post_system_event(topic_id, replay_notice, turn_id)
+            if payload is not None:
+                yield {"type": "event_block", "block": payload}
 
         # Backfill any 现场 events the live hook path missed (backend down / no
         # listener during a prior turn) from the durable spool WAL — idempotent by
@@ -2359,7 +2453,21 @@ class ChatService:
                 )
                 fail_hint = "稍后再 @ 它重试。"
             else:
-                fail_text = "⚠️ 芝士这轮没跑完——AI 服务返回错误。"
+                # #450 rule 2: an unclassified failure shows the SERVICE'S OWN
+                # WORDS in the room line, not a generic label — 「AI 服务返回
+                # 错误」 with the reason buried in meta.detail is what sent a
+                # whole room hunting a \"mystery bug\" twice in one night
+                # (2026-08-16, topic ee17b136: the real text was the delivery
+                # timeout all along). One line's worth here; the untruncated
+                # original still goes into detail below.
+                first_line = detail.splitlines()[0].strip() if detail else ""
+                if len(first_line) > 160:
+                    first_line = first_line[:160] + "…"
+                fail_text = (
+                    f"⚠️ 芝士这轮没跑完——{first_line}"
+                    if first_line
+                    else "⚠️ 芝士这轮没跑完——AI 服务返回错误。"
+                )
                 fail_hint = "稍后再 @ 它重试。"
             if fail_meta is None:
                 # 没被分类的那几条。原话是**唯一**的一份 —— 它没有第二个副本可以

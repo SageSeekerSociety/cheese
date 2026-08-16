@@ -77,6 +77,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._topics.get.return_value = topic
     service._projects = AsyncMock()
     service._projects.get.return_value = project
+    service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
     service._resolve_pr_prerequisites = AsyncMock(
         return_value=(("gho_token", "acme", "widgets"), "")

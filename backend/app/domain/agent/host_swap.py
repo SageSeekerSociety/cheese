@@ -1,4 +1,4 @@
-"""换身体 — when the machine a topic runs on is judged dead, move the topic (#186).
+"""换身体 — when a topic's cloud machine is judged dead, move the topic (#186).
 
 The gap this closes: a turn that dies of a *recognised* platform failure used to be
 the one kind of failure that never came back. Ordinary crashes get an automatic
@@ -13,11 +13,12 @@ The flow, on a host-scoped failure (``PlatformFailure.host_scoped``):
   1. record it against the DEVICE (not the topic) — ``record_host_failure``;
   2. if that was the second consecutive failure of the same kind, the machine is
      quarantined for a cooldown (``device.health``);
-  3. pick another online, non-quarantined machine in the project;
-  4. release the topic's pin **explicitly, with a reason**, and re-pin to it;
-  5. hand the caller a room-visible message and an auto-resume delay.
+  3. if the failed machine is self-hosted, keep its pin and wait for it;
+  4. otherwise, pick another runnable cloud machine in the project;
+  5. release the topic's pin **explicitly, with a reason**, and re-pin to it;
+  6. hand the caller a room-visible message and an auto-resume delay.
 
-Steps 4 and 5 are not decoration. ``bind_topic_device`` is write-once and the
+Steps 5 and 6 are not decoration. ``bind_topic_device`` is write-once and the
 resolver is documented to NEVER fall back to another device, because a topic that
 silently woke up elsewhere with an empty work tree was a real bug that was hard to
 see. Moving a topic is allowed exactly when it is deliberate, reasoned and said out
@@ -39,6 +40,7 @@ from sqlalchemy import select
 
 from app.domain.agent.platform_failures import PlatformFailure
 from app.domain.device.service import DeviceService, device_service_for_session
+from app.domain.device.supply import Supply, has_runnable_transport
 
 logger = logging.getLogger(__name__)
 
@@ -94,9 +96,10 @@ async def swap_topic_device(
         # this one. Counting it would quarantine healthy boxes for a registry
         # outage — and quarantine every box, since they all fail the same way.
         return NO_SWAP
-    old_id = await service.topic_device(topic_id)
-    if old_id is None:
+    binding = await service.topic_binding(topic_id)
+    if binding is None:
         return NO_SWAP
+    old_id = binding.device_id
     verdict = await service.record_host_failure(old_id, failure.code)
     if not verdict.quarantined:
         # First strike: stay put. One failure is a hiccup, and moving a topic
@@ -105,12 +108,30 @@ async def swap_topic_device(
 
     old = await service.get_device(old_id)
     old_name = old.name if old is not None else old_id
+    if old is not None and old.supply is Supply.self_hosted:
+        return SwapOutcome(
+            quarantined=True,
+            old_device=old_id,
+            message=(
+                f"⚠️ 机器「{old_name}」连续 {verdict.consecutive_failures} 轮"
+                f"因「{failure.title}」失败，已暂停向它派活；"
+                "本话题仍留在这台机器上，平台会等待它恢复，不会迁移到别的机器。"
+                "请在机器恢复后再 @芝士。"
+            ),
+        )
     candidates = (
         []
         if project_id is None
-        else await service.healthy_devices_for_project(project_id, is_online)
+        else await service.healthy_cloud_devices_for_project(project_id, is_online)
     )
-    target = next((d for d in candidates if d.device_id != old_id), None)
+    target = next(
+        (
+            device
+            for device in candidates
+            if device.device_id != old_id and has_runnable_transport(binding.visibility)
+        ),
+        None,
+    )
     if target is None:
         # Judged dead with nowhere to go. Say so plainly rather than silently
         # leaving the topic pinned to a machine we just took out of rotation — the
@@ -134,7 +155,9 @@ async def swap_topic_device(
             f"consecutive {failure.code} failures; moving to {target.device_id}"
         ),
     )
-    await service.bind_topic_device(topic_id, target.device_id)
+    await service.bind_topic_device(
+        topic_id, target.device_id, visibility=binding.visibility
+    )
     logger.warning(
         "topic %s moved from device %s to %s after %s",
         topic_id,

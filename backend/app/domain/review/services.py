@@ -30,6 +30,7 @@ from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
@@ -402,6 +403,7 @@ class AcceptService:
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)
+        self._machines = MachineService(session)
 
     async def _topic_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._topics.get(topic_id)
@@ -422,12 +424,13 @@ class AcceptService:
         about Docker boxes, so a device screen (and the ``claude`` process behind it)
         used to leak on the machine forever.
 
-        Best-effort in both halves: a missing box or screen is a successful no-op
-        (it is recreated on demand if the archived topic is ever resumed), and a
-        failure here must never fail the accept itself."""
+        Containers and screens are best-effort. A billed Cloud machine is not:
+        archive is its only reclamation lifecycle, so accept must not report
+        success if MicroCloud did not accept deletion."""
         from app.domain.agent.device_provider import release_topic_screen
         from app.domain.workspace import service as ws
 
+        await self._machines.release_topic_machine(topic.id)
         try:
             ws.stop_topic_container(topic.id)
         except Exception:  # noqa: BLE001 — best effort, never fatal

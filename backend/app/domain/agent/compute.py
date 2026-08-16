@@ -61,6 +61,17 @@ class ComputeProvider(Protocol):
 
     name: str
 
+    # 图片输入: whether THIS provider actually embeds `images=` into the turn's
+    # user message. It is a capability, not a preference — the prompt wording
+    # branches on it (chat._prompt_line). Before this existed, `images=` was
+    # accepted by every provider and silently dropped by the hooks-driven ones,
+    # while the prompt kept telling 芝士 "图片内容已附在本条消息里" on all of
+    # them. An agent that reads that promise and sees nothing does not error —
+    # it invents what the image said, which is worse than saying "我没收到图".
+    # Default True keeps the SDK/relay contract; a backend that drops images
+    # MUST override it to False rather than leave the prompt lying for it.
+    embeds_images: bool
+
     def available(self) -> bool: ...
 
     def run_turn(
@@ -90,6 +101,8 @@ class LocalDockerProvider:
     instead of in ChatService."""
 
     name = "local-docker"
+    # SDK path: build_query_input base64-embeds every image into the user message.
+    embeds_images = True
 
     def __init__(
         self, *, agent: AgentService, workspace_root: str, sandbox_enabled: bool
@@ -256,6 +269,8 @@ class RemoteCheesedProvider:
     source of truth and the signing secret never leaves the backend."""
 
     name = "remote-cheesed"
+    # The node holds the files and runs the same build_query_input on its side.
+    embeds_images = True
 
     def __init__(self, *, cheesed_url: str, cheese_api: str):
         self._url = cheesed_url.rstrip("/")

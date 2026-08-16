@@ -237,7 +237,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         await wait(GET_RETRY_DELAYS_MS[attempt])
         continue
       }
-      throw new ApiError(res.status, `HTTP ${res.status} for ${path}`)
+      // #450 rule 2 (frontend edition): the backend's errors carry a human
+      // sentence (`message`) — a toast that shows only "HTTP 422 for /path"
+      // sends the room hunting a mystery the server had already explained.
+      let serverSaid = ''
+      try {
+        const body = (await res.json()) as { message?: string; error?: { message?: string } }
+        serverSaid = body?.message || body?.error?.message || ''
+      } catch {
+        // non-JSON body — the status line is all there is
+      }
+      throw new ApiError(
+        res.status,
+        serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`
+      )
     }
     const envelope = (await res.json()) as ApiEnvelope<T>
     if (envelope.code !== 200) {
@@ -286,7 +299,14 @@ async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} for ${path}`)
+    let serverSaid = ''
+    try {
+      const body = (await res.json()) as { message?: string; error?: { message?: string } }
+      serverSaid = body?.message || body?.error?.message || ''
+    } catch {
+      // non-JSON body — the status line is all there is
+    }
+    throw new Error(serverSaid ? `${serverSaid}（HTTP ${res.status}）` : `HTTP ${res.status} for ${path}`)
   }
   const envelope = (await res.json()) as ApiEnvelope<T>
   if (envelope.code !== 200) {
@@ -928,6 +948,9 @@ export interface TerminalInfo {
   available: boolean
   backend: string
   url?: string
+  // Device-hosted topics: no proxied ttyd, but a live screen WebSocket
+  // ("/connector/session/{sid}/screen") the 现场 renders with DeviceLiveViewer.
+  ws?: string
 }
 export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)

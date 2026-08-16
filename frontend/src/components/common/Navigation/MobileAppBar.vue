@@ -129,6 +129,7 @@
                 </template>
                 <v-list-item-title>个人中心</v-list-item-title>
               </v-list-item>
+              <ThemeToggle />
               <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
                 <template #prepend>
                   <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
@@ -156,6 +157,7 @@ import { useUserMenu } from '@/composables/useUserMenu'
 
 import NotificationPanel from '../Notification/NotificationPanel.vue'
 
+import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePageTitleStore } from '@/stores/title'
 

@@ -78,6 +78,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._topics.get.return_value = topic
     service._projects = AsyncMock()
     service._projects.get.return_value = project
+    service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
     # Prereqs resolved: a connected token and a connected repo, so the accept
     # really does attempt the two-phase push (that is what we want to fail).
