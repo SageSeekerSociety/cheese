@@ -240,20 +240,26 @@ func dialWhenReady(ctx context.Context, path string, within time.Duration) (net.
 // That is the whole improvement over send-keys, where a pane whose program had
 // died acked happily.
 //
-// NOT guaranteed: that the session turned it into a turn. This protocol has no
-// positive acknowledgement, and a session that is mid-turn does not reliably
-// queue what lands on top of it. Measured on a loaded CI runner: 8 prompts sent
-// back-to-back produced 7 turns, 5 concurrent ones produced 4. The same tests
-// pass every time on an idle laptop — which is exactly why this is written down
-// instead of tuned away with a longer sleep, since a sleep that works on the
-// fast machine is not a guarantee, only a wider window.
+// NOT guaranteed: that the session turned it into a turn — for lack of a way to
+// prove it, not for evidence against. A refusal is the only thing the session
+// ever says back, so "was not refused" is the strongest claim this layer can
+// make. Consumption is confirmed where positive evidence exists: the platform
+// reads Claude Code's own hooks and re-sends a prompt whose hook never arrives.
 //
-// Consumption is therefore confirmed one layer up, where evidence exists: the
-// platform reads Claude Code's own hooks and re-sends a prompt whose hook never
-// arrives. Turn openers are serialized. Mid-turn supplements may target a busy
-// session, but they count as consumed only after the exact UserPromptSubmit hook;
-// without it they remain pending and fall back to a queued turn. That is an
-// at-least-once contract, not a stronger promise from this socket.
+// An earlier version of this comment claimed a mid-turn session drops frames,
+// citing 7-of-8 and 4-of-5 from CI. That was a bad measurement, not a property:
+// the counts came from judging delivery by Claude Code's transcript files, and
+// the same CI run's pane showed one of the "lost" prompts delivered, processed
+// and answered. Counting what the model actually received instead, 5 concurrent
+// prompts all became turns with no duplicates. The retraction is written here
+// rather than quietly deleted — a wrong measurement that survives as a code
+// comment keeps misdirecting people long after the test that produced it is
+// gone.
+//
+// Turn openers are serialized. Mid-turn supplements may target a busy session,
+// but they count as consumed only after the exact UserPromptSubmit hook; without
+// it they remain pending and fall back to a queued turn. That is an at-least-once
+// contract, not a stronger promise from this socket.
 func (c *Client) Reply(text string) error {
 	if text == "" {
 		return errors.New("rendezvous: empty prompt")
