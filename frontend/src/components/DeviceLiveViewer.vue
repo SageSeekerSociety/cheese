@@ -1,9 +1,13 @@
 <script setup lang="ts">
-// 现场 (施工现场) for a self-hosted device agent (P3 Phase B): a read-only xterm that
+// 现场 (施工现场) for a self-hosted device agent (P3 Phase B): an xterm that
 // renders a device screen's real terminal, byte-for-byte. Bytes arrive over
-// `/connector/session/{sid}/screen` (the hub fans out raw `screen.data`); the only
-// thing we send back is a `resize` control frame so the device sizes its tmux to us.
-// Read-only by design — keystrokes are never forwarded (perception, not control).
+// `/connector/session/{sid}/screen` (the hub fans out raw `screen.data`); TEXT
+// frames back are `resize` control, BINARY frames back are keystrokes — the
+// split the backend defines, so control can never be mistaken for typing.
+// Input rides the SAME authorization as watching (connector.py: whoever may
+// view a screen may type into it — the trust boundary the agent already runs
+// inside), so the component defaults to interactive; pass `readonly` where a
+// surface wants perception without control.
 import '@xterm/xterm/css/xterm.css'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -13,7 +17,7 @@ import { Terminal } from '@xterm/xterm'
 
 import { screenWsUrl } from '../api'
 
-const props = defineProps<{ sid: string }>()
+const props = defineProps<{ sid: string; readonly?: boolean }>()
 
 const host = ref<HTMLDivElement | null>(null)
 const status = ref<'connecting' | 'open' | 'closed'>('connecting')
@@ -74,7 +78,7 @@ onMounted(() => {
   if (!host.value) return
   term = new Terminal({
     convertEol: false,
-    disableStdin: true, // read-only 现场
+    disableStdin: props.readonly === true, // perception-only where asked
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
     fontSize: 13,
     theme: { background: '#1e1e1e' },
@@ -82,6 +86,15 @@ onMounted(() => {
   fit = new FitAddon()
   term.loadAddon(fit)
   term.open(host.value)
+  if (props.readonly !== true) {
+    // Keystrokes go out as BINARY — the backend forwards them to the pane's
+    // pty only after the viewer attached (sized), so nothing can type into a
+    // screen that was never subscribed.
+    const enc = new TextEncoder()
+    term.onData((d) => {
+      if (socket && socket.readyState === WebSocket.OPEN) socket.send(enc.encode(d))
+    })
+  }
   fitAndResize()
   ro = new ResizeObserver(() => fitAndResize())
   ro.observe(host.value)

@@ -2541,13 +2541,15 @@ onBeforeUnmount(() => {
               </template>
 
               <!-- 现场: device-hosted topics — the machine screen's REAL terminal,
-                 byte-for-byte over the screen WebSocket. Same read-only stance as
-                 the ttyd embed; DeviceLiveViewer never forwards keystrokes. -->
+                 byte-for-byte over the screen WebSocket, and INTERACTIVE: typing
+                 here reaches the pane (the backend gates input by the same
+                 authorization as watching). Debugging tool, not a toy — what you
+                 type lands in the agent's live claude. -->
               <template v-else-if="openTool === 'site' && screenSid">
                 <div class="term-wrap">
                   <div class="term-bar text-caption px-3 py-1">
                     <span class="term-bar__dot">●</span>
-                    实时终端（只读）· 机器上的 Claude Code
+                    实时终端 · 机器上的 Claude Code（可输入，键入会直达会话）
                   </div>
                   <DeviceLiveViewer :sid="screenSid" />
                 </div>
