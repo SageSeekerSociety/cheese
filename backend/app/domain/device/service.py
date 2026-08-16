@@ -24,6 +24,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.domain.device.ccproxy_tenant import CcproxyTenantClient
 from app.domain.device.health import (
     DEFAULT_FAILURE_THRESHOLD,
     DEFAULT_QUARANTINE,
@@ -60,10 +61,14 @@ class DeviceService:
         *,
         code_ttl: timedelta = timedelta(minutes=10),
         now: Callable[[], datetime] = _now,
+        ccproxy: CcproxyTenantClient | None = None,
     ) -> None:
         self._repo = repo
         self._code_ttl = code_ttl
         self._now = now
+        # Settings-driven default; unconfigured is fine until a device that
+        # actually carries a ccproxy machine id needs revoking (#420).
+        self._ccproxy = ccproxy or CcproxyTenantClient()
 
     async def start(self, device_name: str | None) -> str:
         """Begin a flow; return the opaque ``device_code`` the client polls on. The
@@ -181,7 +186,8 @@ class DeviceService:
 
     async def delete_owned(self, device_id: str, *, actor_user_id: int) -> None:
         """The HUMAN's door: an owner removing their hosted machine."""
-        await self._require_hosted_owned(device_id, actor_user_id)
+        device = await self._require_hosted_owned(device_id, actor_user_id)
+        await self._revoke_ccproxy(device)
         await self._repo.delete_device(device_id)
 
     async def delete_platform_provisioned(
@@ -207,7 +213,27 @@ class DeviceService:
             )
         if device.owner_user_id != actor_user_id:
             raise ForbiddenError("Only the device owner may manage this device")
+        await self._revoke_ccproxy(device)
         await self._repo.delete_device(device_id)
+
+    async def _revoke_ccproxy(self, device: Device) -> None:
+        """Kill the device's ccproxy ticket BEFORE forgetting the device (#420).
+
+        Ordering and failure mode are the point: ccproxy's DELETE is confirmed
+        revocation (204 = the durable credential is gone; 404 = already gone),
+        and anything else raises — leaving the device row in place so the
+        deletion can be retried. A deleted row with a live ticket would be a
+        credential nobody can find to revoke, which is the exact hazard this
+        column exists to close. Devices without a machine id (every laptop, and
+        every device from before per-device tickets) skip straight through."""
+        if device.ccproxy_machine_id is None:
+            return
+        await self._ccproxy.delete_machine(device.ccproxy_machine_id)
+        logger.info(
+            "revoked ccproxy machine %s for device %s",
+            device.ccproxy_machine_id,
+            device.device_id,
+        )
 
     async def rename_owned(
         self, device_id: str, name: str, *, actor_user_id: int
