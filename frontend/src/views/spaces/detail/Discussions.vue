@@ -1,19 +1,18 @@
 <template>
-  <div class="page-header">
-    <v-icon size="24">mdi-forum-outline</v-icon>
-    <span class="text-subtitle-1">{{ t('spaces.discussions.title') }}</span>
-    <v-spacer></v-spacer>
-    <v-btn
-      class="text-medium-emphasis"
-      color="text"
-      size="small"
-      icon
-      variant="text"
-      @click="navigateToCreateDiscussion"
-    >
-      <v-icon left size="20">mdi-plus</v-icon>
-    </v-btn>
-  </div>
+  <PageHeader icon="mdi-forum-outline" :title="t('spaces.discussions.title')" show-on-mobile>
+    <template #actions>
+      <v-btn
+        class="text-medium-emphasis"
+        color="text"
+        size="small"
+        icon
+        variant="text"
+        @click="navigateToCreateDiscussion"
+      >
+        <v-icon left size="20">mdi-plus</v-icon>
+      </v-btn>
+    </template>
+  </PageHeader>
   <v-container fluid>
     <v-row>
       <v-col cols="12">
@@ -140,6 +139,7 @@ import { getAvatarUrl, getFullAttachmentUrl } from '@/utils/materials'
 import { useWindowSize } from '@/composables/useWindowSize'
 
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
 import DiscussionCardSkeleton from '@/components/discussions/DiscussionCardSkeleton.vue'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { DiscussionsApi } from '@/network/api/discussions'
@@ -532,7 +532,7 @@ watch(
   padding: 80px 20px;
   min-height: 400px;
   background-color: rgba(var(--v-theme-surface), 0.6);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   backdrop-filter: blur(5px);
 }
 
