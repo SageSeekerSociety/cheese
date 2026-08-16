@@ -20,6 +20,7 @@ the backend's real tree); for a remote device it is a no-op (the device owns its
 tree and pushes it back over git smart-HTTP instead).
 """
 
+import hashlib
 import logging
 import time
 import uuid
@@ -161,7 +162,25 @@ def uses_tunnel(*, co_located: bool, tunnel_url: str) -> bool:
     return bool(tunnel_url.strip()) and not co_located
 
 
-def connect_transport(*, session_token: str, via_tunnel: bool) -> str:
+def tunnel_port_for_topic(topic_id: uuid.UUID) -> int:
+    """The tunnel helper's loopback port for THIS topic — derived, not fixed.
+
+    One fixed port (#425) meant two concurrent topics on one remote machine
+    raced for the same bind: the second helper failed and its turns died
+    looking like a dead model. Deriving from the topic id keeps the port
+    stable across screen reuse/reassert (claude bakes its HTTPS_PROXY at
+    launch and never re-reads it, #385) while giving concurrent topics
+    distinct listeners. Collisions inside the 2000-port window are possible
+    but loud: the second helper's bind fails and the launch surfaces a
+    visible setup error instead of a silent share.
+    """
+    base = settings.subscription_tunnel_local_port
+    return base + (int(hashlib.sha1(str(topic_id).encode()).hexdigest(), 16) % 2000)
+
+
+def connect_transport(
+    *, session_token: str, via_tunnel: bool, tunnel_port: int | None = None
+) -> str:
     """The ``HTTPS_PROXY`` value that steers this screen to the meter.
 
     Through the tunnel the address is loopback and carries NO credential: the
@@ -174,7 +193,8 @@ def connect_transport(*, session_token: str, via_tunnel: bool) -> str:
     exposed listener relaying for anyone who cannot prove which project to bill.
     """
     if via_tunnel:
-        return f"http://127.0.0.1:{settings.subscription_tunnel_local_port}"
+        port = tunnel_port or settings.subscription_tunnel_local_port
+        return f"http://127.0.0.1:{port}"
     host = (
         settings.subscription_device_proxy_host.strip()
         or settings.subscription_proxy_host
@@ -615,8 +635,11 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
             via_tunnel = uses_tunnel(co_located=co_located, tunnel_url=tunnel_url)
+            tunnel_port = tunnel_port_for_topic(topic_id)
             connect_proxy_url = connect_transport(
-                session_token=session_token, via_tunnel=via_tunnel
+                session_token=session_token,
+                via_tunnel=via_tunnel,
+                tunnel_port=tunnel_port,
             )
             sub = provider_env.subscription_provider(
                 ca_path=_DEVICE_PROXY_CA_PATH,
@@ -648,9 +671,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 # built entirely from `extra_env` — there is no other channel
                 # into that builder.
                 merged["CHEESE_TUNNEL_URL"] = tunnel_url
-                merged["CHEESE_TUNNEL_PORT"] = str(
-                    settings.subscription_tunnel_local_port
-                )
+                merged["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
             elif await self._device_ccproxy_upstream(device_id):
                 # A CO-LOCATED device that brings its own ccproxy identity (the
                 # dev box, registered on `DeviceRow.ccproxy_upstream`) runs on

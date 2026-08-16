@@ -1551,3 +1551,21 @@ async def test_a_device_without_identity_keeps_the_swap_path(monkeypatch, tmp_pa
     hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=True)
 
     assert "CHEESE_MACHINE_TICKET" not in hub.env
+
+
+def test_tunnel_port_is_per_topic_and_stable():
+    """#425: one fixed helper port made two concurrent topics on one remote
+    machine race for the same bind. The port must differ across topics and be
+    stable for one topic (claude bakes its HTTPS_PROXY at launch, #385, so a
+    reused screen must re-derive the same value)."""
+    from app.domain.agent.device_provider import (
+        connect_transport,
+        tunnel_port_for_topic,
+    )
+
+    a, b = uuid.uuid4(), uuid.uuid4()
+    pa, pb = tunnel_port_for_topic(a), tunnel_port_for_topic(b)
+    assert pa == tunnel_port_for_topic(a), "not stable for the same topic"
+    assert pa != pb or a == b  # distinct topics, distinct ports (mod collisions)
+    url = connect_transport(session_token="t", via_tunnel=True, tunnel_port=pa)
+    assert url == f"http://127.0.0.1:{pa}"
