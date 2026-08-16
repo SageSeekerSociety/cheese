@@ -229,19 +229,61 @@ func (c *Client) Close() {
 	})
 }
 
+// writeChunk is how much of a write goes into one `send-keys`. tmux rejects a
+// command whose arguments are too long ("command too long") well before this is
+// a lot of data, so a long message has to arrive in pieces. Kept comfortably
+// under any tmux build's limit — the cost of a smaller value is one more
+// subprocess per few kilobytes, which is nothing next to losing the message.
+// (Ported from upstream micro-connector, which learned this as T-058.)
+const writeChunk = 4096
+
 // Write sends raw bytes to the session as literal input (used by the hosted
 // script; viewer keystrokes go through a Client's pty instead).
 func (s *Session) Write(p []byte) error {
 	if len(p) == 0 {
 		return nil
 	}
-	var stderr bytes.Buffer
-	cmd := s.m.tmux("send-keys", "-t", s.name, "-l", "--", string(p))
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("terminal: write %q: %w: %s", s.name, err, stderr.String())
+	// A pane sitting in copy-mode (a viewer scrolled back) eats literal input;
+	// leave it first so the write reaches the live program. Harmless no-op when
+	// the pane is not in copy-mode.
+	_ = s.m.tmux("send-keys", "-t", s.name, "-X", "cancel").Run()
+	// One write becomes as many send-keys as it takes. Sending the whole thing
+	// in one command is what silently dropped long messages to agents (upstream
+	// T-058): tmux refused the command, the error reached only the connector's
+	// log, and the agent never heard what was said to it. The pieces arrive in
+	// order, so a bracketed paste stays intact — start marker in the first
+	// piece, end marker in the last, one paste to the TUI.
+	for len(p) > 0 {
+		n := chunkEnd(p, writeChunk)
+		var stderr bytes.Buffer
+		cmd := s.m.tmux("send-keys", "-t", s.name, "-l", "--", string(p[:n]))
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("terminal: write %q: %w: %s", s.name, err, stderr.String())
+		}
+		p = p[n:]
 	}
 	return nil
+}
+
+// chunkEnd returns how many bytes of p to send next: at most max, and never
+// splitting a UTF-8 sequence. A half-delivered rune is not cosmetic — the two
+// halves are separate arguments to separate tmux commands, and neither is valid
+// text — and any Chinese message long enough to be chunked would hit it.
+func chunkEnd(p []byte, max int) int {
+	if len(p) <= max {
+		return len(p)
+	}
+	n := max
+	// Back off to the start of the rune straddling the boundary. A UTF-8
+	// continuation byte is 10xxxxxx; at most three precede their leading byte.
+	for n > 0 && p[n]&0xC0 == 0x80 {
+		n--
+	}
+	if n == 0 { // not valid UTF-8 at all: send the raw bytes rather than stall
+		return max
+	}
+	return n
 }
 
 // OnChange registers fn and starts the poller on first use.
