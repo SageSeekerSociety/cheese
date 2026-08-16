@@ -295,8 +295,16 @@ def test_red_checks_are_never_merged_no_matter_how_many_polls(client, app_world)
     # 卡面说得出「为什么没合」。
     assert "Backend Test" in card["note"]
     # 房间里也叫了芝士，不是一张没人管的卡。
+    #
+    # 「哪项检查红了」要在 content + meta.detail 两处合起来找：平台提示的统一契约
+    # （`app/domain/agent/platform_notices.py`，来自 #429/#447）把 content 压成一行
+    # ≤40 字的人话，原话/日志/检查名一律收进 meta.detail 由前端折叠展示。该钉死的
+    # 性质是「房间里读得到是哪项检查红的」，不是「它躺在哪个字段」。
     blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
-    contents = "\n".join(b.get("content") or "" for b in blocks)
+    contents = "\n".join(
+        f"{b.get('content') or ''}\n{(b.get('meta') or {}).get('detail') or ''}"
+        for b in blocks
+    )
     assert "Backend Test" in contents
 
 
