@@ -2,8 +2,10 @@
 
 在这之前 `TopicService._archive_one` 完全不碰卡：话题归档了，它那张还没决议的
 验收卡就永远停在非终态上。对 `pr_open` 的卡来说这不是"停着"而是"还在动"——
-`SchedulerService.poll_open_prs` 每 60 秒仍会用 `decided_by` 的 GitHub token 去
-推进它（推分支、查 CI、合并 PR、再归档一次已归档的话题）。
+`SchedulerService.poll_open_prs` 每 60 秒仍会拿着 GitHub 凭据去推进它（推分支、
+查 CI、合并 PR、再归档一次已归档的话题）。用谁的凭据取决于 forge：接了平台
+GitHub App 的项目用 App 自己的 write token，其余用 `decided_by` 本人连接的
+token（`AcceptService._pr_poll_token`）。
 
 修复分两层（双保险）：
 

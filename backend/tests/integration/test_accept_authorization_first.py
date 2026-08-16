@@ -190,8 +190,12 @@ def test_drift_beyond_authorized_scope_blocks_auto_merge(
         assert after["note"].startswith("✋")
         assert "超出了当时授权的范围" in after["note"]
         assert expected_phrase in after["note"]
-        # 回来找人：卡面必须说清人能做什么，而不只是"卡住了"。
-        assert "撤销这次采纳" in after["note"]
+        # 回来找人：卡面必须说清人能做什么，而不只是"卡住了"。三条出口都要在：
+        # 人工放行（署名合并）、自己去 GitHub 合、作废这张卡。（旧文案写的是
+        # "撤销这次采纳"，但 revoke 只受理 accepted 的卡，pr_open 的出口是作废。）
+        assert "人工放行" in after["note"]
+        assert "GitHub 上合并" in after["note"]
+        assert "作废" in after["note"]
         assert _topic(client, tid)["status"] == "active"
     finally:
         _reset_client()
