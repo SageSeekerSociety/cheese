@@ -130,18 +130,12 @@ on a violation it silently repaired — the writing forms are `lint:style:fix` a
 
 Do not raise a baseline to make a gate green. Baselines only go down.
 
-## Sandbox reality
+## 哪些检查在小机器上跑不动
 
-`pnpm exec vitest run --dir src`, `pnpm run lint` and `pnpm run lint:style` run
-anywhere and are the baseline set.
+`pnpm exec vitest run --dir src`、`pnpm run lint`、`pnpm run lint:style` 轻量,
+到哪都能跑,是基线组合(前两者也已接进 `.claude/scripts/check.sh`)。
 
-`pnpm run build` and `pnpm run typecheck` depend on how much memory the box
-actually has, so **try them once before declaring them unrunnable**:
-
-- On a 2 GB agent sandbox both OOM (build also leaves a ~10 GB core dump under
-  `frontend/` — delete it). Do not retune `--max-old-space-size`: V8 just climbs
-  until the cgroup SIGKILLs it. State that they were not run locally, and say so
-  explicitly rather than implying the check passed.
-- On the larger boxes (2026-08 dogfood machines are 16 core / 62 GB) both run
-  fine in a couple of minutes. Verified there on 2026-08-16. Run them, and say in
-  your report that you really ran them.
+`pnpm run build` 和 `pnpm run typecheck` 吃内存,能不能跑取决于这台机器有多大——
+**先试一次再下结论**,别预先宣布跑不了。被 OOM 杀掉时怎么办(不要调
+`--max-old-space-size`、要明说没跑成、记得删 core dump)是平台层的事,写在
+`backend/sandbox/skills/cheese/SKILL.md` 里,对每个被托管的仓库都一样。

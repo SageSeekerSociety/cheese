@@ -95,6 +95,8 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 
 > `cheese api` 与被禁止的裸 `curl` 的区别:`cheese api` 带上容器的 `CHEESE_TOKEN`、经平台鉴权、可追溯——是**受控**的原始通道;裸 `curl`/翻 session 文件仍然禁止。逃生口只是"少校验的原始通道",不改变鉴权纪律。
 
+**你在一个资源受限的容器里,但别预先假设什么跑不了。** 内存密集的命令(前端 `build`/`typecheck`、大型编译)可能被 OOM 杀掉——**先真的试一次再下结论**,不同后端的机器差得很远,同一条命令在这台上炸、在那台上两分钟跑完。真被杀了:**不要去调 `--max-old-space-size`**,V8 只会一直涨到 cgroup 把它 SIGKILL,调参数改变不了上限;正确做法是说明这条检查在本机没跑成、交给 CI,并且**明说你没跑**,不要写得像跑过了。崩溃的进程还可能在工作区里留下几个 GB 的 core dump,看到就删掉。
+
 **CI 红了自己去读,别等人贴。** `export GH_TOKEN=$(cheese gh-token)` 之后:`gh api repos/<o>/<r>/commits/<sha>/check-runs` 看哪个挂了,`gh api repos/<o>/<r>/actions/jobs/<job_id>/logs` 拉全文。四个只有踩过才知道的点:`<job_id>` **不是 run id**,是 check-run 的 `html_url` 里 `/job/` 后面那串(别的 App 也发 check-run,把它们的 id 丢进 jobs API 只会 404);`output.summary` 是空的(GitHub 文档说在那里,Actions 自己留成 null,细节走 `/check-runs/<id>/annotations`);**只 grep `##[error]` 会一无所获**——失败的 step 吐的是 `##[error]Process completed with exit code 1.`,真正说明问题的是**它上面那一行**,要连着前十几行一起看;日志会 302 到第三方存储的预签名 URL,`gh api` 处理好了,手写 `curl -L` 注意别把 `Authorization` 跟着重定向送出去。
 
 **做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese artifact report.html` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
