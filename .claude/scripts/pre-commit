@@ -17,15 +17,18 @@
 #   actions pinned to a SHA       repo-guards.yml / guards
 #   migration fork vs main        repo-guards.yml / guards
 #   pytest (whole suite, -n 4)    test.yml / test
+#   eslint + stylelint            frontend.yml
+#
+# check.sh now dispatches on what changed, so a docs-only commit skips the
+# backend suite entirely and a frontend-only one runs the frontend checks it
+# used to skip.
 #
 # Deliberately NOT run locally:
 #   - e2e (e2e.yml). Needs Playwright browsers and a running stack; minutes, not
 #     seconds. CI is the right place.
-#   - the frontend gate (frontend.yml: eslint + the vue-tsc ratchet). NOT a
-#     considered trade-off — a real gap: check.sh cds into backend/ and runs
-#     nothing else, so a frontend-only commit pays ~60s of pytest and gets zero
-#     frontend checks. Until check.sh grows per-path dispatch, run
-#     `task fe:check` yourself when you touch frontend/.
+#   - vue-tsc (the typecheck ratchet) and the frontend build. Both OOM on a small
+#     box, and a check that dies on memory reports as a code failure. CI owns
+#     them; run `task fe:check` yourself if you want them before pushing.
 #   - deploy script tests (deploy-scripts-test.yml). Bash against fakes, seconds
 #     in CI, and deploy/ changes are rare enough not to tax every commit.
 set -euo pipefail

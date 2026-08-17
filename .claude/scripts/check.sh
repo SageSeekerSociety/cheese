@@ -221,49 +221,29 @@ PYTEST_ARGS="-n 4"
 [[ "$FULL" == "1" ]] && echo "Mode: FULL suite (parallel)" || echo "Mode: full suite (parallel)"
 [[ "$STRICT" == "1" ]] && echo "Mode: STRICT (a check that can't run does not count as passed)" || true
 
-# This workspace is shared between environments that don't agree on anything
-# below the mount point (interactive session vs. gate host): different uid,
-# different $HOME, different project checkout path. uv/pip console scripts
-# (pyright, pytest — pure Python wrappers, unlike ruff's native binary) bake
-# the ABSOLUTE path of their OWN venv into their shebang line at creation
-# time, so `.venv/bin/pyright` can be unexecutable ("cannot execute: required
-# file not found") on a host where the project was checked out somewhere else
-# — even when `.venv/bin/python` itself still resolves fine (its symlink
-# chain usually bottoms out at a uv-managed interpreter under $HOME, which —
-# same user, same base image — tends to exist regardless of the project's own
-# path; probing THAT proves nothing about the console scripts' baked path).
-# So the probe must exercise an actual console script, not just the
-# interpreter. `uv run --no-sync` can't paper over a broken one either: it
-# still execs that same baked-path script.
-#   - probe succeeds → `uv run --no-sync <tool>`, reusing the venv exactly as
-#     inherited (no sync, no rebuild, no risk of needing to recompile
-#     `srp_rs` — a local maturin/pyo3 Rust crate — from source).
-#   - probe fails     → point uv at a scratch venv and sync fresh THERE
-#     instead of trying to repair the inherited one in place (which fails:
-#     uv can't remove/recreate `.venv/share`, owned by whoever built it).
-if .venv/bin/pyright --version >/dev/null 2>&1; then
-    UV_RUN=(uv run --no-sync)
-else
-    echo "note: inherited .venv's console scripts don't execute on this host (baked absolute shebang from a different path) — syncing a scratch venv"
-    export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/venv"
-    UV_RUN=(uv run)
-fi
+# `uv run` with no --no-sync: if this checkout has no .venv, or it is stale, uv
+# builds one before running. Measured on this repo: 1 second and 30 MB of real
+# disk, because uv hardlinks from its global cache instead of copying (the
+# directory reads as 1.2 GB, but that is not what it costs).
+#
+# What this replaced: a probe that exec'd .venv/bin/pyright, and on failure
+# built a scratch venv in /tmp. That existed for the retired gate container,
+# where ONE workspace was shared by two uids with different $HOME and different
+# checkout paths, so console scripts carried a baked shebang that did not
+# resolve. That host is gone. A git worktree with no .venv looks superficially
+# similar and is not the same thing — it does not need a repair path, it needs a
+# venv, and one is cheap.
+UV_RUN=(uv run)
 
-# ruff ships as a self-contained native binary (no Python shebang), so the
-# venv-portability problem above doesn't apply to it — call it directly
-# regardless of the probe above. `--cache-dir` is a per-subcommand flag (must
-# follow `check`/`format`, not precede it). On the scratch-venv path, `uv run`
-# still has to provision a project-matching interpreter to host the command
-# in — even though ruff itself needs no interpreter — so it's exposed to the
-# same "no network to fetch a Python build" failure as pyright below; bound
-# it with the same timeout so that failure degrades to SKIP instead of FAIL.
+# ruff is a self-contained native binary, so when the venv already has it we
+# skip uv entirely. `--cache-dir` is a per-subcommand flag (must follow
+# check/format, not precede it), and the cache is kept per-run: a previous run's
+# .ruff_cache under backend/ can be owned by another uid and unwritable here.
 run_ruff() {
     if [ -x ".venv/bin/ruff" ]; then
         ".venv/bin/ruff" "$@" --cache-dir "$RUFF_CACHE_DIR"
-    elif [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
-        "${UV_RUN[@]}" ruff "$@" --cache-dir "$RUFF_CACHE_DIR"
     else
-        timeout 120 "${UV_RUN[@]}" ruff "$@" --cache-dir "$RUFF_CACHE_DIR"
+        "${UV_RUN[@]}" ruff "$@" --cache-dir "$RUFF_CACHE_DIR"
     fi
 }
 
@@ -272,45 +252,35 @@ echo "==> ruff check + format"
 if ! in_scope backend; then
     echo "  SKIP: ruff (nothing backend-affecting changed)"
     ((++SKIP))
-elif [ -x ".venv/bin/ruff" ] || [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
-    if run_ruff check . 2>&1 | tail -20 && run_ruff format --check . 2>&1 | tail -20; then
-        echo "  PASS: ruff"
-        ((++PASS))
-    else
-        echo "  FAIL: ruff (lint or format)"
-        ((++FAIL))
-    fi
 elif run_ruff check . 2>&1 | tail -20 && run_ruff format --check . 2>&1 | tail -20; then
     echo "  PASS: ruff"
     ((++PASS))
 else
-    blocked "ruff (scratch-venv sync couldn't get it running in time)"
+    echo "  FAIL: ruff (lint or format)"
+    ((++FAIL))
 fi
 
 # --- pyright ---
-# Bounded ONLY on the scratch-venv path: a freshly-synced venv's pyright-
-# python wrapper downloads a Node binary on first use, which can hang forever
-# on a host with no network (or a cache path that ALSO resolves to a
-# mismatched $HOME) — a timeout turns that into a clean, fast SKIP (an
-# environment limitation, not a code issue) instead of stalling the whole
-# gate. The inherited-venv path never hits this (nothing to download again).
+# `timeout` is not paranoia: pyright-python downloads a Node binary on first
+# use, which hangs indefinitely on a host with no network rather than failing.
+# The exit code tells the two apart — 124 is the timeout (an environment limit,
+# so BLOCKED), anything else is pyright having an opinion about the code.
 echo "==> pyright"
 if ! in_scope backend; then
     echo "  SKIP: pyright (nothing backend-affecting changed)"
     ((++SKIP))
-elif [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
-    if "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
+else
+    PYRIGHT_RC=0
+    timeout 300 "${UV_RUN[@]}" pyright 2>&1 | tail -20 || PYRIGHT_RC=${PIPESTATUS[0]}
+    if [ "$PYRIGHT_RC" = 0 ]; then
         echo "  PASS: pyright"
         ((++PASS))
+    elif [ "$PYRIGHT_RC" = 124 ]; then
+        blocked "pyright (timed out fetching its Node runtime — no network?)"
     else
         echo "  FAIL: pyright"
         ((++FAIL))
     fi
-elif timeout 120 "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
-    echo "  PASS: pyright"
-    ((++PASS))
-else
-    blocked "pyright (scratch-venv sync couldn't get it running in time)"
 fi
 
 # --- alembic single head ---
@@ -453,19 +423,17 @@ except OSError as e:
     else
         blocked "pytest (couldn't even run the DB probe in this environment)"
     fi
-elif [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
-    if "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q -o "cache_dir=$PYTEST_CACHE_DIR" 2>&1 | tail -20; then
+else
+    PYTEST_RC=0
+    "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q \
+        -o "cache_dir=$PYTEST_CACHE_DIR" 2>&1 | tail -20 || PYTEST_RC=${PIPESTATUS[0]}
+    if [ "$PYTEST_RC" = 0 ]; then
         echo "  PASS: pytest"
         ((++PASS))
     else
         echo "  FAIL: pytest"
         ((++FAIL))
     fi
-elif timeout 120 "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-delay 3 -q -o "cache_dir=$PYTEST_CACHE_DIR" 2>&1 | tail -20; then
-    echo "  PASS: pytest"
-    ((++PASS))
-else
-    blocked "pytest (scratch-venv sync couldn't get it running in time)"
 fi
 
 # --- frontend ---
