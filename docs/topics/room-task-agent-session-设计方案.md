@@ -483,6 +483,13 @@ token 是容器创建时烤进 env 的、永不刷新，而签名密钥在部署
 | @分身产出回吐房间 | subagent 的**结论**落进房间；每轮的文件改动汇总落进房间 | `domain/agent/chat.py` |
 | @容器按房间分配 | 母子共用一个容器；`CHEESE_TOPIC`/`CHEESE_TOKEN` 移到 per-session（顺带修掉「后端重启让存量容器变聋」）；提配额；idle reaper 怎么调要问回来 | `domain/agent/tmux_provider.py`、`domain/workspace/service.py` |
 
+**范围调整（@fulu，四件活派出之后）**：
+- 「分身产出回吐房间」里的**第 1 项（subagent 结论回吐）不一定要做**——因为可能直接用子话题
+  取代 subagent；**第 2 项（每轮改动汇总）确认要做**。
+  ⚠️ **这句话没能传进去**：父→子通道 403（见 §11），今天只有人能跨话题传话。
+  处理办法：等它 conclude 回来时按调整后的范围验收，多做的那部分不算错。
+- **commit 可视化** 和 **子话题并入母 PR** 都等这四件做完再接着做。
+
 **第二批**（等前一批回来再拆）：**子话题并入母话题的 PR**。
 它要改 `workspace/service.py`（和「容器按房间分配」撞）且依赖通讯通道
 ——并入同一条分支之后，母子之间必须能实时协调，否则冲突没法解。
@@ -491,7 +498,108 @@ token 是容器创建时烤进 env 的、永不刷新，而签名密钥在部署
 ②不许在沙箱里跑 jj（`.jj/repo/config-id` 属主翻转会让全项目起不了话题，栽过两次）；
 ③前端这一批不做，但要在结论里写清前端需要哪些字段。
 
-## 11. 核实依据
+## 11. 实测更正：父→子通道不是「不唤醒」，是 **403 根本写不进去**
+
+§8.3 里我根据代码推断「评论落库了但没人被叫醒」。**这一轮真实调用验证，比推断更糟**：
+
+```
+cheese api POST /topics/<子话题id>/comments
+→ 403 ForbiddenError: 这个 token 属于别的话题，不能在这里操作
+```
+
+所以拦住它的不是 `_CHEESE_WRITE_PATHS`（那张表里确实没有 comments），而是
+`ActorResolver.resolve` 自己就校验 token 的 topic。**父话题的芝士对子话题连写都写不进去。**
+
+`cheese notify` 也不是出路——它的 `--to` 是**人**的 handle，走通知面板，不唤醒任何话题。
+
+于是有一个很说明问题的死锁：**我这一轮想给「分身产出回吐房间」那件活传一句范围调整，
+而我需要的正是「母子话题通讯通道」那件活正在修的东西。** 今天能跨话题传话的只有人——
+人的 Bearer 凭据不受 topic 限制。
+
+⚠️ 这条直接影响「母子话题通讯通道」的方案：它简报里拿到的事实是「summon 条件是
+`if not actor.is_agent`」（代码确实如此），但**那一层上面还有一道 403**。
+它自己会撞到，简报里也写了「发现前提是错的就 `cheese ask` 问回来」。
+
+## 12. agent 类型：buzz 怎么做，我们已经有什么（@fulu 2026-08-17 提的方向）
+
+读的是 `crates/buzz-persona/PERSONA_PACK_SPEC.md`（1153 行）＋ `persona.rs` / `manifest.rs`。
+
+### 12.1 buzz 的做法
+
+一个 **Persona Pack** 是可分发的一整包（zip 或 git repo），是 Open Plugin Spec 的超集。
+一个 pack 里可以有多个 agent，每个 agent 一个 `*.persona.md` —— **YAML frontmatter 定义它是谁、
+怎么跑，markdown 正文就是它的系统提示**：
+
+```yaml
+name: "lep"                  # 机器名，pack 内唯一
+display_name: "Lep 🍀"       # UI 上显示的名字
+description: "Security-focused code reviewer"
+skills: ["./skills/security-review/"]      # 只给这个 agent 的技能
+mcp_servers: [{name: semgrep, command: …}] # per-agent 工具
+subscribe: ["#security-reviews"]           # 监听哪些频道
+triggers: {mentions: true, keywords: [...]}# 什么情况下响应
+model: "anthropic:claude-sonnet-4-…"       # 用哪个模型
+temperature: 0.3
+max_context_tokens: 128000
+hooks: {on_start: …, on_stop: …}
+```
+
+两个机制值得单独记：
+
+- **继承**：`plugin.json` 里的 `defaults` 是 pack 级默认，persona 没写的字段从那里解析。
+  例子里四个 agent 默认 Sonnet，只有一个覆写成 Opus。
+- **两层 prompt 的纪律**（这一条比 persona 格式本身更值钱）：每条消息按固定顺序拼
+  `[Base]` → `[System]` → 团队说明 → `[Context]` → 会话历史 → 触发事件。
+  `[Base]` 是**平台注入、每个 agent 完全一样**（平台身份、工具参考、工作区布局、怎么轮询消息），
+  **pack 作者不许写也不许配**；`[System]` 才是 persona 自己的。
+  规范里明文警告：**不要在 persona 里重复 base 的内容，否则用户每条消息会看到两遍**，
+  并逐条列出「不要再解释」的四类内容。
+
+### 12.2 我们其实已经有一半地基了
+
+**`expert_roles` 和 `custom_roles` 这两张表已经在**（`backend/app/domain/expert_role/models.py`），
+而且 docstring 写得很明确：
+
+> `ExpertRole`：a role = a set of preset skills + a role description, **mapping directly to a
+> Claude Code agent type**. Platform ships presets（计算机/设计/学术研究/创业…）；leads/teachers
+> can define custom ones. A Task Template can name a default role.
+>
+> `CustomRole`：**Claude Code agents-file semantics stored relationally** —
+> (name, title, description) 对应 frontmatter，`body` 就是 persona 系统提示。
+> NULL space_id = 个人角色，有值 = 归某个机构。
+
+层次也已经有了：平台预设（`project_id` 为 NULL）→ 项目自定义 → 机构（Space）拥有的 CustomRole。
+另外 `.claude/agents/*.md` 里已经有 Claude Code 层面的 agent 定义（`check-runner.md` 的
+frontmatter 就写着 `tools: Bash, Read` / `model: sonnet`）。
+
+**所以缺的不是「造一套 persona 格式」，是三件具体的事：**
+
+| 缺什么 | 说明 |
+|---|---|
+| **角色只管「说什么」，不管「怎么跑」** | `expert_roles` 有 `skills` ＋ `role_description`，**没有 model、没有 effort、没有工具白名单**。而这些今天散在别处：model 在 `.claude/agents/*.md`（Claude Code 层，平台不知道）、effort 根本没有、`compute_profile` 在 topic 上但那是**算力池**（在哪跑）不是**模型档位**（用多强的脑子）——两个不同的轴，很可能正是 issue #282「一个字段挤着四件事」说的问题 |
+| **平台不知道 `.claude/agents/` 里有什么** | 于是人在界面上选不了，split 时也没法指定「这件活用哪个类型的芝士做」 |
+| **「出厂设置」和「自己长出来的」混在一起** | buzz 把 persona（kind 30175，配置）和 engram（学到的东西）分成两种事件；我们把两者混在一个记忆池里平铺注入 |
+
+### 12.3 建议：抄纪律，不抄格式
+
+**值得抄的：**
+
+1. **两层 prompt 的纪律**（最值钱）。明确划出「平台层」和「角色层」，并规定角色层不许重复平台层。
+   我们现在没有这条约定——阶段说明、CLI 规则、记忆、成员表、话题表、活文档全都每轮拼进去，
+   没人说得清哪一层归谁、谁该为体积负责。
+2. **把「怎么跑」并进角色定义**：`expert_roles` 加 model / effort / 工具白名单。
+   这直接就是 @fulu 说的「名称、harness 工程、模型、effort」。
+3. **配置与记忆分离**：角色是出厂设置，core 记忆是它自己长出来的那部分。
+   这和 §6.2 ① 那条「我们缺 core 这一层」是同一件事，应该一起做（并入 issue #187）。
+
+**不建议抄的：**
+
+- **pack 的打包分发**（zip / git repo / 校验和 / OPS 兼容）：那是为第三方作者生态准备的，
+  我们现在没有第三方作者，先做数据库里的角色定义就够。
+- **MCP server 配置**：我们的工具是平台内置的（cheese CLI ＋ Claude Code 内置），没有 MCP 生态需求。
+- **triggers / subscribe**：我们用 @提及 ＋ summon，语义已经清楚，不需要再加一套触发规则。
+
+## 13. 核实依据
 
 本方案每一条「现状」都读过代码。核实过程、逐条证据、以及与 spec / fusion-design / accept-is-merge /
 issue #184 的差异清单，在 <&docs/topics/room与task设计与审批流程.md>。
