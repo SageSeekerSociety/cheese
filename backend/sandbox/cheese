@@ -74,6 +74,17 @@ def _call(
         sys.exit(1)
 
 
+def _port_answers(port: int, timeout: float = 1.0) -> bool:
+    """Is anything listening on this port inside the box? A TCP connect, not an
+    HTTP request: it is what "the platform can reach your server" reduces to, and
+    it stays true for a server that answers HTTP with a 500."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def _need(name: str, value: str) -> str:
     if not value:
         print(f"[cheese] 缺少 {name}（环境变量未注入）", file=sys.stderr)
@@ -734,10 +745,18 @@ def build_parser() -> argparse.ArgumentParser:
             "  2. 后台跑(nohup ... &)\n"
             "  3. curl localhost:$CHEESE_APP_PORT 验证通了,再 serve\n"
             "\n"
+            "**端口是写死的,没得商量**:平台只把 $CHEESE_APP_PORT 这一个端口发布出去,\n"
+            "容器创建时就定了,事后加不了,也没有「把别的端口转发过去」这种命令。所以\n"
+            "dev server 必须固定在这个端口上——vite 默认端口被占就静默跳到下一个,那个\n"
+            "端口平台永远够不到,你却以为自己照做了:\n"
+            "  vite --base=$CHEESE_APP_BASE --host 0.0.0.0 --strictPort\n"
+            "(uvicorn/next 没有静默跳号的行为,但同样必须 --port $CHEESE_APP_PORT。)\n"
+            "\n"
             "页面经后端反代挂在 $CHEESE_APP_BASE 这个子路径下。会发根绝对资源 URL 的\n"
-            "dev server(vite 的 /@vite/client)要按这个 base 起:\n"
-            "  vite --base=$CHEESE_APP_BASE --host 0.0.0.0\n"
-            "否则用户那边只有一个白框。"
+            "dev server(vite 的 /@vite/client)要按这个 base 起,否则用户那边只有一个白框。\n"
+            "\n"
+            "$CHEESE_APP_PORT 是空的 = 本话题不跑在平台容器里(跑在谁自己的机器上),\n"
+            "运行中的应用到不了预览面板,serve 会直接拒绝——改用 cheese artifact 点名文件。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -955,10 +974,32 @@ def main() -> None:
         print(_format_status(d))
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        port = os.environ.get("CHEESE_APP_PORT", "3000")
+        port = os.environ.get("CHEESE_APP_PORT", "")
+        if not port:
+            # No app port in the environment = this runtime is not a platform
+            # container (a topic running on someone's own machine). 运行环境预览
+            # resolves a docker-published port on the backend's host, so there is
+            # nothing for it to reach here — and the panel would show 「应用暂时
+            # 不在线」 forever. The backend refuses this too; failing here just
+            # costs one fewer round trip and says it in the agent's own terms.
+            print("[cheese] 这个运行环境没有可预览的应用端口"
+                  "（CHEESE_APP_PORT 未注入,说明本话题不跑在平台容器里）。\n"
+                  "[cheese] 运行中的应用到不了预览面板。要给人看结果,"
+                  "用 cheese artifact <文件> 点名一个网页/SVG。", file=sys.stderr)
+            sys.exit(2)
+        if not _port_answers(int(port)):
+            # Declaring a preview that cannot render is worse than not declaring
+            # one: 芝士 then tells the user 「预览已就绪」 and the user opens a
+            # white frame. vite in particular hops to the next free port when
+            # this one is taken, so "我明明起了服务" and "端口上没人" coexist.
+            print(f"[cheese] {port} 端口上没有服务在应答,没有设置预览。\n"
+                  f"[cheese] 先把应用起在 0.0.0.0:{port}（只绑 localhost 不行）,"
+                  f"确认 curl localhost:{port} 通了再 serve。\n"
+                  f"[cheese] dev server 要固定端口: vite --strictPort（默认行为是"
+                  f"端口被占就静默跳号,平台够不到跳过去的那个）。", file=sys.stderr)
+            sys.exit(2)
         _call("POST", f"/topics/{topic}/artifact", {"path": a.note, "as": "app"})
-        print(f"已把容器 :{port} 上的应用设为当前预览（{a.note}）。"
-              f"确保它监听 0.0.0.0:{port}，别只绑 localhost。")
+        print(f"已把 :{port} 上的应用设为当前预览（{a.note}）。")
     elif a.cmd == "artifact":
         topic = _need("CHEESE_TOPIC", TOPIC)
         # The platform resolves artifact paths against the worktree ROOT (/work),

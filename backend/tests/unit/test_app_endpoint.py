@@ -44,6 +44,24 @@ def test_app_endpoint_is_none_when_no_box_publishes_it(monkeypatch):
     assert ws.app_endpoint(tid) is None
 
 
+def test_only_a_local_container_can_host_an_app_preview():
+    """`docker port` runs on the BACKEND's host, so a topic whose turn runs on
+    someone's own machine (`device`) or a leased Cloud machine (`cloud`) has
+    nothing here to look up — that is a different state from "the container
+    died", and the panel's copy depends on telling them apart."""
+    from app.domain.agent.compute import LocalDockerProvider, app_preview_reachable
+    from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+    assert app_preview_reachable(TmuxHooksProvider.name) is True
+    assert app_preview_reachable(LocalDockerProvider.name) is True
+    assert app_preview_reachable("device") is False
+    assert app_preview_reachable("cloud") is False
+    # Unpinned topic → whatever this deployment defaults to, not a blanket yes.
+    from app.domain.agent.market import compute_default_name
+
+    assert app_preview_reachable(None) is app_preview_reachable(compute_default_name())
+
+
 def test_no_host_loopback_url_is_handed_out_any_more(monkeypatch):
     """The old `app_preview_url` returned `http://127.0.0.1:<host-port>`, which
     resolves to the VIEWER's own machine — a white frame for every remote user.

@@ -382,6 +382,14 @@ export interface PreviewInfo {
   // 应用没在跑" — without it both looked like an empty white frame.
   url?: string | null
   container_up?: boolean
+  // kind=app: whether this topic's runtime can host a live app AT ALL. A topic
+  // running on someone's own machine has no container here to publish the port,
+  // so `container_up` is false for a machine that is perfectly alive — telling
+  // those users to summon 芝士 again waits on a box that is never coming.
+  supported?: boolean
+  // Which artifact this is. Distinguishes "芝士 pointed at something new" from
+  // "the same preview, re-fetched" — re-pointing at the same path is new too.
+  artifact_id?: string
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).
