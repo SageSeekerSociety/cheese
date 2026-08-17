@@ -73,9 +73,17 @@ out of the path *it* was handed, which is the stripped one, so the browser is
 sent to `<origin>/topics/42` — a URL with no `/api`, which the gateway does not
 route to the backend at all.
 
-Repairing that would mean a middleware rewriting the framework's 307s. Not worth
-writing, for a request that should not be made: a trailing slash has no correct
-meaning here. `test_a_trailing_slash_is_never_a_redirect` pins the setting.
+**Setting `root_path` does not fix this, so do not try it.** That is the obvious
+next idea and it is a dead end: Starlette dropped `root_path` from slash
+redirects in 0.35.0 (FastAPI 0.109), and the discussion asking for it back —
+[starlette#2514](https://github.com/Kludex/starlette/discussions/2514) — is
+still open. We run 1.3.x, well past that. The same machinery has a second known
+defect, [#1396](https://github.com/Kludex/starlette/issues/1396): an https
+request can be redirected to an http `Location`.
+
+Repairing it properly would mean a middleware rewriting the framework's 307s.
+Not worth writing, for a request that has no correct meaning here in the first
+place. `test_a_trailing_slash_is_never_a_redirect` pins the setting.
 
 For a client, the consequence is one line: **a trailing slash is a plain 404**,
 which is an honest error instead of a silent wrong answer. The history of how
