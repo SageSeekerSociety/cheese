@@ -52,6 +52,13 @@ export interface Topic {
   // In-memory session activity, independent of topic status and archival state.
   // Present only on topic list/get responses.
   running?: boolean
+  // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
+  // 四者取一。只有 list/get 话题时才带。
+  i_participate?: boolean
+  // 这个话题在等我做事：有点名给我的待办验收卡，或有 @我 的未读。为真时
+  // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
+  // 只有 list/get 话题时才带。
+  awaits_me?: boolean
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'

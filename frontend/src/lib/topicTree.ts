@@ -10,6 +10,9 @@
 //      被导航偷偷改写。
 //   2. 被收起来的后代的未读，冒到**离它最近的那个「看得见且收起来」的祖先**行
 //      上（`unreadTotal`）。每个隐藏行只算一次，不会被两层祖先重复计。
+//   3. 同样地，被收起来的后代的**状态**（芝士在跑 / 有事等人处理）也要冒上来
+//      （`hiddenRunning` / `hiddenAwaits`）。未读是数字要相加，状态是"有没有"
+//      所以取或——父行的折叠开关凭它上色，"这里面有动静"才不会被折叠吞掉。
 
 export interface TopicNodeLike {
   id: string
@@ -34,6 +37,10 @@ export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends Fla
   hiddenUnread: number
   /** 本行角标该显示的数字：自己的未读 + `hiddenUnread`。 */
   unreadTotal: number
+  /** 隐藏后代里有没有正在跑的（芝士在里面工作）。 */
+  hiddenRunning: boolean
+  /** 隐藏后代里有没有在等人处理的。 */
+  hiddenAwaits: boolean
 }
 
 interface Node<T extends TopicNodeLike> {
@@ -87,6 +94,10 @@ export interface VisibleRowsOptions {
   reveal?: ReadonlySet<string>
   /** 话题级未读；缺省当 0。 */
   unreadOf?: (id: string) => number
+  /** 这个话题里芝士是不是正在跑；缺省当否。 */
+  runningOf?: (id: string) => boolean
+  /** 这个话题是不是在等人处理；缺省当否。 */
+  awaitsOf?: (id: string) => boolean
 }
 
 /**
@@ -103,6 +114,8 @@ export function visibleRows<T extends TopicNodeLike>(
   const collapsedIds = options.collapsed ?? new Set<string>()
   const reveal = options.reveal ?? new Set<string>()
   const unreadOf = options.unreadOf ?? (() => 0)
+  const runningOf = options.runningOf ?? (() => false)
+  const awaitsOf = options.awaitsOf ?? (() => false)
 
   const roots = buildNodes(rows)
   const rendered: Node<T>[] = []
@@ -124,14 +137,16 @@ export function visibleRows<T extends TopicNodeLike>(
 
   // 每个隐藏行只记在「离它最近的、自己也看得见的、收起来的祖先」名下，
   // 这样嵌套折叠时同一条未读不会在两层父行上各显示一次。
-  const owned = new Map<Node<T>, { count: number; unread: number }>()
+  const owned = new Map<Node<T>, { count: number; unread: number; running: boolean; awaits: boolean }>()
   for (const node of hidden) {
     let owner: Node<T> | null = node.parent
     while (owner && !(renderedSet.has(owner) && collapsedIds.has(owner.row.topic.id))) owner = owner.parent
     if (!owner) continue
-    const acc = owned.get(owner) ?? { count: 0, unread: 0 }
+    const acc = owned.get(owner) ?? { count: 0, unread: 0, running: false, awaits: false }
     acc.count += 1
     acc.unread += unreadOf(node.row.topic.id)
+    acc.running = acc.running || runningOf(node.row.topic.id)
+    acc.awaits = acc.awaits || awaitsOf(node.row.topic.id)
     owned.set(owner, acc)
   }
 
@@ -148,6 +163,8 @@ export function visibleRows<T extends TopicNodeLike>(
       hiddenCount: acc?.count ?? 0,
       hiddenUnread,
       unreadTotal: unreadOf(id) + hiddenUnread,
+      hiddenRunning: acc?.running ?? false,
+      hiddenAwaits: acc?.awaits ?? false,
     }
   })
 }
