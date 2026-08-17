@@ -126,10 +126,11 @@ class _HookWorkState:
     todo: list[dict] = field(default_factory=list)
     actions: list[str] = field(default_factory=list)
     # The topic branch's commits as of turn start — what makes "this turn's
-    # changes" answerable at turn end. `None` means we could not read them (no
-    # workspace here, a git failure), and the turn then lands NO change summary
-    # rather than a wrong one: with no baseline, every commit looks new.
-    known_commits: set[str] | None = None
+    # changes" answerable at turn end. A task rather than a value, because the
+    # read shells out to git and creates the repo on first use; see where it is
+    # started. `None` (or a read that failed) means the turn lands NO change
+    # summary rather than a wrong one: with no baseline, every commit looks new.
+    known_commits: asyncio.Task[set[str] | None] | None = None
 
 
 # How long a message's spooled flushes may sit incomplete (no final flush, no
@@ -1911,7 +1912,9 @@ class ChatService:
         # AFTER the checkpoint: that is what turns this turn's edits into the
         # commit the summary is about.
         changeset = await self._turn_changeset(
-            state.project_id, state.topic_id, state.known_commits
+            state.project_id,
+            state.topic_id,
+            None if state.known_commits is None else await state.known_commits,
         )
         if changeset is not None:
             payload = await self._persist_change_summary(
@@ -3225,11 +3228,17 @@ class ChatService:
         todo: list[dict] = []
         if prior_progress:
             yield {"type": "todo", "items": prior_progress, "restored": True}
-        # Baseline for 「这一轮改了哪些文件」, read BEFORE 芝士 can write anything.
-        # Both backends need it, and the hooks backend returns from this function
-        # long before its turn ends — so it is captured once here and carried on
-        # the work state rather than read twice in two places.
-        known_commits = await self._known_commits(project_id, topic_id)
+        # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
+        # but deliberately NOT awaited here: git_log ensures the repo exists, and
+        # on a cold project that is a git init plus a jj colocate. Awaited in
+        # front of the provider, that delay is charged to the start of every
+        # turn, and a turn cancelled inside the window dies before it can store
+        # its session id. What it measures only becomes commits at the
+        # checkpoint, so finishing the read any time before turn end is soon
+        # enough. Both backends need it, and the hooks backend returns from this
+        # function long before its turn ends — so it is started once here and
+        # carried on the work state rather than read twice in two places.
+        known_commits = asyncio.ensure_future(self._known_commits(project_id, topic_id))
         if isinstance(provider, HooksSessionProvider):
             marked_work_ids: list[uuid.UUID] = []
 
@@ -3823,7 +3832,9 @@ class ChatService:
 
         # 一轮的改动汇总: read AFTER the checkpoint, because the checkpoint is what
         # made this turn's edits into a commit.
-        changeset = await self._turn_changeset(project_id, topic_id, known_commits)
+        changeset = await self._turn_changeset(
+            project_id, topic_id, await known_commits
+        )
         change_payload = (
             None
             if changeset is None

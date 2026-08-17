@@ -7,6 +7,9 @@ Two facts used to be invisible in the room and are asserted here:
   the timeline had every individual 改文件 line and no net result.
 """
 
+import threading
+from collections.abc import Callable
+
 import pytest
 
 from app.domain.agent.service import (
@@ -34,6 +37,10 @@ class SubagentStubAgent(StubAgent):
     """Spawns a subagent, then hands its conclusion back — the two halves the
     room needs to pair up."""
 
+    # Fired the moment the provider actually starts, so a test can assert what
+    # does (and does not) happen before that point.
+    on_start: Callable[[], None] | None = None
+
     async def stream_reply(
         self,
         *,
@@ -45,6 +52,8 @@ class SubagentStubAgent(StubAgent):
         allowed_tools=None,
         **_,
     ):
+        if self.on_start is not None:
+            self.on_start()
         self.last_system_prompt = system_prompt
         yield AgentToolUse(name="Task", input={"description": "查分页接口现状"})
         yield AgentToolResult(
@@ -171,6 +180,36 @@ def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
     _chat(client, topic_id)
     blocks = _transcript(client, topic_id)
     assert not [b for b in blocks if (b.get("meta") or {}).get("changeset")]
+
+
+def test_the_baseline_read_never_delays_the_turns_start(
+    client, monkeypatch, stub_agent
+):
+    """The baseline is read through `git_log`, which ensures the repo exists —
+    on a cold project that is a `git init` plus a jj colocate. Awaited in front
+    of the provider it is charged to the start of EVERY turn, and a turn
+    cancelled inside that window dies before it can store its session id
+    (test_turn_exit_paths.py owns that contract). So the read must be started,
+    not awaited, there: what it measures only becomes commits at the checkpoint.
+    """
+    agent_started = threading.Event()
+    saw_the_agent_first: list[bool] = []
+
+    def slow_git_log(*_args, **_kwargs):
+        # Runs on a worker thread. If the turn awaits it before starting the
+        # provider, the agent can never fire this event and the wait times out —
+        # which is the regression, recorded rather than raised because
+        # _known_commits swallows exceptions by design.
+        saw_the_agent_first.append(agent_started.wait(timeout=5))
+        return []
+
+    stub_agent.on_start = agent_started.set
+    monkeypatch.setattr(ws, "git_log", slow_git_log)
+
+    topic_id = _topic(client)
+    _chat(client, topic_id)
+
+    assert saw_the_agent_first and all(saw_the_agent_first), "基线读取挡住了轮次启动"
 
 
 def test_a_broken_workspace_never_fails_the_turn(client, monkeypatch):
