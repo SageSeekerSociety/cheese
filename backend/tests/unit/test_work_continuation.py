@@ -225,3 +225,89 @@ async def test_continuation_for_is_none_outside_a_running_turn():
     # The turn finished; its record is still in the ring buffer but no longer
     # running, so a later stray call must not reuse its namespace.
     assert runner.continuation_for(topic) is None
+
+
+# --- Who is driving: the other question the live turn record answers ---------
+#
+# 归属跟推进者走 (拍板 2026-08-17): `cheese split` runs under the 分身's own
+# `cheese-<hex12>` handle, so the endpoint cannot see the person who asked for the
+# split. That person is in the same `_recent` record as the continuation id, which
+# is why both are read off it — and why they must agree about which turn "now" is.
+
+
+class _Blocks:
+    """A turn that reaches the middle and waits, so a caller can observe the
+    runner WHILE a turn is live — which is the only state `turn_author_for` is
+    allowed to answer from."""
+
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.finish = asyncio.Event()
+
+    async def converse(self, **_):
+        yield {"type": "user_block"}
+        self.started.set()
+        await self.finish.wait()
+        yield {"type": "done"}
+
+
+async def _while_running(runner, broker, topic, author: str):
+    """Start a turn for `author`, read both answers mid-flight, then let it end."""
+    turn = _Blocks()
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(turn, topic, author=author, content="hi", summon=True)
+        await asyncio.wait_for(turn.started.wait(), 2)
+        answer = runner.turn_author_for(topic)
+        continuation = runner.continuation_for(topic)
+        turn.finish.set()
+        await asyncio.wait_for(q.get(), 2)
+    return answer, continuation
+
+
+@pytest.mark.anyio
+async def test_the_human_driving_the_turn_is_reported():
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic = uuid.uuid4()
+    author, continuation = await _while_running(runner, broker, topic, "bob")
+    assert author == "bob"
+    # Same record, so the split endpoint's two reads describe the same turn.
+    assert continuation is not None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "author",
+    [
+        pytest.param("system", id="a_platform_initiated_turn"),
+        pytest.param("cheese", id="the_platform_agent"),
+        pytest.param("cheese-a7a0268b96ff", id="an_autonomous_分身"),
+        pytest.param("anonymous", id="an_unidentified_caller"),
+        pytest.param("", id="no_author_at_all"),
+    ],
+)
+async def test_only_a_real_person_is_reported_as_the_driver(author):
+    """Gate verdicts, scheduled wake-ups, `cheese await` reports and conflict
+    nudges all run as `system`; a 分身 working on its own initiative runs as
+    itself. None of them may become a room's owner — `seed()` refuses to make 芝士
+    an owner, so a room seeded from one lands ownerless and nobody can manage its
+    roster. The caller falls back to the ladder it had instead."""
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic = uuid.uuid4()
+    reported, _ = await _while_running(runner, broker, topic, author)
+    assert reported is None
+
+
+@pytest.mark.anyio
+async def test_no_driver_outside_a_running_turn():
+    """Same rule as `continuation_for`: `_recent` remembers what turns DID, so a
+    finished turn's author must not be read as whoever is driving now."""
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic = uuid.uuid4()
+    assert runner.turn_author_for(topic) is None
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(_Quiet(), topic, author="bob", content="hi", summon=True)
+        await asyncio.wait_for(q.get(), 2)
+    assert runner.turn_author_for(topic) is None

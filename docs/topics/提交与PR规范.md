@@ -21,7 +21,7 @@
 - **谁的提交**：话题发起人连了 GitHub 就用他的 `<id>+<login>@users.noreply.github.com` 作为 author（jj 0.43 无 `--author`，改用 `jj metaedit --update-author` 事后改写）。没连账号就保持 芝士，不编邮箱。
 - **谁的 PR**：开 PR 时优先用发起人自己的 user-to-server token，失败（离职/取消授权/权限不足）自动回落到 App token，绝不因此开不出 PR。
 - **落到 main 的那一个提交**：本仓是 squash 合并，整个话题压成一个提交。它的标题/正文由芝士递卡时写：`cheese accept-request <handle> "<理由>" --subject '<Conventional Commits 标题>' --body '<为什么>'`。格式不对后端当场打回并给出正确写法。不给 `--subject` 就回落成 `chore: <话题标题>`——故意难看，提醒补上。
-- **归属兜底**：squash 提交正文带 `Co-authored-by:`，GitHub 据此计入贡献。
+- **多人归属**：squash 提交正文的 `Co-authored-by:` 只列**不是 author 的贡献者**——话题换过手时，接手的人是 author（`Requested-by:`），原发起人靠这行留在历史里。同一个人不会被写两遍：一个话题只有一份 git 身份，指向 author 本人的那行不携带信息。芝士自己永不出现在这行（`cheese@zhishi.local` 关联不到任何 GitHub 账号，只会污染 contributors；要追溯来源用正文已有的 `Cheese-Topic:`）。
 - **同步上游**：改成「能快进就快进，绝不造合并提交」。判据不是「落后几个提交」而是**本地 base 相对两边共同祖先有没有内容改动**——因为存量项目已经比上游多几十个空合并，用 `merge --ff-only` 只会被拒绝然后再造第 42 个。有真实本地内容（绑定前就有活的项目）时才走真合并。
 
 ## 规范本身（写进 <&CLAUDE.md> 的「Commits and PRs」一节）

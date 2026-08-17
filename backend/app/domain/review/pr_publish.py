@@ -217,16 +217,11 @@ async def _pr_text(
     card = await AcceptCardRepository(session).get(card_id)
     if topic is None:
         return branch, f"Cheese-Topic: {topic_id}"
-    requested_by = await identity.requester_handle(session, topic)
-    author = None
-    if requested_by:
-        author = await identity.resolve_for_handle(session, requested_by)
+    who = await identity.attribution(session, topic)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.
-    return pr_text.change_subject(card, topic), pr_text.pr_body(
-        topic, "", card, author, requested_by
-    )
+    return pr_text.change_subject(card, topic), pr_text.pr_body(topic, "", card, who)
 
 
 async def record_pr(

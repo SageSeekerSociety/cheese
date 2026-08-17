@@ -1,0 +1,148 @@
+# Does the CURRENT Claude Code still speak the protocol we depend on?
+#
+# `delivery-e2e` in cli.yml pins the version production runs, so it proves our
+# code works against a build we already trust. It cannot tell us anything about
+# the next build — and prompt delivery rides the rendezvous socket, which is
+# undocumented private surface. Its frames already moved once, between 2.1.220
+# and 2.1.224. So "upstream might change it" is not a worry, it is a measurement
+# we have already taken.
+#
+# This job installs @latest and runs the same suite. The point is to learn that
+# an upgrade would break us BEFORE anyone upgrades, rather than from a room full
+# of wedged topics afterwards. A red run is intelligence, not breakage: nothing
+# in production changed, and nothing here blocks a merge.
+name: Claude Code canary
+
+on:
+  schedule:
+    # 03:20 UTC — after the nightly quiet period, and off the hour so it does
+    # not queue behind everything else that fires at :00 on a shared runner.
+    - cron: "20 3 * * *"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "npm version/tag to test (default: latest)"
+        required: false
+        default: "latest"
+
+permissions:
+  contents: read
+  issues: write # a silent canary is not a canary — see "Report" below
+
+concurrency:
+  group: claude-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: cli/go.mod
+          cache-dependency-path: cli/go.sum
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      # Deliberately NOT the pin. Everything else in CI tests the version we
+      # trust; this one exists to test the one we do not.
+      - name: Install Claude Code (${{ inputs.version || 'latest' }})
+        id: install
+        run: |
+          export NPM_CONFIG_PREFIX="$GITHUB_WORKSPACE/.npm-canary"
+          npm install -g --silent "@anthropic-ai/claude-code@${{ inputs.version || 'latest' }}"
+          v="$("$NPM_CONFIG_PREFIX/bin/claude" --version | head -n1 | awk '{print $1}')"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "canary is testing Claude Code $v"
+
+      # The pin the launcher enforces, read from the source of truth rather than
+      # repeated here — a canary that compares against a stale copy of the pin
+      # reports the wrong thing on the day it matters.
+      - name: Read the pinned version
+        id: pin
+        run: |
+          pin=$(grep -oE 'CLAUDE_PINNED_VERSION = "[^"]+"' \
+                  backend/app/domain/agent/device_launch.py | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "version=$pin" >> "$GITHUB_OUTPUT"
+          echo "production pin is $pin"
+
+      # Only the rendezvous cases: those are what rides the private protocol.
+      # The cheeselet leg drives a TUI, which is a different (and much slower to
+      # diagnose) kind of breakage, and not what this is watching for.
+      - name: Rendezvous e2e against the newest Claude Code
+        id: e2e
+        working-directory: cli
+        continue-on-error: true
+        run: |
+          export PATH="$GITHUB_WORKSPACE/.npm-canary/bin:$PATH"
+          go test -tags claudee2e -v -timeout 40m -run 'TestRendezvous' ./e2e/ 2>&1 | tee /tmp/canary.log
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      # Report. A scheduled job that only turns a square red is one nobody sees:
+      # the failure arrives days later as "the upgrade broke everything", which
+      # is exactly the outcome this exists to prevent. So a break files an issue
+      # naming the version, and a recovery closes it — one issue, reopened and
+      # updated, never a new one per night.
+      - name: File or update the canary issue
+        if: steps.e2e.outputs.status != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANARY: ${{ steps.install.outputs.version }}
+          PIN: ${{ steps.pin.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Claude Code $CANARY breaks rendezvous prompt delivery"
+          failed=$(grep -E '^--- FAIL' /tmp/canary.log | sed 's/^/    /' | head -20)
+          body=$(printf '%s\n' \
+            "The rendezvous e2e suite fails against **Claude Code \`$CANARY\`**, while production is pinned at \`$PIN\`." \
+            "" \
+            "Nothing is broken right now — production still runs the pin. What this means is that **upgrading would break prompt delivery**, so the pin cannot move until this is understood." \
+            "" \
+            "Failing cases:" \
+            '```' "$failed" '```' \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "The delivery path rides an undocumented socket protocol (see #480); its frames already changed once between 2.1.220 and 2.1.224. The likely next step is to diff what the new build does to the frames in \`cli/internal/rendezvous/client.go\`.")
+          existing=$(gh issue list --state open --search "in:title \"breaks rendezvous prompt delivery\"" --json number,title --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            gh issue edit "$existing" --title "$title"
+          else
+            gh issue create --title "$title" --body "$body" --label ci || gh issue create --title "$title" --body "$body"
+          fi
+
+      - name: Close the canary issue when it recovers
+        if: steps.e2e.outputs.status == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANARY: ${{ steps.install.outputs.version }}
+        run: |
+          existing=$(gh issue list --state open --search "in:title \"breaks rendezvous prompt delivery\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue close "$existing" --comment "Green again against Claude Code \`$CANARY\`."
+          fi
+
+      # The job's own conclusion still tracks the test, so the run history is
+      # honest and `gh run list` shows the break.
+      - name: Fail the job when the canary is red
+        if: steps.e2e.outputs.status != '0'
+        run: |
+          echo "rendezvous e2e failed against Claude Code ${{ steps.install.outputs.version }}" >&2
+          exit 1
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "| | version |"
+            echo "|---|---|"
+            echo "| canary tested | \`${{ steps.install.outputs.version }}\` |"
+            echo "| production pin | \`${{ steps.pin.outputs.version }}\` |"
+            echo "| rendezvous e2e | ${{ steps.e2e.outputs.status == '0' && 'pass' || 'FAIL' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
