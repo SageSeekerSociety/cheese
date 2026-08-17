@@ -68,7 +68,9 @@ jobs:
               with urllib.request.urlopen(req, timeout=20) as r: print(r.read().decode('utf-8', 'replace'))
           except urllib.error.HTTPError as e: print('HTTP', e.code, e.read()[:200].decode('utf-8', 'replace'))")"
           size=$(printf '%s' "$body" | wc -c | tr -d ' ')
-          if printf '%s' "$body" | grep -q "accept-request" && [ "$size" -gt 1000 ]; then
+          # Do not pipe the large body into grep -q under pipefail: grep exits
+          # early on a match, printf gets SIGPIPE, and a healthy CLI looks false.
+          if grep -q "accept-request" <<<"$body" && [ "$size" -gt 1000 ]; then
             echo "PASS  /sandbox/cli/cheese serves the real CLI (${size} bytes)"
           else
             echo "FAIL  /sandbox/cli/cheese returned ${size} bytes: $(printf '%s' "$body" | head -c 200)"; fail=1
