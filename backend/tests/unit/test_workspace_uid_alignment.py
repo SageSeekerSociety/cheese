@@ -106,6 +106,7 @@ async def test_sandbox_container_is_started_as_that_user(project, monkeypatch):
             "CHEESE_ROOM": str(topic),
             "SBX_SESSIONS": str(ws.sessions_root(project)),
         },
+        topic,
     )
     args = captured[-1]
     assert "--user" in args

@@ -929,6 +929,16 @@ async def test_the_container_environment_holds_nothing_per_topic(
     # The sessions TREE is mounted, not one topic's dir — a box cannot gain a
     # mount later, and the tasks that will need one do not exist yet.
     assert f"{tmp_mount(argv)}:{tp.ws.SANDBOX_SESSIONS_ROOT}" in argv
+    # The box's own workdir is the TREE, never a topic's directory in it.
+    # `docker run -w` creates a missing workdir, and this one is inside a bind
+    # mount — naming a topic would plant an empty dir on the host exactly where
+    # that topic's jj workspace has to go, and `jj workspace add` refuses a path
+    # that already exists. A room that has never taken a turn is the live case.
+    assert argv[argv.index("-w") + 1] == tp.ws.SANDBOX_TOPICS_ROOT
+    for session_env in box.sessions.values():
+        assert session_env["CHEESE_WORKDIR"].startswith(
+            f"{tp.ws.SANDBOX_TOPICS_ROOT}/"
+        ), "a session still has to land in its own worktree"
 
 
 def tmp_mount(argv: list[str]) -> str:

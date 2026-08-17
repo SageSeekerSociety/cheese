@@ -59,7 +59,7 @@ def _wire(
             removed.append(args[-1])
         return 0, "", ""
 
-    async def _create(name: str, env: dict) -> None:
+    async def _create(name: str, env: dict, anchor) -> None:
         created.append(name)
 
     async def _notice(topic_id: uuid.UUID, cause: str = "image") -> None:
