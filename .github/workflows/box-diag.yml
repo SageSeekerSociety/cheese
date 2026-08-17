@@ -83,11 +83,21 @@ jobs:
         # tick — `pr poll failed`, the orphan sweep, the reaper — is invisible
         # from outside while the symptom (a card that never advances) is not.
         #
-        # Fixed tail, no parameters: same rule as every other probe in this file
-        # (see the header) — a grep pattern or a line count taken from workflow
-        # input is a remote shell with extra steps. Grep locally in the run log.
+        # Fixed window and fixed filter, no parameters: same rule as every other
+        # probe in this file (see the header) — a grep pattern or a line count
+        # taken from workflow input is a remote shell with extra steps. Grep
+        # locally in the run log.
+        #
+        # `--since 2h`, not `--tail N`: a line budget is the wrong unit here.
+        # The first version tailed 400 lines and got 10 SECONDS of wall clock,
+        # 399 of them routine HTTP access logs — too narrow to contain even one
+        # tick of a 60s maintenance loop, which is exactly what the probe is for.
+        # The access lines are dropped for the same reason; what is left is
+        # startup, the maintenance loops and anything that raised.
         run: |
-          docker logs --tail 400 --timestamps cheese-backend-1 2>&1 || true
+          docker logs --since 2h --timestamps cheese-backend-1 2>&1 \
+            | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
+            | tail -600 || true
 
   prod-box:
     runs-on: [self-hosted, cheese-prod]
