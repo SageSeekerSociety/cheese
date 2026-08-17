@@ -14,18 +14,18 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def _topic(client, project_id: str) -> str:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
+        "/topics", json={"project_id": project_id, "title": "做一个东西"}
     ).json()["data"]["id"]
 
 
 def _card(client, topic_id: str, reviewer: str = "alice") -> str:
     return client.post(
-        f"/api/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -36,14 +36,14 @@ def _card(client, topic_id: str, reviewer: str = "alice") -> str:
 
 def _reject(client, card_id: str, reviewer: str = "alice", note: str = ""):
     return client.post(
-        f"/api/accept-cards/{card_id}/reject",
+        f"/accept-cards/{card_id}/reject",
         json={"decided_by": reviewer, "note": note},
         headers=session_auth_headers(reviewer),
     )
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 def test_reject_wakes_the_topic_with_the_reason(client, stub_agent):
@@ -109,4 +109,4 @@ def test_rejected_topic_stays_active(client):
     _reject(client, cid, note="改一下")
     wait_work_idle()
 
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"

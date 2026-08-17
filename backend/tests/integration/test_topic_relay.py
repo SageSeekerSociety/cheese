@@ -19,17 +19,17 @@ from tests.conftest import wait_work_idle
 
 
 def _project(client) -> dict:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]
 
 
 def _topic(client, project_id: str, title: str = "母话题") -> dict:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": title}
+        "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]
 
 
 def _split(client, parent_id: str, title: str) -> dict:
-    sub = client.post(f"/api/topics/{parent_id}/split", json={"title": title}).json()[
+    sub = client.post(f"/topics/{parent_id}/split", json={"title": title}).json()[
         "data"
     ]
     # The 分身's auto-kickoff turn must finish before the test looks at prompts.
@@ -39,14 +39,14 @@ def _split(client, parent_id: str, title: str) -> dict:
 
 def _tell(client, sender_id: str, target: str, content: str, **kw):
     return client.post(
-        f"/api/topics/{sender_id}/tell",
+        f"/topics/{sender_id}/tell",
         json={"target": target, "content": content},
         **kw,
     )
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 # --- 父 → 直接子: 落地 + 真的叫醒 -------------------------------------------
@@ -277,7 +277,7 @@ def test_archived_target_is_not_woken_and_says_so(client):
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "已经收工的活")
-    client.post(f"/api/topics/{sub['id']}/archive", json={"by": "user-1"})
+    client.post(f"/topics/{sub['id']}/archive", json={"by": "user-1"})
     wait_work_idle()
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
