@@ -1207,6 +1207,10 @@ watch(
 .topic-view {
   flex: 1 1 auto;
   overflow: hidden;
+  /* 底色分层：侧栏坐在 background (--canvas) 上，内容区是它上面那张 surface。
+     这条视图以前不画底、直接透出 body 的 --canvas，于是侧栏和正文同色，两者
+     之间只剩一条边线在撑。 */
+  background: var(--surface);
 }
 /* GitHub-PR-style merge box — green (the merge convention) stays. */
 .merge-box {
@@ -1294,12 +1298,10 @@ watch(
   align-items: center;
   gap: 6px;
   margin-bottom: 6px;
-  padding: 5px 8px 5px 10px;
-  border-left: 2px solid rgb(var(--v-theme-primary));
-  /* 只圆右侧两角。写成 `0 8px 8px 0` 的简写形式过不了圆角阶梯检查（它逐值比对），
-     所以拆成长写法 —— 视觉完全一致。 */
-  border-top-right-radius: var(--radius-md);
-  border-bottom-right-radius: var(--radius-md);
+  padding: 5px 10px;
+  /* 强调靠 wash 底色 + 行内的琥珀图标，不靠左竖条：左条纹在这套设计语言里只
+     留给引用块和树的结构线。四角同圆之后它读起来才是一颗 chip。 */
+  border-radius: var(--radius-md);
   background: rgba(var(--v-theme-primary), 0.07);
 }
 .comment-mode-chip__icon {
