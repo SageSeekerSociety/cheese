@@ -3,7 +3,7 @@ import type { TopicSortField, TopicSortOrder } from '../api'
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { relTime } from '../lib/relTime'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
@@ -44,9 +44,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'select-project', id: string): void
   (e: 'select-topic', id: string): void
-  (e: 'create-project', name: string): void
   (e: 'create-topic', title: string): void
   (e: 'split-topic', payload: { topicId: string; title: string }): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
@@ -82,8 +80,10 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-// 项目级页面（总览/日历/设置）住在项目头下（界面级合入 IA：不在顶栏）。
+// 项目级页面（总览/日历/设置）住在项目头下（界面级合入 IA：不在顶栏）。它们和
+// 这个侧栏里的其他一切一样，只换内容区——所以它们也和其他行一样显示选中态。
 const router = useRouter()
+const route = useRoute()
 // Below this drawer width the 总览/日历/设置 labels are dropped — just the icons,
 // so the row never wraps into an awkward two-line cramp on a narrow rail.
 const narrowPages = computed(() => (props.width ?? 280) < 216)
@@ -364,6 +364,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
           :key="p.key"
           type="button"
           class="proj-pages__item"
+          :class="{ 'is-active': route.name === p.key }"
           :title="p.label"
           @click="openProjectPage(p.key)"
         >
@@ -782,6 +783,11 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 .proj-pages__item:hover {
   background: var(--fill-2);
   color: var(--ink);
+}
+.proj-pages__item.is-active {
+  background: var(--fill-2);
+  color: var(--ink);
+  font-weight: 600;
 }
 /* narrow rail: icon-only, evenly spread, no label wrap */
 .proj-pages--compact .proj-pages__item {
