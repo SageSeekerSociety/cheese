@@ -265,6 +265,22 @@ async def git_diff(project_id: str, topic_id: str) -> dict:
     return {"data": diff}
 
 
+@app.get("/git/changed-files/{project_id}/{topic_id}")
+async def git_changed_files(project_id: str, topic_id: str) -> dict:
+    """Names only, of the same range /git/diff renders — a node's tree has the
+    turn commits and no base branch to compare against, so both answer about
+    HEAD. The panel needs the count while its tab is closed."""
+    tree = Path(_WORKSPACE) / project_id / topic_id
+    paths: list[str] = []
+    if tree.is_dir():
+        if _git(tree, "rev-list", "-n", "1", "--all").strip():
+            out = _git(tree, "show", "--name-only", "--pretty=format:", "HEAD")
+        else:
+            out = _git(tree, "diff", "--name-only")
+        paths = [line.strip() for line in out.splitlines() if line.strip()]
+    return {"data": paths}
+
+
 @app.post("/teardown/{topic_id}")
 async def teardown(topic_id: str) -> dict:
     """Best-effort: drop this topic's node-local scratch workspace."""
