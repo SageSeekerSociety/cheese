@@ -19,6 +19,8 @@ import logging
 import os
 import tempfile
 
+from app.domain.agent import device_launch
+
 logger = logging.getLogger("cheese.machine.enrollment")
 
 # One attempt should be slow enough to survive a cold apt/curl on a fresh
@@ -87,6 +89,12 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
             "device_id": device_id,
         }
     )
+    # The floor and the pin are the launcher's, read from there rather than
+    # restated: a machine enrolled against a different number than the launcher
+    # enforces is a machine that enrolls cleanly and then runs nothing.
+    origin_clean = origin.rstrip("/")
+    min_version = device_launch.CLAUDE_MIN_VERSION
+    pinned_version = device_launch.CLAUDE_PINNED_VERSION
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -113,6 +121,67 @@ for tool in tmux git; do
           && sudo -n apt-get install -y -q "$tool" >/dev/null 2>&1; }} \
     || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
 done
+mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
+export PATH="$HOME/.local/bin:$PATH"
+# claude — the agent itself, and the same argument as tmux/git above with one
+# more turn of the screw. A machine with no claude, or one too old, does not
+# fail here: it enrolls cleanly, reports healthy, and then every topic assigned
+# to it never starts, because the launcher refuses a build below the floor.
+# A loud failure now beats a silent one per topic later (#489, #501 are the
+# same shape).
+#
+# The binary comes from US, not from the vendor. A cloud node sits on a private
+# subnet, a self-hosted machine belongs to a user whose network we do not
+# control, and the vendor's own installer names "not available in your region"
+# as a failure mode. Serving it ourselves is what turns the pin from a hope
+# about what the machine downloaded into a fact about what we handed it — the
+# same reason cheesehost is fetched from us two lines below.
+#
+# Platform strings are the VENDOR's, and the musl check matters: Alpine-style
+# machines need a different build, and only the machine can tell.
+case "$arch" in
+  x86_64|amd64) carch=x64 ;;
+  aarch64|arm64) carch=arm64 ;;
+esac
+if [ "$(uname -s)" = "Linux" ]; then
+  if ldd /bin/ls 2>&1 | grep -q musl; then
+    cplat="linux-$carch-musl"
+  else
+    cplat="linux-$carch"
+  fi
+else
+  cplat="darwin-$carch"
+fi
+claude_ok=0
+if command -v claude >/dev/null 2>&1; then
+  have=$(claude --version 2>/dev/null | head -n 1 | awk '{{print $1}}')
+  if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
+      | sort -V | head -n 1)" = "{min_version}" ]; then
+    claude_ok=1
+  fi
+fi
+if [ "$claude_ok" -eq 0 ]; then
+  mkdir -p "$HOME/.local/share/claude/versions" "$HOME/.local/bin"
+  curl -fsSL --retry 3 --retry-delay 2 -m 300 \
+    "{origin_clean}/connector/claude/{pinned_version}/$cplat/claude" \
+    -o "$HOME/.local/share/claude/versions/{pinned_version}.new" \
+    || {{ echo "could not download claude {pinned_version} for $cplat" >&2; exit 1; }}
+  test -s "$HOME/.local/share/claude/versions/{pinned_version}.new"
+  chmod +x "$HOME/.local/share/claude/versions/{pinned_version}.new"
+  mv "$HOME/.local/share/claude/versions/{pinned_version}.new" \
+     "$HOME/.local/share/claude/versions/{pinned_version}"
+  ln -sf "$HOME/.local/share/claude/versions/{pinned_version}" \
+     "$HOME/.local/bin/claude"
+  # Verify rather than trust the download: a claude that is present but still
+  # under the floor enrolls a machine that cannot run a single turn.
+  have=$("$HOME/.local/bin/claude" --version 2>/dev/null \
+    | head -n 1 | awk '{{print $1}}')
+  if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
+      | sort -V | head -n 1)" != "{min_version}" ]; then
+    echo "claude is ${{have:-unusable}} after install, need >= {min_version}" >&2
+    exit 1
+  fi
+fi
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
   "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\
