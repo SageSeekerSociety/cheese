@@ -314,8 +314,12 @@ class DeviceService:
     # -- topic → device pin (affinity, execution-architecture v4) ----------
 
     async def topic_device(self, topic_id: uuid.UUID) -> str | None:
-        """The device a topic is frozen to (``None`` before its first turn). Its work
-        tree + resumable session live there; later turns must return to it."""
+        """The device a topic is frozen to.
+
+        ``None`` means 「系统挑一台」 still needs to choose on the first turn. A
+        named machine is bound before that turn, because waiting for the exact
+        machine is already part of the user's choice.
+        """
         binding = await self.topic_binding(topic_id)
         return binding.device_id if binding is not None else None
 
@@ -325,8 +329,11 @@ class DeviceService:
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
     ) -> None:
-        """Pin a topic to the device its first turn ran on. Write-once — an existing
-        pin is never overwritten (affinity is permanent for the topic's lifetime)."""
+        """Pin a topic to a named device or the device its first turn chose.
+
+        Write-once — an existing pin is never overwritten. An allowed pre-turn
+        choice change must release the old pin explicitly before binding the new one.
+        """
         await self._repo.bind_topic_device(topic_id, device_id, visibility)
 
     async def release_topic_device(self, topic_id: uuid.UUID, *, reason: str) -> None:
@@ -336,8 +343,10 @@ class DeviceService:
         and it is deliberately a separate, reason-carrying call rather than a
         loosening of the resolver: a pin that can be overwritten silently is exactly
         the original drift bug, where a topic woke up on a different machine with an
-        empty work tree and nobody could tell. The caller must also make the move
-        visible in the room — see ``agent.host_swap``."""
+        empty work tree and nobody could tell. Before the first turn, the compute
+        picker may use it to replace an explicit choice; after work starts, the
+        caller must also make the move visible in the room — see ``agent.host_swap``.
+        """
         logger.warning("releasing topic %s device pin: %s", topic_id, reason)
         await self._repo.release_topic_device(topic_id)
 

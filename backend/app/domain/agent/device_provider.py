@@ -98,15 +98,18 @@ async def resolve_pinned_device(
     """The device this topic's turn must run on (execution-architecture v4 §affinity).
 
     A topic's work tree + resumable claude session live on ONE machine. So:
-      * already pinned → return it **iff hosted, online, and runnable**; an offline
-        pinned device raises (queue/retry) and an `isolated` pinned device raises the
-        #358 「尚未实现」 error — NEVER fall back to another device, which would start
-        from an empty tree and corrupt session resume (the original drift bug);
-      * not yet pinned (first turn) → pick an online, **non-quarantined** hosted
-        device serving the project and create a runnable ``host`` binding (write-once),
-        so every later turn returns to the same machine. Quarantined = judged unhealthy
-        by ``device.health`` (#186); a topic that is already pinned is only ever
-        moved by the explicit ``agent.host_swap`` flow, never from here.
+      * an existing binding — either a machine named before the first turn or the
+        machine frozen by an earlier automatic choice — takes precedence over
+        automatic selection. Return it **iff hosted, online, and runnable**; an
+        offline binding raises
+        (queue/retry) and an `isolated` binding raises the #358 「尚未实现」 error.
+        NEVER fall back to another device, which would break an explicit choice or
+        start a resumed topic from an empty tree;
+      * no binding means 「系统挑一台」 on the first turn: pick the first online,
+        **non-quarantined** hosted device serving the project and create a runnable
+        ``host`` binding (write-once), so every later turn returns to it. Quarantined
+        = judged unhealthy by ``device.health`` (#186); a topic that is already
+        bound is only ever moved by the explicit ``agent.host_swap`` flow, never here.
 
     The #358 visibility gate lives entirely here (the one resolution point every
     production turn passes through), so an `isolated` device — whose per-room
@@ -116,25 +119,28 @@ async def resolve_pinned_device(
 
     Returns the device id, or ``None`` when no runnable bound device is online at all
     (the caller turns that into a clean "no online device" turn error)."""
-    binding = await service.topic_binding(topic_id)
-    if binding is not None:
-        pinned = binding.device_id
-        if await service.get_hosted_device(pinned) is None:
+    # The compute-profile route records a named machine by writing this binding
+    # before the first turn. Consequently only a NULL binding means the user chose
+    # 「系统挑一台」; do not consult the healthy-device pool when a binding exists.
+    chosen = await service.topic_binding(topic_id)
+    if chosen is not None:
+        device_id = chosen.device_id
+        if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
-        if not is_online(pinned):
+        if not is_online(device_id):
             raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
         # An isolated binding must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
-        if not has_runnable_transport(binding.visibility):
+        if not has_runnable_transport(chosen.visibility):
             raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
-        return pinned
-    # First turn: pick from the machines that are online AND not quarantined. A
-    # quarantined machine just failed two turns in a row for a reason that belongs
-    # to the box (#186), so pinning a fresh topic to it would hand the next person
-    # the failure we already diagnosed. Note this filter applies to the FIRST pin
-    # only — moving an ALREADY-pinned topic never happens here, it goes through the
-    # explicit, room-visible path in ``agent.host_swap``, because a pin that the
-    # resolver can quietly change is the original drift bug.
+        return device_id
+    # 「系统挑一台」 on the first turn: pick from machines that are online AND not
+    # quarantined. A quarantined machine just failed two turns in a row for a reason
+    # that belongs to the box (#186), so pinning a fresh topic to it would hand the
+    # next person the failure we already diagnosed. Note this filter applies to the
+    # FIRST pin only. This resolver never moves an ALREADY-pinned topic; movement
+    # goes through the explicit, room-visible path in ``agent.host_swap``, because a
+    # pin that the resolver can quietly change is the original drift bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
         # Only the host transport exists today; isolated bindings become selectable

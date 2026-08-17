@@ -677,11 +677,17 @@ export function getTopicComputeProfile(topicId: string): Promise<TopicComputePro
 }
 export function setTopicComputeProfile(
   topicId: string,
-  profile: string
-): Promise<{ current: string; locked: boolean; inherited: boolean }> {
+  profile: string,
+  deviceId: string | null = null
+): Promise<{
+  current: string
+  device_id: string | null
+  locked: boolean
+  inherited: boolean
+}> {
   return request(`/topics/${encodeURIComponent(topicId)}/compute-profile`, {
     method: 'PUT',
-    body: JSON.stringify({ profile }),
+    body: JSON.stringify(profile === 'device' ? { profile, device_id: deviceId } : { profile }),
   })
 }
 

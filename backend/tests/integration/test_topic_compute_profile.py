@@ -6,10 +6,19 @@ project default and freezes once the topic has run (session_id set).
 
 import asyncio
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+import pytest
+
 from app.core.config import settings
+from app.domain.agent.device_hub import device_hub
+from app.domain.agent.device_provider import resolve_pinned_device
+from app.domain.agent.hooks_substrate import ScreenSetupError
+from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
+from app.domain.device.supply import Supply, Visibility
+from app.domain.device.wiring import sql_device_service
 from app.domain.machine.services import MachineService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import Team
@@ -39,6 +48,55 @@ def _mark_started(client, tid: str) -> None:
             await s.commit()
 
     asyncio.run(_run())
+
+
+def _project_devices(client, pid: str, *names: str) -> list[str]:
+    async def _seed() -> list[str]:
+        async with client.test_factory() as session:
+            service = sql_device_service(session)
+            device_ids: list[str] = []
+            for name in names:
+                code = await service.start(name)
+                device = await service.approve(
+                    code,
+                    owner_user_id=1,
+                    supply=Supply.self_hosted,
+                    visibility=Visibility.isolated,
+                )
+                await service.assign_to_project(
+                    device.device_id, uuid.UUID(pid), actor_user_id=1
+                )
+                device_ids.append(device.device_id)
+            await session.commit()
+            return device_ids
+
+    return asyncio.run(_seed())
+
+
+def _topic_binding(client, tid: str):
+    async def _read():
+        async with client.test_factory() as session:
+            return await sql_device_service(session).topic_binding(uuid.UUID(tid))
+
+    return asyncio.run(_read())
+
+
+def _resolve_topic_device(
+    client,
+    pid: str,
+    tid: str,
+    is_online: Callable[[str], bool],
+) -> str | None:
+    async def _resolve() -> str | None:
+        async with client.test_factory() as session:
+            return await resolve_pinned_device(
+                sql_device_service(session),
+                is_online,
+                uuid.UUID(pid),
+                uuid.UUID(tid),
+            )
+
+    return asyncio.run(_resolve())
 
 
 def test_new_topic_inherits_default_and_is_unlocked(client):
@@ -116,6 +174,117 @@ def test_select_persists_to_topic_and_project_sticky(client, monkeypatch):
     # ...and remembered as the project's sticky default for the next new topic.
     pbody = client.get(f"/api/projects/{pid}/compute-profiles").json()["data"]
     assert pbody["current"] == "device"
+
+
+def test_named_device_resolves_instead_of_first_healthy_device(client, monkeypatch):
+    pid = _project(client)
+    tid = _topic(client, pid)
+    first, named = _project_devices(client, pid, "online first", "named machine")
+    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
+
+    response = client.put(
+        f"/api/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": named},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["device_id"] == named
+    assert _resolve_topic_device(client, pid, tid, lambda _device_id: True) == named
+    assert _topic_binding(client, tid).device_id == named
+    assert first != named
+
+
+def test_named_device_waits_when_offline_instead_of_using_online_peer(
+    client, monkeypatch
+):
+    pid = _project(client)
+    tid = _topic(client, pid)
+    online_device, named_offline_device = _project_devices(
+        client, pid, "online first", "named but offline"
+    )
+    monkeypatch.setattr(
+        device_hub, "is_online", lambda device_id: device_id == online_device
+    )
+
+    response = client.put(
+        f"/api/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": named_offline_device},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["device_id"] == named_offline_device
+    binding = _topic_binding(client, tid)
+    assert binding.device_id == named_offline_device
+    assert binding.visibility is Visibility.host
+    with pytest.raises(ScreenSetupError) as excinfo:
+        _resolve_topic_device(
+            client,
+            pid,
+            tid,
+            lambda device_id: device_id == online_device,
+        )
+    assert str(excinfo.value) == DEVICE_OFFLINE_MESSAGE
+    assert _topic_binding(client, tid).device_id == named_offline_device
+
+
+def test_device_outside_topics_project_is_rejected(client):
+    topic_pid = _project(client)
+    other_pid = _project(client)
+    tid = _topic(client, topic_pid)
+    (other_device,) = _project_devices(client, other_pid, "somebody else's box")
+
+    response = client.put(
+        f"/api/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": other_device},
+    )
+
+    assert response.status_code == 422
+    assert "不属于当前项目" in response.json()["message"]
+    assert _topic_binding(client, tid) is None
+
+
+def test_get_lists_only_project_devices_with_live_online_state(client, monkeypatch):
+    pid = _project(client)
+    other_pid = _project(client)
+    tid = _topic(client, pid)
+    office, home = _project_devices(client, pid, "办公室 Mac mini", "家里那台")
+    (outside,) = _project_devices(client, other_pid, "别人的机器")
+    monkeypatch.setattr(device_hub, "is_online", lambda device_id: device_id == office)
+
+    body = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
+
+    assert body["device_id"] is None
+    assert body["devices"] == [
+        {"device_id": office, "name": "办公室 Mac mini", "online": True},
+        {"device_id": home, "name": "家里那台", "online": False},
+    ]
+    assert outside not in {device["device_id"] for device in body["devices"]}
+
+
+def test_unlocked_topic_can_change_machine_but_locked_topic_cannot(client):
+    pid = _project(client)
+    tid = _topic(client, pid)
+    first, second = _project_devices(client, pid, "first", "second")
+
+    first_response = client.put(
+        f"/api/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": first},
+    )
+    assert first_response.status_code == 200
+    second_response = client.put(
+        f"/api/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": second},
+    )
+    assert second_response.status_code == 200
+    assert _topic_binding(client, tid).device_id == second
+
+    _mark_started(client, tid)
+    locked_response = client.put(
+        f"/api/topics/{tid}/compute-profile",
+        json={"profile": "device", "device_id": first},
+    )
+    assert locked_response.status_code == 422
+    assert _topic_binding(client, tid).device_id == second
 
 
 def test_selecting_cloud_without_machine_create_authority_is_refused(
