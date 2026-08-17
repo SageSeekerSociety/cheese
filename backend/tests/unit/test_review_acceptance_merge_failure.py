@@ -53,6 +53,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._projects.get.return_value = project
     service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
+    # Same reason as test_review_pr_claim_existing: the credit lookup reads the
+    # topic's roster, which an AsyncMock session cannot answer.
+    service._attribution = AsyncMock(return_value=(None, None))
     return service, card, topic
 
 
