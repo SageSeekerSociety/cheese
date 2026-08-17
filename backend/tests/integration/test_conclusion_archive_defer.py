@@ -81,7 +81,12 @@ def _file_conclusion(client, sub_id: str, conclusion: str = "做完了") -> dict
 def _file_accept_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂这块"},
+        json={
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂这块",
+            # 递卡必须带提交标题 (#504)——它是这次改动留在 git 历史里的那一行。
+            "change_subject": "fix(topic): keep the sub-topic alive for its card",
+        },
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
