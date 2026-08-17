@@ -264,4 +264,8 @@ async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
 
     assert [frame["type"] for frame in frames] == ["user_block", "reaction", "done"]
     assert broker.active_turn_ids(str(topic)) == ["already-running"]
+    assert runner.active_turns() == 1
+    await broker.publish(
+        str(topic), {"type": "turn_finished", "turn_id": "already-running"}
+    )
     await _until(lambda: runner.active_turns() == 0)

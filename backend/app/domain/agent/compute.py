@@ -37,7 +37,11 @@ from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
 
 if TYPE_CHECKING:
-    from app.domain.agent.hooks_substrate import HookEventConsumer, TopicSubscription
+    from app.domain.agent.hooks_substrate import (
+        HookActivityConsumer,
+        HookEventConsumer,
+        TopicSubscription,
+    )
 
 # Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
 # chat.py, which imports this module).
@@ -455,13 +459,19 @@ class ComputePool:
                 return True
         return False
 
-    def bind_hook_event_consumer(self, consumer: "HookEventConsumer") -> None:
-        """Give hooks providers the room-side owner of event persistence."""
+    def bind_hook_event_consumer(
+        self,
+        consumer: "HookEventConsumer",
+        activity_consumer: "HookActivityConsumer | None" = None,
+    ) -> None:
+        """Give hooks providers the room-side persistence and activity owners."""
         from app.domain.agent.hooks_substrate import HooksTurnProvider
 
         for provider in self._providers.values():
             if isinstance(provider, HooksTurnProvider):
                 provider.bind_event_consumer(consumer)
+                if activity_consumer is not None:
+                    provider.bind_activity_consumer(activity_consumer)
 
     async def recover_hook_subscriptions(
         self, device_id: str | None = None

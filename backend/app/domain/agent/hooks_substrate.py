@@ -160,12 +160,12 @@ UNDELIVERED_MESSAGE = PROMPT_UNDELIVERED_MESSAGE
 
 @dataclass
 class ActivityTracker:
-    """Per-turn shared clock for the two-layer idle-suspect / hard-ceiling check
-    (turn 活跃度检测, 2026-08-09). Written from up to two places: ``run_hooks_turn``
-    itself on every hook arrival, and — local tmux backend only — a background
-    capture-pane poller (``TmuxHooksProvider._start_activity_monitor``), so a
-    long tool call with no interim hook but a busy pane still counts as active,
-    not just hook arrivals. ``suspect_since`` is surfaced by ``cheese status``."""
+    """Shared clock for one active period of an interactive session.
+
+    Hook arrivals and transport-specific activity probes both touch this clock.
+    It belongs to the screen subscription, independently of whichever work id
+    attributes the blocks produced while the session is active.
+    """
 
     last_at: float
     suspect_since: float | None = None
@@ -191,7 +191,19 @@ class TurnMark:
     turn_id: uuid.UUID
     queue: asyncio.Queue[HookDelivery]
     platform_unsolicited: bool = False
+    consumer_owned: bool = False
     seen_messages: set[str] = field(default_factory=set)
+
+
+@dataclass
+class SessionActivity:
+    """Lifecycle state for the subscription's currently active screen."""
+
+    work_id: uuid.UUID
+    queue: asyncio.Queue[HookDelivery]
+    prompt: str | None
+    ready: bool | None
+    task: asyncio.Task[None] | None = None
 
 
 @dataclass
@@ -202,6 +214,7 @@ class TopicSubscription:
     topic_id: uuid.UUID
     sink: HookSink
     current_turn: TurnMark | None = None
+    activity: SessionActivity | None = None
     consumer_task: asyncio.Task[None] | None = None
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     replay_files: dict[str, list[Path]] = field(default_factory=dict)
@@ -216,8 +229,13 @@ HookEventConsumer = Callable[
         AgentEvent | AgentDeliveryFailure,
         str | None,
         bool,
+        bool,
     ],
     Awaitable[None],
+]
+
+HookActivityConsumer = Callable[
+    [uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[None]
 ]
 
 
@@ -377,6 +395,7 @@ class HooksTurnProvider[ScreenT]:
         router: HookRouter | None = None,
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
+        delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
         self._router = router or hook_router
         # Equal by default → run_hooks_turn's idle-suspect check and hard-ceiling
@@ -384,11 +403,13 @@ class HooksTurnProvider[ScreenT]:
         # (the device backend keeps this; see DeviceProvider).
         self._idle_suspect_s = idle_suspect_s
         self._hard_ceiling_s = hard_ceiling_s
+        self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
         # own the stable router sink, consumer task, and nullable current marker.
         self._live: dict[uuid.UUID, ScreenT] = {}
         self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
         self._event_consumer: HookEventConsumer | None = None
+        self._activity_consumer: HookActivityConsumer | None = None
         # A transport write is not delivery. One waiter per topic tracks the
         # exact UserPromptSubmit hook proving Claude Code accepted a mid-turn
         # message into its own input queue.
@@ -411,6 +432,10 @@ class HooksTurnProvider[ScreenT]:
     def bind_event_consumer(self, consumer: HookEventConsumer) -> None:
         """Bind the room persistence and broadcast callback owned by ChatService."""
         self._event_consumer = consumer
+
+    def bind_activity_consumer(self, consumer: HookActivityConsumer) -> None:
+        """Bind the room's session-activity lifecycle callback."""
+        self._activity_consumer = consumer
 
     async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
         """Inject ``text`` into the screen of the turn ALREADY running on this
@@ -523,6 +548,8 @@ class HooksTurnProvider[ScreenT]:
         if subscription is None:
             return
         subscription.current_turn = None
+        if subscription.activity is not None:
+            await self._end_session_activity(subscription, subscription.activity)
         self._router.unsubscribe(str(topic_id), subscription.sink)
         task = subscription.consumer_task
         if task is not None:
@@ -559,13 +586,29 @@ class HooksTurnProvider[ScreenT]:
                     )
                     subscription.replay_seen_messages.clear()
                     subscription.current_turn = marker
+                activity = subscription.activity
+                if activity is None and (
+                    marker.platform_unsolicited or marker.consumer_owned
+                ):
+                    screen = self._live.get(subscription.topic_id)
+                    if screen is not None:
+                        activity = await self._begin_session_activity(
+                            subscription,
+                            marker,
+                            screen,
+                            prompt=None,
+                            ready=True,
+                        )
                 event = translate_hook(hook)
                 eid_value = hook.get("_eid")
                 eid = eid_value if isinstance(eid_value, str) else None
                 if isinstance(event, AgentMessage):
                     marker.seen_messages.add(event.text.strip())
+                delivery = HookDelivery(hook=hook, event=event, eid=eid)
+                if activity is not None:
+                    activity.queue.put_nowait(delivery)
                 replay_processed = event is None
-                if marker.platform_unsolicited:
+                if marker.platform_unsolicited or marker.consumer_owned:
                     consumer = self._event_consumer
                     if event is not None and consumer is not None:
                         result_text_seen = (
@@ -580,6 +623,7 @@ class HooksTurnProvider[ScreenT]:
                                 event,
                                 eid,
                                 result_text_seen,
+                                marker.platform_unsolicited,
                             )
                             replay_processed = True
                         except Exception:  # noqa: BLE001 — keep the stream alive
@@ -589,9 +633,7 @@ class HooksTurnProvider[ScreenT]:
                                 eid,
                             )
                 else:
-                    marker.queue.put_nowait(
-                        HookDelivery(hook=hook, event=event, eid=eid)
-                    )
+                    marker.queue.put_nowait(delivery)
                 if replay_processed and eid is not None:
                     event_spool.remove(subscription.replay_files.pop(eid, []))
                 if (
@@ -599,8 +641,206 @@ class HooksTurnProvider[ScreenT]:
                     and subscription.current_turn is marker
                 ):
                     subscription.current_turn = None
+                    if activity is not None:
+                        await self._end_session_activity(subscription, activity)
             finally:
                 subscription.sink.queue.task_done()
+
+    async def _begin_session_activity(
+        self,
+        subscription: TopicSubscription,
+        marker: TurnMark,
+        screen: ScreenT,
+        *,
+        prompt: str | None,
+        ready: bool | None,
+        start_task: bool = True,
+    ) -> SessionActivity:
+        """Start the subscription-owned activity clock if it is idle."""
+        activity = subscription.activity
+        if activity is not None:
+            return activity
+        activity = SessionActivity(
+            work_id=marker.turn_id,
+            queue=asyncio.Queue(),
+            prompt=prompt,
+            ready=ready,
+        )
+        subscription.activity = activity
+        consumer = self._activity_consumer
+        if consumer is not None:
+            await consumer(
+                subscription.project_id,
+                subscription.topic_id,
+                activity.work_id,
+                True,
+            )
+        if start_task:
+            activity.task = asyncio.create_task(
+                self._watch_session_activity(subscription, activity, screen),
+                name=f"hook session activity topic={subscription.topic_id}",
+            )
+        return activity
+
+    async def _end_session_activity(
+        self,
+        subscription: TopicSubscription,
+        activity: SessionActivity,
+        *,
+        clear_work: bool = False,
+    ) -> None:
+        """Retire activity state without dropping the screen subscription."""
+        if subscription.activity is not activity:
+            return
+        subscription.activity = None
+        if clear_work:
+            subscription.current_turn = None
+        task = activity.task
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        consumer = self._activity_consumer
+        if consumer is not None:
+            await consumer(
+                subscription.project_id,
+                subscription.topic_id,
+                activity.work_id,
+                False,
+            )
+
+    async def _watch_session_activity(
+        self,
+        subscription: TopicSubscription,
+        activity: SessionActivity,
+        screen: ScreenT,
+    ) -> None:
+        """Apply delivery, idle, liveness, and ceiling policy to the screen."""
+        tracker = ActivityTracker(last_at=asyncio.get_running_loop().time())
+        monitor_task = await self._start_activity_monitor(screen, tracker)
+        redeliveries = 0
+        try:
+            async for event in run_hooks_turn(
+                queue=activity.queue,
+                idle_suspect_s=self._idle_suspect_s,
+                hard_ceiling_s=self._hard_ceiling_s,
+                resume_session_id=None,
+                timeout_message=self._timeout_message,
+                delivery_timeout_s=(
+                    self._idle_suspect_s
+                    if activity.ready is False
+                    else self._delivery_timeout_s
+                ),
+                tracker=tracker,
+                confirm_alive=lambda: self._confirm_alive(screen),
+            ):
+                if isinstance(event, AgentDeliveryFailure):
+                    if activity.prompt is not None:
+                        redeliveries += 1
+                        if redeliveries <= _MAX_REDELIVERIES:
+                            await self._send_prompt(screen, activity.prompt)
+                    continue
+                if not isinstance(event, AgentResult) or not event.is_error:
+                    continue
+                marker = subscription.current_turn
+                consumer = self._event_consumer
+                if marker is not None and consumer is not None:
+                    await consumer(
+                        subscription.project_id,
+                        subscription.topic_id,
+                        marker.turn_id,
+                        event,
+                        None,
+                        False,
+                        marker.platform_unsolicited,
+                    )
+                await self._end_session_activity(
+                    subscription, activity, clear_work=True
+                )
+        finally:
+            if monitor_task is not None:
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
+
+    async def inject_work(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        prompt: str,
+        system_prompt: str,
+        resume_session_id: str | None,
+        work_id: uuid.UUID,
+        on_mark: Callable[[uuid.UUID], None],
+        model: str | None = None,
+        env: dict[str, str] | None = None,
+        memory_scope: str | None = None,
+        owner: str | None = None,
+        sandbox_image: str | None = None,
+        images: list[dict] | None = None,
+    ) -> bool | None:
+        """Inject work into the live session and return after transport receipt."""
+        del sandbox_image, images
+        precheck = await self._precheck(project_id, topic_id)
+        token = mint_scoped_token(
+            project_id=str(project_id),
+            topic_id=str(topic_id),
+            ttl_s=SESSION_TOKEN_TTL_S,
+        )
+        screen = await self._ensure_ready(
+            project_id=project_id,
+            topic_id=topic_id,
+            token=token,
+            model=model,
+            env=env,
+            memory_scope=memory_scope,
+            owner=owner,
+            turn_id=work_id,
+            resume_session_id=resume_session_id,
+            system_prompt=system_prompt,
+            precheck=precheck,
+        )
+        subscription = await self.ensure_subscription(project_id, topic_id)
+        self._live[topic_id] = screen
+        marker = subscription.current_turn
+        if marker is None:
+            marker = TurnMark(
+                turn_id=work_id,
+                queue=asyncio.Queue(),
+                consumer_owned=True,
+            )
+            subscription.current_turn = marker
+        marker.consumer_owned = True
+        on_mark(marker.turn_id)
+        starts_activity = subscription.activity is None
+        activity = await self._begin_session_activity(
+            subscription,
+            marker,
+            screen,
+            prompt=prompt,
+            ready=None,
+            start_task=False,
+        )
+        try:
+            ready = await self._send_prompt(screen, prompt)
+        except BaseException:
+            if starts_activity:
+                await self._end_session_activity(
+                    subscription, activity, clear_work=True
+                )
+            raise
+        if starts_activity:
+            activity.ready = ready
+            activity.task = asyncio.create_task(
+                self._watch_session_activity(subscription, activity, screen),
+                name=f"hook session activity topic={topic_id}",
+            )
+        return ready
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook

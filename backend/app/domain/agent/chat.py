@@ -18,6 +18,7 @@ import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -29,16 +30,18 @@ from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent import event_spool
 from app.domain.agent.cloud_provider import CloudProvider
-from app.domain.agent.compute import ComputePool
+from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
-from app.domain.agent.hooks_substrate import TopicSubscription
+from app.domain.agent.hooks_substrate import HooksTurnProvider, TopicSubscription
 from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
+    EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
+    SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
     notice,
@@ -95,6 +98,30 @@ PRIVATE_SKILLS = ["private-chat", "conversation-style"]
 CHEESE_AUTHOR = "cheese"
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class _HookWorkState:
+    """Persistence context for work whose events arrive on a subscription."""
+
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    work_id: uuid.UUID
+    provider: ComputeProvider
+    pending_ids: set[uuid.UUID]
+    reply_to: uuid.UUID | None
+    roster: list[dict]
+    topic_refs: list[dict]
+    continuation_id: uuid.UUID | None
+    route: str
+    is_private: bool
+    private_owner: str | None
+    acting_agent: str
+    user_text: str
+    started_at: datetime
+    assistant_count: int = 0
+    todo: list[dict] = field(default_factory=list)
+    actions: list[str] = field(default_factory=list)
 
 
 def _persisted_eids(blocks: list[Block]) -> set[str]:
@@ -912,7 +939,9 @@ class ChatService:
             workspace_root=workspace_root,
             sandbox_enabled=sandbox_enabled,
         )
-        self._compute.bind_hook_event_consumer(self._consume_unsolicited_hook)
+        self._compute.bind_hook_event_consumer(
+            self._consume_hook_event, self._set_hook_activity
+        )
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -924,13 +953,16 @@ class ChatService:
         self._gateway_lock = asyncio.Lock()
         # Load the conversation skills once (spec §8.3 product "soul").
         self._skills = load_skills(DEFAULT_CHAT_SKILLS)
-        # Per-topic serial queue (spec §9.1): one agent turn per topic at a
-        # time, so concurrent messages to the same topic don't race.
+        # Prompt construction is serialized per topic. The lock is released as
+        # soon as an interactive provider injects the prompt; non-interactive
+        # providers still hold it while running because they cannot accept a
+        # second message into a live screen.
         self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
-        # The turn currently holding each topic lock. Mid-turn delivery captures
-        # this id before writing to the lower layer, then stamps the message as
-        # consumed only after that layer returns an exact acceptance receipt.
+        # Work currently attributed to each active session. Mid-session delivery
+        # captures this id before writing to the lower layer, then stamps the
+        # message only after the exact UserPromptSubmit receipt.
         self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
+        self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
         self._memory_tasks: set[asyncio.Task] = set()
@@ -957,15 +989,18 @@ class ChatService:
         return lock
 
     @asynccontextmanager
-    async def _turn_lock(
-        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    async def _prompt_lock(
+        self, topic_id: uuid.UUID, work_id: uuid.UUID
     ) -> AsyncIterator[None]:
         async with self._lock_for(topic_id):
-            self._active_turn_ids[topic_id] = turn_id
+            self._active_turn_ids[topic_id] = work_id
             try:
                 yield
             finally:
-                if self._active_turn_ids.get(topic_id) == turn_id:
+                if (
+                    self._active_turn_ids.get(topic_id) == work_id
+                    and (topic_id, work_id) not in self._hook_work
+                ):
                     self._active_turn_ids.pop(topic_id, None)
 
     async def converse(
@@ -1054,8 +1089,7 @@ class ChatService:
         # Only the hooks-driven backends can take it (they own a live screen);
         # `deliver` returns False everywhere else and we fall back to queueing,
         # which is the pre-existing behaviour, not a new failure mode.
-        lock = self._lock_for(topic_id)
-        if lock.locked() and user_block_id is not None:
+        if user_block_id is not None and topic_id in self._active_turn_ids:
             delivered = await self.merge_into_running_turn(
                 topic_id, user_block_id, content, author
             )
@@ -1066,7 +1100,7 @@ class ChatService:
                 yield {"type": "done"}
                 return
 
-        async with self._turn_lock(topic_id, turn_id):
+        async with self._prompt_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1097,7 +1131,7 @@ class ChatService:
         ack = await self.ack_summon(user_block_id, topic_id)
         if ack is not None:
             yield {"type": "reaction", **ack}
-        async with self._turn_lock(topic_id, turn_id):
+        async with self._prompt_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1161,7 +1195,7 @@ class ChatService:
         posted — the instruction is prompt-only, so the visible result is only
         what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
         turn_id = turn_id or uuid.uuid4()
-        async with self._turn_lock(topic_id, turn_id):
+        async with self._prompt_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=prompt or KICKOFF_PROMPT,
@@ -1429,7 +1463,27 @@ class ChatService:
         except Exception:  # noqa: BLE001 — never mask the original failure
             logger.exception("failed to save session pointer for %s", topic_id)
 
-    async def _consume_unsolicited_hook(
+    async def _set_hook_activity(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        work_id: uuid.UUID,
+        active: bool,
+    ) -> None:
+        """Project subscription activity onto the existing realtime protocol."""
+        del project_id
+        from app.domain.agent.runtime import get_broker
+
+        if active:
+            self._active_turn_ids[topic_id] = work_id
+            frame = {"type": "turn_started", "turn_id": str(work_id)}
+        else:
+            if self._active_turn_ids.get(topic_id) == work_id:
+                self._active_turn_ids.pop(topic_id, None)
+            frame = {"type": "turn_finished", "turn_id": str(work_id)}
+        await get_broker().publish(str(topic_id), frame)
+
+    async def _consume_hook_event(
         self,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
@@ -1437,12 +1491,14 @@ class ChatService:
         event: AgentEvent | AgentDeliveryFailure,
         eid: str | None,
         result_text_seen: bool,
+        platform_unsolicited: bool,
     ) -> None:
-        """Persist and broadcast one hook from session-initiated work."""
+        """Persist and broadcast one event from a live screen subscription."""
         from app.domain.agent.runtime import get_broker
 
         broker = get_broker()
         frame: dict | None = None
+        state = self._hook_work.get((topic_id, turn_id))
         if isinstance(event, AgentSessionInfo):
             await self._save_session_pointer(topic_id, event.session_id)
         elif isinstance(event, AgentMessage):
@@ -1451,18 +1507,32 @@ class ChatService:
                 topic_id=topic_id,
                 text=event.text,
                 turn_id=turn_id,
-                reply_to=None,
-                roster=None,
-                topic_refs=[],
+                reply_to=(
+                    state.reply_to
+                    if state is not None and state.assistant_count == 0
+                    else None
+                ),
+                roster=state.roster if state is not None else None,
+                topic_refs=state.topic_refs if state is not None else [],
                 eid=eid or event.eid,
-                platform_unsolicited=True,
+                platform_unsolicited=platform_unsolicited,
+                continuation_id=(state.continuation_id if state is not None else None),
             )
             if payload is not None:
+                if state is not None:
+                    state.assistant_count += 1
                 frame = {"type": "assistant_block", "block": payload}
         elif isinstance(event, AgentToolUse):
             name = event.name.replace("mcp__cheese__", "")
-            if name not in _TASK_TOOLS:
-                args = event.input or {}
+            args = event.input or {}
+            if state is not None and name in _TASK_TOOLS:
+                if _apply_task_event(state.todo, name, args):
+                    await self._persist_progress(topic_id, state.todo, turn_id)
+                    frame = {
+                        "type": "todo",
+                        "items": [dict(item) for item in state.todo],
+                    }
+            elif name not in _TASK_TOOLS:
                 payload = await self._persist_tool_event(
                     project_id=project_id,
                     topic_id=topic_id,
@@ -1471,31 +1541,160 @@ class ChatService:
                     platform=_is_platform_tool(event.name, args),
                     turn_id=turn_id,
                     eid=eid or event.eid,
-                    platform_unsolicited=True,
+                    platform_unsolicited=platform_unsolicited,
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
+                if state is not None and name == "Bash":
+                    resource = _cheese_resource(str(args.get("command", "")))
+                    if resource in _ACTION_LABEL and resource not in state.actions:
+                        state.actions.append(resource)
         elif isinstance(event, AgentResult):
             if event.session_id:
                 await self._save_session_pointer(topic_id, event.session_id)
-            if event.text.strip() and not result_text_seen:
+            if event.is_error:
+                payload = await self.post_system_event(
+                    topic_id,
+                    event.text,
+                    turn_id,
+                    meta=notice(
+                        EVENT_TURN_TIMEOUT,
+                        severity=SEVERITY_WARN,
+                        who=WHO_HUMAN,
+                        detail="会话活动已停止；屏幕订阅仍会接收后续输出。",
+                        detail_label="详细说明",
+                    ),
+                )
+                if payload is not None:
+                    frame = {"type": "event_block", "block": payload}
+            elif event.text.strip() and not result_text_seen:
                 payload = await self._persist_assistant_message(
                     project_id=project_id,
                     topic_id=topic_id,
                     text=event.text,
                     turn_id=turn_id,
                     reply_to=None,
-                    roster=None,
-                    topic_refs=[],
+                    roster=state.roster if state is not None else None,
+                    topic_refs=state.topic_refs if state is not None else [],
                     eid=eid,
-                    platform_unsolicited=True,
+                    platform_unsolicited=platform_unsolicited,
+                    continuation_id=(
+                        state.continuation_id if state is not None else None
+                    ),
                 )
                 if payload is not None:
+                    if state is not None:
+                        state.assistant_count += 1
                     frame = {"type": "assistant_block", "block": payload}
         if frame is not None:
             await broker.publish(str(topic_id), frame)
         if isinstance(event, AgentResult):
+            if state is not None:
+                try:
+                    for close_frame in await self._close_hook_work(state, event):
+                        await broker.publish(str(topic_id), close_frame)
+                except Exception:  # noqa: BLE001 — Stop must close room state
+                    logger.exception(
+                        "hook work close failed (topic=%s, work=%s)",
+                        topic_id,
+                        turn_id,
+                    )
+                finally:
+                    self._hook_work.pop((topic_id, turn_id), None)
+            if event.is_error:
+                await broker.publish(
+                    str(topic_id),
+                    {"type": "error", "message": event.text, "persisted": True},
+                )
             await broker.publish(str(topic_id), {"type": "done"})
+
+    async def _close_hook_work(
+        self, state: _HookWorkState, result: AgentResult
+    ) -> list[dict]:
+        """Commit accounting and prompt consumption after the session stops."""
+        usage = result.usage
+        if usage is not None and not (
+            usage.input_tokens or usage.output_tokens or usage.cost_usd
+        ):
+            usage = None
+        if self._gateway is not None and state.route == "gateway":
+            usage = await self._drain_gateway_usage(state.project_id)
+
+        action_frames: list[dict] = []
+        async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            if usage is None:
+                await UsageRepository(session).add(
+                    project_id=state.project_id,
+                    topic_id=state.topic_id,
+                    model=settings.agent_model,
+                    input_tokens=0,
+                    output_tokens=0,
+                    cost_usd=0.0,
+                    metered=False,
+                    route=state.route,
+                    turn_id=state.work_id,
+                )
+            else:
+                await UsageRepository(session).add(
+                    project_id=state.project_id,
+                    topic_id=state.topic_id,
+                    model=usage.model,
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                    cost_usd=usage.cost_usd,
+                    route=state.route,
+                    turn_id=state.work_id,
+                )
+                await ComputeGrantRepository(session).consume(
+                    state.project_id,
+                    usage_to_credits(usage, spend_priced=state.route == "gateway"),
+                )
+            for resource in state.actions:
+                block = await blocks.add(
+                    project_id=state.project_id,
+                    topic_id=state.topic_id,
+                    author=state.acting_agent,
+                    author_type=AuthorType.system,
+                    content=f"芝士 {_ACTION_LABEL[resource]}",
+                    kind=BlockKind.event,
+                    turn_id=state.work_id,
+                    meta={"platform": True, "action": resource},
+                )
+                action_frames.append(
+                    {
+                        "type": "event_block",
+                        "block": _block_payload(BlockOut.model_validate(block)),
+                    }
+                )
+            if not result.is_error:
+                await blocks.mark_consumed(list(state.pending_ids), state.work_id)
+            await session.commit()
+
+        state.provider.checkpoint(state.project_id, state.topic_id)
+        if not result.is_error:
+            self._schedule_memory_extraction(
+                topic_id=state.topic_id,
+                project_id=state.project_id,
+                is_private=state.is_private,
+                private_owner=state.private_owner,
+                agent_handle=state.acting_agent,
+                user_text=state.user_text,
+                assistant_text=result.text,
+            )
+            try:
+                from app.domain.conclusion.services import settle_turn_cards
+
+                await settle_turn_cards(
+                    self._sessions,
+                    state.topic_id,
+                    turn_started_at=state.started_at,
+                )
+            except Exception:  # noqa: BLE001 — periodic settlement is the backstop
+                logger.exception(
+                    "conclusion settle failed for topic %s", state.topic_id
+                )
+        return action_frames
 
     async def post_user_message(
         self,
@@ -2460,8 +2659,6 @@ class ChatService:
             # `agent_turn_timeout_s`. The SDK / remote-cheesed backends have no such
             # signal and keep the generic default. Without this the device's own
             # two-layer fix is dead on arrival — the outer guard still kills at 900s.
-            from app.domain.agent.hooks_substrate import HooksTurnProvider
-
             is_activity_aware_backend = isinstance(provider, HooksTurnProvider)
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
@@ -2515,6 +2712,11 @@ class ChatService:
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(project_id, provider.name)
+        if isinstance(provider, HooksTurnProvider):
+            # Internal: the screen subscription, not this request, owns timeout
+            # and thinking lifecycle. Runtime consumes this frame and disables
+            # its request-scoped lifecycle before provider setup begins.
+            yield {"type": "session_lifecycle"}
 
         # 重放可见 (#416): say out loud that this turn is re-sending a batch that
         # earlier turns already failed on. Posted BEFORE the stream, because the
@@ -2540,6 +2742,61 @@ class ChatService:
         todo: list[dict] = []
         if prior_progress:
             yield {"type": "todo", "items": prior_progress, "restored": True}
+        if isinstance(provider, HooksTurnProvider):
+            marked_work_ids: list[uuid.UUID] = []
+
+            def _register_work(marked_work_id: uuid.UUID) -> None:
+                marked_work_ids.append(marked_work_id)
+                key = (topic_id, marked_work_id)
+                state = self._hook_work.get(key)
+                if state is None:
+                    self._hook_work[key] = _HookWorkState(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        work_id=marked_work_id,
+                        provider=provider,
+                        pending_ids=set(pending_ids),
+                        reply_to=user_block_id,
+                        roster=roster,
+                        topic_refs=topic_refs,
+                        continuation_id=continuation_id,
+                        route=route,
+                        is_private=is_private,
+                        private_owner=private_owner,
+                        acting_agent=acting_agent,
+                        user_text=prompt_text,
+                        started_at=datetime.now(UTC),
+                    )
+                    return
+                state.pending_ids.update(pending_ids)
+                if state.reply_to is None:
+                    state.reply_to = user_block_id
+                if prompt_text not in state.user_text:
+                    state.user_text = f"{state.user_text}\n{prompt_text}"
+
+            ready = await provider.inject_work(
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt=prompt_text,
+                system_prompt=system_prompt,
+                resume_session_id=resume_session_id,
+                memory_scope="personal" if is_private else None,
+                owner=private_owner if is_private else None,
+                work_id=turn_id,
+                images=turn_images or None,
+                on_mark=_register_work,
+                **model_kwargs,
+            )
+            if ready is False:
+                marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
+                payload = await self.post_system_event(
+                    topic_id,
+                    "⏳ 机器上的会话正在启动，提示词已就位，输入框一出现就会自动发送。",
+                    marked_work_id,
+                )
+                if payload is not None:
+                    yield {"type": "event_block", "block": payload}
+            return
         seen_eids: set[str] = set()  # dedup device-drainer re-deliveries this turn
         actions: list[str] = []  # cheese-action resources this turn (→ persisted cards)
         usage = None

@@ -316,11 +316,18 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
                 "_eid": "stop-autonomous-1",
             },
         )
+        started_frame = await asyncio.wait_for(room.get(), 1)
         message_frame = await asyncio.wait_for(room.get(), 1)
         done_frame = await asyncio.wait_for(room.get(), 1)
+        finished_frame = await asyncio.wait_for(room.get(), 1)
 
+    assert started_frame["type"] == "turn_started"
     assert message_frame["type"] == "assistant_block"
     assert done_frame == {"type": "done"}
+    assert finished_frame == {
+        "type": "turn_finished",
+        "turn_id": started_frame["turn_id"],
+    }
     block = message_frame["block"]
     assert block["turn_id"] is not None
     assert block["meta"] == {
@@ -402,10 +409,17 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
                 "_eid": "late-stop-1",
             },
         )
+        started = await asyncio.wait_for(room.get(), 1)
         frame = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+        finished = await asyncio.wait_for(room.get(), 1)
 
+    assert started["type"] == "turn_started"
     assert frame["type"] == "assistant_block"
+    assert finished == {
+        "type": "turn_finished",
+        "turn_id": started["turn_id"],
+    }
     assert uuid.UUID(frame["block"]["turn_id"]) != requested_id
     assert frame["block"]["meta"]["platform_unsolicited"] is True
     await provider.drop_subscription(topic_id)
@@ -446,13 +460,96 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     broker = get_broker()
     async with broker.subscribe(str(topic_id)) as room:
         assert await service.recover_hook_subscriptions() == 1
+        started = await asyncio.wait_for(room.get(), 1)
         message = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+        finished = await asyncio.wait_for(room.get(), 1)
 
+    assert started["type"] == "turn_started"
     assert message["type"] == "assistant_block"
+    assert finished == {
+        "type": "turn_finished",
+        "turn_id": started["turn_id"],
+    }
     assert message["block"]["meta"] == {
         "eid": "restart-message-1",
         "platform_unsolicited": True,
     }
     assert event_spool.spool_entries(ws.spool_dir(project_id, topic_id)) == []
+    await provider.drop_subscription(topic_id)
+
+
+async def test_session_timeout_retires_activity_but_keeps_subscription(
+    client, tmp_path
+) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = _IdleHooksProvider(
+        router=router,
+        idle_suspect_s=0.2,
+        hard_ceiling_s=0.2,
+        delivery_timeout_s=0.03,
+    )
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+
+    work_id = uuid.uuid4()
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        await _drain(
+            service.converse(
+                topic_id=topic_id,
+                author="u1",
+                content="Wait for a response",
+                summon=True,
+                turn_id=work_id,
+            )
+        )
+        timeout_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(5)]
+
+    assert [frame["type"] for frame in timeout_frames] == [
+        "turn_started",
+        "event_block",
+        "error",
+        "done",
+        "turn_finished",
+    ]
+    subscription = provider._subscriptions[topic_id]
+    assert subscription.activity is None
+    assert subscription.current_turn is None
+    assert router.subscribe(str(topic_id)) is subscription.sink
+
+    async with broker.subscribe(str(topic_id)) as room:
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "Late output survived",
+                "_eid": "late-after-timeout-message",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "Late output survived",
+                "_eid": "late-after-timeout-stop",
+            },
+        )
+        late_frames = [await asyncio.wait_for(room.get(), 1) for _ in range(4)]
+
+    assert [frame["type"] for frame in late_frames] == [
+        "turn_started",
+        "assistant_block",
+        "done",
+        "turn_finished",
+    ]
+    assert late_frames[1]["block"]["meta"]["platform_unsolicited"] is True
+    assert late_frames[1]["block"]["turn_id"] != str(work_id)
     await provider.drop_subscription(topic_id)
