@@ -38,7 +38,7 @@ def test_a_machine_can_push_to_a_topic_that_has_a_worktree(tmp_path, monkeypatch
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
     branch = ws.branch_for_topic(topic)
-    ws._ensure_worktree(project, branch)  # the topic is open on the platform
+    ws._ensure_worktree(project, topic)  # the topic is open on the platform
 
     _configure_for_push(repo)
     pushed = _machine_pushes(repo, tmp_path, branch, "from_machine.txt")
@@ -55,7 +55,7 @@ def test_a_later_platform_snapshot_does_not_drag_the_branch_back(tmp_path, monke
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
     branch = ws.branch_for_topic(topic)
-    wt = ws._ensure_worktree(project, branch)
+    wt = ws._ensure_worktree(project, topic)
     _configure_for_push(repo)
 
     assert _machine_pushes(repo, tmp_path, branch, "from_machine.txt").returncode == 0

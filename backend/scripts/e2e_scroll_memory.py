@@ -45,9 +45,9 @@ def _post(path: str, body: dict) -> dict:
 
 async def seed() -> tuple[str, str, str]:
     """Project + two work topics; topic A gets many messages (scrollable)."""
-    pid = _post("/api/projects", {"name": "滚动记忆测试"})["data"]["id"]
-    a = _post("/api/topics", {"project_id": pid, "title": "滚动话题甲"})["data"]
-    b = _post("/api/topics", {"project_id": pid, "title": "滚动话题乙"})["data"]
+    pid = _post("/projects", {"name": "滚动记忆测试"})["data"]["id"]
+    a = _post("/topics", {"project_id": pid, "title": "滚动话题甲"})["data"]
+    b = _post("/topics", {"project_id": pid, "title": "滚动话题乙"})["data"]
     async with async_session_factory() as s:
         blocks = BlockRepository(s)
         for i in range(60):

@@ -24,7 +24,7 @@ from tests.integration.conftest import session_auth_headers
 
 def _ownerless_project(client) -> tuple[str, str]:
     """A project with a NULL owner_handle and no members at all."""
-    p = client.post("/api/projects", json={"name": "没人管的项目"}).json()["data"]
+    p = client.post("/projects", json={"name": "没人管的项目"}).json()["data"]
     return p["id"], p["root_topic_id"]
 
 
@@ -74,7 +74,7 @@ def _add_project_member(client, project_id: str, handle: str, role) -> None:
 
 def _claim_owner(client, topic_id: str, who: str):
     return client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": who, "role": "owner", "actor": who},
         headers=session_auth_headers(who),
     )
@@ -104,9 +104,9 @@ def test_a_project_with_a_lead_does_not_dilute_to_its_members(client):
 
 def test_a_project_with_an_owner_does_not_dilute_either(client):
     """Same rule via the other half of 'in charge': owner_handle is set."""
-    p = client.post(
-        "/api/projects", json={"name": "有主", "owner_handle": "dave"}
-    ).json()["data"]
+    p = client.post("/projects", json={"name": "有主", "owner_handle": "dave"}).json()[
+        "data"
+    ]
     _add_project_member(client, p["id"], "alice", ProjectRole.member)
     _strip_topic_managers(client, p["root_topic_id"])
 

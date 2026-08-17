@@ -9,26 +9,26 @@ from datetime import UTC, datetime, timedelta
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str, title: str) -> str:
-    r = client.post("/api/topics", json={"project_id": project_id, "title": title})
+    r = client.post("/topics", json={"project_id": project_id, "title": title})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _add_block(client, topic_id: str, text: str) -> str:
     """Land a real block in the topic and return its created_at."""
-    r = client.post(f"/api/topics/{topic_id}/decision", json={"decision": text})
+    r = client.post(f"/topics/{topic_id}/decision", json={"decision": text})
     assert r.status_code == 200
     return r.json()["data"]["created_at"]
 
 
 def _list(client, project_id: str, **params) -> list[dict]:
-    r = client.get("/api/topics", params={"project_id": project_id, **params})
+    r = client.get("/topics", params={"project_id": project_id, **params})
     assert r.status_code == 200
     # The project's auto-created root topic is not part of what these cases seed.
     return [t for t in r.json()["data"]["data"] if t["kind"] != "root"]
@@ -42,13 +42,13 @@ def test_last_activity_follows_a_new_block(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid, "A")
 
-    fresh = client.get(f"/api/topics/{tid}").json()["data"]
+    fresh = client.get(f"/topics/{tid}").json()["data"]
     # No blocks yet: the topic's own creation is the last thing that happened.
     assert fresh["last_activity_at"] == fresh["created_at"]
 
     block_at = _add_block(client, tid, "ship it")
 
-    after = client.get(f"/api/topics/{tid}").json()["data"]
+    after = client.get(f"/topics/{tid}").json()["data"]
     assert after["last_activity_at"] == block_at
     assert after["last_activity_at"] > fresh["last_activity_at"]
     # The row's own mtime is a different question and did not move — which is
@@ -57,7 +57,7 @@ def test_last_activity_follows_a_new_block(client):
 
     # And it keeps following: a second block wins over the first.
     second_at = _add_block(client, tid, "and again")
-    latest = client.get(f"/api/topics/{tid}").json()["data"]
+    latest = client.get(f"/topics/{tid}").json()["data"]
     assert latest["last_activity_at"] == second_at
 
 
@@ -66,10 +66,10 @@ def test_metadata_edits_do_not_count_as_activity(client):
     tid = _make_topic(client, pid, "A")
     block_at = _add_block(client, tid, "ship it")
 
-    r = client.post(f"/api/topics/{tid}/title", json={"title": "renamed"})
+    r = client.post(f"/topics/{tid}/title", json={"title": "renamed"})
     assert r.status_code == 200
 
-    after = client.get(f"/api/topics/{tid}").json()["data"]
+    after = client.get(f"/topics/{tid}").json()["data"]
     assert after["title"] == "renamed"
     # Renaming bumps the row's mtime past the block, and last_activity_at must
     # not follow it — the topic has been silent since that block.
@@ -124,7 +124,7 @@ def test_filter_active_since(client):
     assert [t["title"] for t in active] == ["Recent"]
     # `total` describes what came back, not the unfiltered project.
     r = client.get(
-        "/api/topics", params={"project_id": pid, "active_since": cutoff.isoformat()}
+        "/topics", params={"project_id": pid, "active_since": cutoff.isoformat()}
     )
     assert r.json()["data"]["total"] == len(r.json()["data"]["data"])
 

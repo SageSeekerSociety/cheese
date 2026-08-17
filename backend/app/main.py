@@ -40,7 +40,7 @@ from app.core.sandbox_auth import (
     is_valid_cheese_token,
     looks_like_project_agent_credential,
 )
-from app.core.turn_context import current_turn_id, parse_turn_id
+from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent_credential.services import ProjectAgentCredentialService
@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
     # against the project's current image and recreates it only when the image
     # changed. (reap_sandbox_containers stays available as an ops tool.)
     # Orphan sweep: resume turns the previous process died with (see
-    # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
+    # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
     # ...and that reuse is exactly why the hook credential must survive a
     # restart. `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per
     # PROCESS when unset, which silently invalidates the token baked into every
@@ -77,7 +77,7 @@ async def lifespan(_: FastAPI):
             "topic's session). Pin SANDBOX_TOKEN in the deployment env."
         )
 
-    from app.api.deps import get_chat_service, get_turn_runner
+    from app.api.deps import get_chat_service, get_work_runner
     from app.domain.scheduler.service import (
         ConclusionSweepRunner,
         GateSweepRunner,
@@ -132,8 +132,33 @@ async def lifespan(_: FastAPI):
             ),
         )
 
+    # #370 step 2 flattened the platform routes, so the in-container `cheese`
+    # CLI's base is now the app root. A box still carrying the old `…/api` value
+    # keeps working — `settings.agent_api_base()` strips it — but say so, because
+    # the failure it would otherwise cause is invisible: every platform action
+    # 404s and the turn just looks like an agent that chose not to use its tools.
+    if settings.sandbox_api_base.rstrip("/").endswith("/api"):
+        get_logger("cheesex.runtime").warning(
+            "sandbox_api_base_has_stale_api_suffix",
+            value=settings.sandbox_api_base,
+            detail=(
+                "SANDBOX_API_BASE still ends in /api. The platform routes no "
+                "longer carry that prefix, so the value is being normalised to "
+                "the app root. Drop the /api from the box .env."
+            ),
+        )
+
     try:
-        n = await get_turn_runner().resume_orphans(get_chat_service())
+        recovered = await get_chat_service().recover_hook_subscriptions()
+        if recovered:
+            get_logger("cheesex.runtime").info(
+                "hook_subscriptions_recovered", topics=recovered
+            )
+    except Exception:  # noqa: BLE001 — never block startup
+        get_logger("cheesex.runtime").exception("hook subscription recovery failed")
+
+    try:
+        n = await get_work_runner().resume_orphans(get_chat_service())
         if n:
             get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
     except Exception:  # noqa: BLE001 — never block startup
@@ -210,7 +235,7 @@ async def lifespan(_: FastAPI):
             topic_id for topic_id, device_id in ready if device_hub.is_online(device_id)
         ]
         for topic_id in await chat.cloud_waiting_topics(topic_ids):
-            get_turn_runner().submit_kickoff(
+            get_work_runner().submit_kickoff(
                 chat,
                 topic_id,
                 prompt="Cloud machine is ready; continue the pending input.",
@@ -308,8 +333,8 @@ def _discover_routers(application: FastAPI) -> list[str]:
 # `location /api/ { proxy_pass http://backend:8081/; }` — the trailing slash makes
 # it strip exactly this one segment — so a route's own path is never a URL anybody
 # can send. Publishing it as an OpenAPI server is what makes the schema
-# self-addressing: server + path is the URL, and the 2.0 routers' own `/api`
-# prefix visibly becomes the `/api/api/...` that callers have to send.
+# self-addressing: server + path is the URL, and since #370 retired the 2.0
+# routers' own prefix that composition is the same one shape for every route.
 #
 # Left unset, the schema advertised bare backend paths, and a caller who followed
 # them got no error worth the name: measured 2026-08-12, of the 135 paths under
@@ -381,32 +406,45 @@ register_all_permissions()
 # ActorResolverDep + authorize_topic instead — closing those needs browser
 # user-auth first.
 # Each pattern captures the scoping id as group "topic" or "project".
+# These patterns are the gate itself, and they are written as TEXT — so they do
+# not follow a route that moves. #370 step 2 flattened the 2.0 prefix and every
+# one of them stopped matching, which does not fail: it silently opens the
+# cheese write-surface to anyone who can reach the port. The suite caught it
+# (test_project_agent_credential, test_ask_options, test_await_wake,
+# test_memory_search all went from "refused" to "allowed"), which is the only
+# reason to say it out loud here: a gate defined by strings has to be moved by
+# hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/webhook-token$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/ask$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ask$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/decision$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/background-task$")),
     (
         "POST",
-        re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
+        re.compile(r"^/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
     ),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/accept-card$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/return-conclusion$")),
+    # 母子传话: the scoping id is the SENDER (whose turn is talking); the receiver
+    # is in the body and is checked against the parent/child edge by
+    # `TopicRelayService.direction` — this gate can only prove "some agent of this
+    # project", because a project-scoped credential reaches every topic of it.
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
     # 结论卡: settled by the PARENT during its own turn, so the scoping id in
     # the URL is the receiver, not the sub-topic that produced the card.
     (
         "POST",
         re.compile(
-            r"^/api/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
+            r"^/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
             r"(accept|need-evidence|escalate)$"
         ),
     ),
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory/search$")),
+    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
+    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/milestones$")),
+    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/milestones$")),
 ]
 
 
@@ -527,11 +565,11 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
             )
         break
     # Stash the cheese turn id so blocks written by this request inherit it (R4).
-    ctx = current_turn_id.set(parse_turn_id(request.headers.get("x-cheese-turn")))
+    ctx = current_work_id.set(parse_work_id(request.headers.get("x-cheese-turn")))
     try:
         return await call_next(request)
     finally:
-        current_turn_id.reset(ctx)
+        current_work_id.reset(ctx)
 
 
 @app.middleware("http")
@@ -583,14 +621,14 @@ async def debug_turns() -> dict:
     """可 debug: the last ~100 turns' lifecycle summaries (status, timings,
     tool counts, failure reasons) — read the state of the world without
     grepping logs."""
-    from app.api.deps import get_turn_runner
+    from app.api.deps import get_work_runner
 
-    return {"code": 200, "message": "ok", "data": get_turn_runner().recent_turns()}
+    return {"code": 200, "message": "ok", "data": get_work_runner().recent_work()}
 
 
 @app.get("/health")
 async def health() -> dict:
-    from app.api.deps import get_turn_runner
+    from app.api.deps import get_work_runner
 
     # active_turns lets a redeploy drain: wait until no agent turn is in flight
     # before restarting, so a deploy never kills 芝士 mid-work. version rides
@@ -600,13 +638,13 @@ async def health() -> dict:
         "message": "ok",
         "data": {
             "status": "healthy",
-            "active_turns": get_turn_runner().active_turns(),
+            "active_turns": get_work_runner().active_work_count(),
             "version": settings.app_version,
         },
     }
 
 
-@app.get("/api/version")
+@app.get("/version")
 async def app_version() -> dict:
     """The running build, for the UI's 内测 version badge. Public, unauthenticated
     — it exposes only a commit sha, and only when the box opts in. `badge` is the

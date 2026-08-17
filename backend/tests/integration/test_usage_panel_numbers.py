@@ -260,8 +260,8 @@ async def test_usage_endpoints_expose_turns_and_unpriced_tokens(client):
             )
         await session.commit()
 
-    topic_usage = client.get(f"/api/topics/{tid}/usage").json()["data"]
-    project_usage = client.get(f"/api/projects/{pid}/usage").json()["data"]
+    topic_usage = client.get(f"/topics/{tid}/usage").json()["data"]
+    project_usage = client.get(f"/projects/{pid}/usage").json()["data"]
 
     for stats in (topic_usage, project_usage):
         assert stats["turns"] == 1

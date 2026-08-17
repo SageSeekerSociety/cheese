@@ -40,6 +40,24 @@ class TopicMembershipRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def topic_ids_for_member(
+        self, topic_ids: list[uuid.UUID], member_handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these topics this handle sits in the roster of, in ONE query.
+
+        By topic-SET rather than per topic because the caller is the sidebar's
+        list endpoint: it asks the same question about every topic in a project
+        at once, and asking it one row at a time is the N+1 that makes a
+        hundred-topic project unopenable.
+        """
+        if not topic_ids:
+            return set()
+        stmt = select(TopicMembership.topic_id).where(
+            TopicMembership.topic_id.in_(topic_ids),
+            TopicMembership.member_handle == member_handle,
+        )
+        return set((await self._session.scalars(stmt)).all())
+
     async def count_for_topic(self, topic_id: uuid.UUID) -> int:
         stmt = (
             select(func.count())

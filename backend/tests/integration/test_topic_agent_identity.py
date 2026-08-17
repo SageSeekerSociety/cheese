@@ -21,18 +21,18 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _project_topic(client, owner: str = "alice") -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},
     ).json()["data"]
     return p["id"], t["id"]
 
 
 def _members(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/members").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
 
 
 def _agents(client, topic_id: str) -> list[dict]:
@@ -67,7 +67,7 @@ def test_two_topics_get_two_different_agents(client):
     """The whole point: 分身 A and 分身 B are distinguishable."""
     pid, first = _project_topic(client)
     second = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": pid, "title": "T2", "created_by": "alice"},
     ).json()["data"]["id"]
     a = _agents(client, first)[0]["member_handle"]
@@ -91,7 +91,7 @@ def test_a_sandbox_token_acts_as_that_topics_agent(client):
     holds it — previously every such write said plain ``cheese``."""
     pid, tid = _project_topic(client)
     r = client.put(
-        f"/api/topics/{tid}/doc",
+        f"/topics/{tid}/doc",
         json={"content": "# 分身写的"},
         headers=_sandbox(pid, tid),
     )
@@ -104,14 +104,14 @@ def test_two_sandboxes_writing_are_told_apart(client):
     the property that makes an audit trail possible at all."""
     pid, first = _project_topic(client)
     second = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": pid, "title": "T2", "created_by": "alice"},
     ).json()["data"]["id"]
 
     authors = set()
     for tid in (first, second):
         r = client.put(
-            f"/api/topics/{tid}/doc",
+            f"/topics/{tid}/doc",
             json={"content": "# hi"},
             headers=_sandbox(pid, tid),
         )
@@ -124,7 +124,7 @@ def test_a_forged_author_in_the_body_is_still_ignored(client):
     """The identity comes from the signed token, never the payload."""
     pid, tid = _project_topic(client)
     r = client.put(
-        f"/api/topics/{tid}/doc",
+        f"/topics/{tid}/doc",
         json={"content": "# hi", "author": "alice"},
         headers=_sandbox(pid, tid),
     )
@@ -144,7 +144,7 @@ def test_the_project_roster_marks_an_agent_without_matching_its_handle(client):
     for who in (handle, "alice"):
         assert (
             client.post(
-                f"/api/projects/{pid}/members",
+                f"/projects/{pid}/members",
                 json={"user_handle": who},
                 headers=session_auth_headers("alice"),
             ).status_code
@@ -153,7 +153,7 @@ def test_the_project_roster_marks_an_agent_without_matching_its_handle(client):
 
     rows = {
         m["user_handle"]: m
-        for m in client.get(f"/api/projects/{pid}/members").json()["data"]["data"]
+        for m in client.get(f"/projects/{pid}/members").json()["data"]["data"]
     }
     assert rows[handle]["agent"] is True
     assert rows["alice"]["agent"] is False
@@ -168,13 +168,13 @@ def test_one_agents_seat_can_be_dropped_without_touching_the_others(client):
     and it would have hit every 分身 anyway"."""
     pid, first = _project_topic(client)
     second = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": pid, "title": "T2", "created_by": "alice"},
     ).json()["data"]["id"]
     doomed = _agents(client, first)[0]["member_handle"]
 
     r = client.delete(
-        f"/api/topics/{first}/members/{doomed}?actor=alice",
+        f"/topics/{first}/members/{doomed}?actor=alice",
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
@@ -193,12 +193,16 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
     pid, tid = _project_topic(client)
     handle = topic_agent_handle(uuid.UUID(tid))
     card = client.post(
-        f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": handle, "routing_reason": "自己验"},
+        f"/topics/{tid}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": handle,
+            "routing_reason": "自己验",
+        },
     ).json()["data"]
 
     r = client.post(
-        f"/api/accept-cards/{card['id']}/accept",
+        f"/accept-cards/{card['id']}/accept",
         json={"decided_by": handle},
         headers=_sandbox(pid, tid),
     )

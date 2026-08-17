@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.domain.agent import awaited_tasks
 from app.domain.workspace import service as ws
 from app.main import app
@@ -44,9 +44,9 @@ class FakeRunner:
 def runner():
     fake = FakeRunner()
     awaited_tasks.reset()
-    app.dependency_overrides[get_turn_runner] = lambda: fake
+    app.dependency_overrides[get_work_runner] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_turn_runner, None)
+    app.dependency_overrides.pop(get_work_runner, None)
     awaited_tasks.reset()
 
 
@@ -99,7 +99,7 @@ def _head_commit(project: uuid.UUID, topic: uuid.UUID) -> str:
 def _worktree_with_committed_fix(project: uuid.UUID, topic: uuid.UUID):
     """A topic whose finished work (the fix) is already on the branch — the state
     the incident started from."""
-    wt = ws._ensure_worktree(project, ws.branch_for_topic(topic))
+    wt = ws._ensure_worktree(project, topic)
     (wt / "app.py").write_text("def load(path):\n" + FIX)
     ws.snapshot_worktree(project, topic, "修复 + 测试")
     assert FIX in _on_branch(project, topic, "app.py")
@@ -187,14 +187,14 @@ def test_the_finished_command_gets_the_final_state_onto_the_branch(
 ):
     """The other half: holding is only safe because the report puts the settled
     tree on the branch. Driven over the real HTTP path the detached child uses."""
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    created = client.post("/api/topics", json={"project_id": p["id"], "title": "T"})
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    created = client.post("/topics", json={"project_id": p["id"], "title": "T"})
     tid = created.json()["data"]["id"]
     project, topic = uuid.UUID(p["id"]), uuid.UUID(tid)
     wt = _worktree_with_committed_fix(project, topic)
 
     task = client.post(
-        f"/api/topics/{tid}/background-task",
+        f"/topics/{tid}/background-task",
         json={
             "command": "bash verify_fix.sh",
             "label": "验证修复有效",
@@ -210,7 +210,7 @@ def test_the_finished_command_gets_the_final_state_onto_the_branch(
     (wt / "app.py").write_text("def load(path):\n" + FIX)
     (wt / "verify_fix.out").write_text("负向对照红了，正向绿了\n")
     done = client.post(
-        f"/api/topics/{tid}/background-task/{task['task_id']}/done",
+        f"/topics/{tid}/background-task/{task['task_id']}/done",
         json={"exit_code": 0, "tail": "ok", "duration_s": 35.0},
         headers={"X-Cheese-Token": task["wake_token"]},
     )

@@ -15,7 +15,7 @@ from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
-from app.domain.agent.runtime import TurnRunner, get_broker
+from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import AgentService
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -30,7 +30,7 @@ __all__ = [
     "get_scheduler_service",
     "get_profile_registry",
     "get_broker",
-    "get_turn_runner",
+    "get_work_runner",
     "project_device_online",
     "team_device_online",
 ]
@@ -136,7 +136,7 @@ def get_scheduler_service(
 
 
 @lru_cache
-def get_turn_runner() -> TurnRunner:
+def get_work_runner() -> AgentWorkRunner:
     # #388 缺陷一: let the cold-start fuse know when a topic's device screen is
     # running on a credential the backend already stamped as expired, so a doomed
     # turn fast-fails with the true reason instead of burning the full fuse. Reads
@@ -144,7 +144,7 @@ def get_turn_runner() -> TurnRunner:
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
     from app.domain.agent.device_provider import topic_credential_expiry
 
-    return TurnRunner(
+    return AgentWorkRunner(
         get_broker(),
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,

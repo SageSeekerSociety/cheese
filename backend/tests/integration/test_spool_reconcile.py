@@ -4,6 +4,7 @@ WAL at the next turn start — idempotently (no duplicate if it was also persist
 live). This is the W1 half of the event-durability fix."""
 
 import json
+import time
 import uuid
 from pathlib import Path
 
@@ -11,8 +12,13 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import AgentResult, AgentService, AgentToolUse
-from app.domain.block.models import BlockKind
+from app.domain.agent.service import (
+    AgentMessage,
+    AgentResult,
+    AgentService,
+    AgentToolUse,
+)
+from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -364,3 +370,249 @@ async def test_duplicate_tool_event_is_deduped_by_event_id(client, tmp_path):
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     assert len(_event_blocks_for(rows, "dup-1")) == 1
+
+
+@pytest.mark.anyio
+async def test_fallback_dedup_survives_mention_expansion_and_trailing_newline(
+    client, tmp_path, monkeypatch
+):
+    """The sweep's dedup compared the STORED content (mention-expanded, never
+    stripped) against the raw result text — an @ or a trailing newline in the
+    message defeated the comparison and re-persisted the same text eid-less."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    pid, tid = await _project_topic(factory)
+
+    text = "@u 交给你了\n"
+    svc = ChatService(
+        session_factory=factory,
+        agent=_LateSpoolAgent(ws.spool_dir(pid, tid), text),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    matches = [
+        b
+        for b in rows
+        if b.kind == BlockKind.message
+        and b.author_type == AuthorType.ai
+        and "交给你了" in (b.content or "")
+    ]
+    assert len(matches) == 1  # the spool-backfilled copy; no eid-less twin
+    assert matches[0].meta.get("eid") == "late-msg-1"
+
+
+# --- MessageDisplay flush coalescing in the reconcile --------------------------
+
+
+def _spool_flush(
+    spool: Path,
+    eid: str,
+    mid: str,
+    idx: int,
+    delta: str,
+    *,
+    final: bool = False,
+    ns: int | None = None,
+) -> None:
+    """One MessageDisplay flush file, exactly as the forwarder writes it."""
+    spool.mkdir(parents=True, exist_ok=True)
+    stamp = ns if ns is not None else 1700000000000000000 + idx
+    (spool / f"{stamp}.{eid}").write_text(
+        json.dumps(
+            {
+                "hook_event_name": "MessageDisplay",
+                "message_id": mid,
+                "index": idx,
+                "final": final,
+                "delta": delta,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+async def _project_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        pid, tid = project.id, topic.id
+        await session.commit()
+    return pid, tid
+
+
+def _quiet_service(factory, tmp_path) -> ChatService:
+    return ChatService(
+        session_factory=factory,
+        agent=QuietAgent(),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+
+
+def _ai_messages(rows, *, exclude: tuple[str, ...] = ("ok",)) -> list:
+    return [
+        b
+        for b in rows
+        if b.kind == BlockKind.message
+        and b.author_type == AuthorType.ai
+        and b.content not in exclude
+    ]
+
+
+@pytest.mark.anyio
+async def test_spooled_message_flushes_land_as_one_block(client, tmp_path, monkeypatch):
+    """A lost turn's reply reached the spool as line-batch flushes plus the
+    Stop. The backfill must land ONE whole message — not one block per flush
+    plus a full-text copy from the Stop, which is exactly the reported
+    '断成好几条' + '存两次' shape."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    svc = _quiet_service(factory, tmp_path)
+    pid, tid = await _project_topic(factory)
+    spool = ws.spool_dir(pid, tid)
+
+    _spool_flush(spool, "f0", "m1", 0, "第一行\n")
+    _spool_flush(spool, "f1", "m1", 1, "第二行", final=True)
+    spool.mkdir(parents=True, exist_ok=True)
+    (spool / "1700000000000000002.s1").write_text(
+        json.dumps(
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "第一行\n第二行",
+                "session_id": "s1",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    async for _ in svc.converse(topic_id=tid, author="u", content="继续", summon=True):
+        pass
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    messages = _ai_messages(rows)
+    assert [b.content for b in messages] == ["第一行\n第二行"]
+    assert messages[0].meta.get("backfilled") is True
+    assert messages[0].meta.get("eids") == ["f0", "f1"]
+    assert not list(spool.iterdir())
+
+
+@pytest.mark.anyio
+async def test_incomplete_flushes_wait_for_the_missing_one(
+    client, tmp_path, monkeypatch
+):
+    """A message whose final flush has not reached the spool yet must NOT land
+    as a fragment: its files stay for the pass where the message completes."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    svc = _quiet_service(factory, tmp_path)
+    pid, tid = await _project_topic(factory)
+    spool = ws.spool_dir(pid, tid)
+
+    _spool_flush(spool, "f0", "m1", 0, "第一行\n", ns=time.time_ns())
+    async for _ in svc.converse(
+        topic_id=tid, author="u", content="催一下", summon=True
+    ):
+        pass
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    assert _ai_messages(rows) == []
+    assert [p.name.split(".", 1)[1] for p in spool.iterdir()] == ["f0"]
+
+    _spool_flush(spool, "f1", "m1", 1, "第二行", final=True, ns=time.time_ns())
+    async for _ in svc.converse(topic_id=tid, author="u", content="再催", summon=True):
+        pass
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    assert [b.content for b in _ai_messages(rows)] == ["第一行\n第二行"]
+    assert not list(spool.iterdir())
+
+
+class _FlushedMessageAgent(AgentService):
+    """A live hooks turn after coalescing: ONE whole message carrying every
+    constituent flush id, then the Stop echoing the same text."""
+
+    def __init__(self) -> None:
+        super().__init__(model="stub")
+
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        yield AgentMessage(text="第一行\n第二行", eid="f0", eids=("f0", "f1"))
+        yield AgentResult(text="第一行\n第二行", session_id="s1", usage=None)
+
+
+@pytest.mark.anyio
+async def test_live_coalesced_message_is_not_backfilled_again(
+    client, tmp_path, monkeypatch
+):
+    """The live path persisted the whole message with every flush id; the
+    spool still holds the per-flush files. The next reconcile must recognize
+    EACH flush id as already materialized — matching only the first one left
+    the rest to land again as fragments."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    svc = ChatService(
+        session_factory=factory,
+        agent=_FlushedMessageAgent(),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    pid, tid = await _project_topic(factory)
+    async for _ in svc.converse(topic_id=tid, author="u", content="说吧", summon=True):
+        pass
+
+    spool = ws.spool_dir(pid, tid)
+    _spool_flush(spool, "f0", "m1", 0, "第一行\n")
+    _spool_flush(spool, "f1", "m1", 1, "第二行", final=True)
+
+    quiet = _quiet_service(factory, tmp_path)
+    async for _ in quiet.converse(
+        topic_id=tid, author="u", content="继续", summon=True
+    ):
+        pass
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    assert [b.content for b in _ai_messages(rows)] == ["第一行\n第二行"]
+
+
+@pytest.mark.anyio
+async def test_abandoned_partial_lands_joined_after_grace(
+    client, tmp_path, monkeypatch
+):
+    """Flushes whose message never completed (the screen died mid-message, no
+    Stop ever spooled) must still land once they are stale — joined into one
+    block, not one per flush."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    svc = _quiet_service(factory, tmp_path)
+    pid, tid = await _project_topic(factory)
+    spool = ws.spool_dir(pid, tid)
+
+    _spool_flush(spool, "f0", "m1", 0, "只说到一半\n")  # ancient ns → stale
+    _spool_flush(spool, "f1", "m1", 1, "然后就断了")
+    async for _ in svc.converse(topic_id=tid, author="u", content="人呢", summon=True):
+        pass
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    assert [b.content for b in _ai_messages(rows)] == ["只说到一半\n然后就断了"]
+    assert not list(spool.iterdir())

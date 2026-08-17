@@ -127,7 +127,7 @@ async def main() -> int:
     # The list endpoint refreshes each row from MicroCloud, which is also how a
     # machine the provider has forgotten gets marked deleted instead of sitting
     # in our books as `running` forever.
-    listed = call("GET", f"/api/projects/{project_id}/machines", token)
+    listed = call("GET", f"/projects/{project_id}/machines", token)
     machines = listed.get("data", {}).get("data", [])
     log(f"{len(machines)} machine row(s) after refresh")
     for m in machines:
@@ -148,14 +148,14 @@ async def main() -> int:
         else:
             log("WARNING: no SSH_PUBKEY — the machine cannot be probed afterwards")
         log("provisioning a machine ...")
-        created = call("POST", f"/api/projects/{project_id}/machines", token, body)
+        created = call("POST", f"/projects/{project_id}/machines", token, body)
         row = created.get("data", {})
         log(f"  accepted: {describe(row)}")
 
         deadline = time.monotonic() + SETTLE_TIMEOUT_S
         last = None
         while time.monotonic() < deadline:
-            listed = call("GET", f"/api/projects/{project_id}/machines", token)
+            listed = call("GET", f"/projects/{project_id}/machines", token)
             machines = listed.get("data", {}).get("data", [])
             row = next((m for m in machines if m.get("id") == row.get("id")), row)
             seen = (row.get("status"), row.get("ai_status"))

@@ -31,7 +31,7 @@ from app.domain.memory.models import (
     agent_project_scope_prefix,
 )
 
-router = APIRouter(prefix="/api/memory", tags=["memory"])
+router = APIRouter(prefix="/memory", tags=["memory"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

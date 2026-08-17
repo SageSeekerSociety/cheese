@@ -32,6 +32,7 @@ backend/preview.db
 # machine-local pieces are ignored. A blanket `.claude/` here silently blocked
 # new tracked files while modifications to already-tracked ones still staged.
 .claude/settings.local.json
+.task/
 
 # ---- Python ----
 __pycache__/

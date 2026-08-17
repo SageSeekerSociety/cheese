@@ -6,7 +6,7 @@ documents in ``asyncio.create_task``: *"Save a reference to the result of this
 function, to avoid a task disappearing mid-execution."*
 
 Most of this codebase already does that (``review/gate.py`` keeps ``_INFLIGHT``,
-``TurnRunner`` keeps ``self._tasks``). Three call sites did not, and each of
+``AgentWorkRunner`` keeps ``self._tasks``). Three call sites did not, and each of
 them exists to TELL A ROOM SOMETHING — the accept merged, the push finished, the
 box was rebuilt. A dropped task there is not a crash: it is a topic that never
 hears, which is the exact failure mode the platform is worst at surfacing.

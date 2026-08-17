@@ -8,6 +8,16 @@ Maps to docs/evals.md so the running app has content to click through:
 
 Run (Postgres must be up): cd backend && PYTHONPATH=. uv run python scripts/seed_demo.py
 It TRUNCATEs all tables first (dev/demo DB only) then inserts a fresh scenario.
+
+
+⚠️ This script does not currently run, and not because of anything below: it
+imports ``app.domain.cx_space``, a module the fusion merge retired (one Space =
+知是's int Space). ``scripts/seed_fusion_demo.py`` says the same thing from the
+other side — "the canonical scripts/seed_demo.py is written against cheesex's
+pre-merge User". It is kept because ``scripts/preview_sqlite.py`` imports it and
+someone may yet port it. The 赛题 half WAS updated (#370) so it stops naming a
+domain that no longer exists — fixing one breakage while leaving the older one
+loudly labelled, rather than quietly leaving two.
 """
 
 import asyncio
@@ -19,7 +29,6 @@ from sqlalchemy import text
 from app.core.db import async_session_factory
 from app.domain.alert.models import Alert, AlertKind, AlertLevel
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.cx_task.models import Task, TaskTemplate
 from app.domain.memory.models import MemoryEntry, MemoryScope
 from app.domain.milestone.models import Milestone, MilestoneStatus
 from app.domain.project.models import (
@@ -27,9 +36,10 @@ from app.domain.project.models import (
     Project,
     ProjectMember,
     ProjectRole,
-    ProjectTaskLink,
 )
 from app.domain.review.models import AcceptCard
+from app.domain.space.models import SpaceCategory
+from app.domain.task.models import Task
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.user.models import User
 
@@ -89,41 +99,53 @@ async def seed() -> None:
         s.add(space)
         await s.flush()
 
-        template = TaskTemplate(
+        # 项目集 carries the 机构协议 (#370): one set of terms for every 赛题
+        # under it, rather than a copy per 赛题.
+        category = SpaceCategory(
             space_id=space.id,
             name="创新项目入驻 2026 秋",
             description="书院创新项目，定期里程碑汇报",
-            resource_pack={"compute": "1 GPU", "credits": 5000},
+            display_order=0,
+            resource_pack={"compute": "1 GPU", "compute_credits": 5000},
             conditions=[
                 {"required_topic": "中期汇报", "reviewer_role": "mentor"},
                 {"required_topic": "结题答辩", "reviewer_role": "mentor"},
             ],
             default_role="academic-research",
+            created_at=now,
+            updated_at=now,
         )
-        s.add(template)
+        s.add(category)
         await s.flush()
 
         task = Task(
-            template_id=template.id,
-            title="用 AI 做课程推荐系统",
+            name="用 AI 做课程推荐系统",
+            intro="为校内学生做一个选课推荐系统",
             description="为校内学生做一个选课推荐系统",
+            creator_id=1,
+            space_id=space.id,
+            category_id=category.id,
+            submitter_type=0,
+            approved=0,
+            default_deadline=0,
+            created_at=now,
+            updated_at=now,
         )
         s.add(task)
         await s.flush()
 
         # --- Project (= root topic = repo), collaborative mode ---
+        # Created FROM the 赛题, which is how a project accepts its 项目集's
+        # protocol and shows up on the Space board (#370).
         project = Project(
             name="AI 课程推荐系统",
             owner_handle="user-1",
             ai_mode=AiMode.collaborative,
             expert_role="academic-research",
+            external_task_id=task.id,
         )
         s.add(project)
         await s.flush()
-
-        # Link the project to the Task = accept the Template's protocol (§4.2),
-        # so it shows up on the Space board.
-        s.add(ProjectTaskLink(project_id=project.id, task_id=task.id))
 
         s.add_all(
             [

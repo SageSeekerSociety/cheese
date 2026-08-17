@@ -198,17 +198,16 @@ def test_every_hooks_backend_keeps_the_timeout_marker():
     """The wiring, not the copy: if a subclass hardcodes its own sentence again
     the classification is lost, and nothing else in the suite would notice."""
     from app.domain.agent.device_provider import DeviceProvider
-    from app.domain.agent.hooks_substrate import HooksTurnProvider
+    from app.domain.agent.hooks_substrate import HooksSessionProvider
     from app.domain.agent.platform_failures import TURN_TIMEOUT_MARKER
     from app.domain.agent.tmux_provider import TmuxHooksProvider
 
-    for provider in (HooksTurnProvider, TmuxHooksProvider, DeviceProvider):
+    for provider in (HooksSessionProvider, TmuxHooksProvider, DeviceProvider):
         assert TURN_TIMEOUT_MARKER in provider._timeout_message, provider.__name__
 
 
 def test_undelivered_message_is_the_classified_one():
-    """`run_hooks_turn` yields this text as the turn's result; if it drifts from
-    the sentence the classifier matches, the room shows the wrong failure."""
+    """The session monitor's delivery failure must match the classifier."""
     from app.domain.agent.hooks_substrate import UNDELIVERED_MESSAGE
     from app.domain.agent.platform_failures import (
         PROMPT_UNDELIVERED,

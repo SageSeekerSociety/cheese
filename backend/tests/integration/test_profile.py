@@ -40,25 +40,25 @@ def test_user_profile_aggregates_across_projects(client, bearer):
     asyncio.run(_seed_user())
 
     # Two projects, member of both; started a topic in one.
-    p1 = client.post("/api/projects", json={"name": "P1", "owner_handle": "u1"}).json()[
+    p1 = client.post("/projects", json={"name": "P1", "owner_handle": "u1"}).json()[
         "data"
     ]["id"]
-    p2 = client.post("/api/projects", json={"name": "P2", "owner_handle": "u1"}).json()[
+    p2 = client.post("/projects", json={"name": "P2", "owner_handle": "u1"}).json()[
         "data"
     ]["id"]
     # Roster writes need the owner's token, so u1 adds itself to both projects.
     client.post(
-        f"/api/projects/{p1}/members",
+        f"/projects/{p1}/members",
         json={"user_handle": "u1", "role": "lead"},
         headers=bearer("u1"),
     )
     client.post(
-        f"/api/projects/{p2}/members",
+        f"/projects/{p2}/members",
         json={"user_handle": "u1"},
         headers=bearer("u1"),
     )
     client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p1, "title": "我的话题", "created_by": "u1"},
     )
 
@@ -70,7 +70,7 @@ def test_user_profile_aggregates_across_projects(client, bearer):
 
     asyncio.run(_seed())
 
-    prof = client.get("/api/users/u1/profile").json()["data"]
+    prof = client.get("/users/u1/profile").json()["data"]
     assert prof["name"] == "小林"  # UserProfile.nickname
     assert prof["bio"] == "后端"  # UserProfile.intro
     assert {p["name"] for p in prof["projects"]} == {"P1", "P2"}

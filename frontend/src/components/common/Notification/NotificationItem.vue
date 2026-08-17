@@ -236,17 +236,18 @@ const onUpdateNotification = (notificationId: number) => {
 </script>
 
 <style scoped>
+/* 未读靠 wash 底色区分，不靠左竖条。原来的写法还有一个更实际的问题：hover 和
+   未读用的是同一个 4% 主色底，两者唯一的区别就是那条竖条——把条纹删掉而不换
+   底色，未读态会直接消失。所以 hover 收回中性的 --fill，未读改用 --accent-wash。 */
 .notification-item {
-  border-left: 3px solid transparent;
   transition: background-color 0.2s ease;
 }
 
 .notification-item:hover {
-  background-color: rgba(var(--v-theme-primary), 0.04);
+  background-color: var(--fill);
 }
 
 .unread-notification {
-  background-color: rgba(var(--v-theme-primary), 0.04);
-  border-left: 3px solid var(--v-theme-primary);
+  background-color: var(--accent-wash);
 }
 </style>

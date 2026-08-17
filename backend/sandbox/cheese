@@ -3,7 +3,8 @@
 
 代码/文件的事用原生工具（Bash/Write/Read）；改平台状态的事用本 CLI。
 环境变量（容器注入）：
-  CHEESE_API     平台 API 基址，如 http://host.docker.internal:8099/api
+  CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
+                 经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
   CHEESE_TOPIC   当前话题 id
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
@@ -18,6 +19,7 @@
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
+  cheese tell "数据清洗" "口径改了,按新的来"    # 给正在跑的子话题追加要求(会叫醒它)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
@@ -37,7 +39,7 @@ import sys
 import urllib.error
 import urllib.request
 
-API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099/api").rstrip("/")
+API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
@@ -74,6 +76,17 @@ def _call(
         sys.exit(1)
 
 
+def _port_answers(port: int, timeout: float = 1.0) -> bool:
+    """Is anything listening on this port inside the box? A TCP connect, not an
+    HTTP request: it is what "the platform can reach your server" reduces to, and
+    it stays true for a server that answers HTTP with a 500."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
 def _need(name: str, value: str) -> str:
     if not value:
         print(f"[cheese] 缺少 {name}（环境变量未注入）", file=sys.stderr)
@@ -82,9 +95,14 @@ def _need(name: str, value: str) -> str:
 
 
 def _api_root() -> str:
-    """The app root (where /openapi.json lives), i.e. CHEESE_API without the
-    trailing /api mount prefix."""
-    return API[: -len("/api")] if API.endswith("/api") else API
+    """The API surface base exactly as the launcher supplied it.
+
+    A direct backend URL is the app root. A public URL includes the gateway's
+    ``/api`` mount, which nginx strips before forwarding. Removing that suffix
+    here makes device calls to ``/openapi.json`` and ``/sandbox/github-token``
+    miss the gateway and hit the frontend instead.
+    """
+    return API
 
 
 def _raw_request(method: str, path: str, data: str | None) -> None:
@@ -616,9 +634,9 @@ def build_parser() -> argparse.ArgumentParser:
             "闸门跑在另一个容器里,只和你共享 /work,$HOME 不一样——所以「我这儿是绿的」"
             "不等于闸门那儿是绿的。\n"
             "\n"
-            "**--subject 就是这次改动留在 git 历史里的那一行**。递卡会开 PR,采纳会把整个\n"
-            "分支压成一个提交,标题用的就是它。不给的话平台只能拿话题标题凑,历史里会留下\n"
-            "`chore: <话题标题>` 这种没人看得懂的东西。\n"
+            "**--subject 就是这次改动留在 git 历史里的那一行**,必填。递卡会开 PR,采纳会把\n"
+            "整个分支压成一个提交,标题用的就是它。不给就递不出去——后端会当场打回并告诉你\n"
+            "该怎么写。\n"
             "\n"
             "写法(Conventional Commits, 英文祈使句, ≤72 字符, 不加句号):\n"
             "  cheese accept-request lisi \"最懂这块\" \\\n"
@@ -635,8 +653,8 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("reason", nargs="?", default="", help="为什么找这个人验收")
     pa.add_argument(
         "--subject",
-        default=None,
-        help="这次改动的提交标题: `type(scope): description`,英文,≤72 字符",
+        required=True,
+        help="必填。这次改动的提交标题: `type(scope): description`,英文,≤72 字符",
     )
     pa.add_argument(
         "--body", default=None, help="提交正文: 为什么要这次改动(不明显时才写)"
@@ -655,6 +673,31 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pc.add_argument("conclusion", help="结论摘要,给父话题看的")
+
+    pt = sub.add_parser(
+        "tell",
+        help="给正在跑的直接子话题(或你的母话题)传一句话,并叫醒它",
+        description=(
+            "往父子这条边上传一句话,**并且真的叫醒对方**。只有两个方向通:\n"
+            "  父 → 它的直接子话题    子 → 它的母话题\n"
+            "没有父子关系的两个话题之间发不通——那等于放弃话题级隔离。\n"
+            "\n"
+            "它解决的是:任务简报是一次性的、写完就改不了。发现简报写错了、"
+            "口径变了、有个前提不成立,用这个追过去,别等对方交完活再返工。\n"
+            "\n"
+            "多快:对方**正在跑一轮**的话,这句话直接插进它那一轮(秒级,像人在旁边\n"
+            "插话);对方闲着就叫醒它开一轮;已经有一轮在排队就搭同一轮——\n"
+            "同一个话题连收多条只处理一轮,不会被反复叫醒。命令的输出会告诉你\n"
+            "走的是哪一种。\n"
+            "长的东西写进实况文档(两边都读得到),这里只发「一条追加要求」。\n"
+            "\n"
+            "对方是谁:话题 id、`<#id>`、或者标题都行(只在你的子话题+母话题里认)。\n"
+            "回母话题可以直接写 `parent`,不用去查它叫什么: cheese tell parent \"...\""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pt.add_argument("target", help="收方: 子话题/母话题的 id、<#id> 或标题")
+    pt.add_argument("message", help="要说的话")
 
     pcc = sub.add_parser(
         "conclusion",
@@ -734,10 +777,18 @@ def build_parser() -> argparse.ArgumentParser:
             "  2. 后台跑(nohup ... &)\n"
             "  3. curl localhost:$CHEESE_APP_PORT 验证通了,再 serve\n"
             "\n"
+            "**端口是写死的,没得商量**:平台只把 $CHEESE_APP_PORT 这一个端口发布出去,\n"
+            "容器创建时就定了,事后加不了,也没有「把别的端口转发过去」这种命令。所以\n"
+            "dev server 必须固定在这个端口上——vite 默认端口被占就静默跳到下一个,那个\n"
+            "端口平台永远够不到,你却以为自己照做了:\n"
+            "  vite --base=$CHEESE_APP_BASE --host 0.0.0.0 --strictPort\n"
+            "(uvicorn/next 没有静默跳号的行为,但同样必须 --port $CHEESE_APP_PORT。)\n"
+            "\n"
             "页面经后端反代挂在 $CHEESE_APP_BASE 这个子路径下。会发根绝对资源 URL 的\n"
-            "dev server(vite 的 /@vite/client)要按这个 base 起:\n"
-            "  vite --base=$CHEESE_APP_BASE --host 0.0.0.0\n"
-            "否则用户那边只有一个白框。"
+            "dev server(vite 的 /@vite/client)要按这个 base 起,否则用户那边只有一个白框。\n"
+            "\n"
+            "$CHEESE_APP_PORT 是空的 = 本话题不跑在平台容器里(跑在谁自己的机器上),\n"
+            "运行中的应用到不了预览面板,serve 会直接拒绝——改用 cheese artifact 点名文件。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -862,13 +913,31 @@ def main() -> None:
               {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
                "change_subject": a.subject, "change_body": a.body})
         print(f"已把验收卡递给 {a.reviewer}。")
-        if not a.subject:
-            print("[cheese] 没给 --subject:PR 标题和最终的提交标题只能拿话题标题凑。"
-                  "下次递卡带上它。", file=sys.stderr)
     elif a.cmd == "conclude":
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})
         print("已把结论回流父话题。")
+    elif a.cmd == "tell":
+        # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
+        # 由后端按父子关系校验。
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        data = _call(
+            "POST", f"/topics/{topic}/tell",
+            {"target": a.target, "content": a.message},
+        ).get("data", {})
+        where = data.get("target_title") or data.get("target_topic_id") or a.target
+        print({
+            "injected": f"已插进「{where}」正在跑的那一轮——它现在就看到了。",
+            "woke": f"已传给「{where}」，它被叫醒了，马上开一轮处理。",
+            "merged": (
+                f"已传给「{where}」。它那边已经有一个待跑的轮次，这条搭同一轮"
+                "一起处理（不重复叫醒）。"
+            ),
+            "archived": (
+                f"「{where}」已归档，消息留在那边了，但**没有人被叫醒**"
+                "（归档话题不再跑轮次）。要它动起来先取消归档。"
+            ),
+        }.get(data.get("delivery"), f"已传给「{where}」。"))
     elif a.cmd == "conclusion":
         # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
         # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。
@@ -895,7 +964,7 @@ def main() -> None:
         _call("POST", f"/projects/{proj}/milestones", body)
         print(f"已钉里程碑：{a.title}")
     elif a.cmd == "gh-token":
-        # Root-mounted like /llm (not under /api): build from the api root.
+        # Same API surface as every other platform endpoint.
         # stdout carries ONLY the token so `GH_TOKEN=$(cheese gh-token)` works;
         # the expiry note goes to stderr.
         req = urllib.request.Request(f"{_api_root()}/sandbox/github-token")
@@ -958,10 +1027,32 @@ def main() -> None:
         print(_format_status(d))
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        port = os.environ.get("CHEESE_APP_PORT", "3000")
+        port = os.environ.get("CHEESE_APP_PORT", "")
+        if not port:
+            # No app port in the environment = this runtime is not a platform
+            # container (a topic running on someone's own machine). 运行环境预览
+            # resolves a docker-published port on the backend's host, so there is
+            # nothing for it to reach here — and the panel would show 「应用暂时
+            # 不在线」 forever. The backend refuses this too; failing here just
+            # costs one fewer round trip and says it in the agent's own terms.
+            print("[cheese] 这个运行环境没有可预览的应用端口"
+                  "（CHEESE_APP_PORT 未注入,说明本话题不跑在平台容器里）。\n"
+                  "[cheese] 运行中的应用到不了预览面板。要给人看结果,"
+                  "用 cheese artifact <文件> 点名一个网页/SVG。", file=sys.stderr)
+            sys.exit(2)
+        if not _port_answers(int(port)):
+            # Declaring a preview that cannot render is worse than not declaring
+            # one: 芝士 then tells the user 「预览已就绪」 and the user opens a
+            # white frame. vite in particular hops to the next free port when
+            # this one is taken, so "我明明起了服务" and "端口上没人" coexist.
+            print(f"[cheese] {port} 端口上没有服务在应答,没有设置预览。\n"
+                  f"[cheese] 先把应用起在 0.0.0.0:{port}（只绑 localhost 不行）,"
+                  f"确认 curl localhost:{port} 通了再 serve。\n"
+                  f"[cheese] dev server 要固定端口: vite --strictPort（默认行为是"
+                  f"端口被占就静默跳号,平台够不到跳过去的那个）。", file=sys.stderr)
+            sys.exit(2)
         _call("POST", f"/topics/{topic}/artifact", {"path": a.note, "as": "app"})
-        print(f"已把容器 :{port} 上的应用设为当前预览（{a.note}）。"
-              f"确保它监听 0.0.0.0:{port}，别只绑 localhost。")
+        print(f"已把 :{port} 上的应用设为当前预览（{a.note}）。")
     elif a.cmd == "artifact":
         topic = _need("CHEESE_TOPIC", TOPIC)
         # The platform resolves artifact paths against the worktree ROOT (/work),

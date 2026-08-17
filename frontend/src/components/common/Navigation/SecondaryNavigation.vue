@@ -77,7 +77,6 @@ const drawerClass = computed(() => {
 
 // 路由变化时自动关闭移动端抽屉
 import { useRouter } from 'vue-router'
-import { is } from '@babel/types'
 const router = useRouter()
 
 watch(

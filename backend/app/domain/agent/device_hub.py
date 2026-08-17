@@ -94,10 +94,12 @@ class HubDevice:
     screens: dict[str, HubScreen] = field(default_factory=dict)
     exec_seq: int = 0
     call_seq: int = 0
+    file_seq: int = 0
     exec_pending: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict
     )
     call_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    file_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, msg: dict[str, Any]) -> None:
@@ -165,6 +167,14 @@ class DeviceHub:
         device = self._devices.get(device_id)
         if device is not None and device.transport is transport:
             device.transport = None
+            from app.domain.agent.hooks_substrate import (
+                drop_device_subscriptions,
+                drop_screen_subscriptions,
+            )
+
+            for screen in list(device.screens.values()):
+                await drop_screen_subscriptions(screen)
+            await drop_device_subscriptions(device_id)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -310,6 +320,9 @@ class DeviceHub:
             return False
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
+        from app.domain.agent.hooks_substrate import drop_screen_subscriptions
+
+        await drop_screen_subscriptions(screen)
         await device.send(device_link.session_close(sid))
         return True
 
@@ -365,6 +378,27 @@ class DeviceHub:
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             device.call_pending.pop(call_id, None)
+
+    async def put_file(
+        self,
+        device_id: str,
+        sid: str,
+        path: str,
+        data: bytes,
+        *,
+        timeout: float = 30,
+    ) -> Any:
+        """Atomically stage one file under the screen's workspace and await ack."""
+        device = self._device(device_id)
+        device.file_seq += 1
+        file_id = f"f{device.file_seq}"
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        device.file_pending[file_id] = future
+        try:
+            await device.send(device_link.file_put(sid, file_id, path, data))
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            device.file_pending.pop(file_id, None)
 
     # -- exec (server -> device, awaited) ----------------------------------
 
@@ -491,6 +525,14 @@ class DeviceHub:
             return
         if msg.t == "rpc.result":
             fut = device.call_pending.get(msg.id)
+            if fut is not None and not fut.done():
+                if msg.error:
+                    fut.set_exception(RuntimeError(msg.error))
+                else:
+                    fut.set_result(msg.value)
+            return
+        if msg.t == "file.result":
+            fut = device.file_pending.get(msg.id)
             if fut is not None and not fut.done():
                 if msg.error:
                     fut.set_exception(RuntimeError(msg.error))

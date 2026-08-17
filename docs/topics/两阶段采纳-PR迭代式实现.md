@@ -54,6 +54,7 @@ wangchangxin 点采纳后合并冲突，平台把 main 合进了工作区。核�
 - `review/services.py`：`AcceptService.accept()` 先尝试 `_resolve_pr_prerequisites()`（有 token 且项目连了仓库）→ `_accept_via_pr()`（推分支+开PR+卡片转`pr_open`+不归档）；任何一步失败（含解析前置条件本身失败）都在 try/except 里降级到原来的 `merge_topic()+push_back()` 路径，不影响 accept 本身。新增 `advance_pr_card()`（由轮询调用的状态机推进：查CI→合并→查部署→归档，CI/部署失败都有对应的通知/唤醒逻辑，且都做了"同一个失败不重复通知"的去重）。
 - `scheduler/service.py` + `main.py`：新增 `PrPollRunner`（跟 `SandboxReaperRunner` 同款结构），按 `accept_pr_poll_interval_s`（默认60s）轮询所有 `pr_open` 卡片；`api/routes/scheduler.py` 加 `POST /api/admin/scheduler/poll-open-prs` 供测试/运维手动触发一轮（跟现有 `/tick` 同款）。
 - PR trailer（`_pr_trailers`）：`Requested-by`=`Topic.created_by`，`Reviewed-by`=`AcceptCard.decided_by`，`Cheese-Topic`=话题id；PR 描述和最终合并 commit message 里都带上。
+  - 后续更正（话题「分身PR认到人」）：`Requested-by` 不再取 `Topic.created_by`——分身拆出的子话题里它是分身自己的 `cheese-<hex12>`，不是人。现在取话题成员表里 role=owner 的真人（`identity.requester_handle`），解析不出人才回落 `created_by`。
 
 ## 测试与验证结果
 

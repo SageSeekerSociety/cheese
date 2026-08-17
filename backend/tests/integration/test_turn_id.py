@@ -7,9 +7,9 @@ from tests.integration.conftest import chat_ws_url
 
 
 def _topic(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": "user-1"},
     ).json()["data"]
     return t["id"]
@@ -24,7 +24,7 @@ def test_turn_blocks_share_one_turn_id(client):
             if frame["type"] in ("done", "error"):
                 break
 
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     turn_ids = {b["turn_id"] for b in blocks if b["turn_id"]}
     # The user message + the AI reply belong to the same turn.
     assert len(turn_ids) == 1
@@ -38,11 +38,11 @@ def test_cheese_created_block_inherits_turn_from_header(client):
     tid = _topic(client)
     turn = str(uuid.uuid4())
     r = client.post(
-        f"/api/topics/{tid}/decision",
+        f"/topics/{tid}/decision",
         json={"decision": "Recall@10"},
         headers={"X-Cheese-Token": SANDBOX_TOKEN, "X-Cheese-Turn": turn},
     )
     assert r.status_code == 200
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     decision = next(b for b in blocks if b["kind"] == "decision")
     assert decision["turn_id"] == turn

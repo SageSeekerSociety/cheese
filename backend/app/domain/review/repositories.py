@@ -65,6 +65,73 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_live_for_topics(
+        self, topic_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
+    ) -> list[AcceptCard]:
+        """Undecided cards on ANY of these topics.
+
+        By topic-set rather than by topic because archiving is cascading: the
+        question this answers is "would archiving this sub-topic close a card
+        somebody is still waiting on", and a grandchild's card is closed by the
+        same cascade (`TopicService._archive_children`).
+        """
+        if not topic_ids:
+            return []
+        stmt = (
+            select(AcceptCard)
+            .where(
+                AcceptCard.topic_id.in_(topic_ids),
+                AcceptCard.status.in_(statuses),
+            )
+            .order_by(AcceptCard.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def reviewer_topic_ids(
+        self, topic_ids: list[uuid.UUID], reviewer_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{topic_id: is one of its cards still waiting on this reviewer} for
+        every topic here that ever routed a card to them, in ONE query.
+
+        Two facts in one row because they come from the same scan and the
+        sidebar needs both: *being named* on a card is a lasting relationship
+        with the topic (it stays yours after you accept it), while *pending* is
+        the transient "this is on your desk right now". `pending` alone is the
+        waiting state — a card in `pending_gate`/`gate_failed`/`conflict` is
+        with 芝士, and one in `pr_open`/`accepted` has already been decided.
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(
+                AcceptCard.topic_id,
+                func.bool_or(AcceptCard.status == AcceptStatus.pending),
+            )
+            .where(
+                AcceptCard.topic_id.in_(topic_ids),
+                AcceptCard.reviewer_handle == reviewer_handle,
+            )
+            .group_by(AcceptCard.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: bool(waiting) for topic_id, waiting in rows}
+
+    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
+        """When a card on these topics last changed hands — NULL if there are no
+        cards at all.
+
+        `decided_at` first, `updated_at` as the fallback: a card condemned by
+        the gate never gets a `decided_at` (nobody decided it), yet its moment
+        is exactly what a "give them a window to re-file" clock has to start
+        from.
+        """
+        if not topic_ids:
+            return None
+        stmt = select(
+            func.max(func.coalesce(AcceptCard.decided_at, AcceptCard.updated_at))
+        ).where(AcceptCard.topic_id.in_(topic_ids))
+        return (await self._session.scalars(stmt)).first()
+
     async def list_stale_pending_gate(self, cutoff: datetime) -> list[AcceptCard]:
         """孤儿卡扫底 (2026-08-11): cards still waiting on a gate that started
         (or, failing that, was filed) before ``cutoff``.

@@ -5,10 +5,10 @@ container runs a read-only ``ttyd`` mirror of the `claude` tmux pane on port 768
 (published to a random ``127.0.0.1:<port>``). The browser can't reach that host
 port directly, so this module reverse-proxies it under the topic's API namespace:
 
-  * ``GET  /api/topics/{id}/terminal``           → status ``{available, backend, url?}``
-  * ``GET  /api/topics/{id}/terminal/live[/…]``   → ttyd HTTP (the xterm.js page,
+  * ``GET  /topics/{id}/terminal``           → status ``{available, backend, url?}``
+  * ``GET  /topics/{id}/terminal/live[/…]``   → ttyd HTTP (the xterm.js page,
                                                     ``/token``, assets)
-  * ``WS   /api/topics/{id}/terminal/live/ws``     → ttyd WebSocket (subprotocol
+  * ``WS   /topics/{id}/terminal/live/ws``     → ttyd WebSocket (subprotocol
                                                     ``tty``)
 
 ttyd's client builds its WebSocket/token URLs RELATIVE to ``location.pathname``
@@ -17,11 +17,14 @@ ttyd's client builds its WebSocket/token URLs RELATIVE to ``location.pathname``
 on this proxy with no rewriting. The frontend iframes ``…/terminal/live/`` and
 Vite (or the reverse proxy) forwards both HTTP and the WS upgrade to us.
 
-**This path must reach us un-rewritten.** Both gateways front the API by stripping
-one ``/api`` (nginx ``proxy_pass http://backend:8081/``), which would turn the
-iframe's URL into ``/topics/…`` and 404 it — so ``frontend/nginx.conf`` and
-``vite.config.ts`` each carry an explicit no-strip exception for this prefix. Move
-the routes and those two must move with them.
+The iframe's URL is the browser-side one (`/api/topics/…/terminal/live/`); the
+gateway strips the mount and this route sees it bare. That used to be untrue —
+both gateways carried an explicit no-strip exception for this prefix, because the
+route itself began with `/api` and a strip would have 404'd it. #370 step 2 made
+every route bare, so the exception went with it and this path is now ordinary.
+What is NOT ordinary: anything we hand back for the browser to resolve against
+(the `url` below, the cookie's Path) must be rebuilt with `proxy.browser_path` —
+read from `request.url.path` it would be the stripped one.
 
 Read-only: ttyd runs with ``-R``, so the pane is a pure mirror — keystrokes in
 the browser never reach the container.
@@ -51,7 +54,7 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.tmux_provider import ttyd_endpoint
 from app.domain.topic.services import TopicService
 
-router = APIRouter(prefix="/api/topics", tags=["terminal"])
+router = APIRouter(prefix="/topics", tags=["terminal"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -60,14 +63,9 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 COOKIE_NAME = "cheesex_proxy"
 
 
-def _cookie_path(request: Request) -> str:
-    """The browser-visible ``…/terminal`` prefix of this request, so the cookie
-    covers the pane's sub-requests and nothing else. Derived from the live path
-    rather than hard-coded, so it stays right behind any external prefix."""
-    path = request.url.path
-    marker = "/terminal"
-    idx = path.find(marker)
-    return path[: idx + len(marker)] if idx != -1 else path
+def _prefix(topic_id: uuid.UUID) -> str:
+    """The browser-visible `…/terminal` prefix — see proxy.GATEWAY_MOUNT."""
+    return proxy.browser_path(f"/topics/{topic_id}/terminal")
 
 
 def _device_screen_id(topic_id: uuid.UUID) -> str | None:
@@ -129,7 +127,10 @@ async def terminal_status(topic_id: uuid.UUID, request: Request, db: DbSession) 
             "available": True,
             "backend": backend,
             "interactive": True,
-            "url": f"/api/topics/{topic_id}/terminal/live/",
+            # Browser-facing, so it keeps the gateway mount even though the
+            # route itself is now bare (#370 step 2) — the iframe resolves its
+            # assets and socket against this path, which never saw the strip.
+            "url": f"{_prefix(topic_id)}/live/",
         }
     )
 
@@ -150,7 +151,7 @@ async def terminal_proxy_http(
         return Response(status_code=404, content=b"terminal unavailable")
     response = await proxy.forward(endpoint, path, request)
     return proxy.attach_cookie(
-        response, request, cookie_name=COOKIE_NAME, cookie_path=_cookie_path(request)
+        response, request, cookie_name=COOKIE_NAME, cookie_path=_prefix(topic_id)
     )
 
 

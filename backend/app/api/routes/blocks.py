@@ -14,7 +14,7 @@ from app.domain.agent.runtime import InProcessBroker
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import ReactionToggleIn
 
-router = APIRouter(prefix="/api/blocks", tags=["blocks"])
+router = APIRouter(prefix="/blocks", tags=["blocks"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
