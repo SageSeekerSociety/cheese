@@ -1,0 +1,99 @@
+name: Repo Guards
+
+# Machine-enforced versions of rules this repo already states as absolute.
+#
+# The motivating evidence is in the repo itself: .claude/rules/backend-tests.md
+# says "Eight files already carry a copy-pasted _auth() helper — don't add a
+# ninth", and there are now nine. A rule that only an agent's diligence enforces
+# is a rule that decays. Nothing here changes what is allowed; it changes who
+# notices.
+#
+# On the cheese-ci pool and dependency-free (bash + python3 stdlib, no uv, no
+# database, no docker): the org's Actions billing lapsed on 2026-08-13 (every
+# ubuntu-latest job is refused before it starts), so it moved off hosted onto
+# the same three-machine pool as the other checks — separate capacity from the
+# dev box's single deploy slot. Deliberately NOT behind test.yml's `scope` gate
+# — that gate skips the suite for a squash merge whose tree already passed PR
+# CI, which is exactly the path a cross-PR migration fork travels.
+#
+# `.github/workflows/**` is in the path filter because one of the guards judges
+# the workflows themselves (action pinning) — filtering on this file alone would
+# let an unpinned action land in any other workflow without ever running it.
+# `deploy/**` is there for the same reason: the metering-proxy guard judges the
+# deployment config, so a change under deploy/ must be able to trip it. And
+# `frontend/**`, for the same reason again: the fixed-palette guard judges .vue
+# templates, and the change it exists to catch — a new `color="grey-lighten-5"`
+# on a component — is by definition a frontend-only diff, which without this
+# line would sail past without the guard ever starting.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'deploy/**'
+      - '.claude/scripts/**'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'deploy/**'
+      - '.claude/scripts/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+# Cancel superseded runs on a PR, never on main. Keying push runs by sha puts
+# each merge in its own group: with a shared `github.ref` key, a second merge
+# cancelled the first one's run and main was left with no result for that
+# commit. build.yml already keyed on sha for main; these did not.
+concurrency:
+  group: repo-guards-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  guards:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # Each guard proves itself before it is trusted to judge the tree: a guard
+      # that silently stopped matching would otherwise look identical to a clean
+      # repo, which is the failure mode these guards exist to prevent.
+      - name: Guards self-test
+        run: |
+          bash .claude/scripts/check-repo-rules.sh --self-test
+          bash .claude/scripts/check-action-pins.sh --self-test
+          bash .claude/scripts/check-metering-proxy.sh --self-test
+          python3 .claude/scripts/check-migration-fork.py --self-test
+
+      - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException, fixed-palette colours)
+        run: bash .claude/scripts/check-repo-rules.sh
+
+      # Third-party actions run on the dev and prod boxes themselves (build.yml,
+      # build-tmux.yml and deploy-dev.yml all target self-hosted runners), so a
+      # repointed upstream tag executes with the docker socket and the ghcr
+      # credentials in reach. Pins make that an upgrade we review, not one that
+      # happens to us.
+      - name: Actions are pinned to a commit SHA
+        run: bash .claude/scripts/check-action-pins.sh
+
+      # The subscription metering proxy's durable credential is a one-year,
+      # non-refreshing setup-token (CODEX findings / #388). This fails the build
+      # if the deploy config reintroduces a refresh command, a login-JSON source,
+      # or a credential-refresh daemon — the mechanisms behind the outage.
+      - name: Metering proxy stays credential-hardened
+        run: bash .claude/scripts/check-metering-proxy.sh
+
+      # The remote-tracking ref has to exist for the comparison; a PR checkout
+      # does not create it. Shallow is enough — only the tree at main's tip is
+      # read, never its history.
+      - name: Fetch main for comparison
+        run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+
+      - name: Alembic chain would not fork on merge
+        run: python3 .claude/scripts/check-migration-fork.py --base origin/main

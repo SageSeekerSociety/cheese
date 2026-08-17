@@ -1,0 +1,30 @@
+{
+  "_comment": "Frozen design-token violations (hardcoded colours, off-ladder radii). The ratchet blocks any NEW one; these are pre-existing and may only go down. Regenerate with `pnpm run lint:style:update`. See docs/design-system.md.",
+  "files": {
+    "src/components/chat/ChatConversationsList.vue": 2,
+    "src/components/chat/ChatDialog.vue": 3,
+    "src/components/chat/ChatMessage.vue": 8,
+    "src/components/chat/ConversationGroupList.vue": 2,
+    "src/components/ChatPanel.vue": 3,
+    "src/components/common/AvatarUploader.vue": 2,
+    "src/components/common/Navigation/LeftAppRail.vue": 1,
+    "src/components/common/Navigation/RailItem.vue": 14,
+    "src/components/common/OfflineBanner.vue": 1,
+    "src/components/common/UserAvatar.vue": 1,
+    "src/components/DeviceLiveViewer.vue": 3,
+    "src/components/DocPanel.vue": 4,
+    "src/components/projects/header/ProjectHeader.vue": 1,
+    "src/components/projects/header/SubprojectHeader.vue": 1,
+    "src/components/projects/navigation/ProjectNavigation.vue": 2,
+    "src/components/projects/navigation/SubprojectNavigation.vue": 2,
+    "src/components/TopicMembers.vue": 4,
+    "src/components/TopicSidebar.vue": 1,
+    "src/views/projects/components/ProjectOverview.vue": 2,
+    "src/views/projects/components/ProjectSubprojects.vue": 1,
+    "src/views/projects/Detail.vue": 1,
+    "src/views/tasks/components/TaskHeader.vue": 1,
+    "src/views/tasks/Detail.vue": 1,
+    "src/views/teams/detail/Knowledge.vue": 6,
+    "src/views/user/settings/Profile.vue": 2
+  }
+}

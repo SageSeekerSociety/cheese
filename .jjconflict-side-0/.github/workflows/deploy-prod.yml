@@ -1,0 +1,139 @@
+name: Deploy (prod RUC box)
+
+# Gated deployment to the prod (RUC) box (cheese-prod-app, 192.168.16.8 →
+# cheese.ruc.edu.cn). Like the dev box it's on ghg's private network with no
+# public inbound, so a self-hosted runner (label `cheese-prod`) lives ON the box
+# and pulls jobs outbound; it runs the SAME unified Docker deploy as dev
+# (deploy/deploy-docker.sh — the box was cut over from bare-metal by
+# deploy/prod-docker-cutover.sh; bare-metal kept installed-but-disabled as the
+# rollback). The only difference from dev is the gate: prod never auto-deploys —
+# it fires on a published GitHub Release (or a manual dispatch of a specific
+# ref) and requires a human approval before anything runs.
+#
+# prod deploys RELEASES, not main commits — its current release is v0.16.4
+# (whose images live under the pre-rename `cheese-backend-py/*` path; future
+# releases build under `cheese/*` and need no override).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag, branch, or commit SHA to deploy"
+        required: true
+        default: main
+      dry_run:
+        description: "Show what would deploy; do not deploy"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  checks: read
+  actions: read
+  # manual-approval opens an issue and waits for an approver to comment
+  issues: write
+
+concurrency:
+  group: deploy-prod-ruc
+  cancel-in-progress: false
+
+jobs:
+  # Gate on a CI runner, NOT ubuntu-latest: every other workflow here runs
+  # self-hosted, so an org billing lapse only ever surfaces in THIS job — and it
+  # did (2026-08-15, the 0.18.0 release: "the job was not started because recent
+  # account payments have failed", with zero failed steps to point at). The
+  # original reason for a hosted runner — a long approval wait must not tie up
+  # the PROD box's runner — still holds, and a ci-pool runner satisfies it: the
+  # wait occupies one of three, and never the box that deploys. Waits for the
+  # release commit's CI (release events only; a manual dispatch trusts the
+  # operator's ref) and then a human approval.
+  gate:
+    runs-on: [self-hosted, cheese-ci]
+    # Deliberately unbounded (GitHub's 360m default): this job blocks on a
+    # human approving via manual-approval. A tight timeout here would not
+    # catch a hang, it would cancel a deploy waiting on its approver.
+    steps:
+      - name: Wait for Docker image build
+        if: github.event_name == 'release'
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'build-backend'
+          wait-interval: 15
+
+      - name: Wait for backend tests
+        if: github.event_name == 'release'
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'test'
+          wait-interval: 15
+
+      # Previously missing: this gate only waited on build + pytest, so this
+      # box's releases could ship with a red (or never-run) e2e suite —
+      # "deploy only checks build success" was accurate for prod too.
+      - name: Wait for e2e tests
+        if: github.event_name == 'release'
+        uses: lewagon/wait-on-check-action@ccfb013c15c8afb7bf2b7c028fb74dc5a068cccc # v1.3.4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          check-name: 'e2e'
+          wait-interval: 15
+
+      # GitHub's native environment required-reviewers isn't available on this
+      # plan (private repo), so gate on a human approving via an auto-opened
+      # issue — the same mechanism the etrip deploy uses. Skipped for dry-run.
+      - name: Require manual approval
+        if: ${{ !inputs.dry_run }}
+        uses: trstringer/manual-approval@fa642940caf8412403569b28b2db4a1df08a83a3 # v1.13.1
+        with:
+          secret: ${{ github.token }}
+          approvers: andylizf
+          minimum-approvals: 1
+          issue-title: "Approve prod (RUC) deploy${{ github.event.release.tag_name && format(' of {0}', github.event.release.tag_name) || '' }}"
+          issue-body: "Deploying to cheese.ruc.edu.cn (prod RUC box). Comment `approve` to proceed or `deny` to cancel."
+
+  deploy:
+    needs: gate
+    if: ${{ needs.gate.result == 'success' }}
+    # See deploy-dev.yml: records a deployment so the target is queryable. The
+    # `production` environment already exists (deploy.yml uses it) and carries
+    # no protection rules, so the human gate stays where it is — in `gate`.
+    environment: production
+    runs-on: [self-hosted, cheese-prod]
+    timeout-minutes: 30
+    steps:
+      # Deploy TOOLING (deploy-docker.sh + compose) always comes from the DEFAULT
+      # branch — release branches/tags don't carry it (checking out the release
+      # ref made the job fail with "deploy/deploy-docker.sh: No such file").
+      - name: Check out deploy tooling (default branch)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The deployed REF only determines WHICH image sha to run. Fetch it and
+      # peel to the commit (annotated tags point at a tag object, not the commit).
+      - name: Resolve image tag from the release/ref (monorepo commit sha)
+        id: img
+        env:
+          REF: ${{ github.event.release.tag_name || inputs.ref }}
+        run: |
+          git fetch --depth=1 origin "$REF"
+          echo "sha=$(git rev-parse --short=7 'FETCH_HEAD^{commit}')" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy (or dry-run)
+        env:
+          SHA: ${{ steps.img.outputs.sha }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "DRY RUN — would docker-deploy sha '$SHA'. Current state:"
+            docker compose -f deploy/compose/docker-compose.base.yml -p cheese ps || true
+            curl -s -o /dev/null -w 'backend health=%{http_code}\n' http://127.0.0.1:8081/healthz || true
+            curl -s -o /dev/null -w 'frontend :8080=%{http_code}\n' http://127.0.0.1:8080/ || true
+          else
+            bash deploy/deploy-docker.sh "$SHA"
+          fi

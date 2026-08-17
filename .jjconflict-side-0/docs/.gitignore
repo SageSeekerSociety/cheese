@@ -1,0 +1,6 @@
+# Application materials live in Feishu Drive only — never commit if re-downloaded
+京东杯/
+# Canonical in Feishu wiki — fetched working copies must never be committed
+vision.md
+feedback.md
+.DS_Store

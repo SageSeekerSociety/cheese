@@ -1,0 +1,2195 @@
+[
+  {
+    "path": "/ai/quota",
+    "method": "GET",
+    "tags": [
+      "AI"
+    ],
+    "summary": "Get Current User's AI Quota",
+    "operationId": "get-user-ai-quota",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/discussions",
+    "method": "GET",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "List Discussions",
+    "operationId": "list-discussions",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "modelType",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "modelId",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "parent_id",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "sort_by",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "sort_order",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/discussions",
+    "method": "POST",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "Create Discussion",
+    "operationId": "create-discussion",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/discussions/reactions",
+    "method": "GET",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "Get all reaction types",
+    "operationId": "getAllReactionTypes",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/discussions/{discussionId}",
+    "method": "DELETE",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "Delete Discussion",
+    "operationId": "delete-discussion",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/discussions/{discussionId}",
+    "method": "GET",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "Query Discussion",
+    "operationId": "get-discussion",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "sort_by",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "sort_order",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/discussions/{discussionId}",
+    "method": "PATCH",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "Update Discussion",
+    "operationId": "patch-discussion",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/discussions/{discussionId}/reactions/{reactionTypeId}",
+    "method": "POST",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "React to Discussion",
+    "operationId": "react-to-discussion",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/discussions/{discussionId}/sub-discussions",
+    "method": "GET",
+    "tags": [
+      "Discussions"
+    ],
+    "summary": "List Sub-Discussions",
+    "operationId": "list-sub-discussions",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "sort_by",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "sort_order",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/knowledge",
+    "method": "GET",
+    "tags": [
+      "Knowledge"
+    ],
+    "summary": "List Knowledge Items",
+    "operationId": "listKnowledge",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "teamId",
+        "in": "query",
+        "required": true
+      },
+      {
+        "name": "projectId",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "type",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "labels",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "query",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "sort_by",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "sort_order",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/knowledge",
+    "method": "POST",
+    "tags": [
+      "Knowledge"
+    ],
+    "summary": "Create Knowledge Item",
+    "operationId": "createKnowledge",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/knowledge/{knowledgeId}",
+    "method": "DELETE",
+    "tags": [
+      "Knowledge"
+    ],
+    "summary": "Delete Knowledge Item",
+    "operationId": "knowledgeDelete",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/knowledge/{knowledgeId}",
+    "method": "GET",
+    "tags": [
+      "Knowledge"
+    ],
+    "summary": "Get Single Knowledge Item",
+    "operationId": "KnowledgeGetById",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/knowledge/{knowledgeId}",
+    "method": "PATCH",
+    "tags": [
+      "Knowledge"
+    ],
+    "summary": "Update Knowledge Item",
+    "operationId": "updateKnowledge",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/knowledge/{knowledgeId}/upvote",
+    "method": "DELETE",
+    "tags": [
+      "Knowledge"
+    ],
+    "summary": "Remove Upvote from Knowledge Item",
+    "operationId": "removeUpvoteKnowledge",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/knowledge/{knowledgeId}/upvote",
+    "method": "POST",
+    "tags": [
+      "Knowledge"
+    ],
+    "summary": "Upvote Knowledge Item",
+    "operationId": "upvoteKnowledge",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/notifications",
+    "method": "GET",
+    "tags": [
+      "Notifications"
+    ],
+    "summary": "List Notifications for Current User",
+    "operationId": "list-notifications",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/EncodedCursorPageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "type",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "read",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/notifications",
+    "method": "PATCH",
+    "tags": [
+      "Notifications"
+    ],
+    "summary": "Bulk Update Notification Status (e.g., Mark Multiple as Read)",
+    "operationId": "bulk-update-notifications",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/notifications/status",
+    "method": "PUT",
+    "tags": [
+      "Notifications"
+    ],
+    "summary": "Set Collective Notification Status (e.g., Mark All as Read)",
+    "operationId": "set-collective-notification-status",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/notifications/unread-count",
+    "method": "GET",
+    "tags": [
+      "Notifications"
+    ],
+    "summary": "Get Unread Notification Count",
+    "operationId": "get-unread-notifications-count",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/notifications/{notificationId}",
+    "method": "DELETE",
+    "tags": [
+      "Notifications"
+    ],
+    "summary": "Delete a Notification",
+    "operationId": "delete-notification",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/notifications/{notificationId}",
+    "method": "GET",
+    "tags": [
+      "Notifications"
+    ],
+    "summary": "Get a Single Notification",
+    "operationId": "get-notification-by-id",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/notifications/{notificationId}",
+    "method": "PATCH",
+    "tags": [
+      "Notifications"
+    ],
+    "summary": "Update Notification Status (e.g., Mark as Read/Unread)",
+    "operationId": "update-notification-status",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/projects",
+    "method": "GET",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "List Projects",
+    "operationId": "get-projects",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "team_id",
+        "in": "query",
+        "required": true
+      },
+      {
+        "name": "parent_id",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "leader_id",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "member_id",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "archived",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/projects",
+    "method": "POST",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "Create Project",
+    "operationId": "create-project",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "201"
+    ]
+  },
+  {
+    "path": "/projects/{projectId}",
+    "method": "DELETE",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "Delete Project",
+    "operationId": "delete-project",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/projects/{projectId}",
+    "method": "GET",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "Query Project",
+    "operationId": "get-project",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/projects/{projectId}",
+    "method": "PATCH",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "Update Project",
+    "operationId": "patch-project",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/projects/{projectId}/members",
+    "method": "GET",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "Enumerate Project Members",
+    "operationId": "get-project-members",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/projects/{projectId}/members",
+    "method": "POST",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "Add Project Member",
+    "operationId": "post-project-member",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "201"
+    ]
+  },
+  {
+    "path": "/projects/{projectId}/members/{userId}",
+    "method": "DELETE",
+    "tags": [
+      "Projects"
+    ],
+    "summary": "Remove Project Member",
+    "operationId": "delete-project-member",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/spaces",
+    "method": "GET",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Enumerate Spaces",
+    "operationId": "get-spaces",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "queryMyRank",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "sort_by",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "sort_order",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces",
+    "method": "POST",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Create Space",
+    "operationId": "post-space",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}",
+    "method": "DELETE",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Delete Space",
+    "operationId": "delete-space",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}",
+    "method": "GET",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Query Space",
+    "operationId": "get-space",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "queryMyRank",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryCategories",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}",
+    "method": "PATCH",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Update Space",
+    "operationId": "patch-space",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/analytics/tasks",
+    "method": "GET",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Get Space Task Analytics",
+    "operationId": "getSpaceTaskAnalytics",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "from",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "to",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "taskStatus",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "categoryId",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "publisherId",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "realName",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "successBy",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/categories",
+    "method": "GET",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "List categories in a space",
+    "operationId": "listSpaceCategories",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "includeArchived",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/categories",
+    "method": "POST",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Create a category in a space",
+    "operationId": "createSpaceCategory",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "201"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/categories/{categoryId}",
+    "method": "DELETE",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Delete a category",
+    "operationId": "deleteSpaceCategory",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/categories/{categoryId}",
+    "method": "GET",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Get a specific category",
+    "operationId": "getSpaceCategory",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/categories/{categoryId}",
+    "method": "PATCH",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Update a category",
+    "operationId": "updateSpaceCategory",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/categories/{categoryId}/archive",
+    "method": "DELETE",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Unarchive a category",
+    "operationId": "unarchiveSpaceCategory",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/categories/{categoryId}/archive",
+    "method": "POST",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Archive a category",
+    "operationId": "archiveSpaceCategory",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/managers",
+    "method": "POST",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Add Space Admin",
+    "operationId": "post-space-admin",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/managers/{userId}",
+    "method": "DELETE",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Disqualify Space Admin",
+    "operationId": "delete-space-admin",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/managers/{userId}",
+    "method": "PATCH",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Update Space Admin Info",
+    "operationId": "patch-space-admin",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/participants/export",
+    "method": "GET",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Export Space Participants",
+    "operationId": "exportSpaceParticipants",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "format",
+        "in": "query",
+        "required": true
+      },
+      {
+        "name": "from",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "to",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "taskStatus",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "categoryId",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "publisherId",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "realName",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "successBy",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/spaces/{spaceId}/publishers/participation",
+    "method": "GET",
+    "tags": [
+      "Spaces"
+    ],
+    "summary": "Get Publishers Participation",
+    "operationId": "getPublishersParticipation",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "successBy",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Enumerate Tasks",
+    "operationId": "get-tasks",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "space",
+        "in": "query",
+        "required": true
+      },
+      {
+        "name": "categoryId",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "approved",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "owner",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "joined",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "topics",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/EncodedCursorPageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "sort_by",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "sort_order",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "querySpace",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryTeam",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryJoinability",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "querySubmittability",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryJoined",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryUserDeadline",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryTopics",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "keywords",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks",
+    "method": "POST",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Create Task",
+    "operationId": "post-task",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}",
+    "method": "DELETE",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Delete Task",
+    "operationId": "delete-task",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Query Task",
+    "operationId": "get-task",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "querySpace",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryTeam",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryJoinability",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "querySubmittability",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryJoined",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryUserDeadline",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryTopics",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}",
+    "method": "PATCH",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Update Task",
+    "operationId": "patch-task",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/ai-advice",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Get AI Advice",
+    "operationId": "get-task-ai-advice",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/ai-advice",
+    "method": "POST",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Request AI Advice Generation",
+    "operationId": "request-task-ai-advice",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/ai-advice/conversations",
+    "method": "POST",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Create AI Advice Conversation",
+    "operationId": "create-task-ai-advice-conversation",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/ai-advice/conversations/grouped",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Get AI Advice Conversations Grouped by Conversation ID",
+    "operationId": "get-task-ai-advice-conversations-grouped",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/ai-advice/conversations/{conversationId}",
+    "method": "DELETE",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Delete AI Advice Conversation",
+    "operationId": "delete-task-ai-advice-conversation",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "conversationId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/ai-advice/conversations/{conversationId}",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Get AI Advice Conversation",
+    "operationId": "get-task-ai-advice-conversation",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "conversationId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/ai-advice/status",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Get AI Advice Generation Status",
+    "operationId": "get-task-ai-advice-status",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants",
+    "method": "DELETE",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Leave Task By Member ID",
+    "operationId": "delete-task-participant-by-member",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "member",
+        "in": "query",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Get Participants",
+    "operationId": "get-task-participants",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "approved",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryRealNameInfo",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants",
+    "method": "PATCH",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Update TaskMembership By Member ID",
+    "operationId": "patch-task-membership-by-member",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [
+      {
+        "name": "member",
+        "in": "query",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants",
+    "method": "POST",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Apply for Task",
+    "operationId": "post-task-participant",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [
+      {
+        "name": "member",
+        "in": "query",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}",
+    "method": "DELETE",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Delete TaskMembership",
+    "operationId": "delete-task-participant",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Get TaskMembership",
+    "operationId": "get-task-participant",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}",
+    "method": "PATCH",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Update TaskMembership",
+    "operationId": "patch-task-participant",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}/submissions",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Enumerate Submissions",
+    "operationId": "get-task-submissions",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      },
+      {
+        "name": "allVersions",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "queryReview",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "reviewed",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      },
+      {
+        "name": "sort_by",
+        "in": "query",
+        "required": false
+      },
+      {
+        "name": "sort_order",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}/submissions",
+    "method": "POST",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Create Submission",
+    "operationId": "post-task-submission",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
+    "method": "DELETE",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Revert Review Submission",
+    "operationId": "delete-task-submission-review",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      },
+      {
+        "name": "submissionId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
+    "method": "PATCH",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Re-Review Submission",
+    "operationId": "patch-task-submission-review",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      },
+      {
+        "name": "submissionId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review",
+    "method": "POST",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Review Submission",
+    "operationId": "post-task-submission-review",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      },
+      {
+        "name": "submissionId",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/participants/{participantId}/submissions/{version}",
+    "method": "PATCH",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Update Submission",
+    "operationId": "patch-task-submission",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [
+      {
+        "name": "participantId",
+        "in": "path",
+        "required": true
+      },
+      {
+        "name": "version",
+        "in": "path",
+        "required": true
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/resubmit",
+    "method": "POST",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Resubmit a rejected task for approval",
+    "operationId": "resubmit-task",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/tasks/{taskId}/teams",
+    "method": "GET",
+    "tags": [
+      "Tasks"
+    ],
+    "summary": "Get teams associated with a task",
+    "operationId": "getTaskTeams",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "filter",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Get Teams",
+    "operationId": "get-teams",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "query",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/EncodedCursorPageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Create Team",
+    "operationId": "post-team",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/my-teams",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Query My Teams",
+    "operationId": "get-my-teams",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}",
+    "method": "DELETE",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Delete Team",
+    "operationId": "delete-team",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Query Team",
+    "operationId": "get-team",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}",
+    "method": "PATCH",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Update Team",
+    "operationId": "patch-team",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/invitations",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "List invitations sent by a team",
+    "operationId": "listTeamInvitations",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "status",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/invitations",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Invite a user to the team",
+    "operationId": "createTeamInvitation",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "201"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/invitations/{invitationId}",
+    "method": "DELETE",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Cancel a pending invitation",
+    "operationId": "cancelTeamInvitation",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/members",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Enumerate Team Members",
+    "operationId": "get-team-members",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "queryRealNameStatus",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/members",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Add Team Member",
+    "operationId": "post-team-member",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/members/{userId}",
+    "method": "DELETE",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Kick Out Team Member",
+    "operationId": "delete-team-member",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/members/{userId}",
+    "method": "PATCH",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Update Team Membership Info",
+    "operationId": "patch-team-member",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/requests",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "List join requests for a team",
+    "operationId": "listTeamJoinRequests",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "status",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/requests",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Request to join a team",
+    "operationId": "createTeamJoinRequest",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "201"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/requests/{requestId}/approve",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Approve a join request",
+    "operationId": "approveTeamJoinRequest",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/teams/{teamId}/requests/{requestId}/reject",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Reject a join request",
+    "operationId": "rejectTeamJoinRequest",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/users/me/team-invitations",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "List invitations received",
+    "operationId": "listMyInvitations",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "status",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/users/me/team-invitations/{invitationId}/accept",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Accept a team invitation",
+    "operationId": "acceptTeamInvitation",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/InvitationId"
+      }
+    ],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/users/me/team-invitations/{invitationId}/decline",
+    "method": "POST",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Decline a team invitation",
+    "operationId": "declineTeamInvitation",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/InvitationId"
+      }
+    ],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/users/me/team-requests",
+    "method": "GET",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "List my join requests",
+    "operationId": "listMyJoinRequests",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "status",
+        "in": "query",
+        "required": false
+      },
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/users/me/team-requests/{requestId}",
+    "method": "DELETE",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Cancel my pending join request",
+    "operationId": "cancelMyJoinRequest",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/RequestId"
+      }
+    ],
+    "responseCodes": [
+      "204"
+    ]
+  },
+  {
+    "path": "/users/me/teams/{teamId}",
+    "method": "DELETE",
+    "tags": [
+      "Teams"
+    ],
+    "summary": "Leave a team",
+    "operationId": "leaveTeam",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [],
+    "responseCodes": [
+      "204",
+      "403",
+      "404"
+    ]
+  },
+  {
+    "path": "/users/{userId}/identity",
+    "method": "GET",
+    "tags": [
+      "Users"
+    ],
+    "summary": "Get User Real Name Identity Info",
+    "operationId": "get-user-identity",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "name": "precise",
+        "in": "query",
+        "required": false
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/users/{userId}/identity",
+    "method": "PATCH",
+    "tags": [
+      "Users"
+    ],
+    "summary": "Update User Real Name Identity Info",
+    "operationId": "patch-user-identity",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/users/{userId}/identity",
+    "method": "PUT",
+    "tags": [
+      "Users"
+    ],
+    "summary": "Update User Real Name Identity Info",
+    "operationId": "put-user-identity",
+    "deprecated": false,
+    "hasRequestBody": true,
+    "parameters": [],
+    "responseCodes": [
+      "200"
+    ]
+  },
+  {
+    "path": "/users/{userId}/identity/access-logs",
+    "method": "GET",
+    "tags": [
+      "Users"
+    ],
+    "summary": "Get User Real Name Identity Access Logs",
+    "operationId": "get-user-identity-access-logs",
+    "deprecated": false,
+    "hasRequestBody": false,
+    "parameters": [
+      {
+        "ref": "#/components/parameters/PageStart"
+      },
+      {
+        "ref": "#/components/parameters/PageSize"
+      }
+    ],
+    "responseCodes": [
+      "200"
+    ]
+  }
+]
