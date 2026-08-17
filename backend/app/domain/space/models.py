@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -78,6 +79,19 @@ class SpaceCategory(Base):
     archived_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # 机构协议 (spec §4.2, #370): a 项目集 is where an institution states what it
+    # provides and what it asks in return — 创研课 2026 秋 has twenty 赛题 and one
+    # set of terms, so this is configured once here rather than twenty times
+    # below. A single 赛题 may override it (`task.protocol_override`).
+    # Resolved by app.domain.task.protocol.resolve; never read directly.
+    resource_pack: Mapped[dict] = mapped_column(
+        JSON, nullable=False, default=dict, server_default="{}"
+    )
+    conditions: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
+    default_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False

@@ -78,9 +78,10 @@ async def project_credits(project_id: uuid.UUID, db: DbSession) -> dict:
             "grants": [
                 {
                     "id": str(g.id),
-                    "source_task_id": (
-                        str(g.source_task_id) if g.source_task_id else None
-                    ),
+                    # An int 赛题 id since #370 — it used to be a uuid, which is
+                    # why this was stringified. Sending "7" for 7 would make the
+                    # client's own id comparisons quietly fail.
+                    "source_task_id": g.source_task_id,
                     "credits_total": g.credits_total,
                     "credits_used": g.credits_used,
                     "created_at": g.created_at.isoformat(),

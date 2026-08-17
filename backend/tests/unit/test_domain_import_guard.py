@@ -70,13 +70,11 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 的旧 base 上跑，棘轮会把这两行报成"陈行"——那是 checkout 落后，不是债还完了。
         ("app.domain.conclusion.services", "app.domain.block.repositories"),
         ("app.domain.conclusion.services", "app.domain.topic.repositories"),
-        # --- alert / cx_task ---
+        # --- alert ---
         ("app.domain.alert.services", "app.domain.block.repositories"),
         ("app.domain.alert.services", "app.domain.project.repositories"),
-        ("app.domain.cx_task.services", "app.domain.space.repositories"),
         # --- dashboard（读模型，横跨 7 个领域聚合，单独还） ---
         ("app.domain.dashboard.services", "app.domain.alert.repositories"),
-        ("app.domain.dashboard.services", "app.domain.cx_task.repositories"),
         ("app.domain.dashboard.services", "app.domain.membership.repositories"),
         ("app.domain.dashboard.services", "app.domain.milestone.repositories"),
         ("app.domain.dashboard.services", "app.domain.project.repositories"),
@@ -93,7 +91,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.oauth.services", "app.domain.user.repositories"),
         # --- project ---
         ("app.domain.project.services", "app.domain.topic.repositories"),
-        ("app.domain.project.services", "app.domain.cx_task.repositories"),
         ("app.domain.project.services", "app.domain.usage.repositories"),
         ("app.domain.project.services", "app.domain.user.repositories"),
         # --- questions ---
@@ -107,7 +104,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.gate_sweep", "app.domain.topic.repositories"),
         ("app.domain.review.pr_publish", "app.domain.topic.repositories"),
         ("app.domain.review.services", "app.domain.block.repositories"),
-        ("app.domain.review.services", "app.domain.cx_task.repositories"),
         ("app.domain.review.services", "app.domain.membership.repositories"),
         ("app.domain.review.services", "app.domain.project.repositories"),
         ("app.domain.review.services", "app.domain.topic.repositories"),
