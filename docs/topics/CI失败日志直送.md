@@ -29,7 +29,9 @@ CI 红了之后，芝士**不需要人转述、不需要自己再跑一趟 GitHu
 
 ### 3. 把这条路径写成芝士读得到的文档
 
-新增 `<&.claude/rules/ci-logs.md>`，`paths` 绑 `backend/app/domain/review/**` 和 `.github/workflows/**`——碰到这些文件时自动加载，不用谁记得去翻。此前 `cheese gh-token` 能看 CI 日志这件事在 `.claude/`、`docs/`、`CLAUDE.md` 里**零处提及**，唯一写明用法的是一句给读代码的人看的代码注释。
+当时新增了 `.claude/rules/ci-logs.md`，`paths` 绑 `backend/app/domain/review/**` 和 `.github/workflows/**`。此前 `cheese gh-token` 能看 CI 日志这件事在 `.claude/`、`docs/`、`CLAUDE.md` 里**零处提及**，唯一写明用法的是一句给读代码的人看的代码注释。
+
+（后续：这份 rule 已并入平台 skill `<&backend/sandbox/skills/cheese/SKILL.md>`。两个原因——它整篇是平台知识，对任何被托管的仓库都成立；而且那两条 `paths` 绑错了，CI 红的时候你在改任何文件都可能，偏偏不一定在改 review 域或 workflow。）
 
 ### 4. `gh-token` 自己把仓库名说出来
 

@@ -352,18 +352,19 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
     # A trailing slash is a 404, never a redirect — because behind this gateway a
-    # slash-redirect cannot be made correct. Starlette answers `/api/topics/` with
-    # 307 to an ORIGIN-ABSOLUTE `Location`, and the client sends that back through
-    # nginx, which strips another `/api`. So the redirect spends a prefix the
-    # caller already paid, and the second pass lands one generation over:
-    # `/api/api/tasks/7/` → 307 → `/api/tasks/7` → 1.0's 赛题 answers, with a
-    # success code (docs/api-conventions.md called this an open hole).
+    # slash-redirect cannot be made correct. Starlette answers an unmatched
+    # `/topics/42/` with a 307 whose `Location` is ORIGIN-ABSOLUTE and built from
+    # the path IT was handed — the stripped one — so the browser is sent to
+    # `<origin>/topics/42`, which carries no `/api` and which the gateway does
+    # not route here at all.
     #
-    # The backend cannot fix the Location instead, because it cannot know how many
-    # prefixes the proxy in front of it will strip — which is exactly why turning
-    # the behaviour off is the fix and not a workaround. No route declares a
-    # trailing slash, so nothing canonical changes; only the extra-slash spelling
-    # stops being silently accepted.
+    # Setting `root_path` does not repair it: Starlette stopped putting root_path
+    # back on slash redirects in 0.35.0 (starlette#2514, still open). Measured on
+    # the version we run — 1.3.1, with root_path="/api" explicitly set — the
+    # Location is still `http://testserver/topics/42`. So turning the behaviour
+    # off is the fix and not a workaround. No route declares a trailing slash, so
+    # nothing canonical changes; only the extra-slash spelling stops being
+    # silently accepted.
     redirect_slashes=False,
     servers=[
         {
