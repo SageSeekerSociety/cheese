@@ -133,6 +133,15 @@ async def lifespan(_: FastAPI):
         )
 
     try:
+        recovered = await get_chat_service().recover_hook_subscriptions()
+        if recovered:
+            get_logger("cheesex.runtime").info(
+                "hook_subscriptions_recovered", topics=recovered
+            )
+    except Exception:  # noqa: BLE001 — never block startup
+        get_logger("cheesex.runtime").exception("hook subscription recovery failed")
+
+    try:
         n = await get_turn_runner().resume_orphans(get_chat_service())
         if n:
             get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)

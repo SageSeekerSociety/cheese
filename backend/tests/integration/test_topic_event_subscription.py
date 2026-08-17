@@ -11,6 +11,8 @@ from app.core.config import settings
 from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.hooks_substrate import HooksTurnProvider, TopicSubscription
 from app.domain.agent.runtime import get_broker
 from app.domain.agent.service import (
     AgentEvent,
@@ -21,6 +23,7 @@ from app.domain.agent.service import (
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
+from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.workspace import service as ws
@@ -85,6 +88,37 @@ class _AnsweringLiveScreenProvider:
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         del project_id, topic_id
+
+
+class _IdleHooksProvider(HooksTurnProvider[str]):
+    """A live screen whose hooks can arrive without a platform request."""
+
+    name = "idle-hooks"
+
+    async def _ensure_ready(self, **_: object) -> str:
+        return "screen"
+
+    async def _send_prompt(self, screen: str, prompt: str) -> None:
+        del screen, prompt
+
+
+class _RecoveringHooksProvider(_IdleHooksProvider):
+    """A provider that rediscovers one surviving screen after restart."""
+
+    def __init__(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        self.project_id = project_id
+        self.topic_id = topic_id
+        super().__init__(router=HookRouter())
+
+    async def recover_subscriptions(
+        self, device_id: str | None = None
+    ) -> list[TopicSubscription]:
+        del device_id
+        subscription = await self.ensure_subscription(
+            self.project_id, self.topic_id, paused=True
+        )
+        self._live[self.topic_id] = "surviving-screen"
+        return [subscription]
 
 
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
@@ -236,3 +270,189 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     )
     assert "Handle A" in answer
     assert "Also handle B" in answer
+
+
+async def test_session_initiated_work_is_persisted_and_broadcast(
+    client, tmp_path
+) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    provider = _IdleHooksProvider(router=router)
+    ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "screen"
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "SessionStart",
+                "session_id": "session-autonomous",
+                "_eid": "session-autonomous-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "Background work finished",
+                "_eid": "message-autonomous-1",
+            },
+        )
+        assert router.push(
+            str(topic_id),
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "Background work finished",
+                "session_id": "session-autonomous",
+                "_eid": "stop-autonomous-1",
+            },
+        )
+        message_frame = await asyncio.wait_for(room.get(), 1)
+        done_frame = await asyncio.wait_for(room.get(), 1)
+
+    assert message_frame["type"] == "assistant_block"
+    assert done_frame == {"type": "done"}
+    block = message_frame["block"]
+    assert block["turn_id"] is not None
+    assert block["meta"] == {
+        "eid": "message-autonomous-1",
+        "platform_unsolicited": True,
+    }
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+        topic = await TopicRepository(session).get(topic_id)
+    ai_messages = [
+        row
+        for row in rows
+        if row.kind == BlockKind.message and row.author_type == AuthorType.ai
+    ]
+    assert [row.content for row in ai_messages] == ["Background work finished"]
+    assert topic is not None and topic.session_id == "session-autonomous"
+
+    await provider.drop_subscription(topic_id)
+    assert subscription.consumer_task is not None
+    assert subscription.consumer_task.done()
+
+
+async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    router = HookRouter()
+    topic_key = str(topic_id)
+
+    class _PlatformProvider(_IdleHooksProvider):
+        async def _send_prompt(self, screen: str, prompt: str) -> None:
+            del screen, prompt
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "Requested work finished",
+                    "_eid": "requested-stop-1",
+                },
+            )
+
+    provider = _PlatformProvider(router=router)
+    ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    requested_id = uuid.uuid4()
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+            turn_id=requested_id,
+        )
+    ]
+    assert isinstance(events[-1], AgentResult)
+
+    broker = get_broker()
+    async with broker.subscribe(topic_key) as room:
+        assert router.push(
+            topic_key,
+            {
+                "hook_event_name": "MessageDisplay",
+                "delta": "Late output",
+                "_eid": "late-message-1",
+            },
+        )
+        assert router.push(
+            topic_key,
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "Late output",
+                "_eid": "late-stop-1",
+            },
+        )
+        frame = await asyncio.wait_for(room.get(), 1)
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    assert frame["type"] == "assistant_block"
+    assert uuid.UUID(frame["block"]["turn_id"]) != requested_id
+    assert frame["block"]["meta"]["platform_unsolicited"] is True
+    await provider.drop_subscription(topic_id)
+
+
+async def test_restart_reattaches_and_replays_spooled_hooks(
+    client, tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "restart-message-1",
+        {
+            "hook_event_name": "MessageDisplay",
+            "delta": "Finished during restart",
+        },
+    )
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "restart-stop-1",
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "Finished during restart",
+            "session_id": "session-after-restart",
+        },
+    )
+    provider = _RecoveringHooksProvider(project_id, topic_id)
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+
+    broker = get_broker()
+    async with broker.subscribe(str(topic_id)) as room:
+        assert await service.recover_hook_subscriptions() == 1
+        message = await asyncio.wait_for(room.get(), 1)
+        assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
+
+    assert message["type"] == "assistant_block"
+    assert message["block"]["meta"] == {
+        "eid": "restart-message-1",
+        "platform_unsolicited": True,
+    }
+    assert event_spool.spool_entries(ws.spool_dir(project_id, topic_id)) == []
+    await provider.drop_subscription(topic_id)

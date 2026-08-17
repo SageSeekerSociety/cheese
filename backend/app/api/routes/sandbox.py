@@ -3,7 +3,7 @@
 The interactive `claude` running inside a topic's container posts Claude Code
 HTTP hooks here (settings.json `"type": "http"` hooks). This endpoint verifies a
 per-topic scoped token (same auth as the cheese CLI — app.core.sandbox_auth) and
-routes the hook payload into the topic's active turn queue (HookRouter).
+routes the hook payload into the topic's live screen subscription (HookRouter).
 
 It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 /api write paths, so this route does its own token check.
@@ -79,7 +79,7 @@ async def receive_hook(
     x_cheese_event_id: str = Header(default=""),
 ) -> dict | JSONResponse:
     """Receive one Claude Code hook for `topic_id` and hand it to that topic's
-    active turn. Responds fast (the container's hook call blocks on this): an
+    live screen. Responds fast (the container's hook call blocks on this): an
     empty 200 body = "no decision", so a PreToolUse hook proceeds normally."""
     if not is_valid_cheese_token(x_cheese_token, topic_id=topic_id):
         # Say so. A rejected hook used to vanish here with no trace at all, and
@@ -115,7 +115,7 @@ async def receive_hook(
         payload["_eid"] = x_cheese_event_id
     delivered = hook_router.push(topic_id, payload)
     if not delivered and x_cheese_event_id:
-        # No turn is listening (hook outside a run_turn window). Park it in the
+        # No live screen is subscribed. Park it in the
         # topic's server-side spool so a reconcile materializes it as HISTORY —
         # never dropped, and never replayed into a later live queue (a stale
         # Stop would end the wrong turn). Idempotent by event-id, so a
@@ -132,7 +132,9 @@ async def receive_hook(
                 x_cheese_event_id,
                 payload,
             )
-            chat.schedule_spool_settle(uuid.UUID(topic_id))
+            # Give a reconnecting screen first claim; settle remains the
+            # backstop when the screen never returns.
+            chat.schedule_spool_settle(uuid.UUID(topic_id), delay_s=10.0)
         except Exception:  # noqa: BLE001 — parking is best-effort, reply stays 200
             logger.warning("hook park failed for topic %s", topic_id, exc_info=True)
     # Still 200 either way so claude doesn't treat it as a hook failure.

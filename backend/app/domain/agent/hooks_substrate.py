@@ -23,12 +23,19 @@ All pure / transport-free, so it is unit-testable without Docker or a device.
 import asyncio
 import logging
 import uuid
+import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
-from app.domain.agent.hook_events import HookRouter, hook_router, translate_hook
+from app.domain.agent.hook_events import (
+    HookRouter,
+    HookSink,
+    hook_router,
+    translate_hook,
+)
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_MESSAGE,
     TURN_TIMEOUT_MESSAGE,
@@ -40,9 +47,12 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
 )
-from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
+
+# Screen teardown starts in transport-specific layers while subscriptions stay
+# owned here. Weak references avoid keeping rebuilt pools and test providers alive.
+_PROVIDERS: weakref.WeakSet[object] = weakref.WeakSet()
 
 # How many times one turn re-sends an abandoned prompt (#445) before declaring
 # the screen's input path broken and letting the no-output bound take over.
@@ -53,18 +63,6 @@ _MAX_REDELIVERIES = 3
 # session's life, not a turn's. Topic-scoped, so a stale one still can't reach
 # another topic. Shared by both backends.
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
-
-
-def _park_stale_hook(
-    project_id: uuid.UUID, topic_id: uuid.UUID, eid: str, payload: dict
-) -> None:
-    """Durably park a hook this turn refuses to trust (see ``HookRouter.drain``)
-    into the same spool a later reconcile drains — best-effort, mirrors the
-    /sandbox/hooks endpoint's own park-on-no-listener path."""
-    try:
-        event_spool.append(ws.spool_dir(project_id, topic_id), eid, payload)
-    except Exception:  # noqa: BLE001 — parking is best-effort
-        logger.warning("stale hook park failed for topic %s", topic_id, exc_info=True)
 
 
 def hooks_settings(extra_stop: list[str] | None = None) -> dict:
@@ -177,6 +175,52 @@ class ActivityTracker:
         self.suspect_since = None
 
 
+@dataclass
+class HookDelivery:
+    """A hook translated by the screen-lifetime consumer."""
+
+    hook: dict
+    event: AgentEvent | AgentDeliveryFailure | None
+    eid: str | None = None
+
+
+@dataclass
+class TurnMark:
+    """Attribution for platform-requested work on a long-lived hook stream."""
+
+    turn_id: uuid.UUID
+    queue: asyncio.Queue[HookDelivery]
+    platform_unsolicited: bool = False
+    seen_messages: set[str] = field(default_factory=set)
+
+
+@dataclass
+class TopicSubscription:
+    """Provider-owned state whose lifetime matches one interactive screen."""
+
+    project_id: uuid.UUID
+    topic_id: uuid.UUID
+    sink: HookSink
+    current_turn: TurnMark | None = None
+    consumer_task: asyncio.Task[None] | None = None
+    ready: asyncio.Event = field(default_factory=asyncio.Event)
+    replay_files: dict[str, list[Path]] = field(default_factory=dict)
+    replay_seen_messages: set[str] = field(default_factory=set)
+
+
+HookEventConsumer = Callable[
+    [
+        uuid.UUID,
+        uuid.UUID,
+        uuid.UUID,
+        AgentEvent | AgentDeliveryFailure,
+        str | None,
+        bool,
+    ],
+    Awaitable[None],
+]
+
+
 # How often a suspected-wedged turn re-checks liveness while it stays idle (a
 # single ``confirm_alive`` at the 5-minute mark isn't enough — the screen could
 # die at minute 6 and go unnoticed until the 3-hour hard ceiling otherwise).
@@ -187,7 +231,7 @@ CONFIRM_POLL_S = 15.0
 
 async def run_hooks_turn(
     *,
-    queue: "asyncio.Queue[dict]",
+    queue: "asyncio.Queue[dict] | asyncio.Queue[HookDelivery]",
     idle_suspect_s: float,
     hard_ceiling_s: float,
     resume_session_id: str | None,
@@ -249,7 +293,7 @@ async def run_hooks_turn(
         else:
             wait_for = min(hard_deadline - t, delivery_deadline - t)
         try:
-            hook = await asyncio.wait_for(queue.get(), timeout=max(wait_for, 0.01))
+            delivery = await asyncio.wait_for(queue.get(), timeout=max(wait_for, 0.01))
         except TimeoutError:
             if not delivered:
                 if now() >= delivery_deadline:
@@ -273,11 +317,16 @@ async def run_hooks_turn(
                     )
                     return
             continue
+        hook = delivery.hook if isinstance(delivery, HookDelivery) else delivery
         if on_hook is not None:
             on_hook(hook)
         delivered = True
         tracker.touch(now())
-        event = translate_hook(hook)
+        event = (
+            delivery.event
+            if isinstance(delivery, HookDelivery)
+            else translate_hook(delivery)
+        )
         if event is None:
             continue
         yield event
@@ -335,17 +384,17 @@ class HooksTurnProvider[ScreenT]:
         # (the device backend keeps this; see DeviceProvider).
         self._idle_suspect_s = idle_suspect_s
         self._hard_ceiling_s = hard_ceiling_s
-        # The screen of the turn currently in flight, per topic — what `deliver`
-        # injects into. Written once the screen is ready and dropped in
-        # ``run_turn``'s finally, so "a topic is in here" means exactly "a turn
-        # is running on it right now", which is the only state `deliver` may act
-        # on (it must never bring a screen up).
+        # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
+        # own the stable router sink, consumer task, and nullable current marker.
         self._live: dict[uuid.UUID, ScreenT] = {}
+        self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
+        self._event_consumer: HookEventConsumer | None = None
         # A transport write is not delivery. One waiter per topic tracks the
         # exact UserPromptSubmit hook proving Claude Code accepted a mid-turn
         # message into its own input queue.
         self._delivery_locks: dict[uuid.UUID, asyncio.Lock] = {}
         self._delivery_receipts: dict[uuid.UUID, tuple[str, asyncio.Future[bool]]] = {}
+        _PROVIDERS.add(self)
 
     @property
     def hard_ceiling_s(self) -> float:
@@ -358,6 +407,10 @@ class HooksTurnProvider[ScreenT]:
 
     def available(self) -> bool:
         return True
+
+    def bind_event_consumer(self, consumer: HookEventConsumer) -> None:
+        """Bind the room persistence and broadcast callback owned by ChatService."""
+        self._event_consumer = consumer
 
     async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
         """Inject ``text`` into the screen of the turn ALREADY running on this
@@ -378,7 +431,12 @@ class HooksTurnProvider[ScreenT]:
         lock = self._delivery_locks.setdefault(topic_id, asyncio.Lock())
         async with lock:
             screen = self._live.get(topic_id)
-            if screen is None:
+            subscription = self._subscriptions.get(topic_id)
+            if (
+                screen is None
+                or subscription is None
+                or subscription.current_turn is None
+            ):
                 return False
             receipt: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
             self._delivery_receipts[topic_id] = (text, receipt)
@@ -420,6 +478,129 @@ class HooksTurnProvider[ScreenT]:
         pending = self._delivery_receipts.pop(topic_id, None)
         if pending is not None and not pending[1].done():
             pending[1].set_result(False)
+
+    async def ensure_subscription(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        *,
+        paused: bool = False,
+    ) -> TopicSubscription:
+        """Ensure one stable sink and consumer for the topic's live screen."""
+        subscription = self._subscriptions.get(topic_id)
+        if subscription is not None:
+            return subscription
+        subscription = TopicSubscription(
+            project_id=project_id,
+            topic_id=topic_id,
+            sink=self._router.subscribe(str(topic_id)),
+        )
+        if not paused:
+            subscription.ready.set()
+        self._subscriptions[topic_id] = subscription
+        subscription.consumer_task = asyncio.create_task(
+            self._consume_subscription(subscription),
+            name=f"hook subscription topic={topic_id}",
+        )
+        return subscription
+
+    async def recover_subscriptions(
+        self, device_id: str | None = None
+    ) -> list[TopicSubscription]:
+        """Discover surviving transport screens after a backend restart."""
+        del device_id
+        return []
+
+    async def drop_device_subscriptions(self, device_id: str) -> None:
+        """Drop recovered subscriptions associated with a disconnected device."""
+        del device_id
+
+    async def drop_subscription(self, topic_id: uuid.UUID) -> None:
+        """Drop the sink and consumer after the topic's screen is known dead."""
+        subscription = self._subscriptions.pop(topic_id, None)
+        self._live.pop(topic_id, None)
+        self._finish_delivery_wait(topic_id)
+        if subscription is None:
+            return
+        subscription.current_turn = None
+        self._router.unsubscribe(str(topic_id), subscription.sink)
+        task = subscription.consumer_task
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    async def drop_screen_subscription(self, screen: object) -> None:
+        """Drop topics whose live transport handle is this dead screen."""
+        topic_ids = [
+            topic_id
+            for topic_id, live_screen in self._live.items()
+            if live_screen is screen or live_screen == screen
+        ]
+        for topic_id in topic_ids:
+            await self.drop_subscription(topic_id)
+
+    async def _consume_subscription(self, subscription: TopicSubscription) -> None:
+        """Continuously translate the screen's hooks into attributed events."""
+        await subscription.ready.wait()
+        while True:
+            hook = await subscription.sink.queue.get()
+            try:
+                self._observe_delivery_hook(subscription.topic_id, hook)
+                marker = subscription.current_turn
+                if marker is None:
+                    marker = TurnMark(
+                        turn_id=uuid.uuid4(),
+                        queue=asyncio.Queue(),
+                        platform_unsolicited=True,
+                        seen_messages=set(subscription.replay_seen_messages),
+                    )
+                    subscription.replay_seen_messages.clear()
+                    subscription.current_turn = marker
+                event = translate_hook(hook)
+                eid_value = hook.get("_eid")
+                eid = eid_value if isinstance(eid_value, str) else None
+                if isinstance(event, AgentMessage):
+                    marker.seen_messages.add(event.text.strip())
+                replay_processed = event is None
+                if marker.platform_unsolicited:
+                    consumer = self._event_consumer
+                    if event is not None and consumer is not None:
+                        result_text_seen = (
+                            isinstance(event, AgentResult)
+                            and event.text.strip() in marker.seen_messages
+                        )
+                        try:
+                            await consumer(
+                                subscription.project_id,
+                                subscription.topic_id,
+                                marker.turn_id,
+                                event,
+                                eid,
+                                result_text_seen,
+                            )
+                            replay_processed = True
+                        except Exception:  # noqa: BLE001 — keep the stream alive
+                            logger.exception(
+                                "unsolicited hook persist failed (topic=%s, eid=%s)",
+                                subscription.topic_id,
+                                eid,
+                            )
+                else:
+                    marker.queue.put_nowait(
+                        HookDelivery(hook=hook, event=event, eid=eid)
+                    )
+                if replay_processed and eid is not None:
+                    event_spool.remove(subscription.replay_files.pop(eid, []))
+                if (
+                    isinstance(event, AgentResult)
+                    and subscription.current_turn is marker
+                ):
+                    subscription.current_turn = None
+            finally:
+                subscription.sink.queue.task_done()
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook
@@ -514,9 +695,8 @@ class HooksTurnProvider[ScreenT]:
             )
             return
 
-        # Fail-fast BEFORE claiming the topic's queue (no Docker / no online
-        # device): a turn that can't run must never evict a live queue or widen
-        # the stale-hook window (review finding — matches pre-refactor ordering).
+        # Fail fast before screen setup: a run that cannot start must not create
+        # a subscription with no live screen behind it.
         try:
             precheck = await self._precheck(project_id, topic_id)
         except ScreenSetupError as exc:
@@ -525,15 +705,12 @@ class HooksTurnProvider[ScreenT]:
             )
             return
 
-        topic_key = str(topic_id)
         token = mint_scoped_token(
             project_id=str(project_id),
-            topic_id=topic_key,
+            topic_id=str(topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
         )
-        # Register the queue BEFORE bringing up the screen / sending the prompt so
-        # no hook is missed.
-        queue = self._router.register(topic_key)
+        marker: TurnMark | None = None
         try:
             try:
                 screen = await self._ensure_ready(
@@ -549,21 +726,14 @@ class HooksTurnProvider[ScreenT]:
                     system_prompt=system_prompt,
                     precheck=precheck,
                 )
-                # Nothing has been sent to `claude` yet, so anything already
-                # sitting in the queue at this point is a straggler from a
-                # PREVIOUS, abandoned turn (its own late Stop included) — never
-                # this turn's own event. Park it exactly like a hook that
-                # arrived with no turn listening at all (never dropped, never
-                # mistaken for this turn's result — review finding: a stale
-                # Stop must never end the wrong turn).
-                for stale in self._router.drain(topic_key):
-                    eid = stale.get("_eid")
-                    if isinstance(eid, str):
-                        _park_stale_hook(project_id, topic_id, eid, stale)
-                # Publish the screen only now: from here to the finally below is
-                # exactly the window in which a hook queue is registered, which
-                # is the only window `deliver` may inject into.
+                subscription = await self.ensure_subscription(project_id, topic_id)
                 self._live[topic_id] = screen
+                if subscription.current_turn is not None:
+                    raise ScreenSetupError("这个话题上已有工作正在运行，本次请求已跳过")
+                marker = TurnMark(
+                    turn_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
+                )
+                subscription.current_turn = marker
                 ready = await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
@@ -589,7 +759,7 @@ class HooksTurnProvider[ScreenT]:
                 # visible and the turn falls to the no-output bound as before.
                 redeliveries = 0
                 async for event in run_hooks_turn(
-                    queue=queue,
+                    queue=marker.queue,
                     idle_suspect_s=self._idle_suspect_s,
                     hard_ceiling_s=self._hard_ceiling_s,
                     resume_session_id=resume_session_id,
@@ -606,7 +776,6 @@ class HooksTurnProvider[ScreenT]:
                     delivery_timeout_s=(
                         self._idle_suspect_s if ready is False else DELIVERY_TIMEOUT_S
                     ),
-                    on_hook=lambda hook: self._observe_delivery_hook(topic_id, hook),
                 ):
                     if isinstance(event, AgentDeliveryFailure):
                         # The driver gave up (#445) — re-send NOW instead of
@@ -648,5 +817,51 @@ class HooksTurnProvider[ScreenT]:
                         pass
         finally:
             self._finish_delivery_wait(topic_id)
-            self._live.pop(topic_id, None)
-            self._router.unregister(topic_key, queue)
+            subscription = self._subscriptions.get(topic_id)
+            if (
+                marker is not None
+                and subscription is not None
+                and subscription.current_turn is marker
+            ):
+                subscription.current_turn = None
+
+
+async def drop_topic_subscriptions(topic_id: uuid.UUID) -> None:
+    """Notify every live hooks provider that a topic's screen was removed."""
+    for provider in list(_PROVIDERS):
+        if isinstance(provider, HooksTurnProvider):
+            await provider.drop_subscription(topic_id)
+
+
+async def drop_screen_subscriptions(screen: object) -> None:
+    """Notify providers that one concrete transport screen disappeared."""
+    for provider in list(_PROVIDERS):
+        if isinstance(provider, HooksTurnProvider):
+            await provider.drop_screen_subscription(screen)
+
+
+async def drop_device_subscriptions(device_id: str) -> None:
+    """Notify providers that one device and its recovered topics went offline."""
+    for provider in list(_PROVIDERS):
+        if isinstance(provider, HooksTurnProvider):
+            await provider.drop_device_subscriptions(device_id)
+
+
+def schedule_topic_subscription_drop(topic_id: uuid.UUID) -> bool:
+    """Bridge synchronous workspace teardown into async subscription cleanup."""
+    from app.core.background import spawn
+
+    return spawn(
+        drop_topic_subscriptions(topic_id),
+        name=f"drop hook subscription topic={topic_id}",
+    )
+
+
+def schedule_screen_subscription_drop(screen: object) -> bool:
+    """Bridge synchronous container teardown into async subscription cleanup."""
+    from app.core.background import spawn
+
+    return spawn(
+        drop_screen_subscriptions(screen),
+        name=f"drop hook subscription screen={screen}",
+    )

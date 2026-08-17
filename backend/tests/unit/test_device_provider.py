@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,8 +11,8 @@ from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceProvider
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
-from app.domain.device.repository import Device
-from app.domain.device.supply import Supply
+from app.domain.device.repository import Device, TopicDevice
+from app.domain.device.supply import Supply, Visibility
 
 
 @pytest.fixture(autouse=True)
@@ -140,6 +141,57 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[0], AgentSessionInfo)
     assert isinstance(events[1], AgentMessage) and events[1].text == "2"
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
+
+
+async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, _model, key):
+            if key == topic_id:
+                return SimpleNamespace(id=topic_id, project_id=project_id)
+            return None
+
+    class Service:
+        async def list_topic_bindings(self, device_id):
+            assert device_id == "dev1"
+            return [
+                TopicDevice(
+                    topic_id=topic_id,
+                    device_id=device_id,
+                    visibility=Visibility.host,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.sql_device_service",
+        lambda _session: Service(),
+    )
+    router = HookRouter()
+    provider = DeviceProvider(
+        hub=FakeHub(),  # type: ignore[arg-type]
+        router=router,
+        session_factory=Session,  # type: ignore[arg-type]
+    )
+
+    recovered = await provider.recover_subscriptions("dev1")
+
+    assert len(recovered) == 1
+    assert recovered[0].project_id == project_id
+    assert recovered[0].topic_id == topic_id
+    assert provider._subscription_devices[topic_id] == "dev1"
+    recovered[0].ready.set()
+    router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
+    await recovered[0].sink.queue.join()
+
+    await provider.drop_device_subscriptions("dev1")
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
 
 
 async def test_a_reported_delivery_failure_is_resent_immediately():

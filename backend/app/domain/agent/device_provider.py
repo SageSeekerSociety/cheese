@@ -40,6 +40,7 @@ from app.domain.agent.hooks_substrate import (
     SESSION_TOKEN_TTL_S,
     HooksTurnProvider,
     ScreenSetupError,
+    TopicSubscription,
 )
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
@@ -49,6 +50,7 @@ from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility, has_runnable_transport
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
@@ -357,11 +359,63 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # (project, topic) → was that turn's device co-located? Written when a
         # turn resolves its device, read by checkpoint() afterwards.
         self._co_located_at: dict[tuple[uuid.UUID, uuid.UUID], bool] = {}
+        # Recovered subscriptions have no surviving HubScreen object in this
+        # process. Keep their device relation so disconnect still tears them down.
+        self._subscription_devices: dict[uuid.UUID, str] = {}
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
         happen per turn in ``run_turn``."""
         return bool(self._hub.online_device_ids())
+
+    async def recover_subscriptions(
+        self, device_id: str | None = None
+    ) -> list[TopicSubscription]:
+        """Subscribe topics durably pinned to currently connected devices."""
+        online = set(self._hub.online_device_ids())
+        device_ids = [device_id] if device_id in online else []
+        if device_id is None:
+            device_ids = sorted(online)
+        if not device_ids:
+            return []
+
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        scopes: list[tuple[uuid.UUID, uuid.UUID, str]] = []
+        async with factory() as session:
+            devices = sql_device_service(session)
+            topics = TopicService(session)
+            for connected_device_id in device_ids:
+                bindings = await devices.list_topic_bindings(connected_device_id)
+                for binding in bindings:
+                    topic = await topics.get(binding.topic_id)
+                    if topic is not None:
+                        scopes.append((topic.project_id, topic.id, connected_device_id))
+
+        recovered: list[TopicSubscription] = []
+        for project_id, topic_id, connected_device_id in scopes:
+            subscription = await self.ensure_subscription(
+                project_id, topic_id, paused=True
+            )
+            self._subscription_devices[topic_id] = connected_device_id
+            recovered.append(subscription)
+        return recovered
+
+    async def drop_device_subscriptions(self, device_id: str) -> None:
+        topic_ids = [
+            topic_id
+            for topic_id, subscribed_device_id in self._subscription_devices.items()
+            if subscribed_device_id == device_id
+        ]
+        for topic_id in topic_ids:
+            await self.drop_subscription(topic_id)
+
+    async def drop_subscription(self, topic_id: uuid.UUID) -> None:
+        self._subscription_devices.pop(topic_id, None)
+        await super().drop_subscription(topic_id)
 
     # --- device / screen resolution ----------------------------------------
 
@@ -819,7 +873,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         assert isinstance(precheck, tuple)  # from our _precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
-            return await self._ensure_screen(
+            screen = await self._ensure_screen(
                 device_id=device_id,
                 agent_user_id=agent_user_id,
                 agent_handle=agent_handle,
@@ -830,6 +884,8 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 env=env,
                 system_prompt=system_prompt,
             )
+            self._subscription_devices[topic_id] = device_id
+            return screen
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
             # reach the room as 「device 后端启动失败：」 with nothing after the
@@ -954,6 +1010,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         successful no-op, and every failure is swallowed so one topic can never break
         a reap loop. The screen is forgotten even when its device is offline, so an
         archived topic leaves no stale registry entry behind."""
+        await self.drop_subscription(topic_id)
         for screen in self._hub.screens_for_topic(topic_id):
             device_id = screen.device_id
             try:

@@ -19,6 +19,7 @@ from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -31,6 +32,7 @@ from app.domain.agent.cloud_provider import CloudProvider
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.hooks_substrate import TopicSubscription
 from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
@@ -44,6 +46,8 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.service import (
+    AgentDeliveryFailure,
+    AgentEvent,
     AgentMessage,
     AgentResult,
     AgentService,
@@ -91,6 +95,16 @@ PRIVATE_SKILLS = ["private-chat", "conversation-style"]
 CHEESE_AUTHOR = "cheese"
 
 logger = logging.getLogger(__name__)
+
+
+def _persisted_eids(blocks: list[Block]) -> set[str]:
+    """Event ids already materialized in the topic timeline."""
+    return {
+        block.meta["eid"]
+        for block in blocks
+        if isinstance(block.meta, dict) and isinstance(block.meta.get("eid"), str)
+    }
+
 
 # 施工现场: render each tool call like a Claude Code action line — a Chinese verb
 # plus a short preview of its most telling argument. Stored in the event block as
@@ -898,6 +912,7 @@ class ChatService:
             workspace_root=workspace_root,
             sandbox_enabled=sandbox_enabled,
         )
+        self._compute.bind_hook_event_consumer(self._consume_unsolicited_hook)
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -1300,6 +1315,76 @@ class ChatService:
                 landed += 1
         return landed
 
+    async def recover_hook_subscriptions(self, device_id: str | None = None) -> int:
+        """Reattach surviving hook screens and replay their crash-recovery logs."""
+        subscriptions = await self._compute.recover_hook_subscriptions(device_id)
+        unique = {subscription.topic_id: subscription for subscription in subscriptions}
+        for subscription in unique.values():
+            try:
+                await self._replay_hook_subscription(subscription)
+            except Exception:  # noqa: BLE001 — one topic cannot block startup
+                logger.exception(
+                    "hook subscription recovery failed for topic %s",
+                    subscription.topic_id,
+                )
+                subscription.ready.set()
+        return len(unique)
+
+    async def _replay_hook_subscription(self, subscription: TopicSubscription) -> None:
+        """Replay one topic spool from its latest persisted event id."""
+        entries = event_spool.spool_entries(
+            ws.spool_dir(subscription.project_id, subscription.topic_id)
+        )
+        if not entries:
+            subscription.ready.set()
+            return
+
+        async with self._sessions() as session:
+            blocks = await BlockRepository(session).list_for_topic(
+                subscription.topic_id
+            )
+        spool_eids = {eid for _path, eid, _payload in entries}
+        persisted_order = [
+            block.meta["eid"]
+            for block in blocks
+            if isinstance(block.meta, dict) and isinstance(block.meta.get("eid"), str)
+        ]
+        cursor = next(
+            (eid for eid in reversed(persisted_order) if eid in spool_eids), None
+        )
+        start = (
+            next(i for i, (_path, eid, _payload) in enumerate(entries) if eid == cursor)
+            if cursor is not None
+            else 0
+        )
+        event_spool.remove(path for path, _eid, _payload in entries[:start])
+
+        paths_by_eid: dict[str, list[Path]] = {}
+        payloads: dict[str, dict] = {}
+        for path, eid, payload in entries[start:]:
+            paths_by_eid.setdefault(eid, []).append(path)
+            if payload is not None and eid not in payloads:
+                payloads[eid] = payload
+
+        if payloads:
+            subscription.replay_seen_messages.update(
+                (block.content or "").strip()
+                for block in blocks
+                if block.kind == BlockKind.message
+                and block.author_type == AuthorType.ai
+            )
+        for eid, paths in paths_by_eid.items():
+            payload = payloads.get(eid)
+            if payload is None:
+                event_spool.remove(paths)
+                continue
+            subscription.replay_files.setdefault(eid, []).extend(paths)
+            replay = dict(payload)
+            replay["_eid"] = eid
+            subscription.sink.queue.put_nowait(replay)
+        subscription.ready.set()
+        await asyncio.wait_for(subscription.sink.queue.join(), timeout=30)
+
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
         """Debounced background ``settle_spool``. Two callers: the hooks
         endpoint when it parks an event with no turn listening (so a working
@@ -1343,6 +1428,74 @@ class ChatService:
                     await session.commit()
         except Exception:  # noqa: BLE001 — never mask the original failure
             logger.exception("failed to save session pointer for %s", topic_id)
+
+    async def _consume_unsolicited_hook(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        event: AgentEvent | AgentDeliveryFailure,
+        eid: str | None,
+        result_text_seen: bool,
+    ) -> None:
+        """Persist and broadcast one hook from session-initiated work."""
+        from app.domain.agent.runtime import get_broker
+
+        broker = get_broker()
+        frame: dict | None = None
+        if isinstance(event, AgentSessionInfo):
+            await self._save_session_pointer(topic_id, event.session_id)
+        elif isinstance(event, AgentMessage):
+            payload = await self._persist_assistant_message(
+                project_id=project_id,
+                topic_id=topic_id,
+                text=event.text,
+                turn_id=turn_id,
+                reply_to=None,
+                roster=None,
+                topic_refs=[],
+                eid=eid or event.eid,
+                platform_unsolicited=True,
+            )
+            if payload is not None:
+                frame = {"type": "assistant_block", "block": payload}
+        elif isinstance(event, AgentToolUse):
+            name = event.name.replace("mcp__cheese__", "")
+            if name not in _TASK_TOOLS:
+                args = event.input or {}
+                payload = await self._persist_tool_event(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    name=name,
+                    tool_input=args,
+                    platform=_is_platform_tool(event.name, args),
+                    turn_id=turn_id,
+                    eid=eid or event.eid,
+                    platform_unsolicited=True,
+                )
+                if payload is not None:
+                    frame = {"type": "event_block", "block": payload}
+        elif isinstance(event, AgentResult):
+            if event.session_id:
+                await self._save_session_pointer(topic_id, event.session_id)
+            if event.text.strip() and not result_text_seen:
+                payload = await self._persist_assistant_message(
+                    project_id=project_id,
+                    topic_id=topic_id,
+                    text=event.text,
+                    turn_id=turn_id,
+                    reply_to=None,
+                    roster=None,
+                    topic_refs=[],
+                    eid=eid,
+                    platform_unsolicited=True,
+                )
+                if payload is not None:
+                    frame = {"type": "assistant_block", "block": payload}
+        if frame is not None:
+            await broker.publish(str(topic_id), frame)
+        if isinstance(event, AgentResult):
+            await broker.publish(str(topic_id), {"type": "done"})
 
     async def post_user_message(
         self,
@@ -1504,6 +1657,7 @@ class ChatService:
         topic_refs: list[dict],
         eid: str | None = None,
         backfilled: bool = False,
+        platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
     ) -> dict | None:
         """Persist ONE discrete 芝士 message (Slack-style): committed the moment
@@ -1522,7 +1676,12 @@ class ChatService:
             meta = {"eid": eid}
         if backfilled:
             meta = {**(meta or {}), "backfilled": True}
+        if platform_unsolicited:
+            meta = {**(meta or {}), "platform_unsolicited": True}
         async with self._sessions() as session:
+            blocks = BlockRepository(session)
+            if eid and await blocks.has_eid(topic_id, eid):
+                return None
             # Claim BEFORE writing, in the SAME session: the key and the block
             # commit together, so "key present" and "message posted" cannot
             # disagree no matter where the process dies.
@@ -1533,7 +1692,6 @@ class ChatService:
                 scope_id=str(topic_id),
             ):
                 return None
-            blocks = BlockRepository(session)
             topic = await TopicRepository(session).get(topic_id)
             if roster is None:
                 # The reconcile/backfill caller holds no roster. Load it here
@@ -1615,7 +1773,8 @@ class ChatService:
         turn_id: uuid.UUID | None,
         eid: str | None = None,
         backfilled: bool = False,
-    ) -> dict:
+        platform_unsolicited: bool = False,
+    ) -> dict | None:
         """Persist ONE 施工现场 event the moment it streams in, not batched to the
         turn-end tx2. Mirrors _persist_assistant_message's commit-now contract so
         a mid-turn restart/crash never loses the 现场 timeline already produced.
@@ -1628,8 +1787,13 @@ class ChatService:
             meta = {**meta, "eid": eid}
         if backfilled:
             meta = {**meta, "backfilled": True}
+        if platform_unsolicited:
+            meta = {**meta, "platform_unsolicited": True}
         async with self._sessions() as session:
-            block = await BlockRepository(session).add(
+            blocks = BlockRepository(session)
+            if eid and await blocks.has_eid(topic_id, eid):
+                return None
+            block = await blocks.add(
                 project_id=project_id,
                 topic_id=topic_id,
                 author=await self._agent_handle(session, topic_id),
@@ -1674,11 +1838,7 @@ class ChatService:
             # prior turns): event-ids stamped on this topic's blocks (any kind).
             async with self._sessions() as session:
                 blocks = await BlockRepository(session).list_for_topic(topic_id)
-            seen = {
-                b.meta["eid"]
-                for b in blocks
-                if isinstance(b.meta, dict) and isinstance(b.meta.get("eid"), str)
-            }
+            seen = _persisted_eids(blocks)
             # Text-level dedup for the Stop's final message (it has its OWN eid,
             # so eid dedup can never match it against the MessageDisplay twin).
             known_texts = {
@@ -1761,6 +1921,8 @@ class ChatService:
                     backfilled=True,
                 )
                 seen.add(eid)
+                if block_payload is None:
+                    continue
                 recovered += 1
                 yield {"type": "event_block", "block": block_payload}
             event_spool.remove(path for path, _eid, _payload in entries)
