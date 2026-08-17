@@ -59,15 +59,11 @@ repos:
         pass_filenames: false
         files: ^backend/.*\.py$
 
-      - id: alembic-head
-        name: one migration head, sentinel matches
-        entry: bash .claude/scripts/check-alembic-head.sh
-        language: system
-        pass_filenames: false
-        files: ^backend/alembic/
-
-      # A fork is only visible against main: a tree with one head still forks if
-      # a sibling branch added a migration on the same parent.
+      # Two checks in one script: backend/alembic/HEAD must name the chain's
+      # tip, and merging into main must not leave two heads. The second is only
+      # visible against main — a tree with one head still forks if a sibling
+      # branch added a migration on the same parent — and the first is what
+      # makes two such branches collide in git rather than merge cleanly.
       - id: migration-fork
         name: merging would not fork the alembic chain
         entry: python3 .claude/scripts/check-migration-fork.py
