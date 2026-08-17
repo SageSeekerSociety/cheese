@@ -641,6 +641,30 @@ class AcceptService:
         cards = await self._repo.list_pr_open_on_active_topics()
         return [c.id for c in cards]
 
+    async def anybody_still_waiting(self, topic_ids: list[uuid.UUID]) -> bool:
+        """这些话题里，还有没有一张卡等着人决议 —— 归档前必须问的那一句。
+
+        归档会把非终态的卡当场收敛掉（`review/archive.py`），所以任何**平台自己
+        发起**的归档（结论卡默认采信就是）都得先问这一句，否则会把一张验收人还
+        没看见的卡作废掉。判据（哪些状态算"还等着"）留在本领域，调用方不该自己
+        去数状态——这正是 `close_cards_for_archived_topic` 收敛的那一张表。
+
+        话题是一组而不是一个：归档是级联的，孙子话题的卡会跟着一起被收掉。
+        """
+        return bool(
+            await self._repo.list_live_for_topics(
+                topic_ids, statuses=archive.OPEN_CARD_STATUSES
+            )
+        )
+
+    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
+        """这些话题上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
+
+        给"卡决议之后留一个重新递卡的窗口"用：驳回的意思是回去改了再来，而归档
+        话题递不出新卡，所以窗口从这一刻起算。
+        """
+        return await self._repo.latest_decision_at(topic_ids)
+
     async def describe(self, card: AcceptCard) -> dict:
         """AcceptCardOut payload enriched with the vote state (approvals live in
         their own table; the requirement is a project setting)."""

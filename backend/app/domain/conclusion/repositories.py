@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.conclusion.models import (
+    ARCHIVE_DEFERRED,
     SETTLED_STATES,
     ConclusionCard,
     ConclusionStatus,
@@ -100,6 +101,22 @@ class ConclusionCardRepository:
                 ConclusionCard.digest_deadline_at <= now,
             )
             .order_by(ConclusionCard.digest_deadline_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_archive_deferred(self) -> list[ConclusionCard]:
+        """采信了、但归档还欠着的卡（`ARCHIVE_DEFERRED` 那个哨兵值）。
+
+        跨项目一把捞：这是个兜底扫描，量极小——只有"结论已采信 + 还挂着未决
+        验收卡"的子话题才会出现在这里，而它们同时也是有人正盯着的那几个。
+        """
+        stmt = (
+            select(ConclusionCard)
+            .where(
+                ConclusionCard.status == ConclusionStatus.accepted,
+                ConclusionCard.settle_reason == ARCHIVE_DEFERRED,
+            )
+            .order_by(ConclusionCard.settled_at)
         )
         return list((await self._session.scalars(stmt)).all())
 
