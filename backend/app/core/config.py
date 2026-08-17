@@ -210,17 +210,16 @@ class Settings(BaseSettings):
     # needs a listener that speaks CONNECT, which reverse mode does not.
     subscription_proxy_connect_port: int = 8444
     # Host a DEVICE reaches the CONNECT listener at. Empty = subscription_proxy_host,
-    # which is right for a co-located device (the box's own bridge address). A
-    # REMOTE device needs an address that resolves from its network — until one is
-    # published, remote subscription turns fail on connect (loud, not silent).
+    # which must resolve from every enrolled device's network. Otherwise configure
+    # a tunnel; an unreachable direct address fails on connect (loud, not silent).
     subscription_device_proxy_host: str = ""
-    # Where a REMOTE machine reaches the tunnel (`wss://…/llm/tunnel`), when it
+    # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
     # cannot reach the CONNECT listener directly. On the ghg network it cannot:
     # measured 2026-08-14, packets to the box's listener port never reach its NIC,
     # dropped at a hypervisor bridge the box can neither see nor change — while
     # the gateway path those machines already use for the connector works and
-    # carries websockets. Set this to that path and remote subscription turns ride
-    # it instead. Empty = no tunnel, and a remote machine falls back to dialling
+    # carries websockets. Set this to that path and device subscription turns ride
+    # it instead. Empty = no tunnel, and a device falls back to dialling
     # `subscription_device_proxy_host` directly (right for a flat network, and the
     # behaviour every deployment has today).
     subscription_tunnel_url: str = ""
@@ -267,13 +266,6 @@ class Settings(BaseSettings):
     # lands on the SPA, which answers 200/405 and drops every agent event
     # silently (dev, 2026-08-08: the machine worked, the platform saw nothing).
     connector_public_base: str = "http://localhost:8099"
-    # Single-box self-hosting (fusion §5): the host path where enrolled devices see
-    # this backend's `workspace_root`. When set, a device screen runs directly in the
-    # topic's REAL worktree (the container worktree path translated to this host root)
-    # instead of an empty scratch dir — so device edits flow through the normal
-    # snapshot/accept path, no clone/sync and no out-of-band writes. Leave empty when
-    # devices are remote (they own their own tree; a clone/sync path is separate).
-    device_shared_workspace_host_root: str = ""
     # Optional per-install-origin override for the device's persistent control
     # channel, keyed by the origin install.sh was fetched from and mapping to a
     # plain http(s) origin that CAN carry WebSockets, e.g.

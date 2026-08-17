@@ -1,8 +1,17 @@
-import type { FlatRow, TopicNodeLike } from './topicTree'
+import type { FlatRow, TopicNodeLike, TopicRelevanceLike } from './topicTree'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { ancestorPathIds, loadCollapsedTopics, saveCollapsedTopics, visibleRows } from './topicTree'
+import {
+  ancestorPathIds,
+  isMyTopic,
+  loadCollapsedTopics,
+  loadOthersGroupOpen,
+  partitionByRelevance,
+  saveCollapsedTopics,
+  saveOthersGroupOpen,
+  visibleRows,
+} from './topicTree'
 
 // 一棵跟侧栏一样拍平的树（DFS 顺序 + depth），方便按 id 写断言：
 //   a          depth 0
@@ -148,6 +157,145 @@ describe('话题树折叠', () => {
       { id: 'y', parent_id: 'x' },
     ]
     expect([...ancestorPathIds(cyclic, 'x')].sort()).toEqual(['x', 'y'])
+  })
+})
+
+// ---- 相关性分组 ----
+// 「我参与的」的四种参与方式在后端合成一个布尔 i_participate（名册 / 我建的 /
+// 我是验收人 / 我被 @ 过），所以前端这一侧四种情形是同一条断言；这里仍然分四条
+// 写出来，是为了万一后端把某一种漏掉、看得出漏的是哪一种。
+function rel(id: string, parentId: string | null, flags: Partial<TopicRelevanceLike> = {}): TopicRelevanceLike {
+  return { id, parent_id: parentId, ...flags }
+}
+function flat(topics: TopicRelevanceLike[], depths: number[]): FlatRow<TopicRelevanceLike>[] {
+  return topics.map((topic, i) => ({ topic, depth: depths[i] }))
+}
+
+describe('话题分组：与我相关 / 其他', () => {
+  it('四种参与方式（名册/我建的/我是验收人/我被 @ 过）都落在上组', () => {
+    // 后端把四者合成一个 i_participate=true，所以四种各来一条，结论必须一致。
+    const byRoster = rel('roster', null, { i_participate: true })
+    const byAuthor = rel('author', null, { i_participate: true })
+    const byReviewer = rel('reviewer', null, { i_participate: true })
+    const byMention = rel('mention', null, { i_participate: true })
+    const { mine, others } = partitionByRelevance(flat([byRoster, byAuthor, byReviewer, byMention], [0, 0, 0, 0]))
+    expect(idsOf(mine)).toEqual(['roster', 'author', 'reviewer', 'mention'])
+    expect(others).toEqual([])
+  })
+
+  it('完全无关的进下组', () => {
+    const { mine, others } = partitionByRelevance(
+      flat([rel('mine', null, { i_participate: true }), rel('theirs', null, { i_participate: false })], [0, 0])
+    )
+    expect(idsOf(mine)).toEqual(['mine'])
+    expect(idsOf(others)).toEqual(['theirs'])
+  })
+
+  it('awaits_me 为真但 i_participate 为假时，仍然落在上组', () => {
+    // 后端保证这不该出现（awaits_me ⇒ i_participate），但"等我做事"绝不能因为
+    // 上游的一个反常组合被折进下组——前端不做这个假设。
+    const odd = rel('odd', null, { awaits_me: true, i_participate: false })
+    expect(isMyTopic(odd)).toBe(true)
+    const { mine, others } = partitionByRelevance(flat([odd], [0]))
+    expect(idsOf(mine)).toEqual(['odd'])
+    expect(others).toEqual([])
+  })
+
+  it('字段缺失当"相关"——没算过这两个字段的载荷不会把整个项目折起来', () => {
+    const { mine, others } = partitionByRelevance(flat([rel('unknown', null)], [0]))
+    expect(idsOf(mine)).toEqual(['unknown'])
+    expect(others).toEqual([])
+  })
+
+  it('整棵子树跟着它的根走：子话题里有一个与我相关，整棵都上去', () => {
+    const parent = rel('p', null, { i_participate: false })
+    const kid = rel('p1', 'p', { i_participate: false })
+    const mineKid = rel('p2', 'p', { i_participate: true })
+    const { mine, others } = partitionByRelevance(flat([parent, kid, mineKid], [0, 1, 1]))
+    // 父话题被带上来了——它就是"通往那个子话题的路径"；缩进因此仍有参照。
+    expect(idsOf(mine)).toEqual(['p', 'p1', 'p2'])
+    expect(others).toEqual([])
+  })
+
+  it('无关的子树整棵进下组，depth 原样保留（组内照旧是树）', () => {
+    const rows = flat(
+      [
+        rel('a', null, { i_participate: true }),
+        rel('t', null, { i_participate: false }),
+        rel('t1', 't', { i_participate: false }),
+        rel('t1x', 't1', { i_participate: false }),
+      ],
+      [0, 0, 1, 2]
+    )
+    const { mine, others } = partitionByRelevance(rows)
+    expect(idsOf(mine)).toEqual(['a'])
+    expect(idsOf(others)).toEqual(['t', 't1', 't1x'])
+    expect(others.map((r) => r.depth)).toEqual([0, 1, 2])
+  })
+
+  it('无关但有未读：分组不看未读，未读由组头聚合成一个点', () => {
+    const rows = flat([rel('t', null, { i_participate: false })], [0])
+    const { others } = partitionByRelevance(rows)
+    expect(idsOf(others)).toEqual(['t'])
+    // 组头的那个点 = 组内未读求和，组内自己的折叠状态不影响它。
+    const unread: Record<string, number> = { t: 7 }
+    expect(others.reduce((sum, r) => sum + (unread[r.topic.id] ?? 0), 0)).toBe(7)
+  })
+
+  it('两组各自仍然是可折叠的树（分组不吃掉折叠）', () => {
+    const rows = flat(
+      [
+        rel('t', null, { i_participate: false }),
+        rel('t1', 't', { i_participate: false }),
+        rel('t1x', 't1', { i_participate: false }),
+      ],
+      [0, 1, 2]
+    )
+    const { others } = partitionByRelevance(rows)
+    const shown = visibleRows(others, { collapsed: new Set(['t']) })
+    expect(idsOf(shown)).toEqual(['t'])
+    expect(shown[0].hiddenCount).toBe(2)
+  })
+
+  it('孤儿兜底行自己成一组，不会跟着前一棵子树走', () => {
+    const rows = flat([rel('a', null, { i_participate: true }), rel('z', 'missing', { i_participate: false })], [0, 0])
+    const { mine, others } = partitionByRelevance(rows)
+    expect(idsOf(mine)).toEqual(['a'])
+    expect(idsOf(others)).toEqual(['z'])
+  })
+
+  it('可以换一个判定函数（判定是参数，不是写死在里面的）', () => {
+    const rows = flat([rel('a', null, { i_participate: false }), rel('b', null, { i_participate: false })], [0, 0])
+    const { mine } = partitionByRelevance(rows, (t) => t.id === 'b')
+    expect(idsOf(mine)).toEqual(['b'])
+  })
+})
+
+describe('「其他话题」组展开状态的持久化', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('默认折叠：没存过就是收起来的', () => {
+    expect(loadOthersGroupOpen('p1')).toBe(false)
+  })
+
+  it('按项目分开存，刷新后还在', () => {
+    saveOthersGroupOpen('p1', true)
+    expect(loadOthersGroupOpen('p1')).toBe(true)
+    expect(loadOthersGroupOpen('p2')).toBe(false)
+    expect(loadOthersGroupOpen(null)).toBe(false)
+  })
+
+  it('收回去以后不留垃圾（键不在 = 默认态）', () => {
+    saveOthersGroupOpen('p1', true)
+    saveOthersGroupOpen('p1', false)
+    expect(localStorage.getItem('cheesex.railOthersOpen.v1:p1')).toBeNull()
+  })
+
+  it('和折叠集合是两个键，互不干扰', () => {
+    saveCollapsedTopics('p1', new Set(['a']))
+    saveOthersGroupOpen('p1', true)
+    expect([...loadCollapsedTopics('p1')]).toEqual(['a'])
+    expect(loadOthersGroupOpen('p1')).toBe(true)
   })
 })
 

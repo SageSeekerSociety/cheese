@@ -243,7 +243,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     (wt / "f.txt").write_text("merged version\n")
     ws.snapshot_worktree(puid, tuid, "解决采纳冲突")
 
-    # Retry accept → clean merge, archived, base has the resolution.
+    # Retry accept → clean merge, delivered (not archived), base has the resolution.
     r = client.post(
         f"/accept-cards/{card}/accept",
         json={"decided_by": "u"},
@@ -251,7 +251,8 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     )
     assert r.status_code == 200 and r.json()["data"]["status"] == "accepted"
     t = client.get(f"/topics/{tid}").json()["data"]
-    assert t["status"] == "archived"
+    assert t["status"] == "active"
+    assert t["accepted_at"] is not None
     assert ws.read_file(puid, "f.txt") == "merged version\n"
 
 

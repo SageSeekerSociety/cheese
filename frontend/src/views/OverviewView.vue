@@ -172,23 +172,23 @@ onMounted(load)
 
         <!-- 概要 — rendered only when one exists. Generation is parked, so
              an empty box with a dead button would read as a broken feature. -->
-        <section v-if="summary" class="ln-section">
-          <div class="ln-section-head">
-            <span class="ln-section-title">概要</span>
+        <section v-if="summary" class="page-section">
+          <div class="page-section-head">
+            <span class="page-section-title">概要</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <div class="md-content" v-html="renderMarkdown(summary)" />
           </div>
         </section>
 
         <!-- 等你处理的事 (subtle accent, not a hero block) -->
-        <section class="ln-section">
-          <div class="ln-section-head">
+        <section class="page-section">
+          <div class="page-section-head">
             <span class="ln-accent-dot" />
-            <span class="ln-section-title">等你处理的事</span>
+            <span class="page-section-title">等你处理的事</span>
             <span v-if="myWaiting.length" class="ln-count">{{ myWaiting.length }}</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <div v-if="myWaiting.length === 0" class="c-faint t-body py-2">暂无待处理的事</div>
             <div v-else>
               <div v-for="t in myWaiting" :key="t.id" class="ln-row">
@@ -217,11 +217,11 @@ onMounted(load)
         <v-row>
           <!-- 里程碑 -->
           <v-col cols="12" md="6">
-            <section class="ln-section h-100">
-              <div class="ln-section-head">
-                <span class="ln-section-title">里程碑</span>
+            <section class="page-section">
+              <div class="page-section-head">
+                <span class="page-section-title">里程碑</span>
               </div>
-              <div class="ln-body">
+              <div class="page-section-body">
                 <div v-if="overview.next_milestone" class="ln-row">
                   <span class="ln-dot ln-dot-ink" />
                   <span class="ln-row-title" style="font-weight: 500; color: var(--ink)">
@@ -246,13 +246,13 @@ onMounted(load)
 
           <!-- 话题 × 状态 (dot + label, aligned counts) -->
           <v-col cols="12" md="6">
-            <section class="ln-section h-100">
-              <div class="ln-section-head">
-                <span class="ln-section-title">话题</span>
+            <section class="page-section">
+              <div class="page-section-head">
+                <span class="page-section-title">话题</span>
                 <v-spacer />
                 <span class="ln-num text-medium-emphasis">共 {{ overview.topic_count }}</span>
               </div>
-              <div class="ln-body">
+              <div class="page-section-body">
                 <div v-if="statusEntries.length === 0" class="text-medium-emphasis text-body-2 py-2">暂无话题</div>
                 <div v-else>
                   <div v-for="[s, n] in statusEntries" :key="s" class="ln-row">
@@ -268,11 +268,11 @@ onMounted(load)
 
           <!-- 贡献 · 人 / AI (§10.1) -->
           <v-col cols="12" md="6">
-            <section class="ln-section h-100">
-              <div class="ln-section-head">
-                <span class="ln-section-title">贡献 · 人 / AI</span>
+            <section class="page-section">
+              <div class="page-section-head">
+                <span class="page-section-title">贡献 · 人 / AI</span>
               </div>
-              <div class="ln-body">
+              <div class="page-section-body">
                 <div v-if="contribTotal === 0" class="text-medium-emphasis text-body-2 py-2">暂无贡献记录</div>
                 <template v-else>
                   <div class="contrib-bar mb-3">
@@ -298,15 +298,15 @@ onMounted(load)
 
           <!-- 算力额度 (spec §9.1): 机构发放的额度余量; 无挂靠 = 不限额 -->
           <v-col cols="12" md="6">
-            <section class="ln-section h-100">
-              <div class="ln-section-head">
-                <span class="ln-section-title">算力额度</span>
+            <section class="page-section">
+              <div class="page-section-head">
+                <span class="page-section-title">算力额度</span>
                 <v-spacer />
                 <span v-if="credits && !credits.unlimited" class="ln-num text-medium-emphasis">
                   1 额度 = 1 万 tokens
                 </span>
               </div>
-              <div class="ln-body">
+              <div class="page-section-body">
                 <div v-if="!credits" class="text-medium-emphasis text-body-2 py-2">暂无额度信息</div>
                 <div v-else-if="credits.unlimited" class="text-medium-emphasis text-body-2 py-2">
                   不限额 · 未挂靠机构任务的自治项目
@@ -343,11 +343,11 @@ onMounted(load)
 
           <!-- 成员 -->
           <v-col cols="12" md="6">
-            <section class="ln-section h-100">
-              <div class="ln-section-head">
-                <span class="ln-section-title">成员</span>
+            <section class="page-section">
+              <div class="page-section-head">
+                <span class="page-section-title">成员</span>
               </div>
-              <div class="ln-body">
+              <div class="page-section-body">
                 <div v-if="!overview.members?.length" class="text-medium-emphasis text-body-2 py-2">暂无成员</div>
                 <router-link
                   v-for="m in overview.members"
@@ -369,11 +369,11 @@ onMounted(load)
 
           <!-- 收件箱 -->
           <v-col cols="12">
-            <section class="ln-section">
-              <div class="ln-section-head">
-                <span class="ln-section-title">收件箱 · 你的请求</span>
+            <section class="page-section">
+              <div class="page-section-head">
+                <span class="page-section-title">收件箱 · 你的请求</span>
               </div>
-              <div class="ln-body">
+              <div class="page-section-body">
                 <div v-if="inbox.length === 0" class="text-medium-emphasis text-body-2 py-2">暂无请求</div>
                 <div v-else>
                   <div v-for="item in inbox" :key="item.id" class="ln-inbox-row" :class="{ 'inbox-read': item.read }">
@@ -418,31 +418,33 @@ onMounted(load)
 </template>
 
 <style scoped>
+/* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图同一层关系。 */
 .overview-page {
-  background: var(--canvas);
+  background: var(--surface);
 }
 
-/* ---- Calm, neutral sections: hairline separators, no shadow ---- */
-.ln-section {
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  margin-bottom: 16px;
+/* ---- 区块不是卡片 ----
+   根面变白之后，「canvas 上铺白卡」这个手法既失效也不再需要：白底上套白框只
+   是给白底加了个轮廓。区块划分改由留白 + eyebrow 小标题 + 一条顶部发丝线承担
+   （分隔线，不是左竖条）。卡片留给列表里真正可拿起的对象。 */
+.page-section {
+  padding-top: 18px;
+  margin-bottom: 10px;
+  border-top: 1px solid var(--line);
 }
-.ln-section.h-100 {
-  height: 100%;
-}
-.ln-section-head {
+.page-section-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--line);
+  min-height: 22px;
+  margin-bottom: 4px;
 }
-.ln-section-title {
-  font-size: 15px;
+/* eyebrow: 和页头的 .t-eyebrow 同一档，区块标题不再是一条卡片抬头。 */
+.page-section-title {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--ink);
+  letter-spacing: 0.04em;
+  color: var(--faint);
 }
 /* The one small amber flag on this page: "等你处理的事". */
 .ln-accent-dot {
@@ -460,8 +462,8 @@ onMounted(load)
   padding: 1px 7px;
   border-radius: 8px;
 }
-.ln-body {
-  padding: 6px 18px 14px;
+.page-section-body {
+  padding: 0;
 }
 .ln-row {
   display: flex;
@@ -535,12 +537,13 @@ onMounted(load)
   align-items: center;
   justify-content: center;
 }
+/* 区块里的次级分组。区块标题降成 eyebrow 之后它不能再用同一套字号字重，否则
+   「其他成员待办」读起来和「等你处理的事」是同一级。 */
 .ln-subhead {
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--faint);
-  margin: 12px 0 4px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  margin: 14px 0 4px;
 }
 .ln-group-label {
   margin: 6px 0 2px;
