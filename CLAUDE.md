@@ -28,16 +28,19 @@ We are the easiest repo in the world to get this wrong in, being both the platfo
 
 ## We are still building this — do not preserve what is already decided against
 
-Once a decision is made to change something, change it. Do not leave a guard for
-the shape being replaced, a note explaining when that guard expires, or a
-compatibility path for a state nobody agreed to keep. Those are what a mature
-system pays to protect the users it already has; paying early buys nothing and
-leaves more to unwind.
+Once a decision is made, carry it out completely. Do not leave behind the shape
+being replaced, a note about when it expires, a compatibility path, a
+deprecation marker, a dual-write, a flag keeping the old branch reachable, or a
+doc section explaining what the old way was. Every one of those is a cost a
+mature system pays to protect the users it already has. We do not have them yet,
+so it buys nothing and leaves more to unwind — and each one is a place the next
+reader can mistake for something still in use.
 
-Before defending any guard, check what it actually watches. One written after an
-incident tends to point at where that incident *showed up*, and the code that
-causes it moves; a guard can spend years watching the site of the last outage
-rather than the entrance to the next one.
+The corollary is that a thing must be judged by what it does now, not by the
+reason it was created. Mechanisms drift away from their purpose while keeping
+their name: a check written after an incident points at where that incident
+surfaced, and the code that causes it moves on. Look at what it touches today
+before deciding it is worth keeping.
 
 ## Assume other agents are working right now
 
