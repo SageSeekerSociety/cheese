@@ -16,7 +16,11 @@ name: CLAUDE.md Review Gate
 # rather than trusting the trigger. That also makes the two events take exactly
 # the same code path.
 on:
+  # `labeled`/`unlabeled` are here because the sign-off label is one of the two
+  # accepted signals — without them, adding it would leave the check red until
+  # something else happened to push a commit.
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main]
     paths:
       - 'CLAUDE.md'
