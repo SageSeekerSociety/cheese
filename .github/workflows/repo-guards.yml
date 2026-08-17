@@ -71,8 +71,13 @@ jobs:
           bash .claude/scripts/check-metering-proxy.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
 
-      - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException, fixed-palette colours)
-        run: bash .claude/scripts/check-repo-rules.sh
+      # Run through pre-commit rather than calling the scripts directly, so
+      # this job and a developer's commit are the same list by construction.
+      # The guards' own --self-test above still calls them directly: that step
+      # proves the guard fires, which is a different question from whether the
+      # tree passes it.
+      - name: Repo rules (datetime, HTTPException, palette, platform CLI, …)
+        run: uvx pre-commit run --all-files repo-rules
 
       # Third-party actions run on the dev and prod boxes themselves (build.yml,
       # build-tmux.yml and deploy-dev.yml all target self-hosted runners), so a
@@ -80,14 +85,14 @@ jobs:
       # credentials in reach. Pins make that an upgrade we review, not one that
       # happens to us.
       - name: Actions are pinned to a commit SHA
-        run: bash .claude/scripts/check-action-pins.sh
+        run: uvx pre-commit run --all-files action-pins
 
       # The subscription metering proxy's durable credential is a one-year,
       # non-refreshing setup-token (CODEX findings / #388). This fails the build
       # if the deploy config reintroduces a refresh command, a login-JSON source,
       # or a credential-refresh daemon — the mechanisms behind the outage.
       - name: Metering proxy stays credential-hardened
-        run: bash .claude/scripts/check-metering-proxy.sh
+        run: uvx pre-commit run --all-files metering-proxy
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
       # does not create it. Shallow is enough — only the tree at main's tip is
@@ -96,4 +101,4 @@ jobs:
         run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
 
       - name: Alembic chain would not fork on merge
-        run: python3 .claude/scripts/check-migration-fork.py --base origin/main
+        run: uvx pre-commit run --all-files migration-fork

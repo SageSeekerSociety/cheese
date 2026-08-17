@@ -1,0 +1,115 @@
+# One list of checks, read by both a developer's machine and CI.
+#
+# WHY THIS REPLACED A HAND-WRITTEN SCRIPT: check.sh was a scheduler — it decided
+# which checks ran, in what order, and against which files. All three are things
+# this framework does declaratively, and the hand-written version had drifted
+# from CI in the way that arrangement always drifts: the local/CI coverage table
+# lived in a comment, maintained by whoever remembered. Now CI runs
+# `pre-commit run --all-files` against THIS file, so the two cannot disagree
+# about what a check is. `files:` and `types:` replace a scope_of() written by
+# hand; `pre-commit install` replaces install-hooks.sh copying a script into
+# .git/hooks.
+#
+# WHAT IS NOT HERE, on purpose: pytest. It needs Postgres, takes ~60s, and this
+# repo's own machines do not all run a database — a commit gate that fails on a
+# missing DB teaches people to pass --no-verify, and a bypassed gate protects
+# nothing. `task check` and CI's test.yml own the suite.
+#
+# Every guard below is a standalone executable that says what it thinks through
+# its exit code, and carries --self-test to prove it still fires. That shape
+# predates this file; it is why the migration needed no changes to any of them.
+default_install_hook_types: [pre-commit]
+fail_fast: false
+
+repos:
+  - repo: local
+    hooks:
+      # --- backend ------------------------------------------------------
+      # Each of these reads its config from backend/pyproject.toml, so they run
+      # from that directory rather than taking file arguments. `files:` is what
+      # keeps a docs-only commit from paying for any of it.
+      - id: ruff
+        name: ruff (lint)
+        entry: bash -c 'cd backend && uv run ruff check .'
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+
+      - id: ruff-format
+        name: ruff (format)
+        entry: bash -c 'cd backend && uv run ruff format --check .'
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+
+      - id: pyright
+        name: pyright
+        entry: bash -c 'cd backend && uv run pyright'
+        language: system
+        pass_filenames: false
+        files: ^backend/.*\.py$
+
+      - id: alembic-head
+        name: one migration head, sentinel matches
+        entry: bash .claude/scripts/check-alembic-head.sh
+        language: system
+        pass_filenames: false
+        files: ^backend/alembic/
+
+      # A fork is only visible against main: a tree with one head still forks if
+      # a sibling branch added a migration on the same parent.
+      - id: migration-fork
+        name: merging would not fork the alembic chain
+        entry: python3 .claude/scripts/check-migration-fork.py
+        language: system
+        pass_filenames: false
+        files: ^backend/alembic/
+
+      # --- frontend -----------------------------------------------------
+      # typecheck and build are deliberately absent: both OOM on a small box, and
+      # a check that dies on memory reports as a code failure. CI's frontend.yml
+      # owns them.
+      #
+      # These two DO go red on a checkout with no node_modules, and that is the
+      # intended answer rather than an oversight. A hook that quietly passes
+      # when it could not run is the exact failure the old script's BLOCKED
+      # state existed to prevent — and since `files:` means these only fire when
+      # you are editing frontend/, being asked to `pnpm install` first is fair.
+      - id: eslint
+        name: eslint
+        entry: bash -c 'cd frontend && pnpm run lint'
+        language: system
+        pass_filenames: false
+        files: ^frontend/
+
+      - id: stylelint
+        name: stylelint
+        entry: bash -c 'cd frontend && pnpm run lint:style'
+        language: system
+        pass_filenames: false
+        files: ^frontend/
+
+      # --- repo-wide guards ---------------------------------------------
+      # always_run because it judges relationships across the tree — duplicate
+      # topic notes, a platform command leaking into CLAUDE.md — which no single
+      # changed path predicts.
+      - id: repo-rules
+        name: repo rules (datetime, HTTPException, palette, platform CLI, …)
+        entry: bash .claude/scripts/check-repo-rules.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: action-pins
+        name: actions pinned to a commit SHA
+        entry: bash .claude/scripts/check-action-pins.sh
+        language: system
+        pass_filenames: false
+        files: ^\.github/workflows/
+
+      - id: metering-proxy
+        name: metering proxy stays credential-hardened
+        entry: bash .claude/scripts/check-metering-proxy.sh
+        language: system
+        pass_filenames: false
+        files: ^deploy/
