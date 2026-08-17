@@ -364,6 +364,27 @@ async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str
     )
 
 
+# How big the container actually is. Named rather than inlined because the
+# agent inside has to be TOLD: it cannot see its own cgroup limit, and the
+# failure it produces without knowing — a build the kernel OOM-kills — reads
+# like a broken toolchain rather than a small box. `_turn_meta_lines` in chat.py
+# puts it in the prompt as a run fact, next to the time budget and disk
+# headroom, which is the same category: things an agent has no other way to see.
+#
+# Derived from settings rather than hardcoded because the box is now a ROOM's,
+# not a topic's, and its budget is a deployment knob (settings.sandbox_memory_gb).
+# The `--memory`/`--cpus` args below read THESE constants, not the settings
+# directly: the number the agent is told and the number the kernel enforces have
+# to come from one place, which is exactly what
+# test_the_stated_size_is_the_one_the_container_actually_gets guards.
+#
+# Cores is floored to an int because chat.py only speaks up when it gets one
+# (`isinstance(cores, int)`) — a fractional quota would silence the prompt
+# entirely, which is worse than telling the agent 2 when it has 2.5.
+SANDBOX_MEMORY_MB = int(settings.sandbox_memory_gb * 1024)
+SANDBOX_CORES = int(settings.sandbox_cpus)
+
+
 class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
     """The LOCAL hooks backend: runs interactive `claude` in a per-topic tmux
     session inside a platform container, streaming AgentEvents from Claude Code
@@ -375,6 +396,12 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
     # (see _subscription_args below for how a subscription turn is captured)
 
     name = "tmux-hooks"
+    # What this backend's container is capped at. Read by chat.py through a
+    # getattr, so a backend that genuinely does not know its own size (an
+    # enrolled machine belongs to someone else) simply says nothing rather than
+    # guessing — an invented limit would be worse than none.
+    sandbox_memory_mb = SANDBOX_MEMORY_MB
+    sandbox_cores = SANDBOX_CORES
     _needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
     _timeout_message = f"tmux {TURN_TIMEOUT_MARKER}"
 
@@ -696,9 +723,9 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
             # A ROOM budget, not a topic's — the box runs the room's whole
             # concurrency now. See settings.sandbox_memory_gb for the sizing.
             "--memory",
-            f"{settings.sandbox_memory_gb}g",
+            f"{SANDBOX_MEMORY_MB}m",
             "--cpus",
-            str(settings.sandbox_cpus),
+            str(SANDBOX_CORES),
             "--pids-limit",
             str(settings.sandbox_pids_limit),
             # A crashing node/vite process must not dump its address space into

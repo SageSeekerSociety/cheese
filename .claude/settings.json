@@ -18,7 +18,6 @@
       "Bash(git diff *)",
       "Bash(git status *)",
       "Bash(git log *)",
-      "Bash(git config *)",
       "Bash(curl -sf http://localhost:8081 *)",
       "Bash(ls *)",
       "Bash(mkdir *)"

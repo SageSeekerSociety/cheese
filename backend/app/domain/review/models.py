@@ -57,7 +57,8 @@ class GateOutcome(enum.StrEnum):
     Not a bool: "the check ran and disliked the code" and "the check never ran"
     are different facts, and collapsing them is how a gate ends up green on an
     environment where nothing but lint could start. `check_command` reports the
-    third one with exit code 2 (see .claude/scripts/check.sh --strict).
+    third one with exit code 2. Nothing produces these two any more (the gate
+    was retired by #296); historical rows still carry them and must render.
     """
 
     passed = "passed"

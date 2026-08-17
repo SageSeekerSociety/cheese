@@ -299,11 +299,12 @@ def test_a_trailing_slash_is_never_a_redirect(lenient_client: TestClient) -> Non
     """One stray `/` must be a 404, not a redirect — behind this gateway a
     slash-redirect cannot be made correct.
 
-    Starlette answers an unmatched `/x/` with a 307 to an ORIGIN-ABSOLUTE
-    `Location`, and the client sends that back through nginx, which strips
-    another segment. The backend cannot repair it, because it cannot know how
-    many prefixes the proxy ahead of it will strip — so `redirect_slashes=False`
-    is the fix rather than a workaround, and this pins it.
+    Starlette answers an unmatched `/x/` with a 307 whose `Location` is
+    ORIGIN-ABSOLUTE and built from the stripped path it was handed, so the
+    browser is sent somewhere with no `/api` on it. `root_path` does not repair
+    that; tests/unit/test_slash_redirect_upstream.py measures the upstream
+    behaviour directly. So `redirect_slashes=False` is the fix rather than a
+    workaround, and this pins it.
 
     It used to be worded as "never reaches the OTHER generation", because the
     second pass landed on 1.0's 赛题 and answered with a success code. There is
@@ -352,4 +353,31 @@ def test_the_deployed_gateway_still_strips_what_the_schema_assumes() -> None:
     assert proxy_pass.group("target").endswith("/"), (
         "proxy_pass lost its trailing slash, so nginx no longer strips /api — "
         "the schema's published server is now wrong by one segment"
+    )
+
+
+def test_direct_backend_scripts_do_not_add_the_gateway_mount() -> None:
+    """A caller on backend port 8081 uses app paths; only nginx adds /api.
+
+    These scripts bypass the gateway, so a stale prefix makes the check lie.
+    """
+    direct_scripts = (
+        "backend/scripts/chat_send_probe.py",
+        "backend/scripts/device_capability_setup.py",
+        "backend/scripts/device_capability_verify.py",
+        "backend/scripts/device_selfhost_smoke.py",
+        "backend/scripts/e2e_scroll_memory.py",
+        "backend/scripts/machine_chain_check.py",
+        "backend/scripts/sim_real.py",
+    )
+
+    for relative_path in direct_scripts:
+        source = (_REPO_ROOT / relative_path).read_text()
+        assert not re.search(r"[\"']/api/", source), (
+            f"{relative_path} adds the public /api mount to a direct backend call"
+        )
+
+    workflow = (_REPO_ROOT / ".github/workflows/device-wiring.yml").read_text()
+    assert ":8081/api" not in workflow, (
+        "the device wiring runner talks to port 8081 directly, without /api"
     )
