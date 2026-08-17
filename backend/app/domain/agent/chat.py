@@ -451,6 +451,24 @@ def _progress_lines(items: list[dict]) -> list[str]:
     return lines
 
 
+def _sandbox_limits(provider: object) -> tuple[int, int] | None:
+    """(memory_mb, cores) for backends that know their own size, else None.
+
+    Read off the provider rather than looked up in the machine tables on
+    purpose: #282 决定 2 keeps the agent layer out of the machine domain, and
+    check-repo-rules enforces it. A backend that does not set these attributes
+    genuinely does not know — an enrolled machine belongs to someone else and we
+    do not set its limits — and None then means the prompt says nothing at all.
+    Inventing a number would be worse than silence: the agent would skip work it
+    could have done.
+    """
+    memory_mb = getattr(provider, "sandbox_memory_mb", None)
+    cores = getattr(provider, "sandbox_cores", None)
+    if isinstance(memory_mb, int) and isinstance(cores, int) and memory_mb > 0:
+        return (memory_mb, cores)
+    return None
+
+
 def _turn_meta_lines(
     *,
     budget_s: float,
@@ -2751,11 +2769,7 @@ class ChatService:
                 disk=_workspace_disk(self._workspace_root),
                 open_cards=open_cards,
                 progress=prior_progress,
-                sandbox=(
-                    (provider.sandbox_memory_mb, provider.sandbox_cores)
-                    if getattr(provider, "sandbox_memory_mb", None)
-                    else None
-                ),
+                sandbox=_sandbox_limits(provider),
             ),
             stage_guide=(
                 load_scenario(stage_scenario(topic_stage))

@@ -2422,6 +2422,7 @@ def remove_container(name: str) -> None:
 
 GATE_TAIL_CHARS = 4000
 
+
 def reap_sandbox_containers() -> int:
     """Remove all CheeseX sandbox containers (label cheesex-sandbox=1). Called at
     startup: containers from a previous run hold stale mounts, so we drop them and
