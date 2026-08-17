@@ -65,13 +65,17 @@ directly.
 ## Never send a trailing slash, and never turn the redirect back on
 
 `app.main` builds the app with `redirect_slashes=False`, and that must stay off.
-Starlette's slash-redirect answers with an **origin-absolute** `Location`, and a
-backend behind a stripping gateway cannot know how many prefixes the proxy ahead
-of it will remove — so the URL it hands back has already spent a strip it does
-not know about. That was true when the mistake landed on a wrong-generation
-route, and it is still true now that there is only one generation: the redirect
-is wrong regardless of what it hits. `test_a_trailing_slash_is_never_a_redirect`
-pins it.
+
+Not because the prefix is unknowable — it is a constant, `proxy.GATEWAY_MOUNT`,
+and `browser_path()` is one line built on it. The problem is that **Starlette's
+slash-redirect never calls our code**. It builds an origin-absolute `Location`
+out of the path *it* was handed, which is the stripped one, so the browser is
+sent to `<origin>/topics/42` — a URL with no `/api`, which the gateway does not
+route to the backend at all.
+
+Repairing that would mean a middleware rewriting the framework's 307s. Not worth
+writing, for a request that should not be made: a trailing slash has no correct
+meaning here. `test_a_trailing_slash_is_never_a_redirect` pins the setting.
 
 For a client, the consequence is one line: **a trailing slash is a plain 404**,
 which is an honest error instead of a silent wrong answer. The history of how
@@ -123,9 +127,8 @@ verified live:
    and a **1.0** route answered.
 
 One character turned a correct 2.0 URL into a wrong-generation answer with a
-success code. The backend cannot repair the `Location`, because it cannot know
-how many prefixes the proxy ahead of it will strip — so the redirect itself had
-to go: `app.main` builds the app with `redirect_slashes=False`, and a trailing
+success code. Starlette builds that `Location` itself, from the stripped path,
+without consulting anything of ours — so the redirect itself had to go: `app.main` builds the app with `redirect_slashes=False`, and a trailing
 slash is a plain 404. With one namespace there is no other generation left to
 land on, but the redirect stays off and `test_a_trailing_slash_is_never_a_redirect`
 still pins it: an origin-absolute `Location` from behind a stripping gateway is
