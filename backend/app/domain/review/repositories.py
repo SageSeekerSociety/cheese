@@ -65,6 +65,44 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_live_for_topics(
+        self, topic_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
+    ) -> list[AcceptCard]:
+        """Undecided cards on ANY of these topics.
+
+        By topic-set rather than by topic because archiving is cascading: the
+        question this answers is "would archiving this sub-topic close a card
+        somebody is still waiting on", and a grandchild's card is closed by the
+        same cascade (`TopicService._archive_children`).
+        """
+        if not topic_ids:
+            return []
+        stmt = (
+            select(AcceptCard)
+            .where(
+                AcceptCard.topic_id.in_(topic_ids),
+                AcceptCard.status.in_(statuses),
+            )
+            .order_by(AcceptCard.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
+        """When a card on these topics last changed hands — NULL if there are no
+        cards at all.
+
+        `decided_at` first, `updated_at` as the fallback: a card condemned by
+        the gate never gets a `decided_at` (nobody decided it), yet its moment
+        is exactly what a "give them a window to re-file" clock has to start
+        from.
+        """
+        if not topic_ids:
+            return None
+        stmt = select(
+            func.max(func.coalesce(AcceptCard.decided_at, AcceptCard.updated_at))
+        ).where(AcceptCard.topic_id.in_(topic_ids))
+        return (await self._session.scalars(stmt)).first()
+
     async def list_stale_pending_gate(self, cutoff: datetime) -> list[AcceptCard]:
         """孤儿卡扫底 (2026-08-11): cards still waiting on a gate that started
         (or, failing that, was filed) before ``cutoff``.

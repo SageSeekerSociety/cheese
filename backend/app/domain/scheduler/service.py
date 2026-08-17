@@ -300,9 +300,17 @@ class SchedulerService:
         ran at all (queued behind a wedged turn, refused on credits, killed by a
         deploy). 默认采信 must not depend on any turn actually happening.
         One transaction per sweep — the cards are independent but few.
+
+        Second job, same shape: pay back the archives 采信 deferred because the
+        sub-topic still held an undecided accept card. That deferral is what
+        keeps a reviewer's card from being revoked out from under them; this is
+        what keeps the deferral from turning into a never-archived sub-topic.
         """
         from app.domain.conclusion.services import ConclusionCardService
 
+        errors: list[str] = []
+        settled: list[uuid.UUID] = []
+        archived: list[uuid.UUID] = []
         async with self._sessions() as session:
             try:
                 settled = await ConclusionCardService(session).sweep_expired()
@@ -311,8 +319,20 @@ class SchedulerService:
             except Exception as exc:  # noqa: BLE001 — maintenance must survive
                 await session.rollback()
                 logger.exception("conclusion card sweep failed")
-                return {"settled": 0, "errors": [str(exc)]}
-        return {"settled": len(settled), "errors": []}
+                errors.append(str(exc))
+        # 归档补账走**自己的**事务：默认采信是主机制，补账是它的尾巴，尾巴出错
+        # 不能把已经结算好的卡一起回滚掉。
+        async with self._sessions() as session:
+            try:
+                service = ConclusionCardService(session)
+                archived = await service.sweep_deferred_archives()
+                if archived:
+                    await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("deferred archive sweep failed")
+                errors.append(str(exc))
+        return {"settled": len(settled), "archived": len(archived), "errors": errors}
 
 
 class SchedulerRunner:
@@ -558,7 +578,7 @@ class ConclusionSweepRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._scheduler.sweep_conclusion_cards()
-                if result["settled"] or result["errors"]:
+                if result["settled"] or result["archived"] or result["errors"]:
                     logger.info("conclusion sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("conclusion sweep failed")
