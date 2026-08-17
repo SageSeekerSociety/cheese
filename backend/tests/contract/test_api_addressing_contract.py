@@ -61,24 +61,21 @@ _FAMILIES = [
 
 _HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH"}
 
-# Every (2.0 path, method) whose bare form — one /api layer removed — lands on a
-# live route of the OTHER generation. Measured on the live router (this is the
-# set the sweep below recomputes on every run) and mirrored as the table in
-# docs/api-conventions.md. These are the endpoints where losing a prefix does
-# not 404 — it answers, convincingly, from the wrong generation.
-# Shrinks as #370's renames land: each collision here exists because a 1.0 route
-# squats on a word the 2.0 generation also uses, and renaming the 1.0 route
-# retires the entry for good. Six `/api/projects*` rows left when the 知是 team
-# project moved to `/team-projects`; three `/api/topics*` rows left when the 1.0
-# question tag moved to `/tags`.
+# EMPTY, as of the 赛题 merge (#370) — and that is the whole point of the issue.
 #
-# One pair is left, and it will not leave by renaming: 1.0 `/tasks` and 2.0
-# `/api/tasks` are the SAME resource written twice (#370 — 机构发题, 队伍领题),
-# so they merge, which is its own project. When this set is empty the 2.0 `/api`
-# prefix has no reason left to exist and step 2 can flatten it.
-_CROSS_WIRED_TODAY = {
-    ("/api/tasks/{task_id}", "GET"),
-}
+# Every entry here was a resource word owned twice, where losing one `/api` layer
+# handed a 2.0 request to 1.0 and got a confident answer from the wrong
+# generation. They left one at a time: six `/api/projects*` rows when the 知是
+# team project moved to `/team-projects`, three `/api/topics*` when the question
+# tag moved to `/tags`, and the last one — `/api/tasks/{task_id}` — not by
+# renaming but by MERGING: the cheesex 题目 hierarchy is retired and 赛题 are the
+# 知是 ones.
+#
+# So the doubled `/api/api` has no reason left to exist, and #370 step 2 (flatten
+# the 2.0 prefix, `BASE` back to `/api`) is unblocked. Until that lands this set
+# stays empty and keeps its other direction: a NEW collision fails here, which is
+# what stops the surface from re-acquiring one before the flattening happens.
+_CROSS_WIRED_TODAY: set[tuple[str, str]] = set()
 
 
 @pytest.fixture(scope="module")

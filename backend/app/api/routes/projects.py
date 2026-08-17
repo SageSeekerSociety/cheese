@@ -45,8 +45,6 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.project.schemas import (
     ProjectCreate,
     ProjectOut,
-    TaskLinkCreate,
-    TaskLinkOut,
 )
 from app.domain.project.services import ProjectService
 from app.domain.topic.models import Topic
@@ -226,28 +224,6 @@ async def set_expert_role(project_id: uuid.UUID, body: dict, db: DbSession) -> d
     project.expert_role = name or None
     await db.flush()
     return ok({"current": project.expert_role})
-
-
-@router.post("/{project_id}/tasks")
-async def link_task(project_id: uuid.UUID, body: TaskLinkCreate, db: DbSession) -> dict:
-    link = await ProjectService(db).link_task(
-        project_id=project_id, task_id=body.task_id
-    )
-    return ok(TaskLinkOut.model_validate(link).model_dump(mode="json"))
-
-
-@router.get("/{project_id}/tasks")
-async def list_linked_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
-    links, total = await ProjectService(db).list_links(project_id)
-    items = [TaskLinkOut.model_validate(link).model_dump(mode="json") for link in links]
-    return ok(page(items, total))
-
-
-@router.delete("/{project_id}/tasks/{task_id}")
-async def unlink_task(project_id: uuid.UUID, task_id: uuid.UUID, db: DbSession) -> dict:
-    """退出 Task 协议 (§4): break the project↔task link."""
-    await ProjectService(db).unlink_task(project_id=project_id, task_id=task_id)
-    return ok({"unlinked": True})
 
 
 @router.get("/{project_id}/decisions")

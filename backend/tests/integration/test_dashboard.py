@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
-from tests.conftest import seed_space
+from tests.conftest import seed_space, seed_task_with_protocol
 from tests.integration.conftest import session_auth_headers
 
 
@@ -100,16 +100,12 @@ def test_project_overview(client, bearer):
 
 
 def test_space_board_lists_linked_teams(client):
-    # Build Space → template → task, then link a project.
+    # Space → its 赛题 → a project created from it (#370).
     space_id = seed_space(client, "明理书院")
-    tmpl = client.post(
-        f"/api/spaces/{space_id}/templates", json={"name": "入驻"}
+    task_id = seed_task_with_protocol(client, space_id=space_id)
+    client.post(
+        "/api/projects", json={"name": "队伍A", "external_task_id": task_id}
     ).json()["data"]
-    task = client.post(
-        f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
-    ).json()["data"]
-    p = client.post("/api/projects", json={"name": "队伍A"}).json()["data"]
-    client.post(f"/api/projects/{p['id']}/tasks", json={"task_id": task["id"]})
 
     board = client.get(f"/api/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 1

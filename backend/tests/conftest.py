@@ -553,6 +553,7 @@ def seed_task_with_protocol(
     resource_pack: dict | None = None,
     default_role: str | None = None,
     override: dict | None = None,
+    space_id: int | None = None,
 ) -> int:
     """A 项目集 carrying 机构协议 + one 赛题 under it; returns the 赛题's int id.
 
@@ -572,19 +573,22 @@ def seed_task_with_protocol(
     async def _seed() -> None:
         async with client.test_factory() as session:  # type: ignore[attr-defined]
             now = datetime.now(UTC)
-            space = Space(
-                name=f"信院-{datetime.now(UTC).timestamp()}",
-                intro="",
-                description="",
-                announcements=[],
-                task_templates=[],
-                created_at=now,
-                updated_at=now,
-            )
-            session.add(space)
-            await session.flush()
+            owning_space = space_id
+            if owning_space is None:
+                space = Space(
+                    name=f"信院-{datetime.now(UTC).timestamp()}",
+                    intro="",
+                    description="",
+                    announcements=[],
+                    task_templates=[],
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(space)
+                await session.flush()
+                owning_space = space.id
             category = SpaceCategory(
-                space_id=space.id,
+                space_id=owning_space,
                 name="创研课 2026 秋",
                 description="",
                 display_order=0,
@@ -602,7 +606,7 @@ def seed_task_with_protocol(
                 description="",
                 protocol_override=override,
                 creator_id=1,
-                space_id=space.id,
+                space_id=owning_space,
                 category_id=category.id,
                 submitter_type=0,
                 approved=0,

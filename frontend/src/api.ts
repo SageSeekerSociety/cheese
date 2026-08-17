@@ -16,7 +16,6 @@ import type {
   ListPayload,
   MarketNodes,
   MarketPools,
-  MarketTask,
   MemberSummary,
   MilestoneFull,
   OAuthConnectionInfo,
@@ -28,7 +27,6 @@ import type {
   ProjectOverview,
   ReactionAgg,
   SandboxImageInfo,
-  TaskApplication,
   Topic,
   TopicComputeProfile,
   TopicMemberRow,
@@ -580,37 +578,6 @@ export function getProjectCredits(projectId: string): Promise<ProjectCredits> {
 }
 
 // ---- 题目匹配市场 (spec §13 阶段 6) ----
-
-// Published 题目 (Task Templates), optionally keyword-filtered.
-export function getMarketTasks(q?: string): Promise<ListPayload<MarketTask>> {
-  const query = q ? `?q=${encodeURIComponent(q)}` : ''
-  return request<ListPayload<MarketTask>>(`/market/tasks${query}`)
-}
-
-// 应征: apply with one of your projects. Idempotent per (题目, project).
-export function applyMarketTask(templateId: string, projectId: string, pitch: string): Promise<TaskApplication> {
-  return request<TaskApplication>(`/market/tasks/${encodeURIComponent(templateId)}/apply`, {
-    method: 'POST',
-    body: JSON.stringify({ project_id: projectId, pitch }),
-  })
-}
-
-// Space side: who applied to this 题目.
-export function listTaskApplications(templateId: string): Promise<ListPayload<TaskApplication>> {
-  return request<ListPayload<TaskApplication>>(`/market/tasks/${encodeURIComponent(templateId)}/applications`)
-}
-
-// Accept/decline an 应征. Accept creates the Task + link and notifies the team.
-export function decideTaskApplication(
-  applicationId: string,
-  decision: 'accept' | 'decline',
-  decidedBy: string
-): Promise<TaskApplication> {
-  return request<TaskApplication>(`/market/applications/${encodeURIComponent(applicationId)}/${decision}`, {
-    method: 'POST',
-    body: JSON.stringify({ decided_by: decidedBy }),
-  })
-}
 
 // AI 模型池: the project's current profile + the ones it may select.
 export function getExecutionProfiles(projectId: string): Promise<ExecProfiles> {

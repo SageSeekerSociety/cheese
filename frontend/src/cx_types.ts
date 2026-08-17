@@ -575,33 +575,6 @@ export interface ProjectCredits {
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
-// GET /api/market/tasks — a published Task Template as a market listing.
-export interface MarketTask {
-  id: string
-  space_id: string
-  space_name: string
-  name: string
-  description: string
-  resource_pack: Record<string, unknown>
-  conditions: Array<Record<string, unknown>>
-  default_role: string | null
-  created_at: string
-}
-
-// An 应征 (team applies with a Project). status: pending → accepted | declined.
-export interface TaskApplication {
-  id: string
-  template_id: string
-  project_id: string
-  project_name: string
-  pitch: string
-  status: 'pending' | 'accepted' | 'declined'
-  decided_by: string | null
-  decided_at: string | null
-  task_id: string | null
-  created_at: string
-}
-
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
 export interface ExecProfileOption {
   name: string
