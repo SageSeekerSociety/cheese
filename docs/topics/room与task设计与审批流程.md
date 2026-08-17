@@ -250,7 +250,45 @@ places-and-actors 里已经有一条更可操作的：**它的产出会不会落
 但"那个任务话题自己怎么收尾"还没人拆——归档至今一肩挑三件事（冻结工作面／释放算力／
 计费云机器唯一回收路径），第 4 节那五个洞就落在这里。
 
-## 6. 待办 / 下一步
+## 6. 参考：buzz 怎么区分不同的 agent（2026-08-17 直接读了源码）
+
+沙箱里没有 buzz 的本地副本（`reference/` 是 gitignored，本沙箱没有），但 `raw.githubusercontent.com`
+和加了 User-Agent 的 GitHub API 在沙箱里都通，所以下面是**读真实代码**得到的，不是转述。
+仓库：`github.com/block/buzz`（Apache-2.0，Rust，4010 个文件）。
+
+**一句话：身份是密钥，不是字符串。** 一条完整的链：
+
+| 层 | Nostr 事件类型 | 说的是 | 寻址／保护 |
+|---|---|---|---|
+| 这个 agent 是谁 | `KIND_MANAGED_AGENT` = 30177 | owner 签名发布的 agent 定义 | 按 `(owner_pubkey, kind, d_tag)` 寻址，**d_tag 就是 agent 自己的公钥** |
+| 它的凭据／运行时 | `KIND_PRIVATE_MANAGED_AGENT` = 30179 | 私钥、env、runtime | NIP-44 加密给 owner。30177 那条是世界可读的，代码里写死"MUST never carry the agent's secret key / auth tag / env vars / runtime fields" |
+| 它是什么样 | `KIND_PERSONA` = 30175 | 配置（人设） | 默认作者可见，要共享得显式打 `["shared","true"]` **标签**（不是内容字段，这样切换共享不改内容哈希） |
+| 它学到了什么 | NIP-AE engram | 记忆 | 见下 |
+
+记忆那条最值得看（`crates/buzz-core/src/engram.rs`）：`build_event(agent_keys, owner_pubkey, …)`
+——事件**由 agent 自己的密钥签名**，用 `conversation_key(agent_secret, owner_pubkey)` 加密到
+「agent ↔ owner」这一对，连条目名都不是明文（`d_tag = HMAC(K_c, "agent-memory/v1/d-tag" ‖ 0x00 ‖ slug)`）。
+双方都能读：agent 用自己的私钥＋owner 公钥，owner 用自己的私钥＋agent 公钥。
+
+**所以「记忆按 agent 分池」在 buzz 那边不是一个 WHERE 条件，是密码学**：没有那把私钥，
+事件既不是那个 agent 发的、也解不开。
+
+对照我们：我们区分芝士靠 **handle 字符串**（`cheese-<话题 hex>`）＋后端的 scope 字段
+（`MemoryScope.agent_project`，scope_id = 项目 id + agent handle）。语义一样，失效方式不一样——
+字符串**可以忘记传**。这正是 2026-08-10 那个坑：沙箱里装的 cheese CLI 是旧构建、`remember` 不带
+`topic`，后端认不出是哪个芝士，于是所有记忆**静默落进共享 project 池**，没有任何报错。
+密钥不会有这种失效模式：签名不对，事件就不是那个 agent 的。
+
+另外两条与我们直接相关：
+
+- **进程与身份解耦。** `VISION_AGENT.md`：一个 buzz-agent 进程最多挂 8 个并发 session，
+  各自独立的 MCP server／历史／上下文。身份不住在进程里，所以换进程不改变"它是谁"。
+- **community 是状态边界。** 原文：agent 连的 relay URL 选定它的 community；profile、presence、
+  DM、记忆、jobs、频道成员都 scope 在那个 community 内，「同一个 npub 可以加入另一个 community，
+  但不继承任何 agent state」。这和我们把记忆 scope 在**项目**上是同一个选择
+  （places-and-actors 里那句「项目是我们的 community」）。
+
+## 7. 待办 / 下一步
 
 - [ ] 改 `cheese accept-request` 的帮助文本，删掉闸门那段（差异 ①）—— 这条直接在误导 agent，优先级最高
 - [ ] `docs/accept-is-merge.md` 的 Card states 表加失效标注，或删掉（差异 ②）
