@@ -40,7 +40,7 @@ from tests.integration.test_accept_pr import (
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 def _wait_for_event(client, topic_id: str, event_type: str, *, timeout: float = 10.0):
@@ -211,7 +211,7 @@ def test_upstream_conflict_lands_as_one_line_event(client, monkeypatch):
     只列前 15 个，展开区不该跟着缩水。"""
     from app.domain.workspace import upstream_conflict
 
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     files = [f"pkg/mod_{i}.py" for i in range(20)]
     monkeypatch.setattr(
         ws, "prepare_upstream_conflict_resolution", lambda *_a, **_kw: files

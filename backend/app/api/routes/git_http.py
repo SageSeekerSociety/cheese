@@ -27,7 +27,7 @@ from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sandbox_auth import verify_scoped_token
 from app.domain.workspace import service as ws
 
-router = APIRouter(prefix="/api/projects", tags=["git"])
+router = APIRouter(prefix="/projects", tags=["git"])
 
 # The three endpoints of git's smart HTTP protocol.
 _UPLOAD = "git-upload-pack"  # clone / fetch

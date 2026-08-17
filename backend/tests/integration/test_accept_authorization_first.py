@@ -48,7 +48,7 @@ def _authorize(client, monkeypatch, *, reviewer: str = "alice") -> tuple:
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid, reviewer=reviewer)
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": reviewer},
         headers=session_auth_headers(reviewer),
     )

@@ -8,7 +8,7 @@ from tests.integration.conftest import chat_ws_url
 
 
 def _list_roles(client) -> list[dict]:
-    r = client.get("/api/roles")
+    r = client.get("/roles")
     assert r.status_code == 200
     return r.json()["data"]["data"]
 
@@ -21,7 +21,7 @@ def _create_role(client, **overrides) -> dict:
         "body": "你是一位数据科学导师，擅长统计与机器学习。",
     }
     payload.update(overrides)
-    r = client.post("/api/roles", json=payload)
+    r = client.post("/roles", json=payload)
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -44,13 +44,13 @@ def test_custom_role_crud(client):
     names = [i["name"] for i in _list_roles(client)]
     assert "data-science" in names
 
-    r = client.put("/api/roles/data-science", json={"body": "新的 persona 正文。"})
+    r = client.put("/roles/data-science", json={"body": "新的 persona 正文。"})
     assert r.status_code == 200
     assert r.json()["data"]["body"] == "新的 persona 正文。"
     # Untouched fields survive a partial update.
     assert r.json()["data"]["title"] == "数据科学"
 
-    r = client.delete("/api/roles/data-science")
+    r = client.delete("/roles/data-science")
     assert r.status_code == 200
     assert "data-science" not in [i["name"] for i in _list_roles(client)]
 
@@ -58,7 +58,7 @@ def test_custom_role_crud(client):
 def test_duplicate_custom_name_rejected(client):
     _create_role(client)
     r = client.post(
-        "/api/roles",
+        "/roles",
         json={"name": "data-science", "title": "重复", "body": "x"},
     )
     assert r.status_code == 422
@@ -66,17 +66,17 @@ def test_duplicate_custom_name_rejected(client):
 
 
 def test_invalid_role_name_rejected(client):
-    r = client.post("/api/roles", json={"name": "Bad Name!", "body": "x"})
+    r = client.post("/roles", json={"name": "Bad Name!", "body": "x"})
     assert r.status_code == 422
 
 
 def test_builtin_roles_are_read_only(client):
-    r = client.put("/api/roles/fullstack-engineer", json={"body": "篡改"})
+    r = client.put("/roles/fullstack-engineer", json={"body": "篡改"})
     assert r.status_code == 422
-    r = client.delete("/api/roles/fullstack-engineer")
+    r = client.delete("/roles/fullstack-engineer")
     assert r.status_code == 422
     # Unknown names 404 (distinct from the read-only case).
-    r = client.delete("/api/roles/no-such-role")
+    r = client.delete("/roles/no-such-role")
     assert r.status_code == 404
 
 
@@ -110,15 +110,15 @@ def test_custom_role_injected_into_chat_system_prompt(client, stub_agent):
     custom_body = "你是自定义的评审专家人格。"
     _create_role(client, name="academic-research", title="评审", body=custom_body)
 
-    pr = client.post("/api/projects", json={"name": "RoleDemo"})
+    pr = client.post("/projects", json={"name": "RoleDemo"})
     project_id = pr.json()["data"]["id"]
     r = client.put(
-        f"/api/projects/{project_id}/expert-role", json={"role": "academic-research"}
+        f"/projects/{project_id}/expert-role", json={"role": "academic-research"}
     )
     assert r.json()["data"]["current"] == "academic-research"
 
     tr = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "t", "created_by": "u"},
     )
     topic_id = tr.json()["data"]["id"]
@@ -137,19 +137,17 @@ def test_custom_role_injected_into_chat_system_prompt(client, stub_agent):
 
 
 def test_set_project_expert_role_validation(client):
-    pr = client.post("/api/projects", json={"name": "P"})
+    pr = client.post("/projects", json={"name": "P"})
     project_id = pr.json()["data"]["id"]
 
     # A builtin name works.
     r = client.put(
-        f"/api/projects/{project_id}/expert-role", json={"role": "product-design"}
+        f"/projects/{project_id}/expert-role", json={"role": "product-design"}
     )
     assert r.json()["data"]["current"] == "product-design"
     # Unknown names are rejected.
-    r = client.put(
-        f"/api/projects/{project_id}/expert-role", json={"role": "ghost-role"}
-    )
+    r = client.put(f"/projects/{project_id}/expert-role", json={"role": "ghost-role"})
     assert r.status_code == 422
     # Empty clears.
-    r = client.put(f"/api/projects/{project_id}/expert-role", json={"role": ""})
+    r = client.put(f"/projects/{project_id}/expert-role", json={"role": ""})
     assert r.json()["data"]["current"] is None

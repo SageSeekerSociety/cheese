@@ -244,12 +244,13 @@ def ttyd_endpoint(topic_id: uuid.UUID) -> str | None:
 
 
 def _hook_base() -> str:
-    """Backend base URL reachable from the container, WITHOUT the /api suffix
-    (the hook endpoint is /sandbox/hooks, outside /api)."""
-    base = settings.sandbox_api_base.rstrip("/")
-    if base.endswith("/api"):
-        base = base[: -len("/api")]
-    return base
+    """Backend base URL reachable from the container — the app root.
+
+    Since #370 step 2 that is simply the configured base; the stripping lives in
+    `settings.agent_api_base()` so a box whose .env still carries the old
+    `…/api` value keeps working in one place rather than three.
+    """
+    return settings.agent_api_base()
 
 
 def _subscription_args() -> list[str]:
@@ -989,7 +990,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                 "CHEESE_APP_BASE": f"/api/topics/{topic_id}/app/",
                 "SBX_WORKTREE": worktree,
                 "SBX_SESSION": session_dir,
-                "CHEESE_API": settings.sandbox_api_base,
+                "CHEESE_API": settings.agent_api_base(),
                 "CHEESE_PROJECT": str(project_id),
                 "CHEESE_TOPIC": str(topic_id),
                 # Which 分身 this sandbox is (分身独立身份) — the same identity

@@ -29,12 +29,12 @@ def _project(client, owner: str = "alice") -> str:
     (`authorize_project` 403s an outsider), which is what makes 「无关」 a real
     case rather than an authorization failure wearing its clothes.
     """
-    pid = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": owner}
-    ).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]["id"]
     for handle in ("bob", "carol", "dave"):
         r = client.post(
-            f"/api/projects/{pid}/members",
+            f"/projects/{pid}/members",
             json={"user_handle": handle, "role": "member"},
             headers=session_auth_headers(owner),
         )
@@ -44,7 +44,7 @@ def _project(client, owner: str = "alice") -> str:
 
 def _topic(client, pid: str, title: str, created_by: str = "alice") -> str:
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": pid, "title": title, "created_by": created_by},
         headers=session_auth_headers(created_by),
     )
@@ -55,7 +55,7 @@ def _topic(client, pid: str, title: str, created_by: str = "alice") -> str:
 def _seen_by(client, pid: str, handle: str) -> dict[str, dict]:
     """{title: row} of the project's topics as ``handle`` sees them."""
     r = client.get(
-        "/api/topics",
+        "/topics",
         params={"project_id": pid},
         headers=session_auth_headers(handle),
     )
@@ -65,7 +65,7 @@ def _seen_by(client, pid: str, handle: str) -> dict[str, dict]:
 
 def _card(client, tid: str, reviewer: str) -> str:
     r = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -93,7 +93,7 @@ def test_a_roster_member_participates(client):
     pid = _project(client)
     tid = _topic(client, pid, "T", created_by="alice")
     r = client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     assert r.status_code == 200, r.text
@@ -121,7 +121,7 @@ def test_a_routed_reviewer_participates_and_is_awaited(client):
     tid = _topic(client, pid, "T", created_by="alice")
     _card(client, tid, reviewer="carol")
 
-    roster = client.get(f"/api/topics/{tid}/members").json()["data"]["data"]
+    roster = client.get(f"/topics/{tid}/members").json()["data"]["data"]
     assert "carol" not in {m["member_handle"] for m in roster}
 
     row = _seen_by(client, pid, "carol")["T"]
@@ -160,12 +160,12 @@ def test_an_unread_at_awaits_you_and_a_read_one_still_counts(client):
     assert row["awaits_me"] is True
 
     alerts = client.get(
-        f"/api/projects/{pid}/alerts", headers=session_auth_headers("bob")
+        f"/projects/{pid}/alerts", headers=session_auth_headers("bob")
     ).json()["data"]["data"]
     mention = next(a for a in alerts if a["kind"] == "mention")
     assert (
         client.post(
-            f"/api/alerts/{mention['id']}/read", headers=session_auth_headers("bob")
+            f"/alerts/{mention['id']}/read", headers=session_auth_headers("bob")
         ).status_code
         == 200
     )
@@ -206,7 +206,7 @@ def test_the_topic_header_carries_the_same_verdict(client):
     tid = _topic(client, pid, "T", created_by="alice")
     _card(client, tid, reviewer="carol")
 
-    head = client.get(f"/api/topics/{tid}", headers=session_auth_headers("carol"))
+    head = client.get(f"/topics/{tid}", headers=session_auth_headers("carol"))
     assert head.status_code == 200, head.text
     assert head.json()["data"]["i_participate"] is True
     assert head.json()["data"]["awaits_me"] is True
@@ -217,7 +217,7 @@ def test_an_anonymous_caller_gets_the_default(client):
     pid = _project(client)
     _topic(client, pid, "T", created_by="alice")
 
-    rows = client.get("/api/topics", params={"project_id": pid}).json()["data"]["data"]
+    rows = client.get("/topics", params={"project_id": pid}).json()["data"]["data"]
     row = next(t for t in rows if t["title"] == "T")
     assert row["i_participate"] is False
     assert row["awaits_me"] is False

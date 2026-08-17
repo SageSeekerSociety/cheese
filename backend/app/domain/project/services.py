@@ -4,9 +4,8 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
-from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
-from app.domain.project.models import AiMode, Project, ProjectTaskLink
+from app.core.errors import NotFoundError
+from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
@@ -19,8 +18,6 @@ class ProjectService:
         self._session = session
         self._repo = ProjectRepository(session)
         self._topics = TopicRepository(session)
-        self._tasks = TaskRepository(session)
-        self._templates = TaskTemplateRepository(session)
         self._grants = ComputeGrantRepository(session)
         self._members = TopicMemberService(session)
 
@@ -53,6 +50,15 @@ class ProjectService:
             team_id=team_id,
             external_task_id=external_task_id,
         )
+        # 接受协议 (#370, 时机决定 (i)): a project created FROM a 赛题 accepts its
+        # 项目集's terms at that moment — the institution's 资源包 is issued and
+        # its default expert role inherited. This used to happen when a project
+        # linked a cheesex `task`, a parallel hierarchy with no UI to create it;
+        # the 赛题 page's 「从这道赛题创建项目」 button is where it really happens.
+        # Deliberately NOT at 领取 time: a team claims a 赛题 before any project
+        # exists, and nothing yet needs "a team holding unspent credits".
+        if external_task_id is not None:
+            await self._accept_task_protocol(project, external_task_id)
         root = await self._topics.add(
             project_id=project.id,
             title=f"{name} · 项目总览",
@@ -122,48 +128,37 @@ class ProjectService:
                 projects.sort(key=lambda p: p.created_at, reverse=True)
         return projects
 
-    async def link_task(
-        self, *, project_id: uuid.UUID, task_id: uuid.UUID
-    ) -> ProjectTaskLink:
-        """Link a project to a task = accept the Template's protocol (§4.2)."""
-        project = await self.get_or_404(project_id)
-        task = await self._tasks.get(task_id)
+    async def _accept_task_protocol(self, project: Project, task_id: int) -> None:
+        """Apply the 赛题's 机构协议 to a freshly created project (#370).
+
+        Resolves the terms from the 赛题's 项目集 (with the 赛题's own override,
+        option (c)) and does the two things accepting a protocol means: inherit
+        the default expert role when the project has none, and issue the 资源包's
+        compute credits. A project with NO grant stays unmetered — spec §4 项目
+        自治 — so an unlinked project is untouched by all of this.
+
+        Best-effort: a 赛题 that has gone missing, or one whose 项目集 offers
+        nothing, leaves the project exactly as it was. Creating a project must
+        not fail because an institution left its resource pack empty.
+        """
+        from app.domain.space.models import SpaceCategory
+        from app.domain.task.models import Task
+        from app.domain.task.protocol import resolve
+
+        task = await self._session.get(Task, task_id)
         if task is None:
-            raise NotFoundError("Task not found")
-        if await self._repo.get_link(project_id=project_id, task_id=task_id):
-            raise ValidationError("Project already linked to this task")
-        tmpl = await self._templates.get(task.template_id)
-        if tmpl is not None:
-            # Inherit the Template's default expert role if the project has none
-            # yet (§4.2: accepting the protocol也继承默认配置).
-            if not project.expert_role and tmpl.default_role:
-                project.expert_role = tmpl.default_role
-            # 资源包 made real (spec §9.1 机构提供算力): a compute_credits entry
-            # in the template's resource_pack issues a ComputeGrant. From the
-            # first grant on, the project is metered; unlinked projects stay
-            # unlimited (spec §4 自治).
-            credits = (tmpl.resource_pack or {}).get("compute_credits")
-            if (
-                isinstance(credits, int | float)
-                and not isinstance(credits, bool)
-                and credits > 0
-            ):
-                await self._grants.grant(
-                    project_id=project_id,
-                    source_task_id=task_id,
-                    credits_total=float(credits),
-                )
-        return await self._repo.link_task(project_id=project_id, task_id=task_id)
-
-    async def unlink_task(self, *, project_id: uuid.UUID, task_id: uuid.UUID) -> None:
-        """退出/断开 Task 协议 (§4): remove the project↔task link."""
-        await self.get_or_404(project_id)
-        if not await self._repo.unlink_task(project_id=project_id, task_id=task_id):
-            raise NotFoundError("Project is not linked to this task")
-
-    async def list_links(
-        self, project_id: uuid.UUID
-    ) -> tuple[list[ProjectTaskLink], int]:
-        await self.get_or_404(project_id)
-        links = await self._repo.list_links(project_id)
-        return links, len(links)
+            return
+        category = (
+            await self._session.get(SpaceCategory, task.category_id)
+            if getattr(task, "category_id", None)
+            else None
+        )
+        protocol = resolve(category=category, task=task)
+        if not project.expert_role and protocol.default_role:
+            project.expert_role = protocol.default_role
+        if protocol.compute_credits > 0:
+            await self._grants.grant(
+                project_id=project.id,
+                source_task_id=task_id,
+                credits_total=protocol.compute_credits,
+            )

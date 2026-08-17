@@ -72,10 +72,10 @@ class _Agent(AgentService):
 
 
 def _seed_topic(client) -> str:
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
-    return client.post(
-        "/api/topics", json={"project_id": pid, "title": "退出路径"}
-    ).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/topics", json={"project_id": pid, "title": "退出路径"}).json()[
+        "data"
+    ]["id"]
 
 
 async def _stored_session_id(factory, topic_id: str) -> str | None:

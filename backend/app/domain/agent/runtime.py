@@ -41,11 +41,26 @@ from app.domain.agent.platform_notices import (
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
+    delivery_fallback_notice,
     notice,
 )
 from app.domain.identity.actor import Actor
 
 logger = logging.getLogger("cheesex.runtime")
+
+
+def _fire_on_done(callback: Callable[[], None]) -> None:
+    """Run a `submit(on_done=...)` hook without letting it escape into the loop.
+
+    A done-callback that raises does not fail the turn (that already finished) —
+    it lands in the loop's exception handler as an unattributed error. Swallow
+    and log instead, so a bookkeeping bug in a caller stays a bookkeeping bug.
+    """
+    try:
+        callback()
+    except Exception:  # noqa: BLE001 — a hook must never break the runner
+        logger.exception("submit on_done hook failed")
+
 
 _inflight_lock = threading.Lock()
 
@@ -505,6 +520,7 @@ class AgentWorkRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        on_done: Callable[[], None] | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
@@ -520,7 +536,14 @@ class AgentWorkRunner:
         ``continuation_id`` names the logical unit of work. A fresh turn starts
         one (defaulting to its own turn id); an auto-resume INHERITS the
         interrupted turn's, which is what lets a side effect the first attempt
-        already performed be recognised as done — see domain.idempotency.keys."""
+        already performed be recognised as done — see domain.idempotency.keys.
+
+        ``on_done`` fires when this turn's task finishes, whatever the outcome.
+        It exists for callers that COALESCE work onto a running turn (母子传话,
+        `domain.topic.relay`) and therefore need the moment the topic is free
+        again; it is not an error channel and never sees the result. It runs on
+        the event loop as a done-callback, so it must not block and must not
+        raise — an exception there would only reach the loop's handler."""
         turn_id = uuid.uuid4()
         task = asyncio.create_task(
             self._run(
@@ -542,6 +565,8 @@ class AgentWorkRunner:
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        if on_done is not None:
+            task.add_done_callback(lambda _task: _fire_on_done(on_done))
         return turn_id
 
     async def submit_message(
@@ -562,6 +587,13 @@ class AgentWorkRunner:
         metered work. Keeping those as two operations makes the ordering real:
         the project queue and credit gate can delay/refuse only the latter.
         """
+        channel = str(topic_id)
+        # Capture the user's arrival-time expectation before the database write.
+        # The live session may finish while the message is being persisted; that
+        # race is still a delivery fallback, not an ordinary idle-topic message.
+        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
+            self._broker.active_turn_ids(channel)
+        )
         payloads, user_block_id, user_block_ids = await chat_service.post_user_message(
             topic_id,
             author=author,
@@ -571,7 +603,6 @@ class AgentWorkRunner:
             attachments=attachments,
         )
         turn_id = user_block_id
-        channel = str(topic_id)
         for payload in payloads:
             await self._broker.publish(
                 channel, {"type": "user_block", "block": payload}
@@ -595,6 +626,7 @@ class AgentWorkRunner:
                 provision_actor=provision_actor,
                 landed_user_block_id=user_block_id,
                 landed_user_block_ids=user_block_ids,
+                live_delivery_expected=live_delivery_expected,
             )
         )
         self._tasks.add(task)
@@ -1349,6 +1381,10 @@ class AgentWorkRunner:
         # still pending admission and may instead merge into a live turn.
         landed_user_block_id: uuid.UUID | None = None,
         landed_user_block_ids: list[uuid.UUID] | None = None,
+        # True when live work existed as this human message arrived. If that
+        # work disappears before injection, normal queueing is still a fallback
+        # and must be reported as an error.
+        live_delivery_expected: bool = False,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
@@ -1361,11 +1397,20 @@ class AgentWorkRunner:
                 author,
                 attachments,
             )
-            if delivered:
+            if delivered is True:
                 ack = await chat_service.ack_summon(landed_user_block_id, topic_id)
                 if ack is not None:
                     await self._broker.publish(channel, {"type": "reaction", **ack})
                 return
+            if delivered is False or live_delivery_expected:
+                fallback_text, fallback_meta = delivery_fallback_notice()
+                await self._post_event(
+                    chat_service,
+                    topic_id,
+                    turn_id,
+                    fallback_text,
+                    meta=fallback_meta,
+                )
 
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
         # project's concurrent-turn ceiling is reached. Both states are posted

@@ -13,16 +13,16 @@ def _agent(tid: str) -> str:
 
 
 def _topic(client, created_by: str = "alice") -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": created_by},
     ).json()["data"]
     return t["id"]
 
 
 def _roster(client, tid: str) -> list[dict]:
-    return client.get(f"/api/topics/{tid}/members").json()["data"]["data"]
+    return client.get(f"/topics/{tid}/members").json()["data"]["data"]
 
 
 def test_seed_creator_owner_and_cheese_member(client):
@@ -42,7 +42,7 @@ def test_seed_creator_owner_and_cheese_member(client):
 def test_owner_can_add_member(client):
     tid = _topic(client, created_by="alice")
     r = client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     assert r.status_code == 200
@@ -54,12 +54,12 @@ def test_owner_can_add_member(client):
 def test_non_manager_cannot_add_member(client):
     tid = _topic(client, created_by="alice")
     client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     # bob is a plain member → may not add anyone.
     r = client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "carol", "role": "member", "actor": "bob"},
     )
     assert r.status_code == 403
@@ -68,18 +68,18 @@ def test_non_manager_cannot_add_member(client):
 def test_admin_can_manage_but_stranger_cannot(client):
     tid = _topic(client, created_by="alice")
     client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "role": "admin", "actor": "alice"},
     )
     # admin bob adds carol
     r = client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "carol", "role": "member", "actor": "bob"},
     )
     assert r.status_code == 200
     # a non-member stranger cannot
     r = client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "dave", "role": "member", "actor": "stranger"},
     )
     assert r.status_code == 403
@@ -88,11 +88,11 @@ def test_admin_can_manage_but_stranger_cannot(client):
 def test_duplicate_member_rejected(client):
     tid = _topic(client, created_by="alice")
     client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "actor": "alice"},
     )
     r = client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "actor": "alice"},
     )
     assert r.status_code == 422
@@ -101,11 +101,11 @@ def test_duplicate_member_rejected(client):
 def test_update_role(client):
     tid = _topic(client, created_by="alice")
     client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     r = client.put(
-        f"/api/topics/{tid}/members/bob",
+        f"/topics/{tid}/members/bob",
         json={"role": "admin", "actor": "alice"},
     )
     assert r.status_code == 200
@@ -115,11 +115,11 @@ def test_update_role(client):
 def test_non_manager_cannot_update_role(client):
     tid = _topic(client, created_by="alice")
     client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     r = client.put(
-        f"/api/topics/{tid}/members/cheese",
+        f"/topics/{tid}/members/cheese",
         json={"role": "admin", "actor": "bob"},
     )
     assert r.status_code == 403
@@ -127,14 +127,14 @@ def test_non_manager_cannot_update_role(client):
 
 def test_cannot_remove_last_owner(client):
     tid = _topic(client, created_by="alice")
-    r = client.delete(f"/api/topics/{tid}/members/alice?actor=alice")
+    r = client.delete(f"/topics/{tid}/members/alice?actor=alice")
     assert r.status_code == 422
 
 
 def test_cannot_demote_last_owner(client):
     tid = _topic(client, created_by="alice")
     r = client.put(
-        f"/api/topics/{tid}/members/alice",
+        f"/topics/{tid}/members/alice",
         json={"role": "member", "actor": "alice"},
     )
     assert r.status_code == 422
@@ -143,10 +143,10 @@ def test_cannot_demote_last_owner(client):
 def test_remove_member(client):
     tid = _topic(client, created_by="alice")
     client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "actor": "alice"},
     )
-    r = client.delete(f"/api/topics/{tid}/members/bob?actor=alice")
+    r = client.delete(f"/topics/{tid}/members/bob?actor=alice")
     assert r.status_code == 200
     assert r.json()["data"]["deleted"] is True
     handles = {m["member_handle"] for m in _roster(client, tid)}
@@ -158,18 +158,18 @@ def test_second_owner_lets_first_be_removed(client):
     first can leave."""
     tid = _topic(client, created_by="alice")
     client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": "bob", "role": "owner", "actor": "alice"},
     )
-    r = client.delete(f"/api/topics/{tid}/members/alice?actor=bob")
+    r = client.delete(f"/topics/{tid}/members/alice?actor=bob")
     assert r.status_code == 200
 
 
 def test_endpoints_require_existing_topic(client):
-    r = client.get(f"/api/topics/{MISSING_TOPIC}/members")
+    r = client.get(f"/topics/{MISSING_TOPIC}/members")
     assert r.status_code == 404
     r = client.post(
-        f"/api/topics/{MISSING_TOPIC}/members",
+        f"/topics/{MISSING_TOPIC}/members",
         json={"handle": "bob", "actor": "alice"},
     )
     assert r.status_code == 404

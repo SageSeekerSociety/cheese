@@ -111,7 +111,7 @@ class ComputeGrantRepository:
         self,
         *,
         project_id: uuid.UUID,
-        source_task_id: uuid.UUID | None,
+        source_task_id: int | None,
         credits_total: float,
     ) -> ComputeGrant:
         row = ComputeGrant(

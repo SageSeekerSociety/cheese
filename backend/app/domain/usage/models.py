@@ -28,11 +28,11 @@ class ComputeGrant(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # The task whose template funded this grant. Kept on task deletion (the
-    # credits were granted; the audit trail should survive the source).
-    source_task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
-    )
+    # The 赛题 whose 项目集 funded this grant (#370). An int, and deliberately
+    # NOT a foreign key: the credits were granted, so the audit trail has to
+    # survive the 赛题 being deleted. It pointed at cheesex `tasks.id` (uuid)
+    # until that hierarchy was retired.
+    source_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     credits_total: Mapped[float] = mapped_column(Float)
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 

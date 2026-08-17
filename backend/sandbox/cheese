@@ -18,6 +18,7 @@
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
   cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
+  cheese tell "数据清洗" "口径改了,按新的来"    # 给正在跑的子话题追加要求(会叫醒它)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
@@ -667,6 +668,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pc.add_argument("conclusion", help="结论摘要,给父话题看的")
 
+    pt = sub.add_parser(
+        "tell",
+        help="给正在跑的直接子话题(或你的母话题)传一句话,并叫醒它",
+        description=(
+            "往父子这条边上传一句话,**并且真的叫醒对方**。只有两个方向通:\n"
+            "  父 → 它的直接子话题    子 → 它的母话题\n"
+            "没有父子关系的两个话题之间发不通——那等于放弃话题级隔离。\n"
+            "\n"
+            "它解决的是:任务简报是一次性的、写完就改不了。发现简报写错了、"
+            "口径变了、有个前提不成立,用这个追过去,别等对方交完活再返工。\n"
+            "\n"
+            "多快:对方**正在跑一轮**的话,这句话直接插进它那一轮(秒级,像人在旁边\n"
+            "插话);对方闲着就叫醒它开一轮;已经有一轮在排队就搭同一轮——\n"
+            "同一个话题连收多条只处理一轮,不会被反复叫醒。命令的输出会告诉你\n"
+            "走的是哪一种。\n"
+            "长的东西写进实况文档(两边都读得到),这里只发「一条追加要求」。\n"
+            "\n"
+            "对方是谁:话题 id、`<#id>`、或者标题都行(只在你的子话题+母话题里认)。\n"
+            "回母话题可以直接写 `parent`,不用去查它叫什么: cheese tell parent \"...\""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pt.add_argument("target", help="收方: 子话题/母话题的 id、<#id> 或标题")
+    pt.add_argument("message", help="要说的话")
+
     pcc = sub.add_parser(
         "conclusion",
         help="结算子话题回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
@@ -885,6 +911,27 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})
         print("已把结论回流父话题。")
+    elif a.cmd == "tell":
+        # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
+        # 由后端按父子关系校验。
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        data = _call(
+            "POST", f"/topics/{topic}/tell",
+            {"target": a.target, "content": a.message},
+        ).get("data", {})
+        where = data.get("target_title") or data.get("target_topic_id") or a.target
+        print({
+            "injected": f"已插进「{where}」正在跑的那一轮——它现在就看到了。",
+            "woke": f"已传给「{where}」，它被叫醒了，马上开一轮处理。",
+            "merged": (
+                f"已传给「{where}」。它那边已经有一个待跑的轮次，这条搭同一轮"
+                "一起处理（不重复叫醒）。"
+            ),
+            "archived": (
+                f"「{where}」已归档，消息留在那边了，但**没有人被叫醒**"
+                "（归档话题不再跑轮次）。要它动起来先取消归档。"
+            ),
+        }.get(data.get("delivery"), f"已传给「{where}」。"))
     elif a.cmd == "conclusion":
         # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
         # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。

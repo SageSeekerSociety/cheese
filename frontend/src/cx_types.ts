@@ -52,6 +52,13 @@ export interface Topic {
   // In-memory session activity, independent of topic status and archival state.
   // Present only on topic list/get responses.
   running?: boolean
+  // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
+  // 四者取一。只有 list/get 话题时才带。
+  i_participate?: boolean
+  // 这个话题在等我做事：有点名给我的待办验收卡，或有 @我 的未读。为真时
+  // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
+  // 只有 list/get 话题时才带。
+  awaits_me?: boolean
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -582,33 +589,6 @@ export interface ProjectCredits {
 }
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
-
-// GET /api/market/tasks — a published Task Template as a market listing.
-export interface MarketTask {
-  id: string
-  space_id: string
-  space_name: string
-  name: string
-  description: string
-  resource_pack: Record<string, unknown>
-  conditions: Array<Record<string, unknown>>
-  default_role: string | null
-  created_at: string
-}
-
-// An 应征 (team applies with a Project). status: pending → accepted | declined.
-export interface TaskApplication {
-  id: string
-  template_id: string
-  project_id: string
-  project_name: string
-  pitch: string
-  status: 'pending' | 'accepted' | 'declined'
-  decided_by: string | null
-  decided_at: string | null
-  task_id: string | null
-  created_at: string
-}
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
 export interface ExecProfileOption {

@@ -53,12 +53,14 @@ from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.relay import TopicRelayService, deliver_or_wake
 from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     BackgroundTaskDoneIn,
     BackgroundTaskIn,
     ConclusionIn,
     DocEditIn,
+    RelayIn,
     SplitIn,
     TopicCreate,
     TopicOut,
@@ -70,7 +72,7 @@ from app.domain.usage.repositories import ComputeGrantRepository, UsageRepositor
 from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
 
-router = APIRouter(prefix="/api/topics", tags=["topics"])
+router = APIRouter(prefix="/topics", tags=["topics"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -1182,6 +1184,72 @@ async def clone_topic_from(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
+@router.post("/{topic_id}/tell")
+async def tell_topic(
+    topic_id: uuid.UUID,
+    body: RelayIn,
+    db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+    resolver: ActorResolverDep,
+) -> dict:
+    """母子传话: send one message across the parent/child edge AND wake the other
+    side (`cheese tell`). See `app.domain.topic.relay` for why the comments
+    endpoint could not be this channel and why only this one edge is open.
+
+    `topic_id` is the SENDER — the topic whose turn is speaking, which is what
+    the per-turn token in `_CHEESE_WRITE_PATHS` is scoped to. The receiver rides
+    in the body and is resolved against sender's parent + direct children only:
+    a topic id in the URL says "who is talking", never "which resource is this".
+    """
+    sender = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=sender.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=sender.project_id, topic_id=topic_id
+    )
+    service = TopicRelayService(db)
+    target = await service.resolve_target(sender=sender, target=body.target)
+    # Friendly "@名字 / @话题名" → structured tokens BEFORE the message lands in
+    # the other room, so chips render and @mentions notify over there.
+    content = await canonicalize_refs(
+        db, sender.project_id, body.content, exclude_topic_id=target.id
+    )
+    block, direction = await service.relay(
+        sender=sender, target=target, content=content
+    )
+    out = BlockOut.model_validate(block).model_dump(mode="json")
+    # Commit BEFORE waking: the woken turn runs on its own session and has to be
+    # able to read the message it is being woken about.
+    await db.commit()
+    await get_broker().publish(
+        str(target.id), {"type": "assistant_block", "block": out}
+    )
+    delivery = await deliver_or_wake(
+        chat=chat,
+        runner=runner,
+        target=target,
+        direction=direction,
+        sender_title=sender.title,
+        sender_id=sender.id,
+        block_id=block.id,
+        message=content,
+    )
+    return ok(
+        {
+            "block": out,
+            "target_topic_id": str(target.id),
+            "target_title": target.title,
+            "direction": direction,
+            # injected / woke / merged / archived — see relay.RelayDelivery. The
+            # sender is told which, because "芝士 has it now" and "nobody will
+            # ever read it" must not look the same.
+            "delivery": delivery,
+        }
+    )
+
+
 @router.post("/{topic_id}/return-conclusion")
 async def return_conclusion(
     topic_id: uuid.UUID,
@@ -1502,7 +1570,7 @@ async def attachment_raw(
 
 # Per-project unread map lives under /api/projects (a "/unread" path under
 # /api/topics would be shadowed by the /{topic_id} route). Separate router.
-project_router = APIRouter(prefix="/api/projects", tags=["topics"])
+project_router = APIRouter(prefix="/projects", tags=["topics"])
 
 
 @project_router.get("/{project_id}/topic-unread")
@@ -1551,7 +1619,7 @@ async def project_private_unread(
 
 
 # Block upgrade lives here (it produces a topic). Separate router prefix.
-block_router = APIRouter(prefix="/api/blocks", tags=["topics"])
+block_router = APIRouter(prefix="/blocks", tags=["topics"])
 
 
 @block_router.post("/{block_id}/upgrade")

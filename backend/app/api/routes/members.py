@@ -29,7 +29,7 @@ router = APIRouter(prefix="", tags=["members"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-@router.post("/api/projects/{project_id}/members")
+@router.post("/projects/{project_id}/members")
 async def add_member(
     project_id: uuid.UUID,
     body: MemberCreate,
@@ -43,7 +43,7 @@ async def add_member(
     return ok(MemberOut.model_validate(member).model_dump(mode="json"))
 
 
-@router.get("/api/projects/{project_id}/members")
+@router.get("/projects/{project_id}/members")
 async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     from app.domain.identity.repositories import AgentBindingRepository
     from app.domain.project.repositories import ProjectRepository
@@ -80,7 +80,7 @@ async def list_members(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(page(items, total))
 
 
-@router.put("/api/projects/{project_id}/members/{user_handle}")
+@router.put("/projects/{project_id}/members/{user_handle}")
 async def update_member_role(
     project_id: uuid.UUID,
     user_handle: str,
@@ -95,7 +95,7 @@ async def update_member_role(
     return ok(MemberOut.model_validate(member).model_dump(mode="json"))
 
 
-@router.delete("/api/projects/{project_id}/members/{user_handle}")
+@router.delete("/projects/{project_id}/members/{user_handle}")
 async def remove_member(
     project_id: uuid.UUID,
     user_handle: str,

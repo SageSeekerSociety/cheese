@@ -5,7 +5,6 @@ import { computed, onMounted, ref } from 'vue'
 
 import { getMarketPools } from '../api'
 import NodeBoard from '../components/NodeBoard.vue'
-import TaskMarket from '../components/TaskMarket.vue'
 
 // 市场 has two faces (spec §13 阶段 6 + design v3):
 //   题目匹配 — Spaces publish 题目 (Task Templates), teams apply with a project.
@@ -63,7 +62,6 @@ onMounted(load)
             机构把 <strong>题目</strong> 发布到市场；团队用自己的项目
             <strong>应征</strong>。应征被接受后，项目自动链接到题目，资源包与条件即刻生效。
           </p>
-          <TaskMarket />
         </v-window-item>
 
         <!-- 算力资源: the original resource-pool catalog, moved verbatim. -->

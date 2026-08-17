@@ -44,6 +44,7 @@ from app.domain.agent.platform_notices import (
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
+    delivery_fallback_notice,
     notice,
 )
 from app.domain.agent.profiles import ProfileRegistry
@@ -1069,6 +1070,15 @@ class ChatService:
         ``continuation_id`` is the logical unit of work this turn belongs to — a
         turn and every auto-resume of it share one, so a message the interrupted
         attempt already posted is not posted again (④)."""
+        # Record the arrival-time state before persistence and acknowledgements.
+        # If live work ends during either operation, queueing is still a fallback
+        # from the user's attempted live handoff and must be reported.
+        live_delivery_expected = (
+            summon
+            and not is_resume
+            and nudge_event is None
+            and self.has_running_turn(topic_id)
+        )
         if is_resume or nudge_event:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
@@ -1127,10 +1137,12 @@ class ChatService:
         # made every later message wait the whole turn out. Injecting instead
         # gets the message in front of 芝士 in seconds.
         #
-        # Only the hooks-driven backends can take it (they own a live screen);
-        # `deliver` returns False everywhere else and we fall back to queueing,
-        # which is the pre-existing behaviour, not a new failure mode.
-        if user_block_id is not None and topic_id in self._active_turn_ids:
+        # Only the hooks-driven backends can take it (they own a live screen).
+        # If the handoff fails, the message remains pending and runs through the
+        # normal queue, but that degradation must be visible in the room.
+        if user_block_id is not None and (
+            live_delivery_expected or self.has_running_turn(topic_id)
+        ):
             delivered = await self.merge_into_running_turn(
                 topic_id,
                 user_block_ids,
@@ -1138,11 +1150,17 @@ class ChatService:
                 author,
                 attachments,
             )
-            if delivered:
+            if delivered is True:
                 # The answer streams out of the turn already in flight, which
                 # every client in this topic is subscribed to — this request has
                 # nothing left to yield.
                 return
+            fallback_text, fallback_meta = delivery_fallback_notice()
+            fallback = await self.post_system_event(
+                topic_id, fallback_text, turn_id, meta=fallback_meta
+            )
+            if fallback is not None:
+                yield {"type": "event_block", "block": fallback}
 
         async with self._prompt_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
@@ -1193,9 +1211,14 @@ class ChatService:
         content: str,
         author: str,
         attachments: list[dict] | None = None,
-    ) -> bool:
+    ) -> bool | None:
         """Inject a just-posted human message into the turn already running on
-        this topic. True when the screen took it.
+        this topic.
+
+        ``True`` means the live session acknowledged the message, ``False``
+        means live delivery was attempted but failed, and ``None`` means no live
+        work remained by the time this method checked. Callers use that third
+        state to distinguish a normal new message from a raced fallback.
 
         The text is labelled the same way `_prompt_line` labels a pending block,
         so a message that arrives mid-turn reads identically to one that came in
@@ -1207,7 +1230,7 @@ class ChatService:
         the file write."""
         consuming_turn_id = self._active_turn_ids.get(topic_id)
         if consuming_turn_id is None:
-            return False
+            return None
         lines = []
         if content:
             lines.append(f"[{author}]: {_strip_platform_notice(content)}")
@@ -1241,10 +1264,14 @@ class ChatService:
                     user_block_ids, consuming_turn_id
                 )
                 await session.commit()
-        except Exception:  # noqa: BLE001 — falling back to a queued turn is safe
+        except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             return False
         return True
+
+    def has_running_turn(self, topic_id: uuid.UUID) -> bool:
+        """Whether this process currently owns live work for the topic."""
+        return topic_id in self._active_turn_ids
 
     async def kickoff(
         self,

@@ -17,7 +17,7 @@ from app.core.sandbox_auth import verify_scoped_token
 from app.domain.project.services import ProjectService
 from app.domain.workspace import service as ws
 
-router = APIRouter(prefix="/api/projects", tags=["workspace"])
+router = APIRouter(prefix="/projects", tags=["workspace"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

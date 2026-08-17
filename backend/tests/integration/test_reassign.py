@@ -4,12 +4,12 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _topic_and_card(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
     card = client.post(
-        f"/api/topics/{t['id']}/accept-card",
+        f"/topics/{t['id']}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "user-1",
@@ -21,7 +21,7 @@ def _topic_and_card(client) -> str:
 def test_reassign_changes_reviewer(client):
     card_id = _topic_and_card(client)
     r = client.post(
-        f"/api/accept-cards/{card_id}/reassign",
+        f"/accept-cards/{card_id}/reassign",
         json={"reviewer_handle": "mentor-1", "routing_reason": "导师更合适"},
         headers=session_auth_headers("alice"),
     )
@@ -33,12 +33,12 @@ def test_reassign_changes_reviewer(client):
 def test_cannot_reassign_decided_card(client):
     card_id = _topic_and_card(client)
     client.post(
-        f"/api/accept-cards/{card_id}/accept",
+        f"/accept-cards/{card_id}/accept",
         json={"decided_by": "user-1"},
         headers=session_auth_headers("user-1"),
     )
     r = client.post(
-        f"/api/accept-cards/{card_id}/reassign",
+        f"/accept-cards/{card_id}/reassign",
         json={"reviewer_handle": "user-2"},
         headers=session_auth_headers("alice"),
     )

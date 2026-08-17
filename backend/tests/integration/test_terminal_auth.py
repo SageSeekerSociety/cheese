@@ -35,10 +35,10 @@ def _reachable(alive: bool):
 
 def _project_topic(client, handle: str = "alice"):
     project = client.post(
-        "/api/projects", json={"name": "T", "owner_handle": handle}
+        "/projects", json={"name": "T", "owner_handle": handle}
     ).json()["data"]
     topic = client.post(
-        "/api/topics", json={"project_id": project["id"], "title": "t"}
+        "/topics", json={"project_id": project["id"], "title": "t"}
     ).json()["data"]
     return project, topic
 
@@ -54,7 +54,7 @@ def test_the_ttyd_proxy_requires_a_credential(client, monkeypatch):
     monkeypatch.setattr(terminal, "_live_endpoint", lambda _t: "127.0.0.1:7681")
     monkeypatch.setattr(proxy, "forward", _serving(served))
 
-    resp = client.get(f"/api/topics/{uuid.uuid4()}/terminal/live/")
+    resp = client.get(f"/topics/{uuid.uuid4()}/terminal/live/")
 
     assert resp.status_code in (401, 403, 404), (
         f"unauthenticated caller got {resp.status_code} and the proxy "
@@ -72,7 +72,7 @@ def test_a_project_member_still_gets_the_pane(client, monkeypatch):
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
 
-    resp = client.get(f"/api/topics/{topic['id']}/terminal/live/?token={token}")
+    resp = client.get(f"/topics/{topic['id']}/terminal/live/?token={token}")
 
     assert resp.status_code == 200, resp.text
     assert served, "the owner should have reached ttyd"
@@ -88,7 +88,7 @@ def test_the_pane_leaves_a_scoped_cookie_for_its_own_subrequests(client, monkeyp
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
 
-    resp = client.get(f"/api/topics/{topic['id']}/terminal/live/?token={token}")
+    resp = client.get(f"/topics/{topic['id']}/terminal/live/?token={token}")
 
     cookie = resp.headers.get("set-cookie", "")
     assert terminal.COOKIE_NAME in cookie, cookie
@@ -104,9 +104,17 @@ def test_a_subrequest_authenticates_with_that_cookie_alone(client, monkeypatch):
 
     _project, topic = _project_topic(client)
     token = _login(client, "alice")
-    client.get(f"/api/topics/{topic['id']}/terminal/live/?token={token}")
+    first = client.get(f"/topics/{topic['id']}/terminal/live/?token={token}")
 
-    resp = client.get(f"/api/topics/{topic['id']}/terminal/live/token")
+    # The cookie is scoped to the path the BROWSER used (`/api/…`, see
+    # proxy.GATEWAY_MOUNT), while this client talks to the backend directly at
+    # the bare route — so its cookie jar correctly declines to send it and we
+    # hand it over by hand. What that scoping is supposed to be is asserted in
+    # test_the_pane_leaves_a_scoped_cookie_for_its_own_subrequests; what this
+    # test is for is the other half: that the cookie ALONE, with no `?token=`,
+    # authenticates the sub-request.
+    jar = {terminal.COOKIE_NAME: first.cookies[terminal.COOKIE_NAME]}
+    resp = client.get(f"/topics/{topic['id']}/terminal/live/token", cookies=jar)
 
     assert resp.status_code == 200, resp.text
     assert served, "the cookie-bearing sub-request should have reached ttyd"
@@ -125,7 +133,7 @@ def test_status_says_unavailable_without_a_credential(client, monkeypatch):
 
     _project, topic = _project_topic(client)
 
-    data = client.get(f"/api/topics/{topic['id']}/terminal").json()["data"]
+    data = client.get(f"/topics/{topic['id']}/terminal").json()["data"]
 
     assert data["available"] is False, data
     assert "url" not in data
@@ -142,7 +150,7 @@ def test_status_says_unavailable_when_nothing_answers_on_the_port(client, monkey
     token = _login(client, "alice")
 
     data = client.get(
-        f"/api/topics/{topic['id']}/terminal",
+        f"/topics/{topic['id']}/terminal",
         headers={"Authorization": f"Bearer {token}"},
     ).json()["data"]
 
@@ -160,9 +168,9 @@ def test_status_offers_the_pane_to_a_member_when_it_is_really_up(client, monkeyp
     token = _login(client, "alice")
 
     data = client.get(
-        f"/api/topics/{topic['id']}/terminal",
+        f"/topics/{topic['id']}/terminal",
         headers={"Authorization": f"Bearer {token}"},
     ).json()["data"]
 
     assert data["available"] is True, data
-    assert data["url"] == f"/api/topics/{topic['id']}/terminal/live/"
+    assert data["url"] == f"/api/topics/{topic['id']}/terminal/live/"  # 浏览器侧

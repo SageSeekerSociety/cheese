@@ -20,9 +20,9 @@ from app.main import app
 
 
 def _project_and_topic(client) -> tuple[str, str]:
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     tid = client.post(
-        "/api/topics", json={"project_id": pid, "title": "做一个东西"}
+        "/topics", json={"project_id": pid, "title": "做一个东西"}
     ).json()["data"]["id"]
     return pid, tid
 
@@ -73,7 +73,7 @@ def _tool_block(client, pid: str, tid: str, *, age: timedelta) -> None:
 
 
 def _stall(client, topic_id: str) -> dict:
-    r = client.get(f"/api/topics/{topic_id}/status")
+    r = client.get(f"/topics/{topic_id}/status")
     assert r.status_code == 200
     return r.json()["data"]["stall"]
 

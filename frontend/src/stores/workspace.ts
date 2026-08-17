@@ -52,11 +52,13 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const members = ref<ProjectMemberRow[]>([])
   const loadingTopics = ref(false)
 
-  // 话题列表排序: most-recently-active first, and no longer configurable — the
-  // sidebar row's right anchor is relTime(last_activity_at), so this is the
-  // ordering it already promises. The 排序 menu that used to change it offered
-  // 标题 A→Z, which only ever reordered siblings inside the tree; it was removed
-  // rather than kept as a control nobody could get value out of.
+  // 话题列表排序: most-recently-active first, and no longer configurable. The
+  // rail states this ordering by position alone — it used to also print
+  // relTime(last_activity_at) on every row, which was the same fact a second
+  // time, so the number went and the order stayed. The 排序 menu that used to
+  // change it offered 标题 A→Z, which only ever reordered siblings inside the
+  // tree; it was removed rather than kept as a control nobody could get value
+  // out of.
   const TOPIC_SORT = { sort: 'last_activity_at', order: 'desc' } as const
 
   // 话题级未读 (Feishu-style badges), and 私聊未读 keyed by peer handle

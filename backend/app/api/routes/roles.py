@@ -15,7 +15,7 @@ from app.core.db import get_db
 from app.domain.expert_role.schemas import RoleCreate, RoleUpdate
 from app.domain.expert_role.services import CustomRoleService
 
-router = APIRouter(prefix="/api/roles", tags=["roles"])
+router = APIRouter(prefix="/roles", tags=["roles"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

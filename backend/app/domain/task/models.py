@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     DateTime,
@@ -36,6 +37,11 @@ class Task(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     intro: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
+    # 机构协议 per-赛题 override (#370 option (c)). NULL / absent keys inherit the
+    # 项目集's terms; a present key REPLACES it wholesale (a half-merged resource
+    # pack is harder to reason about than either source). Accepted keys:
+    # resource_pack / conditions / default_role — see app.domain.task.protocol.
+    protocol_override: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Foreign keys as simple ids for now; detailed relationships can be added later.
     creator_id: Mapped[int] = mapped_column("creator_id", Integer, nullable=False)
@@ -137,6 +143,13 @@ class TaskMembership(Base):
 
     email: Mapped[str] = mapped_column(String, nullable=False, default="")
     phone: Mapped[str] = mapped_column(String, nullable=False, default="")
+
+    # 应征说明 (#370): why this team fits the 赛题. The one field the cheesex
+    # market had that 知是's 领取 did not — everything else about claiming
+    # (approval, quota, real-name, team locking) already lived here.
+    pitch: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
 
     completion_status: Mapped[str] = mapped_column(
         "completion_status", String(50), nullable=False, default="NOT_SUBMITTED"

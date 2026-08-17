@@ -607,12 +607,10 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
 
 
 @pytest.mark.anyio
-async def test_a_backend_with_no_live_screen_still_queues_the_work(client, tmp_path):
-    """`deliver` returning False is the pre-existing behaviour, not a new
-    failure mode: the message must fall back to its own run rather than be
-    dropped. Guards the SDK / remote-node providers, which have nothing to
-    inject into."""
+async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_path):
+    """A failed live handoff is visible before the message runs from the queue."""
     from app.domain.agent.compute import ComputePool
+    from app.domain.block.repositories import BlockRepository
 
     factory = client.test_factory  # type: ignore[attr-defined]
 
@@ -657,5 +655,28 @@ async def test_a_backend_with_no_live_screen_still_queues_the_work(client, tmp_p
 
     provider.release.set()
     await asyncio.wait_for(first, 5)
-    await asyncio.wait_for(second, 5)
+    second_frames = await asyncio.wait_for(second, 5)
     assert provider.runs == 2
+    assert provider.delivered == ["[user-2]: 第二件事"]
+
+    fallback_frames = [
+        frame
+        for frame in second_frames
+        if frame["type"] == "event_block"
+        and frame["block"]["meta"].get("event_type") == "delivery_fallback"
+    ]
+    assert len(fallback_frames) == 1
+    fallback = fallback_frames[0]["block"]
+    assert "实时送入当前会话失败" in fallback["content"]
+    assert fallback["meta"]["severity"] == "error"
+    assert fallback["meta"]["who"] == "platform"
+    assert all(frame["type"] != "error" for frame in second_frames)
+
+    async with factory() as session:
+        history = await BlockRepository(session).list_for_topic(topic_id)
+    persisted = [
+        block
+        for block in history
+        if (block.meta or {}).get("event_type") == "delivery_fallback"
+    ]
+    assert len(persisted) == 1
