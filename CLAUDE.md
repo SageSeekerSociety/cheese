@@ -30,15 +30,6 @@ We are the easiest repo in the world to get this wrong in, being both the platfo
 
 Not hypothetically — concurrently, in this repo, on adjacent files. Before starting a fix, look for someone already fixing it in an open PR. Before handing work off, review **every path your change touches**; a cache directory in that list is a stop sign.
 
-## A path you received is not a path the browser can use
-
-The gateway strips a segment before a request reaches the backend, so
-`request.url.path` is the stripped one. Anything handed back **for the browser
-to resolve against** — a proxy cookie's `Path`, a URL rewritten into proxied
-HTML, an iframe's `url` — must be built with `proxy.browser_path()`. Reading it
-off the request looks right, passes every test that does not involve a browser,
-and is wrong in production. Nothing checks this for you.
-
 ## Test behaviour, never the implementation
 
 Write functional tests. Do not read the source to work out what to assert — a test derived from the implementation passes by construction and proves nothing, including after the implementation breaks.
