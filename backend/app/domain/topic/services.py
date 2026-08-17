@@ -210,8 +210,10 @@ class TopicService:
         # Phase-0), would leave the room OWNERLESS — seed() deliberately skips
         # "cheese"/None as owner — and then nobody can manage its roster, and
         # every sub-topic split beneath it inherits the same emptiness
-        # (split_to_subtopic falls back to the PARENT's owner). Same fallback
-        # ladder as split_to_subtopic, one level wider.
+        # (split_to_subtopic falls back to the PARENT's owner). Nearly the same
+        # ladder as split_to_subtopic, which has one rung this does not: a split
+        # happens DURING somebody's turn, so it can ask who is driving. Creating a
+        # topic is a standalone act with nobody to ask.
         await self._members.seed(
             topic.id,
             owner_handle=await self._resolve_owner(
