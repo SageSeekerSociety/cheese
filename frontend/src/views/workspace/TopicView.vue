@@ -1,25 +1,25 @@
 <script setup lang="ts">
-import type { ChatAttachment, Topic } from '@/cx_types'
+import type { Topic } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { attachmentRawUrl } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
-import { usePendingAttachments } from '@/lib/attachments'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
 import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-// 话题视图: ONE topic header, then the chat | 工作面板 split, then the composer
-// under both. Which topic is open is a route param — this component is reused
-// across topic switches, so everything topic-scoped below keys off
+// 话题视图: ONE topic header, then the chat | 工作面板 split. The input bar is
+// the chat column's own — it used to span both columns from here, which read as
+// addressing the whole topic while 99% of what it sent was a chat message only
+// the left column shows. Which topic is open is a route param — this component
+// is reused across topic switches, so everything topic-scoped below keys off
 // `props.topicId`.
 defineOptions({ name: 'TopicView' })
 
@@ -90,39 +90,10 @@ function startPaneDrag(e: MouseEvent) {
 // doc 芝士 maintained).
 const activityTick = ref(0)
 
-// ---- Spanning composer (spec §7.1: 输入栏在对话+文档区域底部) ----
-const chatRef = ref<{
-  send: (content: string, summon: boolean, attachments?: ChatAttachment[]) => boolean
-  connected: boolean
-} | null>(null)
-const draft = ref('')
-const summon = ref(false) // @芝士 toggle: default OFF (人与人对话为主)
+// The chat column's own composer is the one this topic uses; TopicView only
+// needs a handle on the panel it lives in for the connection dot in the header.
+const chatRef = ref<{ connected: boolean } | null>(null)
 const composerReady = computed(() => !!chatRef.value?.connected)
-
-// 图片输入: paste a screenshot / pick images → upload to the topic's worktree,
-// preview above the composer, reference them on send.
-const composerFileInput = ref<HTMLInputElement | null>(null)
-const {
-  pending: pendingAtts,
-  uploading: attsUploading,
-  addFiles: addAttFiles,
-  onPaste: onComposerPaste,
-  removeAt: removePendingAtt,
-  clear: clearPendingAtts,
-} = usePendingAttachments(
-  () => selectedTopic.value?.id,
-  (msg) => {
-    store.error = msg
-  }
-)
-function pickAttFiles() {
-  composerFileInput.value?.click()
-}
-function onAttFilePicked(e: Event) {
-  const input = e.target as HTMLInputElement
-  if (input.files?.length) void addAttFiles(Array.from(input.files))
-  input.value = ''
-}
 
 // 施工现场 live feed for the current topic — the 现场 tab shows it with a pulsing
 // dot while the turn runs; cleared when the turn ends (the persisted transcript
@@ -151,147 +122,6 @@ watch(
     cardPhase.value = undefined
   }
 )
-
-const composerInput = ref<{ focus?: () => void } | null>(null)
-
-// 切换后把焦点还给输入框。不还的话 chip 自己一直握着焦点，用户接下来按的那次
-// Enter 就打在 chip 上——把刚点亮的 @芝士 又静默关掉，而且那次 Enter 也不发送。
-// 「先打字、再点 @芝士、再按 Enter」是很自然的顺序，走这条路的人得到的是：消息
-// 正常发出、芝士不来、页面上没有任何东西说明为什么。和「忘了 @」长得一模一样。
-function toggleSummon() {
-  summon.value = !summon.value
-  void nextTick(() => composerInput.value?.focus?.())
-}
-
-function sendDraft() {
-  const ok = chatRef.value?.send(expandMentions(draft.value), summon.value, pendingAtts.value.slice())
-  if (ok) {
-    draft.value = ''
-    clearPendingAtts()
-  }
-}
-
-// @-autocomplete: the @token currently being typed at the end of the draft, and
-// the matching teammates / topics it can be completed to (§3.1.1 人也能 @).
-const mentionQuery = computed(() => {
-  const m = draft.value.match(/@([^\s@]*)$/)
-  return m ? m[1] : null
-})
-interface MentionItem {
-  label: string
-  kind: 'member' | 'topic' | 'broadcast'
-  // Text written after the "@" when picked (a handle/token/name). Defaults to
-  // `label` for members/topics; broadcast items insert the fixed token (all/here).
-  insert: string
-  // Secondary line: @handle for people, status for topics, hint for broadcast.
-  sub: string
-  agent: boolean
-}
-// 群播 (fusion-design §3): @all/@here are FIXED-LITERAL tokens (rule 4), pinned
-// at the top of the menu. expandMentions turns them into <@all>/<@here>.
-const BROADCAST_ITEMS: MentionItem[] = [
-  {
-    label: '所有人',
-    kind: 'broadcast',
-    insert: 'all',
-    sub: '@all · 通知话题全体成员',
-    agent: false,
-  },
-  {
-    label: '在线成员',
-    kind: 'broadcast',
-    insert: 'here',
-    sub: '@here · 通知在线成员',
-    agent: false,
-  },
-]
-const mentionMatches = computed<MentionItem[]>(() => {
-  const q = mentionQuery.value
-  if (q === null) return []
-  const ql = q.toLowerCase()
-  const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
-  const rest: MentionItem[] = [
-    ...store.members.map((m) => ({
-      label: m.name || m.user_handle,
-      kind: 'member' as const,
-      insert: m.name || m.user_handle,
-      sub: `@${m.user_handle}`,
-      agent: !!m.agent,
-    })),
-    ...store.topics
-      .filter((t) => t.kind !== 'root')
-      .map((t) => ({
-        label: t.title,
-        kind: 'topic' as const,
-        insert: t.title,
-        sub: t.status === 'archived' ? '已归档' : '进行中',
-        agent: false,
-      })),
-  ].filter((i) => i.label.toLowerCase().includes(ql))
-  return [...broadcast, ...rest].slice(0, 7)
-})
-function pickMention(item: MentionItem) {
-  draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
-}
-
-// IME (输入法) guard. Chrome marks the commit-Enter keydown with
-// isComposing=true / keyCode 229, but Safari fires compositionend FIRST and
-// the trailing keydown looks like a plain Enter (isComposing=false, keyCode
-// 13). So we also track composition state ourselves and swallow any Enter
-// arriving right after compositionend — that keypress belongs to the IME
-// (上屏), not to "send".
-let composing = false
-let compositionEndedAt = -1e9
-function onCompositionStart() {
-  composing = true
-}
-function onCompositionEnd(e: CompositionEvent) {
-  composing = false
-  compositionEndedAt = e.timeStamp
-}
-function isImeKey(e: KeyboardEvent) {
-  return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
-}
-
-function onComposerKey(e: KeyboardEvent) {
-  if (e.key !== 'Enter' || e.shiftKey) return
-  // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
-  if (isImeKey(e)) return
-  // Only act on Enter that truly originates from the focused composer
-  // textarea — guards against bubbled / fallthrough keydowns triggering an
-  // unintended send when the input isn't focused.
-  const t = e.target as HTMLElement | null
-  if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
-  e.preventDefault()
-  // While the @-menu is open, Enter picks the first match instead of sending.
-  if (mentionMatches.value.length) {
-    pickMention(mentionMatches.value[0])
-    return
-  }
-  void sendDraft()
-}
-
-// Human composer: turn a friendly "@名字 / @话题名" into the canonical token
-// (<@handle> for a teammate, <#topicId> for a topic) at send time — longest
-// patterns first so substrings don't mis-match — same encoding 芝士 uses.
-function expandMentions(text: string): string {
-  const subs: { pat: string; token: string }[] = [
-    // 群播 tokens (fusion-design §3): @all/@here → the reserved broadcast tokens
-    // the backend expands to the whole roster.
-    { pat: '@all', token: '<@all>' },
-    { pat: '@here', token: '<@here>' },
-    // Both spellings a human naturally types: @名字 and @handle (e.g. a handle
-    // pasted from someone else's message).
-    ...store.members.flatMap((m) => [
-      { pat: `@${m.name || m.user_handle}`, token: `<@${m.user_handle}>` },
-      { pat: `@${m.user_handle}`, token: `<@${m.user_handle}>` },
-    ]),
-    ...store.topics.map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
-  ].sort((a, b) => b.pat.length - a.pat.length)
-  let out = text
-  for (const s of subs) out = out.split(s.pat).join(s.token)
-  return out
-}
 
 function handleTurnDone() {
   // The live feed's job is over — the persisted 现场 transcript is the record.
@@ -375,7 +205,6 @@ watch(
     worklog.value = []
     working.value = false
     workingSince.value = null
-    clearPendingAtts() // pending images belong to the topic they were typed in
     if (id) store.markRead(id)
   },
   { immediate: true }
@@ -412,6 +241,7 @@ watch(
           :style="{ flex: `0 0 ${store.chatPct}%` }"
           :topic="selectedTopic"
           hide-header
+          show-composer
           :members="store.members"
           :topic-list="store.topics"
           @turn-done="handleTurnDone"
@@ -432,6 +262,19 @@ watch(
               @phase="cardPhase = $event"
               @review="onPanelTab('changes')"
             />
+          </template>
+          <!-- 话题自己的 chips: what this box is addressing, and where this
+               topic's turns will run. 算力 locks on the first message, so it
+               belongs beside the input that sends it. -->
+          <template #composer-chips>
+            <span
+              v-if="selectedTopic.status === 'archived'"
+              class="d-inline-flex align-center ga-1 c-faint"
+              style="font-size: 12px"
+            >
+              <span class="status-dot status-dot--muted" />已归档
+            </span>
+            <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
           </template>
         </ChatPanel>
         <div
@@ -457,117 +300,6 @@ watch(
           @mention-click="handleMentionClick"
           @update:tab="onPanelTab"
         />
-      </div>
-
-      <!-- 输入栏 spans 对话 + 工作面板, not the rail (spec §7.1) -->
-      <v-divider />
-      <div class="composer pa-2 px-3">
-        <div class="d-flex align-center ga-2 mb-1">
-          <span class="chip-neutral"> <v-icon size="12">mdi-pound</v-icon>本话题 </span>
-          <span
-            v-if="selectedTopic.status === 'archived'"
-            class="d-inline-flex align-center ga-1 c-faint"
-            style="font-size: 12px"
-          >
-            <span class="status-dot status-dot--muted" />已归档
-          </span>
-          <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
-          <button
-            type="button"
-            class="summon-chip"
-            :class="{ 'summon-chip--on': summon }"
-            title="让芝士回复"
-            @click="toggleSummon"
-          >
-            <v-icon v-if="summon" size="13">mdi-creation</v-icon>
-            @芝士
-          </button>
-          <v-spacer />
-          <!-- 会话级算力 (v4): pick where this topic's turns run; locks on the
-               first message. Keyed by topic so it reloads on switch. -->
-          <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
-        </div>
-        <!-- @-autocomplete: pick a teammate / topic while typing @ -->
-        <div v-if="mentionMatches.length" class="mention-menu">
-          <button
-            v-for="(mm, i) in mentionMatches"
-            :key="mm.kind + mm.insert"
-            type="button"
-            class="mention-menu-item"
-            @click="pickMention(mm)"
-          >
-            <span v-if="mm.kind === 'broadcast'" class="mention-avatar mention-avatar--broadcast">
-              <v-icon size="13">mdi-bullhorn-outline</v-icon>
-            </span>
-            <span
-              v-else-if="mm.kind === 'member'"
-              class="mention-avatar"
-              :class="{ 'mention-avatar--agent': mm.agent }"
-            >
-              {{ mm.label.slice(0, 1).toUpperCase() }}
-            </span>
-            <span v-else class="mention-avatar mention-avatar--topic">
-              <v-icon size="13">mdi-pound</v-icon>
-            </span>
-            <span class="mention-menu-name">{{ mm.label }}</span>
-            <span v-if="mm.agent" class="mention-agent-badge">AI</span>
-            <span class="mention-menu-sub">{{ mm.sub }}</span>
-            <span v-if="i === 0" class="mention-menu-hint">Enter</span>
-          </button>
-        </div>
-        <!-- 图片输入: images waiting to go with the next send. -->
-        <div v-if="pendingAtts.length || attsUploading" class="att-strip">
-          <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-            <img :src="attachmentRawUrl(selectedTopic.id, a.path)" :alt="a.path" />
-            <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
-              <v-icon size="12">mdi-close</v-icon>
-            </button>
-          </div>
-          <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
-        </div>
-        <div class="d-flex align-end ga-2">
-          <v-textarea
-            ref="composerInput"
-            v-model="draft"
-            variant="plain"
-            rows="1"
-            auto-grow
-            max-rows="6"
-            hide-details
-            density="comfortable"
-            class="composer-input flex-grow-1"
-            :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
-            :disabled="!composerReady"
-            @keydown="onComposerKey"
-            @paste="onComposerPaste"
-            @compositionstart="onCompositionStart"
-            @compositionend="onCompositionEnd"
-          />
-          <input
-            ref="composerFileInput"
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            class="d-none"
-            @change="onAttFilePicked"
-          />
-          <v-btn
-            icon="mdi-image-plus-outline"
-            variant="text"
-            size="small"
-            title="发送图片"
-            :disabled="!composerReady"
-            @click="pickAttFiles"
-          />
-          <v-btn
-            color="primary"
-            variant="flat"
-            icon="mdi-send"
-            size="small"
-            :disabled="!composerReady || (!draft.trim() && !pendingAtts.length)"
-            @click="sendDraft"
-          />
-        </div>
       </div>
     </template>
   </div>
@@ -595,151 +327,7 @@ watch(
 .pane-resizer:hover {
   background: var(--accent);
 }
-.composer {
-  background: var(--surface);
-}
-/* 图片输入: pending images above the composer, each with a remove button. */
-.att-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 2px;
-}
-.att-thumb {
-  position: relative;
-  line-height: 0;
-}
-.att-thumb img {
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--fill);
-}
-.att-remove {
-  display: inline-flex;
-  position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 18px;
-  height: 18px;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  cursor: pointer;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  color: var(--muted);
-}
-.att-remove:hover {
-  color: var(--ink);
-}
 /* @-autocomplete dropdown (§3.1.1) */
-.mention-menu {
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 6px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--surface);
-  box-shadow: var(--shadow-2);
-}
-.mention-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 12px;
-  min-height: 36px;
-  text-align: left;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-.mention-menu-item:hover {
-  background: var(--fill);
-}
-.mention-avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  font-size: 0.7rem;
-  font-weight: 700;
-  /* 没有真实头像时的中性圆点。原来是钉死的 #8a94a3 + #fff，理由写的是「和
-     avatarColor() 算出来的头像同一类，两个主题下同值」——但这一个并不是
-     avatarColor() 算出来的，它就是一个字面灰，那条豁免对它不成立。换成 token
-     还顺手把对比度从 2.9:1 提到 5.0:1。 */
-  color: var(--surface);
-  background: var(--muted);
-  flex: none;
-}
-.mention-avatar--agent {
-  background: var(--accent);
-}
-.mention-avatar--broadcast {
-  background: var(--ink);
-}
-.mention-avatar--topic {
-  background: var(--fill);
-  color: var(--muted);
-}
-.mention-menu-name {
-  font-weight: 500;
-}
-.mention-agent-badge {
-  font-size: 0.65rem;
-  font-weight: 600;
-  padding: 0 5px;
-  border-radius: var(--radius-sm);
-  color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.12);
-}
-.mention-menu-sub {
-  font-size: 0.75rem;
-  color: var(--faint);
-}
-.mention-menu-hint {
-  margin-left: auto;
-  font-size: 0.7rem;
-  color: var(--faint);
-}
-.composer-input :deep(textarea) {
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-/* The ONE amber chip allowed: @芝士 toggle when ON. OFF = neutral. */
-.summon-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  background: var(--fill);
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-.summon-chip--on {
-  background: var(--accent);
-  /* on-primary，和 ChatPanel 的同名 chip 一致 —— 琥珀填充上的字全站只有这一种做法。
-     浅色下 Vuetify 对 #F57F17 推出来的就是 #fff，所以这里仍然是白字，2.65:1，低于
-     AA 的 4.5:1。这是已知豁免，不是漏掉的 bug：2026-08-16 项目负责人拍板「保持白字」
-     —— 改成深墨确实能到 5.84:1，但主操作上的字会从白变深、观感肉眼可见地变，而品牌
-     琥珀 #F57F17 本身已锁定不动；同一次拍板里，琥珀选中指示条的 2.49:1 也按同样理由
-     接受了。深色侧不受影响：on-primary 对 #FFA733 推成 #000，10.8:1，过 AA。
-     所以：别把它「修好」成钉死的深墨 —— 那是被推翻过的方案。 */
-  color: rgb(var(--v-theme-on-primary));
-}
-
 @media (max-width: 960px) {
   .panes {
     flex-direction: column;
