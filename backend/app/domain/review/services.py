@@ -2546,7 +2546,7 @@ class AcceptService:
         了 16 分钟。绿是运气，门禁根本没等。
 
         改法不是新造一道闸门（andy 在 #362 定的原则是 mirror, don't gate，而
-        `review/gate.py` 第一行至今写着 NO LONGER DISPATCHED），而是让这条路也走
+        andy 的前置闸门早已退役、代码也已删除），而是让这条路也走
         `github_user` 早就在走的两阶段：人点采纳 = 授权「以我的名义把这份改动送
         进 CI，全绿且没超出授权范围就合」，剩下的交给 `advance_pr_card`。等 CI
         全绿再合，读的正是 forge 自己的检查结论——这恰恰是 mirror。
@@ -2949,8 +2949,8 @@ class AcceptService:
         「合并时 CI 检查未全绿」写进 note，然后照合——默认放行、事后留痕。这条
         出口把它翻过来：**默认拒绝、显式放行**，而且放行必须签字。
 
-        为什么不是把 andy 已经退役的前置闸门造回来（`review/gate.py` 第一行至今
-        写着 NO LONGER DISPATCHED）：平台不重算「这段代码好不好」，它只是把
+        为什么不是把 andy 已经退役的前置闸门造回来（#296 退役,runner 与
+        `run_check_command` 都已删除）：平台不重算「这段代码好不好」，它只是把
         forge 的结论如实呈上，然后让一个**具名的人**在上面按手印。
 
         它记什么：谁、什么时候、**当时的检查到底是什么状态**（现读一次，读不到

@@ -62,62 +62,43 @@ This is a smaller trap than the one it replaced, but it is sharper: it fails onl
 in a browser, behind the gateway, and never in a test that talks to the backend
 directly.
 
-## Why there used to be two shapes
+## Never send a trailing slash, and never turn the redirect back on
 
-Until #370 the product carried two generations of routers: 知是 1.0 bare
-(`/users`, `/questions`, `/spaces`, `/teams`) and 知是 2.0 (CheeseX) declaring
-their own `/api` (`/api/topics`, `/api/projects`, `/api/blocks`). A 2.0 URL
-therefore needed **two** — `https://<host>/api/api/topics/42` — one for the mount
-and one for the route.
+`app.main` builds the app with `redirect_slashes=False`, and that must stay off.
 
-That doubling was not decoration; it was the only thing keeping the two owners of
-a duplicated resource word apart. Both generations owned `topics`, `projects` and
-`tasks`, and FastAPI resolves such an ambiguity silently — first router
-registered wins, the other's endpoints simply stop existing. Measured on `main`
-2026-08-12: of the 135 paths under the 2.0 prefix, dropping one `/api` layer sent
-128 to a 404 and 7 onto a live 1.0 route. `frontend/src/api.ts` recorded what
-that felt like — creating a project answered 400, the project list 400'd, and
-`/api/topics` returned **200 from 1.0's question tags**. A wrong answer with a
-success code is worse than a 404.
+Not because the prefix is unknowable — it is a constant, `proxy.GATEWAY_MOUNT`,
+and `browser_path()` is one line built on it. The problem is that **Starlette's
+slash-redirect never calls our code**. It builds an origin-absolute `Location`
+out of the path *it* was handed, which is the stripped one, so the browser is
+sent to `<origin>/topics/42` — a URL with no `/api`, which the gateway does not
+route to the backend at all.
 
-So the order was fixed and it was followed: free every duplicated word first
-(`project` → `/team-projects`, `topic` → `/tags`, `notification` → `/alerts`,
-`task` merged rather than renamed), then drop the prefix. The collision count
-went 10 → 4 → 1 → 0, pinned at each step by
-`tests/contract/test_api_addressing_contract.py`, which failed both on a new
-collision and on a prefix flattened too early.
+**Setting `root_path` does not fix this, so do not try it.** That is the obvious
+next idea and it is a dead end: Starlette dropped `root_path` from slash
+redirects in 0.35.0 (FastAPI 0.109), and the discussion asking for it back —
+[starlette#2514](https://github.com/Kludex/starlette/discussions/2514) — is
+still open. We run 1.3.x, well past that. The same machinery has a second known
+defect, [#1396](https://github.com/Kludex/starlette/issues/1396): an https
+request can be redirected to an http `Location`.
 
-Two nginx/vite exceptions went with it. The terminal and app-preview prefixes
-used to be forwarded **un-stripped**, because those routes carried their own
-`/api` and a strip would have 404'd them; now that every route is bare they are
-ordinary traffic, and the special-casing is deleted rather than kept "just in
-case". `/connector/…` keeps its own `location` block for an unrelated reason —
-enrolled devices dial it directly.
+Repairing it properly would mean a middleware rewriting the framework's 307s.
+Not worth writing, for a request that has no correct meaning here in the first
+place. `test_a_trailing_slash_is_never_a_redirect` pins the setting.
 
-### A trailing slash used to re-open the same trap (closed)
+For a client, the consequence is one line: **a trailing slash is a plain 404**,
+which is an honest error instead of a silent wrong answer.
 
-The strip happens once per pass through nginx — and a trailing slash used to buy
-a second pass. Sending `GET <origin>/api/api/tasks/7/` (one stray `/`) went, as
-verified live:
+## Two routes must never answer the same URL
 
-1. nginx strips one segment → the backend receives `/api/tasks/7/`.
-2. No route matches; Starlette's slash-redirect answers **307** with
-   `Location: <origin>/api/tasks/7` — an origin-absolute URL that has already
-   spent its strip.
-3. The client follows, nginx strips again, the backend receives `/tasks/7` —
-   and a **1.0** route answered.
+FastAPI resolves that ambiguity silently: the first router registered wins and
+the other's endpoints simply stop existing — no warning, no error, just a URL
+that quietly belongs to someone else. That is worse than a 404, because it can
+answer with a success code.
+`tests/contract/test_api_addressing_contract.py` fails on any pair that claims
+the same URL, which is what makes a single flat namespace safe to keep.
 
-One character turned a correct 2.0 URL into a wrong-generation answer with a
-success code. The backend cannot repair the `Location`, because it cannot know
-how many prefixes the proxy ahead of it will strip — so the redirect itself had
-to go: `app.main` builds the app with `redirect_slashes=False`, and a trailing
-slash is a plain 404. With one namespace there is no other generation left to
-land on, but the redirect stays off and `test_a_trailing_slash_is_never_a_redirect`
-still pins it: an origin-absolute `Location` from behind a stripping gateway is
-wrong regardless of what it hits.
-
-Still: **never send a trailing slash.** It is an honest error instead of a silent
-one.
+`/connector/…` has its own nginx `location` block, because enrolled devices dial
+it directly rather than through the app origin. Nothing else is special-cased.
 
 ## Notes for client authors
 

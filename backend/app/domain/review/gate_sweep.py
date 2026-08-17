@@ -10,7 +10,7 @@
    44 分，而同期健康的卡从建卡到落定全部在 17–23 秒。
 2. **`_settle` 放弃**：卡的 INSERT 一直不可见时它重试约 10 秒后 `logger.error(
    "gate result dropped")` 就走了 —— 进程还活着，卡照样成孤儿。
-3. **task 被取消 / `BaseException`**：`gate._run` 只 `except Exception`。
+3. **task 被取消 / `BaseException`**：退役前的 `gate._run` 只 `except Exception`。
 
 而 `pending_gate` 这个状态**没有任何出口**：accept / reject / revoke / reassign
 四条路由对它全是拒绝，`create_card` 又因为它拒绝再建新卡 —— 所以坏掉的不是一张
