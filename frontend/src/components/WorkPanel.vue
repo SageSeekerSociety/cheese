@@ -7,11 +7,12 @@
 //
 // This component owns exactly two things, and deliberately nothing else:
 //
-//   1. WHICH tab is on screen. Everything a tab renders or fetches belongs to
-//      that tab's own SFC, so the four follow-up cards each edit one file.
+//   1. WHICH tab is on screen, and WHICH tabs exist at all. Everything a tab
+//      renders or fetches belongs to that tab's own SFC, so the four follow-up
+//      cards each edit one file.
 //   2. SIGNALS — facts about a tab that have to be right while that tab is
-//      CLOSED. Today there is one (预览 has new content), and it is here rather
-//      than in PanelPreview because a closed component cannot report anything.
+//      CLOSED (预览 has new content; how many files 改动 would show). They are
+//      here rather than in the tabs because a closed component reports nothing.
 //
 // The one cross-tab wire is `open-file`: a <&path> chip in the doc (or in the
 // chat, via `openFile`) selects the 改动 tab and opens that file there.
@@ -19,7 +20,7 @@ import type { PreviewInfo, Topic } from '../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getPreview } from '../api'
+import { getPreview, getTopicWorkSummary } from '../api'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelDoc from './panels/PanelDoc.vue'
@@ -54,7 +55,7 @@ interface TabDef {
   label: string
   icon: string
 }
-const TABS: TabDef[] = [
+const ALL_TABS: TabDef[] = [
   { key: 'doc', label: '文档', icon: 'mdi-file-document-outline' },
   { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
   { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
@@ -87,6 +88,7 @@ watch(
     if (!before || now) return
     refreshTick.value += 1
     void pollPreviewPointer()
+    void pollWorkSummary()
   }
 )
 
@@ -127,6 +129,49 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
   else previewLatest.value = id
 }
 
+// ---- 能力: a tab exists only where the thing it shows exists ----
+// 文档 is every topic's — it is the topic's state, and a topic always has one.
+// The other three are about a workspace 芝士 worked in, and asking for one of
+// them on a topic that never ran used to yield a tab whose whole content was a
+// sentence explaining there was nothing there. The kind of the topic does NOT
+// decide this: the backend gives every topic a worktree and a branch, so 房间型
+// vs 任务型 would have been a guess about capability rather than a reading of it.
+const summary = ref<{ changedFiles: string[]; hasRun: boolean }>({ changedFiles: [], hasRun: false })
+
+async function pollWorkSummary() {
+  const tid = props.topic?.id
+  const pid = props.topic?.project_id
+  if (!tid || !pid) return
+  let next: { changed_files: string[]; has_run: boolean }
+  try {
+    next = await getTopicWorkSummary(pid, tid)
+  } catch {
+    // A failed poll is not a state. Leaving the tab bar as it was beats making
+    // tabs disappear because one request lost a race with a redeploy.
+    return
+  }
+  if (props.topic?.id !== tid) return
+  summary.value = { changedFiles: next.changed_files, hasRun: next.has_run }
+}
+
+function tabIsOffered(key: TabKey): boolean {
+  // The tab you are ON never disappears from under you. A topic whose changes
+  // just merged, or whose preview 芝士 retracted, would otherwise close the
+  // thing you were reading — the same rule as 「信号上 Tab，不抢占视图」.
+  if (key === tab.value) return true
+  if (key === 'doc') return true
+  // 现场 is where 芝士 works: it is there once the topic has run, and from the
+  // first moment of the first turn (before the session id is captured).
+  if (key === 'site') return summary.value.hasRun || props.working
+  if (key === 'changes') return summary.value.changedFiles.length > 0
+  return !!previewLatest.value
+}
+
+const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
+// 房间型话题（谁也没在里面干过活）就只剩文档一个 tab —— 一条只有一个选项的
+// tab 栏教不了任何东西，只是一条占着 33px 的横线。
+const showTabBar = computed(() => tabs.value.length > 1)
+
 // Topic switch: back to 文档, and baseline the dot against whatever this topic
 // already had so opening a topic never greets you with a hint for old work.
 watch(
@@ -134,7 +179,11 @@ watch(
   (id) => {
     tab.value = 'doc'
     markPreviewSeen(null)
-    if (id) void pollPreviewPointer({ seen: true })
+    summary.value = { changedFiles: [], hasRun: false }
+    if (id) {
+      void pollPreviewPointer({ seen: true })
+      void pollWorkSummary()
+    }
   },
   { immediate: true }
 )
@@ -169,9 +218,9 @@ defineExpose({ pulse, highlightTurn, openFile, refreshComments })
     </div>
 
     <template v-else>
-      <div class="tabbar" role="tablist">
+      <div v-if="showTabBar" class="tabbar" role="tablist">
         <button
-          v-for="t in TABS"
+          v-for="t in tabs"
           :key="t.key"
           type="button"
           role="tab"

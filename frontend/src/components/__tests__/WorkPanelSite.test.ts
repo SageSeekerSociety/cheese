@@ -45,6 +45,9 @@ vi.mock('../../api', async () => {
     getPreview: vi.fn().mockResolvedValue(null),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    // 规则 1: the tabs a topic offers follow what it actually holds. These suites
+    // are about the tabs' CONTENT, so they mount a topic that holds everything.
+    getTopicWorkSummary: vi.fn().mockResolvedValue({ changed_files: ['a.py'], has_run: true }),
   }
 })
 

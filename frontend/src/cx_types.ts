@@ -399,6 +399,18 @@ export interface PreviewInfo {
   artifact_id?: string
 }
 
+// GET /projects/{id}/topics/{id}/work-summary: what work a topic is holding,
+// answered without opening any of it. The 工作面板 offers a tab only where the
+// thing it shows exists, and 改动 carries the count — both are questions about
+// tabs that are closed.
+export interface TopicWorkSummary {
+  // Paths this topic's branch changes vs the base — the diff's table of contents.
+  changed_files: string[]
+  // The topic has run at least one turn, so there is a 现场 to open. A room
+  // where only people talked has none.
+  has_run: boolean
+}
+
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).
 export interface UsageStats {
   input_tokens: number

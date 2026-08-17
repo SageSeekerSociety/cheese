@@ -33,6 +33,7 @@ const readFile = vi.fn()
 const getTranscript = vi.fn()
 const getGitDiff = vi.fn()
 const getPreview = vi.fn()
+const getTopicWorkSummary = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -44,6 +45,7 @@ vi.mock('../../api', async () => {
     getTranscript: (...a: unknown[]) => getTranscript(...a),
     getGitDiff: (...a: unknown[]) => getGitDiff(...a),
     getPreview: (...a: unknown[]) => getPreview(...a),
+    getTopicWorkSummary: (...a: unknown[]) => getTopicWorkSummary(...a),
     putDoc: vi.fn().mockResolvedValue({}),
     writeFile: vi.fn().mockResolvedValue({ path: 'a.py', version: 'v2' }),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -61,10 +63,10 @@ function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
 }
 
-function mountPanel(id = 'topic-A') {
+function mountPanel(id = 'topic-A', props: Record<string, unknown> = {}) {
   const vuetify = createVuetify({ components, directives })
   return render(WorkPanel, {
-    props: { topic: topic(id), activityTick: 0 },
+    props: { topic: topic(id), activityTick: 0, ...props },
     global: { plugins: [vuetify] },
   })
 }
@@ -76,10 +78,16 @@ async function flush() {
 function buttons(container: Element): HTMLButtonElement[] {
   return Array.from(container.querySelectorAll('button'))
 }
+function findTab(container: Element, label: string): HTMLButtonElement | undefined {
+  return buttons(container).find((b) => b.getAttribute('title')?.startsWith(label) && b.closest('.tabbar'))
+}
 function tabButton(container: Element, label: string): HTMLButtonElement {
-  const btn = buttons(container).find((b) => b.getAttribute('title')?.startsWith(label) && b.closest('.tabbar'))
+  const btn = findTab(container, label)
   expect(btn, `找不到 ${label} tab`).toBeTruthy()
   return btn!
+}
+function tabLabels(container: Element): string[] {
+  return Array.from(container.querySelectorAll('.tabbar__tab')).map((b) => b.textContent?.trim() ?? '')
 }
 async function openTab(container: Element, label: string) {
   await fireEvent.click(tabButton(container, label))
@@ -122,13 +130,14 @@ beforeEach(() => {
   getTranscript.mockResolvedValue({ data: [], total: 0 })
   getGitDiff.mockResolvedValue({ diff: 'diff --git a/x b/x\n' })
   getPreview.mockResolvedValue(null)
+  // A topic 芝士 has worked in: the default for the suites about tab CONTENT.
+  getTopicWorkSummary.mockResolvedValue({ changed_files: ['a.py'], has_run: true })
 })
 
 describe('工作面板 · Tab 容器', () => {
-  it('四个 tab 都在，默认停在文档', async () => {
+  it('默认停在文档', async () => {
     const { container } = mountPanel()
     await flush()
-    for (const label of ['文档', '现场', '改动', '预览']) tabButton(container, label)
     expect(visible(container, '.doc')).toBe(true)
   })
 
@@ -146,10 +155,6 @@ describe('工作面板 · Tab 容器', () => {
     expect(visible(container, '.panel-changes')).toBe(true)
     expect(getGitDiff).toHaveBeenCalled()
     expect(container.textContent).toContain('本话题改动（相对主干）')
-
-    await openTab(container, '预览')
-    expect(visible(container, '.panel-preview')).toBe(true)
-    expect(container.textContent).toContain('暂无预览')
 
     // 回到文档：编辑器还在（它从头到尾没被卸载过，切走一趟不会重建 tiptap）。
     await openTab(container, '文档')
@@ -187,6 +192,61 @@ describe('工作面板 · Tab 容器', () => {
     // ……而且是它的文件半边，开着的正是被点的那个文件。
     expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A')
     expect(container.querySelector('.file-bar__path')?.textContent?.trim()).toBe('src/b.ts')
+  })
+
+  // 规则 1: 能力不存在时，入口就不该存在。判定读的是「这个话题手上有什么」，
+  // 不是它的 kind —— 后端给每个话题都建了 worktree 和分支，按 kind 分只是猜。
+  it('谁也没在里面干过活的话题：只剩文档，连 tab 栏都不出现', async () => {
+    getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
+    const { container } = mountPanel()
+    await flush()
+
+    expect(container.querySelector('.tabbar')).toBeNull()
+    expect(visible(container, '.doc')).toBe(true)
+  })
+
+  it('跑过活但没产生改动：有现场，没有改动', async () => {
+    getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: true })
+    const { container } = mountPanel()
+    await flush()
+
+    expect(tabLabels(container)).toEqual(['文档', '现场'])
+  })
+
+  it('第一轮还在跑、session 还没落库：现场立刻就在', async () => {
+    getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
+    const { container } = mountPanel('topic-A', { working: true })
+    await flush()
+
+    expect(findTab(container, '现场')).toBeTruthy()
+  })
+
+  it('芝士指定了预览，预览 tab 才出现', async () => {
+    getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: true })
+    const { container } = mountPanel()
+    await flush()
+    expect(findTab(container, '预览')).toBeUndefined()
+
+    getPreview.mockResolvedValue({ kind: 'file', path: 'r.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container: c2 } = mountPanel('topic-B')
+    await flush()
+    expect(findTab(c2, '预览')).toBeTruthy()
+  })
+
+  // 「信号上 Tab，不抢占视图」的另一半：正开着的 tab 不会在脚下消失。改动被
+  // 采纳合走之后 changed_files 变空，此时把人正在读的 diff 关掉才是更坏的事。
+  it('正开着的 tab 即使能力没了也不撤走', async () => {
+    const { container, rerender } = mountPanel('topic-A')
+    await flush()
+    await openTab(container, '改动')
+
+    getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: true })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: true })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: false })
+    await flush()
+
+    expect(findTab(container, '改动')).toBeTruthy()
+    expect(visible(container, '.panel-changes')).toBe(true)
   })
 
   it('换话题回到文档 tab（旧行为：切话题会把抽屉关掉）', async () => {
