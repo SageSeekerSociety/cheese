@@ -39,11 +39,10 @@ import uuid
 from collections.abc import Callable
 
 from app.core.errors import NotFoundError, ValidationError
-from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.block.repositories import BlockRepository
+from app.domain.block.models import Block
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.services import TopicMemberService
+from app.domain.topic.services import TopicService
 
 #: 一条传话的长度上限。传话是「追加一条要求」，不是搬运一篇文档 —— 长的东西
 #: 属于实况文档，那边两侧都读得到。
@@ -99,8 +98,6 @@ class TopicRelayService:
     def __init__(self, session) -> None:
         self._session = session
         self._topics = TopicRepository(session)
-        self._blocks = BlockRepository(session)
-        self._members = TopicMemberService(session)
 
     async def resolve_target(self, *, sender: Topic, target: str) -> Topic:
         """The topic ``target`` names, restricted to sender's parent + children.
@@ -172,11 +169,8 @@ class TopicRelayService:
     ) -> tuple[Block, str]:
         """Land the message in ``target``'s timeline. Returns (block, direction).
 
-        The block is authored by the RECEIVING room's 芝士, the same way a
-        returned conclusion is (`TopicService.return_conclusion`): a message from
-        someone who is not in the room reads as a ghost, and the sending room's
-        分身 is not on the receiver's roster. `refs` carries the sender so the
-        chip links back.
+        The block itself is written by `TopicService.add_relay_block` (authorship
+        rule and the reason it lives there are documented on that method).
         """
         text = content.strip()
         if not text:
@@ -188,15 +182,8 @@ class TopicRelayService:
             )
         direction = self.direction(sender=sender, target=target)
         label = "母话题追加" if direction == RelayDirection.TO_CHILD else "子话题来信"
-        author = await self._members.resolve_agent_handle(target.id)
-        block = await self._blocks.add(
-            project_id=target.project_id,
-            topic_id=target.id,
-            author=author,
-            author_type=AuthorType.ai,
-            content=f"【{label}｜{sender.title}】\n{text}",
-            kind=BlockKind.message,
-            refs=[str(sender.id)],
+        block = await TopicService(self._session).add_relay_block(
+            target=target, sender=sender, label=label, text=text
         )
         return block, direction
 
