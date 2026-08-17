@@ -33,7 +33,7 @@ from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.scheduler.service import SchedulerService
 from app.domain.topic.services import TopicService
-from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
 PAST_GRACE = ARCHIVE_REFILE_GRACE_MINUTES + 1
@@ -57,7 +57,7 @@ def _split(client, parent_id: str, title: str) -> dict:
         "data"
     ]
     # The 分身's auto-kickoff turn must finish before the test writes more.
-    _wait_turns_idle()
+    _wait_work_idle()
     return sub
 
 

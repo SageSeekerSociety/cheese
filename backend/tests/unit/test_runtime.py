@@ -572,7 +572,7 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_second_failure_explicitly_hands_control_to_a_human(monkeypatch):
+async def test_repeated_platform_failure_stays_platform_owned(monkeypatch):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
@@ -588,10 +588,13 @@ async def test_second_failure_explicitly_hands_control_to_a_human(monkeypatch):
             self.events.append((content, meta))
             return {"id": "sys", "kind": "event", "content": content, "meta": meta}
 
-    def unexpected_resume(*_args, **_kwargs):
-        pytest.fail("a failed automatic retry must not schedule a third turn")
+    scheduled: list[tuple[tuple, dict]] = []
 
-    monkeypatch.setattr(runner, "_schedule_resume", unexpected_resume)
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resume",
+        lambda *args, **kwargs: scheduled.append((args, kwargs)),
+    )
     svc = _BoomAgain()
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as queue:
@@ -606,9 +609,10 @@ async def test_second_failure_explicitly_hands_control_to_a_human(monkeypatch):
         error = await _next_frame(queue, "error")
 
     text, meta = svc.events[0]
-    assert "需要人来处理" in text
-    assert meta["who"] == "human"
-    assert "自动重试已经用完" in meta["detail"]
+    assert "需要人来处理" not in text
+    assert meta["who"] == "platform"
+    assert "自动恢复" in meta["detail"]
+    assert len(scheduled) == 1
     assert error["message"] == text
 
 

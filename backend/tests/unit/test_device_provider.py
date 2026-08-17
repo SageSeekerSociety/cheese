@@ -40,6 +40,7 @@ class FakeHub:
         self.prompts: list[list] = []
         self.reasserted: list[str] = []  # sids re-sent as adopt-creates
         self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
+        self.files: list[tuple[str, str, bytes]] = []  # (sid, path, bytes)
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -83,6 +84,10 @@ class FakeHub:
         return "call1"
 
     async def await_call(self, device_id, call_id, timeout=30):
+        return {"ok": True}
+
+    async def put_file(self, device_id, sid, path, data, timeout=30):
+        self.files.append((sid, path, data))
         return {"ok": True}
 
 
@@ -141,6 +146,41 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[0], AgentSessionInfo)
     assert isinstance(events[1], AgentMessage) and events[1].text == "2"
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
+
+
+async def test_remote_image_is_staged_before_rendezvous_prompt(monkeypatch):
+    hub = FakeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    async def remote(_device_id):
+        return False
+
+    monkeypatch.setattr(provider, "_is_co_located", remote)
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.ws.read_file_bytes",
+        lambda project, path, topic_id=None: b"exact-image-bytes",
+    )
+
+    events, task = await _run(
+        provider,
+        project_id=project_id,
+        topic_id=topic_id,
+        prompt="[u] sent an image",
+        system_prompt="",
+        resume_session_id=None,
+        images=[{"path": "uploads/img-a.png", "media_type": "image/png"}],
+    )
+    await asyncio.sleep(0.05)
+
+    assert hub.files == [("s1", "uploads/img-a.png", b"exact-image-bytes")]
+    assert hub.prompts == [["[u] sent an image\n\n@uploads/img-a.png"]]
+    router.push(
+        str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
+    )
+    await asyncio.wait_for(task, timeout=5)
+    assert events[-1].text == "ok"
 
 
 async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):

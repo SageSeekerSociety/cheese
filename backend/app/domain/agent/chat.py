@@ -781,19 +781,31 @@ def _strip_platform_notice(text: str) -> str:
     return text.replace(PLATFORM_NOTICE, "【平台·用户原文】")
 
 
+def _attachment_prompt_line(author: str, path: str, *, embeds_images: bool) -> str:
+    if embeds_images:
+        return (
+            f"[{author}] 发来一张图片（图片内容已附在本条消息里；"
+            f"它同时存在你工作目录的 {path}）"
+        )
+    return (
+        f"[{author}] 发来一张图片：**它没有附在本条消息里**，"
+        f"文件在你工作目录的 {path}，需要你自己用 Read 打开它。"
+        f"（打不开就直说打不开，不要猜图里是什么。）"
+    )
+
+
 def _prompt_line(b, *, embeds_images: bool) -> str:
     """One speaker-labelled prompt line per pending human block.
 
     An attachment block is a worktree image, and the line has to describe how it
     actually arrives THIS turn — which is not the same on every backend:
 
-    - ``embeds_images`` (SDK / relayed node): the bytes ride the user message as
-      a native base64 image block (``service.build_query_input``), so 芝士 has
-      already seen it by the time it reads this line.
-    - hooks-driven backends (local tmux, remote device): the prompt is injected
-      as TEXT into a live Claude Code screen and ``images=`` is dropped on the
-      floor. The file is still in the worktree, so the line must send 芝士 to
-      open it instead of claiming it is attached.
+    - ``embeds_images``: the provider produces a native image block. SDK/relay
+      providers embed base64 directly; interactive Claude Code resolves the
+      prompt's ``@path`` through its native attachment path after a remote
+      device has acknowledged staging the bytes.
+    - a third-party provider that declares ``embeds_images=False`` gets the
+      explicit Read fallback and must not claim the image was attached.
 
     The wording is load-bearing, not cosmetic. Told "图片内容已附在本条消息里"
     and handed nothing, an agent does not raise — it writes a confident answer
@@ -801,16 +813,7 @@ def _prompt_line(b, *, embeds_images: bool) -> str:
     invented. Saying "去打开这个文件" fails safe: worst case it reports it could
     not read the path."""
     if b.kind == BlockKind.attachment:
-        if embeds_images:
-            return (
-                f"[{b.author}] 发来一张图片（图片内容已附在本条消息里；"
-                f"它同时存在你工作目录的 {b.content}）"
-            )
-        return (
-            f"[{b.author}] 发来一张图片：**它没有附在本条消息里**，"
-            f"文件在你工作目录的 {b.content}，需要你自己用 Read 打开它。"
-            f"（打不开就直说打不开，不要猜图里是什么。）"
-        )
+        return _attachment_prompt_line(b.author, b.content, embeds_images=embeds_images)
     return f"[{b.author}]: {_strip_platform_notice(b.content)}"
 
 
@@ -1053,7 +1056,7 @@ class ChatService:
             yield {"type": "event_block", "block": payload}
             user_block_id = None
         else:
-            user_payloads, user_block_id = await self.post_user_message(
+            user_payloads, user_block_id, user_block_ids = await self.post_user_message(
                 topic_id,
                 author=author,
                 content=content,
@@ -1093,13 +1096,16 @@ class ChatService:
         # which is the pre-existing behaviour, not a new failure mode.
         if user_block_id is not None and topic_id in self._active_turn_ids:
             delivered = await self.merge_into_running_turn(
-                topic_id, user_block_id, content, author
+                topic_id,
+                user_block_ids,
+                content,
+                author,
+                attachments,
             )
             if delivered:
                 # The answer streams out of the turn already in flight, which
                 # every client in this topic is subscribed to — this request has
                 # nothing left to yield.
-                yield {"type": "done"}
                 return
 
         async with self._prompt_lock(topic_id, turn_id):
@@ -1147,9 +1153,10 @@ class ChatService:
     async def merge_into_running_turn(
         self,
         topic_id: uuid.UUID,
-        user_block_id: uuid.UUID,
+        user_block_ids: list[uuid.UUID],
         content: str,
         author: str,
+        attachments: list[dict] | None = None,
     ) -> bool:
         """Inject a just-posted human message into the turn already running on
         this topic. True when the screen took it.
@@ -1158,16 +1165,35 @@ class ChatService:
         so a message that arrives mid-turn reads identically to one that came in
         the prompt — 芝士 must not have to tell the two apart to know who spoke.
 
-        Attachments are deliberately NOT merged (the caller only reaches here for
-        a text message): an image needs the path wording `_prompt_line` builds
-        per backend, and getting that wrong makes an agent describe a picture it
-        never opened."""
+        Images use the same @path input path as an initial prompt. Interactive
+        providers resolve that path into a native image block before the model
+        sees the message; a remote device first stages the exact bytes and acks
+        the file write."""
         consuming_turn_id = self._active_turn_ids.get(topic_id)
         if consuming_turn_id is None:
             return False
-        line = f"[{author}]: {_strip_platform_notice(content)}"
+        lines = []
+        if content:
+            lines.append(f"[{author}]: {_strip_platform_notice(content)}")
+        images = [
+            {
+                "path": str(attachment.get("path") or ""),
+                "media_type": str(attachment.get("mime") or "image/png"),
+            }
+            for attachment in attachments or []
+            if attachment.get("path")
+        ]
+        lines.extend(
+            _attachment_prompt_line(author, image["path"], embeds_images=True)
+            for image in images
+        )
+        line = "\n".join(lines)
         try:
-            delivered = await self._compute.deliver(topic_id, line)
+            delivered = (
+                await self._compute.deliver(topic_id, line, images=images)
+                if images
+                else await self._compute.deliver(topic_id, line)
+            )
             if not delivered:
                 return False
             # The receipt is the boundary: before it, the message stays pending;
@@ -1176,7 +1202,7 @@ class ChatService:
             # turn replays a message Claude Code already accepted.
             async with self._sessions() as session:
                 await BlockRepository(session).mark_consumed(
-                    [user_block_id], consuming_turn_id
+                    user_block_ids, consuming_turn_id
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001 — falling back to a queued turn is safe
@@ -1707,11 +1733,12 @@ class ChatService:
         turn_id: uuid.UUID | None,
         reply_to: str | None,
         attachments: list[dict] | None = None,
-    ) -> tuple[list[dict], uuid.UUID]:
+    ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID]]:
         """Persist the human message (+ its image attachment blocks) and the
         @mention notifications in one short transaction, outside any turn lock.
-        Returns (payloads, anchor_block_id) — the anchor is what 芝士's reply
-        threads under (the text block, or the first attachment when image-only)."""
+        Returns (payloads, anchor_block_id, all_block_ids) — the anchor is what
+        芝士's reply threads under; all ids are consumed together after a
+        mid-session delivery receipt."""
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
@@ -1792,7 +1819,7 @@ class ChatService:
                 _block_payload(BlockOut.model_validate(block))
                 for block in created_blocks
             ]
-        return payloads, anchor_id
+        return payloads, anchor_id, [block.id for block in created_blocks]
 
     async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID

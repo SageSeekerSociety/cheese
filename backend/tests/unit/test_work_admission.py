@@ -42,7 +42,23 @@ class FakeChat:
 
     async def post_user_message(self, topic_id, **kwargs):
         self.converse_calls.append({"received": True, **kwargs})
-        return ([{"content": kwargs["content"]}], uuid.uuid4())
+        ids = []
+        payloads = []
+        if kwargs["content"]:
+            block_id = uuid.uuid4()
+            ids.append(block_id)
+            payloads.append({"id": str(block_id), "content": kwargs["content"]})
+        for attachment in kwargs.get("attachments") or []:
+            block_id = uuid.uuid4()
+            ids.append(block_id)
+            payloads.append(
+                {
+                    "id": str(block_id),
+                    "content": attachment["path"],
+                    "kind": "attachment",
+                }
+            )
+        return payloads, ids[0], ids
 
     async def merge_into_running_turn(self, *args):
         return False
@@ -235,18 +251,23 @@ async def test_unsummoned_message_never_touches_turn_admission():
 
 
 @pytest.mark.anyio
-async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
+async def test_receipted_mid_session_message_has_no_second_done():
     class MergeIntoLive(FakeChat):
+        def __init__(self):
+            super().__init__(None)
+            self.merged: tuple | None = None
+
         async def work_policy(self, topic_id):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
         async def merge_into_running_turn(self, *args):
+            self.merged = args
             return True
 
         async def ack_summon(self, block_id, topic_id):
             return {"block_id": str(block_id), "reactions": []}
 
-    chat = MergeIntoLive(None)
+    chat = MergeIntoLive()
     runner, broker = _runner()
     topic = uuid.uuid4()
     await broker.publish(
@@ -259,12 +280,62 @@ async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
         )
         frames = []
         async with asyncio.timeout(2):
-            while len(frames) < 3:
+            while len(frames) < 2:
                 frames.append(await queue.get())
 
-    assert [frame["type"] for frame in frames] == ["user_block", "reaction", "done"]
+    assert [frame["type"] for frame in frames] == ["user_block", "reaction"]
+    assert chat.merged is not None
+    assert chat.merged[2:] == ("补充一条", "u", None)
     assert broker.active_turn_ids(str(topic)) == ["already-running"]
     assert runner.active_work_count() == 1
+    await broker.publish(
+        str(topic), {"type": "turn_finished", "turn_id": "already-running"}
+    )
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_image_only_message_can_merge_into_live_session():
+    class MergeIntoLive(FakeChat):
+        def __init__(self):
+            super().__init__(None)
+            self.merged: tuple | None = None
+
+        async def work_policy(self, topic_id):
+            raise AssertionError("a delivered image needs no new work item")
+
+        async def merge_into_running_turn(self, *args):
+            self.merged = args
+            return True
+
+        async def ack_summon(self, block_id, topic_id):
+            return {"block_id": str(block_id), "reactions": []}
+
+    chat = MergeIntoLive()
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+    await broker.publish(
+        str(topic), {"type": "turn_started", "turn_id": "already-running"}
+    )
+    attachment = {"path": "uploads/img-a.png", "mime": "image/png"}
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.submit_message(
+            chat,
+            topic,
+            author="u",
+            content="",
+            attachments=[attachment],
+            summon=True,
+        )
+        frames = [await queue.get(), await queue.get()]
+
+    assert [frame["type"] for frame in frames] == ["user_block", "reaction"]
+    assert chat.merged is not None
+    block_ids = chat.merged[1]
+    assert len(block_ids) == 1
+    assert chat.merged[2:] == ("", "u", [attachment])
+
     await broker.publish(
         str(topic), {"type": "turn_finished", "turn_id": "already-running"}
     )

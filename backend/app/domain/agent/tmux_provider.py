@@ -741,7 +741,9 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                 return False
             await asyncio.sleep(_SETTLE_POLL_S)
 
-    async def _send_prompt(self, name: str, prompt: str) -> None:
+    async def _send_prompt(
+        self, name: str, prompt: str, images: list[dict] | None = None
+    ) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
         bracketed paste + independent Enter, so the prompt isn't split) — and
         confirm EACH half against the screen before moving on (the device
@@ -763,6 +765,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         nudges Enter. The UserPromptSubmit hook stays the delivery authority —
         this loop exists so the 25s verdict stops firing on a swallowed
         keystroke."""
+        del images  # files already live in the shared topic worktree
         try:
             control = await self._control(name)
             if await control.pane_dead():

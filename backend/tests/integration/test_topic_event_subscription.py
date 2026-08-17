@@ -290,7 +290,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
         1,
     )
 
-    assert second_frames[-1]["type"] == "done"
+    assert all(frame["type"] != "done" for frame in second_frames)
     assert not first.done()
     assert provider.runs == 1
     assert provider.delivered == ["[u2]: Also handle B"]

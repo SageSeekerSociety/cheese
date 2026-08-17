@@ -895,7 +895,9 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
 
-    async def _send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
+    async def _send_prompt(
+        self, screen: HubScreen, prompt: str, images: list[dict] | None = None
+    ) -> bool | None:
         """Deliver the prompt over the screen's rendezvous socket, where Claude
         Code enqueues it as `origin: {kind:"human"}` — the same place a keystroke
         lands, with none of a keystroke's blindness.
@@ -907,6 +909,23 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         session refused the frame — instead of a driver silently re-pasting into
         a composer nobody was reading (2026-08-16)."""
         try:
+            if images and screen.project_id is not None and screen.topic_id is not None:
+                co_located = self._co_located_at.get(
+                    (screen.project_id, screen.topic_id), False
+                )
+                if not co_located:
+                    for image in images:
+                        path = str(image.get("path") or "")
+                        data = ws.read_file_bytes(
+                            screen.project_id, path, topic_id=screen.topic_id
+                        )
+                        await self._hub.put_file(
+                            screen.device_id,
+                            screen.sid,
+                            path,
+                            data,
+                            timeout=_PROMPT_DELIVERY_TIMEOUT_S,
+                        )
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
             )

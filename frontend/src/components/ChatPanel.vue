@@ -582,9 +582,8 @@ function handleFrame(frame: WsServerFrame) {
       todoRestored.value = true
       break
     case 'done':
-      // `done` closes one request stream. A mid-turn merged message has its own
-      // done while the original turn remains active, so lifecycle markers own
-      // the running indicator whenever they are present.
+      // Mid-session messages fold into the existing Claude run and emit no
+      // separate completion frame. Lifecycle markers own the running indicator.
       if (activeTurnIds.value.size === 0) {
         awaitingReply.value = false
         todoRestored.value = true

@@ -98,7 +98,9 @@ class ComputeProvider(Protocol):
         images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """Inject text into the turn already running on this topic, if this
         transport can. False = "I have no live screen for it" — the caller then
         runs an ordinary turn. Only the hooks-driven backends (a long-lived
@@ -262,10 +264,13 @@ class LocalDockerProvider:
             images=images,
         )
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """No live screen to inject into: this provider runs the SDK per turn, so
         between turns there is no process to talk to and during one the turn owns
         the stream. The caller falls back to running its own turn."""
+        del images
         return False
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
@@ -345,10 +350,13 @@ class RemoteCheesedProvider:
                     if line.strip():
                         yield event_from_dict(json.loads(line))
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """Not relayed: the node's turn is an NDJSON stream this side consumes,
         with no back-channel into the running screen. Wiring one is a node RPC
         change, not something to fake here."""
+        del images
         return False
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
@@ -448,14 +456,21 @@ class ComputePool:
                 return provider.activity_status(topic_id)
         return None
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """Inject text into whichever provider is currently running a turn on
         this topic. Asks every provider rather than resolving the topic's
         configured one: only a provider that HAS a live screen for this exact
         topic can answer True, so the first True is the right one — and it needs
         no DB read on the hot path where a human is waiting."""
         for provider in self._providers.values():
-            if await provider.deliver(topic_id, text):
+            delivered = (
+                await provider.deliver(topic_id, text, images=images)
+                if images
+                else await provider.deliver(topic_id, text)
+            )
+            if delivered:
                 return True
         return False
 

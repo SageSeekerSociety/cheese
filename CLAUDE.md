@@ -4,6 +4,16 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `cli/` (Go) + `e2e
 
 Procedural guidance lives in `.claude/` (skills, path-scoped rules, agents, scripts — `ls .claude/` is the inventory), not in always-on prose here: review → `cheese-py-code-review` skill, post-pull → `post-pull` skill, running tests where there is no docker → `.claude/scripts/dev-db.sh` (see Testing); area-specific pitfalls (migrations, backend tests, e2e) live in `.claude/rules/` and load automatically when you touch matching files. This file holds only the always-relevant conventions below.
 
+## The person in the room is a product user, not the platform operator
+
+Own diagnosis and recovery yourself. Never ask the person in the room to inspect
+logs, rerun infrastructure commands, repair authentication, fix a machine, or
+decide how an execution failure should be retried. Record the exact evidence,
+use the platform's recovery paths, and keep retrying at a bounded cadence when
+recovery is possible. Ask that person only for a product decision or for a
+credential, approval, payment, or physical action that only they can provide;
+when that exception applies, name the one required action plainly.
+
 **Where a tool can describe itself, let it.** Run any bundled CLI (`cheese`,
 `task`, `.claude/scripts/*.sh`) with `--help` to discover its flags, arguments
 and usage — that layer is generated from the code, so it cannot go stale. Prose
@@ -71,8 +81,9 @@ Real incident (2026-08-11, PR #267): an agent reported "the change went to the P
 branch with the snapshot"; the tip had not moved and the conflict was still
 there. It was not lying — it had no way to look. So anything about remote state
 (pushed, merged, conflict resolved, CI green) is a **claim, not an observation**:
-label it unverified and let a human confirm. What you *can* verify is local —
-`jj log`, `jj status`, and `jj diff` against `main@upstream`.
+label it unverified and leave remote verification to the platform workflow; do
+not make the person in the room operate the platform for you. What you *can*
+verify is local — `jj log`, `jj status`, and `jj diff` against `main@upstream`.
 
 Command mapping — `jj log`, `jj status`, `jj diff`, `jj file show -r <rev> <path>`,
 `jj bookmark list`. Two habits do not carry over: there is **no staging area**
@@ -85,7 +96,8 @@ when the topic is split, and main moves. Before editing a file other agents also
 touch, diff it against `main@upstream` and rebase; editing on a stale base is how
 you silently revert someone's merged PR. To git that is an ordinary modification,
 not a conflict, so it merges clean and no check catches it: **if you are editing
-a file you did not create, say so in your report** and let a human look.
+a file you did not create, say so in your report** so the platform-side
+integration check can cover it.
 
 ## Development Commands
 

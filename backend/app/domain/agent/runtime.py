@@ -155,10 +155,9 @@ class InProcessBroker:
     gets those frames immediately (catch-up), then the live continuation — so a
     reconnect (after `GET /blocks` for persisted history) is seamless.
 
-    Turn lifetime is explicit and keyed by turn id. ``done`` / ``error`` finish a
-    request stream, not necessarily the topic's running turn: a message merged
-    into a live Claude session has its own ``done`` while the original turn keeps
-    working. Only ``turn_started`` / ``turn_finished`` mutate active state.
+    Active work is keyed by its compatibility id. A message folded into a live
+    Claude session emits no synthetic completion boundary; only the session's
+    existing lifecycle markers own active state.
     """
 
     def __init__(self, replay_size: int = 512) -> None:
@@ -563,7 +562,7 @@ class AgentWorkRunner:
         metered work. Keeping those as two operations makes the ordering real:
         the project queue and credit gate can delay/refuse only the latter.
         """
-        payloads, user_block_id = await chat_service.post_user_message(
+        payloads, user_block_id, user_block_ids = await chat_service.post_user_message(
             topic_id,
             author=author,
             content=content,
@@ -595,6 +594,7 @@ class AgentWorkRunner:
                 continuation_id=turn_id,
                 provision_actor=provision_actor,
                 landed_user_block_id=user_block_id,
+                landed_user_block_ids=user_block_ids,
             )
         )
         self._tasks.add(task)
@@ -1126,9 +1126,11 @@ class AgentWorkRunner:
         *,
         continuation_id: uuid.UUID | None = None,
     ):
-        """One bounded auto-resume: wait, then run a system-nudged turn that
-        continues the saved session. Resumed turns never schedule another
-        resume (is_resume=True), so a persistent failure stops after one shot.
+        """Wait, then run a system-nudged continuation of the saved session.
+
+        Generic platform failures keep scheduling this at a bounded cadence
+        until recovery succeeds. An ordinary room member is not the platform
+        operator and must never become the fallback retry mechanism.
 
         The resume runs under the interrupted turn's ``continuation_id``, so any
         side effect the first attempt already committed is recognised as done
@@ -1346,21 +1348,23 @@ class AgentWorkRunner:
         # Human message already persisted by ``submit_message``. Its AI work is
         # still pending admission and may instead merge into a live turn.
         landed_user_block_id: uuid.UUID | None = None,
+        landed_user_block_ids: list[uuid.UUID] | None = None,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
         channel = str(topic_id)
-        if landed_user_block_id is not None and content and not attachments:
+        if landed_user_block_id is not None and (content or attachments):
             delivered = await chat_service.merge_into_running_turn(
-                topic_id, landed_user_block_id, content, author
+                topic_id,
+                landed_user_block_ids or [landed_user_block_id],
+                content,
+                author,
+                attachments,
             )
             if delivered:
                 ack = await chat_service.ack_summon(landed_user_block_id, topic_id)
                 if ack is not None:
                     await self._broker.publish(channel, {"type": "reaction", **ack})
-                # This request is complete; the already-active turn remains live
-                # until its own turn_finished marker arrives.
-                await self._broker.publish(channel, {"type": "done"})
                 return
 
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
@@ -1799,29 +1803,22 @@ class AgentWorkRunner:
                 rec["detail"] = "no first output"
                 # 平台提示统一契约: 房间里一行，「常见原因」那一串进 meta.detail。
                 text = (
-                    "⚠️ 芝士自动续跑仍然**一个字都没输出**，需要人来处理。"
-                    if is_resume
-                    else (
-                        f"⚠️ 芝士这轮**一个字都没输出**"
-                        f"（{round(self._first_output_timeout_s)}秒），"
-                        "会自动再试一次。"
-                    )
+                    f"⚠️ 芝士这轮**一个字都没输出**"
+                    f"（{round(self._first_output_timeout_s)}秒），"
+                    "平台会自动恢复并继续重试。"
                 )
                 timeout_meta = notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
-                    who=WHO_HUMAN if is_resume else WHO_PLATFORM,
+                    who=WHO_PLATFORM,
                     detail=(
                         f"{round(self._first_output_timeout_s)}秒内没有任何模型输出，"
                         "也没有任何工具调用，按运行环境没起来处理。"
                         "常见原因：平台的模型订阅凭据过期（需要主机侧重新认证）、"
                         "沙箱容器建不起来、磁盘满了、或者模型侧连不上"
                         "——不是芝士卡在某一步，所以这里没有「已完成的改动」。"
-                        + (
-                            "自动重试已经用完，请检查平台状态后再决定是否重新 @。"
-                            if is_resume
-                            else "再失败就先去看平台状态，反复 @ 它没有用。"
-                        )
+                        "平台负责检查并恢复运行环境，恢复前会按限速周期自动重试；"
+                        "普通用户无需检查日志、修机器或反复 @。"
                     ),
                     detail_label="常见原因",
                 )
@@ -1834,25 +1831,18 @@ class AgentWorkRunner:
                     topic_id,
                 )
                 text = (
-                    "⚠️ 芝士自动续跑再次超时，需要人来处理。"
-                    if is_resume
-                    else (
-                        f"⚠️ 芝士这轮超时被中断了"
-                        f"（{effective_ceiling_s}秒的上限），马上自动接着跑。"
-                    )
+                    f"⚠️ 芝士这轮超时被中断了"
+                    f"（{effective_ceiling_s}秒的上限），平台会自动接着跑。"
                 )
                 timeout_meta = notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
-                    who=WHO_HUMAN if is_resume else WHO_PLATFORM,
+                    who=WHO_PLATFORM,
                     detail=(
                         f"上限 {effective_ceiling_s} 秒，实际跑了约 "
                         f"{rec['duration_s']} 秒，可能卡在某步。"
-                        + (
-                            "已完成的改动都在；自动重试已经用完，请检查后再继续。"
-                            if is_resume
-                            else "已完成的改动都在；马上自动接着跑一次。"
-                        )
+                        "已完成的改动都在；平台会按限速周期自动接着跑，"
+                        "无需普通用户接管恢复。"
                     ),
                     detail_label="详细说明",
                 )
@@ -1882,8 +1872,8 @@ class AgentWorkRunner:
             # "对自己的失败没有记忆"). It self-heals on the next human summon once
             # the host re-auths — the reused screen is then retired (缺陷二) and
             # reopened with a live credential. Every other timeout retries as before.
-            if not is_resume and not credential_expired:
-                resume_after = 10.0
+            if not credential_expired:
+                resume_after = 60.0 if is_resume else 10.0
                 resume_why = "上一轮超时中断，接着跑"
         except AppError as exc:
             rec["status"] = "error"
@@ -1906,22 +1896,14 @@ class AgentWorkRunner:
             else:
                 # 平台提示统一契约: 一行给房间，别的收进 detail。真正的 traceback
                 # 只进日志（这里连异常文本都不外发是刻意的 —— 见上面那段注释）。
-                text = (
-                    "⚠️ 芝士自动续跑再次中断，需要人来处理。"
-                    if is_resume
-                    else "⚠️ 芝士这轮中断了，马上自动接着跑一次。"
-                )
+                text = "⚠️ 芝士这轮中断了，平台会自动恢复并接着跑。"
                 event_meta = notice(
                     EVENT_TURN_FAILED,
                     severity=SEVERITY_ERROR,
-                    who=WHO_HUMAN if is_resume else WHO_PLATFORM,
+                    who=WHO_PLATFORM,
                     detail=(
-                        "已完成的改动都在；自动重试已经用完，请检查后再继续。"
-                        if is_resume
-                        else (
-                            "已完成的改动都在；平台会自动接着跑一次，"
-                            "若再失败就需要你再 @ 它。"
-                        )
+                        "已完成的改动都在；平台负责诊断运行环境并按限速周期"
+                        "自动恢复，无需普通用户检查日志、修机器或重新 @。"
                     ),
                     detail_label="详细说明",
                 )
@@ -1944,8 +1926,8 @@ class AgentWorkRunner:
             if platform_failure is not None:
                 error_frame["code"] = platform_failure.code
             await self._broker.publish(channel, error_frame)
-            if not is_resume and platform_failure is None:
-                resume_after = 5.0
+            if platform_failure is None:
+                resume_after = 60.0 if is_resume else 5.0
             if platform_failure is not None and platform_failure.host_scoped:
                 # The machine, not the turn, is the suspect (#186). Account for it
                 # and — if it has now failed once too often — move the topic to a
@@ -1970,7 +1952,7 @@ class AgentWorkRunner:
                 if swap.resume_after_s is not None and not is_resume:
                     resume_after = swap.resume_after_s
                     resume_why = swap.resume_reason or resume_why
-        if resume_after is not None and not is_resume:
+        if resume_after is not None:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
             self._schedule_resume(
                 chat_service,

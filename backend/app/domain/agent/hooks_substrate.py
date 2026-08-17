@@ -355,6 +355,21 @@ class ScreenSetupError(Exception):
     result — the ONE place setup failures turn into an ``AgentResult``."""
 
 
+def _prompt_with_native_images(prompt: str, images: list[dict] | None) -> str:
+    """Use Claude Code's own @path attachment path for interactive sessions."""
+    paths = list(
+        dict.fromkeys(
+            str(image.get("path") or "").strip()
+            for image in images or []
+            if str(image.get("path") or "").strip()
+        )
+    )
+    if not paths:
+        return prompt
+    mentions = "\n".join(f"@{path}" for path in paths)
+    return f"{prompt}\n\n{mentions}" if prompt else mentions
+
+
 class HooksSessionProvider[ScreenT]:
     """Base for the hooks-driven backends (fusion-design §8.6, increment 2).
 
@@ -371,13 +386,10 @@ class HooksSessionProvider[ScreenT]:
     (remote link.Msg)."""
 
     name: str = "hooks"
-    # 图片输入: this transport injects a TEXT prompt into a live Claude Code
-    # screen — there is no user-message content array to hang a base64 image
-    # block off, so `images=` reaches `run_turn` and goes nowhere. Declaring
-    # that here is what stops the prompt from promising the opposite; the
-    # picture is still reachable, but only because the prompt now names its
-    # path and 芝士 opens it with Read (its own tool), not because we sent it.
-    embeds_images = False
+    # Claude Code resolves an @-mentioned local image into the same native image
+    # block its clipboard paste path produces. Remote devices stage the bytes
+    # before this text is sent; local screens already share the worktree.
+    embeds_images = True
     _needs_topic_message = "本轮需要话题上下文"
     # A subclass may prefix its transport ("tmux …" / "device …") but MUST keep
     # TURN_TIMEOUT_MARKER in the string — that attribution is how the failure gets
@@ -426,7 +438,9 @@ class HooksSessionProvider[ScreenT]:
         """Bind the room's session-activity lifecycle callback."""
         self._activity_consumer = consumer
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """Inject ``text`` into the topic's active screen.
 
         This is what lets a message posted mid-turn reach 芝士 now instead of
@@ -449,10 +463,14 @@ class HooksSessionProvider[ScreenT]:
                 or subscription.current_work is None
             ):
                 return False
+            delivered_text = _prompt_with_native_images(text, images)
             receipt: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-            self._delivery_receipts[topic_id] = (text, receipt)
+            self._delivery_receipts[topic_id] = (delivered_text, receipt)
             try:
-                await self._send_prompt(screen, text)
+                if images:
+                    await self._send_prompt(screen, delivered_text, images=images)
+                else:
+                    await self._send_prompt(screen, delivered_text)
                 try:
                     return await asyncio.wait_for(receipt, timeout=DELIVERY_TIMEOUT_S)
                 except TimeoutError:
@@ -771,7 +789,8 @@ class HooksSessionProvider[ScreenT]:
         images: list[dict] | None = None,
     ) -> bool | None:
         """Inject work into the live session and return after transport receipt."""
-        del sandbox_image, images
+        del sandbox_image
+        prompt = _prompt_with_native_images(prompt, images)
         precheck = await self._precheck(project_id, topic_id)
         token = mint_scoped_token(
             project_id=str(project_id),
@@ -813,7 +832,10 @@ class HooksSessionProvider[ScreenT]:
             start_task=False,
         )
         try:
-            ready = await self._send_prompt(screen, prompt)
+            if images:
+                ready = await self._send_prompt(screen, prompt, images=images)
+            else:
+                ready = await self._send_prompt(screen, prompt)
         except BaseException:
             if starts_activity:
                 await self._end_session_activity(
@@ -861,7 +883,9 @@ class HooksSessionProvider[ScreenT]:
         that is merely reused keeps the prompt it was started with."""
         raise NotImplementedError
 
-    async def _send_prompt(self, screen: ScreenT, prompt: str) -> bool | None:
+    async def _send_prompt(
+        self, screen: ScreenT, prompt: str, images: list[dict] | None = None
+    ) -> bool | None:
         """Deliver the turn's prompt to the ready screen. Transport-specific.
 
         Returns the driver's readiness at delivery time when the transport can
@@ -921,6 +945,8 @@ class HooksSessionProvider[ScreenT]:
             )
             return
 
+        prompt = _prompt_with_native_images(prompt, images)
+
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.
         try:
@@ -960,7 +986,10 @@ class HooksSessionProvider[ScreenT]:
                     work_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
                 )
                 subscription.current_work = attribution
-                ready = await self._send_prompt(screen, prompt)
+                if images:
+                    ready = await self._send_prompt(screen, prompt, images=images)
+                else:
+                    ready = await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
                     text=str(exc), session_id=resume_session_id, is_error=True
