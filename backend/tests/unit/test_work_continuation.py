@@ -1,12 +1,12 @@
-"""续跑必须继承同一个 continuation (④ — the hinge between the two halves).
+"""Automatic retries must inherit the same continuation id.
 
 The idempotency keys in ``domain.idempotency`` are all scoped to a continuation
 id. If an auto-resume ran under a FRESH one, every key the interrupted attempt
 claimed would stop matching and all five side effects would be repeated — the
 keys would still be there, still durable, and completely inert.
 
-So this is the load-bearing assertion of the whole 下半: a turn and every
-automatic continuation of it are ONE unit of work, on all three paths
+This is the load-bearing assertion: one request and every automatic continuation
+are one unit of work on all three paths
 (timeout resume / crash resume / restart re-send).
 """
 
@@ -17,7 +17,7 @@ import uuid
 import pytest
 
 from app.domain.agent import runtime as rt
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
 
 class _Hang:
@@ -73,12 +73,12 @@ def _capture_resends(runner, monkeypatch) -> list[dict]:
 @pytest.mark.anyio
 async def test_a_fresh_turn_starts_its_own_continuation():
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
         turn_id = runner.submit(_Quiet(), topic, author="u", content="hi", summon=True)
         await asyncio.wait_for(q.get(), 2)
-    rec = runner.topic_turn(topic)
+    rec = runner.topic_work(topic)
     assert rec is not None
     # "第一次尝试的 continuation 就是它自己的 turn id" — the invariant the
     # orphan-sweep fallback also relies on.
@@ -88,7 +88,7 @@ async def test_a_fresh_turn_starts_its_own_continuation():
 @pytest.mark.anyio
 async def test_timeout_resume_inherits_the_continuation(monkeypatch):
     broker = InProcessBroker()
-    runner = TurnRunner(broker, turn_timeout_s=0.05)
+    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
     seen = _capture_resumes(runner, monkeypatch)
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
@@ -107,7 +107,7 @@ async def test_timeout_resume_inherits_the_continuation(monkeypatch):
 @pytest.mark.anyio
 async def test_crash_resume_inherits_the_continuation(monkeypatch):
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     seen = _capture_resumes(runner, monkeypatch)
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
@@ -146,7 +146,7 @@ async def test_orphan_resend_runs_under_the_recorded_continuation(
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     seen = _capture_resends(runner, monkeypatch)
     assert await runner.resume_orphans(_Quiet()) == 1
     assert seen[0]["continuation_id"] == continuation
@@ -170,7 +170,7 @@ async def test_legacy_orphan_entry_falls_back_to_its_turn_id(tmp_path, monkeypat
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     seen = _capture_resends(runner, monkeypatch)
     assert await runner.resume_orphans(_Quiet()) == 1
     assert seen[0]["continuation_id"] == turn_id
@@ -204,7 +204,7 @@ async def test_an_unparseable_entry_still_resends_instead_of_killing_the_sweep(
             },
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     seen = _capture_resends(runner, monkeypatch)
     assert await runner.resume_orphans(_Quiet()) == 2
     assert all(isinstance(s["continuation_id"], uuid.UUID) for s in seen)
@@ -216,7 +216,7 @@ async def test_continuation_for_is_none_outside_a_running_turn():
     """What the endpoints key off: no running turn → no continuation → no
     dedup. A human clicking twice means it twice."""
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     topic = uuid.uuid4()
     assert runner.continuation_for(topic) is None
     async with broker.subscribe(str(topic)) as q:

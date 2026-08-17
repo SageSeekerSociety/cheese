@@ -1,10 +1,8 @@
-"""TurnRunner + Broker: run agent turns as background jobs; WS is a subscriber.
+"""AgentWorkRunner + Broker: run agent work as background jobs.
 
-Design §4 / v2 R1·R3. The WebSocket used to run the turn inside its own
-coroutine, so a disconnect tore down the work. Here a TurnRunner runs the turn as
-a background task and publishes its frames to a Broker; WebSocket connections just
-SUBSCRIBE and relay. A disconnect only drops the subscription — the turn keeps
-running and persisting (invariant 2: the job does not depend on who is watching).
+WebSocket connections subscribe and relay; they never own model work. A
+disconnect drops only the subscriber while the background request or live
+session continues and persists independently.
 
 Today's Broker is in-process (single backend instance). Multi-instance needs a
 cross-process broker (Valkey/PG) + a durable per-topic lease + a per-turn replay
@@ -285,13 +283,13 @@ def get_broker() -> InProcessBroker:
     return InProcessBroker()
 
 
-class TurnRunner:
-    """Runs a converse turn as a background task and publishes its frames to the
-    broker. The turn owns its lifecycle; subscribers come and go.
+class AgentWorkRunner:
+    """Admit background work and publish its frames to the broker.
 
-    The runner is a process singleton (its task registry must outlive any single
-    connection), so the ChatService is passed per-submit rather than held — that
-    keeps it resolved through FastAPI's dependency overrides (e.g. tests)."""
+    Interactive session lifecycle is owned by its provider subscription. This
+    runner owns only request admission, non-interactive request execution, and
+    recovery bookkeeping. It is process-scoped so work survives subscribers.
+    """
 
     def __init__(
         self,
@@ -347,29 +345,29 @@ class TurnRunner:
         # DB cannot, and keeps a long tool-only stretch from looking dead.
         self._last_frame_at: dict[str, float] = {}
         # Which topic each live turn belongs to. Kept in memory rather than read
-        # back off the on-disk registry because `live_turn_for_topic` answers a
+        # back off the on-disk registry because `live_work_for_topic` answers a
         # request (`/topics/{id}/status`), and that must not cost a file read.
         self._live_topics: dict[str, uuid.UUID] = {}
         # Topics whose last turn died of a host-scoped failure (#186). Clearing the
         # machine's failure streak costs a DB round-trip, and a turn must not wait
         # on bookkeeping to be released — `_live` is emptied only after `_execute`
-        # returns, and `live_turn_for_topic` is the heartbeat half of the stall
+        # returns, and `live_work_for_topic` is the heartbeat half of the stall
         # verdict, so a slow tail here reads as "still running" to every caller.
         # Remembering who actually failed keeps the happy path free of it entirely;
         # what this set cannot see (a failure recorded before a restart) is covered
         # by the staleness rule in `device.health` instead.
         self._host_failed_topics: set[str] = set()
 
-    def recent_turns(self) -> list[dict]:
+    def recent_work(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
         return list(reversed(self._recent))
 
-    def active_turns(self) -> int:
+    def active_work_count(self) -> int:
         """How many turns are currently in flight — /health exposes this so a
         redeploy can drain (wait for running turns) instead of killing them."""
         return max(len(self._tasks), self._broker.active_count())
 
-    def topic_turn(self, topic_id: uuid.UUID) -> dict | None:
+    def topic_work(self, topic_id: uuid.UUID) -> dict | None:
         """Latest lifecycle record for this topic. `ceiling_s` is this turn's
         effective absolute ceiling (`self._timeout` for most backends; the tmux
         backend's own hard ceiling once its `turn_ceiling` frame has rescheduled
@@ -438,8 +436,8 @@ class TurnRunner:
     def running_topic_ids(self) -> set[uuid.UUID]:
         """Every topic with a turn currently in flight — for bulk UI signals
         (e.g. the sidebar's "还在说话" indicator) that can't afford one
-        `topic_turn()` lookup per row. Same "newest record per topic wins"
-        rule as `topic_turn()`, just collected across all topics at once."""
+        `topic_work()` lookup per row. Same "newest record per topic wins"
+        rule as `topic_work()`, just collected across all topics at once."""
         seen: set[str] = set()
         running: set[uuid.UUID] = set()
         for channel in self._broker.active_channels():
@@ -456,12 +454,12 @@ class TurnRunner:
                 running.add(uuid.UUID(key))
         return running
 
-    def live_turn_for_topic(self, topic_id: uuid.UUID) -> dict | None:
+    def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
         """The turn THIS process is actually executing for `topic_id`, with how
         long since it last published a frame — or None if nobody is running one.
 
         This is the heartbeat half of the stall verdict (see
-        `TopicService.stall_signal`), and deliberately not `topic_turn()`:
+        `TopicService.stall_signal`), and deliberately not `topic_work()`:
         `_recent` is a ring buffer of what turns *did*, so a turn killed with the
         process still reads `running` there forever. `_live` is emptied by the
         turn's own `finally`, which a dying process never gets to run — so a
@@ -1241,9 +1239,9 @@ class TurnRunner:
           the turn itself surfaces the real error.
         """
         try:
-            policy = await chat_service.turn_policy(topic_id)
+            policy = await chat_service.work_policy(topic_id)
         except Exception:  # noqa: BLE001 — admission must never kill a turn
-            logger.exception("turn_policy failed for %s; admitting", topic_id)
+            logger.exception("work_policy failed for %s; admitting", topic_id)
             policy = None
         if policy is None:
             return "ok", None
@@ -1544,7 +1542,7 @@ class TurnRunner:
             # generator → its `async with` blocks unwind → the topic lock releases
             # and the in-container claude process is torn down.
             #
-            # This wrap is transport-INDEPENDENT — one TurnRunner singleton, same
+            # This wrap is transport-INDEPENDENT — one AgentWorkRunner singleton, same
             # `self._timeout` for every backend (SDK / tmux / device). Most
             # backends have no activity signal of their own, so this stays their
             # only ceiling. The tmux backend now has one (turn 活跃度检测:
@@ -1636,7 +1634,7 @@ class TurnRunner:
                     self._last_frame_at[str(turn_id)] = time.monotonic()
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
-                        # `topic_turn()` reads this so `cheese status` reports the
+                        # `topic_work()` reads this so `cheese status` reports the
                         # backend's REAL ceiling, not the generic outer default.
                         rec["ceiling_s"] = ceiling_s
                         if fuse_deadline is None:
@@ -1751,7 +1749,7 @@ class TurnRunner:
         except TimeoutError:
             rec["status"] = "timeout"
             rec["duration_s"] = round(time.monotonic() - t0, 1)
-            # The actual ceiling this turn ran against — `topic_turn()` reads
+            # The actual ceiling this turn ran against — `topic_work()` reads
             # the same `ceiling_s or self._timeout` fallback for `cheese
             # status` (see its docstring above); a backend that emitted a
             # `turn_ceiling` frame may have raised this well above

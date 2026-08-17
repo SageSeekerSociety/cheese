@@ -35,7 +35,7 @@ from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    HooksTurnProvider,
+    HooksSessionProvider,
     ScreenSetupError,
     TopicSubscription,
     hooks_settings,
@@ -306,11 +306,11 @@ async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str
     )
 
 
-class TmuxHooksProvider(HooksTurnProvider[str]):
+class TmuxHooksProvider(HooksSessionProvider[str]):
     """The LOCAL hooks backend: runs interactive `claude` in a per-topic tmux
     session inside a platform container, streaming AgentEvents from Claude Code
     hooks. Transport = docker/tmux; the shared turn flow lives in the base
-    (HooksTurnProvider) — this class implements only the transport seam. The
+    (HooksSessionProvider) — this class implements only the transport seam. The
     screen ctx is the container name (str)."""
 
     # (see _subscription_args below for how a subscription turn is captured)

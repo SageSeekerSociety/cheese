@@ -14,7 +14,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
-    get_turn_runner,
+    get_work_runner,
     project_device_online,
 )
 from app.api.response import ok, page
@@ -32,7 +32,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.roles import resolve_role_description
-from app.domain.agent.runtime import TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -763,7 +763,7 @@ async def sync_project_upstream(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """同步上游: fetch + merge the upstream default branch into the project base.
     Conflicts abort cleanly and come back as {"synced": false, "reason": ...} —

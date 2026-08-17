@@ -33,7 +33,7 @@ from app.domain.agent.cloud_provider import CloudProvider
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.hook_events import translate_hook
-from app.domain.agent.hooks_substrate import HooksTurnProvider, TopicSubscription
+from app.domain.agent.hooks_substrate import HooksSessionProvider, TopicSubscription
 from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
@@ -1127,7 +1127,7 @@ class ChatService:
     ) -> AsyncIterator[dict]:
         """Run the AI half of a human message that is already durable.
 
-        ``TurnRunner.submit_message`` owns the receive-before-admission ordering;
+        ``AgentWorkRunner.submit_message`` owns the receive-before-admission ordering;
         this method starts only after the project gate admits the model work.
         """
         ack = await self.ack_summon(user_block_id, topic_id)
@@ -1256,8 +1256,8 @@ class ChatService:
                     waiting.append(topic_id)
         return waiting
 
-    async def turn_policy(self, topic_id: uuid.UUID) -> dict | None:
-        """Admission facts the TurnRunner gates on BEFORE running a turn
+    async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
+        """Admission facts the AgentWorkRunner gates on BEFORE running a turn
         (spec §9.1 算力额度): the owning project, its concurrency ceiling, and
         whether its compute credits are exhausted. None when the topic doesn't
         exist (the turn itself will surface the 404)."""
@@ -2672,7 +2672,7 @@ class ChatService:
             # `agent_turn_timeout_s`. The SDK / remote-cheesed backends have no such
             # signal and keep the generic default. Without this the device's own
             # two-layer fix is dead on arrival — the outer guard still kills at 900s.
-            is_activity_aware_backend = isinstance(provider, HooksTurnProvider)
+            is_activity_aware_backend = isinstance(provider, HooksSessionProvider)
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later team-default/sticky change must
@@ -2682,7 +2682,7 @@ class ChatService:
 
         # --- streaming: no DB transaction held open ---
         if is_activity_aware_backend:
-            # Tells TurnRunner's outer wall-clock wrap (runtime.py) to reschedule
+            # Tells AgentWorkRunner's outer wall-clock wrap (runtime.py) to reschedule
             # to this backend's real ceiling instead of the generic
             # `agent_turn_timeout_s` — the ONLY frame kind that does so, and only
             # emitted here, so every other backend's outer-wrap behaviour is
@@ -2725,7 +2725,7 @@ class ChatService:
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
         model_kwargs, route = await self._model_kwargs(project_id, provider.name)
-        if isinstance(provider, HooksTurnProvider):
+        if isinstance(provider, HooksSessionProvider):
             # Internal: the screen subscription, not this request, owns timeout
             # and thinking lifecycle. Runtime consumes this frame and disables
             # its request-scoped lifecycle before provider setup begins.
@@ -2755,7 +2755,7 @@ class ChatService:
         todo: list[dict] = []
         if prior_progress:
             yield {"type": "todo", "items": prior_progress, "restored": True}
-        if isinstance(provider, HooksTurnProvider):
+        if isinstance(provider, HooksSessionProvider):
             marked_work_ids: list[uuid.UUID] = []
 
             def _register_work(marked_work_id: uuid.UUID) -> None:

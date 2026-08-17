@@ -19,7 +19,7 @@ import uuid
 import pytest
 
 from app.domain.agent import runtime as rt
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
 
 class _Chat:
@@ -100,7 +100,7 @@ async def test_delivered_orphan_attaches_instead_of_reprompting(tmp_path, monkey
     topic, turn = uuid.uuid4(), uuid.uuid4()
     rt._save_inflight({str(turn): _entry(topic)})
     chat = _Chat(delivered=[turn])
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
@@ -126,7 +126,7 @@ async def test_spool_trace_attaches_and_vetoes_every_resend(tmp_path, monkeypatc
         }
     )
     chat = _Chat(spool=True)
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
@@ -144,7 +144,7 @@ async def test_zero_evidence_resends_the_original_prompt_once(tmp_path, monkeypa
     topic = uuid.uuid4()
     rt._save_inflight({str(uuid.uuid4()): _entry(topic, content="修一下登录页")})
     chat = _Chat()
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
     await _drain(chat)
@@ -170,7 +170,7 @@ async def test_five_orphans_one_topic_get_at_most_one_action(tmp_path, monkeypat
     }
     rt._save_inflight(reg)
     chat = _Chat()
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
     await _drain(chat)
@@ -190,7 +190,7 @@ async def test_probe_failure_is_treated_as_evidence(tmp_path, monkeypatch):
     topic = uuid.uuid4()
     rt._save_inflight({str(uuid.uuid4()): _entry(topic)})
     chat = _Chat(probe_error=True)
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
@@ -217,7 +217,7 @@ async def test_delivered_and_undelivered_split_gets_both_remedies(
         }
     )
     chat = _Chat(delivered=[running])
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
     await _drain(chat)

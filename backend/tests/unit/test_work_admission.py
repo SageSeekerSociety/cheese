@@ -1,8 +1,8 @@
-"""TurnRunner admission: project concurrency gate + credit exhaustion (§9.1).
+"""AgentWorkRunner admission: project concurrency gate + credit exhaustion (§9.1).
 
 Functional tests against a fake ChatService: the runner must (a) run at most
-max_concurrent_turns turns per project at once, queueing the rest FIFO with a
-visible "排队中" system event, and (b) refuse a turn outright when the
+max_concurrent_turns work items per project at once, queueing the rest FIFO with a
+visible "排队中" system event, and (b) refuse work outright when the
 project's compute credits are exhausted — landing the human's message but
 posting the platform's exhaustion event instead of running the agent.
 """
@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
 
 class FakeChat:
@@ -27,7 +27,7 @@ class FakeChat:
         self.converse_calls: list[dict] = []
         self.release = asyncio.Event()
 
-    async def turn_policy(self, topic_id: uuid.UUID) -> dict | None:
+    async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
         return self.policy
 
     async def post_system_event(
@@ -69,9 +69,9 @@ async def _until(cond, timeout: float = 2.0) -> None:
             await asyncio.sleep(0.01)
 
 
-def _runner() -> tuple[TurnRunner, InProcessBroker]:
+def _runner() -> tuple[AgentWorkRunner, InProcessBroker]:
     broker = InProcessBroker()
-    return TurnRunner(broker, turn_timeout_s=5.0), broker
+    return AgentWorkRunner(broker, turn_timeout_s=5.0), broker
 
 
 @pytest.mark.anyio
@@ -107,7 +107,7 @@ async def test_concurrency_gate_queues_and_announces_position():
     # Release: all three turns complete, never more than one at a time.
     chat.release.set()
     await _until(lambda: len(chat.converse_calls) == 3 and chat.running == 0)
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
     assert chat.max_running == 1
 
 
@@ -130,7 +130,7 @@ async def test_concurrency_gate_allows_up_to_limit_without_queueing():
     assert chat.system_events == []
 
     chat.release.set()
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
     assert chat.max_running == 2
 
 
@@ -165,7 +165,7 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
     # The refusal is the PLATFORM's structured copy, in the topic 现场.
     assert any("算力额度已用完" in e for e in chat.system_events)
     assert "算力额度已用完" in frames[-1]["message"]
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
 
 
 @pytest.mark.anyio
@@ -176,7 +176,7 @@ async def test_unknown_policy_admits_ungated():
     runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
     await _until(lambda: chat.running == 1)
     chat.release.set()
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
     assert len(chat.converse_calls) == 1
 
 
@@ -219,7 +219,7 @@ async def test_received_message_lands_before_credit_refusal():
 @pytest.mark.anyio
 async def test_unsummoned_message_never_touches_turn_admission():
     class PostOnly(FakeChat):
-        async def turn_policy(self, topic_id):
+        async def work_policy(self, topic_id):
             raise AssertionError("plain messages do not enter the turn gate")
 
     chat = PostOnly(None)
@@ -231,13 +231,13 @@ async def test_unsummoned_message_never_touches_turn_admission():
         )
         assert (await queue.get())["type"] == "user_block"
         assert (await queue.get())["type"] == "done"
-    assert runner.active_turns() == 0
+    assert runner.active_work_count() == 0
 
 
 @pytest.mark.anyio
 async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
     class MergeIntoLive(FakeChat):
-        async def turn_policy(self, topic_id):
+        async def work_policy(self, topic_id):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
         async def merge_into_running_turn(self, *args):
@@ -264,8 +264,8 @@ async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
 
     assert [frame["type"] for frame in frames] == ["user_block", "reaction", "done"]
     assert broker.active_turn_ids(str(topic)) == ["already-running"]
-    assert runner.active_turns() == 1
+    assert runner.active_work_count() == 1
     await broker.publish(
         str(topic), {"type": "turn_finished", "turn_id": "already-running"}
     )
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)

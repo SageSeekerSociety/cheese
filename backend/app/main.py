@@ -40,7 +40,7 @@ from app.core.sandbox_auth import (
     is_valid_cheese_token,
     looks_like_project_agent_credential,
 )
-from app.core.turn_context import current_turn_id, parse_turn_id
+from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.agent_credential.services import ProjectAgentCredentialService
@@ -61,7 +61,7 @@ async def lifespan(_: FastAPI):
     # against the project's current image and recreates it only when the image
     # changed. (reap_sandbox_containers stays available as an ops tool.)
     # Orphan sweep: resume turns the previous process died with (see
-    # TurnRunner.resume_orphans) — a deploy must never silently eat a turn.
+    # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
     # ...and that reuse is exactly why the hook credential must survive a
     # restart. `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per
     # PROCESS when unset, which silently invalidates the token baked into every
@@ -77,7 +77,7 @@ async def lifespan(_: FastAPI):
             "topic's session). Pin SANDBOX_TOKEN in the deployment env."
         )
 
-    from app.api.deps import get_chat_service, get_turn_runner
+    from app.api.deps import get_chat_service, get_work_runner
     from app.domain.scheduler.service import (
         ConclusionSweepRunner,
         GateSweepRunner,
@@ -142,7 +142,7 @@ async def lifespan(_: FastAPI):
         get_logger("cheesex.runtime").exception("hook subscription recovery failed")
 
     try:
-        n = await get_turn_runner().resume_orphans(get_chat_service())
+        n = await get_work_runner().resume_orphans(get_chat_service())
         if n:
             get_logger("cheesex.runtime").info("orphan_sweep", resumed=n)
     except Exception:  # noqa: BLE001 — never block startup
@@ -219,7 +219,7 @@ async def lifespan(_: FastAPI):
             topic_id for topic_id, device_id in ready if device_hub.is_online(device_id)
         ]
         for topic_id in await chat.cloud_waiting_topics(topic_ids):
-            get_turn_runner().submit_kickoff(
+            get_work_runner().submit_kickoff(
                 chat,
                 topic_id,
                 prompt="Cloud machine is ready; continue the pending input.",
@@ -536,11 +536,11 @@ async def cheese_token_gate(request: Request, call_next: Callable):  # type: ign
             )
         break
     # Stash the cheese turn id so blocks written by this request inherit it (R4).
-    ctx = current_turn_id.set(parse_turn_id(request.headers.get("x-cheese-turn")))
+    ctx = current_work_id.set(parse_work_id(request.headers.get("x-cheese-turn")))
     try:
         return await call_next(request)
     finally:
-        current_turn_id.reset(ctx)
+        current_work_id.reset(ctx)
 
 
 @app.middleware("http")
@@ -592,14 +592,14 @@ async def debug_turns() -> dict:
     """可 debug: the last ~100 turns' lifecycle summaries (status, timings,
     tool counts, failure reasons) — read the state of the world without
     grepping logs."""
-    from app.api.deps import get_turn_runner
+    from app.api.deps import get_work_runner
 
-    return {"code": 200, "message": "ok", "data": get_turn_runner().recent_turns()}
+    return {"code": 200, "message": "ok", "data": get_work_runner().recent_work()}
 
 
 @app.get("/health")
 async def health() -> dict:
-    from app.api.deps import get_turn_runner
+    from app.api.deps import get_work_runner
 
     # active_turns lets a redeploy drain: wait until no agent turn is in flight
     # before restarting, so a deploy never kills 芝士 mid-work. version rides
@@ -609,7 +609,7 @@ async def health() -> dict:
         "message": "ok",
         "data": {
             "status": "healthy",
-            "active_turns": get_turn_runner().active_turns(),
+            "active_turns": get_work_runner().active_work_count(),
             "version": settings.app_version,
         },
     }

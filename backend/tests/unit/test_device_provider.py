@@ -1176,7 +1176,7 @@ def test_a_remote_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
 
 
 # --- turn 活跃度检测 (the device half): two-layer timeout + liveness probe -------
-# The shared two-layer loop (`run_hooks_turn` idle-suspect / hard-ceiling +
+# The shared two-layer loop (`monitor_session_activity` idle-suspect / hard-ceiling +
 # `confirm_alive`) is exercised in test_hooks_substrate.py; these cover what is
 # device-SPECIFIC: the two layers are no longer collapsed into one deadline, the
 # device's own `_confirm_alive` maps a process-tree probe to a liveness verdict,
@@ -1207,7 +1207,7 @@ def test_device_splits_the_two_timeout_layers_instead_of_collapsing_them():
     was 'kill unconditionally at 900s' — a long-but-silent foreground command (a
     20-minute pytest emits no interim hook) died at minute 15. The layers must now
     be distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
-    the value TurnRunner reschedules its outer wall-clock wrap to."""
+    the value AgentWorkRunner reschedules its outer wall-clock wrap to."""
     prov = DeviceProvider(hub=FakeHub())
     assert prov._idle_suspect_s == 300.0
     assert prov._hard_ceiling_s == 10800.0

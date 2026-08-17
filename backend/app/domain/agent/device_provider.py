@@ -38,7 +38,7 @@ from app.domain.agent.device_launch import DEVICE_ALIVE_PROBE, build_screen_laun
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     SESSION_TOKEN_TTL_S,
-    HooksTurnProvider,
+    HooksSessionProvider,
     ScreenSetupError,
     TopicSubscription,
 )
@@ -313,11 +313,11 @@ def _credential_expiry(token: str) -> int:
     return int(time.time()) + SESSION_TOKEN_TTL_S
 
 
-class DeviceProvider(HooksTurnProvider[HubScreen]):
+class DeviceProvider(HooksSessionProvider[HubScreen]):
     """The REMOTE hooks backend: runs interactive `claude` on a user's enrolled
     machine over the frozen link.Msg channel (DeviceHub), streaming AgentEvents
     from Claude Code hooks. Transport = link.Msg + a device screen; the shared
-    turn flow lives in the base (HooksTurnProvider) — this class implements only
+    turn flow lives in the base (HooksSessionProvider) — this class implements only
     the transport seam. The screen ctx is a HubScreen."""
 
     name = "device"

@@ -23,7 +23,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import gate_sweep
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
 
@@ -168,7 +168,7 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
     text = ""
     deadline = time.time() + 10
     while time.time() < deadline:
-        wait_turns_idle()
+        wait_work_idle()
         text = _blocks_text(client, tid)
         if "闸门没跑完" in text:
             break

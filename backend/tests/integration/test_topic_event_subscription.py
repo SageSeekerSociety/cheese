@@ -12,7 +12,7 @@ from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import HooksTurnProvider, TopicSubscription
+from app.domain.agent.hooks_substrate import HooksSessionProvider, TopicSubscription
 from app.domain.agent.runtime import get_broker
 from app.domain.agent.service import (
     AgentEvent,
@@ -91,7 +91,7 @@ class _AnsweringLiveScreenProvider:
         del project_id, topic_id
 
 
-class _IdleHooksProvider(HooksTurnProvider[str]):
+class _IdleHooksProvider(HooksSessionProvider[str]):
     """A live screen whose hooks can arrive without a platform request."""
 
     name = "idle-hooks"
@@ -561,7 +561,7 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     ]
     subscription = provider._subscriptions[topic_id]
     assert subscription.activity is None
-    assert subscription.current_turn is None
+    assert subscription.current_work is None
     assert router.subscribe(str(topic_id)) is subscription.sink
 
     async with broker.subscribe(str(topic_id)) as room:

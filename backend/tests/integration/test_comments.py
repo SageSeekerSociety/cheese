@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.identity.handles import topic_agent_handle
 from app.main import app
@@ -22,9 +22,9 @@ class _RecordingRunner:
 @pytest.fixture
 def runner():
     fake = _RecordingRunner()
-    app.dependency_overrides[get_turn_runner] = lambda: fake
+    app.dependency_overrides[get_work_runner] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_turn_runner, None)
+    app.dependency_overrides.pop(get_work_runner, None)
 
 
 def _topic(client) -> str:

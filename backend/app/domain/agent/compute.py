@@ -465,10 +465,10 @@ class ComputePool:
         activity_consumer: "HookActivityConsumer | None" = None,
     ) -> None:
         """Give hooks providers the room-side persistence and activity owners."""
-        from app.domain.agent.hooks_substrate import HooksTurnProvider
+        from app.domain.agent.hooks_substrate import HooksSessionProvider
 
         for provider in self._providers.values():
-            if isinstance(provider, HooksTurnProvider):
+            if isinstance(provider, HooksSessionProvider):
                 provider.bind_event_consumer(consumer)
                 if activity_consumer is not None:
                     provider.bind_activity_consumer(activity_consumer)
@@ -477,11 +477,11 @@ class ComputePool:
         self, device_id: str | None = None
     ) -> list["TopicSubscription"]:
         """Recover subscriptions for screens that survived this process."""
-        from app.domain.agent.hooks_substrate import HooksTurnProvider
+        from app.domain.agent.hooks_substrate import HooksSessionProvider
 
         recovered: list[TopicSubscription] = []
         for provider in self._providers.values():
-            if isinstance(provider, HooksTurnProvider):
+            if isinstance(provider, HooksSessionProvider):
                 recovered.extend(await provider.recover_subscriptions(device_id))
         return recovered
 
