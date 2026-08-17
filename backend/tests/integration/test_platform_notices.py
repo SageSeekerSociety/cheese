@@ -17,19 +17,15 @@ author_type=system`，前端一行灰字）。另一条更糟：`runner.submit(a
 
 ## 为什么闸门那两条不走 HTTP
 
-`review/gate.py` 的 runner **已经退役**（`采纳即合并`，见该模块 docstring：
-"THIS RUNNER IS NO LONGER DISPATCHED"），`routes/accept.py` 不再调 `dispatch`，
-所以没有任何 HTTP 路径能把它跑起来。它留在库里是因为 `gate_sweep` 还要用它的
-常量去清历史 `pending_gate` 行。要钉住它的话术，只能直接调 `gate._run` —— 用的
-仍然是生产函数本体和真实的卡状态机，只是把 runner 换成一个记录器。
+`review/gate.py` 的 runner 已随 `采纳即合并`（#296）退役，连同它的
+`run_check_command` 与那两条话术的用例一起删掉了 —— 没有任何代码路径还会产生
+`gate_failed` / `gate_blocked`，也就没有话术可钉。这两个状态仍留在卡片枚举和前端
+里，因为历史行带着它们，得渲染得出来。
 """
 
 import asyncio
 import uuid
 
-import pytest
-
-from app.domain.review import gate
 from app.domain.review.services import _NUDGE_TAIL_LIMIT
 from app.domain.workspace import service as ws
 from tests.conftest import wait_turns_idle
@@ -190,12 +186,12 @@ def test_merge_refused_lands_as_one_line_event(client, monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 质量闸门 —— 红了 vs 没跑起来（两套话术不能合并）
+# 只记不跑的 runner（被下面几组用例共用）
 # --------------------------------------------------------------------------
 
 
 class _RecordingRunner:
-    """只记不跑的 runner。闸门 runner 已退役，没有 HTTP 路径能驱动它。"""
+    """只记录 submit 调用、不真正驱动一轮的 runner。"""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -203,99 +199,6 @@ class _RecordingRunner:
     def submit(self, chat_service, topic_id, **kw):
         self.calls.append({"topic_id": topic_id, **kw})
         return uuid.uuid4()
-
-
-def _seed_pending_gate_card(client, topic_id: str) -> uuid.UUID:
-    from app.domain.review.models import AcceptCard, AcceptStatus
-
-    async def _do() -> uuid.UUID:
-        async with client.test_factory() as session:
-            card = AcceptCard(
-                topic_id=uuid.UUID(topic_id),
-                reviewer_handle="alice",
-                routing_reason="最懂",
-                status=AcceptStatus.pending_gate,
-            )
-            session.add(card)
-            await session.flush()
-            cid = card.id
-            await session.commit()
-            return cid
-
-    return asyncio.run(_do())
-
-
-def _run_retired_gate(client, monkeypatch, tmp_path, *, exit_code: int, tail: str):
-    """把退役的闸门 runner 就地跑一次，返回它发出的那一次 submit。"""
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
-    tid = client.post(
-        "/api/topics", json={"project_id": pid, "title": "做一个东西"}
-    ).json()["data"]["id"]
-    card_id = _seed_pending_gate_card(client, tid)
-
-    monkeypatch.setattr(ws, "topic_worktree", lambda *_a, **_kw: tmp_path)
-    monkeypatch.setattr(
-        ws,
-        "run_check_command",
-        lambda *_a, **_kw: {"exit_code": exit_code, "tail": tail},
-    )
-    runner = _RecordingRunner()
-    asyncio.run(
-        gate._run(
-            client.test_factory,
-            object(),  # chat_service: the recording runner never touches it
-            runner,
-            card_id=card_id,
-            topic_id=uuid.UUID(tid),
-            project_id=uuid.UUID(pid),
-            command="pytest",
-        )
-    )
-    assert len(runner.calls) == 1
-    return runner.calls[0]
-
-
-@pytest.mark.parametrize(
-    ("exit_code", "event_type", "expect_in_line"),
-    [
-        # 检查跑了、红了 → 去改代码。
-        (1, "gate_failed", "没通过"),
-        # 检查根本没跑起来（check.sh --strict 的 exit 2）→ 去弄环境。对芝士来说
-        # 这是完全相反的下一步，所以两个码必须分开 —— 见 gate.py 里那段注释。
-        (gate.BLOCKED_EXIT_CODE, "gate_blocked", "没能跑起来"),
-    ],
-)
-def test_gate_result_lands_as_one_line_event(
-    client, monkeypatch, tmp_path, exit_code, event_type, expect_in_line
-):
-    output = "".join(f"E   assert {i} == {i + 1}\n" for i in range(200))
-    call = _run_retired_gate(
-        client, monkeypatch, tmp_path, exit_code=exit_code, tail=output
-    )
-
-    assert "\n" not in call["nudge_event"]
-    assert len(call["nudge_event"]) <= 40
-    assert expect_in_line in call["nudge_event"]
-    meta = call["nudge_meta"]
-    assert meta["event_type"] == event_type
-    assert meta["severity"] == "error"
-    assert meta["who"] == "cheese"
-    # 检查输出的结尾原样收在 detail 里，1500 的上限没变。
-    assert meta["detail"] == output[-1500:]
-    # 给芝士的整段指令一个字没动 —— 它还是走 content 进 prompt。
-    assert output[-1500:] in call["content"]
-
-
-def test_gate_failed_and_gate_blocked_never_collapse_into_one_code(
-    client, monkeypatch, tmp_path
-):
-    """守卫：有人图省事把两套话术合并时，这条会红。"""
-    red = _run_retired_gate(client, monkeypatch, tmp_path, exit_code=1, tail="boom")
-    blocked = _run_retired_gate(
-        client, monkeypatch, tmp_path, exit_code=gate.BLOCKED_EXIT_CODE, tail="boom"
-    )
-    assert red["nudge_meta"]["event_type"] != blocked["nudge_meta"]["event_type"]
-    assert red["nudge_event"] != blocked["nudge_event"]
 
 
 # --------------------------------------------------------------------------
