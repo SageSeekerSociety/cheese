@@ -62,6 +62,21 @@ This is a smaller trap than the one it replaced, but it is sharper: it fails onl
 in a browser, behind the gateway, and never in a test that talks to the backend
 directly.
 
+## Never send a trailing slash, and never turn the redirect back on
+
+`app.main` builds the app with `redirect_slashes=False`, and that must stay off.
+Starlette's slash-redirect answers with an **origin-absolute** `Location`, and a
+backend behind a stripping gateway cannot know how many prefixes the proxy ahead
+of it will remove — so the URL it hands back has already spent a strip it does
+not know about. That was true when the mistake landed on a wrong-generation
+route, and it is still true now that there is only one generation: the redirect
+is wrong regardless of what it hits. `test_a_trailing_slash_is_never_a_redirect`
+pins it.
+
+For a client, the consequence is one line: **a trailing slash is a plain 404**,
+which is an honest error instead of a silent wrong answer. The history of how
+that was discovered is below and is only history.
+
 ## Why there used to be two shapes
 
 Until #370 the product carried two generations of routers: 知是 1.0 bare
@@ -94,7 +109,7 @@ ordinary traffic, and the special-casing is deleted rather than kept "just in
 case". `/connector/…` keeps its own `location` block for an unrelated reason —
 enrolled devices dial it directly.
 
-### A trailing slash used to re-open the same trap (closed)
+### How the trailing-slash trap was found (history)
 
 The strip happens once per pass through nginx — and a trailing slash used to buy
 a second pass. Sending `GET <origin>/api/api/tasks/7/` (one stray `/`) went, as
@@ -115,9 +130,6 @@ slash is a plain 404. With one namespace there is no other generation left to
 land on, but the redirect stays off and `test_a_trailing_slash_is_never_a_redirect`
 still pins it: an origin-absolute `Location` from behind a stripping gateway is
 wrong regardless of what it hits.
-
-Still: **never send a trailing slash.** It is an honest error instead of a silent
-one.
 
 ## Notes for client authors
 
