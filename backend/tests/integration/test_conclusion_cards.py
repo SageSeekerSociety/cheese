@@ -72,7 +72,7 @@ def _topic_status(client, topic_id: str) -> str:
 
 
 def test_conclude_files_a_card_without_touching_the_three_old_side_effects(client):
-    """阶段一是纯加法：回流照旧插消息 / 织进父活文档 / 发 change_alert，
+    """阶段一是纯加法：回流照旧插消息 / 织进父实况文档 / 发 change_alert，
     卡是第四件事。"""
     p = _project(client)
     parent = _topic(client, p["id"])
@@ -96,7 +96,7 @@ def test_conclude_files_a_card_without_touching_the_three_old_side_effects(clien
     blocks = client.get(f"/api/topics/{parent['id']}/blocks").json()["data"]["data"]
     assert any("数据清洗完成" in b["content"] for b in blocks), "父话题消息没了"
     doc = client.get(f"/api/topics/{parent['id']}/doc").json()["data"]
-    assert doc is not None and "数据清洗完成" in doc["content"], "父活文档没织进去"
+    assert doc is not None and "数据清洗完成" in doc["content"], "父实况文档没织进去"
     notifs = client.get(f"/api/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any("实现数据清洗" in n["title"] for n in notifs), "change_alert 没发"
 
@@ -412,7 +412,7 @@ def test_a_card_addressed_to_another_parent_is_not_settleable_here(client):
 
 
 def test_archiving_settles_descendant_cards_instead_of_freezing_them(client):
-    """孙子的卡收方是儿子；直接归档儿子会把那张卡冻住（归档后活文档定格，再没人
+    """孙子的卡收方是儿子；直接归档儿子会把那张卡冻住（归档后实况文档定格，再没人
     能结算）。规则是先结算再归档。
 
     三层只有一种合法形状：本体 → 房间 → 事。事是叶子，从事上再拆只会得到它在

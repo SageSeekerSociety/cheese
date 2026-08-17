@@ -175,10 +175,10 @@ onMounted(load)
             </div>
             <div v-else class="empty-state">
               <v-icon size="30" class="empty-state__icon">mdi-account-question-outline</v-icon>
-              <span class="t-body c-muted">芝士还在了解 TA</span>
+              <span class="t-body c-muted">暂无观察记录</span>
             </div>
             <div class="t-meta mt-3" style="line-height: 1.5">
-              这些理解来自芝士在协作中的持续观察，会随着一起做事不断加深。
+              这些理解来自芝士在协作中的持续观察，会随着一起做事不断加深
             </div>
           </v-card-text>
         </v-card>
@@ -236,7 +236,7 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="(member.topics_active ?? []).length === 0" class="c-faint t-body">当前没有在忙的话题</div>
+                  <div v-if="(member.topics_active ?? []).length === 0" class="c-faint t-body">暂无进行中的话题</div>
                   <v-list v-else density="comfortable" class="py-0">
                     <v-list-item
                       v-for="t in member.topics_active ?? []"
@@ -264,7 +264,7 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="member.topics_started.length === 0" class="c-faint t-body">还没有发起过话题</div>
+                  <div v-if="member.topics_started.length === 0" class="c-faint t-body">暂无发起的话题</div>
                   <v-list v-else density="comfortable" class="py-0">
                     <v-list-item v-for="t in member.topics_started" :key="t.id" class="px-0" @click="openTopic(t.id)">
                       <v-list-item-title>{{ t.title }}</v-list-item-title>
@@ -290,7 +290,7 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="member.waiting_on_you.length === 0" class="c-faint t-body">没有待处理的事</div>
+                  <div v-if="member.waiting_on_you.length === 0" class="c-faint t-body">暂无待处理的事</div>
                   <v-list v-else density="comfortable" class="py-0">
                     <v-list-item v-for="t in member.waiting_on_you" :key="t.id" class="px-0">
                       <template #prepend>
@@ -326,7 +326,7 @@ onMounted(load)
   width: 96px;
   height: 96px;
   margin-top: -48px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   border: 4px solid var(--surface);
   background: var(--ink);
   /* 底色是 --ink（浅色近黑 / 深色近白），所以字必须是它的反面 —— 写死的白
@@ -361,13 +361,14 @@ onMounted(load)
 /* Contribution bar per project — neutral ink, not amber. */
 .contrib-track {
   height: 6px;
-  border-radius: 3px;
+  /* 6px 高的进度条，两端本来就该是半圆 → --radius-pill（原来是 3px，不在阶梯上）。 */
+  border-radius: var(--radius-pill);
   background: var(--fill-2);
   overflow: hidden;
 }
 .contrib-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   background: var(--ink);
 }
 </style>

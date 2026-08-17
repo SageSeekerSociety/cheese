@@ -99,7 +99,7 @@ onMounted(load)
         </v-btn>
 
         <div class="mb-6">
-          <div class="t-eyebrow mb-1">日历 · 时间维度</div>
+          <div class="t-eyebrow mb-1">日历</div>
           <h1 class="t-page-title">{{ projectName || '项目日历' }}</h1>
         </div>
 

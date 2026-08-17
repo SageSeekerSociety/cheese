@@ -45,7 +45,7 @@ onMounted(async () => {
 
 async function approve() {
   if (!code.value) {
-    error.value = '缺少设备码（请从 cli 打开的链接进入）'
+    error.value = '缺少设备码，请从命令行打开的链接进入'
     return
   }
   loading.value = true
@@ -67,16 +67,16 @@ async function approve() {
         <div class="t-eyebrow mb-1">设备连接</div>
         <h1 class="t-page-title">批准这台设备</h1>
         <div class="t-body c-muted mt-1">
-          你的机器请求作为 self-hosted 算力节点接入芝士。批准后它成为归你所有的算力， 芝士的分身即可派到这台机器上干活。
+          这台机器请求接入芝士，成为归你所有的设备。批准后，芝士就可以把任务派到它上面运行。
         </div>
       </div>
 
       <v-alert v-if="!code" type="warning" density="comfortable" class="mb-4">
-        链接里没有设备码。请从 cli（<code>cheese link</code>）打开的地址进入本页面。
+        链接里没有设备码，请从 <code>cheese link</code> 打开的地址进入
       </v-alert>
 
       <v-alert v-else-if="!loggedIn" type="info" density="comfortable" class="mb-4">
-        请先登录你的账号，再批准这台设备归你所有。
+        请先登录，再批准这台设备归你所有
         <template #append>
           <v-btn size="small" variant="tonal" :to="loginLink">去登录</v-btn>
         </template>
@@ -88,7 +88,7 @@ async function approve() {
 
         <v-text-field
           v-model="deviceName"
-          label="给这台算力节点起个名字"
+          label="设备名称"
           placeholder="例如：andy-macbook"
           variant="outlined"
           density="comfortable"
@@ -109,11 +109,11 @@ async function approve() {
         <v-icon size="40" color="success" class="mb-2"> mdi-check-circle-outline </v-icon>
         <h2 class="t-title mb-1">设备已连接</h2>
         <div class="t-body c-muted mb-3">
-          算力节点 «<strong>{{ approved.device_name }}</strong
-          >» 已绑定到你。
+          设备「<strong>{{ approved.device_name }}</strong
+          >」已绑定到你
         </div>
         <div class="t-caption c-muted mb-4">
-          回到 cli 运行 <code>cheese link connect</code>，它就会保持在线、接受派活。
+          在命令行运行 <code>cheese link connect</code>，设备就会保持在线并接受任务
         </div>
         <v-btn variant="tonal" :to="{ name: 'my-devices' }"> 去「我的设备」 </v-btn>
       </v-card>

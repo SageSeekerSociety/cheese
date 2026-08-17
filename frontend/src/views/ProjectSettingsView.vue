@@ -344,11 +344,11 @@ function consumeGithubCallbackNotice() {
     const repo = route.query.repo as string | undefined
     githubRepoNotice.value = { type: 'success', text: `已连接仓库 ${repo ?? ''}`.trim() }
   } else if (install === 'pending') {
-    githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准。' }
+    githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准' }
   } else if (install === 'error') {
     githubRepoNotice.value = { type: 'error', text: explainRepoInstallFailure(reason) }
   } else if (account === 'success') {
-    githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号。' }
+    githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号' }
   } else if (account === 'error') {
     githubAccountNotice.value = { type: 'error', text: explainAccountLinkFailure(reason) }
   }
@@ -388,7 +388,7 @@ watch(() => props.projectId, load)
           append-icon="mdi-storefront-outline"
           @click="router.push({ name: 'market' })"
         >
-          逛市场
+          市场
         </v-btn>
       </div>
 
@@ -396,8 +396,9 @@ watch(() => props.projectId, load)
         <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
         <h1 class="t-page-title">资源池</h1>
         <p class="t-body c-muted mt-1" style="max-width: 640px">
-          选择这个项目用哪套 AI 模型、跑在哪套算力上。默认都是知是自己的池，开箱即用； 需要更强的模型或专属机器，可以在
-          <a class="link" @click="router.push({ name: 'market' })">市场</a> 里挑。
+          选择这个项目使用哪套 AI
+          模型、运行在哪套算力上。默认都是知是自己的资源池，开箱即用；需要更强的模型或专属机器，可以在
+          <a class="link" @click="router.push({ name: 'market' })">市场</a> 里挑选。
         </p>
       </div>
 
@@ -437,7 +438,7 @@ watch(() => props.projectId, load)
               <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="roleDialog = true"> 新建角色 </v-btn>
             </div>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              芝士以这个专家身份进驻项目（影响它的口吻和关注点）。平台内置了几个； 也可以给机构或自己定义新角色。
+              芝士以这个专家身份进驻项目，影响它的口吻和关注点。平台内置了几个角色，也可以为机构或自己定义新的。
             </p>
           </div>
         </section>
@@ -480,8 +481,8 @@ watch(() => props.projectId, load)
           </div>
           <div class="ln-body">
             <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
-              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省 订阅额度）；复杂项目可切
-              <strong>Opus 5</strong>（更强，但更快消耗额度）。
+              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省额度）；复杂项目可切换到
+              <strong>Opus 5</strong>（更强，但消耗额度更快）。
             </p>
             <button
               v-for="p in model?.profiles ?? []"
@@ -523,7 +524,7 @@ watch(() => props.projectId, load)
             >
               <span class="pool-radio" :class="{ 'pool-radio--on': !env?.current }" />
               <div class="pool-main">
-                <div class="pool-title">知是基座（默认）</div>
+                <div class="pool-title">默认镜像</div>
                 <div class="pool-sub c-muted">{{ env?.default }}</div>
               </div>
               <v-progress-circular
@@ -554,8 +555,8 @@ watch(() => props.projectId, load)
               <span v-else-if="env?.current === o.image" class="pool-current">使用中</span>
             </button>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              基座装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的 依赖，芝士可以直接在盒子里跑 cheesex
-              自己的测试（dogfooding）。
+              默认镜像装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的依赖，芝士可以直接在里面运行本仓库
+              自己的测试。
             </p>
           </div>
         </section>
@@ -596,13 +597,14 @@ watch(() => props.projectId, load)
               :class="syncResult.synced ? 'c-muted' : 'text-error'"
             >
               <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
-                已合入上游 {{ syncResult.commits }} 个提交。
+                已合入上游 {{ syncResult.commits }} 个提交
               </template>
-              <template v-else-if="syncResult.synced">已是最新，没有新提交。</template>
+              <template v-else-if="syncResult.synced">已是最新，没有新提交</template>
               <template v-else>同步失败：{{ syncResult.reason }}</template>
             </p>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              关联一个已有的 git 仓库，把它的历史拉进这个项目；之后随时同步新提交。 有冲突时会原样中止，不会合一半。
+              关联一个已有的 git
+              仓库，把它的历史拉进这个项目；之后可随时同步新提交。有冲突时会原样中止，不会只合并一部分。
             </p>
           </div>
         </section>
@@ -636,7 +638,7 @@ watch(() => props.projectId, load)
               </v-btn>
             </div>
             <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">尚未连接仓库</span>
+              <span class="t-body c-muted">暂无关联仓库</span>
               <v-spacer />
               <v-btn
                 size="small"
@@ -649,8 +651,8 @@ watch(() => props.projectId, load)
               </v-btn>
             </div>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后沙箱看 CI/CD 用的短时 token
-              会按这个连接铸造，不用再手工配凭据。
+              通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
+              会按这个连接自动签发，不用再手工配置。
             </p>
           </div>
         </section>
@@ -728,7 +730,7 @@ watch(() => props.projectId, load)
 
             <!-- 未连接 -->
             <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">把你自己的 GitHub 账号和这个平台身份关联起来</span>
+              <span class="t-body c-muted">暂无关联账号</span>
               <v-spacer />
               <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
                 连接 GitHub 账号
@@ -736,8 +738,8 @@ watch(() => props.projectId, load)
             </div>
 
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              用于把你 merge 的提交正确归到你名下（committer credit），也是两阶段采纳能代表你身份开 PR
-              的前提。跟登录用的 GitHub 账号授权是两回事，可以是同一个 GitHub 账号，也可以不是。
+              用于把你合并的提交正确归到你名下，也是采纳时能代表你的身份开 PR 的前提。这与登录用的 GitHub
+              授权是两回事，可以是同一个账号，也可以不是。
             </p>
           </div>
         </section>
@@ -752,9 +754,9 @@ watch(() => props.projectId, load)
         <v-card-text class="pb-0">
           <v-text-field
             v-model="newRoleName"
-            label="名称（英文标识）"
+            label="名称（英文）"
             placeholder="data-science"
-            hint="小写字母、数字和 .-_，作为角色的唯一 ID"
+            hint="小写字母、数字和 .-_"
             persistent-hint
             density="compact"
             variant="outlined"
@@ -770,7 +772,7 @@ watch(() => props.projectId, load)
           />
           <v-text-field
             v-model="newRoleDescription"
-            label="描述（一句话，显示在下拉里）"
+            label="描述"
             placeholder="统计分析、机器学习与数据可视化"
             density="compact"
             variant="outlined"
@@ -778,7 +780,7 @@ watch(() => props.projectId, load)
           />
           <v-textarea
             v-model="newRoleBody"
-            label="Persona 正文（注入芝士的 system prompt）"
+            label="角色设定"
             placeholder="你是一位数据科学导师，擅长……"
             rows="6"
             density="compact"
@@ -838,7 +840,7 @@ watch(() => props.projectId, load)
   text-align: left;
   padding: 12px 14px;
   border: 1px solid rgba(var(--v-border-color), 0.55);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--surface);
   cursor: pointer;
   transition:
@@ -883,7 +885,8 @@ watch(() => props.projectId, load)
   font-size: 0.68rem;
   font-weight: 500;
   padding: 1px 7px;
-  border-radius: 10px;
+  /* 小标签 → --radius-sm，和 .chip-neutral / .ln-tag 同档（原来是 10px，不在阶梯上）。 */
+  border-radius: var(--radius-sm);
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.1);
 }
