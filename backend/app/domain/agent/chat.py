@@ -971,6 +971,15 @@ class ChatService:
         self._compute.bind_hook_event_consumer(
             self._consume_hook_event, self._set_hook_activity
         )
+        self._compute.bind_prompt_receipt_consumer(self.confirm_prompt_receipt)
+        # Mid-turn messages whose write the transport accepted but whose
+        # UserPromptSubmit receipt has not arrived yet (#539 decision A):
+        # topic → [(injected text, block ids, consuming turn)]. The receipt
+        # stamps them consumed; until then they stay pending, so a session
+        # death replays them (宁可重复不可丢失).
+        self._pending_receipts: dict[
+            uuid.UUID, list[tuple[str, list[uuid.UUID], uuid.UUID]]
+        ] = {}
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -1243,27 +1252,63 @@ class ChatService:
             for image in images
         )
         line = "\n".join(lines)
+        # Register BEFORE the write so a fast receipt cannot race the entry
+        # (#539 decision A). The receipt is still the consumed boundary — it
+        # just no longer gates the delivery verdict: write-accept is delivery,
+        # and the stamp lands whenever the session actually consumes the text
+        # (confirm_prompt_receipt). Until then the message stays pending, so a
+        # session death replays it — 宁可重复不可丢失.
+        pending = self._pending_receipts.setdefault(topic_id, [])
+        entry = (line, list(user_block_ids), consuming_turn_id)
+        pending.append(entry)
+        del pending[:-16]  # a dead session must not grow this forever
         try:
             delivered = (
                 await self._compute.deliver(topic_id, line, images=images)
                 if images
                 else await self._compute.deliver(topic_id, line)
             )
-            if not delivered:
-                return False
-            # The receipt is the boundary: before it, the message stays pending;
-            # after it, persist the consumed marker immediately. Waiting for the
-            # whole turn to finish creates a race where Stop can win and the next
-            # turn replays a message Claude Code already accepted.
-            async with self._sessions() as session:
-                await BlockRepository(session).mark_consumed(
-                    user_block_ids, consuming_turn_id
-                )
-                await session.commit()
         except Exception:  # noqa: BLE001 — caller reports the queued fallback
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
+            delivered = False
+        if not delivered:
+            if entry in pending:
+                pending.remove(entry)
             return False
         return True
+
+    async def confirm_prompt_receipt(self, topic_id: uuid.UUID, prompt: str) -> None:
+        """A UserPromptSubmit receipt from the topic's screen: the session
+        consumed an input. If it is one we injected mid-turn, stamp its blocks
+        consumed now — this is the boundary that keeps the next turn's pending
+        window honest. A provider may append native-image mentions to the text
+        it types, so the receipt matches on equality or on carrying our text
+        as its prefix."""
+        pending = self._pending_receipts.get(topic_id)
+        if not pending:
+            return
+        for entry in pending:
+            text, block_ids, consuming_turn_id = entry
+            if prompt == text or (text and prompt.startswith(text)):
+                pending.remove(entry)
+                try:
+                    async with self._sessions() as session:
+                        await BlockRepository(session).mark_consumed(
+                            block_ids, consuming_turn_id
+                        )
+                        await session.commit()
+                    logger.info(
+                        "prompt receipt matched an injected message — %d "
+                        "block(s) stamped consumed (topic=%s, turn=%s)",
+                        len(block_ids),
+                        topic_id,
+                        consuming_turn_id,
+                    )
+                except Exception:  # noqa: BLE001 — a failed stamp just replays
+                    logger.exception(
+                        "consumed stamp failed on receipt (topic=%s)", topic_id
+                    )
+                return
 
     def has_running_turn(self, topic_id: uuid.UUID) -> bool:
         """Whether this process currently owns live work for the topic."""
