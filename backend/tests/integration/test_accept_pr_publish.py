@@ -439,6 +439,94 @@ def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
     assert _Client.checked_ref == "abc123"
 
 
+def test_pr_checks_answers_available_false_when_github_is_unreachable(
+    client, monkeypatch
+):
+    """/pr-checks is polled on a timer, so an exception escaping it is not one
+    500 — it is a 500 every few seconds, each posting a traceback into the room
+    (2026-08-17: `httpx.ConnectError` out of `pr_view`, TLS handshake). The
+    endpoint's contract is "never error"; the reason travels in the payload."""
+    import httpx
+
+    from app.api.routes import accept as accept_routes
+    from app.domain.workspace import service as ws
+
+    class _Tokens:
+        async def readonly_token(self) -> tuple[str, str]:
+            return "ghs_read", "2099-01-01T00:00:00+00:00"
+
+        async def write_token(self) -> tuple[str, str]:
+            return "ghs_write", "2099-01-01T00:00:00+00:00"
+
+    class _UnreachableClient:
+        def __init__(self, owner: str, repo: str, tokens, **_):
+            pass
+
+        async def pr_view(self, number: int) -> dict:
+            raise httpx.ConnectError("TLS handshake failed")
+
+        async def check_runs(self, ref: str) -> list[dict]:
+            raise AssertionError("never reached")
+
+    async def _tokens_for_project(_project_id, _session):
+        return _Tokens()
+
+    monkeypatch.setattr(
+        accept_routes, "github_app_tokens_for_project", _tokens_for_project
+    )
+    monkeypatch.setattr(accept_routes, "GitHubPRClient", _UnreachableClient)
+    monkeypatch.setattr(
+        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
+    )
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=7)
+
+    r = client.get(f"/api/topics/{tid}/pr-checks")
+
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["available"] is False
+    assert "ConnectError" in data["reason"]
+
+
+def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypatch):
+    """The old guard only wrapped the two GitHub calls; everything before them
+    (token mint, upstream read) could still 500. Same contract applies."""
+    from app.api.routes import accept as accept_routes
+    from app.domain.workspace import service as ws
+
+    class _Tokens:
+        async def readonly_token(self) -> tuple[str, str]:
+            return "ghs_read", "2099-01-01T00:00:00+00:00"
+
+        async def write_token(self) -> tuple[str, str]:
+            return "ghs_write", "2099-01-01T00:00:00+00:00"
+
+    async def _tokens_for_project(_project_id, _session):
+        return _Tokens()
+
+    def _boom(_pid):
+        raise OSError("workspace unavailable")
+
+    monkeypatch.setattr(
+        accept_routes, "github_app_tokens_for_project", _tokens_for_project
+    )
+    monkeypatch.setattr(ws, "get_upstream", _boom)
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=7)
+
+    r = client.get(f"/api/topics/{tid}/pr-checks")
+
+    assert r.status_code == 200
+    assert r.json()["data"]["available"] is False
+
+
 def test_prless_card_never_touches_github(client, pr_world):
     """App 机制关着（默认测试世界）：无 PR 卡照旧走本地合并，不碰 GitHub。"""
     pid = _make_project(client)
