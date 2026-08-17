@@ -16,22 +16,20 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -48,7 +46,7 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
 
 def test_create_card_404_for_missing_topic(client):
     r = client.post(
-        f"/api/topics/{uuid.uuid4()}/accept-card",
+        f"/topics/{uuid.uuid4()}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
@@ -64,13 +62,13 @@ def test_list_cards_newest_first(client):
     # One pending card per topic (not a broadcast): reject the first before a
     # second can be filed.
     client.post(
-        f"/api/accept-cards/{first}/reject",
+        f"/accept-cards/{first}/reject",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
     second = _make_card(client, tid, "bob")
 
-    r = client.get(f"/api/topics/{tid}/accept-card")
+    r = client.get(f"/topics/{tid}/accept-card")
     body = r.json()
     assert body["code"] == 200
     assert body["data"]["total"] == 2
@@ -87,7 +85,7 @@ def test_accept_happy_path_archives_topic(client):
     cid = _make_card(client, tid)
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -98,11 +96,11 @@ def test_accept_happy_path_archives_topic(client):
     assert card["decided_at"] is not None
 
     # 采纳即归档 (spec §6.3): topic now archived with accept markers.
-    r = client.get(f"/api/topics/{tid}")
+    r = client.get(f"/topics/{tid}")
     topic = r.json()["data"]
     assert topic["status"] == "archived"
 
-    cards = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "accepted"
 
 
@@ -119,17 +117,17 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
     monkeypatch.setattr(ws, "merge_topic", fail_merge)
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
 
     assert r.status_code == 422
     assert "could not be merged" in r.json()["message"]
-    cards = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"
     assert cards[0]["approvals"] == []
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_ai_cannot_accept_own_work_collaborative(client):
@@ -140,7 +138,7 @@ def test_ai_cannot_accept_own_work_collaborative(client):
     cid = _make_card(client, tid, "cheese")
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "cheese"},
         headers=session_auth_headers("cheese"),
     )
@@ -148,9 +146,9 @@ def test_ai_cannot_accept_own_work_collaborative(client):
     assert "AI 不能验收自己做的东西" in r.json()["message"]
 
     # Card untouched, topic still active.
-    cards = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_double_accept_422(client):
@@ -160,14 +158,14 @@ def test_double_accept_422(client):
 
     assert (
         client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).status_code
         == 200
     )
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -176,7 +174,7 @@ def test_double_accept_422(client):
 
 def test_accept_404_for_missing_card(client):
     r = client.post(
-        f"/api/accept-cards/{uuid.uuid4()}/accept",
+        f"/accept-cards/{uuid.uuid4()}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -189,7 +187,7 @@ def test_reject_keeps_topic_active(client):
     cid = _make_card(client, tid, "bob")
 
     r = client.post(
-        f"/api/accept-cards/{cid}/reject",
+        f"/accept-cards/{cid}/reject",
         json={"decided_by": "bob", "note": "数据不够"},
         headers=session_auth_headers("bob"),
     )
@@ -199,7 +197,7 @@ def test_reject_keeps_topic_active(client):
     assert card["decided_by"] == "bob"
     assert card["note"] == "数据不够"
 
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_reject_then_accept_422(client):
@@ -208,12 +206,12 @@ def test_reject_then_accept_422(client):
     cid = _make_card(client, tid)
 
     client.post(
-        f"/api/accept-cards/{cid}/reject",
+        f"/accept-cards/{cid}/reject",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -226,14 +224,14 @@ def test_revoke_accepted_card_unarchives_topic(client):
     cid = _make_card(client, tid)
 
     client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
 
     r = client.post(
-        f"/api/accept-cards/{cid}/revoke",
+        f"/accept-cards/{cid}/revoke",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -241,7 +239,7 @@ def test_revoke_accepted_card_unarchives_topic(client):
     assert r.json()["data"]["status"] == "revoked"
 
     # Topic back to active (spec §6.3: accept is revocable).
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_revoke_non_accepted_card_422(client):
@@ -251,7 +249,7 @@ def test_revoke_non_accepted_card_422(client):
 
     # Pending card cannot be revoked.
     r = client.post(
-        f"/api/accept-cards/{cid}/revoke",
+        f"/accept-cards/{cid}/revoke",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -264,7 +262,7 @@ def test_only_one_pending_card_per_topic(client):
     tid = _make_topic(client, pid)
     _make_card(client, tid, "alice")
     r = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
@@ -280,12 +278,12 @@ def test_no_new_card_on_archived_topic(client):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
     r = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
@@ -301,31 +299,31 @@ def test_revoke_requires_authority(client):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
 
     r = client.post(
-        f"/api/accept-cards/{cid}/revoke",
+        f"/accept-cards/{cid}/revoke",
         json={"decided_by": "stranger"},
         headers=session_auth_headers("stranger"),
     )
     assert r.status_code == 422
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
 
     r = client.post(
-        f"/api/accept-cards/{cid}/revoke",
+        f"/accept-cards/{cid}/revoke",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_revoke_404_for_missing_card(client):
     r = client.post(
-        f"/api/accept-cards/{uuid.uuid4()}/revoke",
+        f"/accept-cards/{uuid.uuid4()}/revoke",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )

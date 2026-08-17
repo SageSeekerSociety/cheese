@@ -17,9 +17,9 @@ def _owner(client, handle: str = "alice") -> dict[str, str]:
 
 
 def _project(client) -> str:
-    return client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()[
+        "data"
+    ]["id"]
 
 
 def _make_upstream(tmp_path: Path, name: str = "up") -> Path:
@@ -41,10 +41,10 @@ def _make_upstream(tmp_path: Path, name: str = "up") -> Path:
 
 def test_upstream_unset_by_default(client):
     pid = _project(client)
-    r = client.get(f"/api/projects/{pid}/upstream")
+    r = client.get(f"/projects/{pid}/upstream")
     assert r.status_code == 200 and r.json()["data"]["url"] is None
     # Syncing without a link is a no-op with a clear reason, not an error.
-    r = client.post(f"/api/projects/{pid}/upstream/sync")
+    r = client.post(f"/projects/{pid}/upstream/sync")
     assert r.status_code == 200
     d = r.json()["data"]
     assert d["synced"] is False and "未关联" in d["reason"]
@@ -54,17 +54,17 @@ def test_link_sync_and_resync(client, tmp_path):
     up = _make_upstream(tmp_path)
     pid = _project(client)
 
-    r = client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    r = client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
     assert r.status_code == 200 and r.json()["data"]["url"] == str(up)
-    assert client.get(f"/api/projects/{pid}/upstream").json()["data"]["url"] == str(up)
+    assert client.get(f"/projects/{pid}/upstream").json()["data"]["url"] == str(up)
 
     # First sync: unrelated histories merge in cleanly, upstream file appears.
-    r = client.post(f"/api/projects/{pid}/upstream/sync")
+    r = client.post(f"/projects/{pid}/upstream/sync")
     assert r.status_code == 200
     d = r.json()["data"]
     assert d["synced"] is True and d["commits"] >= 1
     r = client.get(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"path": "hello.txt"},
         headers=_owner(client),
     )
@@ -72,7 +72,7 @@ def test_link_sync_and_resync(client, tmp_path):
     assert "hi from upstream" in r.json()["data"]["content"]
 
     # Nothing new upstream → up to date, no merge commit spam.
-    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
     assert d["synced"] is True and d["commits"] == 0
 
     # New upstream commit → next sync picks it up.
@@ -81,10 +81,10 @@ def test_link_sync_and_resync(client, tmp_path):
     subprocess.run(
         ["git", "-C", str(up), "commit", "-q", "-m", "upstream: more"], check=True
     )
-    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
     assert d["synced"] is True and d["commits"] >= 1
     r = client.get(
-        f"/api/projects/{pid}/file", params={"path": "more.txt"}, headers=_owner(client)
+        f"/projects/{pid}/file", params={"path": "more.txt"}, headers=_owner(client)
     )
     assert r.status_code == 200
 
@@ -105,8 +105,8 @@ def test_sync_conflict_aborts_and_names_files(client, tmp_path):
         ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
     )
 
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
-    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
     assert d["synced"] is False
     assert "hello.txt" in d["reason"] and d["conflicts"] == ["hello.txt"]
     # Aborted cleanly: no half-merge left behind, local content intact.
@@ -117,17 +117,17 @@ def test_sync_conflict_aborts_and_names_files(client, tmp_path):
 def test_invalid_upstream_url_rejected(client):
     pid = _project(client)
     for bad in ["-x", "ext::sh -c id", "a b", "http://insecure", "file:///etc"]:
-        r = client.put(f"/api/projects/{pid}/upstream", json={"url": bad})
+        r = client.put(f"/projects/{pid}/upstream", json={"url": bad})
         assert r.status_code == 422, bad
 
 
 def test_unlink_upstream(client, tmp_path):
     up = _make_upstream(tmp_path)
     pid = _project(client)
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
-    r = client.put(f"/api/projects/{pid}/upstream", json={"url": ""})
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    r = client.put(f"/projects/{pid}/upstream", json={"url": ""})
     assert r.status_code == 200 and r.json()["data"]["url"] is None
-    assert client.get(f"/api/projects/{pid}/upstream").json()["data"]["url"] is None
+    assert client.get(f"/projects/{pid}/upstream").json()["data"]["url"] is None
 
 
 def test_accept_pushes_back_and_fires_hook(client, tmp_path):
@@ -146,9 +146,9 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
     hook.chmod(0o755)
 
     pid = _project(client)
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
     r = client.post(
-        "/api/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
+        "/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
     )
     tid = r.json()["data"]["id"]
 
@@ -159,7 +159,7 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
     ws.snapshot_worktree(puid, tuid)
 
     card = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
@@ -167,7 +167,7 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
         },
     ).json()["data"]["id"]
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "u"},
         headers=_owner(client, "u"),
     )
@@ -198,7 +198,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
 
     pid = _project(client)
     r = client.post(
-        "/api/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
+        "/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
     )
     tid = r.json()["data"]["id"]
     puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
@@ -216,7 +216,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     )
 
     card = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
@@ -224,7 +224,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
         },
     ).json()["data"]["id"]
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "u"},
         headers=_owner(client, "u"),
     )
@@ -233,7 +233,7 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     assert d["status"] == "conflict"
     assert "f.txt" in d["note"]
     # The topic is NOT archived — the work is not stranded silently.
-    t = client.get(f"/api/topics/{tid}").json()["data"]
+    t = client.get(f"/topics/{tid}").json()["data"]
     assert t["status"] == "active"
     # The workspace holds the materialized conflict for 芝士.
     content = (wt / "f.txt").read_text()
@@ -245,12 +245,12 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
 
     # Retry accept → clean merge, archived, base has the resolution.
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "u"},
         headers=_owner(client, "u"),
     )
     assert r.status_code == 200 and r.json()["data"]["status"] == "accepted"
-    t = client.get(f"/api/topics/{tid}").json()["data"]
+    t = client.get(f"/topics/{tid}").json()["data"]
     assert t["status"] == "archived"
     assert ws.read_file(puid, "f.txt") == "merged version\n"
 
@@ -279,13 +279,13 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
     )
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
-    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
     assert d["synced"] is False and d["conflicts"] == ["hello.txt"]
 
     # A topic to resolve it in, then materialize the conflict there.
     tid = client.post(
-        "/api/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
+        "/topics", json={"project_id": pid, "title": "T", "created_by": "u"}
     ).json()["data"]["id"]
     tuid = _uuid.UUID(tid)
     files = ws.prepare_upstream_conflict_resolution(puid, tuid)
@@ -302,7 +302,7 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
     ws.snapshot_worktree(puid, tuid, "解决同步上游冲突")
 
     card = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "u",
@@ -310,7 +310,7 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
         },
     ).json()["data"]["id"]
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "u"},
         headers=_owner(client, "u"),
     )
@@ -321,7 +321,7 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
     # …and the sync is genuinely DONE: upstream is now an ancestor of base, so
     # the next sync has nothing left to bring over. This is the assertion that
     # proves the merge carried the upstream history, not just the file edit.
-    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
     assert d["synced"] is True and d["commits"] == 0
 
 
@@ -343,10 +343,10 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
     )
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
 
     d = client.post(
-        f"/api/projects/{pid}/upstream/sync", headers=_owner(client, "alice")
+        f"/projects/{pid}/upstream/sync", headers=_owner(client, "alice")
     ).json()["data"]
 
     # The sync itself still tells the truth: aborted, and which files.
@@ -357,7 +357,7 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
 
     # The task is real, carries the conflict in its workspace, and hangs under
     # the caller's 1:1 room rather than polluting the project's topic list.
-    t = client.get(f"/api/topics/{tid}").json()["data"]
+    t = client.get(f"/topics/{tid}").json()["data"]
     assert t["title"] == "解决同步上游冲突"
     body = (ws.topic_worktree(puid, _uuid.UUID(tid)) / "hello.txt").read_text()
     assert "<<<<<<<" in body
@@ -397,10 +397,10 @@ def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
     )
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
 
     headers = _owner(client, "alice")
-    first = client.post(f"/api/projects/{pid}/upstream/sync", headers=headers).json()[
+    first = client.post(f"/projects/{pid}/upstream/sync", headers=headers).json()[
         "data"
     ]["dispatched"]
 
@@ -408,7 +408,7 @@ def test_second_sync_reuses_the_open_resolution_task(client, tmp_path):
     wt = ws.topic_worktree(_uuid.UUID(pid), _uuid.UUID(first["topic_id"]))
     (wt / "hello.txt").write_text("half-resolved by 芝士\n")
 
-    second = client.post(f"/api/projects/{pid}/upstream/sync", headers=headers).json()[
+    second = client.post(f"/projects/{pid}/upstream/sync", headers=headers).json()[
         "data"
     ]["dispatched"]
     assert second["topic_id"] == first["topic_id"] and second["reused"] is True
@@ -434,7 +434,7 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
 
     chat = ChatService(
         session_factory=client.test_factory,
@@ -471,7 +471,7 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "-m", "local hello"], check=True
     )
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
 
     chat = ChatService(
         session_factory=client.test_factory,
@@ -525,12 +525,12 @@ def test_repeated_syncs_add_no_commits_of_their_own(client, tmp_path):
 
     up = _make_upstream(tmp_path)
     pid = _project(client)
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
-    client.post(f"/api/projects/{pid}/upstream/sync")
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    client.post(f"/projects/{pid}/upstream/sync")
 
     for i in range(10):
         _commit_upstream(up, f"f{i}.txt", f"{i}\n")
-        d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+        d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
         assert d["synced"] is True, d
 
     repo = ws.ensure_repo(_uuid.UUID(pid))
@@ -557,8 +557,8 @@ def test_a_base_left_ahead_by_old_empty_merges_is_realigned(client, tmp_path):
     up = _make_upstream(tmp_path)
     pid = _project(client)
     repo = ws.ensure_repo(_uuid.UUID(pid))
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
-    client.post(f"/api/projects/{pid}/upstream/sync")
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    client.post(f"/projects/{pid}/upstream/sync")
 
     # Stand in for the old implementation's leftovers: commits on the base that
     # change not one byte.
@@ -570,7 +570,7 @@ def test_a_base_left_ahead_by_old_empty_merges_is_realigned(client, tmp_path):
     assert len(_base_log(repo)) > 1
 
     _commit_upstream(up, "next.txt", "next\n")
-    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
 
     assert d["synced"] is True
     assert not [s for s in _base_log(repo) if s.startswith("noop")]
@@ -598,8 +598,8 @@ def test_local_content_the_upstream_lacks_is_merged_not_discarded(client, tmp_pa
         ["git", "-C", str(repo), "commit", "-q", "-m", "local: mine"], check=True
     )
 
-    client.put(f"/api/projects/{pid}/upstream", json={"url": str(up)})
-    d = client.post(f"/api/projects/{pid}/upstream/sync").json()["data"]
+    client.put(f"/projects/{pid}/upstream", json={"url": str(up)})
+    d = client.post(f"/projects/{pid}/upstream/sync").json()["data"]
 
     assert d["synced"] is True, d
     assert (repo / "mine.txt").read_text() == "local work\n"

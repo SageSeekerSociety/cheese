@@ -101,7 +101,7 @@ def chat_ws_url(topic_id: str, handle: str) -> str:
     its roster owner, or a member/owner of its project — or the connect is
     refused with ``code: forbidden``.
     """
-    return f"/api/topics/{topic_id}/chat?token={session_token(handle)}"
+    return f"/topics/{topic_id}/chat?token={session_token(handle)}"
 
 
 @dataclass

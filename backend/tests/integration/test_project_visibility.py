@@ -80,14 +80,14 @@ def test_an_unidentifiable_caller_gets_none_not_all(client):
     Whatever else is open, this route's meaning without `team_id` is "the
     caller's OWN projects". With no caller, the honest answer is none.
     """
-    client.post("/api/projects", json={"name": "任何人的项目"})
-    body = client.get("/api/projects").json()["data"]
+    client.post("/projects", json={"name": "任何人的项目"})
+    body = client.get("/projects").json()["data"]
     assert body["total"] == 0
     assert body["data"] == []
 
 
 def test_a_team_id_filter_still_answers_for_that_team(client):
-    r = client.get("/api/projects?team_id=999999")
+    r = client.get("/projects?team_id=999999")
     assert r.status_code == 200
     assert r.json()["data"]["total"] == 0
 
@@ -107,7 +107,7 @@ def test_a_real_login_token_sees_the_project_it_owns(
     """
     handle = authenticated_user.username
     created = api_client.post(
-        "/api/projects", json={"name": "登录用户的项目"}, headers=auth_headers
+        "/projects", json={"name": "登录用户的项目"}, headers=auth_headers
     )
     assert created.status_code == 200
     assert created.json()["data"]["owner_handle"] == handle, (
@@ -115,6 +115,6 @@ def test_a_real_login_token_sees_the_project_it_owns(
         "downstream has a claim on it"
     )
 
-    body = api_client.get("/api/projects", headers=auth_headers).json()["data"]
+    body = api_client.get("/projects", headers=auth_headers).json()["data"]
     assert [p["name"] for p in body["data"]] == ["登录用户的项目"]
     assert body["total"] == 1

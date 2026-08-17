@@ -15,7 +15,7 @@ from app.domain.frontend_log import FrontendErrorBatchIn
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.repositories import TopicRepository
 
-router = APIRouter(prefix="/api/frontend-errors", tags=["frontend-errors"])
+router = APIRouter(prefix="/frontend-errors", tags=["frontend-errors"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

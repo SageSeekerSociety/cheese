@@ -9,16 +9,16 @@ from app.domain.workspace import service as ws
 
 
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def _current(client, pid: str):
-    return client.get(f"/api/projects/{pid}/sandbox-image").json()["data"]["current"]
+    return client.get(f"/projects/{pid}/sandbox-image").json()["data"]["current"]
 
 
 def test_get_defaults_to_pool_image(client):
     pid = _project(client)
-    d = client.get(f"/api/projects/{pid}/sandbox-image").json()["data"]
+    d = client.get(f"/projects/{pid}/sandbox-image").json()["data"]
     assert d["current"] is None  # unset = using the pool default
     assert d["default"] == settings.sandbox_image
     assert any(o["image"] == "cheesex-dev:v0" for o in d["options"])
@@ -26,13 +26,11 @@ def test_get_defaults_to_pool_image(client):
 
 def test_set_and_clear_sandbox_image(client):
     pid = _project(client)
-    r = client.put(
-        f"/api/projects/{pid}/sandbox-image", json={"image": "cheesex-dev:v0"}
-    )
+    r = client.put(f"/projects/{pid}/sandbox-image", json={"image": "cheesex-dev:v0"})
     assert r.status_code == 200 and r.json()["data"]["current"] == "cheesex-dev:v0"
     assert _current(client, pid) == "cheesex-dev:v0"
     # Empty → revert to the pool default.
-    r = client.put(f"/api/projects/{pid}/sandbox-image", json={"image": ""})
+    r = client.put(f"/projects/{pid}/sandbox-image", json={"image": ""})
     assert r.json()["data"]["current"] is None
     assert _current(client, pid) is None
 
@@ -40,7 +38,7 @@ def test_set_and_clear_sandbox_image(client):
 def test_invalid_image_rejected(client):
     pid = _project(client)
     for bad in ["bad image", "a;rm -rf", "-x/y"]:
-        r = client.put(f"/api/projects/{pid}/sandbox-image", json={"image": bad})
+        r = client.put(f"/projects/{pid}/sandbox-image", json={"image": bad})
         assert r.status_code == 422, bad
 
 

@@ -23,7 +23,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
 
-router = APIRouter(prefix="/api/projects", tags=["machines"])
+router = APIRouter(prefix="/projects", tags=["machines"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

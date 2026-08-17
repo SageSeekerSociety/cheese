@@ -12,7 +12,7 @@ from app.core.db import get_db
 from app.domain.dashboard.services import DashboardService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 
-router = APIRouter(prefix="/api", tags=["dashboard"])
+router = APIRouter(prefix="", tags=["dashboard"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

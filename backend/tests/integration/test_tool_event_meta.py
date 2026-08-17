@@ -57,14 +57,14 @@ def _chat(client, topic_id: str) -> None:
 
 
 def test_event_blocks_persist_structured_meta(client):
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]
     _chat(client, t["id"])
 
-    tr = client.get(f"/api/topics/{t['id']}/transcript").json()["data"]["data"]
+    tr = client.get(f"/topics/{t['id']}/transcript").json()["data"]["data"]
     by_tool = {b["meta"]["tool"]: b for b in tr if (b.get("meta") or {}).get("tool")}
 
     # Plain work → neutral dot; verb/arg live in meta for display-time labels.

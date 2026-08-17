@@ -132,6 +132,22 @@ async def lifespan(_: FastAPI):
             ),
         )
 
+    # #370 step 2 flattened the platform routes, so the in-container `cheese`
+    # CLI's base is now the app root. A box still carrying the old `…/api` value
+    # keeps working — `settings.agent_api_base()` strips it — but say so, because
+    # the failure it would otherwise cause is invisible: every platform action
+    # 404s and the turn just looks like an agent that chose not to use its tools.
+    if settings.sandbox_api_base.rstrip("/").endswith("/api"):
+        get_logger("cheesex.runtime").warning(
+            "sandbox_api_base_has_stale_api_suffix",
+            value=settings.sandbox_api_base,
+            detail=(
+                "SANDBOX_API_BASE still ends in /api. The platform routes no "
+                "longer carry that prefix, so the value is being normalised to "
+                "the app root. Drop the /api from the box .env."
+            ),
+        )
+
     try:
         recovered = await get_chat_service().recover_hook_subscriptions()
         if recovered:
@@ -390,32 +406,40 @@ register_all_permissions()
 # ActorResolverDep + authorize_topic instead — closing those needs browser
 # user-auth first.
 # Each pattern captures the scoping id as group "topic" or "project".
+# These patterns are the gate itself, and they are written as TEXT — so they do
+# not follow a route that moves. #370 step 2 flattened the 2.0 prefix and every
+# one of them stopped matching, which does not fail: it silently opens the
+# cheese write-surface to anyone who can reach the port. The suite caught it
+# (test_project_agent_credential, test_ask_options, test_await_wake,
+# test_memory_search all went from "refused" to "allowed"), which is the only
+# reason to say it out loud here: a gate defined by strings has to be moved by
+# hand whenever the strings it names do.
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/webhook-token$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/ask$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/webhook-token$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/ask$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/decision$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/background-task$")),
     (
         "POST",
-        re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
+        re.compile(r"^/topics/(?P<topic>[^/]+)/background-task/[^/]+/done$"),
     ),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/return-conclusion$")),
-    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/accept-card$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/return-conclusion$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
     # 结论卡: settled by the PARENT during its own turn, so the scoping id in
     # the URL is the receiver, not the sub-topic that produced the card.
     (
         "POST",
         re.compile(
-            r"^/api/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
+            r"^/topics/(?P<topic>[^/]+)/conclusion-cards/[^/]+/"
             r"(accept|need-evidence|escalate)$"
         ),
     ),
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory/search$")),
+    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory$")),
+    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/memory/search$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.
-    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/milestones$")),
+    ("POST", re.compile(r"^/projects/(?P<project>[^/]+)/milestones$")),
 ]
 
 
@@ -615,7 +639,7 @@ async def health() -> dict:
     }
 
 
-@app.get("/api/version")
+@app.get("/version")
 async def app_version() -> dict:
     """The running build, for the UI's 内测 version badge. Public, unauthenticated
     — it exposes only a commit sha, and only when the box opts in. `badge` is the

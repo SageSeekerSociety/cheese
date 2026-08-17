@@ -14,9 +14,7 @@ from app.domain.workspace import service as ws
 
 
 def _mkproject(client) -> uuid.UUID:
-    resp = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()
+    resp = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()
     return uuid.UUID(resp["data"]["id"])
 
 
@@ -38,14 +36,14 @@ def _turn(pid: uuid.UUID, tid: uuid.UUID, path: str, content: str, msg: str) -> 
 def _log(client, pid, topic=None) -> list[dict]:
     params = {"topic": str(topic)} if topic else {}
     return client.get(
-        f"/api/projects/{pid}/git/log", params=params, headers=_owner(client)
+        f"/projects/{pid}/git/log", params=params, headers=_owner(client)
     ).json()["data"]["data"]
 
 
 def _diff(client, pid, topic=None) -> str:
     params = {"topic": str(topic)} if topic else {}
     return client.get(
-        f"/api/projects/{pid}/git/diff", params=params, headers=_owner(client)
+        f"/projects/{pid}/git/diff", params=params, headers=_owner(client)
     ).json()["data"]["diff"]
 
 
