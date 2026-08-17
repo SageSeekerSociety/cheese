@@ -30,6 +30,22 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.services import TopicService
 from app.domain.user.repositories import UserRepository
 
+# The gateway mounts this whole app under `/api` and strips that one segment
+# (`proxy_pass http://backend:8081/`), so a backend route is bare while the URL
+# the browser used is `/api` + that route. Everything the BROWSER consumes has to
+# be built with this: a cookie's Path, a rewritten asset URL, a `url` we hand the
+# frontend to iframe. Deriving those from `request.url.path` reads the stripped
+# path and silently scopes the cookie to a path the browser never visits — which
+# is what #370 step 2 turned from correct into wrong, since the two iframe
+# prefixes used to carry a no-strip exception in nginx and now do not.
+GATEWAY_MOUNT = "/api"
+
+
+def browser_path(route_path: str) -> str:
+    """The URL the browser used to reach this backend route."""
+    return f"{GATEWAY_MOUNT}{route_path}"
+
+
 # Hop-by-hop headers a proxy must not forward (RFC 7230 §6.1) plus length/type,
 # which the Response recomputes from the body it actually sends.
 DROP_HEADERS = {

@@ -42,7 +42,7 @@ from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.accept")
 
-router = APIRouter(prefix="/api", tags=["accept"])
+router = APIRouter(prefix="", tags=["accept"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

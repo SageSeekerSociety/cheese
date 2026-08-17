@@ -55,7 +55,7 @@ def _link_state(user_id: int, return_project_id: uuid.UUID | None = None) -> str
 
 
 def test_authorize_url_requires_login(client):
-    r = client.get("/api/users/me/github-account/authorize-url")
+    r = client.get("/users/me/github-account/authorize-url")
     assert r.status_code == 401
 
 
@@ -64,13 +64,13 @@ def test_authorize_url_404s_when_provider_not_configured(client):
     # the generic OAuthService reports it as an unregistered provider — same
     # behavior as any other disabled OAuth provider, not a #192-specific 500.
     token = seed_user(client, "alice")
-    r = client.get("/api/users/me/github-account/authorize-url", headers=_bearer(token))
+    r = client.get("/users/me/github-account/authorize-url", headers=_bearer(token))
     assert r.status_code == 404
 
 
 def test_callback_garbage_state_redirects_to_root(client):
     r = client.get(
-        "/api/users/me/github-account/callback",
+        "/users/me/github-account/callback",
         params={"code": "x", "state": "not-a-jwt"},
         follow_redirects=False,
     )
@@ -85,7 +85,7 @@ def test_callback_returns_to_the_originating_project(client):
     # No oauth provider configured → the exchange itself fails, but the
     # redirect must still land on the project that asked, not the root.
     r = client.get(
-        "/api/users/me/github-account/callback",
+        "/users/me/github-account/callback",
         params={"code": "x", "state": state},
         follow_redirects=False,
     )
@@ -145,7 +145,7 @@ class TestAccountLinkTokenPersistence:
         state = _link_state(user_id)
 
         r = client.get(
-            "/api/users/me/github-account/callback",
+            "/users/me/github-account/callback",
             params={"code": "x", "state": state},
             follow_redirects=False,
         )
@@ -187,7 +187,7 @@ class TestAccountLinkTokenPersistence:
         token = seed_user(client, "judy_ghcn")
         user_id = int(decode_token(token)["sub"])
         r = client.get(
-            "/api/users/me/github-account/callback",
+            "/users/me/github-account/callback",
             params={
                 "code": "x",
                 "state": _link_state(user_id),
@@ -214,7 +214,7 @@ class TestAccountLinkTokenPersistence:
 
         monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_1)
         r1 = client.get(
-            "/api/users/me/github-account/callback",
+            "/users/me/github-account/callback",
             params={
                 "code": "x",
                 "state": _link_state(user_id),
@@ -230,7 +230,7 @@ class TestAccountLinkTokenPersistence:
 
         monkeypatch.setattr(GitHubProvider, "exchange_code", fake_exchange_2)
         r2 = client.get(
-            "/api/users/me/github-account/callback",
+            "/users/me/github-account/callback",
             params={
                 "code": "y",
                 "state": _link_state(user_id),
@@ -256,7 +256,7 @@ class TestAccountLinkTokenPersistence:
         token = seed_user(client, "dave_ghlink")
         user_id = int(decode_token(token)["sub"])
         r = client.get(
-            "/api/users/me/github-account/callback",
+            "/users/me/github-account/callback",
             params={
                 "code": "bad",
                 "state": _link_state(user_id),
@@ -300,7 +300,7 @@ class TestAccountLinkTokenPersistence:
         route_logger = "app.api.routes.github_account_link"
         with caplog.at_level(logging.INFO, logger=route_logger):
             r1 = client.get(
-                "/api/users/me/github-account/callback",
+                "/users/me/github-account/callback",
                 params={
                     "code": "x",
                     "state": _link_state(owner_id),
@@ -310,7 +310,7 @@ class TestAccountLinkTokenPersistence:
             assert "github_account=success" in r1.headers["location"]
 
             r2 = client.get(
-                "/api/users/me/github-account/callback",
+                "/users/me/github-account/callback",
                 params={
                     "code": "y",
                     "state": _link_state(victim_id),
@@ -558,7 +558,7 @@ class TestTheConnectionShowsAName:
         token = seed_user(client, handle)
         user_id = int(decode_token(token)["sub"])
         r = client.get(
-            "/api/users/me/github-account/callback",
+            "/users/me/github-account/callback",
             params={"code": "x", "state": _link_state(user_id)},
             follow_redirects=False,
         )
@@ -636,7 +636,7 @@ class TestTheConnectionShowsAName:
 
         monkeypatch.setattr(GitHubProvider, "get_user_info", fake_get_user_info)
         r = client.get(
-            "/api/users/me/github-account/callback",
+            "/users/me/github-account/callback",
             params={"code": "x", "state": _link_state(user_id)},
             follow_redirects=False,
         )

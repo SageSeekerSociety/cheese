@@ -198,7 +198,7 @@ class LocalDockerProvider:
             # workspace_root/UUID paths never contain whitespace.
             "SBX_VCS_MOUNTS": " ".join(ws.sandbox_vcs_mounts(project_id, topic_id)),
             "SBX_SESSION": str(ws.session_dir(project_id, topic_id)),
-            "CHEESE_API": settings.sandbox_api_base,
+            "CHEESE_API": settings.agent_api_base(),
             "CHEESE_PROJECT": str(project_id),
             "CHEESE_TOPIC": str(topic_id),
             # Which 分身 this sandbox is (分身独立身份) — the same identity its

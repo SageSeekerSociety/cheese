@@ -38,7 +38,7 @@ def crashing_route(client):
     actual stack rather than by calling it directly."""
     router = APIRouter()
 
-    @router.get("/api/topics/{topic_id}/__boom_for_test")
+    @router.get("/topics/{topic_id}/__boom_for_test")
     async def _boom(topic_id: str) -> dict:
         raise RuntimeError("kaboom in a route")
 
@@ -49,21 +49,19 @@ def crashing_route(client):
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _backend_events(client, topic_id: str) -> list[dict]:
-    r = client.get(f"/api/topics/{topic_id}/blocks")
+    r = client.get(f"/topics/{topic_id}/blocks")
     assert r.status_code == 200
     return [
         b
@@ -75,7 +73,7 @@ def _backend_events(client, topic_id: str) -> list[dict]:
 def _post(client, errors, *, token=None, **body):
     headers = {"X-Cheese-Token": token} if token else None
     return client.post(
-        "/api/backend-errors", json={**body, "errors": errors}, headers=headers
+        "/backend-errors", json={**body, "errors": errors}, headers=headers
     )
 
 
@@ -218,13 +216,15 @@ def test_unhandled_route_exception_becomes_a_block_in_that_topic(
     tid = _make_topic(client, pid)
 
     with pytest.raises(RuntimeError):
-        client.get(f"/api/topics/{tid}/__boom_for_test")
+        client.get(f"/topics/{tid}/__boom_for_test")
 
     events = _backend_events(client, tid)
     assert len(events) == 1
     assert "RuntimeError" in events[0]["content"]
     assert "kaboom in a route" in events[0]["content"]
-    assert events[0]["meta"]["where"] == f"GET /api/topics/{tid}/__boom_for_test"
+    assert (
+        events[0]["meta"]["where"] == f"GET /topics/{tid}/__boom_for_test"
+    )  # 服务端记录的是它实际收到的路径
     # The stack is kept from the TAIL: outer middleware frames are boilerplate,
     # the throw site is what identifies the bug.
     stack = events[0]["meta"]["stack"]
@@ -241,7 +241,7 @@ def test_repeated_crashes_of_one_route_still_produce_one_block(
 
     for _ in range(25):
         with pytest.raises(RuntimeError):
-            client.get(f"/api/topics/{tid}/__boom_for_test")
+            client.get(f"/topics/{tid}/__boom_for_test")
 
     assert len(_backend_events(client, tid)) == 1
 
@@ -297,6 +297,6 @@ def test_expected_4xx_is_not_an_incident(in_process_db):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
 
-    r = client.get(f"/api/topics/{uuid.uuid4()}/blocks")
+    r = client.get(f"/topics/{uuid.uuid4()}/blocks")
     assert r.status_code == 404
     assert _backend_events(client, tid) == []

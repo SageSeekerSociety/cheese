@@ -62,12 +62,12 @@ async def test_intact_response_is_silent(caplog) -> None:
 @pytest.mark.anyio
 async def test_short_body_is_reported_with_the_gap(caplog) -> None:
     # 声明 1000 字节，只发出 400——这就是浏览器那侧看到的截断。
-    sent = await _drive(_responder(1000, b"y" * 400), path="/api/topics/t1/blocks")
+    sent = await _drive(_responder(1000, b"y" * 400), path="/topics/t1/blocks")
 
     assert len(sent) == 2  # 消息照常透传，中间件只观察不拦截
     record = _only_warning(caplog)
     assert record["event"] == "response truncated"
-    assert record["path"] == "/api/topics/t1/blocks"
+    assert record["path"] == "/topics/t1/blocks"
     assert (record["declared"], record["sent"], record["missing"]) == (1000, 400, 600)
 
 

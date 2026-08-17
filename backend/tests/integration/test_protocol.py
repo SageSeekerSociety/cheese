@@ -20,30 +20,30 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
         client, conditions=[{"required_topic": "结题", "reviewer_role": "mentor"}]
     )
     p = client.post(
-        "/api/projects",
+        "/projects",
         json={"name": "团队", "owner_handle": OWNER, "external_task_id": task_id},
     ).json()["data"]
     pid = p["id"]
     # Roster writes are authorized against a token — go out as the project owner.
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "mentor-1", "role": "mentor"},
         headers=session_auth_headers(OWNER),
     )
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "user-1"},
         headers=session_auth_headers(OWNER),
     )
     topic = client.post(
-        "/api/topics", json={"project_id": pid, "title": "结题答辩"}
+        "/topics", json={"project_id": pid, "title": "结题答辩"}
     ).json()["data"]
     return pid, topic["id"]
 
 
 def _card(client, topic_id: str, reviewer: str) -> str:
     return client.post(
-        f"/api/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -58,7 +58,7 @@ def test_non_mentor_cannot_accept_protocol_topic(client):
     _, tid = _setup_with_mentor_condition(client)
     card = _card(client, tid, "user-1")
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "user-1"},
         headers=session_auth_headers("user-1"),
     )
@@ -69,10 +69,10 @@ def test_mentor_can_accept(client):
     _, tid = _setup_with_mentor_condition(client)
     card = _card(client, tid, "mentor-1")
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "mentor-1"},
         headers=session_auth_headers("mentor-1"),
     )
     assert r.status_code == 200
-    topic = client.get(f"/api/topics/{tid}").json()["data"]
+    topic = client.get(f"/topics/{tid}").json()["data"]
     assert topic["status"] == "archived"

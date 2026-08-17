@@ -26,14 +26,14 @@ from app.domain.topic.repositories import TopicRepository
 
 
 def _project(client, owner: str = "andyl") -> str:
-    return client.post(
-        "/api/projects", json={"name": "P", "owner_handle": owner}
-    ).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]["id"]
 
 
 def _topic(client, pid: str) -> str:
     return client.post(
-        "/api/topics", json={"project_id": pid, "title": "T", "created_by": "andyl"}
+        "/topics", json={"project_id": pid, "title": "T", "created_by": "andyl"}
     ).json()["data"]["id"]
 
 
@@ -102,7 +102,7 @@ def _resolve_topic_device(
 def test_new_topic_inherits_default_and_is_unlocked(client):
     pid = _project(client)
     tid = _topic(client, pid)
-    body = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
+    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     # Nothing selected anywhere, so the fallback applies: Cloud, not the retired
     # local pool (#358). Last selection would win if there were one.
     assert body["current"] == "cloud"
@@ -135,7 +135,7 @@ def test_fresh_project_inherits_its_team_default(client):
             await session.commit()
 
     asyncio.run(_seed_team_default())
-    body = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
+    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert body["current"] == "remote-cheesed"
     assert body["sticky"] == "remote-cheesed"
     assert body["inherited"] is True
@@ -155,24 +155,24 @@ def test_select_persists_to_topic_and_project_sticky(client, monkeypatch):
     monkeypatch.setattr("app.api.routes.projects.project_device_online", _online)
 
     # An undeployed pool can't be selected.
-    bad = client.put(f"/api/topics/{tid}/compute-profile", json={"profile": "gpu"})
+    bad = client.put(f"/topics/{tid}/compute-profile", json={"profile": "gpu"})
     assert bad.status_code == 422
     # A retired one cannot either — no silent fallback to it.
     retired = client.put(
-        f"/api/topics/{tid}/compute-profile", json={"profile": "local-docker"}
+        f"/topics/{tid}/compute-profile", json={"profile": "local-docker"}
     )
     assert retired.status_code == 422
 
-    r = client.put(f"/api/topics/{tid}/compute-profile", json={"profile": "device"})
+    r = client.put(f"/topics/{tid}/compute-profile", json={"profile": "device"})
     assert r.status_code == 200
     assert r.json()["data"]["current"] == "device"
     assert r.json()["data"]["inherited"] is False
 
     # Persisted on the topic (no longer inheriting)...
-    tbody = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
+    tbody = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert tbody["inherited"] is False
     # ...and remembered as the project's sticky default for the next new topic.
-    pbody = client.get(f"/api/projects/{pid}/compute-profiles").json()["data"]
+    pbody = client.get(f"/projects/{pid}/compute-profiles").json()["data"]
     assert pbody["current"] == "device"
 
 
@@ -183,7 +183,7 @@ def test_named_device_resolves_instead_of_first_healthy_device(client, monkeypat
     monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
 
     response = client.put(
-        f"/api/topics/{tid}/compute-profile",
+        f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": named},
     )
 
@@ -207,7 +207,7 @@ def test_named_device_waits_when_offline_instead_of_using_online_peer(
     )
 
     response = client.put(
-        f"/api/topics/{tid}/compute-profile",
+        f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": named_offline_device},
     )
 
@@ -234,7 +234,7 @@ def test_device_outside_topics_project_is_rejected(client):
     (other_device,) = _project_devices(client, other_pid, "somebody else's box")
 
     response = client.put(
-        f"/api/topics/{tid}/compute-profile",
+        f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": other_device},
     )
 
@@ -251,7 +251,7 @@ def test_get_lists_only_project_devices_with_live_online_state(client, monkeypat
     (outside,) = _project_devices(client, other_pid, "别人的机器")
     monkeypatch.setattr(device_hub, "is_online", lambda device_id: device_id == office)
 
-    body = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
+    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
 
     assert body["device_id"] is None
     assert body["devices"] == [
@@ -267,12 +267,12 @@ def test_unlocked_topic_can_change_machine_but_locked_topic_cannot(client):
     first, second = _project_devices(client, pid, "first", "second")
 
     first_response = client.put(
-        f"/api/topics/{tid}/compute-profile",
+        f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": first},
     )
     assert first_response.status_code == 200
     second_response = client.put(
-        f"/api/topics/{tid}/compute-profile",
+        f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": second},
     )
     assert second_response.status_code == 200
@@ -280,7 +280,7 @@ def test_unlocked_topic_can_change_machine_but_locked_topic_cannot(client):
 
     _mark_started(client, tid)
     locked_response = client.put(
-        f"/api/topics/{tid}/compute-profile",
+        f"/topics/{tid}/compute-profile",
         json={"profile": "device", "device_id": first},
     )
     assert locked_response.status_code == 422
@@ -297,9 +297,7 @@ def test_selecting_cloud_without_machine_create_authority_is_refused(
     provision = AsyncMock()
     monkeypatch.setattr(MachineService, "provision", provision)
 
-    response = client.put(
-        f"/api/topics/{tid}/compute-profile", json={"profile": "cloud"}
-    )
+    response = client.put(f"/topics/{tid}/compute-profile", json={"profile": "cloud"})
 
     assert response.status_code == 401
     provision.assert_not_awaited()
@@ -313,7 +311,7 @@ def test_visibility_block_is_present_non_default_and_carries_the_notice(client):
     is not a Hosted Machine turn, so `machine_access` is False."""
     pid = _project(client)
     tid = _topic(client, pid)
-    vis = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]["visibility"]
+    vis = client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
 
     opts = {o["id"]: o for o in vis["options"]}
     assert opts["isolated"]["default"] is True
@@ -356,12 +354,12 @@ def test_two_topics_on_one_machine_report_their_own_visibility(client):
             await session.commit()
 
     asyncio.run(_pin_both_topics())
-    host_visibility = client.get(f"/api/topics/{host_tid}/compute-profile").json()[
+    host_visibility = client.get(f"/topics/{host_tid}/compute-profile").json()["data"][
+        "visibility"
+    ]
+    isolated_visibility = client.get(f"/topics/{isolated_tid}/compute-profile").json()[
         "data"
     ]["visibility"]
-    isolated_visibility = client.get(
-        f"/api/topics/{isolated_tid}/compute-profile"
-    ).json()["data"]["visibility"]
     assert host_visibility["effective"] == "host"
     assert host_visibility["machine_access"] is True
     assert isolated_visibility["effective"] == "isolated"
@@ -373,11 +371,9 @@ def test_locked_once_topic_has_run(client):
     tid = _topic(client, pid)
     _mark_started(client, tid)
 
-    body = client.get(f"/api/topics/{tid}/compute-profile").json()["data"]
+    body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
     assert body["locked"] is True
 
     # Switching after the first turn is rejected — the pin is frozen.
-    r = client.put(
-        f"/api/topics/{tid}/compute-profile", json={"profile": "local-docker"}
-    )
+    r = client.put(f"/topics/{tid}/compute-profile", json={"profile": "local-docker"})
     assert r.status_code == 422

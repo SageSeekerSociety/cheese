@@ -4,9 +4,9 @@ from tests.integration.conftest import chat_ws_url
 
 
 def _topic(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "T", "created_by": "u"}
+        "/topics", json={"project_id": p["id"], "title": "T", "created_by": "u"}
     ).json()["data"]
     return t["id"]
 

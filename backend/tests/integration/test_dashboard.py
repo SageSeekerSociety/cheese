@@ -29,25 +29,25 @@ def _seed_block(client, project_id, topic_id, author, author_type, kind):
 
 def test_contributions_exclude_system_blocks(client):
     # spec §10.1: by_author counts real contributors, not system lifecycle blocks.
-    p = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]
+    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]
     pid, root = p["id"], p["root_topic_id"]
     _seed_block(client, pid, root, "user-1", AuthorType.human, BlockKind.message)
     _seed_block(client, pid, root, "user-1", AuthorType.system, BlockKind.event)
 
-    c = client.get(f"/api/projects/{pid}/contributions").json()["data"]
+    c = client.get(f"/projects/{pid}/contributions").json()["data"]
     assert c["by_author"].get("user-1") == 1  # the system block is not counted
     assert c["by_author_type"]["system"] >= 1
 
 
 def test_member_summary_has_active_and_weekly(client, bearer):
-    p = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]
+    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]
     pid, root = p["id"], p["root_topic_id"]
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "user-1"},
         headers=bearer("user-1"),  # the project owner
     )
@@ -55,7 +55,7 @@ def test_member_summary_has_active_and_weekly(client, bearer):
 
     # The member page resolves the viewer like /overview does — read as user-1.
     s = client.get(
-        f"/api/projects/{pid}/members/user-1/summary",
+        f"/projects/{pid}/members/user-1/summary",
         headers=session_auth_headers("user-1"),
     ).json()["data"]
     assert "topics_active" in s and "weekly_contributions" in s
@@ -65,22 +65,22 @@ def test_member_summary_has_active_and_weekly(client, bearer):
 
 
 def test_project_overview(client, bearer):
-    p = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]
+    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]
     pid = p["id"]
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "user-1"},
         headers=bearer("user-1"),  # the project owner
     )
     client.post(
-        f"/api/projects/{pid}/milestones",
+        f"/projects/{pid}/milestones",
         json={"title": "中期", "due_date": "2030-01-01T00:00:00Z"},
     )
     # A decision request addressed to user-1 → should appear in 等你处理的事.
     client.post(
-        f"/api/projects/{pid}/alerts",
+        f"/projects/{pid}/alerts",
         json={
             "level": "light",
             "kind": "decision_request",
@@ -90,7 +90,7 @@ def test_project_overview(client, bearer):
     )
 
     ov = client.get(
-        f"/api/projects/{pid}/overview", headers=session_auth_headers("user-1")
+        f"/projects/{pid}/overview", headers=session_auth_headers("user-1")
     ).json()["data"]
     assert ov["name"] == "P"
     assert ov["topic_count"] >= 1  # root topic auto-created
@@ -104,23 +104,23 @@ def test_space_board_lists_linked_teams(client):
     space_id = seed_space(client, "明理书院")
     task_id = seed_task_with_protocol(client, space_id=space_id)
     client.post(
-        "/api/projects", json={"name": "队伍A", "external_task_id": task_id}
+        "/projects", json={"name": "队伍A", "external_task_id": task_id}
     ).json()["data"]
 
-    board = client.get(f"/api/spaces/{space_id}/dashboard").json()["data"]
+    board = client.get(f"/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 1
     assert board["teams"][0]["name"] == "队伍A"
 
 
 def test_space_board_empty_for_space_without_links(client):
     space_id = seed_space(client, "空书院")
-    board = client.get(f"/api/spaces/{space_id}/dashboard").json()["data"]
+    board = client.get(f"/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 0
 
 
 def test_overview_404_for_missing_project(client):
     r = client.get(
-        "/api/projects/00000000-0000-0000-0000-000000000000/overview",
+        "/projects/00000000-0000-0000-0000-000000000000/overview",
         headers=session_auth_headers("user-1"),
     )
     assert r.status_code == 404

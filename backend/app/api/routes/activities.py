@@ -27,4 +27,4 @@ from fastapi import APIRouter
 # Deliberately empty: discovered by app.main._discover_routers, mounts nothing.
 # Keeping the module (rather than deleting the file) is what makes the reason
 # above discoverable at the place someone would go to add the route back.
-router = APIRouter(prefix="/api/projects", tags=["activities"])
+router = APIRouter(prefix="/projects", tags=["activities"])

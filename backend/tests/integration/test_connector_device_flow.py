@@ -22,7 +22,7 @@ def _bearer(token: str) -> dict:
 def test_full_device_flow_start_approve_poll(client):
     # A project the device will be bound to.
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     token = _login(client, "alice")
 

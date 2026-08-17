@@ -11,17 +11,17 @@ from app.core.sandbox_auth import mint_scoped_token
 
 def _project(client, owner: str = "alice") -> str:
     body = {"name": "P", "owner_handle": owner}
-    return client.post("/api/projects", json=body).json()["data"]["id"]
+    return client.post("/projects", json=body).json()["data"]["id"]
 
 
 def _add(client, pid: str, handle: str, role: str = "member", **kw):
     return client.post(
-        f"/api/projects/{pid}/members", json={"user_handle": handle, "role": role}, **kw
+        f"/projects/{pid}/members", json={"user_handle": handle, "role": role}, **kw
     )
 
 
 def _handles(client, pid: str) -> list[str]:
-    body = client.get(f"/api/projects/{pid}/members").json()
+    body = client.get(f"/projects/{pid}/members").json()
     return [m["user_handle"] for m in body["data"]["data"]]
 
 
@@ -51,13 +51,13 @@ def test_plain_member_cannot_add_or_promote(client, bearer):
 
     assert _add(client, pid, "carol", headers=bearer("bob")).status_code == 403
     r = client.put(
-        f"/api/projects/{pid}/members/bob",
+        f"/projects/{pid}/members/bob",
         json={"role": "lead"},
         headers=bearer("bob"),
     )
     assert r.status_code == 403
     # 自我提权 must not have happened.
-    members = client.get(f"/api/projects/{pid}/members").json()["data"]["data"]
+    members = client.get(f"/projects/{pid}/members").json()["data"]["data"]
     assert members[0]["role"] == "member"
 
 
@@ -70,13 +70,13 @@ def test_lead_can_manage_the_roster(client, bearer):
 
     assert _add(client, pid, "carol", headers=bearer("bob")).status_code == 200
     r = client.put(
-        f"/api/projects/{pid}/members/carol",
+        f"/projects/{pid}/members/carol",
         json={"role": "mentor"},
         headers=bearer("bob"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["role"] == "mentor"
-    r = client.delete(f"/api/projects/{pid}/members/carol", headers=bearer("bob"))
+    r = client.delete(f"/projects/{pid}/members/carol", headers=bearer("bob"))
     assert r.status_code == 200
     assert _handles(client, pid) == ["bob"]
 
@@ -87,7 +87,7 @@ def test_token_wins_over_a_forged_body_handle(client, bearer):
     pid = _project(client)
 
     forged = client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "mallory", "role": "lead", "actor": "alice"},
         headers=bearer("mallory"),
     )
@@ -95,7 +95,7 @@ def test_token_wins_over_a_forged_body_handle(client, bearer):
     assert _handles(client, pid) == []
 
     real = client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "bob", "actor": "mallory"},
         headers=bearer("alice"),
     )
@@ -112,10 +112,10 @@ def test_agent_scoped_token_cannot_write_the_roster(client):
 
     assert _add(client, pid, "carol", headers=scoped).status_code == 403
     r = client.put(
-        f"/api/projects/{pid}/members/bob", json={"role": "lead"}, headers=scoped
+        f"/projects/{pid}/members/bob", json={"role": "lead"}, headers=scoped
     )
     assert r.status_code == 403
-    r = client.delete(f"/api/projects/{pid}/members/bob", headers=scoped)
+    r = client.delete(f"/projects/{pid}/members/bob", headers=scoped)
     assert r.status_code == 403
 
 
@@ -125,7 +125,7 @@ def test_update_and_delete_are_guarded_too(client, bearer):
 
     assert (
         client.put(
-            f"/api/projects/{pid}/members/bob",
+            f"/projects/{pid}/members/bob",
             json={"role": "lead"},
             headers=bearer("mallory"),
         ).status_code
@@ -133,11 +133,11 @@ def test_update_and_delete_are_guarded_too(client, bearer):
     )
     assert (
         client.delete(
-            f"/api/projects/{pid}/members/bob", headers=bearer("mallory")
+            f"/projects/{pid}/members/bob", headers=bearer("mallory")
         ).status_code
         == 403
     )
-    assert client.delete(f"/api/projects/{pid}/members/bob").status_code == 403
+    assert client.delete(f"/projects/{pid}/members/bob").status_code == 403
     assert _handles(client, pid) == ["bob"]
 
 
@@ -145,7 +145,7 @@ def test_reading_the_roster_stays_open(client, bearer):
     """Only the writes were closed: the UI reads this list without a token."""
     pid = _project(client)
     _add(client, pid, "bob", headers=bearer("alice"))
-    assert client.get(f"/api/projects/{pid}/members").status_code == 200
+    assert client.get(f"/projects/{pid}/members").status_code == 200
 
 
 def _seed_member(client, pid: str, handle: str, role: str) -> None:
