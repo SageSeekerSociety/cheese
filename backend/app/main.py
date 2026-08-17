@@ -333,8 +333,8 @@ def _discover_routers(application: FastAPI) -> list[str]:
 # `location /api/ { proxy_pass http://backend:8081/; }` — the trailing slash makes
 # it strip exactly this one segment — so a route's own path is never a URL anybody
 # can send. Publishing it as an OpenAPI server is what makes the schema
-# self-addressing: server + path is the URL, and the 2.0 routers' own `/api`
-# prefix visibly becomes the `/api/api/...` that callers have to send.
+# self-addressing: server + path is the URL, and since #370 retired the 2.0
+# routers' own prefix that composition is the same one shape for every route.
 #
 # Left unset, the schema advertised bare backend paths, and a caller who followed
 # them got no error worth the name: measured 2026-08-12, of the 135 paths under

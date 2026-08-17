@@ -24,7 +24,9 @@ import (
 )
 
 // A minimal spec carrying what matters here: the backend's published servers
-// and one path from each API generation (1.0 bare, 2.0 with its own /api).
+// and two ordinary bare paths. It used to carry one path per generation, the
+// 2.0 one with its own /api — #370 retired that prefix, and this literal is the
+// only place in the repo that would otherwise still describe the old shape.
 const specWithServers = `{
   "openapi": "3.0.3",
   "info": {"title": "CheeseX", "version": "0.1.0"},
@@ -33,7 +35,7 @@ const specWithServers = `{
     {"url": "/", "description": "Straight at the backend port"}
   ],
   "paths": {
-    "/api/topics": {
+    "/topics": {
       "get": {"operationId": "list-topics", "responses": {"200": {"description": "ok"}}}
     },
     "/users/auth/login": {
@@ -72,12 +74,12 @@ func operationURLs(t *testing.T, base string) map[string]bool {
 // (settings.sandbox_api_base, device_provider's api_base), and `cheese auth
 // login <origin>/connector` stores the same. servers[0] REPLACES the base's
 // path rather than appending to it, so the result addresses the origin
-// correctly: one /api for a 1.0 path, the visible /api/api for a 2.0 one.
+// correctly: exactly one /api in front of every route.
 func TestOperationURLsThroughGatewayBase(t *testing.T) {
 	got := operationURLs(t, "https://cheese.example.com/api/")
 
 	for _, want := range []string{
-		"https://cheese.example.com/api/api/topics",
+		"https://cheese.example.com/api/topics",
 		"https://cheese.example.com/api/users/auth/login",
 	} {
 		if !got[want] {
@@ -98,7 +100,7 @@ func TestOperationURLsAgainstBareBackendPort(t *testing.T) {
 	got := operationURLs(t, "http://127.0.0.1:8799/")
 
 	for _, want := range []string{
-		"http://127.0.0.1:8799/api/api/topics",
+		"http://127.0.0.1:8799/api/topics",
 		"http://127.0.0.1:8799/api/users/auth/login",
 	} {
 		if !got[want] {

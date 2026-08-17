@@ -160,7 +160,7 @@ Route → Service → Repository → Model
 
 ## API Design
 
-- **A route's path is not a URL you can send.** The backend is mounted at `/api` on the app origin, and the gateway strips that one segment — so a 1.0 route (`/users/…`) is reached at `/api/users/…` and a 2.0 route (which carries its own `/api`) at `/api/api/topics/…`. The doubling is deliberate and load-bearing; flattening it makes six endpoints answer from the wrong generation. Writing a client, or wondering why a call 404s or returns HTML: [`docs/api-conventions.md`](docs/api-conventions.md).
+- **A route's path is not a URL you can send.** The backend is mounted at `/api` on the app origin and the gateway strips that one segment, so every route is bare and every URL you send has exactly one `/api` — `/topics/…` is reached at `/api/topics/…`. (There used to be a second `/api` on the 2.0 routes; #370 retired it, so `/api/api/…` in any prose you find is that prose being old.) The strip leaves one hazard: anything the backend hands back **for the browser to resolve against** — a proxy cookie's `Path`, a URL rewritten into proxied HTML, a `url` bound for an iframe — must be built with `proxy.browser_path()`, never read off `request.url.path`, which is the stripped one. Writing a client, or wondering why a call 404s or returns HTML: [`docs/api-conventions.md`](docs/api-conventions.md).
 - RESTful: GET/POST/PUT/DELETE on `/resource`.
 - Pagination: `pageStart` + `pageSize`. Return `{data: [...], total: int}`.
 - Response format: `{"code": 200, "message": "...", "data": {...}}`.
