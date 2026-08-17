@@ -751,7 +751,150 @@ Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的
 4. **默认 agent 应该是项目级可覆盖的设置**，不是平台硬编码 —— 某个项目想把默认换成自己定制的
    角色，应该允许（`project.settings` 里一个字段）。
 
-## 13. 核实依据
+## 13. 子话题 ＝ subagent 的可视化（<@wangchangxin> 2026-08-17）
+
+原话：「子话题与母话题共用房间，子话题可视为 subagent 的可视化表现，不过子话题本质上是另一个
+session，可以选用不同的 agent，可以与母话题双向交流，可以 commit 到同一个 PR。」
+
+下面先把 Claude Code 那套机制核实清楚，再逐条对我们的可行性。
+
+### 13.1 Claude Code 是怎么派发 subagent 的（核实，2026-08-17）
+
+**证据来源要先说明**：官方文档站 `code.claude.com/docs/en/sub-agents` 在沙箱里抓不到
+（网络策略挡住了 claude.ai 系域名），所以下面每条都注明出处等级 ——
+【契约】＝我手上 Agent / Workflow 工具描述的原文（一手，就是当前实现的接口本身）；
+【仓库】＝本仓库文件；【二手】＝第三方整理，未经官方文档复核。
+
+| 维度 | 事实 | 出处 |
+|---|---|---|
+| **怎么派** | 母 agent 调一个工具（`Agent`，旧名 `Task`），参数只有两样：`subagent_type`（用哪个类型）＋ 一段自然语言 prompt。没有第二个入口 | 【契约】 |
+| **类型从哪来** | `.claude/agents/*.md` 的 frontmatter。原文：*"Each agent type's model, reasoning effort, and tools come from its definition (`.claude/agents/*.md` frontmatter or SDK `agents`)"*。本仓库就有两个，<&.claude/agents/check-runner.md> 的 frontmatter 是 `tools: Bash, Read` / `model: sonnet` | 【契约】【仓库】 |
+| **注入什么** | ①它自己那份 .md 正文当系统提示 ②环境信息（工作目录）③派发时那段 prompt ④项目的 CLAUDE.md 与记忆层级 ⑤母会话**开始时**的 git 状态快照 ⑥它 `skills` 字段点名的 skill 全文。**不含母 agent 的对话历史** —— 契约原文：*"a new Agent call starts fresh"* | ④⑤⑥【二手】，其余【契约】 |
+| **例外** | 内置的 `Explore` / `Plan` 两个类型**故意跳过 CLAUDE.md 和 git 状态**，为的是快和便宜 | 【二手】 |
+| **怎么回来** | **只有最后一条消息**回到母 agent。中间每一次工具调用、读过的每个文件、跑出来的每行日志，全留在它自己的上下文里，永不注入母上下文。Workflow 契约说得更直白：*"Subagents are told their final text IS the return value (not a human-facing message)"* | 【契约】 |
+| **能不能嵌套** | 看类型的工具白名单：`Explore` / `Plan` 是 *"All tools except Agent"*，派不出下一层；`general-purpose` / `claude` 是 `*`，能派。所以「不能嵌套」是**配置出来的约定**，不是机制禁止 | 【契约】 |
+| **文件系统** | 默认**和母 agent 共用同一个工作目录**；`isolation: "worktree"` 才给它自己的 git worktree（*"auto-cleaned if unchanged"*） | 【契约】 |
+| **双向** | 新增了 `SendMessage` —— *"continue a previously spawned agent with its context intact"*，配 `ListAgents` 列出可寻址的 agent。也就是说 **Claude Code 自己已经从「一次性派发」走到「可以续聊」了** | 【契约】 |
+
+最后一行是这一节最值钱的信息：**双向不是我们的发明，是上游已经走到的地方**。
+
+### 13.2 我们的 split 和它是同构的，不是「像」
+
+一一对应，每行都有代码出处：
+
+| Claude Code subagent | 我们的子话题 | 出处 |
+|---|---|---|
+| `subagent_type`（用哪个类型） | 子话题用哪个 agent（阶段一：继承房间的那个，见 §12.8） | 本文档 §12.8 |
+| 派发时那段 prompt | `cheese split --brief` | `TopicService.split_to_subtopic(brief=...)` |
+| 项目 CLAUDE.md / 记忆层级 | 母话题活文档的**逐字快照** ＋ 项目记忆注入 | `_brief_doc(parent_doc=...)` |
+| 全新上下文 | 全新 session | docstring 原话：*"分身 (split_to_subtopic) starts a FRESH session with a task brief"* |
+| `isolation: "worktree"` | 每话题一个 jj workspace ＋ `topic/<hex>` 分支 | `ws._ensure_worktree` / `ws.branch_for_topic` |
+| final message 回程 | `cheese conclude` → 结论卡 | `ConclusionCardService` |
+| 不能嵌套（配置） | 不能嵌套（`_child_kind`） | 注释原话就引了 Claude Code：*"the same call Claude Code's agent teams make (a teammate cannot spawn teammates)"* |
+
+我们还多一种上游没有的：`clone_from` —— 继承母话题**完整 transcript** 的分叉，
+docstring 明确把它和 split 对立着写（*"clone instead forks the source's full conversation state"*）。
+
+**所以「子话题是 subagent 的可视化」是一句准确的技术陈述，不是类比。**
+
+### 13.3 建议的表达
+
+一句话版本：
+
+> **子话题不是「更小的房间」，是「被看见的 subagent」。**
+
+展开版（可直接抄进对外材料）：
+
+> Claude Code 派一个 subagent 出去，是个黑盒：给它一段话，它回你一段话，中间做了什么——
+> 读了哪些文件、试错了几次、卡在哪里——母 agent 看不见，人更看不见。
+>
+> 我们把这个黑盒换成房间里的一条明线。**隔离照旧**（独立上下文、独立工作区、只带一份简报出门），
+> 但**过程是公开的**：任何人随时能点进去看它在干什么，能中途插一句话，能换一个更合适的 agent 来做，
+> 它的提交并进同一个 PR。
+>
+> 换句话说：subagent 解决的是「上下文别互相污染」，我们在此之上多解决一件事——
+> **「别人得看得见你在干嘛」**。前者是给模型的，后者是给人的。
+
+要点在于：**不要把它讲成「我们也有 subagent」**，那是把一个更强的东西讲小了。
+差异有三条，都对我们有利：
+
+1. **过程可见**：subagent 的中间过程结构性地不可见（只有 final message 回程）；子话题全程可读。
+2. **可以换人做**：subagent 绑死在派发时选的类型上；子话题可以换成池里另一个 agent（§12.8）。
+3. **产出并轨**：subagent 的产出要么写进共享工作目录（无隔离），要么留在自己的 worktree 里
+   （`isolation`，且 *"auto-cleaned if unchanged"* —— 没人接就没了）；子话题的提交进同一个 PR，有人审。
+
+### 13.4 可行性：三条，逐条核实
+
+#### ① 共用房间（容器）—— 可行，且已经在铺地基
+
+现状：容器是**每话题一个**，`ws.container_name(topic_id)` → `cheesex-sbx-<12位hex>`，
+tmux 后端是 `cheesex-tmux-<12位hex>`（<&backend/app/domain/workspace/service.py>）。
+所以今天一个房间拆 5 个子话题 ＝ 6 个容器。这就是「太贵」的来源。
+
+但**工作区本来就已经是共用的**：所有话题的 worktree 都挂在同一个 project-tree 挂载下
+（`sandbox_topic_workdir` 的 docstring 写明是「REAL path under the project-tree mount，不是每话题重映射」，
+为的是和共享的 pnpm / uv 缓存做硬链接）。**也就是说物理上一个容器已经能看见全部子话题的工作区了**，
+差的只是「谁来起这个容器、谁负责它的生命周期」。
+
+@容器按房间分配 那件活正在把 `CHEESE_TOPIC` / `CHEESE_TOKEN` 从容器 env 移到 per-session 注入，
+那正是这一条的前提（一个容器里跑多个 session，每个 session 自己知道「我是谁、我在哪个话题」）。
+**结论：可行，改动集中在容器命名与回收的 key（topic → room），不动工作区布局。**
+
+#### ② 双向交流 —— 今天是**单向的**，有两处硬拦，改法明确
+
+- **子 → 母：已经通了。** `cheese conclude` 开结论卡，母话题可采信 / 补证据 / 升级
+  （`ConclusionCardService`）。
+- **母 → 子：断的，两处独立的拦截**，都在代码里核实过：
+  1. **403**：<&backend/app/api/auth.py>:307 —— per-turn token 带 `t`（topic）claim，
+     指向别的话题就 `ForbiddenError("这个 token 属于别的话题，不能在这里操作")`。
+     所以母话题的芝士**连写都写不进**子话题。
+  2. **不叫醒**：<&backend/app/api/routes/topics.py>:504 —— 评论触发 summon 的条件是
+     `if not actor.is_agent`，只有**人类**评论才唤醒目标话题的芝士。
+  额外一个已知缺口：结论卡「补证据」只在子话题时间线写一行 event
+  （`ConclusionCardService._announce` 调 `blocks.add` 时**没传** `summon`），
+  所以**打回不叫醒**——和闸门红了自动 summon 的行为不一致。
+
+  **改法（建议）**：不要去放宽 token 的 topic scope —— 那等于放弃话题级隔离。
+  正确形状是新增一条**以「我」为主语的路由**，跨话题关联由后端内部完成、不出现在 URL 上：
+  `POST /api/topics/{me}/message-to-child`，body 里带 `child_id`，服务层校验
+  `child.parent_id == me` 才放行，写入并 `summon=True`。
+  同时把 `_announce` 在 `returned` 分支上补 `summon=True`。
+  两处都是小改动，但**必须一起做**：只开通道不叫醒，等于没通。
+
+#### ③ commit 进同一个 PR —— 可行，改动点只有两个，但风险要写明
+
+现状（全部读码核实）：
+- 每个话题（含 task）一个 jj workspace ＋ 一条 `topic/<id前8位hex>` 分支（`branch_for_topic`）；
+- `_ensure_worktree` 用 `jj workspace add` 从**主仓当前位置**长出来，**不是从母话题的分支**；
+- 递卡采纳时推到 `cheesex/<hex>`（`github_pr.pr_branch_name`）开**自己的** PR，base 是项目基线分支。
+
+所以今天：母子是两条各自从 main 长出来的线，两个 PR，互不相干。
+
+要并成一个 PR，最小改动是两点：
+1. `_ensure_worktree` 加一个 base revision 参数，子话题从**母话题的分支**长出来；
+2. 子话题结论被采信时，把子分支合进母分支 —— **原语已经有了**：
+   `_merge_ref_into_base(project_id, repo, base, merge_ref, message)` 的 `base` 就是个任意 ref
+   （今天只被 `merge_topic` 用来合进基线分支）。合完之后母话题 PR 的更新走现成的
+   `snapshot_worktree` ＋ 推送逻辑，不用新写。
+
+**必须一起说清的三个风险：**
+- **冲突提前了**。多个子话题并行改同一批文件，冲突从「两个 PR 之间」提前到「母分支上」。
+  这不是坏事（早发现），但要有预警 —— 正好是 @并行话题冲突预警设计 那件活。
+- **母话题自己在编辑时会卡住合并**。`_catch_up_with_branch` 只在工作区**没有 pending 改动**时快进，
+  「人的未提交编辑绝不能被机器的推送扫掉」是它写死的原则。所以子话题合回来时母话题正好有人在改，
+  这次合并要么等、要么明确报出来，不能默默失败。
+- **和「等 CI 期间不要写工作区」撞车**。母话题的卡进入 `pr_open` 之后，轮询每 60 秒会把工作区的
+  任何改动折成提交推到 PR 分支、CI 从头重排（本项目这条队列约 1.7 小时）。
+  子话题在这个窗口里合回来，等于把母话题的 CI 打回起点。**需要一条规则**：
+  母卡在 `pr_open` 期间，子话题的合并要排队，不能即时落。
+
+### 13.5 一句话结论
+
+三条里 ①③ 是**工程量小、地基已在**；② 是**必须做且今天完全断着**的那条 ——
+而它恰恰是「子话题 ≠ 一次性 subagent」这句话的全部含金量所在。
+建议的落地顺序：② → ① → ③。
+
+## 14. 核实依据
 
 本方案每一条「现状」都读过代码。核实过程、逐条证据、以及与 spec / fusion-design / accept-is-merge /
 issue #184 的差异清单，在 <&docs/topics/room与task设计与审批流程.md>。
