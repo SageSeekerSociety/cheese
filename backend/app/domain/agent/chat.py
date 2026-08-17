@@ -1144,6 +1144,13 @@ class ChatService:
                 # every client in this topic is subscribed to — this request has
                 # nothing left to yield.
                 return
+            logger.warning(
+                "live delivery fell back to the queue (topic=%s, turn=%s, "
+                "delivered=%s)",
+                topic_id,
+                turn_id,
+                delivered,
+            )
             fallback_text, fallback_meta = delivery_fallback_notice()
             fallback = await self.post_system_event(
                 topic_id, fallback_text, turn_id, meta=fallback_meta

@@ -1403,6 +1403,14 @@ class AgentWorkRunner:
                     await self._broker.publish(channel, {"type": "reaction", **ack})
                 return
             if delivered is False or live_delivery_expected:
+                logger.warning(
+                    "live delivery fell back to the queue (topic=%s, "
+                    "block=%s, delivered=%s, live_expected=%s)",
+                    topic_id,
+                    landed_user_block_id,
+                    delivered,
+                    live_delivery_expected,
+                )
                 fallback_text, fallback_meta = delivery_fallback_notice()
                 await self._post_event(
                     chat_service,

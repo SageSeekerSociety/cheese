@@ -264,6 +264,7 @@ async def monitor_session_activity(
     confirm_alive: Callable[[], Awaitable[bool]] | None = None,
     confirm_poll_s: float = CONFIRM_POLL_S,
     on_hook: Callable[[dict], None] | None = None,
+    context: str = "",
 ) -> AsyncIterator[AgentEvent | AgentDeliveryFailure]:
     """Monitor one active session period until ``Stop`` or a watchdog verdict.
 
@@ -302,6 +303,11 @@ async def monitor_session_activity(
     while True:
         t = now()
         if t >= hard_deadline:
+            logger.warning(
+                "session hit its hard ceiling after %.0fs — ending as timeout (%s)",
+                hard_ceiling_s,
+                context,
+            )
             yield AgentResult(
                 text=timeout_message, session_id=resume_session_id, is_error=True
             )
@@ -319,6 +325,12 @@ async def monitor_session_activity(
         except TimeoutError:
             if not delivered:
                 if now() >= delivery_deadline:
+                    logger.warning(
+                        "no hook within %.0fs of the prompt — ending as "
+                        "undelivered; the claude may still hold it queued (%s)",
+                        delivery_timeout_s,
+                        context,
+                    )
                     yield AgentResult(
                         text=delivery_message,
                         session_id=resume_session_id,
@@ -332,6 +344,12 @@ async def monitor_session_activity(
                     tracker.suspect_since = now()
                 alive = await confirm_alive() if confirm_alive is not None else True
                 if not alive:
+                    logger.warning(
+                        "screen declared dead after %.0fs idle — ending as "
+                        "timeout (%s)",
+                        idle_for,
+                        context,
+                    )
                     yield AgentResult(
                         text=timeout_message,
                         session_id=resume_session_id,
@@ -469,6 +487,15 @@ class HooksSessionProvider[ScreenT]:
                 or subscription is None
                 or subscription.current_work is None
             ):
+                logger.info(
+                    "mid-turn delivery skipped (topic=%s): no live screen here "
+                    "(screen=%s subscription=%s work=%s) — falling back to a "
+                    "fresh turn",
+                    topic_id,
+                    screen is not None,
+                    subscription is not None,
+                    subscription is not None and subscription.current_work is not None,
+                )
                 return False
             delivered_text = _prompt_with_native_images(text, images)
             receipt: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
@@ -482,10 +509,19 @@ class HooksSessionProvider[ScreenT]:
                     return await asyncio.wait_for(receipt, timeout=DELIVERY_TIMEOUT_S)
                 except TimeoutError:
                     logger.warning(
-                        "mid-turn delivery receipt timed out (topic=%s)", topic_id
+                        "mid-turn delivery receipt timed out after %.0fs "
+                        "(topic=%s) — the message IS in the session's queue if "
+                        "the inject landed; falling back to a fresh turn",
+                        DELIVERY_TIMEOUT_S,
+                        topic_id,
                     )
                     return False
-            except ScreenSetupError:
+            except ScreenSetupError as exc:
+                logger.warning(
+                    "mid-turn delivery failed at screen setup (topic=%s): %s",
+                    topic_id,
+                    exc,
+                )
                 return False
             except Exception:  # noqa: BLE001 — failed inject falls back to a turn
                 logger.exception(
@@ -774,6 +810,7 @@ class HooksSessionProvider[ScreenT]:
                 ),
                 tracker=tracker,
                 confirm_alive=lambda: self._confirm_alive(screen),
+                context=f"topic={subscription.topic_id} subscription-watch",
             ):
                 if isinstance(event, AgentDeliveryFailure):
                     if activity.prompt is not None:
@@ -1066,12 +1103,21 @@ class HooksSessionProvider[ScreenT]:
                     delivery_timeout_s=(
                         self._idle_suspect_s if ready is False else DELIVERY_TIMEOUT_S
                     ),
+                    context=f"topic={topic_id} turn={turn_id}",
                 ):
                     if isinstance(event, AgentDeliveryFailure):
                         # The driver gave up (#445) — re-send NOW instead of
                         # letting the room wait out the 300s bound. The event
                         # itself never reaches the chat layer.
                         redeliveries += 1
+                        logger.warning(
+                            "prompt redelivery %d/%d (topic=%s, phase=%s, ticks=%d)",
+                            redeliveries,
+                            _MAX_REDELIVERIES,
+                            topic_id,
+                            event.phase,
+                            event.ticks,
+                        )
                         if redeliveries <= _MAX_REDELIVERIES:
                             yield AgentMessage(
                                 text=(

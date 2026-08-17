@@ -816,3 +816,118 @@ async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
     assert len(results) == 1
     assert results[0][1] is True  # Stop's text matches the assembled message
     await provider.drop_subscription(topic_id)
+
+
+# --- delivery verdicts must leave a server-side trace -------------------------
+#
+# 2026-08-17: a wave of false 「这条消息没能送到芝士那边」 banners was debugged
+# with ZERO server-side evidence — every verdict below went straight into a room
+# banner without a log line, so the only forensic record was a user's screenshot
+# (issue #539). Each verdict now says what it decided and for which topic.
+
+
+async def test_undelivered_verdict_logs_a_warning_with_context(caplog):
+    queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
+    with caplog.at_level("WARNING"):
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            timeout_message="轮次超时",
+            delivery_timeout_s=0.05,
+            context="topic=t-undelivered",
+        )
+    assert isinstance(events[0], AgentResult) and events[0].is_error
+    assert any(
+        "t-undelivered" in r.getMessage() and "undelivered" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_hard_ceiling_verdict_logs_a_warning_with_context(caplog):
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "SessionStart", "session_id": "s1"})
+    with caplog.at_level("WARNING"):
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=0.15,
+            timeout_message="轮次超时",
+            context="topic=t-ceiling",
+        )
+    assert isinstance(events[-1], AgentResult) and events[-1].is_error
+    assert any(
+        "t-ceiling" in r.getMessage() and "ceiling" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_deliver_without_live_screen_logs_why(caplog):
+    import uuid as _uuid
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            return None
+
+    provider = _FakeProvider(router=HookRouter())
+    topic_id = _uuid.uuid4()
+    with caplog.at_level("INFO"):
+        assert await provider.deliver(topic_id, "hi") is False
+    assert any(
+        str(topic_id) in r.getMessage() and "no live screen" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_prompt_redelivery_logs_each_attempt(caplog):
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+    sends: list[str] = []
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            sends.append(prompt)
+            if len(sends) == 1:
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "CheeseDeliveryFailed",
+                        "phase": "paste",
+                        "ticks": 3,
+                    },
+                )
+            else:
+                router.push(
+                    topic_key,
+                    {"hook_event_name": "Stop", "last_assistant_message": "好"},
+                )
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    with caplog.at_level("WARNING"):
+        events = [
+            e
+            async for e in provider.run_turn(
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt="go",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+    assert len(sends) == 2  # original + one redelivery
+    assert isinstance(events[-1], AgentResult)
+    assert any(
+        str(topic_id) in r.getMessage() and "redeliver" in r.getMessage()
+        for r in caplog.records
+    )
+    await provider.drop_subscription(topic_id)
