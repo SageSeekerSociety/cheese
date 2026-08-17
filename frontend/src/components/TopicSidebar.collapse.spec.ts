@@ -164,6 +164,47 @@ describe('左侧话题列表：子话题折叠', () => {
     expect(row.querySelector('.unread-badge')?.textContent?.trim()).toBe('7')
   })
 
+  // 收起来的父话题原先会把子话题的呼吸点整个藏掉：只有未读会聚合，"芝士在跑"
+  // 和"等你处理"不会。合槽之后由折叠开关自己带聚合色补上。
+  it('收起来时子话题的"芝士在跑"冒到折叠开关上', async () => {
+    const running = { ...topic('a1x', 'a1'), running: true } as Topic
+    const { container } = mount({ topics: topics.map((t) => (t.id === 'a1x' ? running : t)) })
+    // 展开着的时候，动静长在 a1x 自己那一行上
+    expect(rowFor(container, 'a1x').querySelector('.running-dot')).not.toBeNull()
+    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--running')).toBe(false)
+
+    await fireEvent.click(toggleFor(container, 'a'))
+    expect(visibleTitles(container)).toEqual(['a', 'b'])
+    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--running')).toBe(true)
+    // 底下什么都没有的那一支不能跟着亮
+    expect(rowFor(container, 'b').querySelector('.subtree-toggle')).toBeNull()
+  })
+
+  it('收起来时子话题的"等你处理"也冒上来，并且压过"在跑"', async () => {
+    const patched = topics.map((t) => {
+      if (t.id === 'a1x') return { ...t, running: true } as Topic
+      if (t.id === 'a2') return { ...t, awaits_me: true } as Topic
+      return t
+    })
+    const { container } = mount({ topics: patched })
+    await fireEvent.click(toggleFor(container, 'a'))
+    const toggle = toggleFor(container, 'a')
+    expect(toggle.classList.contains('subtree-toggle--awaits')).toBe(true)
+    // 两种状态同时存在时只显示一种，否则一个槽要上两个颜色
+    expect(toggle.classList.contains('subtree-toggle--running')).toBe(false)
+    expect(toggle.getAttribute('title')).toBe('展开子话题：里面有事等你处理')
+  })
+
+  // 选中 + 收起是最需要看见聚合状态的组合（人正站在这个话题里，子话题在替他跑）。
+  it('选中的父话题收起来时，聚合状态仍然挂在开关上', async () => {
+    const patched = topics.map((t) => (t.id === 'a2' ? ({ ...t, running: true } as Topic) : t))
+    const { container } = mount({ topics: patched, selectedTopicId: 'a' })
+    await fireEvent.click(toggleFor(container, 'a'))
+    const row = rowFor(container, 'a')
+    expect(row.classList.contains('is-active')).toBe(true)
+    expect(toggleFor(container, 'a').classList.contains('subtree-toggle--running')).toBe(true)
+  })
+
   it('「已归档」分组不受影响', async () => {
     const archived = { ...topic('old', 'root'), status: 'archived', archived_at: '2026-08-01T00:00:00Z' } as Topic
     const { container } = mount({ topics: [...topics, archived] })

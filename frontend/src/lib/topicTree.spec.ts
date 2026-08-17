@@ -87,6 +87,45 @@ describe('话题树折叠', () => {
     expect(shown[0].unreadTotal).toBe(8)
   })
 
+  it('折叠后"芝士在跑"和"等你处理"也冒到父行上，不只是未读', () => {
+    const running = new Set(['a1x'])
+    const awaits = new Set(['a2'])
+    const opts = { runningOf: (id: string) => running.has(id), awaitsOf: (id: string) => awaits.has(id) }
+
+    // 展开着的时候，父行不背任何人的状态——每一行自己说自己的。
+    const open = visibleRows(rows, opts)
+    expect(open.map((r) => r.hiddenRunning)).toEqual([false, false, false, false, false])
+    expect(open.map((r) => r.hiddenAwaits)).toEqual([false, false, false, false, false])
+
+    // 收起来之后，藏起来的动静必须还看得见——这正是原先漏掉的那个 bug。
+    const shown = visibleRows(rows, { ...opts, collapsed: new Set(['a']) })
+    expect(idsOf(shown)).toEqual(['a', 'b'])
+    expect(shown[0].hiddenRunning).toBe(true)
+    expect(shown[0].hiddenAwaits).toBe(true)
+    // b 底下什么都没有，不能跟着一起亮。
+    expect(shown[1].hiddenRunning).toBe(false)
+    expect(shown[1].hiddenAwaits).toBe(false)
+  })
+
+  it('状态是"有没有"不是计数：嵌套折叠时只归最近的可见祖先', () => {
+    const running = new Set(['a1x'])
+    const shown = visibleRows(rows, {
+      collapsed: new Set(['a', 'a1']),
+      reveal: ancestorPathIds(topics, 'a1'),
+      runningOf: (id: string) => running.has(id),
+    })
+    expect(idsOf(shown)).toEqual(['a', 'a1', 'b'])
+    // a1x 藏在 a1 底下，所以亮的是 a1；a 不该重复亮一次。
+    expect(shown[1].hiddenRunning).toBe(true)
+    expect(shown[0].hiddenRunning).toBe(false)
+  })
+
+  it('不传状态查询函数时一律当没有状态（老调用点不受影响）', () => {
+    const shown = visibleRows(rows, { collapsed: new Set(['a']) })
+    expect(shown[0].hiddenRunning).toBe(false)
+    expect(shown[0].hiddenAwaits).toBe(false)
+  })
+
   it('中间层缺席（父话题已归档、子话题还活着）时，孙子仍归最近的可见祖先管', () => {
     // activeTree 过滤掉了 a1，但 a1x 仍带着 depth 2 留在数组里。
     const filtered = rows.filter((r) => r.topic.id !== 'a1')
