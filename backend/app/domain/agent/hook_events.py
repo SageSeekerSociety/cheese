@@ -11,10 +11,13 @@ docker-free core of the tmux backend:
 - ``HookRouter`` fans hook POSTs (from the /sandbox/hooks endpoint) to the
   long-lived sink owned by that topic's interactive screen.
 
-Event mapping (verified in the spike, docs/tmux-backend-spike.md):
+Event mapping:
   SessionStart{session_id}                → AgentSessionInfo
   PreToolUse{tool_name, tool_input}       → AgentToolUse
-  MessageDisplay{delta} (non-empty)       → AgentMessage (discrete message)
+  MessageDisplay{message_id,index,final,delta}
+      —— MessageAssembler ——              → AgentMessage (one WHOLE message,
+                                            assembled from its line-batch
+                                            flushes; see the class docstring)
   PostToolUse{...}                        → (ignored — no matching AgentEvent)
   Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
 """
@@ -77,8 +80,10 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
         )
 
     if event == "MessageDisplay":
-        # A discrete 芝士 message (Slack-style), not a token delta: one
-        # MessageDisplay = one chat message block (spike mapping).
+        # One FLUSH of a streaming message, not a whole message — a hook
+        # STREAM must route MessageDisplay through MessageAssembler. This
+        # branch survives as the one-hook-one-message fallback for payloads
+        # without the flush fields (older Claude Code, hand-built tests).
         text = hook.get("delta")
         if isinstance(text, str) and text.strip():
             eid = hook.get("_eid")
@@ -138,6 +143,142 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
 
     # PostToolUse and any unmapped event: nothing to surface.
     return None
+
+
+@dataclass
+class _PendingMessage:
+    """Flushes of one streaming assistant message, keyed by flush index."""
+
+    deltas: dict[int, str] = field(default_factory=dict)
+    eids: dict[int, str | None] = field(default_factory=dict)
+    final_index: int | None = None
+
+
+class MessageAssembler:
+    """Reassemble MessageDisplay flushes into whole assistant messages.
+
+    Claude Code fires MessageDisplay once per batch of newly completed lines
+    while a message streams — NOT once per message (the spike read one flush
+    per message because its replies fit one batch; a 60-line reply arrives as
+    ~9 flushes). The payload carries the reassembly key: ``message_id`` (stable
+    across the message's flushes), ``index`` (increments per flush), ``final``
+    (exactly one flush per message), and ``delta`` (the new lines, newlines
+    included — concatenating deltas in index order reconstructs the message
+    verbatim). Verified against 2.1.224, the pinned device version, and 2.1.233.
+
+    Persisting each flush as its own chat message is what split one reply into
+    several bubbles — and what then defeated every whole-text dedup downstream,
+    because the Stop hook's ``last_assistant_message`` never matches a fragment,
+    so the full text landed AGAIN next to its own pieces. The SDK backend fixed
+    the same shape in #170 by buffering fragments to a semantic boundary; this
+    is the hooks-path equivalent, with ``final`` as the boundary.
+
+    Also absorbs at-least-once redelivery: a flush re-POSTed after a lost ack
+    arrives with the same (message_id, index) and is dropped, whether its
+    message is still pending or already assembled. Flushes may arrive out of
+    order (the drainer retries a failed file while later ones already landed);
+    a message completes only when every index up to ``final`` is present.
+
+    Payloads without the flush fields (an older Claude Code) keep the
+    historical one-hook-one-message behavior. One instance per hook stream
+    (screen subscription / spool reconcile pass); event-loop only.
+    """
+
+    # Assembled message ids kept for late-redelivery dedup. A session streams
+    # messages one at a time, so even a small window is generous.
+    _DONE_CAP = 256
+
+    def __init__(self) -> None:
+        self._pending: dict[str, _PendingMessage] = {}
+        self._done: dict[str, None] = {}
+
+    def add(self, hook: dict) -> AgentMessage | None:
+        """Fold one MessageDisplay payload in. Returns the completed message,
+        or None while it is still streaming (or the payload was blank or a
+        duplicate)."""
+        delta = hook.get("delta")
+        text = delta if isinstance(delta, str) else ""
+        eid_value = hook.get("_eid")
+        eid = eid_value if isinstance(eid_value, str) else None
+        message_id = hook.get("message_id")
+        final = hook.get("final")
+        index = hook.get("index")
+        if (
+            not isinstance(message_id, str)
+            or not isinstance(final, bool)
+            or not isinstance(index, int)
+        ):
+            if not text.strip():
+                return None
+            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else ())
+        if message_id in self._done:
+            return None
+        pending = self._pending.setdefault(message_id, _PendingMessage())
+        if index in pending.deltas:
+            return None
+        pending.deltas[index] = text
+        pending.eids[index] = eid
+        if final:
+            pending.final_index = index
+        last = pending.final_index
+        if last is None or any(i not in pending.deltas for i in range(last)):
+            return None
+        del self._pending[message_id]
+        self._mark_done(message_id)
+        return self._assemble(pending)
+
+    def translate(self, hook: dict) -> list[AgentEvent | AgentDeliveryFailure]:
+        """Stream-level translation of one hook payload: MessageDisplay folds
+        into the assembler (a completed message emerges as ONE event), a Stop
+        first drains whatever is still buffered so nothing dies with the
+        buffer, and every other hook passes through ``translate_hook``."""
+        if _hook_event_name(hook) == "MessageDisplay":
+            message = self.add(hook)
+            return [message] if message is not None else []
+        event = translate_hook(hook)
+        if event is None:
+            return []
+        if isinstance(event, AgentResult):
+            return [*self.drain(), event]
+        return [event]
+
+    def drain(self) -> list[AgentMessage]:
+        """Assemble every still-pending message from the flushes that did
+        arrive (gaps collapsed), oldest first. For Stop / turn end: buffered
+        content must land rather than die with the buffer."""
+        drained: list[AgentMessage] = []
+        for message_id, pending in self._pending.items():
+            self._mark_done(message_id)
+            message = self._assemble(pending)
+            if message is not None:
+                drained.append(message)
+        self._pending.clear()
+        return drained
+
+    def pending_eids(self) -> set[str]:
+        """Event ids buffered toward messages that have not completed yet —
+        what a spool reconcile must NOT delete, so the flushes survive to the
+        pass where their message completes."""
+        return {
+            eid
+            for pending in self._pending.values()
+            for eid in pending.eids.values()
+            if eid is not None
+        }
+
+    def _mark_done(self, message_id: str) -> None:
+        self._done[message_id] = None
+        while len(self._done) > self._DONE_CAP:
+            del self._done[next(iter(self._done))]
+
+    @staticmethod
+    def _assemble(pending: _PendingMessage) -> AgentMessage | None:
+        indices = sorted(pending.deltas)
+        text = "".join(pending.deltas[i] for i in indices)
+        if not text.strip():
+            return None
+        eids = tuple(eid for i in indices if (eid := pending.eids[i]) is not None)
+        return AgentMessage(text=text, eid=eids[0] if eids else None, eids=eids)
 
 
 @dataclass(eq=False)

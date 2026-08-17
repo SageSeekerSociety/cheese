@@ -654,3 +654,165 @@ async def test_run_refuses_to_clobber_existing_attribution():
     assert events[0].is_error is True
     assert subscription.current_work is open_attribution
     await provider.drop_subscription(topic_id)
+
+
+# --- MessageDisplay flush coalescing on the live subscription ---------------
+
+
+def _display_flush(
+    mid: str, idx: int, delta: str, *, final: bool = False, eid: str = ""
+) -> dict:
+    return {
+        "hook_event_name": "MessageDisplay",
+        "message_id": mid,
+        "index": idx,
+        "final": final,
+        "delta": delta,
+        "_eid": eid or f"{mid}-{idx}",
+    }
+
+
+async def test_run_turn_coalesces_message_flushes_into_one_message():
+    """A streamed reply arrives as several MessageDisplay flushes; the turn
+    must see ONE AgentMessage carrying the whole text (each flush used to
+    become its own chat message — one reply, many bubbles)."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            router.push(topic_key, _display_flush("m1", 0, "line 1\nline 2\n"))
+            router.push(topic_key, _display_flush("m1", 1, "line 3", final=True))
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "line 1\nline 2\nline 3",
+                    "session_id": "s1",
+                    "_eid": "stop-1",
+                },
+            )
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    messages = [e for e in events if isinstance(e, AgentMessage)]
+    assert [m.text for m in messages] == ["line 1\nline 2\nline 3"]
+    assert messages[0].eids == ("m1-0", "m1-1")
+    assert isinstance(events[-1], AgentResult)
+    await provider.drop_subscription(topic_id)
+
+
+async def test_run_turn_stop_drains_a_partial_message():
+    """A message whose final flush never arrived still lands at Stop — the
+    buffered lines must not die with the buffer."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            router.push(topic_key, _display_flush("m1", 0, "第一行\n"))
+            router.push(topic_key, _display_flush("m1", 1, "到这里就断了\n"))
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "",
+                    "session_id": "s1",
+                    "_eid": "stop-1",
+                },
+            )
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    types = [type(e).__name__ for e in events]
+    assert types == ["AgentMessage", "AgentResult"]
+    assert events[0].text == "第一行\n到这里就断了\n"
+    await provider.drop_subscription(topic_id)
+
+
+async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
+    """The screen-subscription consumer path (no turn listening) coalesces the
+    same way, and the Stop's copy of the message is recognized as already
+    seen — this exact miss is what stored a whole extra copy of every
+    multi-flush reply."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            return None
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    consumed: list[tuple[object, str | None, bool]] = []
+
+    async def consumer(
+        project, topic, work_id, event, eid, result_text_seen, unsolicited
+    ):
+        consumed.append((event, eid, result_text_seen))
+
+    provider.bind_event_consumer(consumer)
+    await provider.ensure_subscription(project_id, topic_id)
+
+    router.push(topic_key, _display_flush("m1", 0, "第一行\n"))
+    router.push(topic_key, _display_flush("m1", 1, "第二行", final=True))
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "第一行\n第二行",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if any(isinstance(e, AgentResult) for e, _eid, _seen in consumed):
+            break
+
+    messages = [e for e, _eid, _seen in consumed if isinstance(e, AgentMessage)]
+    assert [m.text for m in messages] == ["第一行\n第二行"]
+    results = [(e, seen) for e, _eid, seen in consumed if isinstance(e, AgentResult)]
+    assert len(results) == 1
+    assert results[0][1] is True  # Stop's text matches the assembled message
+    await provider.drop_subscription(topic_id)
