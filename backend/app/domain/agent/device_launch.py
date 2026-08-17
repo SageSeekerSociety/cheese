@@ -434,8 +434,9 @@ if [ -n "${{CHEESE_GIT_REMOTE:-}}" ] && [ ! -d "$CHEESE_WORK/.git" ]; then
   git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
       clone -q "$CHEESE_GIT_REMOTE" "$CHEESE_WORK" 2>/dev/null || true
   if [ -d "$CHEESE_WORK/.git" ]; then
-    git -C "$CHEESE_WORK" config user.name "芝士"
-    git -C "$CHEESE_WORK" config user.email "cheese@zhishi.local"
+    git -C "$CHEESE_WORK" config user.name "${{CHEESE_GIT_AUTHOR_NAME:-芝士}}"
+    git -C "$CHEESE_WORK" config user.email \
+      "${{CHEESE_GIT_AUTHOR_EMAIL:-cheese@zhishi.local}}"
     git -C "$CHEESE_WORK" config http.extraHeader "X-Cheese-Token: $CHEESE_TOKEN"
     git -C "$CHEESE_WORK" checkout -q -B "${{CHEESE_GIT_BRANCH:-main}}" \
       "origin/${{CHEESE_GIT_BRANCH:-main}}" 2>/dev/null \
@@ -484,7 +485,7 @@ cat > "$HOME/.claude/cheese-sync" <<'SYNC'
 cd "$CHEESE_WORK" || exit 0
 git add -A >/dev/null 2>&1
 git diff --cached --quiet && exit 0
-git commit -q -m "芝士 edits" >/dev/null 2>&1 || exit 0
+git commit -q -m "chore: snapshot workspace after agent turn" >/dev/null 2>&1 || exit 0
 # Report the outcome through cheese-hook, which already has a durable spool and
 # retries until the backend acknowledges. Staying non-fatal was right — a Stop
 # hook that dies takes the turn with it — but silence was not: a rejected push
@@ -881,6 +882,7 @@ def build_screen_launch(
     project_id: str | None = None,
     topic_id: str | None = None,
     author: str | None = None,
+    git_author: tuple[str, str] | None = None,
     git_remote: str | None = None,
     git_branch: str | None = None,
     system_prompt: str = "",
@@ -930,6 +932,11 @@ def build_screen_launch(
         # the real worktree and must not clone over it.
         env["CHEESE_GIT_REMOTE"] = git_remote
         env["CHEESE_GIT_BRANCH"] = git_branch or "main"
+    if git_author:
+        # Who the turn's commits belong to (workspace/identity.py). Absent, the
+        # launcher falls back to 芝士 — the same default the in-repo snapshot
+        # path uses, so both surfaces agree.
+        env["CHEESE_GIT_AUTHOR_NAME"], env["CHEESE_GIT_AUTHOR_EMAIL"] = git_author
     if extra_env:
         env.update(extra_env)
     return command, env, cheeselet_source()

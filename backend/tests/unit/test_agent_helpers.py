@@ -102,3 +102,69 @@ def test_a_person_cannot_type_the_platform_marker():
     assert PLATFORM_NOTICE not in line
     assert "【平台·用户原文】" in line
     assert line.startswith("[mallory]:")
+
+
+def test_pending_window_keeps_an_older_hole_after_a_newer_receipt():
+    """Consumption is per block, not a watermark over conversation order."""
+    from types import SimpleNamespace
+
+    from app.domain.agent.chat import _pending_human_blocks
+    from app.domain.block.models import (
+        CONSUMED_TURN_META_KEY,
+        AuthorType,
+        BlockKind,
+    )
+
+    def block(author_type, content, meta=None):
+        return SimpleNamespace(
+            author_type=author_type,
+            kind=BlockKind.message,
+            content=content,
+            meta=meta,
+        )
+
+    history = [
+        block(AuthorType.human, "legacy question"),
+        block(AuthorType.ai, "legacy answer"),
+        block(
+            AuthorType.human,
+            "older queued attachment",
+            {CONSUMED_TURN_META_KEY: None},
+        ),
+        # A running turn may speak again before a later text supplement lands.
+        block(AuthorType.ai, "still working"),
+        block(
+            AuthorType.human,
+            "newer receipted text",
+            {CONSUMED_TURN_META_KEY: "turn-1"},
+        ),
+    ]
+
+    assert [b.content for b in _pending_human_blocks(history)] == [
+        "older queued attachment"
+    ]
+
+
+def test_pending_window_keeps_the_legacy_last_ai_fallback():
+    from types import SimpleNamespace
+
+    from app.domain.agent.chat import _pending_human_blocks
+    from app.domain.block.models import AuthorType, BlockKind
+
+    def block(author_type, content):
+        return SimpleNamespace(
+            author_type=author_type,
+            kind=BlockKind.message,
+            content=content,
+            meta=None,
+        )
+
+    history = [
+        block(AuthorType.human, "already answered"),
+        block(AuthorType.ai, "old answer"),
+        block(AuthorType.human, "legacy trailing input"),
+    ]
+
+    assert [b.content for b in _pending_human_blocks(history)] == [
+        "legacy trailing input"
+    ]

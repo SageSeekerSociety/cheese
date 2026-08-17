@@ -265,9 +265,15 @@ class TopicService:
         """
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
-        return await self._repo.get_or_create_private(
+        topic = await self._repo.get_or_create_private(
             project_id=project_id, user_handle=user_handle, peer_handle=peer_handle
         )
+        await TopicMemberService(self._session).seed_private(
+            topic.id,
+            owner_handle=topic.private_owner or user_handle,
+            peer_handle=topic.private_peer,
+        )
+        return topic
 
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)

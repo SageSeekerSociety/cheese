@@ -41,9 +41,13 @@ def _adapters(*, role=None, roster=True, project_member=False):
     )
 
 
-async def _access(actor, **adapters):
+async def _access(actor, *, is_private=False, **adapters):
     return await authorize_topic_access(
-        actor, project_id=PID, topic_id=TID, **_adapters(**adapters)
+        actor,
+        project_id=PID,
+        topic_id=TID,
+        is_private=is_private,
+        **_adapters(**adapters),
     )
 
 
@@ -74,6 +78,52 @@ async def test_token_outsider_on_rostered_topic_denied():
 async def test_token_on_rosterless_legacy_topic_allowed():
     assert (
         await _access(_actor("token"), role=None, roster=False, project_member=False)
+        is True
+    )
+
+
+async def test_private_topic_allows_only_authenticated_roster_members():
+    assert (
+        await _access(
+            _actor("token"),
+            is_private=True,
+            role=TopicRole.member,
+            project_member=False,
+        )
+        is True
+    )
+    assert (
+        await _access(
+            _actor("token"),
+            is_private=True,
+            role=None,
+            project_member=True,
+        )
+        is False
+    )
+    assert (
+        await _access(
+            _actor("handle"),
+            is_private=True,
+            role=TopicRole.member,
+            project_member=True,
+        )
+        is False
+    )
+    assert (
+        await _access(
+            _actor("cheese", is_agent=True),
+            is_private=True,
+            role=None,
+        )
+        is False
+    )
+    assert (
+        await _access(
+            _actor("cheese", is_agent=True),
+            is_private=True,
+            role=TopicRole.member,
+        )
         is True
     )
 

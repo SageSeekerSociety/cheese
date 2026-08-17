@@ -347,12 +347,12 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
   })
 
   it('meta.action=doc 还是那张动作行，按钮照旧', async () => {
-    const { container } = mountRoom([event('', '芝士 更新了活文档', { action: 'doc' })])
+    const { container } = mountRoom([event('', '芝士 更新了实况文档', { action: 'doc' })])
     await flush()
 
     const card = container.querySelector('.action-card')!
-    expect(card.textContent).toContain('更新了活文档')
-    expect(card.querySelector('button')!.textContent).toContain('看活文档')
+    expect(card.textContent).toContain('更新了实况文档')
+    expect(card.querySelector('button')!.textContent).toContain('看实况文档')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
   })
 
@@ -381,9 +381,9 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
 
   it('内容一模一样的老事件连发，还是折成一条（老规则没丢）', async () => {
     const { container } = mountRoom([
-      event('', '芝士 更新了活文档', { action: 'doc' }),
-      event('', '芝士 更新了活文档', { action: 'doc' }),
-      event('', '芝士 更新了活文档', { action: 'doc' }),
+      event('', '芝士 更新了实况文档', { action: 'doc' }),
+      event('', '芝士 更新了实况文档', { action: 'doc' }),
+      event('', '芝士 更新了实况文档', { action: 'doc' }),
     ])
     await flush()
 

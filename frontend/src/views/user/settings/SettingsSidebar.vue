@@ -1,6 +1,6 @@
 <template>
   <v-navigation-drawer permanent class="page-sidebar border-e-0 border-b-0" border="sm" color="background">
-    <div class="page-header">
+    <div class="sidebar-header">
       <v-avatar size="24" :image="getAvatarUrl(userData?.avatarId)" />
       <span class="text-subtitle-1">{{ userData?.nickname }}</span>
       <v-spacer></v-spacer>

@@ -197,6 +197,7 @@ async def run_hooks_turn(
     tracker: ActivityTracker | None = None,
     confirm_alive: Callable[[], Awaitable[bool]] | None = None,
     confirm_poll_s: float = CONFIRM_POLL_S,
+    on_hook: Callable[[dict], None] | None = None,
 ) -> AsyncIterator[AgentEvent | AgentDeliveryFailure]:
     """Drain the topic's hook queue, translating each hook to an ``AgentEvent``,
     until the ``Stop`` hook (→ ``AgentResult``) ends the turn. Transport-independent:
@@ -272,6 +273,8 @@ async def run_hooks_turn(
                     )
                     return
             continue
+        if on_hook is not None:
+            on_hook(hook)
         delivered = True
         tracker.touch(now())
         event = translate_hook(hook)
@@ -338,6 +341,11 @@ class HooksTurnProvider[ScreenT]:
         # is running on it right now", which is the only state `deliver` may act
         # on (it must never bring a screen up).
         self._live: dict[uuid.UUID, ScreenT] = {}
+        # A transport write is not delivery. One waiter per topic tracks the
+        # exact UserPromptSubmit hook proving Claude Code accepted a mid-turn
+        # message into its own input queue.
+        self._delivery_locks: dict[uuid.UUID, asyncio.Lock] = {}
+        self._delivery_receipts: dict[uuid.UUID, tuple[str, asyncio.Future[bool]]] = {}
 
     @property
     def hard_ceiling_s(self) -> float:
@@ -367,17 +375,51 @@ class HooksTurnProvider[ScreenT]:
         hook queue registered either, so anything the screen produced would land
         outside every window. A False here means the caller must fall back to
         starting a turn of its own."""
-        screen = self._live.get(topic_id)
-        if screen is None:
-            return False
-        try:
-            await self._send_prompt(screen, text)
-        except ScreenSetupError:
-            return False
-        except Exception:  # noqa: BLE001 — a failed inject is a fallback, not a crash
-            logger.exception("deliver into running turn failed (topic=%s)", topic_id)
-            return False
-        return True
+        lock = self._delivery_locks.setdefault(topic_id, asyncio.Lock())
+        async with lock:
+            screen = self._live.get(topic_id)
+            if screen is None:
+                return False
+            receipt: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            self._delivery_receipts[topic_id] = (text, receipt)
+            try:
+                await self._send_prompt(screen, text)
+                try:
+                    return await asyncio.wait_for(receipt, timeout=DELIVERY_TIMEOUT_S)
+                except TimeoutError:
+                    logger.warning(
+                        "mid-turn delivery receipt timed out (topic=%s)", topic_id
+                    )
+                    return False
+            except ScreenSetupError:
+                return False
+            except Exception:  # noqa: BLE001 — failed inject falls back to a turn
+                logger.exception(
+                    "deliver into running turn failed (topic=%s)", topic_id
+                )
+                return False
+            finally:
+                pending = self._delivery_receipts.get(topic_id)
+                if pending is not None and pending[1] is receipt:
+                    self._delivery_receipts.pop(topic_id, None)
+
+    def _observe_delivery_hook(self, topic_id: uuid.UUID, hook: dict) -> None:
+        pending = self._delivery_receipts.get(topic_id)
+        if pending is None:
+            return
+        expected, receipt = pending
+        event_name = str(hook.get("hook_event_name") or hook.get("hookEventName") or "")
+        if (
+            event_name == "UserPromptSubmit"
+            and hook.get("prompt") == expected
+            and not receipt.done()
+        ):
+            receipt.set_result(True)
+
+    def _finish_delivery_wait(self, topic_id: uuid.UUID) -> None:
+        pending = self._delivery_receipts.pop(topic_id, None)
+        if pending is not None and not pending[1].done():
+            pending[1].set_result(False)
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Cheap fail-fast checks that run BEFORE the token is minted and the hook
@@ -564,6 +606,7 @@ class HooksTurnProvider[ScreenT]:
                     delivery_timeout_s=(
                         self._idle_suspect_s if ready is False else DELIVERY_TIMEOUT_S
                     ),
+                    on_hook=lambda hook: self._observe_delivery_hook(topic_id, hook),
                 ):
                     if isinstance(event, AgentDeliveryFailure):
                         # The driver gave up (#445) — re-send NOW instead of
@@ -604,5 +647,6 @@ class HooksTurnProvider[ScreenT]:
                     except asyncio.CancelledError:
                         pass
         finally:
+            self._finish_delivery_wait(topic_id)
             self._live.pop(topic_id, None)
             self._router.unregister(topic_key, queue)

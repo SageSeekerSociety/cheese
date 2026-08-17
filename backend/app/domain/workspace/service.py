@@ -21,7 +21,14 @@ from pathlib import Path
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
+from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
+from app.domain.workspace.identity import (
+    CHEESE_EMAIL,
+    CHEESE_IDENTITY,
+    CHEESE_NAME,
+    GitIdentity,
+)
 from app.domain.workspace.textfile import (
     MAX_TEXT_BYTES,
     content_version,
@@ -255,8 +262,8 @@ def _share_jj_modes(repo: Path, since: float = 0.0) -> None:
         pass
 
 
-JJ_USER_NAME = "芝士"
-JJ_USER_EMAIL = "cheese@zhishi.local"
+JJ_USER_NAME = CHEESE_NAME
+JJ_USER_EMAIL = CHEESE_EMAIL
 
 
 def _drop_repo_config_id(store: Path) -> None:
@@ -312,7 +319,12 @@ def _jj_failure_message(command: str, detail: str, repo: Path) -> str:
     return f"jj {command} failed: {detail}"
 
 
-def _jj(repo: Path, *args: str) -> str:
+def _jj(repo: Path, *args: str, identity: GitIdentity | None = None) -> str:
+    """`identity` overrides who the commit belongs to — see workspace/identity.py.
+    jj has one identity knob (JJ_USER/JJ_EMAIL sets author AND committer; 0.43
+    has no `--author`), so an overridden call attributes the commit wholly to
+    that person. Only the topic snapshot passes one; everything the platform
+    does on its own behalf (base commit, upstream merge) stays 芝士."""
     started = time.time() - 1  # -1s: filesystem mtime vs clock granularity slack
     # Before every call, not once at setup: a jj run by any other uid (an agent
     # in a sandbox) recreates config-id and locks the backend out mid-flight.
@@ -325,7 +337,11 @@ def _jj(repo: Path, *args: str) -> str:
         timeout=30,
         # Identity per call rather than as per-repo config: setting it with
         # `--repo` is the one thing that creates config-id in the first place.
-        env={**os.environ, "JJ_USER": JJ_USER_NAME, "JJ_EMAIL": JJ_USER_EMAIL},
+        env={
+            **os.environ,
+            "JJ_USER": (identity or CHEESE_IDENTITY).name,
+            "JJ_EMAIL": (identity or CHEESE_IDENTITY).email,
+        },
     )
     # Before the returncode check: a FAILED jj call still writes operations, and
     # those unreadable files break the sandbox just as thoroughly.
@@ -389,7 +405,7 @@ def _ensure_base_commit(repo: Path) -> None:
             "--allow-empty",
             "-q",
             "-m",
-            "init",
+            "chore: initialize project repository",
         )
 
 
@@ -1302,7 +1318,7 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     # have edited files (人改文件即指令) with no agent turn afterwards to
     # snapshot them — accepting must deliver what the reviewer actually saw.
     try:
-        snapshot_worktree(project_id, topic_id, "采纳前快照")
+        snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_ACCEPT)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
     branch = branch_for_topic(topic_id)
@@ -1316,7 +1332,7 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
             "reason": "topic is the base branch",
         }
     return _merge_ref_into_base(
-        project_id, repo, base, branch, f"采纳 {branch} → {base}"
+        project_id, repo, base, branch, f"chore: merge {branch} into {base}"
     )
 
 
@@ -1381,11 +1397,82 @@ def _upstream_ref(repo: Path) -> str:
     raise ValidationError("上游仓库没有 main/master 分支")
 
 
+def _base_adds_nothing(repo: Path, ref: str, base: str) -> bool:
+    """Whether `base` contributes any CONTENT the upstream doesn't already have.
+
+    Not `rev-list --count ref..base`: after a merge-based sync the base is ahead
+    by a merge commit that changes not one byte. What decides whether the base
+    may simply be pointed at the upstream is the tree, so that is what gets
+    asked — is `base` identical in content to the last commit the two histories
+    share? Unrelated histories (a fresh repo whose only commit is the platform's
+    synthetic one) have no merge base at all, and answer no."""
+    try:
+        common = _git(repo, "merge-base", ref, base).strip()
+    except ValidationError:
+        return False  # unrelated histories — a real join is needed
+    if not common:
+        return False
+    result = subprocess.run(
+        ["git", "diff", "--quiet", common, base],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _fast_forward_base(project_id: uuid.UUID, repo: Path, base: str, ref: str) -> dict:
+    """Point `base` straight at `ref` — no merge commit, nothing to conflict.
+
+    Same two steps as the tail of `_merge_ref_into_base` (CAS the ref, then sync
+    the shared checkout) and the same rule about them: once the CAS lands the
+    sync is durable, and a stale shared directory afterwards is loud
+    housekeeping, not a failed sync."""
+    for _attempt in range(_MERGE_RETRY_LIMIT):
+        old_sha = _git(repo, "rev-parse", base).strip()
+        new_sha = _git(repo, "rev-parse", ref).strip()
+        if old_sha == new_sha:
+            return {"synced": True, "commits": 0, "reason": "已是最新"}
+        try:
+            _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
+        except ValidationError:
+            continue  # base moved under us — re-read and retry
+        try:
+            _sync_shared_checkout(repo, base, new_sha)
+        except ValidationError as exc:
+            logger.exception(
+                "%s advanced to %s but the shared checkout could not be synced",
+                base,
+                new_sha,
+            )
+            return {"synced": True, "fast_forward": True, "sync_failed": str(exc)}
+        return {"synced": True, "fast_forward": True}
+    return {
+        "synced": False,
+        "reason": f"同步失败：{base} 分支并发更新冲突过多，请重试",
+    }
+
+
 def sync_upstream(project_id: uuid.UUID) -> dict:
-    """同步上游: fetch the upstream remote and merge its default branch into the
-    project's base branch. The first sync of a seeded/fresh repo is an
-    unrelated-histories merge; a conflict aborts cleanly (never half-merges) and
-    reports back — same contract as merge_topic."""
+    """同步上游: bring the project's base branch up to the upstream's default
+    branch.
+
+    **For a bound project the base branch is a MIRROR of the upstream's default
+    branch, not a branch of its own.** That is the whole design, and getting it
+    wrong is what produced the mess this replaces: the sync used to be an
+    unconditional `merge --no-ff`, so every tick minted a merge commit that
+    existed only locally. Nothing ever removed them, every topic branch was cut
+    from a base carrying the whole pile, and each one showed up as a "new"
+    commit in that topic's PR — 39 of PR #488's 40 commits were
+    `同步上游 upstream/main → main`, and this repo's own base was 41 such commits
+    ahead of upstream while its tree was byte-identical (verified 2026-08-16).
+
+    So: fast-forward whenever the base has no content of its own, which after
+    采纳即合并 (#296) is always — a bound project never commits to its base
+    locally. A real merge is reserved for the case that genuinely needs one: a
+    base that HAS local content the upstream lacks (a project seeded with work
+    before it was bound), where a fast-forward would silently discard it.
+    Conflicts there abort cleanly and report, same contract as merge_topic."""
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         return {"synced": False, "reason": "未关联上游仓库"}
@@ -1396,6 +1483,14 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         return {"synced": False, "reason": str(exc)}
     base = _base_branch(repo)
     behind = int(_git(repo, "rev-list", "--count", f"{base}..{ref}").strip() or "0")
+    if _base_adds_nothing(repo, ref, base):
+        # Covers "simply behind" AND "ahead only by contentless merges left by
+        # the old implementation" — the second is why this is not just
+        # `merge --ff-only`, which would refuse and mint merge #42.
+        result = _fast_forward_base(project_id, repo, base, ref)
+        if result.get("synced"):
+            result.setdefault("commits", behind)
+        return result
     if behind == 0:
         return {"synced": True, "commits": 0, "reason": "已是最新"}
     result = _merge_ref_into_base(
@@ -1403,7 +1498,7 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         repo,
         base,
         ref,
-        f"同步上游 {ref} → {base}",
+        f"chore: merge upstream {ref} into {base}",
         allow_unrelated_histories=True,
     )
     if not result["merged"]:
@@ -1620,7 +1715,7 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     if get_upstream(project_id) is None:
         raise ValidationError("未关联上游仓库，无法推分支")
     try:
-        snapshot_worktree(project_id, topic_id, "PR 快照")
+        snapshot_worktree(project_id, topic_id, SNAPSHOT_FOR_PR)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
     branch = branch_for_topic(topic_id)
@@ -1767,7 +1862,7 @@ def _sync_remote_base_into_topic_branch(
                 "--no-ff",
                 "-q",
                 "-m",
-                f"同步 GitHub {default} → {branch}（推 PR 分支前）",
+                f"chore: merge {default} into {branch} before pushing the PR branch",
                 base_ref,
             )
         except ValidationError as exc:
@@ -1859,7 +1954,7 @@ def push_topic_branch_for_github_pr(
     60s re-push poll) exactly as cheap as it was — no fetch, no extra commit."""
     repo_path = ensure_repo(project_id)
     try:
-        snapshot_worktree(project_id, topic_id, "两阶段采纳前快照")
+        snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_TWO_PHASE)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
     branch = branch_for_topic(topic_id)
@@ -1993,13 +2088,7 @@ def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     here via CHEESE_HOOK_SPOOL=/home/node/.claude/cheese-spool (the session dir
     mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
     session_dir's base so both sides agree on ONE location."""
-    return (
-        Path(settings.workspace_root)
-        / ".sessions"
-        / str(project_id)
-        / topic_id.hex[:8]
-        / "cheese-spool"
-    ).resolve()
+    return identity_mod.session_dir(project_id, topic_id) / "cheese-spool"
 
 
 def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
@@ -2008,13 +2097,7 @@ def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     mounts to /home/node/.claude), so the output of a command that runs for hours
     survives the container being rebuilt under it. Mirrors spool_dir's base so
     both sides agree on ONE location."""
-    return (
-        Path(settings.workspace_root)
-        / ".sessions"
-        / str(project_id)
-        / topic_id.hex[:8]
-        / "cheese-await"
-    ).resolve()
+    return identity_mod.session_dir(project_id, topic_id) / "cheese-await"
 
 
 def has_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
@@ -2024,20 +2107,45 @@ def has_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     return (_worktree_path(project_id, branch_for_topic(topic_id)) / ".jj").exists()
 
 
+# ---- Automatic commit messages ---------------------------------------------
+#
+# These are commits nobody wrote by hand, and they end up in the history a human
+# reads. They used to be Chinese in-house jargon ("芝士 edits（后台任务「…」结束后
+# 的最终态）") — unreadable to anyone outside the platform, and nothing a git tool
+# can parse. Conventional Commits, English, imperative, subject under 72 chars:
+# the same rule the agent itself is held to (CLAUDE.md 的「提交与 PR 规范」).
+#
+# `chore` is the honest type: a snapshot is not itself a feature or a fix, it is
+# the platform preserving whatever state the workspace is in. What the change
+# actually IS gets said once, in the squash commit that lands on main
+# (review/services.py 的 `_pr_merge_commit_title`).
+SNAPSHOT_MESSAGE = "chore: snapshot workspace after agent turn"
+SNAPSHOT_BEFORE_ACCEPT = "chore: snapshot workspace before accept"
+SNAPSHOT_FOR_PR = "chore: snapshot workspace for pull request"
+SNAPSHOT_BEFORE_TWO_PHASE = "chore: snapshot workspace before two-phase accept"
+SNAPSHOT_BEFORE_CI_POLL = "chore: snapshot workspace before CI poll"
+
+
 def snapshot_worktree(
-    project_id: uuid.UUID, topic_id: uuid.UUID, message: str = "芝士 edits"
+    project_id: uuid.UUID, topic_id: uuid.UUID, message: str = SNAPSHOT_MESSAGE
 ) -> None:
     """Snapshot whatever the agent changed in the topic's workspace this turn as a
     jj commit, so native Bash/Write/Edit edits become version history (no manual
     commit needed). The topic's git branch (bookmark) is moved to the new commit
     so 采纳/diff still work via git.
 
+    Authored by the human the topic belongs to when they have a linked GitHub
+    account (`workspace/identity.py`), 芝士 otherwise — an unlinkable address is
+    why these commits showed up on GitHub as a grey name with no avatar.
+
     A snapshot taken while `cheese await` has a command in flight can only catch a
     half-written worktree, so the automatic post-turn one is HELD instead
     (`awaited_tasks.checkpoint_worktree`). What still reaches here during a hold
-    are the paths a human is waiting on — 采纳前快照, PR 快照 — where refusing
+    are the paths a human is waiting on — before-accept, PR — where refusing
     would wedge the accept. Those commit, but say so in the message rather than
-    passing a mid-command tree off as a settled one."""
+    passing a mid-command tree off as a settled one. It goes in the BODY: the
+    subject line is a Conventional Commits subject and a parenthetical warning
+    glued onto it would blow past 72 chars and read as part of the change."""
     from app.domain.agent import awaited_tasks  # local: it imports this module
 
     branch = branch_for_topic(topic_id)
@@ -2046,9 +2154,23 @@ def snapshot_worktree(
         return  # nothing changed this turn
     held = awaited_tasks.snapshot_hold(topic_id)
     if held is not None:
-        message = f"{message}（⚠️ 后台任务「{held.label}」运行中，可能是中间态）"
+        message = (
+            f"{message}\n\n"
+            f"Taken while the background task {held.label!r} was still running, "
+            "so this tree may be a mid-command state."
+        )
     _jj(wt, "commit", "-m", message)
     # The just-committed work is @- (jj commit started a fresh empty @).
+    #
+    # Authorship is a SECOND step, not an env var on the commit above: jj stamps
+    # the author when the working-copy commit is CREATED — which happened at the
+    # end of the previous turn — so JJ_USER at `jj commit` time changes nothing.
+    # `metaedit --update-author` rewrites it afterwards, and the bookmark is set
+    # after that so it lands on the rewritten commit rather than the discarded
+    # one.
+    author = identity_mod.read(project_id, topic_id)
+    if author is not None:
+        _jj(wt, "metaedit", "--update-author", "-r", "@-", identity=author)
     _jj(wt, "bookmark", "set", branch, "-r", "@-", "--allow-backwards")
     _jj(wt, "git", "export")
 

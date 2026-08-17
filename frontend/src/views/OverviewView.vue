@@ -20,7 +20,7 @@ const inbox = ref<InboxItem[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 
-// 一页纸总结. Read-only here: the overview (or the project card) carries it and
+// 概要. Read-only here: the overview (or the project card) carries it and
 // nothing in this view writes it back. The 生成/刷新 button that used to sit in
 // the section head is gone along with the POST behind it — parking a feature has
 // to include its entry point, or the user reads the leftover button as "this is
@@ -184,11 +184,11 @@ onMounted(load)
           <h1 class="t-page-title">{{ overview.name }}</h1>
         </div>
 
-        <!-- 一页纸总结 — rendered only when one exists. Generation is parked, so
+        <!-- 概要 — rendered only when one exists. Generation is parked, so
              an empty box with a dead button would read as a broken feature. -->
         <section v-if="summary" class="ln-section">
           <div class="ln-section-head">
-            <span class="ln-section-title">一页纸总结</span>
+            <span class="ln-section-title">概要</span>
           </div>
           <div class="ln-body">
             <div class="md-content" v-html="renderMarkdown(summary)" />
@@ -203,7 +203,7 @@ onMounted(load)
             <span v-if="myWaiting.length" class="ln-count">{{ myWaiting.length }}</span>
           </div>
           <div class="ln-body">
-            <div v-if="myWaiting.length === 0" class="c-faint t-body py-2">没有需要你处理的事</div>
+            <div v-if="myWaiting.length === 0" class="c-faint t-body py-2">暂无待处理的事</div>
             <div v-else>
               <div v-for="t in myWaiting" :key="t.id" class="ln-row">
                 <span class="ln-dot ln-dot-warn" />
@@ -305,7 +305,6 @@ onMounted(load)
                     <v-spacer />
                     <span class="ln-num">{{ aiCount }}</span>
                   </div>
-                  <div class="text-caption text-medium-emphasis mt-2">人指挥、AI 执行，各自统计</div>
                 </template>
               </div>
             </section>
@@ -322,9 +321,9 @@ onMounted(load)
                 </span>
               </div>
               <div class="ln-body">
-                <div v-if="!credits" class="text-medium-emphasis text-body-2 py-2">额度信息暂不可用</div>
+                <div v-if="!credits" class="text-medium-emphasis text-body-2 py-2">暂无额度信息</div>
                 <div v-else-if="credits.unlimited" class="text-medium-emphasis text-body-2 py-2">
-                  不限额 · 自治项目（未挂靠机构任务，链接题目后按资源包计量）
+                  不限额 · 未挂靠机构任务的自治项目
                 </div>
                 <template v-else>
                   <div class="credit-remaining" :class="{ 'credit-remaining--empty': creditsExhausted }">
@@ -346,7 +345,7 @@ onMounted(load)
                     </span>
                   </div>
                   <div v-if="creditsExhausted" class="credit-exhausted mt-1">
-                    额度已用完——芝士的新一轮会被拒绝，请联系机构续充
+                    额度已用完，芝士将无法继续运行，请联系机构续充
                   </div>
                   <div v-else class="text-caption text-medium-emphasis mt-2">
                     来自 {{ credits.grants.length }} 笔机构发放，按发放顺序扣减
@@ -389,7 +388,7 @@ onMounted(load)
                 <span class="ln-section-title">收件箱 · 你的请求</span>
               </div>
               <div class="ln-body">
-                <div v-if="inbox.length === 0" class="text-medium-emphasis text-body-2 py-2">收件箱是空的</div>
+                <div v-if="inbox.length === 0" class="text-medium-emphasis text-body-2 py-2">暂无请求</div>
                 <div v-else>
                   <div v-for="item in inbox" :key="item.id" class="ln-inbox-row" :class="{ 'inbox-read': item.read }">
                     <div class="d-flex align-center ga-2 flex-wrap">
@@ -591,7 +590,8 @@ onMounted(load)
 }
 .credit-bar {
   height: 10px;
-  border-radius: 5px;
+  /* 10px 高的进度条，两端本来就该是半圆 → --radius-pill（原来是 5px，不在阶梯上）。 */
+  border-radius: var(--radius-pill);
   overflow: hidden;
   background: var(--fill);
 }
@@ -612,7 +612,7 @@ onMounted(load)
 .contrib-bar {
   display: flex;
   height: 14px;
-  border-radius: 7px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   background: var(--fill);
 }
@@ -678,7 +678,7 @@ onMounted(load)
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
 .md-content :deep(blockquote) {

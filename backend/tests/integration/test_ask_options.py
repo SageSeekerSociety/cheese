@@ -2,6 +2,7 @@
 
 import uuid
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.identity.handles import topic_agent_handle
 from tests.integration.conftest import chat_ws_url
 
@@ -47,6 +48,32 @@ def test_ask_rejects_bad_option_counts(client):
         json={"question": "q", "options": ["a", "b", "c", "d", "e"]},
     )
     assert r.status_code == 422
+
+
+def test_ask_requires_a_valid_topic_scoped_credential(client):
+    tid = _topic(client)
+    body = {"question": "选哪个？", "options": ["a", "b"]}
+    without_token = client.post(
+        f"/api/topics/{tid}/ask",
+        json=body,
+        headers={"X-Cheese-Token": ""},
+    )
+    assert without_token.status_code == 401
+
+    other = _topic(client)
+    wrong_topic = client.post(
+        f"/api/topics/{tid}/ask",
+        json=body,
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=str(
+                    client.get(f"/api/topics/{other}").json()["data"]["project_id"]
+                ),
+                topic_id=other,
+            )
+        },
+    )
+    assert wrong_topic.status_code == 401
 
 
 def test_answer_records_choice_and_posts_reply(client):

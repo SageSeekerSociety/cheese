@@ -151,9 +151,11 @@ export type WsServerFrame =
   // block; the client must not double-show it as a floating banner.
   | { type: 'error'; message: string; persisted?: boolean; code?: string }
   | { type: 'done' }
+  | { type: 'turn_started'; turn_id: string }
+  | { type: 'turn_finished'; turn_id: string }
   // Sent once on WS connect when a turn is already mid-stream on this topic,
   // so a re-entering client rebuilds the 正在思考 indicator.
-  | { type: 'turn_active' }
+  | { type: 'turn_active'; turn_ids?: string[] }
   // A just-persisted block turned out to be a provider-error echo — remove it.
   | { type: 'retract_block'; block_id: string }
   // An existing block's data changed in place (e.g. an option question got
@@ -425,6 +427,11 @@ export interface AcceptCard {
   topic_id: string
   reviewer_handle: string
   routing_reason: string
+  // 提交与 PR 规范: the Conventional Commits subject + body this topic will be
+  // squash-merged under. Null on a card filed without them (the platform then
+  // falls back to `chore: <话题标题>`).
+  change_subject: string | null
+  change_body: string | null
   status: AcceptStatus
   decided_by: string | null
   decided_at: string | null

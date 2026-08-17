@@ -5,11 +5,19 @@ all: a fact can only help if it can be found by someone who does not already
 know the words it was written with.
 """
 
+from app.core.sandbox_auth import mint_scoped_token
+
 
 def _project(client) -> str:
     r = client.post("/api/projects", json={"name": "Mem"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
+
+
+def _topic(client, project_id: str) -> str:
+    return client.post(
+        "/api/topics", json={"project_id": project_id, "title": "memory scope"}
+    ).json()["data"]["id"]
 
 
 def test_search_project_memory(client):
@@ -123,3 +131,42 @@ def test_search_requires_query(client):
     pid = _project(client)
     r = client.post(f"/api/projects/{pid}/memory/search", json={"query": "  "})
     assert r.status_code == 422
+
+
+def test_memory_search_requires_a_credential(client):
+    pid = _project(client)
+    r = client.post(
+        f"/api/projects/{pid}/memory/search",
+        json={"query": "x"},
+        headers={"X-Cheese-Token": ""},
+    )
+    assert r.status_code == 401
+
+
+def test_memory_body_topic_must_match_the_scoped_token(client):
+    pid = _project(client)
+    mine = _topic(client, pid)
+    other = _topic(client, pid)
+    token = mint_scoped_token(project_id=pid, topic_id=mine)
+
+    for suffix, body in (
+        ("memory", {"content": "cross-topic write", "topic": other}),
+        ("memory/search", {"query": "cross-topic", "topic": other}),
+    ):
+        r = client.post(
+            f"/api/projects/{pid}/{suffix}",
+            json=body,
+            headers={"X-Cheese-Token": token},
+        )
+        assert r.status_code == 403
+
+
+def test_memory_body_topic_must_belong_to_the_url_project(client):
+    pid = _project(client)
+    foreign_pid = _project(client)
+    foreign_topic = _topic(client, foreign_pid)
+    r = client.post(
+        f"/api/projects/{pid}/memory",
+        json={"content": "wrong project", "topic": foreign_topic},
+    )
+    assert r.status_code == 403

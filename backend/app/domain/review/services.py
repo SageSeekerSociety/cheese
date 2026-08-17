@@ -36,7 +36,7 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review import archive, delivery, pr_publish
+from app.domain.review import archive, commit_message, delivery, pr_publish, pr_text
 from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
@@ -44,6 +44,7 @@ from app.domain.review.schemas import AcceptCardOut
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
+from app.domain.workspace import identity
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.review.github_pr import PullRequestStatus
@@ -135,41 +136,6 @@ _MERGE_FAILED_MESSAGE = (
     "The card remains pending and the topic stays active; repair the workspace "
     "and retry."
 )
-
-
-def _pr_trailers(topic: Topic, decided_by: str) -> str:
-    """两阶段采纳 (PR迭代式) 设计要点5: 标清芝士代表谁开的 PR. Requested-by = 话题
-    发起人 (Topic.created_by)，Reviewed-by = 批准人 (AcceptCard.decided_by)。"""
-    lines = []
-    if topic.created_by:
-        lines.append(f"Requested-by: {topic.created_by}")
-    lines.append(f"Reviewed-by: {decided_by}")
-    lines.append(f"Cheese-Topic: {topic.id}")
-    return "\n".join(lines)
-
-
-def _pr_body(topic: Topic, decided_by: str) -> str:
-    return (
-        f"由芝士代表 {decided_by} 通过 CheeseX 平台两阶段采纳流程开出。\n\n"
-        f"{_pr_trailers(topic, decided_by)}"
-    )
-
-
-# The squash commit's title line. GitHub only auto-appends "(#N)" to the
-# DEFAULT title (the one derived from the repo's `squash_merge_commit_title`
-# setting); an explicit `commit_title` replaces that default wholesale, so the
-# PR number has to be appended here or the repo's "… (#213)" history style
-# breaks.
-def _pr_merge_commit_title(topic: Topic, number: int) -> str:
-    title = topic.title if len(topic.title) <= 60 else f"{topic.title[:59]}…"
-    return f"采纳 {title} (#{number})"
-
-
-def _pr_merge_commit_message(topic: Topic, decided_by: str) -> str:
-    """The squash commit's BODY. Just the trailers — the "采纳 …" line lives in
-    `_pr_merge_commit_title` now, and repeating it here would put it in the
-    commit twice."""
-    return _pr_trailers(topic, decided_by)
 
 
 #: How much of the failure detail rides in the nudge message. The detail is
@@ -509,8 +475,18 @@ class AcceptService:
         topic_id: uuid.UUID,
         reviewer_handle: str,
         routing_reason: str = "",
+        change_subject: str | None = None,
+        change_body: str | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
+        # Before anything else touches the DB: a malformed subject is the
+        # filer's to fix in the same breath, and it is the one thing here that
+        # ends up in permanent history.
+        if change_subject:
+            try:
+                change_subject = commit_message.check_subject(change_subject)
+            except commit_message.InvalidSubject as exc:
+                raise ValidationError(str(exc)) from exc
         # 采纳是一次性交付 (spec §6.3): a frozen topic can't be re-submitted.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
@@ -545,6 +521,8 @@ class AcceptService:
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
             status=AcceptStatus.pending,
+            change_subject=change_subject,
+            change_body=(change_body or None),
         )
         await self._warn_about_a_second_pending_migration(topic)
         return card
@@ -1096,7 +1074,7 @@ class AcceptService:
         from app.domain.workspace import service as ws
 
         try:
-            ws.snapshot_worktree(project_id, topic_id, "两阶段采纳 CI 轮询前快照")
+            ws.snapshot_worktree(project_id, topic_id, ws.SNAPSHOT_BEFORE_CI_POLL)
         except ValidationError:
             pass  # no workspace/jj state yet — nothing pending to fold
         repo_path = ws.ensure_repo(project_id)
@@ -1264,6 +1242,20 @@ class AcceptService:
         await self._session.flush()
         return True
 
+    async def _change_author(self, topic: Topic) -> identity.GitIdentity | None:
+        """Whose GitHub account this change should be credited to — the person
+        who opened the topic. None when they never linked one; attribution is a
+        nice-to-have and must never take a merge down with it."""
+        try:
+            return await identity.resolve_for_handle(
+                self._session, topic.created_by or ""
+            )
+        except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
+            logger.warning(
+                "could not resolve change author for topic %s", topic.id, exc_info=True
+            )
+            return None
+
     async def _resolve_pr_prerequisites(
         self, topic: Topic, decided_by: str
     ) -> tuple[tuple[str, str, str] | None, str]:
@@ -1329,8 +1321,10 @@ class AcceptService:
             repo=repo,
             head=remote_branch,
             base=base,
-            title=f"[cheesex] {topic.title}"[:250],
-            body=_pr_body(topic, decided_by),
+            title=pr_text.change_subject(card, topic),
+            body=pr_text.pr_body(
+                topic, decided_by, card, await self._change_author(topic)
+            ),
             token=token,
         )
 
@@ -1730,8 +1724,10 @@ class AcceptService:
             repo=repo,
             number=card.pr_number,
             token=creds.write,
-            commit_title=_pr_merge_commit_title(topic, number),
-            commit_message=_pr_merge_commit_message(topic, card.decided_by or ""),
+            commit_title=pr_text.merge_commit_title(card, topic, number),
+            commit_message=pr_text.merge_commit_message(
+                topic, card.decided_by or "", card, await self._change_author(topic)
+            ),
         )
         if result.sha is None:
             # GitHub refused (405/409). NOT necessarily transient — a
@@ -2574,11 +2570,17 @@ class AcceptService:
                 logger.exception("pre-merge check-runs read failed for PR #%s", number)
                 checks = None
             checks_line = _checks_summary(checks)
+            # Same builders as every other merge path: this is the squash
+            # commit that lands on the default branch, and it used to say
+            # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
+            # body — the branch it came from and who clicked, but nothing at
+            # all about what changed.
             await client.merge_pr(
                 number,
-                title=f"采纳 {branch} → {view.get('base', {}).get('ref', 'main')} "
-                f"(#{number})",
-                message=f"验收人：{decided_by}\n\n{card.routing_reason}".strip(),
+                title=pr_text.merge_commit_title(card, topic, number),
+                message=pr_text.merge_commit_message(
+                    topic, decided_by, card, await self._change_author(topic)
+                ),
             )
         except GitHubPRMergeBlocked as blocked:
             # 405 covers a whole family of "cannot merge right now" reasons
@@ -2818,8 +2820,10 @@ class AcceptService:
             repo=repo,
             number=number,
             token=creds.write,
-            commit_title=_pr_merge_commit_title(topic, number),
-            commit_message=_pr_merge_commit_message(topic, card.decided_by or ""),
+            commit_title=pr_text.merge_commit_title(card, topic, number),
+            commit_message=pr_text.merge_commit_message(
+                topic, card.decided_by or "", card, await self._change_author(topic)
+            ),
         )
         if result.sha is None:
             raise ValidationError(

@@ -17,6 +17,7 @@ import shutil
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
@@ -54,7 +55,13 @@ from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_ski
 from app.domain.agent.stages import resolve_stage, stage_scenario
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
-from app.domain.block.models import AuthorType, Block, BlockKind, consumed_turn
+from app.domain.block.models import (
+    CONSUMED_TURN_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+    consumed_turn,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.idempotency import store as idem
@@ -74,6 +81,7 @@ from app.domain.topic.repositories import TopicProgressRepository, TopicReposito
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.credits import usage_to_credits
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
+from app.domain.workspace import identity as ws_identity
 from app.domain.workspace import service as ws
 
 ACTIVITY_SKILLS = ["conversation-style", "activity-digestion", "doc-form"]
@@ -773,20 +781,25 @@ def _pending_human_blocks(history: list[Block]) -> list[Block]:
     切掉就再也捡不回来了（那个下标只会往前走）。这里改成挑「没被任何一轮盖过
     consumed 戳」的块，戳由跑完的轮次自己盖上（BlockRepository.mark_consumed）。
 
+    New inputs carry an explicit ``consumed_turn: null`` marker while pending.
+    That presence matters: a newer mid-turn input can be receipted before an
+    older queued attachment, so no consumed block may act as a positional
+    watermark over another tracked input. Legacy blocks have no marker and keep
+    the old "after the latest AI message" fallback.
+
     `history` 已按 created_at 升序。
     """
-    watermark = -1  # 最后一个已被消费的人类块的位置
+    legacy_watermark = -1
     for i, b in enumerate(history):
-        if _is_human_input(b) and consumed_turn(b) is not None:
-            watermark = i
-    if watermark < 0:
-        # 兼容老数据：戳是这次改动才有的，改动之前的块一个都没有。一个戳都没有
-        # 的话题退回旧语义（最后一条 AI 消息之前的算已读），否则上线后每个老话题
-        # 的第一轮都会把整段历史重放一遍。盖过一次戳之后就永远走上面那条线。
-        for i, b in enumerate(history):
-            if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
-                watermark = i
-    return [b for b in history[watermark + 1 :] if _is_human_input(b)]
+        if b.author_type == AuthorType.ai and b.kind == BlockKind.message:
+            legacy_watermark = i
+    return [
+        b
+        for i, b in enumerate(history)
+        if _is_human_input(b)
+        and consumed_turn(b) is None
+        and (CONSUMED_TURN_META_KEY in (b.meta or {}) or i > legacy_watermark)
+    ]
 
 
 # 重放可见 (#416). The first notice fires on the third attempt: one retry is
@@ -899,12 +912,10 @@ class ChatService:
         # Per-topic serial queue (spec §9.1): one agent turn per topic at a
         # time, so concurrent messages to the same topic don't race.
         self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
-        # Human blocks handed to a turn that was ALREADY RUNNING when they were
-        # posted (see `converse`). The running turn computed its `pending_ids`
-        # before these existed, so it stamps them from here instead — and only
-        # when it finishes, exactly like its own ids: a turn that dies leaves the
-        # message pending so the next one replays it (重复看得见，丢失看不见).
-        self._merged_into: dict[uuid.UUID, list[uuid.UUID]] = {}
+        # The turn currently holding each topic lock. Mid-turn delivery captures
+        # this id before writing to the lower layer, then stamps the message as
+        # consumed only after that layer returns an exact acceptance receipt.
+        self._active_turn_ids: dict[uuid.UUID, uuid.UUID] = {}
         # Strong refs to in-flight post-turn memory-extraction tasks (asyncio
         # only keeps weak refs; without this a pending commit could be GC'd).
         self._memory_tasks: set[asyncio.Task] = set()
@@ -929,6 +940,18 @@ class ChatService:
             lock = asyncio.Lock()
             self._topic_locks[topic_id] = lock
         return lock
+
+    @asynccontextmanager
+    async def _turn_lock(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> AsyncIterator[None]:
+        async with self._lock_for(topic_id):
+            self._active_turn_ids[topic_id] = turn_id
+            try:
+                yield
+            finally:
+                if self._active_turn_ids.get(topic_id) == turn_id:
+                    self._active_turn_ids.pop(topic_id, None)
 
     async def converse(
         self,
@@ -980,7 +1003,7 @@ class ChatService:
             yield {"type": "event_block", "block": payload}
             user_block_id = None
         else:
-            user_payloads, user_block_id = await self._post_user_message(
+            user_payloads, user_block_id = await self.post_user_message(
                 topic_id,
                 author=author,
                 content=content,
@@ -1000,7 +1023,7 @@ class ChatService:
             # on the summoning message the moment its turn is underway — a
             # deterministic ack. Only a real human summon gets it: a resume /
             # nudge / kickoff turn has no user block and skips this branch.
-            ack = await self._ack_summon(user_block_id, topic_id)
+            ack = await self.ack_summon(user_block_id, topic_id)
             if ack is not None:
                 yield {"type": "reaction", **ack}
 
@@ -1018,7 +1041,7 @@ class ChatService:
         # which is the pre-existing behaviour, not a new failure mode.
         lock = self._lock_for(topic_id)
         if lock.locked() and user_block_id is not None:
-            delivered = await self._merge_into_running_turn(
+            delivered = await self.merge_into_running_turn(
                 topic_id, user_block_id, content, author
             )
             if delivered:
@@ -1028,7 +1051,7 @@ class ChatService:
                 yield {"type": "done"}
                 return
 
-        async with lock:
+        async with self._turn_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=content,
@@ -1040,7 +1063,37 @@ class ChatService:
             ):
                 yield frame
 
-    async def _merge_into_running_turn(
+    async def converse_prepared(
+        self,
+        *,
+        topic_id: uuid.UUID,
+        author: str,
+        content: str,
+        turn_id: uuid.UUID,
+        user_block_id: uuid.UUID,
+        continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
+    ) -> AsyncIterator[dict]:
+        """Run the AI half of a human message that is already durable.
+
+        ``TurnRunner.submit_message`` owns the receive-before-admission ordering;
+        this method starts only after the project gate admits the model work.
+        """
+        ack = await self.ack_summon(user_block_id, topic_id)
+        if ack is not None:
+            yield {"type": "reaction", **ack}
+        async with self._turn_lock(topic_id, turn_id):
+            async for frame in self._converse_impl(
+                topic_id=topic_id,
+                content=content,
+                turn_id=turn_id,
+                user_block_id=user_block_id,
+                continuation_id=continuation_id,
+                provision_actor=provision_actor,
+            ):
+                yield frame
+
+    async def merge_into_running_turn(
         self,
         topic_id: uuid.UUID,
         user_block_id: uuid.UUID,
@@ -1058,15 +1111,27 @@ class ChatService:
         a text message): an image needs the path wording `_prompt_line` builds
         per backend, and getting that wrong makes an agent describe a picture it
         never opened."""
+        consuming_turn_id = self._active_turn_ids.get(topic_id)
+        if consuming_turn_id is None:
+            return False
         line = f"[{author}]: {_strip_platform_notice(content)}"
         try:
             delivered = await self._compute.deliver(topic_id, line)
+            if not delivered:
+                return False
+            # The receipt is the boundary: before it, the message stays pending;
+            # after it, persist the consumed marker immediately. Waiting for the
+            # whole turn to finish creates a race where Stop can win and the next
+            # turn replays a message Claude Code already accepted.
+            async with self._sessions() as session:
+                await BlockRepository(session).mark_consumed(
+                    [user_block_id], consuming_turn_id
+                )
+                await session.commit()
         except Exception:  # noqa: BLE001 — falling back to a queued turn is safe
             logger.exception("merge into running turn failed (topic=%s)", topic_id)
             return False
-        if delivered:
-            self._merged_into.setdefault(topic_id, []).append(user_block_id)
-        return delivered
+        return True
 
     async def kickoff(
         self,
@@ -1081,7 +1146,7 @@ class ChatService:
         posted — the instruction is prompt-only, so the visible result is only
         what the agent itself says/does (语义内容由 AI 生成 — CLAUDE.md)."""
         turn_id = turn_id or uuid.uuid4()
-        async with self._lock_for(topic_id):
+        async with self._turn_lock(topic_id, turn_id):
             async for frame in self._converse_impl(
                 topic_id=topic_id,
                 content=prompt or KICKOFF_PROMPT,
@@ -1233,10 +1298,6 @@ class ChatService:
             async for frame in self._reconcile_spool(topic.project_id, topic_id, None):
                 await broker.publish(channel, frame)
                 landed += 1
-        if landed:
-            # The backfilled frames were buffered as an in-progress turn; close
-            # the buffer so a reconnecting client isn't told one is mid-stream.
-            await broker.publish(channel, {"type": "done"})
         return landed
 
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
@@ -1283,7 +1344,7 @@ class ChatService:
         except Exception:  # noqa: BLE001 — never mask the original failure
             logger.exception("failed to save session pointer for %s", topic_id)
 
-    async def _post_user_message(
+    async def post_user_message(
         self,
         topic_id: uuid.UUID,
         *,
@@ -1368,7 +1429,7 @@ class ChatService:
             await session.commit()
         return payloads, anchor_id
 
-    async def _ack_summon(
+    async def ack_summon(
         self, user_block_id: uuid.UUID, topic_id: uuid.UUID
     ) -> dict | None:
         """Add 芝士's ✅ receipt to the summoning user message (idempotent) and
@@ -2036,19 +2097,9 @@ class ChatService:
         provision_actor: Actor | None = None,
     ) -> AsyncIterator[dict]:
         """Run the AGENT part of a turn (the human block was already posted by
-        _post_user_message), yielding WS frames as JSON-ready dicts. Runs under
+        post_user_message), yielding WS frames as JSON-ready dicts. Runs under
         the per-topic lock; the prompt is built from history at lock time so a
         queued turn picks up every message posted while it waited."""
-        # 正在思考 for EVERYONE: with discrete messages there are no deltas to
-        # make a running turn visible, so the working indicator is announced
-        # explicitly to every open client (not just the submitter / late
-        # re-connectors, who get it from the WS-connect in_flight check).
-        yield {"type": "turn_active"}
-        # Anything still parked here belongs to a PREVIOUS turn that died before
-        # stamping it. Drop it: those blocks are unstamped, so they are in this
-        # turn's own `pending` and get stamped with this turn's id below. Keeping
-        # them would credit this turn with messages it never saw.
-        self._merged_into.pop(topic_id, None)
         # --- tx1: load topic + history, load memory ---
         async with self._sessions() as session:
             topics = TopicRepository(session)
@@ -2123,6 +2174,14 @@ class ChatService:
                     exclude_id=topic.id,
                 )
             project_id = topic.project_id
+            # Who this topic's commits are authored by. Refreshed every turn
+            # rather than once at creation: people connect GitHub after their
+            # first topic, and topics that predate this have no record at all.
+            # Best-effort by construction — see workspace/identity.py.
+            if not is_private:
+                await ws_identity.sync_for_topic(
+                    session, topic.project_id, topic.id, topic.created_by
+                )
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
@@ -2786,12 +2845,9 @@ class ChatService:
             # 超时 / provider 报错的路径都在上面 return 或 raise 掉了，戳没盖上，消息
             # 就留在 pending 里由续跑轮重发。宁可重复，不可丢失 —— 重复看得见，丢失
             # 看不见，而后者正是这次要修的 bug。
-            # Plus every message injected into this turn WHILE it ran (converse's
-            # merge path). Those blocks were posted after `pending_ids` was
-            # computed, so without this they would look unread and the next turn
-            # would say them all over again.
-            merged_ids = self._merged_into.pop(topic_id, [])
-            await blocks.mark_consumed([*pending_ids, *merged_ids], turn_id)
+            # Mid-turn messages are stamped on their exact lower-layer receipt;
+            # this end-of-turn path owns only the batch built into this prompt.
+            await blocks.mark_consumed(pending_ids, turn_id)
             await session.commit()
 
         # A hooks backend can reach here with assistant_count == 0 not because

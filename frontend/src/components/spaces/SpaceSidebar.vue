@@ -2,7 +2,11 @@
   <SecondaryNavigation>
     <v-menu v-if="isCurrentUserAtLeastAdmin" offset="8">
       <template #activator="{ isActive, props }">
-        <div class="page-header page-header-menu" v-bind="props" :class="{ 'page-header-menu-active': isActive }">
+        <div
+          class="sidebar-header sidebar-header-menu"
+          v-bind="props"
+          :class="{ 'sidebar-header-menu-active': isActive }"
+        >
           <v-avatar size="24" :image="getAvatarUrl(space?.avatarId)" />
           <span class="text-subtitle-1">{{ space?.name }}</span>
           <v-spacer></v-spacer>
@@ -17,7 +21,7 @@
         </v-list-item>
       </v-list>
     </v-menu>
-    <div v-else class="page-header">
+    <div v-else class="sidebar-header">
       <v-avatar size="24" :image="getAvatarUrl(space?.avatarId)" />
       <span class="text-subtitle-1">{{ space?.name }}</span>
     </div>

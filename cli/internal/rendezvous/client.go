@@ -147,13 +147,9 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 	if wait <= 0 {
 		wait = 90 * time.Second
 	}
-	if err := waitForSocket(ctx, path, wait); err != nil {
-		return nil, err
-	}
-
-	conn, err := net.DialTimeout("unix", path, 5*time.Second)
+	conn, err := dialWhenReady(ctx, path, wait)
 	if err != nil {
-		return nil, fmt.Errorf("rendezvous: dial %s: %w", path, err)
+		return nil, err
 	}
 
 	c := &Client{
@@ -187,22 +183,50 @@ func Dial(ctx context.Context, path, token string, opts Options) (*Client, error
 	return c, nil
 }
 
-// waitForSocket polls until the path is a socket. Polling (not fsnotify) keeps
-// this dependency-free and is bounded by the caller's window; the file appears
-// once, so the cost is a handful of stats.
-func waitForSocket(ctx context.Context, path string, within time.Duration) error {
+// dialWhenReady polls through both startup states: first the socket path does
+// not exist, then bind may make it visible just before listen starts accepting.
+// Returning at the first state transition races that tiny bind/listen window and
+// turns a healthy late-starting session into a connection-refused failure.
+func dialWhenReady(ctx context.Context, path string, within time.Duration) (net.Conn, error) {
 	deadline := time.Now().Add(within)
+	poll := time.NewTicker(100 * time.Millisecond)
+	defer poll.Stop()
+	seenSocket := false
+	var lastDialErr error
 	for {
 		if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeSocket != 0 {
-			return nil
+			seenSocket = true
+			remaining := time.Until(deadline)
+			if remaining > 0 {
+				conn, dialErr := net.DialTimeout("unix", path, min(5*time.Second, remaining))
+				if dialErr == nil {
+					return conn, nil
+				}
+				lastDialErr = dialErr
+			}
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("rendezvous: socket %s did not appear within %s", path, within)
+			if !seenSocket {
+				return nil, fmt.Errorf(
+					"rendezvous: socket %s did not appear within %s", path, within,
+				)
+			}
+			if lastDialErr == nil {
+				return nil, fmt.Errorf(
+					"rendezvous: socket %s was not ready within %s", path, within,
+				)
+			}
+			return nil, fmt.Errorf(
+				"rendezvous: socket %s did not accept connections within %s: %w",
+				path,
+				within,
+				lastDialErr,
+			)
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+			return nil, ctx.Err()
+		case <-poll.C:
 		}
 	}
 }
@@ -231,6 +255,11 @@ func waitForSocket(ctx context.Context, path string, within time.Duration) error
 // rather than quietly deleted — a wrong measurement that survives as a code
 // comment keeps misdirecting people long after the test that produced it is
 // gone.
+//
+// Turn openers are serialized. Mid-turn supplements may target a busy session,
+// but they count as consumed only after the exact UserPromptSubmit hook; without
+// it they remain pending and fall back to a queued turn. That is an at-least-once
+// contract, not a stronger promise from this socket.
 func (c *Client) Reply(text string) error {
 	if text == "" {
 		return errors.New("rendezvous: empty prompt")

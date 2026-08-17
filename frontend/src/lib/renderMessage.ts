@@ -24,9 +24,11 @@ function tokenChip(kind: string, id: string, maps: RefMaps): string {
     return `<span class="mention" data-handle="${id}">@${escapeHtml(name)}</span>`
   }
   if (kind === '&') {
-    // 文件引用: <&backend/app/main.py> → 📄 main.py chip, click opens the file.
+    // 文件引用: <&backend/app/main.py> → 一枚文件图标 + main.py 的 chip，点开文件。
+    // 图标走 @mdi/font 的字体类（全局 CSS）而不是 emoji：emoji 在各系统上是彩色
+    // 位图，字号、基线、颜色都不跟着正文走，混在一行字里很脏。
     const base = id.split('/').pop() || id
-    return `<span class="mention file-ref" data-file="${escapeHtml(id)}" title="${escapeHtml(id)}">📄${escapeHtml(base)}</span>`
+    return `<span class="mention file-ref" data-file="${escapeHtml(id)}" title="${escapeHtml(id)}"><i class="mdi mdi-file-document-outline file-ref__icon" aria-hidden="true"></i>${escapeHtml(base)}</span>`
   }
   const title = maps.topicTitles[id] || '话题'
   return `<span class="mention topic-ref" data-topic="${id}">#${escapeHtml(title)}</span>`

@@ -59,6 +59,8 @@ async def create_accept_card(
         topic_id=topic_id,
         reviewer_handle=body.reviewer_handle,
         routing_reason=body.routing_reason,
+        change_subject=body.change_subject,
+        change_body=body.change_body,
     )
     # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is the
     # platform's view of a PR, so filing it opens that PR right away with the

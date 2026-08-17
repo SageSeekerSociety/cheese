@@ -29,13 +29,13 @@ export function deliveryStageOf(card: Pick<AcceptCard, 'stages'>): DeliveryStage
   if (active?.key === 'checks') {
     return {
       title: '等检查通过',
-      hint: '检查全绿后平台会自动合并，合并即完成；红了平台会叫芝士回这个话题修，改完自动重跑。',
+      hint: '检查全部通过后平台会自动合并，合并即完成；未通过时平台会叫芝士回本话题修复，改完自动重跑',
       steps,
     }
   }
   return {
     title: '等合并',
-    hint: '本项目没有外部检查，合并即完成。',
+    hint: '本项目没有外部检查，合并即完成',
     steps,
   }
 }

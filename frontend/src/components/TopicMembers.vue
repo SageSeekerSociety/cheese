@@ -209,8 +209,8 @@ async function onSetRole(handle: string, role: string) {
           density="compact"
           variant="outlined"
           hide-details
-          placeholder="加成员…"
-          no-data-text="项目成员都在话题里了"
+          placeholder="添加成员…"
+          no-data-text="项目成员都已在话题中"
           class="roster__select"
         />
         <v-btn
@@ -224,7 +224,7 @@ async function onSetRole(handle: string, role: string) {
           加入
         </v-btn>
       </div>
-      <div v-else class="roster__hint">只有 owner / admin 能改成员</div>
+      <div v-else class="roster__hint">只有拥有者和管理员能修改成员</div>
     </div>
   </v-menu>
 </template>

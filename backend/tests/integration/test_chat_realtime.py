@@ -584,11 +584,19 @@ async def test_summon_during_a_running_turn_is_injected_not_queued(client, tmp_p
     # Injected, not queued: still exactly one turn.
     assert provider.turns == 1
 
+    # The exact lower-layer receipt is the consumed boundary. The marker lands
+    # immediately, not in the original turn's eventual completion path.
+    async with factory() as session:
+        history = await BlockRepository(session).list_for_topic(topic_id)
+    merged = [b for b in history if b.content == "等一下，先别跑"]
+    assert len(merged) == 1
+    assert consumed_turn(merged[0]) is not None
+
     provider.release.set()
     await asyncio.wait_for(turn, 5)
 
-    # The injected message counts as read by the turn that took it, so the next
-    # turn does not say it all over again.
+    # Finishing the original turn preserves that marker; the next turn will not
+    # say the injected message all over again.
     async with factory() as session:
         history = await BlockRepository(session).list_for_topic(topic_id)
     merged = [b for b in history if b.content == "等一下，先别跑"]

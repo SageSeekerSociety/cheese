@@ -26,7 +26,14 @@ pytestmark = pytest.mark.anyio
 def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
     s = hooks_settings()
     assert s["skipDangerousModePermissionPrompt"] is True
-    names = ("SessionStart", "PreToolUse", "PostToolUse", "MessageDisplay", "Stop")
+    names = (
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "MessageDisplay",
+        "Stop",
+    )
     for event in names:
         entry = s["hooks"][event][0]
         assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
@@ -407,7 +414,7 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
     injected: list[str] = []
-    delivered_midturn: list[bool] = []
+    started = asyncio.Event()
 
     class _FakeProvider(HooksTurnProvider[str]):
         name = "fake"
@@ -417,18 +424,11 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
 
         async def _send_prompt(self, screen, prompt):
             injected.append(prompt)
-            if len(injected) > 1:
-                return  # the merged message — let the turn keep running
-            # Mid-turn: a second message arrives and must land on this screen.
-            delivered_midturn.append(await self.deliver(topic_id, "[人]: 等一下"))
+            if prompt == "第一条":
+                started.set()
+                return
             router.push(
-                topic_key,
-                {
-                    "hook_event_name": "Stop",
-                    "last_assistant_message": "好",
-                    "session_id": "s1",
-                    "_eid": "stop-1",
-                },
+                topic_key, {"hook_event_name": "UserPromptSubmit", "prompt": prompt}
             )
 
     provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
@@ -436,18 +436,32 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
     # Before any turn: nothing to inject into, so the caller must run its own.
     assert await provider.deliver(topic_id, "早") is False
 
-    events = [
-        e
-        async for e in provider.run_turn(
-            project_id=_uuid.uuid4(),
-            topic_id=topic_id,
-            prompt="第一条",
-            system_prompt="",
-            resume_session_id=None,
-        )
-    ]
+    async def run() -> list:
+        return [
+            event
+            async for event in provider.run_turn(
+                project_id=_uuid.uuid4(),
+                topic_id=topic_id,
+                prompt="第一条",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+
+    turn = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), 1)
+    assert await provider.deliver(topic_id, "[人]: 等一下") is True
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "好",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    events = await asyncio.wait_for(turn, 1)
     assert isinstance(events[-1], AgentResult)
-    assert delivered_midturn == [True]
     assert injected == ["第一条", "[人]: 等一下"]
 
     # The turn is over: the screen is unpublished again, so a later message
@@ -456,15 +470,13 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
 
 
 async def test_deliver_reports_false_when_the_screen_refuses():
-    """A screen that can't take the text must not be reported as delivered —
-    the caller falls back to a queued turn, and a message is never silently
-    dropped on the floor."""
+    """A screen that can't take the text must not be reported as delivered."""
     import uuid as _uuid
 
     router = HookRouter()
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
-    outcome: list[bool] = []
+    started = asyncio.Event()
 
     class _FakeProvider(HooksTurnProvider[str]):
         name = "fake"
@@ -474,29 +486,91 @@ async def test_deliver_reports_false_when_the_screen_refuses():
 
         async def _send_prompt(self, screen, prompt):
             if prompt == "第一条":
-                outcome.append(await self.deliver(topic_id, "插一句"))
-                router.push(
-                    topic_key,
-                    {
-                        "hook_event_name": "Stop",
-                        "last_assistant_message": "好",
-                        "session_id": "s1",
-                        "_eid": "stop-1",
-                    },
-                )
+                started.set()
                 return
             raise ScreenSetupError("窗格已经死掉")
 
     provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
-    events = [
-        e
-        async for e in provider.run_turn(
-            project_id=_uuid.uuid4(),
-            topic_id=topic_id,
-            prompt="第一条",
-            system_prompt="",
-            resume_session_id=None,
-        )
-    ]
+
+    async def run() -> list:
+        return [
+            event
+            async for event in provider.run_turn(
+                project_id=_uuid.uuid4(),
+                topic_id=topic_id,
+                prompt="第一条",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+
+    turn = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), 1)
+    assert await provider.deliver(topic_id, "插一句") is False
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "好",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    events = await asyncio.wait_for(turn, 1)
     assert isinstance(events[-1], AgentResult)
-    assert outcome == [False]
+
+
+async def test_deliver_requires_the_matching_prompt_receipt(monkeypatch):
+    """Activity from the live turn cannot acknowledge a different message."""
+    import uuid as _uuid
+
+    from app.domain.agent import hooks_substrate as substrate
+
+    monkeypatch.setattr(substrate, "DELIVERY_TIMEOUT_S", 0.05)
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+    started = asyncio.Event()
+
+    class _FakeProvider(HooksTurnProvider[str]):
+        name = "fake"
+
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            if prompt == "第一条":
+                started.set()
+                return
+            router.push(
+                topic_key,
+                {"hook_event_name": "UserPromptSubmit", "prompt": "别的消息"},
+            )
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+
+    async def run() -> list:
+        return [
+            event
+            async for event in provider.run_turn(
+                project_id=_uuid.uuid4(),
+                topic_id=topic_id,
+                prompt="第一条",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+
+    turn = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), 1)
+    assert await provider.deliver(topic_id, "目标消息") is False
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "好",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    await asyncio.wait_for(turn, 1)

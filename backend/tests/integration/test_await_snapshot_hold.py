@@ -81,6 +81,21 @@ def _commit_messages(project: uuid.UUID, topic: uuid.UUID) -> list[str]:
     return done.stdout.splitlines()
 
 
+def _head_commit(project: uuid.UUID, topic: uuid.UUID) -> str:
+    """Subject AND body. 提交与 PR 规范 (2026-08-16) moved everything that is not
+    a Conventional Commits subject into the body, so a test that reads only `%s`
+    can no longer see what the snapshot admitted about itself."""
+    repo = ws.ensure_repo(project)
+    done = subprocess.run(
+        ["git", "log", "-1", "--format=%B", ws.branch_for_topic(topic)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return done.stdout
+
+
 def _worktree_with_committed_fix(project: uuid.UUID, topic: uuid.UUID):
     """A topic whose finished work (the fix) is already on the branch — the state
     the incident started from."""
@@ -158,9 +173,13 @@ def test_a_snapshot_that_cannot_be_held_says_so_in_its_commit(workspace, runner)
     _register(project, topic, label="全量检查")
 
     (wt / "app.py").write_text("def load(path):\n")
-    ws.snapshot_worktree(project, topic, "采纳前快照")
+    ws.snapshot_worktree(project, topic, ws.SNAPSHOT_BEFORE_ACCEPT)
 
-    assert "全量检查" in _commit_messages(project, topic)[0]
+    # In the BODY, not the subject: the subject is a Conventional Commits line
+    # and a warning glued onto it would read as part of the change.
+    subject, _, body = _head_commit(project, topic).partition("\n")
+    assert subject.strip() == ws.SNAPSHOT_BEFORE_ACCEPT
+    assert "全量检查" in body
 
 
 def test_the_finished_command_gets_the_final_state_onto_the_branch(
@@ -201,4 +220,4 @@ def test_the_finished_command_gets_the_final_state_onto_the_branch(
     assert _on_branch(project, topic, "verify_fix.out"), (
         "the run's own output never reached the branch"
     )
-    assert "验证修复有效" in _commit_messages(project, topic)[0]
+    assert "验证修复有效" in _head_commit(project, topic)

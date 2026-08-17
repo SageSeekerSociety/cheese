@@ -18,7 +18,7 @@ const emit = defineEmits<{ (e: 'open', topicId: string): void }>()
 
 // 归档 = 那件事在子话题里完事了。同一行改口而不是换一种标记：读的人关心的是「这段
 // 归谁」，而不是子话题的生命周期。
-const note = computed(() => (props.marker.status === 'archived' ? '这件事在那边做完了' : '这件事在那边做，不在这里'))
+const note = computed(() => (props.marker.status === 'archived' ? '这部分已在那个话题完成' : '这部分改在那个话题进行'))
 
 function open() {
   emit('open', props.marker.topicId)

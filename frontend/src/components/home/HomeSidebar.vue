@@ -1,6 +1,6 @@
 <template>
   <SecondaryNavigation>
-    <div class="page-header">
+    <div class="sidebar-header">
       <span class="text-subtitle-1">首页</span>
       <v-spacer></v-spacer>
     </div>

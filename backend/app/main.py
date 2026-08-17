@@ -383,6 +383,7 @@ register_all_permissions()
 # Each pattern captures the scoping id as group "topic" or "project".
 _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/webhook-token$")),
+    ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/ask$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/decision$")),
     ("POST", re.compile(r"^/api/topics/(?P<topic>[^/]+)/background-task$")),
     (
@@ -401,6 +402,7 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
         ),
     ),
     ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory$")),
+    ("POST", re.compile(r"^/api/projects/(?P<project>[^/]+)/memory/search$")),
     # Notification creation is NOT here: humans post there too (Bearer), which
     # this gate cannot see. The route enforces its own credential check via
     # ActorResolver.require_verified_caller — same tokens accepted, plus Bearer.

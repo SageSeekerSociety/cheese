@@ -1,5 +1,31 @@
 """B4: inline comments anchored to a doc node."""
 
+import pytest
+
+from app.api.deps import get_turn_runner
+from app.core.sandbox_auth import mint_scoped_token
+from app.domain.identity.handles import topic_agent_handle
+from app.main import app
+
+
+class _RecordingRunner:
+    def __init__(self) -> None:
+        self.submitted: list[dict] = []
+
+    def submit(self, chat_service, topic_id, **kw):
+        self.submitted.append({"topic_id": topic_id, **kw})
+
+    def running_topic_ids(self):
+        return set()
+
+
+@pytest.fixture
+def runner():
+    fake = _RecordingRunner()
+    app.dependency_overrides[get_turn_runner] = lambda: fake
+    yield fake
+    app.dependency_overrides.pop(get_turn_runner, None)
+
 
 def _topic(client) -> str:
     p = client.post("/api/projects", json={"name": "P"}).json()["data"]
@@ -76,3 +102,21 @@ def test_comment_rejects_foreign_anchor(client):
         f"/api/topics/{tid}/comments", json={"anchor": foreign, "content": "x"}
     )
     assert r.status_code == 422
+
+
+def test_agent_comment_is_attributed_but_does_not_wake_itself(client, runner):
+    tid = _topic(client)
+    topic = client.get(f"/api/topics/{tid}").json()["data"]
+    token = mint_scoped_token(project_id=topic["project_id"], topic_id=tid)
+
+    r = client.post(
+        f"/api/topics/{tid}/comments",
+        json={"content": "I already handled this."},
+        headers={"X-Cheese-Token": token},
+    )
+
+    assert r.status_code == 200
+    comment = r.json()["data"]
+    assert comment["author"] == topic_agent_handle(tid)
+    assert comment["author_type"] == "ai"
+    assert runner.submitted == []

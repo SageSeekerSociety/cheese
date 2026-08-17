@@ -7,8 +7,8 @@ paths:
 
 Full spec: [`docs/design-system.md`](../../docs/design-system.md). Read it before
 any non-trivial styling work. This file is only the part you will otherwise get
-wrong on turn one, because the tree still contains ~251 counterexamples to copy
-from.
+wrong on turn one: the backlog is down from 524 to 92 gated violations, but 92
+counterexamples are still 92 things to copy from by accident.
 
 ## The product has a dark theme. Every colour you write must survive it.
 
@@ -29,8 +29,9 @@ from.
   every page that used it. Table of replacements: `docs/design-system.md` §1.2.
   - Exception, and write the reason in the code when you take it: where the
     BACKGROUND is itself theme-invariant, the ink on it must be too. The default
-    avatar's `hsl(hue, 55%, 55%)` is the same in both themes, so its `#fff` text
-    is correct and "fixing" it to a token breaks it.
+    avatar's background is the `#rrggbb` `avatarColor()` computes at a fixed
+    OKLCH lightness (L = 0.54 / C = 0.12) — the same value in both themes, so
+    its `#fff` text is correct and "fixing" it to a token breaks it.
 - The neutral ramp is `--ink` (titles) > `--text` (body) > `--muted` (secondary)
   > `--faint` (meta), on `--surface` (cards) over `--canvas` (app bg), separated
   by `--line`. Pick by how important the information is, not by how it looks.
@@ -70,6 +71,32 @@ avoid a white flash before first paint. Change the storage key
   10–11px and they are not a precedent to follow.
 - Spacing: 8px grid (4/8/12/16/24/32). Prefer Vuetify's `pa-*`/`ma-*` utilities.
 
+## The Chinese copy is part of the design system, and nothing lints it
+
+Full rules: [`docs/design-system.md` §8](../../docs/design-system.md#8-文案). Colours
+and radii have stylelint; copy has nothing — a bad string ships silently. So the
+one thing to internalise before you type user-facing Chinese:
+
+- **正式、清晰、自然、简明.** Both failure directions are wrong: `平台检查没跑成`
+  (too colloquial) and `平台检查未能顺利完成执行` (公文腔) — write
+  `平台检查未能执行`. Second person is always 「你」, never 「您」.
+- **No implementation words on screen.** 跑沙箱 / 干活 → 运行任务; system prompt /
+  注入 → 角色设定; 算力节点 / 连接器 → 设备; 小队 → 团队; 一页纸总结 → 概要;
+  知是基座 → 默认镜像. Test: *would someone opening this product for the first
+  time understand the word?* If not, it is jargon. §8.2 carries the running list
+  — add to it when you find a new one.
+- **Empty states are always 「暂无 X」**, no trailing period. Short strings
+  (labels, buttons, empty states, single-sentence hints) take no 句号 at all.
+- **Parentheses never explain internal mechanics.** `理由（会留在卡上）` → `理由`.
+  A parenthesis may hold a short qualifier (`名称（英文）`), not a sentence.
+- **Keyboard/drag hints do not live on screen** — move them into `title`, or
+  delete them. A placeholder counts as on-screen.
+- **A control says its thing once.** When a button is right there, the adjacent
+  text states the STATE (`暂无关联账号`), not the action again.
+- **Deleting a UI element is riskier than rewording it.** If you are not certain
+  an element is pure meta, keep it and raise it — see the §8.7 counter-example
+  where the "废话" was also the only signal of an unavailable state.
+
 ## The two ratchets
 
 `frontend/stylelint-baseline.json` freezes the pre-existing violations and the
@@ -85,7 +112,8 @@ pnpm run lint:style:update   # after fixing some, ratchet the baseline DOWN
 Palette NAMES are a **separate** gate, because stylelint parses CSS and can
 therefore never see a `<template>` attribute or a `<script>` prop default. It
 lives in `.claude/scripts/check-repo-rules.sh` with its own frozen baseline
-(`frontend/palette-baseline.json`, 111 hits in 40 files) and runs in `task
+(`frontend/palette-baseline.json`, 10 hits in 6 files as of 2026-08-16, down
+from 111 in 40) and runs in `task
 check`, in the accept-card quality gate, and in CI's Repo Guards:
 
 ```bash
@@ -105,8 +133,16 @@ Do not raise a baseline to make a gate green. Baselines only go down.
 
 ## Sandbox reality
 
-`pnpm run build` and full `vue-tsc` both OOM in a 2 GB agent sandbox (build also
-leaves a ~10 GB core dump under `frontend/`). Do not retune
-`--max-old-space-size`; state that they were not run locally and let CI cover
-them. `pnpm exec vitest run --dir src`, `pnpm run lint` and `pnpm run lint:style`
-all work in the sandbox and are what you should actually run.
+`pnpm exec vitest run --dir src`, `pnpm run lint` and `pnpm run lint:style` run
+anywhere and are the baseline set.
+
+`pnpm run build` and `pnpm run typecheck` depend on how much memory the box
+actually has, so **try them once before declaring them unrunnable**:
+
+- On a 2 GB agent sandbox both OOM (build also leaves a ~10 GB core dump under
+  `frontend/` — delete it). Do not retune `--max-old-space-size`: V8 just climbs
+  until the cgroup SIGKILLs it. State that they were not run locally, and say so
+  explicitly rather than implying the check passed.
+- On the larger boxes (2026-08 dogfood machines are 16 core / 62 GB) both run
+  fine in a couple of minutes. Verified there on 2026-08-16. Run them, and say in
+  your report that you really ran them.
