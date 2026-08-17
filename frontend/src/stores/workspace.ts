@@ -1,4 +1,3 @@
-import type { TopicSortField, TopicSortOrder } from '@/api'
 import type { Project, ProjectMemberRow, Topic } from '@/cx_types'
 
 import { computed, ref } from 'vue'
@@ -53,10 +52,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const members = ref<ProjectMemberRow[]>([])
   const loadingTopics = ref(false)
 
-  // 话题列表排序: defaults to most-recently-active first — the sidebar row's
-  // right anchor is relTime(last_activity_at), so this is the ordering it implies.
-  const topicSort = ref<TopicSortField>('last_activity_at')
-  const topicOrder = ref<TopicSortOrder>('desc')
+  // 话题列表排序: most-recently-active first, and no longer configurable — the
+  // sidebar row's right anchor is relTime(last_activity_at), so this is the
+  // ordering it already promises. The 排序 menu that used to change it offered
+  // 标题 A→Z, which only ever reordered siblings inside the tree; it was removed
+  // rather than kept as a control nobody could get value out of.
+  const TOPIC_SORT = { sort: 'last_activity_at', order: 'desc' } as const
 
   // 话题级未读 (Feishu-style badges), and 私聊未读 keyed by peer handle
   // ('cheese' = the 芝士 DM) — DM rows come from the roster and carry no topic id.
@@ -116,7 +117,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const pid = projectId.value
     if (!pid) return
     try {
-      const payload = await listTopics(pid, { sort: topicSort.value, order: topicOrder.value })
+      const payload = await listTopics(pid, TOPIC_SORT)
       if (projectId.value === pid) topics.value = payload.data
     } catch {
       // Best-effort background refresh; ignore.
@@ -144,7 +145,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     void refreshMembers()
     if (projects.value.length === 0) void refreshProjects()
     try {
-      const payload = await listTopics(id, { sort: topicSort.value, order: topicOrder.value })
+      const payload = await listTopics(id, TOPIC_SORT)
       if (projectId.value !== id) return
       topics.value = payload.data
     } catch (e) {
@@ -153,12 +154,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       if (projectId.value === id) loadingTopics.value = false
     }
     void refreshUnread()
-  }
-
-  async function setSort(payload: { sort: TopicSortField; order: TopicSortOrder }) {
-    topicSort.value = payload.sort
-    topicOrder.value = payload.order
-    await refreshTopics()
   }
 
   async function refreshUnread() {
@@ -309,8 +304,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     topics,
     members,
     loadingTopics,
-    topicSort,
-    topicOrder,
     unreadMap,
     privateUnreadMap,
     activeTopicId,
@@ -329,7 +322,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     refreshUnread,
     refreshTopicRow,
     openProject,
-    setSort,
     markRead,
     markDmRead,
     renameTopic,

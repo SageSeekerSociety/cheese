@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import type { TopicSortField, TopicSortOrder } from '@/api'
-
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -55,10 +53,6 @@ async function onArchiveTopic(topicId: string) {
     void router.replace({ name: 'workspace-project', params: { projectId: props.projectId } })
   }
 }
-
-function onSort(payload: { sort: TopicSortField; order: TopicSortOrder }) {
-  void store.setSort(payload)
-}
 </script>
 
 <template>
@@ -76,10 +70,7 @@ function onSort(payload: { sort: TopicSortField; order: TopicSortOrder }) {
     :active-docs="activeDocs"
     :unread-map="store.unreadMap"
     :private-unread-map="store.privateUnreadMap"
-    :topic-sort="store.topicSort"
-    :topic-order="store.topicOrder"
     @update:width="store.setRailWidth"
-    @update:topic-sort="onSort"
     @select-topic="openTopic"
     @select-private="openDm('cheese')"
     @select-peer-dm="openDm"

@@ -1535,11 +1535,11 @@ onBeforeUnmount(() => {
   color: var(--muted);
   margin: 2px 0 0;
 }
+/* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
 .todo-list {
   list-style: none;
   margin: 2px 0 6px;
   padding: 6px 10px;
-  border-left: 2px solid var(--accent);
   background: rgba(var(--v-theme-primary), 0.05);
   border-radius: var(--radius-sm);
 }
