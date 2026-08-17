@@ -8,7 +8,7 @@ with realistic but predictable data for both Kotlin and Python backends.
 import random
 import string
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 
@@ -63,7 +63,9 @@ class TestTeam:
         if not self.name:
             self.name = f"TestTeam_{random_string()}"
         if not self.intro:
-            self.intro = f"This is a test team created at {datetime.now().isoformat()}"
+            self.intro = (
+                f"This is a test team created at {datetime.now(UTC).isoformat()}"
+            )
 
     def to_create_payload(self) -> dict[str, Any]:
         """Convert to team creation request payload."""
@@ -98,7 +100,7 @@ class TestTask:
         if not self.description:
             self.description = "Detailed description of the test task"
         if not self.deadline:
-            self.deadline = datetime.now() + timedelta(days=7)
+            self.deadline = datetime.now(UTC) + timedelta(days=7)
 
     def to_create_payload(self) -> dict[str, Any]:
         """Convert to task creation request payload."""
@@ -214,7 +216,7 @@ class TestDataFactory:
             name=name or f"TestTask_{random_string()}",
             space_id=space_id,
             category_id=category_id,
-            deadline=datetime.now() + timedelta(days=deadline_days),
+            deadline=datetime.now(UTC) + timedelta(days=deadline_days),
         )
         self._created_tasks.append(task)
         return task

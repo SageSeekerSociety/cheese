@@ -17,7 +17,7 @@ stream + git refs back.
 import json
 import subprocess
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -487,6 +487,17 @@ class ComputePool:
                 provider.bind_event_consumer(consumer)
                 if activity_consumer is not None:
                     provider.bind_activity_consumer(activity_consumer)
+
+    def bind_prompt_receipt_consumer(
+        self, consumer: Callable[[uuid.UUID, str], Awaitable[None]]
+    ) -> None:
+        """Give hooks providers the owner of UserPromptSubmit receipts — the
+        consumed-stamp side of #539 decision A."""
+        from app.domain.agent.hooks_substrate import HooksSessionProvider
+
+        for provider in self._providers.values():
+            if isinstance(provider, HooksSessionProvider):
+                provider.bind_receipt_consumer(consumer)
 
     async def recover_hook_subscriptions(
         self, device_id: str | None = None

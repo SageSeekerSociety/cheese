@@ -514,63 +514,6 @@ async def test_deliver_reports_false_when_the_screen_refuses():
     await provider.drop_subscription(topic_id)
 
 
-async def test_deliver_requires_the_matching_prompt_receipt(monkeypatch):
-    """Activity from the live turn cannot acknowledge a different message."""
-    import uuid as _uuid
-
-    from app.domain.agent import hooks_substrate as substrate
-
-    monkeypatch.setattr(substrate, "DELIVERY_TIMEOUT_S", 0.05)
-    router = HookRouter()
-    topic_id = _uuid.uuid4()
-    topic_key = str(topic_id)
-    started = asyncio.Event()
-
-    class _FakeProvider(HooksSessionProvider[str]):
-        name = "fake"
-
-        async def _ensure_ready(self, **kwargs):
-            return "screen"
-
-        async def _send_prompt(self, screen, prompt):
-            if prompt == "第一条":
-                started.set()
-                return
-            router.push(
-                topic_key,
-                {"hook_event_name": "UserPromptSubmit", "prompt": "别的消息"},
-            )
-
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
-
-    async def run() -> list:
-        return [
-            event
-            async for event in provider.run_turn(
-                project_id=_uuid.uuid4(),
-                topic_id=topic_id,
-                prompt="第一条",
-                system_prompt="",
-                resume_session_id=None,
-            )
-        ]
-
-    turn = asyncio.create_task(run())
-    await asyncio.wait_for(started.wait(), 1)
-    assert await provider.deliver(topic_id, "目标消息") is False
-    router.push(
-        topic_key,
-        {
-            "hook_event_name": "Stop",
-            "last_assistant_message": "好",
-            "session_id": "s1",
-            "_eid": "stop-1",
-        },
-    )
-    await asyncio.wait_for(turn, 1)
-    await provider.drop_subscription(topic_id)
-
-
 async def test_subscription_outlives_run_and_drops_only_with_screen():
     """Stop closes attribution, not the stable screen subscription."""
     import uuid as _uuid
@@ -815,4 +758,215 @@ async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
     results = [(e, seen) for e, _eid, seen in consumed if isinstance(e, AgentResult)]
     assert len(results) == 1
     assert results[0][1] is True  # Stop's text matches the assembled message
+    await provider.drop_subscription(topic_id)
+
+
+# --- delivery verdicts must leave a server-side trace -------------------------
+#
+# 2026-08-17: a wave of false 「这条消息没能送到芝士那边」 banners was debugged
+# with ZERO server-side evidence — every verdict below went straight into a room
+# banner without a log line, so the only forensic record was a user's screenshot
+# (issue #539). Each verdict now says what it decided and for which topic.
+
+
+async def test_undelivered_verdict_logs_a_warning_with_context(caplog):
+    queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
+    with caplog.at_level("WARNING"):
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            timeout_message="轮次超时",
+            delivery_timeout_s=0.05,
+            context="topic=t-undelivered",
+        )
+    assert isinstance(events[0], AgentResult) and events[0].is_error
+    assert any(
+        "t-undelivered" in r.getMessage() and "undelivered" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_hard_ceiling_verdict_logs_a_warning_with_context(caplog):
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "SessionStart", "session_id": "s1"})
+    with caplog.at_level("WARNING"):
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=0.15,
+            timeout_message="轮次超时",
+            context="topic=t-ceiling",
+        )
+    assert isinstance(events[-1], AgentResult) and events[-1].is_error
+    assert any(
+        "t-ceiling" in r.getMessage() and "ceiling" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_deliver_without_live_screen_logs_why(caplog):
+    import uuid as _uuid
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            return None
+
+    provider = _FakeProvider(router=HookRouter())
+    topic_id = _uuid.uuid4()
+    with caplog.at_level("INFO"):
+        assert await provider.deliver(topic_id, "hi") is False
+    assert any(
+        str(topic_id) in r.getMessage() and "no live screen" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+# --- receipt semantics: write-accept IS delivery (#539 decision A) -----------
+#
+# The transport already promises "a write either reaches the process or
+# returns an error" (#487). UserPromptSubmit fires when the session CONSUMES
+# the message — often minutes later on a busy session — so gating deliver()
+# on a 25s receipt wait manufactured false 「没能送到」 banners for messages
+# that were sitting safely in claude's own input queue. The receipt's real
+# jobs are the consumed stamp and the record, both via the receipt consumer.
+
+
+async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
+    monkeypatch,
+):
+    import time as _time
+    import uuid as _uuid
+
+    from app.domain.agent import hooks_substrate as hs
+
+    monkeypatch.setattr(hs, "DELIVERY_TIMEOUT_S", 0.3)
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    started = asyncio.Event()
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        name = "fake"
+
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            # Write accepted; the session is busy — NO UserPromptSubmit comes
+            # back for a long while. That must not read as "undelivered".
+            if prompt == "第一条":
+                started.set()
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+
+    async def run() -> list:
+        return [
+            event
+            async for event in provider.run_turn(
+                project_id=_uuid.uuid4(),
+                topic_id=topic_id,
+                prompt="第一条",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+
+    turn = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), 1)
+    t0 = _time.monotonic()
+    assert await provider.deliver(topic_id, "[人]: 等一下") is True
+    assert _time.monotonic() - t0 < 0.25  # returned on write-accept, no wait
+    router.push(
+        str(topic_id),
+        {"hook_event_name": "Stop", "last_assistant_message": "好", "_eid": "s1"},
+    )
+    await asyncio.wait_for(turn, 1)
+    await provider.drop_subscription(topic_id)
+
+
+async def test_user_prompt_submit_is_reported_to_the_receipt_consumer():
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    received: list[tuple[object, str]] = []
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            return None
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+
+    async def on_receipt(tid, prompt):
+        received.append((tid, prompt))
+
+    provider.bind_receipt_consumer(on_receipt)
+    await provider.ensure_subscription(project_id, topic_id)
+    router.push(
+        str(topic_id),
+        {"hook_event_name": "UserPromptSubmit", "prompt": "[人]: 等一下"},
+    )
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if received:
+            break
+    assert received == [(topic_id, "[人]: 等一下")]
+    await provider.drop_subscription(topic_id)
+
+
+async def test_prompt_redelivery_logs_each_attempt(caplog):
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+    sends: list[str] = []
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            sends.append(prompt)
+            if len(sends) == 1:
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "CheeseDeliveryFailed",
+                        "phase": "paste",
+                        "ticks": 3,
+                    },
+                )
+            else:
+                router.push(
+                    topic_key,
+                    {"hook_event_name": "Stop", "last_assistant_message": "好"},
+                )
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    with caplog.at_level("WARNING"):
+        events = [
+            e
+            async for e in provider.run_turn(
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt="go",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+    assert len(sends) == 2  # original + one redelivery
+    assert isinstance(events[-1], AgentResult)
+    assert any(
+        str(topic_id) in r.getMessage() and "redeliver" in r.getMessage()
+        for r in caplog.records
+    )
     await provider.drop_subscription(topic_id)

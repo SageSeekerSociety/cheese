@@ -527,18 +527,6 @@ wangchangxin 盘出来的数是「27 个活着的话题只有 4 张卡在流转�
 
 一句话：**同样的目的，算出来而不是报上来。** 地基（`branch_for_topic`、`merge_topic` 单一入口、同项目共仓、`summon` 通路）全部已存在。
 
-## 顺带发现（与 Buzz 无关）——已拍板并执行
-
-`docs/` 下曾有 7 个受版本控制的商业材料文件：`bp.md` / `bp-v2.md` / `bp-brief.md` / `bp.docx` / `bp-v2.docx` / `bp.pdf` / `gen-bp.js`，与 <&CLAUDE.md> 「`docs/` 严格只放工程文档」的约定直接冲突。
-
-已按该约定移出版本控制，暂存本机 `tmp/bp/` 待上传飞书 wiki。git 历史里仍有，需要旧版内容从那里取。
-
-### 我们自己也有一份 Buzz 式的 skill 漂移隐患
-
-已核实：`.agents/skills/` 下 5 个 `lark-*` 目录与 `.claude/skills/` 下的**逐字节相同**（`diff -rq` 全部无差异），**零同步脚本、零 CI 校验**——和我们批评 Buzz 的那条一模一样。
-
-**为什么没直接删**：删哪一份取决于我们到底在用哪套 agent 工具链，这是人的决定不是技术判断。需要拍板后单开一路。
-
 ---
 
 *参照仓库已 clone 至各子话题工作区的 `tmp/buzz`（gitignored）。*
