@@ -637,15 +637,18 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
                 "is_resume": False,
                 "author": "u",
                 "content": "修一下登录页",
+                "resendable": True,
             },
-            # a resume must never chain another automatic turn, even across
-            # restarts
+            # an auto-resume nudge must never chain another automatic turn, even
+            # across restarts: "从上一轮的断点继续" means nothing to a session
+            # that never heard the task
             "t2": {
                 "topic_id": str(uuid.uuid4()),
                 "started_at": _time.time() - 60,
                 "is_resume": True,
                 "author": "system",
                 "content": "续跑",
+                "resendable": False,
             },
             # stale (>2h) entries are dropped, not resurrected
             "t3": {
@@ -654,6 +657,7 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
                 "is_resume": False,
                 "author": "u",
                 "content": "旧任务",
+                "resendable": True,
             },
         }
     )
@@ -691,10 +695,11 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     # The undelivered human turn is re-sent with its ORIGINAL text — never a
     # "接着干" nudge a claude that heard nothing could act on.
     assert scheduled == [(topic, "修一下登录页")]
-    # 宁可吵，不可静默: all three get an event — the re-sent one AND the two we
-    # refuse to touch. A dropped turn that says nothing is what made a dead
-    # topic look exactly like a working one.
-    assert len(chat.events) == 3
+    # Two, not three. The re-sent turn says nothing: the platform is handling it
+    # and there is no anomaly for the room to explain. The other two are genuinely
+    # stranded — nothing will re-send them and nothing else in the room shows it —
+    # so each asks a human to step in.
+    assert len(chat.events) == 2
     dropped = [text for tid, text in chat.notices if tid != topic]
     assert len(dropped) == 2
     assert all("@ 芝士" in text for text in dropped)
@@ -725,6 +730,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
                 "is_resume": False,
                 "author": "u",
                 "content": "查一下日志",
+                "resendable": True,
             },
             "live": {
                 "topic_id": str(live_topic),
@@ -732,6 +738,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
                 "is_resume": False,
                 "author": "u",
                 "content": "别动我",
+                "resendable": True,
             },
         }
     )
@@ -809,6 +816,7 @@ async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
                 "is_resume": False,
                 "author": "u",
                 "content": "老任务",
+                "resendable": True,
             }
         }
     )
@@ -1250,3 +1258,212 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
     assert runner.topic_work(topic)["status"] != "running"
     # A reconnecting client must not be told the dead turn is still streaming.
     assert broker.in_flight(str(topic)) is False
+
+
+@pytest.mark.anyio
+async def test_a_deploy_the_platform_handles_itself_says_nothing(tmp_path, monkeypatch):
+    """Nothing happened that a person can see, so nothing is said.
+
+    #316 added this event because a deploy left the room looking dead: the
+    backend half died, nothing reattached, and the session's output only
+    surfaced later out of the spool. Retiring the turn (#508) removed that —
+    the subscription lives with the screen and reattaches on restart, so the
+    room just keeps showing 芝士 working. What is left here is a message the
+    platform re-sends down that same session, which is indistinguishable from
+    the person asking again.
+    """
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "undelivered": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 60,
+                "is_resume": False,
+                "author": "u",
+                "content": "把测试跑一遍",
+                "resendable": True,
+            }
+        }
+    )
+
+    runner = AgentWorkRunner(InProcessBroker())
+    scheduled: list[uuid.UUID] = []
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resend",
+        lambda _chat, tid, after, content, **_kw: scheduled.append(tid),
+    )
+    metas: list[dict] = []
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+            metas.append(meta or {})
+            return {"id": "b1", "content": text}
+
+        async def orphan_turn_evidence(self, topic_id, turn_ids):
+            return {"delivered": set(), "spool": False}
+
+    assert await runner.sweep_orphans(_Chat()) == 1
+    assert scheduled == [topic], "the re-send must still happen"
+    assert metas == [], "nothing broke that a person can see"
+
+
+@pytest.mark.anyio
+async def test_a_legacy_entry_is_judged_by_the_rule_it_was_written_under(
+    tmp_path, monkeypatch
+):
+    """The deploy that ships `resendable` reads entries written without it.
+
+    Treating a missing field as "not re-sendable" would strand exactly the
+    in-flight human prompts the field exists to protect — on the one deploy
+    where the registry is guaranteed to hold some."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    human_topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            # No `resendable` key anywhere below: this is the old record shape.
+            "human": {
+                "topic_id": str(human_topic),
+                "started_at": _time.time() - 60,
+                "is_resume": False,
+                "author": "u",
+                "content": "把测试跑一遍",
+            },
+            "auto_resume": {
+                "topic_id": str(uuid.uuid4()),
+                "started_at": _time.time() - 60,
+                "is_resume": True,
+                "author": "system",
+                "content": "续跑",
+            },
+        }
+    )
+
+    runner = AgentWorkRunner(InProcessBroker())
+    scheduled: list[uuid.UUID] = []
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resend",
+        lambda _chat, tid, after, content, **_kw: scheduled.append(tid),
+    )
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+            return {"id": "b1", "content": text}
+
+        async def orphan_turn_evidence(self, topic_id, turn_ids):
+            return {"delivered": set(), "spool": False}
+
+    assert await runner.sweep_orphans(_Chat()) == 1
+    assert scheduled == [human_topic]
+
+
+@pytest.mark.anyio
+async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
+    tmp_path, monkeypatch
+):
+    """A turn the PLATFORM started — 验收卡被驳回, CI 红了, 上游合并冲突, a 分身's
+    kickoff — is re-sent exactly like a person's message.
+
+    The sweep used to skip these on the grounds that "no human message is in it
+    to lose". Nothing is lost only in the sense that nobody typed it: the work
+    itself still evaporates, the room shows nothing, and the topic sits until
+    someone happens to notice. Whose turn it was never made it any less gone."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    nudge = "PR #123 的检查没通过：…请在这个话题的工作区里修复问题并提交。"
+    rt._save_inflight(
+        {
+            "ci_red": {
+                "topic_id": str(topic),
+                "started_at": _time.time() - 60,
+                "is_resume": False,
+                "author": "system",
+                "content": nudge,
+                "resendable": True,
+            }
+        }
+    )
+
+    runner = AgentWorkRunner(InProcessBroker())
+    scheduled: list[tuple[uuid.UUID, str]] = []
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resend",
+        lambda _chat, tid, after, content, **_kw: scheduled.append((tid, content)),
+    )
+    metas: list[dict] = []
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+            metas.append(meta or {})
+            return {"id": "b1", "content": text}
+
+        async def orphan_turn_evidence(self, topic_id, turn_ids):
+            return {"delivered": set(), "spool": False}
+
+    assert await runner.sweep_orphans(_Chat()) == 1
+    assert scheduled == [(topic, nudge)]
+    # And it says nothing, for the same reason a re-sent human message does: the
+    # platform is handling it, so there is no anomaly to narrate.
+    assert metas == []
+
+
+@pytest.mark.anyio
+async def test_a_deploy_that_loses_a_message_for_good_still_warns(
+    tmp_path, monkeypatch
+):
+    """The one case that survives: the message never reached 芝士 and the
+    platform will not re-send it. Nothing else in the room shows that — the
+    person would wait for an answer that is never coming."""
+    import time as _time
+
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic = uuid.uuid4()
+    rt._save_inflight(
+        {
+            "stale": {
+                "topic_id": str(topic),
+                # Older than ORPHAN_STALE_S: too old to re-send on its own.
+                "started_at": _time.time() - AgentWorkRunner.ORPHAN_STALE_S - 600,
+                "is_resume": False,
+                "author": "u",
+                "content": "把测试跑一遍",
+                "resendable": True,
+            }
+        }
+    )
+
+    runner = AgentWorkRunner(InProcessBroker())
+    monkeypatch.setattr(
+        runner, "_schedule_resend", lambda *a, **k: pytest.fail("must not re-send")
+    )
+    metas: list[dict] = []
+
+    class _Chat:
+        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
+            metas.append(meta or {})
+            return {"id": "b1", "content": text}
+
+        async def orphan_turn_evidence(self, topic_id, turn_ids):
+            return {"delivered": set(), "spool": False}
+
+    assert await runner.sweep_orphans(_Chat()) == 0
+    assert len(metas) == 1
+    assert metas[0].get("severity") == "warn"
+    assert metas[0].get("who") == "human"
