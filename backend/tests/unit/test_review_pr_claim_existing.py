@@ -82,6 +82,11 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._resolve_pr_prerequisites = AsyncMock(
         return_value=(("gho_token", "acme", "widgets"), "")
     )
+    # Who the change is credited to. Reads the topic's roster, so on an
+    # AsyncMock session it resolves to nothing anyway — stubbed rather than
+    # left to fail silently, which leaks an un-awaited coroutine into every
+    # test in this file. Attribution is not what these assert.
+    service._attribution = AsyncMock(return_value=(None, None))
     return service, card, topic
 
 
