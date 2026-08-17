@@ -1,18 +1,20 @@
 <script setup lang="ts">
-// 改动 tab.
+// 改动 tab: 这个话题干出来的东西，一个面看完。
 //
-// ⚠️ 本轮它只是一个**容器**：把原来的 Git 抽屉（提交 + 裸 diff）和原来的 文件
-// 抽屉（一棵不知道哪些文件被改过的树）原样搬进来，用一个分段开关并排放着，
-// 行为一个字没改。
+// 它以前是两个半成品并排放着，中间一个分段开关：Git 那半是一坨没有语法着色、不能
+// 按文件跳的裸 diff，文件那半是一棵不知道哪些文件被改过的树。想验收的人得先在
+// 「改动」里读整块 diff 找出改了哪些文件，再切到「文件」里一个个翻出来看——两边
+// 都不是一个能验收的面。
 //
-// 真正的合并是下一张卡的活：一棵带变更标记的文件树 + 逐文件 diff（带语法着色、
-// 能按文件跳）。到那时这个分段开关连同下面两半各自的加载逻辑一起消失，
-// `segment` 这个 ref 就是它留下的接缝。别在这里加功能。
+// 合成之后只有一棵树：树上标着每个文件改了多少，点开看的是这个文件自己的 diff，
+// 要微调就切到编辑（保存冲突的两条出路原样保留）。分段开关没了。
 import type { GitCommit, WorkspaceFile } from '../../cx_types'
+import type { FileDiff } from '../../lib/diff'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import { ApiError, getGitDiff, getGitLog, listFiles, readFile, workspaceFileRawUrl, writeFile } from '../../api'
+import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
 import CodeEditor from '../CodeEditor.vue'
 
 const props = withDefaults(
@@ -29,10 +31,12 @@ const props = withDefaults(
   { active: false, refreshTick: 0 }
 )
 
-// 分段: 'git' = 本话题的提交与 diff, 'files' = 工作区文件浏览器。
-// 下一张卡会把两者合成一个视图，届时这个 ref 消失。
-type Segment = 'git' | 'files'
-const segment = ref<Segment>('git')
+// 树的范围: 默认只看这个话题改过的文件——验收要看的就是这些。展开成全部文件是
+// 为了「看一眼旁边那个文件原来长什么样」，那是次要动作。
+const showAll = ref(false)
+// 打开的文件看哪一面：它的 diff，还是可编辑的全文。
+type FileView = 'diff' | 'edit'
+const fileView = ref<FileView>('diff')
 
 const loading = ref(false)
 // A background re-fetch: spins only the 刷新 button, never replaces the panel.
@@ -74,8 +78,13 @@ async function loadGit(opts: { silent?: boolean } = {}) {
   }
 }
 
-// ---- 文件: a two-pane browser — the file list stays visible on the left, the
-// opened file loads into a code editor on the right (editable; save = 人改文件
+// 一份 diff，切成每个文件一段。树上的 +N −M、点开文件看的那一段，都读这里 ——
+// 不再多要一次请求，也不会出现「树说改了、diff 里没有」这种两边不一致。
+const fileDiffs = computed<FileDiff[]>(() => splitDiffByFile(gitDiff.value))
+const diffByPath = computed(() => new Map(fileDiffs.value.map((f) => [f.path, f])))
+
+// ---- 文件: a two-pane browser — the tree stays visible on the left, the opened
+// file loads on the right: its diff, or the editable text (save = 人改文件
 // 即指令). ----
 const files = ref<WorkspaceFile[]>([])
 const openPath = ref<string | null>(null)
@@ -99,14 +108,18 @@ const fileConflict = ref(false)
 
 // 文件树: the backend returns a flat list of full relative paths; build a nested
 // tree out of it (folders first, each level sorted by name), then flatten into
-// render rows — only expanded folders contribute their subtrees. Default is
-// fully COLLAPSED: open exactly what you need.
+// render rows — only expanded folders contribute their subtrees.
+//
+// 默认只装这个话题改过的文件，并且全展开：那是一份清单，收起来等于把要验收的东西
+// 藏起来。切到全部文件时它才变回一棵默认收起的树。
 interface FileRow {
   type: 'dir' | 'file'
   path: string // full relative path (dir or file)
   name: string // last segment, what we display
   depth: number
   bytes: number
+  /** Set when this topic's branch touches the file — the marker on the row. */
+  diff?: FileDiff
 }
 const expandedDirs = ref(new Set<string>())
 function toggleDir(path: string) {
@@ -134,13 +147,29 @@ function revealInTree(path: string) {
     fileListEl.value?.querySelector('.file-item--active')?.scrollIntoView({ block: 'nearest' })
   })
 }
+// 改动清单里可能有工作区已经没有的文件（这一支删掉了它）——那也是要验收的一条，
+// 不能因为树是按工作区建的就漏掉。
+const treeFiles = computed<WorkspaceFile[]>(() => {
+  if (!showAll.value) {
+    return fileDiffs.value.map((d) => ({
+      path: d.path,
+      bytes: files.value.find((f) => f.path === d.path)?.bytes ?? 0,
+    })) as WorkspaceFile[]
+  }
+  const known = new Set(files.value.map((f) => f.path))
+  const gone = fileDiffs.value
+    .filter((d) => !known.has(d.path))
+    .map((d) => ({ path: d.path, bytes: 0 }) as WorkspaceFile)
+  return [...files.value, ...gone]
+})
+
 const fileRows = computed<FileRow[]>(() => {
   interface DirNode {
     dirs: Map<string, DirNode>
     files: WorkspaceFile[]
   }
   const root: DirNode = { dirs: new Map(), files: [] }
-  for (const f of files.value) {
+  for (const f of treeFiles.value) {
     const parts = f.path.split('/')
     let node = root
     for (const part of parts.slice(0, -1)) {
@@ -158,7 +187,9 @@ const fileRows = computed<FileRow[]>(() => {
     for (const name of [...node.dirs.keys()].sort((a, b) => a.localeCompare(b))) {
       const path = prefix ? `${prefix}/${name}` : name
       rows.push({ type: 'dir', path, name, depth, bytes: 0 })
-      if (expandedDirs.value.has(path)) {
+      // A changed-files list is a checklist, so it is always open; the full tree
+      // stays collapsed by default (open exactly what you need).
+      if (!showAll.value || expandedDirs.value.has(path)) {
         walk(node.dirs.get(name)!, path, depth + 1)
       }
     }
@@ -170,12 +201,20 @@ const fileRows = computed<FileRow[]>(() => {
         name: f.path.split('/').pop() ?? f.path,
         depth,
         bytes: f.bytes,
+        diff: diffByPath.value.get(f.path),
       })
     }
   }
   walk(root, '', 0)
   return rows
 })
+
+/** The open file's own diff, or null when this topic did not touch it. */
+const openDiff = computed<FileDiff | null>(() => (openPath.value ? diffByPath.value.get(openPath.value) ?? null : null))
+const openDiffLines = computed(() => (openDiff.value ? parseDiffLines(openDiff.value.body) : []))
+// 差异 is the default face of a changed file — reviewing is what this tab is
+// for — but a file with no diff has only one face, so the toggle is not offered.
+const effectiveView = computed<FileView>(() => (openDiff.value ? fileView.value : 'edit'))
 
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif'])
 function isImagePath(path: string): boolean {
@@ -218,7 +257,7 @@ function resetFilePanel() {
 let pendingOpen: string | null = null
 
 // Two callers can ask for the listing in the same tick — `openFile` asks
-// directly, and flipping `segment` makes the activation watcher ask too. Letting
+// directly, and coming on screen makes the activation watcher ask too. Letting
 // both run raced: whichever finished second re-ran the "nothing is open, select
 // the first file" branch and stole the file the reader had actually clicked.
 let filesInFlight: Promise<void> | null = null
@@ -249,10 +288,13 @@ async function doLoadFiles() {
       await selectFile(want)
       return
     }
-    // Keep the open file if it still exists; otherwise open the first file.
-    if (!openPath.value || !files.value.some((f) => f.path === openPath.value)) {
+    // Keep the open file if it still exists; otherwise open the first one in
+    // scope — which is the first CHANGED file by default, i.e. the top of the
+    // review list rather than whatever sorts first in the repo.
+    if (!openPath.value || !treeFiles.value.some((f) => f.path === openPath.value)) {
       openPath.value = null
-      if (files.value.length) await selectFile(files.value[0].path)
+      const first = treeFiles.value[0]?.path
+      if (first) await selectFile(first)
     }
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
@@ -267,6 +309,9 @@ async function selectFile(path: string) {
   if (!pid) return
   errorMsg.value = null
   fileConflict.value = false
+  // Each file opens on its diff — that is what a review surface is for. Files
+  // this topic never touched have no diff and open on their text.
+  fileView.value = 'diff'
   const listed = files.value.find((f) => f.path === path)?.bytes ?? 0
   // Images render as images — Monaco would show mangled bytes.
   if (isImagePath(path)) {
@@ -347,28 +392,27 @@ function reloadOpenFile() {
   if (path) void selectFile(path)
 }
 
-// ---- Loading policy: a segment loads when it comes on screen, the same rule
-// the drawer used ("opening the tool loads it"). ----
-function loadSegment(opts: { silent?: boolean } = {}) {
-  if (segment.value === 'git' && !pendingOpen) void loadGit(opts)
-  else void loadFiles()
+// ---- Loading policy: the surface loads when it comes on screen, the same rule
+// the drawer used ("opening the tool loads it"). One surface now, so both halves
+// load together — the tree cannot mark what the diff has not told it yet. ----
+function loadAll(opts: { silent?: boolean } = {}) {
+  void loadGit(opts)
+  void loadFiles()
 }
 
 watch(
-  [() => props.active, segment],
-  ([on]) => {
-    if (on) loadSegment()
+  () => props.active,
+  (on) => {
+    if (on) loadAll()
   },
   { immediate: true }
 )
 
-// A turn ended: 芝士's commits and its working tree just changed. Only the Git
-// half was ever auto-refreshed (the file list was not), so that is what this
-// keeps doing.
+// A turn ended: 芝士's commits and its working tree just changed.
 watch(
   () => props.refreshTick,
   () => {
-    if (props.active && segment.value === 'git') void loadGit({ silent: true })
+    if (props.active) loadAll({ silent: true })
   }
 )
 
@@ -383,14 +427,17 @@ function stopAutoRefresh() {
   refreshTimer = null
 }
 watch(
-  [() => props.active, segment],
-  ([on, seg]) => {
+  () => props.active,
+  (on) => {
     stopAutoRefresh()
-    if (!on || seg !== 'git') return
+    if (!on) return
     refreshTimer = setInterval(() => {
       // A hidden tab polling forever is pure waste — it re-fetches on the next
       // tick after it comes back anyway.
       if (typeof document !== 'undefined' && document.hidden) return
+      // Commits and the diff only. The listing changes when a turn writes
+      // files, which the turn-boundary tick already covers — putting it on the
+      // timer would be a third request every 20 seconds buying nothing.
       void loadGit({ silent: true })
     }, REFRESH_MS)
   },
@@ -406,17 +453,43 @@ watch(
     gitDiff.value = ''
     errorMsg.value = null
     resetFilePanel()
-    segment.value = 'git'
-    if (props.active) loadSegment()
+    showAll.value = false
+    if (props.active) loadAll()
   }
 )
+
+// Widening (or narrowing) the scope with nothing open should land on the first
+// thing in the new scope — otherwise switching to 全部文件 on a topic with no
+// changes shows a tree and an empty right half.
+// Land on the first file in scope whenever the scope gains one and nothing is
+// open. It has to be the scope rather than the listing: the diff and the file
+// list are two requests fired together, and when the listing wins the race the
+// changed-files scope is still empty, so the panel would sit on an empty right
+// half until the reader clicked something.
+//
+// Never over a directed open: `openFile` widens the scope on its way to a
+// specific file, and selecting here would steal the one that was asked for —
+// the same race the in-flight guard on the listing exists for.
+watch(treeFiles, (rows) => {
+  if (openPath.value || pendingOpen || !rows.length) return
+  void selectFile(rows[0].path)
+})
 
 // A <&path> chip (chat or doc) opens that file here. WorkPanel switches to this
 // tab first, then calls in.
 async function openFile(path: string) {
   pendingOpen = path
-  segment.value = 'files'
+  // A file reached by a <&path> chip may be one this topic never touched, and
+  // then it is not in the default scope — widen so the tree can show it.
+  if (!diffByPath.value.has(path)) showAll.value = true
   await loadFiles()
+  // The listing may already have been in flight when this call arrived, past
+  // the point where it consumes a directed open — so claim it here rather than
+  // relying on which of the two got there first.
+  if (pendingOpen === path) {
+    pendingOpen = null
+    await selectFile(path)
+  }
 }
 
 defineExpose({ openFile })
@@ -425,30 +498,26 @@ defineExpose({ openFile })
 <template>
   <div class="panel-changes">
     <div class="changes-bar">
+      <!-- 树的范围。默认只列这个话题改过的文件 —— 验收要看的就是这些；全部文件
+           是为了顺手看一眼旁边那个没动过的文件。 -->
       <div class="seg">
-        <!-- 分段开关：下一张卡把两半合成一个视图时，它整个消失。 -->
-        <button type="button" class="seg__btn" :class="{ 'seg__btn--on': segment === 'git' }" @click="segment = 'git'">
+        <button type="button" class="seg__btn" :class="{ 'seg__btn--on': !showAll }" @click="showAll = false">
           改动
+          <span v-if="fileDiffs.length" class="seg__count">{{ fileDiffs.length }}</span>
         </button>
-        <button
-          type="button"
-          class="seg__btn"
-          :class="{ 'seg__btn--on': segment === 'files' }"
-          @click="segment = 'files'"
-        >
-          文件
+        <button type="button" class="seg__btn" :class="{ 'seg__btn--on': showAll }" @click="showAll = true">
+          全部文件
         </button>
       </div>
       <v-spacer />
       <v-btn
-        v-if="segment === 'git'"
         icon="mdi-refresh"
         size="small"
         variant="text"
         class="c-muted"
         title="刷新"
         :loading="refreshing"
-        @click="loadGit({ silent: true })"
+        @click="loadAll({ silent: true })"
       />
     </div>
 
@@ -459,38 +528,6 @@ defineExpose({ openFile })
       {{ errorMsg }}
     </v-alert>
 
-    <!-- Git: this topic's own commits + the diff its 采纳 would merge. Both are
-         topic-scoped; the project-level view is other topics' work and was what
-         made this panel lie. -->
-    <div v-else-if="segment === 'git'" class="changes-scroll">
-      <div class="pa-3">
-        <div class="t-eyebrow mb-2">本话题提交</div>
-        <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2 mb-3">
-          暂无提交，采纳后会并入主干
-        </div>
-        <v-list v-else density="compact" class="py-0 mb-3">
-          <v-list-item v-for="c in gitCommits" :key="c.hash" class="px-0">
-            <template #prepend>
-              <v-icon size="14" class="me-1 c-faint">mdi-source-commit</v-icon>
-            </template>
-            <v-list-item-title class="text-body-2">
-              {{ c.message }}
-            </v-list-item-title>
-            <v-list-item-subtitle class="text-caption">
-              {{ c.hash.slice(0, 7) }} · {{ c.author }}
-            </v-list-item-subtitle>
-          </v-list-item>
-        </v-list>
-
-        <v-divider class="mb-3" />
-        <div class="t-eyebrow mb-2">本话题改动（相对主干）</div>
-        <pre v-if="gitDiff.trim()" class="code-pre">{{ gitDiff }}</pre>
-        <div v-else class="text-medium-emphasis text-body-2">暂无改动</div>
-      </div>
-    </div>
-
-    <!-- 文件: two-pane — the list stays on the left, the opened file loads into a
-         code editor on the right (editable; 保存 = 人改文件即指令). -->
     <div v-else class="file-tool">
       <div class="file-bar">
         <v-btn
@@ -509,11 +546,30 @@ defineExpose({ openFile })
         </span>
         <span v-if="fileDirty" class="file-bar__dot" title="未保存" />
         <v-spacer />
+        <!-- 看 diff / 改文件是同一个文件的两面，只有改过的文件才有两面。 -->
+        <div v-if="openDiff" class="seg seg--sm">
+          <button
+            type="button"
+            class="seg__btn"
+            :class="{ 'seg__btn--on': effectiveView === 'diff' }"
+            @click="fileView = 'diff'"
+          >
+            差异
+          </button>
+          <button
+            type="button"
+            class="seg__btn"
+            :class="{ 'seg__btn--on': effectiveView === 'edit' }"
+            @click="fileView = 'edit'"
+          >
+            编辑
+          </button>
+        </div>
         <!-- Read-only files (binary / oversized / images) get no 保存 button at
              all: saving one is what corrupted them. -->
         <span v-if="fileReadOnly && openPath" class="file-bar__ro">只读</span>
         <v-btn
-          v-else
+          v-else-if="effectiveView === 'edit'"
           size="x-small"
           variant="flat"
           color="primary"
@@ -536,7 +592,9 @@ defineExpose({ openFile })
       </div>
       <div class="file-body">
         <div v-if="fileListOpen" ref="fileListEl" class="file-list">
-          <div v-if="files.length === 0" class="text-center c-faint py-6" style="font-size: 0.8rem">暂无文件</div>
+          <div v-if="fileRows.length === 0" class="text-center c-faint py-6" style="font-size: 0.8rem">
+            {{ showAll ? '暂无文件' : '暂无改动，采纳后会并入主干' }}
+          </div>
           <template v-for="row in fileRows" :key="`${row.type}:${row.path}`">
             <!-- folder row: click toggles expand/collapse -->
             <button
@@ -548,14 +606,14 @@ defineExpose({ openFile })
               @click="toggleDir(row.path)"
             >
               <v-icon size="13" class="c-muted">
-                {{ expandedDirs.has(row.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+                {{ !showAll || expandedDirs.has(row.path) ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
               </v-icon>
               <v-icon size="13" class="me-1 c-muted">
-                {{ expandedDirs.has(row.path) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}
+                {{ !showAll || expandedDirs.has(row.path) ? 'mdi-folder-open-outline' : 'mdi-folder-outline' }}
               </v-icon>
               <span class="file-item__name">{{ row.name }}</span>
             </button>
-            <!-- file row: shows only the file name, indented under its folder -->
+            <!-- file row: name, and how much this topic changed in it -->
             <button
               v-else
               type="button"
@@ -567,11 +625,25 @@ defineExpose({ openFile })
             >
               <v-icon size="13" class="me-1 c-muted">mdi-file-outline</v-icon>
               <span class="file-item__name">{{ row.name }}</span>
+              <!-- 变更标记: 新增 / 删除 说的是这个文件本身的去留，改过的给增删行数。 -->
+              <span v-if="row.diff?.status === 'added'" class="file-mark file-mark--add">新增</span>
+              <span v-else-if="row.diff?.status === 'removed'" class="file-mark file-mark--del">删除</span>
+              <template v-else-if="row.diff">
+                <span v-if="row.diff.added" class="file-mark file-mark--add">+{{ row.diff.added }}</span>
+                <span v-if="row.diff.removed" class="file-mark file-mark--del">−{{ row.diff.removed }}</span>
+              </template>
             </button>
           </template>
         </div>
         <div class="file-editor">
-          <div v-if="openPath && openIsImage" class="file-image-view">
+          <!-- 逐文件 diff: 一个文件一段，增删各自着色。整块裸 diff 读不动，也没法
+               定位到文件，所以验收动线以前根本立不起来。 -->
+          <div v-if="openPath && effectiveView === 'diff'" class="diff-view">
+            <div v-for="(l, i) in openDiffLines" :key="i" class="diff-line" :class="`diff-line--${l.kind}`">
+              {{ l.text }}
+            </div>
+          </div>
+          <div v-else-if="openPath && openIsImage" class="file-image-view">
             <img :src="openRawUrl" :alt="openPath" />
           </div>
           <!-- Binary / oversized: no editor. Opening one in Monaco meant every
@@ -601,8 +673,28 @@ defineExpose({ openFile })
             </v-btn>
           </div>
           <CodeEditor v-else-if="openPath" v-model="fileDraft" :filename="openPath" @save="saveFile" />
-          <div v-else class="d-flex align-center justify-center fill-height c-faint" style="font-size: 0.85rem">
-            选择左侧文件查看或编辑
+          <!-- 没打开文件时这一半装的是「这个话题干了什么」——提交本身是过程记录，
+               它配一个位置，但不配一个和文件并列的入口。 -->
+          <div v-else class="changes-scroll">
+            <div class="pa-3">
+              <div class="t-eyebrow mb-2">本话题提交</div>
+              <div v-if="gitCommits.length === 0" class="text-medium-emphasis text-body-2">
+                暂无提交，采纳后会并入主干
+              </div>
+              <v-list v-else density="compact" class="py-0">
+                <v-list-item v-for="c in gitCommits" :key="c.hash" class="px-0">
+                  <template #prepend>
+                    <v-icon size="14" class="me-1 c-faint">mdi-source-commit</v-icon>
+                  </template>
+                  <v-list-item-title class="text-body-2">
+                    {{ c.message }}
+                  </v-list-item-title>
+                  <v-list-item-subtitle class="text-caption">
+                    {{ c.hash.slice(0, 7) }} · {{ c.author }}
+                  </v-list-item-subtitle>
+                </v-list-item>
+              </v-list>
+            </div>
           </div>
         </div>
       </div>
@@ -654,24 +746,78 @@ defineExpose({ openFile })
   color: var(--ink);
   font-weight: 600;
 }
-/* Git 半边的滚动层 —— 这个 tab 只有一个滚动条。 */
+/* 范围切换上的计数：改动的文件有几个。 */
+.seg__count {
+  margin-left: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.seg__btn--on .seg__count {
+  color: var(--muted);
+}
+/* 没打开文件时右半边装的提交列表，也是这个 tab 唯一的另一个滚动层。 */
 .changes-scroll {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
 }
-.code-pre {
+
+/* 树上的变更标记。增删各自用 wash 底 + ink 字：mark 色（--ok / --danger）当文字
+   在浅色主题下读不到 4.5:1，而这两个数字是要被读的，不是被瞥见的。 */
+.file-mark {
+  flex: 0 0 auto;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.file-mark--add {
+  color: var(--ok-ink);
+  background: var(--ok-wash);
+}
+.file-mark--del {
+  color: var(--danger-ink);
+  background: var(--danger-wash);
+}
+
+/* 逐文件 diff。一行一个 div 而不是一整块 <pre>：每一行要自己带底色，而增删两色
+   正是「读得动」和「读不动」的全部差别。 */
+.diff-view {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+  background: var(--surface);
   font-family: var(--font-mono);
   font-size: 0.78rem;
-  line-height: 1.5;
-  background: var(--fill);
-  color: var(--text);
-  padding: 10px 12px;
-  border-radius: 8px;
-  overflow-x: auto;
+  line-height: 1.55;
+}
+.diff-line {
+  padding: 0 12px;
   white-space: pre;
-  margin: 0;
+  color: var(--text);
+}
+.diff-line--add {
+  background: var(--ok-wash);
+  color: var(--ok-ink);
+}
+.diff-line--del {
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+.diff-line--hunk {
+  margin-top: 4px;
+  background: var(--fill);
+  color: var(--muted);
+}
+.diff-line--meta {
+  color: var(--faint);
 }
 
 /* 文件: a two-pane browser — list + Monaco editor. Light, to match the app.

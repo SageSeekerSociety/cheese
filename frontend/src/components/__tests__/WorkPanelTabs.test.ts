@@ -159,7 +159,7 @@ describe('工作面板 · Tab 容器', () => {
     await openTab(container, '改动')
     expect(visible(container, '.panel-changes')).toBe(true)
     expect(getGitDiff).toHaveBeenCalled()
-    expect(container.textContent).toContain('本话题改动（相对主干）')
+    expect(container.querySelector('.file-list'), '改动 tab 没渲染出文件树').toBeTruthy()
 
     // 回到文档：编辑器还在（它从头到尾没被卸载过，切走一趟不会重建 tiptap）。
     await openTab(container, '文档')
