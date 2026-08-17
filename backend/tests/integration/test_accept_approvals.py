@@ -35,7 +35,11 @@ def _make_topic(client, project_id: str) -> str:
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]

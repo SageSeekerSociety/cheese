@@ -15,13 +15,17 @@ from app.domain.workspace import identity
 
 
 def fallback_subject(topic: Topic) -> str:
-    """The subject for a card filed without one — every card that predates
-    `change_subject`, and any client that still doesn't send it.
+    """The subject for a card that has none — now only the rows filed before
+    `change_subject` existed, whose column is NULL.
+
+    Since 2026-08-17 no NEW card can reach this: `AcceptService.create_card`
+    refuses a card without a subject. This stays for the history already in the
+    table, which is also why it must not be "cleaned up" — deleting it breaks
+    the PR title and merge subject of every pre-existing card.
 
     It is deliberately ugly. `chore: <话题标题>` is a truthful admission that
     nobody wrote a commit subject for this change, and it reads as clearly
-    wrong in `git log`, which is the point: the fix is to file the card with
-    `--subject`, not to make the fallback look presentable."""
+    wrong in `git log`, which is the point."""
     room = commit_message.MAX_SUBJECT - len("chore: ") - len(" (#0000)")
     title = topic.title or "untitled topic"
     trimmed = title if len(title) <= room else f"{title[: room - 1]}…"

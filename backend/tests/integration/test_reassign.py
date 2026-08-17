@@ -10,7 +10,10 @@ def _topic_and_card(client) -> str:
     ]
     card = client.post(
         f"/api/topics/{t['id']}/accept-card",
-        json={"reviewer_handle": "user-1"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "user-1",
+        },
     ).json()["data"]
     return card["id"]
 

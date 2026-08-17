@@ -32,7 +32,11 @@ def _make_topic(client, project_id: str) -> str:
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     card = r.json()["data"]
@@ -45,7 +49,10 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
 def test_create_card_404_for_missing_topic(client):
     r = client.post(
         f"/api/topics/{uuid.uuid4()}/accept-card",
-        json={"reviewer_handle": "alice"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+        },
     )
     assert r.status_code == 404
 
@@ -258,7 +265,11 @@ def test_only_one_pending_card_per_topic(client):
     _make_card(client, tid, "alice")
     r = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "bob", "routing_reason": "x"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "bob",
+            "routing_reason": "x",
+        },
     )
     assert r.status_code == 422
 
@@ -275,7 +286,11 @@ def test_no_new_card_on_archived_topic(client):
     )
     r = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "bob", "routing_reason": "x"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "bob",
+            "routing_reason": "x",
+        },
     )
     assert r.status_code == 422
 

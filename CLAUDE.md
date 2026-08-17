@@ -273,11 +273,12 @@ cheese accept-request lisi "最懂这块" \
 person whose work it is gets no attribution and cannot filter for it.'
 ```
 
-`--subject` is the PR title **and** the squash commit subject. Skip it and the
-platform falls back to `chore: <话题标题>` — a room name in `git log`, which is
-the thing this convention exists to stop. The backend rejects a malformed
-subject at the card (`domain/review/commit_message.py`), so you find out in the
-same breath, not next month.
+`--subject` is the PR title **and** the squash commit subject, and it is
+**required** — the backend refuses a card without one, and refuses a malformed
+one too (`domain/review/commit_message.py`), so you find out in the same breath,
+not next month. It used to be optional, with `chore: <话题标题>` filled in when
+it was missing; that is a room name in `git log`, which is the thing this
+convention exists to stop.
 
 ### Subject
 

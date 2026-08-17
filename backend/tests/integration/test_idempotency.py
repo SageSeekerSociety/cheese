@@ -280,14 +280,22 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
 
     first = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
         headers=session_auth_headers("cheese"),
     )
     assert first.status_code == 200, first.text
 
     second = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
         headers=session_auth_headers("cheese"),
     )
     assert second.status_code >= 400, "第二张验收卡没被拦住——它能开出第二个 PR"

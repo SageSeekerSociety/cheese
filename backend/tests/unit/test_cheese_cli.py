@@ -363,6 +363,53 @@ def test_await_report_retries_before_giving_up(monkeypatch, tmp_path):
 # from emptying out again.
 
 
+def test_accept_request_without_a_subject_never_reaches_the_backend(
+    monkeypatch, capsys
+):
+    """The subject is required, and the CLI must refuse BEFORE the POST — a card
+    that is already filed cannot be un-filed, so a warning printed afterwards
+    (which is what this used to do) taught nobody anything."""
+    cli = _load()
+    calls: list[tuple] = []
+    monkeypatch.setattr(cli, "_call", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "accept-request", "alice", "最懂"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code != 0
+    assert calls == []
+    assert "--subject" in capsys.readouterr().err
+
+
+def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
+    cli = _load()
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        cli, "_call", lambda m, p, d=None: sent.append({"p": p, "d": d})
+    )
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "cheese",
+            "accept-request",
+            "alice",
+            "最懂",
+            "--subject",
+            "fix(accept): require a commit subject",
+        ],
+    )
+
+    cli.main()
+
+    [call] = sent
+    assert call["p"] == "/topics/t-1/accept-card"
+    assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
+
+
 def _subparsers(parser):
     """(name, parser) for every subcommand, minus the internal `__`-prefixed ones."""
     import argparse

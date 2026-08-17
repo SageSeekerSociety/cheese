@@ -194,7 +194,11 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
     handle = topic_agent_handle(uuid.UUID(tid))
     card = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": handle, "routing_reason": "自己验"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": handle,
+            "routing_reason": "自己验",
+        },
     ).json()["data"]
 
     r = client.post(

@@ -46,7 +46,11 @@ def _make_topic(client, project_id: str) -> str:
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -537,9 +541,12 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         assert "Reviewed-by: alice" in fake.merge_calls[0]["commit_message"]
         # ...and its title carries "(#N)", which GitHub only auto-appends to
         # the default title — an explicit commit_title replaces that default.
-        # No `--subject` on this card, so the subject is the honest fallback:
-        # `chore: <话题标题>` (提交与 PR 规范, review/pr_text.py).
-        assert fake.merge_calls[0]["commit_title"] == f"chore: 做一个东西 (#{number})"
+        # The subject is the card's own (递卡必带 --subject, review/services.py);
+        # the `(#N)` is what this assertion is really about.
+        assert (
+            fake.merge_calls[0]["commit_title"]
+            == f"chore(test): file an accept card (#{number})"
+        )
     finally:
         _reset_client()
 

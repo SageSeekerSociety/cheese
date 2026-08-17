@@ -39,7 +39,11 @@ def _make_topic(client, project_id: str) -> str:
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -206,7 +210,7 @@ def test_pr_card_is_accepted_by_merging_the_pr(client, pr_world):
     # The squash commit that lands on main: a Conventional Commits subject with
     # the PR number, and trailers instead of "验收人：alice".
     assert merges[0][2].endswith(" (#7)")
-    assert merges[0][2].startswith("chore: ")
+    assert merges[0][2].startswith("chore(test): ")
     assert "Reviewed-by: alice" in merges[0][3]
     assert pr_world["local_merges"] == []
     assert len(pr_world["pushes"]) == 1  # last-minute edits re-pushed pre-merge
