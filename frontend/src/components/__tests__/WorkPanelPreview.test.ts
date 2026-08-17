@@ -1,12 +1,14 @@
-/** 预览 panel: what it says when the app is not reachable, and what a refresh
- * must not do to the app that IS.
+/** 预览 tab: what it says when the app is not reachable, and what a refresh must
+ * not do to the app that IS.
  *
  * 三件事被钉在这里：
  *   1. 「运行环境到不了」和「运行环境挂了」是两回事。前者以前被当成后者，于是
  *      面板叫人「再 @ 它一次」去等一个永远不会出现的运行环境。
  *   2. 预览面板会自动刷新了，但静默刷新绝不能把 iframe 拆掉重建——那会让正在
  *      看的应用每 20 秒重载一次，比不刷新更糟。
- *   3. 芝士换了预览，抽屉关着的人也要看得见。
+ *   3. 芝士换了预览，没停在这个 tab 上的人也要看得见。
+ *
+ * (Was DocPanelPreview.test.ts. 抽屉 → tab，断言一条没改。)
  */
 import type { Topic } from '../../cx_types'
 
@@ -49,7 +51,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import DocPanel from '../DocPanel.vue'
+import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
@@ -57,7 +59,7 @@ function topic(id: string): Topic {
 
 function mountPanel(working = false) {
   const vuetify = createVuetify({ components, directives })
-  return render(DocPanel, {
+  return render(WorkPanel, {
     props: { topic: topic('topic-A'), activityTick: 0, working },
     global: { plugins: [vuetify] },
   })
@@ -68,8 +70,10 @@ async function flush() {
 }
 
 function previewButton(container: Element): HTMLButtonElement {
-  const btn = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title')?.includes('预览'))
-  expect(btn, '找不到预览工具按钮').toBeTruthy()
+  // startsWith, not includes: the tab's own title is 预览 / 预览（有新内容）,
+  // while the panel inside carries a 全屏预览 button that would also match.
+  const btn = Array.from(container.querySelectorAll('button')).find((b) => b.getAttribute('title')?.startsWith('预览'))
+  expect(btn, '找不到 预览 tab').toBeTruthy()
   return btn!
 }
 
@@ -181,7 +185,7 @@ describe('预览面板：刷新', () => {
 })
 
 describe('预览面板：有新内容', () => {
-  it('抽屉关着时芝士换了预览 → 预览按钮上出现提示', async () => {
+  it('停在别的 tab 时芝士换了预览 → 预览 tab 上出现提示', async () => {
     getPreview.mockResolvedValue({
       kind: 'file',
       path: 'report.html',

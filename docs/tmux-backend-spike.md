@@ -8,7 +8,10 @@
 - hooks 在交互模式下照常触发,事件与 AgentEvent 1:1 映射:
   - `SessionStart.session_id`      → AgentSessionInfo
   - `PreToolUse{tool_name,tool_input}` → AgentToolUse
-  - `MessageDisplay.delta`         → AgentMessage(离散消息)
+  - `MessageDisplay.delta`         → AgentMessage(注意:每条消息**多次** flush,
+    每批新完成的行一次,带 `message_id`/`index`/`final`;spike 的回复短到单次
+    flush 装得下,曾被误读成"一次 hook 一条消息"。现由 `MessageAssembler`
+    按 `final` 拼回整条消息——见 `hook_events.py`)
   - `PostToolUse{tool_name,duration_ms}` → 工具完成
   - `Stop{last_assistant_message,transcript_path}` → AgentResult
 - ttyd `-R` 只读镜像:浏览器里是逐字节真终端(Playwright 截图确认)。

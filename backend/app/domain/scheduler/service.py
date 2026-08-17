@@ -144,8 +144,7 @@ class SchedulerService:
 
         Only ONLINE devices are walked (an offline box is unreachable now). The same
         safety holds as for containers: an active turn has just-persisted blocks, so
-        its topic can never look idle. Teardown is best-effort — a remote device's
-        per-topic work dir is removed too, a co-located device keeps its real tree.
+        its topic can never look idle. Teardown removes the device's per-topic tree.
         Returns how many topics were released."""
         from app.domain.agent.device_hub import device_hub
         from app.domain.agent.device_provider import release_topic_screen
@@ -173,8 +172,7 @@ class SchedulerService:
                 if last is not None and last >= cutoff:
                     continue  # recently active — keep the screen alive
                 idle.append((project_id, topic_id))
-        # Release outside the query session so co-location's own DB read (a separate
-        # session) never nests inside this one.
+        # Release outside the query session so teardown cannot hold it open.
         for project_id, topic_id in idle:
             await release_topic_screen(
                 project_id, topic_id, session_factory=self._sessions

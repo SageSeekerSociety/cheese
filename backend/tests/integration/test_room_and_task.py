@@ -71,6 +71,11 @@ def test_accepting_a_task_leaves_its_room_open(client):
 
     Before tasks existed, this accept archived the only object there was, and
     the room, its roster and its history went with it.
+
+    Since #442 decision 1 the accept doesn't archive the task either: it marks
+    it delivered (`accepted_at`) and stops. 「这件事做完了」lives on the card;
+    putting the row away is a person's decision, and often nobody needs to —
+    the follow-up conversation happens right there.
     """
     project_id = _project(client)
     room_id = _room(client, project_id)
@@ -78,7 +83,9 @@ def test_accepting_a_task_leaves_its_room_open(client):
 
     _accept(client, task["id"])
 
-    assert _status(client, task["id"]) == "archived"
+    delivered = client.get(f"/topics/{task['id']}").json()["data"]
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     assert _status(client, room_id) == "active"
 
 

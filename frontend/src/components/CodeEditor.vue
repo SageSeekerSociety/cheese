@@ -53,7 +53,7 @@ function tokenColor(name: string, fallback: string): string {
 // accent for cursor/selection/active-line (with derived alphas), our gray
 // gutter, and the shared --code-* syntax palette. Everything here therefore
 // follows the active theme — including the syntax colours, which are the same
-// values DocPanel/DocEditor give the lowlight classes, so a snippet looks the
+// values PanelDoc/DocEditor give the lowlight classes, so a snippet looks the
 // same in the doc and in the file editor.
 //
 // ONE theme name for both light and dark: `defineTheme` is keyed by name and

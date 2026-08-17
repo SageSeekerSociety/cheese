@@ -109,7 +109,7 @@ def test_approvals_then_accept_merges(client):
     out = r.json()["data"]
     assert out["status"] == "accepted"
     assert sorted(out["approvals"]) == ["alice", "bob"]
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 def test_ai_cannot_approve_collaborative(client):

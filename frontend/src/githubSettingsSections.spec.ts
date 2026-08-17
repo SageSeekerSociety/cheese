@@ -17,13 +17,13 @@ import { describe, expect, it } from 'vitest'
 const SRC = dirname(fileURLToPath(import.meta.url))
 const view = readFileSync(join(SRC, 'views/ProjectSettingsView.vue'), 'utf8')
 
-/** The markup between a `<span class="ln-section-title">TITLE</span>` and the
+/** The markup between a `<span class="page-section-title">TITLE</span>` and the
  *  next section title — i.e. one settings section's body. */
 function section(title: string): string {
-  const head = `<span class="ln-section-title">${title}</span>`
+  const head = `<span class="page-section-title">${title}</span>`
   const start = view.indexOf(head)
   expect(start, `section 「${title}」 not found`).toBeGreaterThan(-1)
-  const next = view.indexOf('<span class="ln-section-title">', start + head.length)
+  const next = view.indexOf('<span class="page-section-title">', start + head.length)
   return view.slice(start, next === -1 ? undefined : next)
 }
 

@@ -2,7 +2,11 @@
 
 import pytest
 
-from app.domain.agent.hook_events import HookRouter, translate_hook
+from app.domain.agent.hook_events import (
+    HookRouter,
+    MessageAssembler,
+    translate_hook,
+)
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -153,3 +157,124 @@ async def test_router_delivers_between_platform_requests():
     sink = router.subscribe("t1")
     assert router.push("t1", {"a": 1}) is True
     assert (await sink.queue.get()) == {"a": 1}
+
+
+# --- MessageAssembler: MessageDisplay flushes → whole messages ---------------
+#
+# Claude Code fires MessageDisplay once per batch of newly completed lines
+# while an assistant message streams (payload verified against 2.1.224, the
+# pinned device version, and 2.1.233 live): `message_id` is stable across the
+# message's flushes, `index` increments per flush, exactly one flush carries
+# `final: true`, and concatenating the deltas in index order reconstructs the
+# message verbatim.
+
+
+def _flush(
+    mid: str, idx: int, delta: str, *, final: bool = False, eid: str | None = None
+) -> dict:
+    hook = {
+        "hook_event_name": "MessageDisplay",
+        "message_id": mid,
+        "index": idx,
+        "final": final,
+        "delta": delta,
+    }
+    if eid is not None:
+        hook["_eid"] = eid
+    return hook
+
+
+def test_multi_flush_message_coalesces_into_one_event():
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "line 1\nline 2\n", eid="e0")) is None
+    assert asm.add(_flush("m1", 1, "line 3\n", eid="e1")) is None
+    ev = asm.add(_flush("m1", 2, "line 4", final=True, eid="e2"))
+    assert isinstance(ev, AgentMessage)
+    assert ev.text == "line 1\nline 2\nline 3\nline 4"
+    assert ev.eid == "e0"
+    assert ev.eids == ("e0", "e1", "e2")
+
+
+def test_single_flush_final_message_passes_through():
+    ev = MessageAssembler().add(_flush("m1", 0, "hi", final=True, eid="e0"))
+    assert isinstance(ev, AgentMessage)
+    assert ev.text == "hi"
+    assert ev.eids == ("e0",)
+
+
+def test_final_flush_with_empty_delta_ends_the_message():
+    # A message ending on a newline sends its last content in the prior flush;
+    # the final flush is the end-of-message signal alone.
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "done\n", eid="e0")) is None
+    ev = asm.add(_flush("m1", 1, "", final=True, eid="e1"))
+    assert isinstance(ev, AgentMessage)
+    assert ev.text == "done\n"
+    assert ev.eids == ("e0", "e1")
+
+
+def test_blank_message_is_suppressed():
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "  \n", eid="e0")) is None
+    assert asm.add(_flush("m1", 1, "", final=True, eid="e1")) is None
+
+
+def test_legacy_payload_without_flush_fields_is_one_message():
+    # An older Claude Code (or a hand-built test payload) sends only `delta`:
+    # keep the historical one-hook-one-message behavior.
+    asm = MessageAssembler()
+    ev = asm.add({"hook_event_name": "MessageDisplay", "delta": "hi", "_eid": "e9"})
+    assert isinstance(ev, AgentMessage)
+    assert ev.text == "hi"
+    assert ev.eid == "e9"
+    assert asm.add({"hook_event_name": "MessageDisplay", "delta": "   "}) is None
+
+
+def test_redelivered_flush_is_dropped_by_index():
+    # The device drainer is at-least-once: a flush whose ack was lost is
+    # re-POSTed. The (message_id, index) pair identifies it exactly.
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "a\n", eid="e0")) is None
+    assert asm.add(_flush("m1", 0, "a\n", eid="e0-again")) is None
+    ev = asm.add(_flush("m1", 1, "b", final=True, eid="e1"))
+    assert ev is not None
+    assert ev.text == "a\nb"
+    assert ev.eids == ("e0", "e1")
+
+
+def test_redelivered_flush_of_a_completed_message_is_dropped():
+    asm = MessageAssembler()
+    ev = asm.add(_flush("m1", 0, "hi", final=True, eid="e0"))
+    assert ev is not None
+    assert asm.add(_flush("m1", 0, "hi", final=True, eid="e0")) is None
+
+
+def test_out_of_order_flushes_wait_for_the_gap():
+    # The drainer retries failed files while later ones may already have
+    # landed, so index 2 can arrive before index 1. The message completes
+    # only when every index up to the final one is present.
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "a\n", eid="e0")) is None
+    assert asm.add(_flush("m1", 2, "c", final=True, eid="e2")) is None
+    ev = asm.add(_flush("m1", 1, "b\n", eid="e1"))
+    assert isinstance(ev, AgentMessage)
+    assert ev.text == "a\nb\nc"
+    assert ev.eids == ("e0", "e1", "e2")
+
+
+def test_drain_flushes_partials_in_arrival_order():
+    # Stop / turn end: whatever is still buffered must land rather than be
+    # lost, joined from the flushes that did arrive.
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "first\n", eid="e0")) is None
+    assert asm.add(_flush("m2", 0, "second", eid="e1")) is None
+    drained = asm.drain()
+    assert [ev.text for ev in drained] == ["first\n", "second"]
+    assert [ev.eids for ev in drained] == [("e0",), ("e1",)]
+    assert asm.drain() == []
+
+
+def test_drain_suppresses_blank_partials():
+    asm = MessageAssembler()
+    assert asm.add(_flush("m1", 0, "   ", eid="e0")) is None
+    assert asm.drain() == []

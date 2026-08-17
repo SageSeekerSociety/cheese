@@ -25,13 +25,14 @@ def _load():
     return mod
 
 
-def test_api_root_strips_api_prefix(monkeypatch):
+@pytest.mark.parametrize(
+    "base",
+    ("http://host.docker.internal:8099", "https://cheese.example/api"),
+)
+def test_api_root_preserves_the_selected_transport_surface(monkeypatch, base):
     cli = _load()
-    monkeypatch.setattr(cli, "API", "http://host.docker.internal:8099/api")
-    assert cli._api_root() == "http://host.docker.internal:8099"
-    # No /api suffix → returned unchanged.
-    monkeypatch.setattr(cli, "API", "http://localhost:9000")
-    assert cli._api_root() == "http://localhost:9000"
+    monkeypatch.setattr(cli, "API", base)
+    assert cli._api_root() == base
 
 
 def test_api_subcommand_parses_method_and_path(monkeypatch):
