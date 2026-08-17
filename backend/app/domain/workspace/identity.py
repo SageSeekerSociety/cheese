@@ -15,11 +15,17 @@ any of those makes the commit unlinked again. The numeric id is what GitHub
 matches on, which is why the login alone is not enough.
 
 Who this names: the human the topic BELONGS TO — its roster owner, see
-`requester_handle`. They asked for the change and they are the one accountable
-for it; the agent typed it. That the agent typed it is not hidden — every such
-commit rides a PR whose body carries `Cheese-Topic:` and whose subject 芝士
-wrote, and the platform's own commits (repo init, upstream merges) keep the 芝士
-identity because nobody asked for those.
+`requester_handle`. They are the one accountable for the change; the agent typed
+it. That the agent typed it is not hidden — every such commit rides a PR whose
+body carries `Cheese-Topic:` and whose subject 芝士 wrote, and the platform's own
+commits (repo init, upstream merges) keep the 芝士 identity because nobody asked
+for those.
+
+Accountable is not the same as sole contributor. A room can change hands — one
+person opens it, it stalls, someone else picks it up and the sub-topics split out
+of THEIR turns belong to them (`TopicService.split_to_subtopic`). The person who
+asked in the first place still did something, so they come back as
+`Co-authored-by:`; see `coauthor_handles`.
 
 One knob, not two: git carries author and committer separately, but jj 0.43 sets
 both from JJ_USER/JJ_EMAIL and has no `--author`. So an attributed commit is
@@ -61,11 +67,35 @@ class GitIdentity:
 
 CHEESE_IDENTITY = GitIdentity(CHEESE_NAME, CHEESE_EMAIL)
 
+
+@dataclass(frozen=True)
+class Attribution:
+    """Who a change belongs to, as the PR body and the squash commit say it.
+
+    One object rather than three loose values because the three are only correct
+    together: `coauthors` means "credited, and not `author`", so a caller that
+    took them from different resolutions could name the same person twice or lose
+    a credit. Every field may be empty — nobody on the roster, or nobody with a
+    GitHub account to link to — and that is a normal, silent degrade, never a
+    reason to fail a merge."""
+
+    #: `Requested-by:`, the git author of the branch's commits, and the account
+    #: the PR is opened under. See `requester_handle`.
+    handle: str | None
+    #: `handle`'s git identity, or None when they never connected GitHub.
+    author: GitIdentity | None
+    #: `Co-authored-by:`, one line each. See `coauthor_handles`.
+    coauthors: tuple[GitIdentity, ...] = ()
+
+
 __all__ = [
     "CHEESE_EMAIL",
     "CHEESE_IDENTITY",
     "CHEESE_NAME",
+    "Attribution",
     "GitIdentity",
+    "attribution",
+    "coauthor_handles",
     "coauthored_by",
     "identity_from_profile",
     "identity_path",
@@ -143,9 +173,10 @@ async def requester_handle(session: Any, topic: "Topic") -> str | None:
     those attributions silently degraded: the PR opened as ``cheesex-app[bot]``,
     its body said ``Requested-by: cheese-a7a0268b``, and the commits carried no
     ``Co-authored-by`` at all (PR #500, #504). The roster already knows better —
-    ``TopicService.split_to_subtopic`` walks a ladder (creator if human, else the
-    parent room's owner, else the project's) precisely to seed a real human as
-    the child's owner. This reads that answer instead of re-deriving it.
+    ``TopicService.split_to_subtopic`` walks a ladder (the splitter if human, else
+    the human whose turn the split came out of, else the parent room's owner, else
+    the project's) precisely to seed a real human as the child's owner. This reads
+    that answer instead of re-deriving it.
 
     Falls back to ``created_by``, which is what every caller used before: a room
     a human opened directly is unaffected (owner and creator are the same
@@ -154,16 +185,100 @@ async def requester_handle(session: Any, topic: "Topic") -> str | None:
     never be the reason a PR fails to open, so a broken roster read is logged
     and swallowed.
     """
-    owner: str | None = None
-    try:
-        from app.domain.topic_membership.services import TopicMemberService
-
-        owner = await TopicMemberService(session).owner_of(topic.id)
-    except Exception:  # noqa: BLE001 — attribution never fails its caller
-        logger.info("could not read roster owner for topic %s", topic.id, exc_info=True)
+    owner = await _roster_owner(session, topic.id)
     if owner and not looks_like_agent_handle(owner):
         return owner
     return topic.created_by or None
+
+
+async def _roster_owner(session: Any, topic_id: uuid.UUID) -> str | None:
+    """The room's owner per its roster, or None if it cannot be read. Never
+    raises: attribution must not be the reason a PR fails to open, so a broken
+    roster read degrades to "no answer" rather than to an exception."""
+    try:
+        from app.domain.topic_membership.services import TopicMemberService
+
+        return await TopicMemberService(session).owner_of(topic_id)
+    except Exception:  # noqa: BLE001 — attribution never fails its caller
+        logger.info("could not read roster owner for topic %s", topic_id, exc_info=True)
+        return None
+
+
+async def coauthor_handles(
+    session: Any, topic: "Topic", *, besides: str | None
+) -> list[str]:
+    """Humans who should be credited on this change but are not the one it is
+    attributed to (`besides`, normally `requester_handle`'s answer).
+
+    Exactly one candidate today: the PARENT room's owner. When a room changes
+    hands, the sub-topics split out of the new driver's turns belong to the new
+    driver — that is what makes their accept card land on someone who is still
+    working on it — but the person who asked for the thing in the first place did
+    not stop having asked, and `Co-authored-by:` is where git records that.
+
+    Deliberately NOT "everyone who spoke in the parent room": a trailer is a claim
+    that someone contributed to this change, and handing it to every passer-by
+    inflates the credit until it means nothing.
+
+    Returns empty for a top-level room, which is the ordinary case and the reason
+    `Co-authored-by:` stopped being written on most changes: one room has one git
+    identity, so a self-referential trailer naming the commit's own author added
+    nothing but noise."""
+    if topic.parent_id is None:
+        return []
+    owner = await _roster_owner(session, topic.parent_id)
+    if not owner or looks_like_agent_handle(owner) or owner == besides:
+        return []
+    return [owner]
+
+
+async def attribution(session: Any, topic: "Topic") -> "Attribution":
+    """Everything a PR body and a squash commit need to say about who a change
+    belongs to, resolved in ONE place.
+
+    The three answers are correlated — a co-author is defined as "credited but not
+    the author" — so they are resolved together rather than at each call site;
+    that is how the PR-opening path and the three merge paths are kept from
+    disagreeing about the same change.
+
+    Best-effort, and each part fails on its own: attribution must never take a
+    merge down, but one broken lookup must not cost more than it has to either —
+    losing `Requested-by:` because a co-author's account could not be read would
+    make the credit the trailer exists for the thing that destroys it."""
+    handle: str | None = None
+    try:
+        handle = await requester_handle(session, topic)
+    except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
+        logger.warning(
+            "could not resolve the requester for topic %s", topic.id, exc_info=True
+        )
+    author = await _identity_of(session, handle)
+    coauthors: list[GitIdentity] = []
+    try:
+        for who in await coauthor_handles(session, topic, besides=handle):
+            found = await _identity_of(session, who)
+            # `!= author` again on the resolved identity, not just on the handle:
+            # two handles can be connected to the same GitHub account, and a
+            # trailer naming the commit's own author is the noise this removed.
+            if found is not None and found != author and found not in coauthors:
+                coauthors.append(found)
+    except Exception:  # noqa: BLE001 — same rule, narrower blast radius
+        logger.warning(
+            "could not resolve co-authors for topic %s", topic.id, exc_info=True
+        )
+    return Attribution(handle, author, tuple(coauthors))
+
+
+async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
+    """`resolve_for_handle` that answers None instead of raising — one unreadable
+    OAuth connection costs that one person's link, nothing else."""
+    if not handle:
+        return None
+    try:
+        return await resolve_for_handle(session, handle)
+    except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
+        logger.warning("could not resolve a git identity for %s", handle, exc_info=True)
+        return None
 
 
 def read(project_id: uuid.UUID, topic_id: uuid.UUID) -> GitIdentity | None:
@@ -219,10 +334,16 @@ async def sync_for_topic(session: Any, topic: "Topic") -> None:
 
 
 def coauthored_by(identity: GitIdentity | None) -> str | None:
-    """The `Co-authored-by:` trailer GitHub reads when it decides who a commit
-    belongs to. Squash-merging collapses a whole topic branch into ONE commit
-    whose author GitHub picks for us, so this trailer is the only lever that
-    reliably credits the human on the commit that actually lands on main."""
+    """One `Co-authored-by:` line — the trailer GitHub reads when it decides who
+    a commit belongs to. Squash-merging collapses a whole topic branch into ONE
+    commit, so this is the only lever that credits a contributor who is not that
+    commit's author on the thing that actually lands on main.
+
+    None for 芝士 (拍板 2026-08-17): every commit on this platform is one she
+    typed, so the trailer would be true of every change and therefore carry no
+    information, and `cheese@zhishi.local` links to no GitHub account — it would
+    only pollute the repo's contributor list. `Cheese-Topic:` in the PR body is
+    already the traceable record of where a change came from."""
     if identity is None or identity == CHEESE_IDENTITY:
         return None
     return f"Co-authored-by: {identity.name} <{identity.email}>"

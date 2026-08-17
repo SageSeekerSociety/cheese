@@ -24,7 +24,7 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conclusion.models import ConclusionCard
 from app.domain.conclusion.services import ConclusionCardService
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
@@ -661,6 +661,7 @@ class TopicService:
         title: str,
         created_by: str | None = None,
         brief: str | None = None,
+        triggered_by: str | None = None,
     ) -> Topic:
         """从上往下拆解 (eval A2): split a todo into a sub-topic under a topic.
 
@@ -668,7 +669,11 @@ class TopicService:
         一致, spec §8.4): the splitter's `brief` plus a verbatim snapshot of the
         parent's living doc. No canned opening message anymore — the 分身's
         auto-kickoff first turn (routes/topics.py) writes its own opening
-        (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md)."""
+        (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md).
+
+        `triggered_by` is the human whose turn asked for this split, which the
+        caller reads off the runner (`AgentWorkRunner.turn_author_for`) — see the
+        ownership ladder below for why it outranks the parent room's owner."""
         parent = await self.get_or_404(parent_topic_id)
         # 归档后工作面冻结 (spec §6.3): no new sub-topics under a frozen topic —
         # follow-up work starts a new topic from the conclusion (升级), not here.
@@ -690,23 +695,31 @@ class TopicService:
             (m.member_handle for m in parent_members if m.role == TopicRole.owner),
             None,
         )
-        # A split requested BY a real human keeps them as the child's owner. But
-        # when the splitter is 芝士 itself (e.g. an autonomous 分身发起的拆分) or no
-        # human is identified at all, `created_by` alone would leave the child
-        # ownerless (seed() intentionally skips 芝士 as owner) — nobody could then
-        # manage its roster. Two independent gaps, both closed here:
+        # 归属跟推进者走: WHO the child belongs to, most specific answer first.
         #
-        # 1. WHO counts as 芝士: the check spans the whole 芝士 handle namespace,
-        #    because 分身 split under their OWN handle (``cheese-<topic hex>``) and
-        #    matching the bare ``cheese`` string would hand them the very
-        #    ownership this branch exists to withhold.
-        # 2. WHERE the fallback lands: the parent's real human owner, and when the
-        #    parent is itself ownerless (a room born before this fallback existed),
-        #    the project's owner — so the emptiness stops cascading down the tree.
+        # 1. `created_by`, when a real human called split — they said what they
+        #    wanted. Both this rung and the next screen for an actual person
+        #    (`names_a_person`) rather than merely "not 芝士": a 分身 splits under
+        #    its OWN handle (``cheese-<topic hex>``), and `anonymous`/`system` name
+        #    nobody either. Letting any of them through is not a cosmetic mistake —
+        #    `seed()` refuses to make 芝士 an owner, so the room lands ownerless and
+        #    nobody can manage its roster, which is the bug this ladder exists for.
+        # 2. `triggered_by` — the human driving the turn 芝士 split from. A room
+        #    stalls, someone else picks it up, and the work that comes out of THEIR
+        #    turn is theirs: the child ends in an accept card, and handing that card
+        #    to whoever opened the parent room months ago strands it a second time.
+        #    GitHub credit for the original requester is not lost — they come back
+        #    as `Co-authored-by:` (`workspace.identity.coauthor_handles`).
+        # 3. The parent room's owner, then the project's — an autonomous 分身 split
+        #    and a platform-initiated turn identify no person at all, and a room
+        #    born before any of this has no owner to inherit, so the emptiness
+        #    stops cascading down the tree here.
         project = await self._projects.get(parent.project_id)
         owner_handle = (
             created_by
-            if created_by and not looks_like_agent_handle(created_by)
+            if names_a_person(created_by)
+            else triggered_by
+            if names_a_person(triggered_by)
             else parent_owner or (project.owner_handle if project else None)
         )
         await self._members.seed_split(

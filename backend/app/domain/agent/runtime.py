@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.identity.actor import Actor
+from app.domain.identity.handles import names_a_person
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -419,6 +420,39 @@ class AgentWorkRunner:
         dedup against. None means "not inside an automatic turn": a human
         clicking a button twice means it twice, so the caller skips the check
         rather than inventing a namespace."""
+        rec = self._current_turn_record(topic_id)
+        raw = rec.get("continuation_id") if rec is not None else None
+        return uuid.UUID(raw) if isinstance(raw, str) else None
+
+    def turn_author_for(self, topic_id: uuid.UUID) -> str | None:
+        """The HUMAN whose turn is running on this topic right now — who is
+        actually driving the work — or None when nobody identifiable is.
+
+        The answer a sandbox-side action cannot supply for itself: 芝士 calls
+        `cheese split` under her own `cheese-<hex12>` handle, so the endpoint sees
+        the robot and not the person who asked. That person is right here in the
+        turn record, next to the continuation id the split endpoint already reads.
+
+        None covers three cases the caller must treat identically — fall back to
+        whatever it did before: no turn of ours is running; the turn was started
+        by the platform itself (`author="system"` — gate verdicts, scheduled
+        wake-ups, `cheese await` reports, conflict nudges); or it was started by
+        a 分身 working autonomously. Only a real person's handle comes back."""
+        rec = self._current_turn_record(topic_id)
+        author = rec.get("author") if rec is not None else None
+        if not isinstance(author, str) or not names_a_person(author):
+            return None
+        return author
+
+    def _current_turn_record(self, topic_id: uuid.UUID) -> dict | None:
+        """The `_recent` entry for the turn this topic is running NOW, or None.
+
+        Shared by `continuation_for` and `turn_author_for` so the two cannot
+        disagree about which turn "now" means. `_recent` is a ring buffer of what
+        turns *did*, so the newest entry for a topic is not necessarily live —
+        hence the two guards: prefer the broker's own live turn id, and when the
+        broker has none, accept the newest entry only while it still reads
+        `running`."""
         key = str(topic_id)
         activity = self._broker.activity_snapshot(key)
         active_id = activity["turn_id"] if activity is not None else None
@@ -429,8 +463,7 @@ class AgentWorkRunner:
                 continue
             if active_id is None and rec["status"] != "running":
                 return None
-            raw = rec.get("continuation_id")
-            return uuid.UUID(raw) if isinstance(raw, str) else None
+            return rec
         return None
 
     def running_topic_ids(self) -> set[uuid.UUID]:
