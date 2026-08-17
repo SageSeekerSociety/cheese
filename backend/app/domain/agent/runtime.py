@@ -565,15 +565,15 @@ class TurnRunner:
         metered work. Keeping those as two operations makes the ordering real:
         the project queue and credit gate can delay/refuse only the latter.
         """
-        turn_id = uuid.uuid4()
         payloads, user_block_id = await chat_service.post_user_message(
             topic_id,
             author=author,
             content=content,
-            turn_id=turn_id,
+            turn_id=None,
             reply_to=reply_to,
             attachments=attachments,
         )
+        turn_id = user_block_id
         channel = str(topic_id)
         for payload in payloads:
             await self._broker.publish(

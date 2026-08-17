@@ -182,6 +182,35 @@ async def test_exchange_blocks_and_usage_share_the_supplied_id(
     assert usage_rows[0].turn_id == work_id
 
 
+async def test_human_summon_uses_message_id_as_work_attribution(
+    client, tmp_path
+) -> None:
+    factory = client.test_factory
+    _project_id, topic_id = await _seed_topic(factory)
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+    )
+
+    frames = await _drain(
+        service.converse(
+            topic_id=topic_id,
+            author="u1",
+            content="Attribute this work to me",
+            summon=True,
+        )
+    )
+    user = next(frame["block"] for frame in frames if frame["type"] == "user_block")
+    answer = next(
+        frame["block"] for frame in frames if frame["type"] == "assistant_block"
+    )
+
+    assert user["turn_id"] == user["id"]
+    assert answer["turn_id"] == user["id"]
+
+
 async def test_hook_without_a_live_run_reaches_the_room_from_spool(
     client, tmp_path, monkeypatch
 ) -> None:

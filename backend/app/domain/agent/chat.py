@@ -1030,9 +1030,9 @@ class ChatService:
         ``continuation_id`` is the logical unit of work this turn belongs to — a
         turn and every auto-resume of it share one, so a message the interrupted
         attempt already posted is not posted again (④)."""
-        turn_id = turn_id or uuid.uuid4()
-        continuation_id = continuation_id or turn_id
         if is_resume or nudge_event:
+            turn_id = turn_id or uuid.uuid4()
+            continuation_id = continuation_id or turn_id
             # System-initiated turn (自动续跑 / 评论叫醒 / 冲突调度…): no human
             # spoke — the opener is a SYSTEM event in the 现场, and the
             # instruction goes straight to the agent as the prompt.
@@ -1061,6 +1061,8 @@ class ChatService:
                 reply_to=reply_to,
                 attachments=attachments,
             )
+            turn_id = turn_id or user_block_id
+            continuation_id = continuation_id or turn_id
             for payload in user_payloads:
                 yield {"type": "user_block", "block": payload}
 
@@ -1702,7 +1704,7 @@ class ChatService:
         *,
         author: str,
         content: str,
-        turn_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
         reply_to: str | None,
         attachments: list[dict] | None = None,
     ) -> tuple[list[dict], uuid.UUID]:
@@ -1716,8 +1718,9 @@ class ChatService:
             topic = await topics.get(topic_id)
             if topic is None:
                 raise NotFoundError("Topic not found")
-            payloads: list[dict] = []
+            created_blocks: list[Block] = []
             anchor_id: uuid.UUID | None = None
+            attribution_id = turn_id
             if content:
                 # Same backstop the doc/chat-reply paths already had, but the
                 # human chat-send path used to skip it: a friendly "@Alice /
@@ -1748,6 +1751,9 @@ class ChatService:
                     turn_id=turn_id,
                     reply_to=_parse_uuid(reply_to),  # B3: thread under another
                 )
+                if attribution_id is None:
+                    attribution_id = user_block.id
+                    user_block.turn_id = attribution_id
                 # Resolve <@handle> mentions in the human message → strong notify.
                 resolved, _unresolved = await self._notify_mentions(
                     session, topic, author, content, roster
@@ -1756,7 +1762,7 @@ class ChatService:
                 if refs:
                     user_block.refs = refs
                 anchor_id = user_block.id
-                payloads.append(_block_payload(BlockOut.model_validate(user_block)))
+                created_blocks.append(user_block)
             # 图片输入: each image = an attachment block. content = the worktree
             # path (a REAL file, uploaded before this message), mime_type = how
             # to render it — structured fields, never parsed out of prose.
@@ -1769,16 +1775,23 @@ class ChatService:
                     content=str(att.get("path") or ""),
                     kind=BlockKind.attachment,
                     mime_type=str(att.get("mime") or "") or None,
-                    turn_id=turn_id,
+                    turn_id=attribution_id,
                     # An image-only send still honors the reply thread (B3).
                     reply_to=None if content else _parse_uuid(reply_to),
                 )
+                if attribution_id is None:
+                    attribution_id = att_block.id
+                    att_block.turn_id = attribution_id
                 if anchor_id is None:
                     anchor_id = att_block.id
-                payloads.append(_block_payload(BlockOut.model_validate(att_block)))
+                created_blocks.append(att_block)
             if anchor_id is None:  # guarded by the route, but never crash a turn
                 raise NotFoundError("empty message")
             await session.commit()
+            payloads = [
+                _block_payload(BlockOut.model_validate(block))
+                for block in created_blocks
+            ]
         return payloads, anchor_id
 
     async def ack_summon(
