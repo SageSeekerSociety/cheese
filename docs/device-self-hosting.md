@@ -6,6 +6,30 @@
 
 ---
 
+## 0. Hosted 机器不是我们的
+
+> 机器形态（Cloud / Hosted Sandbox / Hosted Machine）见 **#358**——三类里两类还没传输，去读那条，别从这里推。本节只讲**已落地、改代码必须守住**的一条约束。
+
+只适用于 **Hosted**（人接入的常驻机器）：那是别人的笔记本、别人的 `claude`，他借我们算力，不是把机器交给我们。**Cloud 不适用**——平台按话题开的一次性机器，随便处置。
+
+**判据：除了我们放进去的东西，机器上任何一样在我们来之前是什么样，走之后还是什么样。**
+
+- 装 claude = 往 `~/.local/share/claude/versions/<pin>` 加一个版本（那目录本就为共存而设）。**不碰 `~/.local/bin/claude`**，那是他敲 `claude` 得到的东西；启动器按 `versions/<pin>` 找，symlink 一分钱不值。反过来也不行：**看到他已有够新的就不装**，等于他下次升降级成了我们的行为变更。
+- 配置隔离：`CLAUDE_CONFIG_DIR` / `HOME` / 工作树都在 `~/.cheese/`、`~/cheese-workspaces/` 下；他的 `~/.claude` 不读不写。
+- 装在**他能写的目录**——否则自更新永远失败，且无声（#501）。
+
+### 为什么这条特别容易破
+
+破坏它的代码看起来都很合理：一个 symlink 让 `claude` 可用、一个 `sudo` 让安装成功、复用系统 tmux 省一个 socket。而反馈回路是断的——#489、#501、`systemctl kill` 带走 20 个会话，**全都只存在于没人看的地方**（一个 plist 的 stderr、一条 journald、一台"健康"的离线机器），平台侧一律正常。
+
+所以问的不是"这样能不能 work"，而是：**这步在用户机器上做错了，谁会发现？** 答案若是"他，几周后，且不会联想到我们"，换做法。
+
+### 已知未修的耦合
+
+启动器起 claude 用 **tmux 默认 server**（`unset TMUX` 之后），不是 connector 的私有 socket。他 `tmux kill-server` 会带走所有 agent 会话，反之亦然。修好之前，**任何"重启一下 connector"都要按"会杀掉所有会话"对待**：`systemctl stop` 会（`KillServer` 在 deferred 里），`systemctl kill` 也会（打整个 cgroup）。
+
+---
+
 ## 1. 设备入册流程
 
 完整链路（装 → 登录 → 批准 → 上线 → 绑定 → 选用）：
@@ -42,11 +66,18 @@
 | **bash** | 启动器本身就是 `bash -lc` 脚本 | 必须 |
 | **node** | 启动器用 node 写 `~/.claude.json` 的 per-project trust 闸门（动态 key，shell heredoc 做不到） | 必须 |
 | **curl** | hook 转发器用 curl 把每个 hook JSON POST 回后端；`install.sh` 也用 curl 下二进制 | 必须 |
-| **tmux** | 把 `claude` 养在持久会话 `cheese` 里，链路/屏幕掉线不丢进程，重开屏幕即 re-attach | 推荐（没装则退化为直接 `exec claude`，掉线即丢会话） |
-| **claude**（Claude Code CLI） | 真正干活的 agent | 必须 |
-| **cheesehost** 连接器 | `install.sh` 自动装到 `~/.local/bin/`；可选再放一个私有 tmux 到 `~/.config/cheese/bin/tmux` | 必须（连接器） |
+| **tmux** | 把 `claude` 养在持久会话里，链路/屏幕掉线不丢进程，重开屏幕即 re-attach | 必须。连接器**没有 tmux 就直接退出**，而 `link connect` 仍报成功（systemd 在进程倒下之前就返回了），所以缺它表现为"机器永远不上线"，不是任何一条错误信息 |
+| **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
+| **claude**（Claude Code CLI） | 真正干活的 agent | 必须，**由平台装**（见下） |
+| **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
 
-平台：Linux / macOS（需 pty），**无 Windows**。除 tmux 外其余均为硬依赖；缺 tmux 能跑但失去掉线续跑能力。
+平台：Linux / macOS（需 pty），**无 Windows**。
+
+**claude 由平台安装，不由机器去厂商那里下。** 入册（`bootstrap_script`）和启动器共用同一个 pin，二进制从 `<origin>/connector/claude/<version>/<platform>/claude` 取——平台拉一次、按厂商发布的 SHA-256 校验、缓存、本地供给。三个理由每个都单独成立：机器未必到得了 `claude.ai`（云节点在私有子网、自托管机器在我们看不见的网里，而厂商安装脚本把"你所在地区不可用"列为一种失败）；拿到的版本未必过门槛，而**低于门槛启动器拒绝启动**；只有平台自己发二进制，pin 才从"希望机器下到对的版本"变成"我们递给它的就是那个"。
+
+平台字符串用**厂商的词汇**（`linux-x64`、`linux-arm64-musl`），不是我们的 `<os>-<arch>`——我们的命名表达不了 musl，而只有机器知道自己的 libc。
+
+**入册时缺任何一样都是 fatal**，理由同 §0：留到后面发现的失败，全都出现在没人看的地方。
 
 ---
 
