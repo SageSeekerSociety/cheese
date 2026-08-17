@@ -152,35 +152,39 @@ if [ "$(uname -s)" = "Linux" ]; then
 else
   cplat="darwin-$carch"
 fi
-claude_ok=0
-if command -v claude >/dev/null 2>&1; then
-  have=$(claude --version 2>/dev/null | head -n 1 | awk '{{print $1}}')
-  if [ -n "$have" ] && [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
-      | sort -V | head -n 1)" = "{min_version}" ]; then
-    claude_ok=1
-  fi
-fi
-if [ "$claude_ok" -eq 0 ]; then
-  mkdir -p "$HOME/.local/share/claude/versions" "$HOME/.local/bin"
+# The pinned build goes into claude's own versions directory, which is built
+# for exactly this — several versions coexisting, with the user's `claude`
+# entry point deciding which one THEY get. We add a version and touch nothing
+# else.
+#
+# Specifically: no symlink into ~/.local/bin. That path is the machine owner's
+# claude, and on a self-hosted machine it belongs to a person who did not ask
+# us to change which version they type `claude` and get. The launcher looks in
+# versions/<pin> first and never consults ~/.local/bin for the pin, so the
+# symlink would buy nothing and cost someone their default.
+#
+# And we install our pin even when a good-enough claude is already present:
+# otherwise the platform silently rides whatever the owner happens to have, and
+# their next upgrade or downgrade becomes our behaviour change. Pinning has to
+# mean the version we put there, not the version we found.
+claude_pin="$HOME/.local/share/claude/versions/{pinned_version}"
+if [ ! -x "$claude_pin" ]; then
+  mkdir -p "$HOME/.local/share/claude/versions"
   curl -fsSL --retry 3 --retry-delay 2 -m 300 \
     "{origin_clean}/connector/claude/{pinned_version}/$cplat/claude" \
-    -o "$HOME/.local/share/claude/versions/{pinned_version}.new" \
+    -o "$claude_pin.new" \
     || {{ echo "could not download claude {pinned_version} for $cplat" >&2; exit 1; }}
-  test -s "$HOME/.local/share/claude/versions/{pinned_version}.new"
-  chmod +x "$HOME/.local/share/claude/versions/{pinned_version}.new"
-  mv "$HOME/.local/share/claude/versions/{pinned_version}.new" \
-     "$HOME/.local/share/claude/versions/{pinned_version}"
-  ln -sf "$HOME/.local/share/claude/versions/{pinned_version}" \
-     "$HOME/.local/bin/claude"
-  # Verify rather than trust the download: a claude that is present but still
-  # under the floor enrolls a machine that cannot run a single turn.
-  have=$("$HOME/.local/bin/claude" --version 2>/dev/null \
-    | head -n 1 | awk '{{print $1}}')
-  if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
-      | sort -V | head -n 1)" != "{min_version}" ]; then
-    echo "claude is ${{have:-unusable}} after install, need >= {min_version}" >&2
-    exit 1
-  fi
+  test -s "$claude_pin.new"
+  chmod +x "$claude_pin.new"
+  mv "$claude_pin.new" "$claude_pin"
+fi
+# Verify what we placed, not what `claude` resolves to — the owner's entry point
+# is none of our business and could be any version at all.
+have=$("$claude_pin" --version 2>/dev/null | head -n 1 | awk '{{print $1}}')
+if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
+    | sort -V | head -n 1)" != "{min_version}" ]; then
+  echo "claude at $claude_pin is ${{have:-unusable}}, need >= {min_version}" >&2
+  exit 1
 fi
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
