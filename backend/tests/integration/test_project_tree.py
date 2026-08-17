@@ -251,7 +251,7 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     doc = client.get(f"/api/topics/{topic['id']}/doc").json()["data"]
     assert doc is not None
     assert "我们其实该单独做个数据清洗模块" in doc["content"]  # source block
-    assert "父话题当时还没有活文档" in doc["content"]
+    assert "父话题当时还没有实况文档" in doc["content"]
 
 
 def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):

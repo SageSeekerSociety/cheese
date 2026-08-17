@@ -504,7 +504,7 @@ async def add_comment(
             topic_id,
             author="system",
             content=(
-                f"{author} 在活文档 {where} 处评论：{content}\n"
+                f"{author} 在实况文档 {where} 处评论：{content}\n"
                 "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
             ),
             summon=True,

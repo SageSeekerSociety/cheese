@@ -106,10 +106,10 @@ def _brief_doc(
             else "（拆分时没有附说明——任务以标题和下面的父话题文档为准）",
         ]
     parts += [
-        "## 父话题当时的活文档（快照，供参考）",
+        "## 父话题当时的实况文档（快照，供参考）",
         parent_doc.strip()
         if parent_doc and parent_doc.strip()
-        else "（父话题当时还没有活文档）",
+        else "（父话题当时还没有实况文档）",
     ]
     return "\n\n".join(parts)
 
