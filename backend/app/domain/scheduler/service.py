@@ -103,25 +103,35 @@ class SchedulerService:
         an active turn has just-persisted blocks, so its topic can never look
         idle.
 
+        A tmux box is named after a ROOM and hosts that room's tasks too, so its
+        idleness is the idleness of the room AND everything in it. Judging the
+        room alone would destroy a box with a task working in it the moment the
+        room's own timeline went quiet — which is the normal state of a room
+        whose work has been split out.
+
         Reaping is not destructive to the conversation. The transcript lives in
-        the topic's ``~/.claude`` mount on the HOST, so the next turn recreates
-        the box and resumes from it — the container is the body, not the
-        continuity."""
+        the topic's config dir on the HOST, so the next turn recreates the box
+        and resumes from it — the container is the body, not the continuity."""
         names = ws.list_sandbox_containers()
         if not names:
             return 0
         cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
         reaped = 0
         async with self._sessions() as session:
-            ids = (await session.execute(select(Topic.id))).scalars().all()
-            by_hex = {t.hex[:12]: t for t in ids}
+            rows = (await session.execute(select(Topic.id, Topic.parent_id))).all()
+            by_hex = {row.id.hex[:12]: row.id for row in rows}
+            children: dict[uuid.UUID, list[uuid.UUID]] = {}
+            for row in rows:
+                if row.parent_id is not None:
+                    children.setdefault(row.parent_id, []).append(row.id)
             for name in names:
                 topic_id = by_hex.get(name.rsplit("-", 1)[-1])
                 if topic_id is not None:
+                    scope = [topic_id, *children.get(topic_id, [])]
                     last = (
                         await session.execute(
                             select(func.max(Block.created_at)).where(
-                                Block.topic_id == topic_id
+                                Block.topic_id.in_(scope)
                             )
                         )
                     ).scalar()

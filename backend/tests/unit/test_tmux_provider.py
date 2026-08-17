@@ -21,7 +21,7 @@ from app.domain.agent.service import (
     AgentSessionInfo,
     AgentToolUse,
 )
-from app.domain.agent.tmux_provider import TmuxHooksProvider, pane_ready
+from app.domain.agent.tmux_provider import TmuxHooksProvider, TmuxScreen, pane_ready
 
 
 def test_pane_ready_detects_prompt_box():
@@ -127,8 +127,33 @@ def _fast_settle(monkeypatch):
     monkeypatch.setattr(tp, "_SETTLE_POLL_S", 0.01)
 
 
+# A box hosts a whole room, so a screen is (container, session) — every helper
+# below needs one, and the session name is what tells two topics apart inside
+# the same box.
+_BOX = TmuxScreen("topic-box", "cheese-ab12cd34")
+
+
+def _aio(value):
+    """Wrap a value as an awaitable, for monkeypatching an async method."""
+
+    async def _coro(*_args, **_kwargs):
+        return value
+
+    return _coro()
+
+
+def _topic_env(**overrides) -> dict[str, str]:
+    """The minimum per-session env `_ensure_session` reads off its argument."""
+    return {
+        "CLAUDE_CONFIG_DIR": "/sessions/ab12cd34",
+        "CHEESE_WORKDIR": "/topics/topic_ab12cd34",
+        "CHEESE_PORT_SLOT": "0",
+        **overrides,
+    }
+
+
 def _wire(monkeypatch, provider, screen: _FakeScreenControl) -> None:
-    async def fake_control(_name: str):
+    async def fake_control(_screen):
         return screen
 
     async def fake_docker(*args: str, stdin: bytes | None = None):
@@ -152,7 +177,7 @@ async def test_send_prompt_resends_a_swallowed_enter(_fast_settle, monkeypatch):
     screen = _FakeScreenControl(swallow_enters=1)
     _wire(monkeypatch, provider, screen)
 
-    await provider._send_prompt("box", "帮我看下这个问题")
+    await provider._send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.pastes == 1, "re-pasting duplicates the prompt"
     assert screen.enters == 2, "the swallowed Enter was never re-sent"
@@ -173,7 +198,7 @@ async def test_send_prompt_fails_loud_when_the_paste_never_lands(
     _wire(monkeypatch, provider, screen)
 
     with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
-        await provider._send_prompt("box", "帮我看下这个问题")
+        await provider._send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.pastes == 1 + tp._MAX_REPASTES
     assert screen.enters == 0, "an Enter was fired at a body-less composer"
@@ -197,7 +222,7 @@ async def test_send_prompt_clears_a_poisoned_composer_before_pasting(
     _wire(monkeypatch, provider, screen)
 
     with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
-        await provider._send_prompt("box", "帮我看下这个问题")
+        await provider._send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.kills == 1 + tp._MAX_REPASTES, "no Ctrl+U before each paste"
     assert screen.enters == 0, "the old garbage widget was verified as this paste"
@@ -265,7 +290,8 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
 
     # No transcript → fresh session (no --resume).
     await provider._ensure_session(
-        "box", None, resume_session_id=sid, session_dir=str(tmp_path)
+        _BOX, None, session_env=_topic_env(), resume_session_id=sid,
+        session_dir=str(tmp_path),
     )
     new_session = next(c for c in calls if "new-session" in c)
     assert "--resume" not in " ".join(new_session)
@@ -277,7 +303,8 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
     f.write_text("{}", encoding="utf-8")
     calls.clear()
     await provider._ensure_session(
-        "box", None, resume_session_id=sid, session_dir=str(tmp_path)
+        _BOX, None, session_env=_topic_env(), resume_session_id=sid,
+        session_dir=str(tmp_path),
     )
     new_session = next(c for c in calls if "new-session" in c)
     assert f"--resume {sid}" in " ".join(new_session)
@@ -296,7 +323,9 @@ async def test_ensure_session_denies_the_unanswerable_ask_tool(monkeypatch, tmp_
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
-    await provider._ensure_session("box", None, session_dir=str(tmp_path))
+    await provider._ensure_session(
+        _BOX, None, session_env=_topic_env(), session_dir=str(tmp_path)
+    )
 
     new_session = " ".join(next(c for c in calls if "new-session" in c))
     assert "--disallowedTools AskUserQuestion" in new_session
@@ -326,7 +355,11 @@ def _stub_env(monkeypatch, tmp_path):
     monkeypatch.setattr(tp, "_docker", fake_docker)
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
     monkeypatch.setattr(tp.ws, "session_dir", lambda p, t: tmp_path / "session")
+    monkeypatch.setattr(tp.ws, "sessions_root", lambda p: tmp_path)
     monkeypatch.setattr(tp.ws, "topic_worktree", lambda p, t: tmp_path / "work")
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, project_id, topic_id: _aio(topic_id)
+    )
     (tmp_path / "session").mkdir()
     (tmp_path / "work").mkdir()
     return sent
@@ -343,7 +376,7 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
 
     # The moment the prompt is injected, deliver the hooks the container would
     # POST back (in the real system they arrive over /sandbox/hooks).
-    async def fake_send(name: str, prompt: str) -> None:
+    async def fake_send(screen, prompt: str) -> None:
         _stub_env["prompt"] = prompt
         for hook in [
             {"hook_event_name": "SessionStart", "session_id": "sess-1"},
@@ -493,7 +526,7 @@ async def test_activity_monitor_touches_tracker_on_pane_change(monkeypatch):
     monkeypatch.setattr(tp, "_docker", fake_docker)
     tracker = ActivityTracker(last_at=0.0)
 
-    task = await provider._start_activity_monitor("box", tracker)
+    task = await provider._start_activity_monitor(_BOX, tracker)
     assert task is not None
     try:
         await asyncio.sleep(0.08)
@@ -519,10 +552,9 @@ async def test_activity_status_reports_idle_and_suspect_state(monkeypatch):
     trips, how long it's been suspected."""
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
     topic_id = uuid.uuid4()
-    name = tp._tmux_container_name(topic_id)
     loop = asyncio.get_event_loop()
     tracker = ActivityTracker(last_at=loop.time())
-    provider._activity[name] = tracker
+    provider._activity[tp._screen_for(topic_id)] = tracker
 
     status = provider.activity_status(topic_id)
     assert status is not None
@@ -598,12 +630,11 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
 
     monkeypatch.setattr(settings, "subscription_enabled", True)
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
-    env = provider._session_env(
+    env = provider._topic_env(
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
-        session_dir="/s",
-        worktree="/w",
         token="hook-token",
+        port_slot=0,
         env=None,
         memory_scope=None,
         owner=None,
@@ -623,9 +654,9 @@ async def test_drop_control_also_drops_the_container_subscription():
     provider = TmuxHooksProvider(image="img:test", router=router)
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
     subscription = await provider.ensure_subscription(project_id, topic_id)
-    provider._live[topic_id] = "topic-box"
+    provider._live[topic_id] = _BOX
 
-    await provider.drop_control("topic-box")
+    await provider.drop_control(_BOX)
 
     assert subscription.consumer_task is not None
     assert subscription.consumer_task.done()
@@ -642,11 +673,11 @@ async def test_restart_recovery_subscribes_running_topic_containers(monkeypatch)
         if args and args[0] == "ps":
             return 0, "topic-box\n", ""
         if args and args[0] == "inspect":
-            return (
-                0,
-                f"CHEESE_PROJECT={project_id}\nCHEESE_TOPIC={topic_id}\n",
-                "",
-            )
+            return 0, f"CHEESE_PROJECT={project_id}\n", ""
+        if "list-sessions" in args:
+            return 0, f"cheese-{topic_id.hex[:8]}\n", ""
+        if "show-environment" in args:
+            return 0, f"CHEESE_TOPIC={topic_id}\n", ""
         return 1, "", "unexpected"
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
@@ -659,7 +690,9 @@ async def test_restart_recovery_subscribes_running_topic_containers(monkeypatch)
     assert recovered[0].project_id == project_id
     assert recovered[0].topic_id == topic_id
     assert not recovered[0].ready.is_set()
-    assert provider._live[topic_id] == "topic-box"
+    assert provider._live[topic_id] == tp.TmuxScreen(
+        "topic-box", f"cheese-{topic_id.hex[:8]}"
+    )
     assert calls[0][0] == "ps"
 
     recovered[0].ready.set()
