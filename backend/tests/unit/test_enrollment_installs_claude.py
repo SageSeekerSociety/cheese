@@ -39,7 +39,7 @@ def test_the_machine_owners_claude_is_left_alone():
     s = script()
     claude_block = s[s.index("claude_pin=") : s.index("cheesehost.new")]
     assert "ln -s" not in claude_block, "must not repoint the owner's claude"
-    assert '$HOME/.local/bin/claude' not in claude_block
+    assert "$HOME/.local/bin/claude" not in claude_block
 
 
 def test_the_pin_is_installed_even_when_a_newer_claude_exists():
