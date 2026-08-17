@@ -188,7 +188,7 @@ class LocalDockerProvider:
             # `docker run` as extra `-v` args, space-joined since deterministic
             # workspace_root/UUID paths never contain whitespace.
             "SBX_VCS_MOUNTS": " ".join(
-                ws.sandbox_vcs_mounts(project_id, ws.branch_for_topic(topic_id))
+                ws.sandbox_vcs_mounts(project_id, topic_id)
             ),
             "SBX_SESSION": str(ws.session_dir(project_id, topic_id)),
             "CHEESE_API": settings.sandbox_api_base,

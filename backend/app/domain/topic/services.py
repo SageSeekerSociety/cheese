@@ -694,7 +694,7 @@ class TopicService:
                 new_session_id=new_sid,
                 # Claude resolves --resume under the slug of the cwd it runs
                 # with, so the fork must land under the TARGET topic's workdir.
-                target_cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(target.id)),
+                target_cwd=ws.sandbox_topic_workdir(target.id),
             )
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
