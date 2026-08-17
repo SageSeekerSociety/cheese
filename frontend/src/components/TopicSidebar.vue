@@ -1,12 +1,20 @@
 <script setup lang="ts">
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
-import type { VisibleRow } from '../lib/topicTree'
+import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
-import { ancestorPathIds, loadCollapsedTopics, saveCollapsedTopics, visibleRows } from '../lib/topicTree'
+import {
+  ancestorPathIds,
+  loadCollapsedTopics,
+  loadOthersGroupOpen,
+  partitionByRelevance,
+  saveCollapsedTopics,
+  saveOthersGroupOpen,
+  visibleRows,
+} from '../lib/topicTree'
 import { avatarColor } from '../utils/avatar'
 
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
@@ -243,10 +251,14 @@ function startDm(handle: string) {
 // 按项目存 localStorage（而不是只放内存）：这个 rail 是主导航，每次刷新都要
 // 重收一遍等于没有折叠。存的是**收起来的** id，所以新拆出来的话题天然可见。
 const collapsedIds = ref<ReadonlySet<string>>(new Set<string>())
+// 「其他话题」这一组展开没展开。默认折叠——这一整条改动的意义就在这里，所以它
+// 也按项目落盘（键不在 = 折叠，见 lib/topicTree.ts）。
+const othersOpen = ref(false)
 watch(
   () => props.selectedProjectId,
   (pid) => {
     collapsedIds.value = loadCollapsedTopics(pid)
+    othersOpen.value = loadOthersGroupOpen(pid)
   },
   { immediate: true }
 )
@@ -266,15 +278,64 @@ function awaitsOf(id: string): boolean {
   return topicById.value.get(id)?.awaits_me === true
 }
 
-const visibleTree = computed(() =>
-  visibleRows(activeTree.value, {
+// ---- 分组 (C2): 我参与的平铺，其他话题收进一个默认折叠的组 ----
+// 判定住在 lib/topicTree.ts 里（纯函数 + 单测），这里只管接线、组的开关和落盘。
+//
+// 两组的**行是同一种形态**：同一段模板渲染，所以树形缩进、竖向引导线、16px 状态
+// 槽、未读角标、hover 的 ⋯ 一个不少。折叠组只是把一批行收起来，不是换一种行。
+const grouped = computed(() => partitionByRelevance(activeTree.value))
+
+function rowsOf(rows: readonly FlatRow<Topic>[]) {
+  return visibleRows(rows, {
     collapsed: collapsedIds.value,
     reveal: selectedPath.value,
     unreadOf,
     runningOf,
     awaitsOf,
   })
+}
+
+const mineTree = computed(() => rowsOf(grouped.value.mine))
+const othersTree = computed(() => rowsOf(grouped.value.others))
+
+// 组头的未读聚合成**一个点**，不是数字：别人话题里有几条新消息与我无关，但"那边
+// 有动静"值得知道。算的是整组（含组内自己收起来的子话题），所以点在不在，不受
+// 组内折叠状态影响。
+const othersUnread = computed<number>(() => grouped.value.others.reduce((sum, r) => sum + unreadOf(r.topic.id), 0))
+
+// 选中的话题落在这一组里时，通往它的那条路径照常渲染——和折叠一个父话题时的
+// reveal 一模一样：人正待在里面的那个话题永远不会被折叠藏掉，但收起来的其余部分
+// 仍然是收起来的，组头的开关也仍然说的是用户自己设的那个值（不会变成一颗按了
+// 没反应的按钮）。落盘的偏好一个字都不动，离开之后这一组照旧是收着的。
+const othersHoldsSelected = computed(() =>
+  props.selectedTopicId ? grouped.value.others.some((r) => r.topic.id === props.selectedTopicId) : false
 )
+const othersRendered = computed(() => {
+  if (othersOpen.value) return othersTree.value
+  if (!othersHoldsSelected.value) return []
+  return othersTree.value.filter((r) => selectedPath.value.has(r.topic.id))
+})
+
+function toggleOthers() {
+  othersOpen.value = !othersOpen.value
+  saveOthersGroupOpen(props.selectedProjectId, othersOpen.value)
+}
+
+// 一次 v-for 走完两组，所以话题行的那段模板只存在一份——「形态一致」是结构保证
+// 的，不是靠两处复制的模板保持同步。组头只有下面那一组有。
+const railSections = computed(() => [
+  { key: 'mine', label: '', head: false, count: 0, unread: 0, open: true, rows: mineTree.value },
+  {
+    key: 'others',
+    label: '其他话题',
+    head: grouped.value.others.length > 0,
+    count: grouped.value.others.length,
+    unread: othersUnread.value,
+    // open 只管组头那个 chevron 的朝向 = 用户设的值；实际渲染哪些行看 rows。
+    open: othersOpen.value,
+    rows: othersRendered.value,
+  },
+])
 
 // ---- 行左边那一个 16px 槽 ----
 // 一个槽，按优先级换租客：有子话题 → 折叠开关；否则「等你处理」→ 琥珀点；
@@ -468,137 +529,162 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
           </div>
 
           <v-list v-else density="compact" nav class="py-0">
-            <v-list-item
-              v-for="row in visibleTree"
-              :key="row.topic.id"
-              :active="row.topic.id === selectedTopicId"
-              rounded="lg"
-              class="topic-row"
-              :class="{
-                'is-active': row.topic.id === selectedTopicId,
-                'is-sub': row.depth > 0,
-                'is-menu-open': actionsMenuFor === row.topic.id,
-              }"
-              :style="{
-                paddingInlineStart: 8 + row.depth * 20 + 'px',
-                '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
-              }"
-              @click="emit('select-topic', row.topic.id)"
-            >
-              <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
-                   身份靠标题本身，种类标签不要（缩进表达层级），操作 hover 才浮现。
-                   原先这里还有一颗每行都一样的装饰图标——同一层级里人人相同的标记
-                   区分不了任何东西，删掉了。 -->
-              <template #prepend>
-                <button
-                  v-if="row.hasChildren"
-                  type="button"
-                  class="row-slot subtree-toggle"
-                  :class="{
-                    'subtree-toggle--awaits': rowAwaits(row),
-                    'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
-                  }"
-                  :title="toggleTitle(row)"
-                  :aria-expanded="!row.collapsed"
-                  @click.stop="toggleCollapse(row.topic.id)"
-                >
-                  <v-icon size="15">
-                    {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
-                  </v-icon>
-                </button>
-                <!-- 等你处理：有点名给你的验收卡，或有 @你 的未读。排在"在跑"
-                     前面——芝士在忙是它的事，等你做事才是你的事。 -->
-                <span v-else-if="row.topic.awaits_me" class="row-slot">
-                  <span class="await-dot" title="有事等你处理" />
-                </span>
-                <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
-                     任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
-                <span v-else-if="row.topic.running" class="row-slot">
-                  <span class="running-dot" title="芝士正在这个话题里工作" />
-                </span>
-                <span v-else class="row-slot" />
-              </template>
-              <v-list-item-title class="d-flex align-center topic-title">
-                <v-text-field
-                  v-if="renamingTopicId === row.topic.id"
-                  v-model="draftTitle"
-                  density="compact"
-                  variant="outlined"
-                  hide-details
-                  autofocus
-                  :maxlength="TOPIC_TITLE_MAX_LENGTH"
-                  class="rename-field"
-                  @click.stop
-                  @keyup.enter="saveRename(row.topic)"
-                  @keyup.esc="cancelRename()"
-                  @blur="saveRename(row.topic)"
-                />
-                <template v-else>
-                  <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
-                    row.topic.title
-                  }}</span>
-                  <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
-                  <span
-                    v-if="row.collapsed && row.hiddenCount > 0"
-                    class="subtree-count ms-2"
-                    :title="`收起了 ${row.hiddenCount} 个子话题`"
-                    >{{ countLabel(row.hiddenCount) }}</span
-                  >
-                  <span
-                    v-if="statusBadge(row.topic.status)"
-                    class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
-                  >
-                    <span class="status-dot status-dot--warn" />
-                    {{ statusBadge(row.topic.status) }}
-                  </span>
-                </template>
-              </v-list-item-title>
-              <template #append>
-                <!-- 折叠不能把"有新消息"吞掉：收起来的后代的未读加到本行上。 -->
-                <span
-                  v-if="row.unreadTotal > 0"
-                  class="unread-badge"
-                  :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
-                  >{{ countLabel(row.unreadTotal) }}</span
-                >
-                <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
-                <div class="row-actions" @click.stop>
-                  <v-menu
-                    :model-value="actionsMenuFor === row.topic.id"
-                    location="bottom end"
-                    @update:model-value="(open: boolean) => setActionsMenu(row.topic.id, open)"
-                  >
-                    <template #activator="{ props: menuProps }">
-                      <v-btn
-                        v-bind="menuProps"
-                        icon="mdi-dots-horizontal"
-                        size="small"
-                        variant="text"
-                        density="comfortable"
-                        title="更多操作"
-                        class="row-actions__btn"
-                      />
-                    </template>
-                    <v-list density="compact" nav>
-                      <v-list-item prepend-icon="mdi-pencil-outline" title="重命名" @click="startRename(row.topic)" />
-                      <v-list-item
-                        prepend-icon="mdi-archive-arrow-down-outline"
-                        title="归档"
-                        @click="emit('archive-topic', row.topic.id)"
-                      />
-                      <!-- 拆出子话题点一下就真的建一个话题并打开它——比上面两条
-                           重一个量级，所以在菜单里单独隔一组，不和改名并排。 -->
-                      <v-divider class="my-1" />
-                      <v-list-item
-                        prepend-icon="mdi-source-branch-plus"
-                        title="拆出子话题"
-                        @click="onSplit(row.topic)"
-                      />
-                    </v-list>
-                  </v-menu>
-                </div>
-              </template>
+            <!-- 一组都不相关的时候（刚进项目、还没参与任何话题），上组是空的。
+                 说清楚"空的是这一组，不是这个项目"，否则下面那个折叠组会像个谜。 -->
+            <v-list-item v-if="mineTree.length === 0 && grouped.others.length > 0" class="c-faint t-body">
+              暂无与你相关的话题
             </v-list-item>
+
+            <!-- 分组 (C2): 两组走同一段模板。上组直接平铺；下组「其他话题」多一个
+                 组头、默认收起。行的形态两组完全一致——见 .group-toggle 的注释。 -->
+            <template v-for="section in railSections" :key="section.key">
+              <button v-if="section.head" type="button" class="group-toggle" @click="toggleOthers">
+                <v-icon size="15" class="c-faint">
+                  {{ section.open ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
+                </v-icon>
+                <span class="t-eyebrow">{{ section.label }}</span>
+                <span class="group-count">{{ section.count }}</span>
+                <!-- 收起来时聚合成一个点，不是数字：别人话题里有几条与我无关，
+                     但"那边有动静"值得知道。 -->
+                <span
+                  v-if="!section.open && section.unread > 0"
+                  class="unread-badge unread-badge--dot"
+                  title="其他话题里有新消息"
+                />
+              </button>
+
+              <v-list-item
+                v-for="row in section.rows"
+                :key="row.topic.id"
+                :active="row.topic.id === selectedTopicId"
+                rounded="lg"
+                class="topic-row"
+                :class="{
+                  'is-active': row.topic.id === selectedTopicId,
+                  'is-sub': row.depth > 0,
+                  'is-menu-open': actionsMenuFor === row.topic.id,
+                }"
+                :style="{
+                  paddingInlineStart: 8 + row.depth * 20 + 'px',
+                  '--guide-x': 16 + (row.depth - 1) * 20 + 'px',
+                }"
+                @click="emit('select-topic', row.topic.id)"
+              >
+                <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
+                     身份靠标题本身，种类标签不要（缩进表达层级），操作 hover 才浮现。
+                     原先这里还有一颗每行都一样的装饰图标——同一层级里人人相同的
+                     标记区分不了任何东西，删掉了。 -->
+                <template #prepend>
+                  <button
+                    v-if="row.hasChildren"
+                    type="button"
+                    class="row-slot subtree-toggle"
+                    :class="{
+                      'subtree-toggle--awaits': rowAwaits(row),
+                      'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
+                    }"
+                    :title="toggleTitle(row)"
+                    :aria-expanded="!row.collapsed"
+                    @click.stop="toggleCollapse(row.topic.id)"
+                  >
+                    <v-icon size="15">
+                      {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
+                    </v-icon>
+                  </button>
+                  <!-- 等你处理：有点名给你的验收卡，或有 @你 的未读。排在"在跑"
+                       前面——芝士在忙是它的事，等你做事才是你的事。 -->
+                  <span v-else-if="row.topic.awaits_me" class="row-slot">
+                    <span class="await-dot" title="有事等你处理" />
+                  </span>
+                  <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
+                       任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
+                  <span v-else-if="row.topic.running" class="row-slot">
+                    <span class="running-dot" title="芝士正在这个话题里工作" />
+                  </span>
+                  <span v-else class="row-slot" />
+                </template>
+                <v-list-item-title class="d-flex align-center topic-title">
+                  <v-text-field
+                    v-if="renamingTopicId === row.topic.id"
+                    v-model="draftTitle"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    autofocus
+                    :maxlength="TOPIC_TITLE_MAX_LENGTH"
+                    class="rename-field"
+                    @click.stop
+                    @keyup.enter="saveRename(row.topic)"
+                    @keyup.esc="cancelRename()"
+                    @blur="saveRename(row.topic)"
+                  />
+                  <template v-else>
+                    <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
+                      row.topic.title
+                    }}</span>
+                    <!-- 收起来了就说清楚收了多少——「这里还有内容」得看得见。 -->
+                    <span
+                      v-if="row.collapsed && row.hiddenCount > 0"
+                      class="subtree-count ms-2"
+                      :title="`收起了 ${row.hiddenCount} 个子话题`"
+                      >{{ countLabel(row.hiddenCount) }}</span
+                    >
+                    <span
+                      v-if="statusBadge(row.topic.status)"
+                      class="d-inline-flex align-center ga-1 c-faint topic-status ms-2"
+                    >
+                      <span class="status-dot status-dot--warn" />
+                      {{ statusBadge(row.topic.status) }}
+                    </span>
+                  </template>
+                </v-list-item-title>
+                <template #append>
+                  <!-- 折叠不能把"有新消息"吞掉：收起来的后代的未读加到本行上。 -->
+                  <span
+                    v-if="row.unreadTotal > 0"
+                    class="unread-badge"
+                    :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
+                    >{{ countLabel(row.unreadTotal) }}</span
+                  >
+                  <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
+                  <div class="row-actions" @click.stop>
+                    <v-menu
+                      :model-value="actionsMenuFor === row.topic.id"
+                      location="bottom end"
+                      @update:model-value="(open: boolean) => setActionsMenu(row.topic.id, open)"
+                    >
+                      <template #activator="{ props: menuProps }">
+                        <v-btn
+                          v-bind="menuProps"
+                          icon="mdi-dots-horizontal"
+                          size="small"
+                          variant="text"
+                          density="comfortable"
+                          title="更多操作"
+                          class="row-actions__btn"
+                        />
+                      </template>
+                      <v-list density="compact" nav>
+                        <v-list-item prepend-icon="mdi-pencil-outline" title="重命名" @click="startRename(row.topic)" />
+                        <v-list-item
+                          prepend-icon="mdi-archive-arrow-down-outline"
+                          title="归档"
+                          @click="emit('archive-topic', row.topic.id)"
+                        />
+                        <!-- 拆出子话题点一下就真的建一个话题并打开它——比上面两条
+                           重一个量级，所以在菜单里单独隔一组，不和改名并排。 -->
+                        <v-divider class="my-1" />
+                        <v-list-item
+                          prepend-icon="mdi-source-branch-plus"
+                          title="拆出子话题"
+                          @click="onSplit(row.topic)"
+                        />
+                      </v-list>
+                    </v-menu>
+                  </div>
+                </template>
+              </v-list-item>
+            </template>
 
             <v-list-item v-if="activeTree.length === 0" class="c-faint t-body"> 暂无话题 </v-list-item>
           </v-list>
@@ -607,12 +693,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                Archived topics leave the active tree and land here (newest
                first), so done work stops crowding the rail. -->
           <template v-if="archivedRows.length">
-            <button type="button" class="archived-toggle" @click="archivedOpen = !archivedOpen">
+            <button type="button" class="group-toggle archived-toggle" @click="archivedOpen = !archivedOpen">
               <v-icon size="15" class="c-faint">
                 {{ archivedOpen ? 'mdi-chevron-down' : 'mdi-chevron-right' }}
               </v-icon>
               <span class="t-eyebrow">已归档</span>
-              <span class="archived-count">{{ archivedRows.length }}</span>
+              <span class="group-count">{{ archivedRows.length }}</span>
               <span
                 v-if="!archivedOpen && archivedUnread > 0"
                 class="unread-badge unread-badge--dot"
@@ -792,13 +878,23 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   padding-inline-end: 8px;
 }
 
-/* 项目头：整块是菜单的 activator。高度、内边距、底部分隔线都来自全局
-   .sidebar-header (48px 基线)，这里只把 <button> 的浏览器默认样式抹平——
-   注意只抹左右和上边框，底边那条分隔线是 .sidebar-header 画的，不能连坐。 */
+/* 项目头：整块是菜单的 activator。高度和内边距来自全局 .sidebar-header
+   (48px 基线)。
+ *
+ * 底部那条分隔线必须在这里再声明一遍，不能指望全局 .sidebar-header 那条。
+ * 原因是 style.css 的 `button:not(.v-btn) { border: none }`——那条选择器权重是
+ * (0,1,1)，压过 .sidebar-header 的 (0,1,0)，而这条 rail 是四个侧栏里唯一把
+ * .sidebar-header 放在 <button> 上的（首页/空间/设置都是 <div>），所以**只有
+ * 工作台**这条线被抹掉了，其余三个照常显示。那条 reset 自己的注释也写明了这个
+ * 约定：「buttons that declare their own border override this」。
+ *
+ * 颜色和 .sidebar-header / PageHeader 完全一致（Vuetify 那对 border token），
+ * 不是 --line/--line-2：目标是和右边内容区顶栏那条线同款同高，能接成一条。
+ * 删掉这一行，线就会静默消失，而且沙箱里跑不了渲染、任何测试都抓不到。 */
 .rail-header {
   width: 100%;
-  border-inline: 0;
-  border-block-start: 0;
+  border: 0;
+  border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   background: none;
   font: inherit;
   color: inherit;
@@ -809,6 +905,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+
 .rail-header__caret {
   flex: none;
   color: var(--muted);
@@ -920,8 +1017,11 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   background: var(--muted);
 }
 
-/* 已归档 group toggle at the bottom of the topic list. */
-.archived-toggle {
+/* 收起来的一组话题的组头：底部的「已归档」，以及话题列表里的「其他话题」。
+   两处共用一种形态——同一条侧栏里"一组被收起来的话题"只能有一种读法。
+   注意组头长这样，不代表**组里的行**也换一种形态：「其他话题」里的行走的是
+   上面那套完整的 .topic-row（树形缩进、状态槽、未读、hover 的 ⋯）。 */
+.group-toggle {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -933,13 +1033,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   text-align: left;
   transition: background 0.12s ease;
 }
-.archived-toggle:hover {
+.group-toggle:hover {
   background: var(--fill);
 }
-.archived-toggle .t-eyebrow {
+.group-toggle .t-eyebrow {
   padding: 0;
 }
-.archived-count {
+.group-count {
   font-size: 11px;
   color: var(--faint);
   background: var(--fill);

@@ -62,7 +62,7 @@ def api_get(path: str):
 
 
 def blocks_of(topic_id: str) -> list[dict]:
-    d = api_get(f"/api/topics/{topic_id}/blocks")
+    d = api_get(f"/topics/{topic_id}/blocks")
     return d["data"] if isinstance(d, dict) and "data" in d else d
 
 
@@ -288,7 +288,7 @@ async def main() -> None:
         await page.reload(wait_until="networkidle")
         await page.wait_for_timeout(1500)
 
-        topics = api_get(f"/api/topics?project_id={project_id}")["data"]
+        topics = api_get(f"/topics?project_id={project_id}")["data"]
         root_id = next(t["id"] for t in topics if t["kind"] == "root")
         _log(f"root topic: {root_id}")
 
@@ -311,7 +311,7 @@ async def main() -> None:
         _log("creating work topic via + (untitled; 芝士 will name it)…")
         await page.get_by_title("新建话题").first.click()
         await page.wait_for_timeout(2500)
-        topics = api_get(f"/api/topics?project_id={project_id}")["data"]
+        topics = api_get(f"/topics?project_id={project_id}")["data"]
         work_id = next(
             t["id"] for t in topics if t["kind"] == "topic" and t["title"] == "新话题"
         )
@@ -368,7 +368,7 @@ async def main() -> None:
         _log("【私聊】opening private chat with 芝士…")
         await page.get_by_text("与芝士私聊").first.click()
         await page.wait_for_timeout(1500)
-        priv = api_get(f"/api/projects/{project_id}/private-chat?user_handle=user-1")
+        priv = api_get(f"/projects/{project_id}/private-chat?user_handle=user-1")
         priv_id = priv["id"]
         _log(f"private topic: {priv_id}")
         # ChatPanel's own composer already defaults to @芝士 ON.
@@ -392,11 +392,11 @@ async def main() -> None:
     print(f"  project_id : {project_id}")
     print(f"  open       : {BASE}/project/{project_id}")
     work_events = count_blocks(work_id, "ai", "event")
-    decisions = api_get(f"/api/projects/{project_id}/decisions")
+    decisions = api_get(f"/projects/{project_id}/decisions")
     n_dec = decisions.get("total") if isinstance(decisions, dict) else len(decisions)
     print(f"  工作话题 现场事件 : {work_events}")
     print(f"  决策记录 条数      : {n_dec}")
-    topics = api_get(f"/api/topics?project_id={project_id}")["data"]
+    topics = api_get(f"/topics?project_id={project_id}")["data"]
     print(f"  话题总数（含子话题）: {len(topics)}")
     print("=" * 60)
 

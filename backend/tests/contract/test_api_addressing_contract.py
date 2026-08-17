@@ -269,16 +269,17 @@ def test_no_two_routes_want_the_same_url_from_a_caller() -> None:
     """Two routes may never be reachable at the SAME external URL (#370 step 3).
 
     The test above bans duplicate BACKEND paths. This one asks the question a
-    caller asks: given the published mount, what do I type? A 1.0 `/x` is typed
-    `/api/x` and a 2.0 `/api/x` is typed `/api/api/x`, so today they differ — and
-    that difference is the only thing keeping the two generations apart while
-    they still share resource words.
+    caller asks: given the published mount, what do I type? While the two
+    generations shared resource words, a differing answer was the only thing
+    keeping them apart — a 1.0 `/x` was typed `/api/x`, a 2.0 `/api/x` was typed
+    `/api/api/x`.
 
-    It matters most for what comes next: #370 step 2 drops the 2.0 prefix, at
-    which point external URL and backend path become the same string and any
-    surviving shared word becomes a real duplicate. This assertion holds before
-    and after that change, so it is what makes the flattening checkable rather
-    than hopeful.
+    Step 2 removed that difference: external URL is now backend path plus the
+    mount, one shape for everything, so two routes wanting the same URL is no
+    longer softened by a prefix — it is the silent amputation this whole file
+    exists to catch. The assertion held before the flattening and holds after,
+    which is what made the flattening checkable rather than hopeful; what it
+    guards now is every route added from here on.
     """
     claims: dict[tuple[str, str], list[str]] = defaultdict(list)
     for module, routes in _module_routers().items():
@@ -351,4 +352,31 @@ def test_the_deployed_gateway_still_strips_what_the_schema_assumes() -> None:
     assert proxy_pass.group("target").endswith("/"), (
         "proxy_pass lost its trailing slash, so nginx no longer strips /api — "
         "the schema's published server is now wrong by one segment"
+    )
+
+
+def test_direct_backend_scripts_do_not_add_the_gateway_mount() -> None:
+    """A caller on backend port 8081 uses app paths; only nginx adds /api.
+
+    These scripts bypass the gateway, so a stale prefix makes the check lie.
+    """
+    direct_scripts = (
+        "backend/scripts/chat_send_probe.py",
+        "backend/scripts/device_capability_setup.py",
+        "backend/scripts/device_capability_verify.py",
+        "backend/scripts/device_selfhost_smoke.py",
+        "backend/scripts/e2e_scroll_memory.py",
+        "backend/scripts/machine_chain_check.py",
+        "backend/scripts/sim_real.py",
+    )
+
+    for relative_path in direct_scripts:
+        source = (_REPO_ROOT / relative_path).read_text()
+        assert not re.search(r"[\"']/api/", source), (
+            f"{relative_path} adds the public /api mount to a direct backend call"
+        )
+
+    workflow = (_REPO_ROOT / ".github/workflows/device-wiring.yml").read_text()
+    assert ":8081/api" not in workflow, (
+        "the device wiring runner talks to port 8081 directly, without /api"
     )

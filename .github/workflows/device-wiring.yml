@@ -74,16 +74,8 @@ jobs:
             echo "FAIL  /sandbox/cli/cheese returned ${size} bytes: $(printf '%s' "$body" | head -c 200)"; fail=1
           fi
 
-          # 3) The co-located worktree setting must be live, or device screens run
-          #    in a scratch dir and their edits never reach the topic branch.
-          root="$(docker exec cheese-backend-1 printenv DEVICE_SHARED_WORKSPACE_HOST_ROOT || true)"
-          if [ -n "$root" ] && [ -d "$root" ]; then
-            echo "PASS  co-located workspace root live: $root"
-          else
-            echo "FAIL  DEVICE_SHARED_WORKSPACE_HOST_ROOT unset or missing on the box"; fail=1
-          fi
 
-          # 4) The device must be enrolled AND online, or every turn queues. The
+          # 3) The device must be enrolled AND online, or every turn queues. The
           #    probe runs as a FILE (inline python through YAML + bash -e was too
           #    fragile: one non-zero exit aborted the whole step before it could
           #    report) and always prints a number, so `|| echo 0` can never mask
@@ -108,10 +100,10 @@ jobs:
 
       # The two DEVICE CAPABILITIES self-hosting depends on, exercised from the
       # device side with zero model spend: the agent's model provider is not
-      # involved in either (the CLI talks to the platform API, and the worktree
-      # is a filesystem the device can reach). A paid device-smoke run proves the
-      # agent CHOOSES to use them; these prove the box CAN.
-      - name: Device capabilities (real worktree + shipped CLI) — no model spend
+      # involved in either (the CLI talks to the platform API, and git carries
+      # the device's branch back). A paid device-smoke run proves the agent
+      # CHOOSES to use them; these prove the device CAN.
+      - name: Device capabilities (git clone/push + shipped CLI) — no model spend
         run: |
           set -uo pipefail
           fail=0
@@ -120,69 +112,98 @@ jobs:
 
           setup="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
             python /tmp/device_capability_setup.py 2>/dev/null || true)"
-          eval "$(printf '%s\n' "$setup" | grep -E '^(PROJECT|TOPIC|TOKEN|WORKTREE|HOSTTREE)=')"
-          if [ -z "${TOPIC:-}" ] || [ -z "${TOKEN:-}" ]; then
+          eval "$(printf '%s\n' "$setup" | grep -E '^(PROJECT|TOPIC|TOKEN|BRANCH)=')"
+          if [ -z "${TOPIC:-}" ] || [ -z "${TOKEN:-}" ] || [ -z "${BRANCH:-}" ]; then
             echo "FAIL  could not prepare a scratch topic:"; printf '%s\n' "$setup" | head -5; exit 1
           fi
-          echo "topic=$TOPIC worktree(host)=${HOSTTREE:-<unset>}"
-          printf '%s' "$TOPIC" > /tmp/cap_topic
+          echo "CAP_TOPIC=$TOPIC" >> "$GITHUB_ENV"
+          echo "topic=$TOPIC branch=$BRANCH"
 
-          # #94 — the topic's REAL worktree must exist where the DEVICE sees it and
-          # be writable by the device user; write a probe file exactly as a screen
-          # would, then confirm the BACKEND reads it back through the topic.
+          # #94 — reproduce the exact device boundary: clone the topic branch into
+          # a device-owned tree, commit a marker, and push it through smart HTTP.
           MARKER="cap-$(date +%s)-$RANDOM"
-          if [ -n "${HOSTTREE:-}" ] && [ -d "$HOSTTREE" ]; then
-            if printf 'device probe %s\n' "$MARKER" > "$HOSTTREE/DEVICE_PROBE.txt" 2>/dev/null; then
-              echo "PASS  device can write the topic's real worktree ($HOSTTREE)"
+          DEVICE_TREE="$PWD/tmp/device-capability-$TOPIC"
+          CLI_PROBE="$PWD/tmp/device-capability-cli-$TOPIC"
+          # Port 8081 is the backend app itself. Only the public nginx gateway
+          # adds and strips /api, so direct device probes use bare route paths.
+          REMOTE="http://192.168.16.5:8081/projects/$PROJECT/git"
+          case "$DEVICE_TREE" in
+            "$PWD"/tmp/device-capability-*) ;;
+            *) echo "FAIL  unsafe device tree path: $DEVICE_TREE"; exit 1 ;;
+          esac
+          mkdir -p "$PWD/tmp"
+          if [ -e "$DEVICE_TREE" ]; then
+            rm -rf -- "$DEVICE_TREE"
+          fi
+          if git -c http.extraHeader="X-Cheese-Token: $TOKEN" \
+              clone -q --branch "$BRANCH" --single-branch "$REMOTE" "$DEVICE_TREE"; then
+            git -C "$DEVICE_TREE" config user.name "Cheese device check"
+            git -C "$DEVICE_TREE" config user.email "device-check@zhishi.local"
+            git -C "$DEVICE_TREE" config http.extraHeader "X-Cheese-Token: $TOKEN"
+            printf 'device probe %s\n' "$MARKER" > "$DEVICE_TREE/DEVICE_PROBE.txt"
+            git -C "$DEVICE_TREE" add DEVICE_PROBE.txt
+            git -C "$DEVICE_TREE" commit -q -m "test: add device capability marker"
+            if git -C "$DEVICE_TREE" push -q origin "HEAD:$BRANCH"; then
+              echo "PASS  device clone committed and pushed $BRANCH"
             else
-              echo "FAIL  worktree not writable by the device user: $HOSTTREE"; fail=1
+              echo "FAIL  device could not push $BRANCH"; fail=1
             fi
           else
-            echo "FAIL  topic worktree missing on the device side: ${HOSTTREE:-<unset>}"; fail=1
+            echo "FAIL  device could not clone $BRANCH"; fail=1
           fi
 
           # #95 — fetch the CLI the way the screen launcher does, then FILE A CARD
           # with it using the screen's scoped token. This is the whole platform-
           # action path, end to end, on the device.
-          rm -f /tmp/cheese_cli_probe
-          curl -s -m 15 -H "X-Cheese-Token: $TOKEN" \
-            "http://192.168.16.5:8081/sandbox/cli/cheese" -o /tmp/cheese_cli_probe || true
-          chmod +x /tmp/cheese_cli_probe 2>/dev/null || true
-          out="$(CHEESE_API=http://192.168.16.5:8081/api CHEESE_PROJECT="$PROJECT" \
+          curl -sS -f -m 15 -H "X-Cheese-Token: $TOKEN" \
+            "http://192.168.16.5:8081/sandbox/cli/cheese" -o "$CLI_PROBE" || true
+          chmod +x "$CLI_PROBE" 2>/dev/null || true
+          out="$(CHEESE_API=http://192.168.16.5:8081 CHEESE_PROJECT="$PROJECT" \
                  CHEESE_TOPIC="$TOPIC" CHEESE_TOKEN="$TOKEN" CHEESE_AUTHOR=cheese \
-                 python3 /tmp/cheese_cli_probe accept-request andy "设备能力检查" 2>&1 || true)"
+                 python3 "$CLI_PROBE" accept-request andy "设备能力检查" 2>&1 || true)"
           echo "cli said: $(printf '%s' "$out" | head -c 200)"
 
           verify="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
             python /tmp/device_capability_verify.py "$TOPIC" "$MARKER" 2>/dev/null || true)"
-          # Remove the probe now that it has been read back. 采纳前快照 commits
-          # whatever sits in the worktree, so a leftover probe rides an accept all
-          # the way onto the upstream trunk (it did: DEVICE_PROBE.txt reached main).
-          rm -f "$HOSTTREE/DEVICE_PROBE.txt" 2>/dev/null || true
           eval "$(printf '%s\n' "$verify" | grep -E '^(CARDS|MARKER)=')"
           if [ "${CARDS:-0}" -gt 0 ] 2>/dev/null; then
             echo "PASS  the shipped cheese CLI filed an accept card from the device (${CARDS})"
           else
             echo "FAIL  the CLI could not file a card from the device"; fail=1
           fi
-          if [ "$(printf '%s\n' "$verify" | grep '^MARKER=' | cut -d= -f2)" = "1" ]; then
-            echo "PASS  the backend reads the device's write back through the topic worktree"
+          if [ "${MARKER:-0}" = "1" ]; then
+            echo "PASS  the backend sees the branch pushed by the device"
           else
-            echo "FAIL  the device's write is NOT visible in the topic's worktree"; fail=1
+            echo "FAIL  the device's pushed marker is missing from the topic branch"; fail=1
           fi
+
+          # Leave the topic branch clean even when the optional accept step runs.
+          if [ -d "$DEVICE_TREE/.git" ]; then
+            if git -C "$DEVICE_TREE" rm -q DEVICE_PROBE.txt \
+                && git -C "$DEVICE_TREE" commit -q -m "test: remove device capability marker"; then
+              if git -C "$DEVICE_TREE" push -q origin "HEAD:$BRANCH"; then
+                echo "PASS  removed the capability marker from $BRANCH"
+              else
+                echo "FAIL  could not remove the capability marker from $BRANCH"; fail=1
+              fi
+            else
+              echo "FAIL  could not commit capability marker cleanup"; fail=1
+            fi
+          fi
+          rm -rf -- "$DEVICE_TREE"
+          rm -f -- "$CLI_PROBE"
 
           exit $fail
 
       # The LANDING half, still without a model: the card this check just filed is
       # accepted exactly as the UI button would, so 采纳 → merge → sync upstream →
-      # fast-forward runs for real. The topic itself carries no commits (the probe
-      # write is never committed), so what lands is whatever the project's base
-      # already holds — which is the point: it proves the path, not the payload.
+      # fast-forward runs for real. The capability commits have no net tree change,
+      # so the check exercises the path without leaving probe content behind.
       - name: Accept the filed card (lands on the upstream)
         if: ${{ inputs.accept }}
         run: |
           set -uo pipefail
-          TOPIC="$(cat /tmp/cap_topic 2>/dev/null || true)"
+          TOPIC="${CAP_TOPIC:-}"
           [ -n "$TOPIC" ] || { echo "no topic recorded by the capability step"; exit 1; }
           docker cp backend/scripts/accept_topic_card.py cheese-backend-1:/tmp/ >/dev/null
           docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \

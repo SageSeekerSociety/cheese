@@ -1,4 +1,5 @@
-// 折叠：左侧话题列表里，有子话题的行可以收起来。
+// 左侧话题列表的两件纯逻辑：**分组**（按"与我相关"切成两组）和**折叠**（有子话题
+// 的行可以收起来，「其他话题」整组也可以收起来）。
 //
 // TopicSidebar 的树是**拍平**的（`{topic, depth}` 的数组，DFS 顺序），折叠因此
 // 也在拍平的数组上做：这里只负责「哪些行还看得见 / 收起来的行替谁背着未读」，
@@ -17,6 +18,14 @@
 export interface TopicNodeLike {
   id: string
   parent_id?: string | null
+}
+
+/** 分组判定用到的两个后端字段（`TopicOut`，正交布尔）。 */
+export interface TopicRelevanceLike extends TopicNodeLike {
+  /** 我在名册里 / 我建的 / 我是验收人 / 我被 @ 过，四者取一。 */
+  i_participate?: boolean | null
+  /** 现在正等我做事：点名给我的验收卡，或 @我 的未读。为真时 `i_participate` 必然为真。 */
+  awaits_me?: boolean | null
 }
 
 /** 拍平树的一行：话题 + 缩进深度（TopicSidebar 里的 `TreeRow`）。 */
@@ -66,6 +75,69 @@ function buildNodes<T extends TopicNodeLike>(rows: readonly FlatRow<T>[]): Node<
     stack.push(node)
   }
   return roots
+}
+
+// ---- 相关性分组 ----
+// 侧栏把话题分成两组：「我参与的」平铺，「其他话题」收进一个默认折叠的组。
+//
+// 三条规则，每条都是为了"分组不能让人找不到东西"：
+//   1. **整棵子树跟着它的根走。** 判定的单位是顶层话题连它底下所有子话题，而不是
+//      单个话题——按单个话题分，一个父话题去了上组、它的子话题留在下组，缩进就
+//      失去参照（depth 1 的行在自己组里没有 depth 0 的父行），竖向引导线也指向
+//      一行不存在的东西。子树里只要有一个话题与我相关，整棵就上去；父话题因此
+//      顺带出现在上组，那正是"通往它的那条路径"。
+//   2. **`awaits_me` 永远在上组。** 它是"等我做事"，藏在折叠组里就等于没通知。
+//      后端保证 `awaits_me` 为真时 `i_participate` 必然为真，所以规则 1 已经覆盖
+//      它；判定里仍然把它单独写出来，是为了万一后端语义变了也不会把它折进去。
+//   3. **字段缺失当"相关"，只有明确说了 `false` 才降级。** 老客户端、没经过
+//      `list_topics` 的载荷、以及任何还没算过这两个字段的地方给的都是 undefined；
+//      那种时候宁可全部照旧显示，也不要把整个项目的话题静默折起来。
+
+/** 分组结果：两组都仍然是拍平的 `{topic, depth}` 数组，可以直接喂给 `visibleRows`。 */
+export interface RelevancePartition<T extends TopicNodeLike = TopicNodeLike> {
+  /** 与我相关（含"子树里有相关话题"而被带上来的祖先）。 */
+  mine: FlatRow<T>[]
+  /** 整棵子树都与我无关。 */
+  others: FlatRow<T>[]
+}
+
+/** 这个话题算不算"与我相关"。见上面规则 2、3。 */
+export function isMyTopic(topic: TopicRelevanceLike): boolean {
+  return topic.awaits_me === true || topic.i_participate !== false
+}
+
+function collectSubtree<T extends TopicNodeLike>(
+  node: Node<T>,
+  out: FlatRow<T>[],
+  isMine: (topic: T) => boolean
+): boolean {
+  out.push(node.row)
+  let relevant = isMine(node.row.topic)
+  // 不短路：整棵子树都要进 out，判定只是顺带求个"或"。
+  for (const child of node.children) {
+    if (collectSubtree(child, out, isMine)) relevant = true
+  }
+  return relevant
+}
+
+/**
+ * 拍平树 → 按相关性切成两组，各组内部保持原来的顺序和 depth。
+ *
+ * 顶层单位是 `buildNodes` 认定的根（= 前面没有更浅的行），所以中间层被过滤掉的
+ * 情形——父话题已归档、子话题还活着——和 `visibleRows` 的处理完全一致。
+ */
+export function partitionByRelevance<T extends TopicRelevanceLike>(
+  rows: readonly FlatRow<T>[],
+  isMine: (topic: T) => boolean = isMyTopic
+): RelevancePartition<T> {
+  const mine: FlatRow<T>[] = []
+  const others: FlatRow<T>[] = []
+  for (const root of buildNodes(rows)) {
+    const subtree: FlatRow<T>[] = []
+    const target = collectSubtree(root, subtree, isMine) ? mine : others
+    for (const row of subtree) target.push(row)
+  }
+  return { mine, others }
 }
 
 /**
@@ -174,10 +246,39 @@ export function visibleRows<T extends TopicNodeLike>(
 // 存量数据也不会因为多了个话题就把它藏起来。
 
 const COLLAPSE_PREFIX = 'cheesex.topicCollapsed.v1:'
+// 「其他话题」组展开没展开，也按项目一份。和上面共用同一套键格式，只是存的东西
+// 反过来：这一组**默认折叠**，所以键存在 = 用户展开过，键不在 = 默认的折叠态。
+// （折叠集合那边默认展开，存的是"收起来的 id"，同样是让默认态等于键不存在。）
+const OTHERS_OPEN_PREFIX = 'cheesex.railOthersOpen.v1:'
+
+function keyFor(prefix: string, projectId: string | null | undefined): string | null {
+  const normalized = (projectId ?? '').trim()
+  return normalized ? `${prefix}${encodeURIComponent(normalized)}` : null
+}
 
 function storageKey(projectId: string | null | undefined): string | null {
-  const normalized = (projectId ?? '').trim()
-  return normalized ? `${COLLAPSE_PREFIX}${encodeURIComponent(normalized)}` : null
+  return keyFor(COLLAPSE_PREFIX, projectId)
+}
+
+export function loadOthersGroupOpen(projectId: string | null | undefined): boolean {
+  const key = keyFor(OTHERS_OPEN_PREFIX, projectId)
+  if (!key || typeof localStorage === 'undefined') return false
+  try {
+    return localStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
+}
+
+export function saveOthersGroupOpen(projectId: string | null | undefined, open: boolean): void {
+  const key = keyFor(OTHERS_OPEN_PREFIX, projectId)
+  if (!key || typeof localStorage === 'undefined') return
+  try {
+    if (open) localStorage.setItem(key, '1')
+    else localStorage.removeItem(key)
+  } catch {
+    // 隐私模式/配额满：展开仍然在内存里生效，只是这次刷新后不保留。
+  }
 }
 
 export function loadCollapsedTopics(projectId: string | null | undefined): Set<string> {

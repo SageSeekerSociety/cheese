@@ -12,11 +12,12 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError
+from app.core.errors import AuthenticationRequiredError, BaseError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_CONFLICT,
+    EVENT_CARD_REJECTED,
     SEVERITY_WARN,
     WHO_CHEESE,
     notice,
@@ -91,38 +92,53 @@ async def topic_pr_checks(topic_id: uuid.UUID, db: DbSession) -> dict:
     """PR-based accept (#188 §5.1): live PR + check-run state for the newest
     card that rides a PR. Display only — never blocks anything. Answers
     {"available": false} instead of erroring so every caller (card UI, CLI)
-    can poll it unconditionally."""
+    can poll it unconditionally.
+
+    "Never erroring" has to hold for the whole body, not just the two GitHub
+    calls it used to guard: this endpoint is polled on a timer, so anything
+    that escapes here is not one 500 — it is a 500 every few seconds, each one
+    posting a traceback into the room (`report_unhandled_to_room`). That is
+    how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
+    The failure is still logged, and its reason is handed to the caller."""
+    try:
+        return ok(await _pr_checks_payload(topic_id, db))
+    except BaseError:
+        raise  # 404 for a topic that does not exist stays a 404
+    except Exception as exc:  # noqa: BLE001 — display-only endpoint, see above
+        logger.exception("pr-checks read failed for topic %s", topic_id)
+        return ok({"available": False, "reason": f"{type(exc).__name__}: {exc}"[:200]})
+
+
+async def _pr_checks_payload(topic_id: uuid.UUID, db: AsyncSession) -> dict:
     svc = AcceptService(db)
     cards, _ = await svc.list_for_topic(topic_id)
     card = next((c for c in cards if c.pr_number is not None), None)
     if card is None or card.pr_number is None:
-        return ok({"available": False})
+        return {"available": False}
     topic = await svc._topic_or_404(topic_id)
     # #192: the installation to mint from is resolved per-project, not global.
     tokens = await github_app_tokens_for_project(topic.project_id, db)
     if tokens is None:
-        return ok({"available": False})
+        return {"available": False}
     upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
     parsed = parse_github_repo(upstream)
     if parsed is None:
-        return ok({"available": False})
+        return {"available": False}
     client = GitHubPRClient(*parsed, tokens)
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
         checks = await client.check_runs(head_sha or ws.branch_for_topic(topic_id))
     except GitHubPRError as exc:
-        return ok({"available": False, "reason": str(exc)[:200]})
-    return ok(
-        {
-            "available": True,
-            "pr_number": card.pr_number,
-            "pr_url": card.pr_url,
-            "state": "merged" if view.get("merged") else view.get("state"),
-            "mergeable": view.get("mergeable"),
-            "checks": checks,
-        }
-    )
+        return {"available": False, "reason": str(exc)[:200]}
+    return {
+        "available": True,
+        "pr_number": card.pr_number,
+        "pr_url": card.pr_url,
+        "state": "merged" if view.get("merged") else view.get("state"),
+        "mergeable": view.get("mergeable"),
+        "checks": checks,
+    }
 
 
 @router.post("/accept-cards/{card_id}/approve")
@@ -213,14 +229,58 @@ async def reassign_card(
 
 @router.post("/accept-cards/{card_id}/reject")
 async def reject_card(
-    card_id: uuid.UUID, body: RejectDecision, db: DbSession, resolver: ActorResolverDep
+    card_id: uuid.UUID,
+    body: RejectDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
+    """驳回一张验收卡 —— 并且**叫醒芝士去改**。
+
+    `AcceptService.reject` only writes the row: no message, no summon. So a
+    rejected topic used to sit there until a human happened to come back and
+    poke it, while a CI failure on the same card DOES summon (`_nudge_pr_fix`).
+    Same card, same "去改代码" verdict, opposite behaviour — the difference was
+    invisible from the room.
+
+    The wake-up lives here rather than in the service on purpose: `chat`/`runner`
+    are request-scoped dependencies the domain layer has no handle on, and the
+    conflict branch of `accept_card` right above already does it this way.
+    """
     actor = await resolver.resolve(fallback_handle=body.decided_by)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
-    return ok(await svc.describe(card))
+    described = await svc.describe(card)
+    topic_id = card.topic_id
+    decided_by = card.decided_by or actor.handle
+    reason = (card.note or "").strip()
+    # 理由必须过去，否则芝士只知道"被退了"、不知道退在哪，只能猜着重做一遍。
+    reason_line = f"他给的理由：{reason}" if reason else "他没写理由。"
+    await db.commit()  # the card's new state must be readable by the woken turn
+    runner.submit(
+        chat,
+        topic_id,
+        author="system",
+        content=(
+            f"{decided_by} 驳回了你递的验收卡。{reason_line}\n"
+            "话题没归档，工作区还是你的：照着这条理由改，改完重新递卡"
+            "（驳回不阻塞重递）。理由看不懂或者你不同意，别默默按自己的理解改 —— "
+            "在对话里简短回一句问清楚。"
+        ),
+        summon=True,
+        nudge_event=f"↩️ {decided_by} 驳回了验收卡，芝士去改",
+        nudge_meta=notice(
+            EVENT_CARD_REJECTED,
+            severity=SEVERITY_WARN,
+            who=WHO_CHEESE,
+            detail=reason or None,
+            detail_label="驳回理由",
+        ),
+    )
+    return ok(described)
 
 
 @router.post("/accept-cards/{card_id}/void")

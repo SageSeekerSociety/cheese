@@ -533,7 +533,10 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         # stranding the card forever.
         assert card["status"] == "accepted"
         assert card["pr_merged_at"] is not None
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
         assert fake.merge_calls[0]["number"] == number
         # Trailers ride the squash commit's BODY (2026-08-09 设计要点5)...
         assert "Reviewed-by: alice" in fake.merge_calls[0]["commit_message"]
@@ -838,7 +841,10 @@ def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
         # (noop on an empty topic) IS the accept, labelled as such.
         assert card["status"] == "accepted"
         assert "本项目未接 GitHub" in card["note"]
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
     finally:
         _reset_client()
 
@@ -976,7 +982,10 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     card = r.json()["data"]
     assert card["status"] == "accepted"
     assert card["pr_number"] is None
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     # 降级原因可见性: WHY it skipped the PR path must be legible on the card,
     # not indistinguishable from "never eligible in the first place" — and
     # must never contain a token or ciphertext.
@@ -1126,7 +1135,10 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
         assert card["pr_number"] is None
         assert "未走 PR 采纳" in card["note"]
         assert "Base ref must be a branch" in card["note"]
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
         assert seen == ["POST"]
     finally:
         _reset_client()
@@ -1309,7 +1321,7 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
 # --- PR 被外部（人工）处理掉的情况 (2026-08-10) ------------------------------
 #
 # 病灶：a PR merged by hand on GitHub was invisible to the poller, so its card
-# sat at `pr_open` forever and the topic never archived (cards 1c7016e3 / #210
+# sat at `pr_open` forever and never reached accepted (cards 1c7016e3 / #210
 # and ceb1b9b9 / #211). These drive the poller through the same public
 # endpoint every other test here uses; nothing inspects source.
 
@@ -1351,7 +1363,10 @@ def test_poll_externally_merged_pr_finishes_the_accept(client, monkeypatch):
         # and since #206 that fact is the whole of what the accept waits for.
         assert card["status"] == "accepted"
         assert card["pr_merged_at"] is not None
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
         # The wording still has to say who merged it — an accept that reads as
         # if the platform did it hides that nobody here ran the checks.
         assert "人工合并" in card["note"]
@@ -1364,7 +1379,7 @@ def test_poll_externally_merged_pr_finishes_the_accept(client, monkeypatch):
         card = _cards_for_topic(client, tid)[0]
         assert card["status"] == "accepted"
         topic = _topic(client, tid)
-        assert topic["status"] == "archived"
+        assert topic["status"] == "active"
         assert topic["accepted_by"] == "alice"
     finally:
         _reset_client()

@@ -385,8 +385,16 @@ def test_refiling_a_card_re_protects_the_subtopic(client):
     assert _accept_cards(client, sub_id)[0]["status"] == AcceptStatus.pending
 
 
-def test_accepting_the_card_archives_the_subtopic_and_clears_the_deferral(client):
-    """正路：验收人点了采纳——采纳即归档，话题该归档的照样归档，待办随之消解。"""
+def test_accepting_the_card_pays_the_deferred_archive_back_via_the_sweep(client):
+    """正路：验收人点了采纳。
+
+    采纳本身不再归档任何东西 (#442 decision 1) —— 它只标记「这次交付完成了」。
+    所以这个话题上欠着的那次归档（来自父话题采信结论）不会顺便被清掉，而是照原样
+    留给扫描：卡有了终局、重新递卡的宽限也过完，归档在扫描里落下。
+
+    终局状态跟以前一样（话题归档、哨兵收掉），只是触发点从"采纳那一刻"挪到了
+    "宽限过后的那次扫描"。
+    """
     _, parent, sub_id, card_id = _concluded_with_a_card_waiting(client)
     _settle_by_turn_end(client, parent["id"])
 
@@ -398,9 +406,14 @@ def test_accepting_the_card_archives_the_subtopic_and_clears_the_deferral(client
     assert r.status_code == 200, r.text
 
     assert _accept_cards(client, sub_id)[0]["status"] == AcceptStatus.accepted
+    # 采纳只打交付标记，话题照常活着。
+    assert _topic_status(client, sub_id) == "active"
+    # 宽限还没过：欠着的归档也还不落。
+    assert _sweep_deferred(client) == []
+    assert _topic_status(client, sub_id) == "active"
+
+    assert _sweep_deferred(client, after_minutes=PAST_GRACE) == [sub_id]
     assert _topic_status(client, sub_id) == "archived"
-    # 扫描不会再归档一次（已经是归档了），只把待办标记收掉。
-    assert _sweep_deferred(client, after_minutes=PAST_GRACE) == []
     assert _conclusion_cards(client, sub_id)[0]["settle_reason"] == (
         ARCHIVE_DEFERRED_DONE
     )

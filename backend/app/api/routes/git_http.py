@@ -1,10 +1,8 @@
-"""Serve each project's repo over git's own protocol, so a remote machine can
+"""Serve each project's repo over git's own protocol, so every device can
 push what it wrote.
 
-A co-located device edits the topic's real worktree, so the platform snapshots it
-and 采纳 sees the work. A machine cheese provisions is on its own host and owns
-its own tree — nothing carried the code back, and the gap was silent: the agent
-worked, reported success, and the branch never moved.
+Every device owns an independent topic tree and pushes its branch back so 采纳
+sees the work.
 
 The transport has to be HTTP: the machine dials out (it is behind NAT) and it
 already reaches this origin — that is where it downloaded its connector. So the

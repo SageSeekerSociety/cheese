@@ -49,6 +49,20 @@ from app.domain.identity.handles import names_a_person
 
 logger = logging.getLogger("cheesex.runtime")
 
+
+def _fire_on_done(callback: Callable[[], None]) -> None:
+    """Run a `submit(on_done=...)` hook without letting it escape into the loop.
+
+    A done-callback that raises does not fail the turn (that already finished) —
+    it lands in the loop's exception handler as an unattributed error. Swallow
+    and log instead, so a bookkeeping bug in a caller stays a bookkeeping bug.
+    """
+    try:
+        callback()
+    except Exception:  # noqa: BLE001 — a hook must never break the runner
+        logger.exception("submit on_done hook failed")
+
+
 _inflight_lock = threading.Lock()
 
 
@@ -539,6 +553,7 @@ class AgentWorkRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        on_done: Callable[[], None] | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
         on the same topic serialize on ChatService's per-topic lock (so a second
@@ -554,7 +569,14 @@ class AgentWorkRunner:
         ``continuation_id`` names the logical unit of work. A fresh turn starts
         one (defaulting to its own turn id); an auto-resume INHERITS the
         interrupted turn's, which is what lets a side effect the first attempt
-        already performed be recognised as done — see domain.idempotency.keys."""
+        already performed be recognised as done — see domain.idempotency.keys.
+
+        ``on_done`` fires when this turn's task finishes, whatever the outcome.
+        It exists for callers that COALESCE work onto a running turn (母子传话,
+        `domain.topic.relay`) and therefore need the moment the topic is free
+        again; it is not an error channel and never sees the result. It runs on
+        the event loop as a done-callback, so it must not block and must not
+        raise — an exception there would only reach the loop's handler."""
         turn_id = uuid.uuid4()
         task = asyncio.create_task(
             self._run(
@@ -576,6 +598,8 @@ class AgentWorkRunner:
         )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+        if on_done is not None:
+            task.add_done_callback(lambda _task: _fire_on_done(on_done))
         return turn_id
 
     async def submit_message(

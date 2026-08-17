@@ -32,6 +32,7 @@ from app.domain.agent import event_spool
 from app.domain.agent.hook_events import (
     HookRouter,
     HookSink,
+    MessageAssembler,
     hook_router,
     translate_hook,
 )
@@ -45,6 +46,7 @@ from app.domain.agent.service import (
     AgentEvent,
     AgentMessage,
     AgentResult,
+    AgentToolUse,
 )
 
 logger = logging.getLogger(__name__)
@@ -216,6 +218,11 @@ class TopicSubscription:
     ready: asyncio.Event = field(default_factory=asyncio.Event)
     replay_files: dict[str, list[Path]] = field(default_factory=dict)
     replay_seen_messages: set[str] = field(default_factory=set)
+    # Reassembles the screen's MessageDisplay flushes into whole messages.
+    # Subscription-scoped on purpose: its dedup memory (message ids already
+    # assembled) has to survive across works, or a flush redelivered after
+    # its turn ended would land again as a fragment.
+    assembler: MessageAssembler = field(default_factory=MessageAssembler)
 
 
 HookEventConsumer = Callable[
@@ -603,46 +610,74 @@ class HooksSessionProvider[ScreenT]:
                             prompt=None,
                             ready=True,
                         )
-                event = translate_hook(hook)
                 eid_value = hook.get("_eid")
-                eid = eid_value if isinstance(eid_value, str) else None
-                if isinstance(event, AgentMessage):
-                    attribution.seen_messages.add(event.text.strip())
-                delivery = HookDelivery(hook=hook, event=event, eid=eid)
-                if activity is not None:
-                    activity.queue.put_nowait(delivery)
-                replay_processed = event is None
-                if attribution.platform_unsolicited or attribution.consumer_owned:
-                    consumer = self._event_consumer
-                    if event is not None and consumer is not None:
-                        result_text_seen = (
-                            isinstance(event, AgentResult)
-                            and event.text.strip() in attribution.seen_messages
+                hook_eid = eid_value if isinstance(eid_value, str) else None
+                # One hook can surface zero events (a MessageDisplay flush
+                # still buffering toward its message) or several (a Stop
+                # draining a partial message ahead of the result); each
+                # surfaced event routes exactly like the old one-hook-one-event
+                # flow did.
+                events = subscription.assembler.translate(hook)
+                for event in events:
+                    if isinstance(event, AgentMessage):
+                        attribution.seen_messages.add(event.text.strip())
+                consumer_owned = (
+                    attribution.platform_unsolicited or attribution.consumer_owned
+                )
+                if not events:
+                    # No surfaced event (a buffered flush, UserPromptSubmit,
+                    # PostToolUse…) still proves delivery and liveness: the
+                    # eventless hook reaches the same queues it always did, so
+                    # the turn monitor and the watchdog keep their clock.
+                    delivery = HookDelivery(hook=hook, event=None, eid=hook_eid)
+                    if activity is not None:
+                        activity.queue.put_nowait(delivery)
+                    if not consumer_owned:
+                        attribution.queue.put_nowait(delivery)
+                consumer = self._event_consumer
+                consume_failed = False
+                for event in events:
+                    eid = (
+                        event.eid
+                        if isinstance(event, AgentMessage | AgentToolUse) and event.eid
+                        else hook_eid
+                    )
+                    delivery = HookDelivery(hook=hook, event=event, eid=eid)
+                    if activity is not None:
+                        activity.queue.put_nowait(delivery)
+                    if not consumer_owned:
+                        attribution.queue.put_nowait(delivery)
+                        continue
+                    if consumer is None:
+                        continue
+                    result_text_seen = (
+                        isinstance(event, AgentResult)
+                        and event.text.strip() in attribution.seen_messages
+                    )
+                    try:
+                        await consumer(
+                            subscription.project_id,
+                            subscription.topic_id,
+                            attribution.work_id,
+                            event,
+                            eid,
+                            result_text_seen,
+                            attribution.platform_unsolicited,
                         )
-                        try:
-                            await consumer(
-                                subscription.project_id,
-                                subscription.topic_id,
-                                attribution.work_id,
-                                event,
-                                eid,
-                                result_text_seen,
-                                attribution.platform_unsolicited,
-                            )
-                            replay_processed = True
-                        except Exception:  # noqa: BLE001 — keep the stream alive
-                            logger.exception(
-                                "unsolicited hook persist failed (topic=%s, eid=%s)",
-                                subscription.topic_id,
-                                eid,
-                            )
-                else:
-                    attribution.queue.put_nowait(delivery)
-                if replay_processed and eid is not None:
-                    event_spool.remove(subscription.replay_files.pop(eid, []))
-                if (
-                    isinstance(event, AgentResult)
-                    and subscription.current_work is attribution
+                    except Exception:  # noqa: BLE001 — keep the stream alive
+                        consume_failed = True
+                        logger.exception(
+                            "unsolicited hook persist failed (topic=%s, eid=%s)",
+                            subscription.topic_id,
+                            eid,
+                        )
+                replay_processed = (not events) or (
+                    consumer_owned and consumer is not None and not consume_failed
+                )
+                if replay_processed and hook_eid is not None:
+                    event_spool.remove(subscription.replay_files.pop(hook_eid, []))
+                if any(isinstance(event, AgentResult) for event in events) and (
+                    subscription.current_work is attribution
                 ):
                     subscription.current_work = None
                     if activity is not None:

@@ -233,9 +233,7 @@ print("ok (ticket extracted)")
 # the probe asks the box directly: the process-tree signal, the one that stays
 # valid through a hook-silent window where transcript mtime / statusline / OTel do
 # not. It keys on the `claude` process's own CHEESE_TOPIC env, so it is per-topic
-# precise even with several screens on one machine, and is identical for a
-# co-located device (the backend's own host) and a remote one (both reached over
-# the same link `exec`).
+# precise even with several screens on one machine.
 #
 # Prints exactly one of `alive` / `dead` / `unknown`. The caller treats ONLY an
 # explicit `dead` as fatal; `unknown` (no /proc, an unreadable environ) and any
@@ -426,10 +424,8 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # the tmux-hosted claude below runs from a fresh server with its own cwd.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
-# A machine on its own host starts with an EMPTY work dir, so whatever the agent
-# writes there is unreachable — the topic branch never moves and 采纳 has nothing
-# to take. Give it the branch itself: a real checkout it can push back from.
-# (Co-located devices get the real worktree instead and skip this entirely.)
+# A device starts with an empty work dir. Give every device the topic branch: a
+# real checkout it can push back from so 采纳 sees what the agent wrote.
 if [ -n "${{CHEESE_GIT_REMOTE:-}}" ] && [ ! -d "$CHEESE_WORK/.git" ]; then
   git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
       clone -q "$CHEESE_GIT_REMOTE" "$CHEESE_WORK" 2>/dev/null || true
@@ -928,8 +924,7 @@ def build_screen_launch(
     if author:
         env["CHEESE_AUTHOR"] = author
     if git_remote:
-        # Only a machine on its own host gets these; a co-located device edits
-        # the real worktree and must not clone over it.
+        # Every device clones and pushes its own independent topic tree.
         env["CHEESE_GIT_REMOTE"] = git_remote
         env["CHEESE_GIT_BRANCH"] = git_branch or "main"
     if git_author:

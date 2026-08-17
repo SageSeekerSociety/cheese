@@ -214,10 +214,11 @@ export default defineConfig({
     proxy: {
       // Mirror the production nginx gateway (frontend/nginx.conf): `location /api/
       // { proxy_pass http://backend:8081/; }` strips exactly one `/api` from every
-      // request. The frontend leans on that — api.ts uses BASE='/api/api' for 2.0
-      // routes, and the 知是 1.0 layer rides VITE_API_BASE_URL=/api — so calls
-      // arrive here double- (`/api/api/*`) or single- (`/api/users/*`) prefixed and
-      // must lose exactly one `/api` to hit the real backend route.
+      // request. Every route is bare since #370 retired the 2.0 prefix, so calls
+      // arrive here uniformly single-prefixed (`/api/topics/*`, `/api/users/*`) and
+      // must lose exactly one `/api` to hit the real backend route. That uniformity
+      // is why the two no-strip exceptions this block used to carry (terminal, app
+      // preview) are gone: they existed only for routes that carried their own.
       '/api': {
         // :8081 is where `task dev` puts the backend (backend/Taskfile.yml),
         // what e2e/playwright.config.ts starts, and what nginx talks to in

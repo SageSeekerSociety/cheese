@@ -49,7 +49,7 @@ async def get_cheese_cli(
     x_cheese_token: str = Header(default=""),
 ) -> PlainTextResponse | JSONResponse:
     """Serve the `cheese` platform-action CLI to an enrolled device's screen launcher
-    (a co-located/remote device has no baked-in image). Gated by any valid scoped
+    (a device has no baked-in image). Gated by any valid scoped
     token — it carries no data, just the script; the token still authorizes the
     ACTIONS the CLI performs."""
     if not scoped_token_claims(x_cheese_token):
