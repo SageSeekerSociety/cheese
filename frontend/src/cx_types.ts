@@ -49,8 +49,8 @@ export interface Topic {
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
-  // 本轮是否在跑（TurnRunner, 内存态）——和 status/归档完全分开：一个话题可以
-  // 是 active 且空闲，也可以是 active 且正在跑一轮。只有 list/get 话题时才带。
+  // In-memory session activity, independent of topic status and archival state.
+  // Present only on topic list/get responses.
   running?: boolean
 }
 

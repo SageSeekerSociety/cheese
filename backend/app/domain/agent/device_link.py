@@ -11,7 +11,8 @@ rather than in production.
 The field names are the Go ``json`` tags verbatim: ``t`` (type), ``sid`` (screen id),
 ``v`` (version), ``name``/``value`` (variables), ``id``/``args``/``error`` (rpc),
 ``command``/``env``/``screen``/``cols``/``rows``/``source``/``adopt`` (session),
-``data`` (base64 raw screen bytes), and the exec set
+``data`` (base64 raw screen bytes or one uploaded file), ``path`` (file upload),
+and the exec set
 ``cwd``/``stdin``/``timeout``/``stdout``/``stderr``/``exit``/``truncated``.
 """
 
@@ -37,6 +38,7 @@ class LinkMsg:
     id: str = ""
     error: str = ""
     data: str = ""
+    path: str = ""
     stdout: str = ""
     stderr: str = ""
     exit: int = 0
@@ -54,6 +56,7 @@ class LinkMsg:
             id=str(m.get("id", "")),
             error=str(m.get("error", "")),
             data=str(m.get("data", "")),
+            path=str(m.get("path", "")),
             stdout=str(m.get("stdout", "")),
             stderr=str(m.get("stderr", "")),
             exit=int(m.get("exit", 0) or 0),
@@ -131,6 +134,17 @@ def rpc_result(sid: str, call_id: str, value: Any, error: str = "") -> dict[str,
         "id": call_id,
         "value": value,
         "error": error,
+    }
+
+
+def file_put(sid: str, file_id: str, path: str, data: bytes) -> dict[str, Any]:
+    """Stage one worktree-relative file in a screen's workspace."""
+    return {
+        "t": "file.put",
+        "sid": sid,
+        "id": file_id,
+        "path": path,
+        "data": base64.b64encode(data).decode(),
     }
 
 

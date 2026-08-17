@@ -25,7 +25,7 @@ from app.core.errors import ValidationError
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review import github_pr
 from app.domain.workspace import service as ws
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
 
@@ -567,7 +567,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         fake.check_state_by_sha[head_sha] = ("failure", "pytest: 3 failed")
 
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         # 平台提示统一契约: 房间里是一行 + 折叠的 `meta.detail`（`room_text` 把两半
@@ -590,7 +590,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
 
         # Polling again with the SAME failing commit must not spam a second nudge.
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert contents.count("pytest: 3 failed") == nudge_count
@@ -604,7 +604,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         new_sha = fake.push_new_commit(number)
         fake.check_state_by_sha[new_sha] = ("failure", "pytest: 1 failed now")
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "pytest: 1 failed now" in contents
@@ -1213,7 +1213,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         )
 
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "Pull Request has merge conflicts" in contents
@@ -1226,7 +1226,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
 
         # Same refusal next tick → no second summon.
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert contents.count("Pull Request has merge conflicts") == first_count
@@ -1234,7 +1234,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         # A DIFFERENT refusal is new information — summon again.
         fake.merge_blocked_by_number[number] = "HTTP 409：Head branch was modified"
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "Head branch was modified" in contents

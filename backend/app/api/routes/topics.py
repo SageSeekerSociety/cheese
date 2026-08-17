@@ -15,7 +15,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import (
     get_broker,
     get_chat_service,
-    get_turn_runner,
+    get_work_runner,
     project_device_online,
 )
 from app.api.response import ok, page
@@ -37,7 +37,7 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
-from app.domain.agent.runtime import TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -138,7 +138,7 @@ def _topic_out(
 async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     resolver: ActorResolverDep,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
@@ -171,7 +171,7 @@ async def list_topics(
 async def get_topic(
     topic_id: uuid.UUID,
     db: DbSession,
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One topic's header.
@@ -357,7 +357,7 @@ def _disk_snapshot(root: str) -> dict | None:
 async def topic_status(
     topic_id: uuid.UUID,
     db: DbSession,
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
@@ -387,13 +387,13 @@ async def topic_status(
     topic = await topics.get_or_404(topic_id)
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(topic.project_id)
-    turn = runner.topic_turn(topic_id)
+    turn = runner.topic_work(topic_id)
     if turn is not None and turn.get("status") == "running":
         turn["activity"] = chat_service.tmux_activity_status(topic_id)
     background = awaited_tasks.status_snapshot(topic_id)
     stall = await topics.stall_signal(
         topic_id,
-        live_turn=runner.live_turn_for_topic(topic_id),
+        live_turn=runner.live_work_for_topic(topic_id),
         background_tasks=len(background["tasks"]),
     )
     return ok(
@@ -409,7 +409,7 @@ async def topic_status(
             "cards": [_card_snapshot(c) for c in cards],
             "background": background,
             "platform": {
-                "active_turns": runner.active_turns(),
+                "active_turns": runner.active_work_count(),
                 "queued_turns": runner.project_queue_depth(topic.project_id),
                 "disk": _disk_snapshot(settings.workspace_root),
                 "credits": {
@@ -488,7 +488,7 @@ async def add_comment(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
     doc panel — a human selects text and comments; not cheese-gated."""
@@ -816,7 +816,7 @@ async def answer_options(
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """One-click answer to an option question: validates the choice against the
     ask block's own options, records it on the block (meta.answered), and posts
@@ -921,7 +921,7 @@ async def finish_background_task(
     task_id: uuid.UUID,
     body: BackgroundTaskDoneIn,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """The backgrounded command exited — land its result and (guards permitting)
     wake the topic. Reached by the detached child `cheese await` forked, carrying
@@ -967,7 +967,7 @@ async def record_decision(
     # same decision — a resumed 芝士 re-recording it must not stack a second
     # 决策记录 row. Outside a turn (a human in the UI) there is no continuation
     # and no dedup: pressing the button twice means it twice.
-    continuation = get_turn_runner().continuation_for(topic_id)
+    continuation = get_work_runner().continuation_for(topic_id)
     key = action_key(continuation, "decision", decision) if continuation else None
     if key is not None and not await idem.claim(
         db, key, action="decision", scope_id=str(topic_id)
@@ -1107,7 +1107,7 @@ async def split_topic(
     # does not just write a row, it spawns a second 分身 that starts working.
     # `split 是唯一会生出另一个 agent 的动作` (cheese CLI help), so a resumed
     # turn re-splitting doubles the agents on the same brief.
-    runner = get_turn_runner()
+    runner = get_work_runner()
     continuation = runner.continuation_for(topic_id)
     key = (
         action_key(continuation, "split", topic_id, body.title)
@@ -1225,7 +1225,7 @@ async def return_conclusion(
         str(parent.id), {"type": "assistant_block", "block": out}
     )
     if wake:
-        get_turn_runner().submit_kickoff(
+        get_work_runner().submit_kickoff(
             chat,
             parent.id,
             prompt=conclusion_digest_prompt(
@@ -1574,5 +1574,5 @@ async def upgrade_block(
     # idempotent re-upgrade (created=False) must not kick the 分身 again.
     await db.commit()
     if created:
-        get_turn_runner().submit_kickoff(chat, topic.id)
+        get_work_runner().submit_kickoff(chat, topic.id)
     return ok(out)

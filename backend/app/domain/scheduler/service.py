@@ -58,11 +58,11 @@ class SchedulerService:
         The startup one only ever runs when the PROCESS restarts, but a turn can
         die without taking the process with it (container recreate, OOM-killed
         child, sandbox image swap). Nothing re-read the registry in that case, so
-        the topic stayed `active` forever — see TurnRunner.sweep_orphans."""
-        from app.api.deps import get_turn_runner
+        the topic stayed `active` forever — see AgentWorkRunner.sweep_orphans."""
+        from app.api.deps import get_work_runner
         from app.core.config import settings
 
-        return await get_turn_runner().sweep_orphans(
+        return await get_work_runner().sweep_orphans(
             self._chat,
             last_activity=self.last_block_at,
             silence_s=settings.turn_silence_timeout_s,
@@ -72,7 +72,7 @@ class SchedulerService:
         self, topic_ids: set[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         """Newest block timestamp per topic — the liveness probe the orphan sweep
-        judges silence on. Lives here rather than in TurnRunner because the runner
+        judges silence on. Lives here rather than in AgentWorkRunner because the runner
         has no DB binding, and it is the same signal a human reads off the topic
         (「最后一块是几点」), which is what makes a sweep verdict checkable."""
         if not topic_ids:
@@ -201,10 +201,10 @@ class SchedulerService:
         reuses an already-open resolution task, so repeating this on an interval
         cannot pile up duplicates, and a project with no owner is skipped rather
         than dispatched into nowhere."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.workspace import upstream_conflict
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
         synced = 0
         dispatched = 0
         errors: list[str] = []
@@ -243,10 +243,10 @@ class SchedulerService:
         machine (check PR CI → merge → check deploy workflow → archive).
         One DB transaction per card so one card's failure can't roll back
         another's progress."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.review.services import AcceptService
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
         checked = 0
         errors: list[str] = []
         async with self._sessions() as session:
@@ -274,10 +274,10 @@ class SchedulerService:
         runner is gone, so their topic stops being unable to file a new card.
         The actual rules (and why a periodic sweep is needed on top of the
         startup one) live in review/gate_sweep.py."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.review import gate_sweep
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
 
         def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
             runner.submit(

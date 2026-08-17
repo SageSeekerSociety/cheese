@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -69,6 +71,7 @@ type sess struct {
 	// while claude boots, which is strictly after the screen is spawned.
 	rvPath      string
 	rvTokenFile string
+	workDir     string
 	rvMu        sync.Mutex
 	rv          *rendezvous.Client
 }
@@ -220,6 +223,12 @@ func (h *Host) onMsg(m link.Msg) {
 			}
 			s.rt.Invoke(m.ID, m.Name, m.Args)
 		}
+	case "file.put":
+		if s := h.session(m.Sid); s != nil {
+			go h.putFile(m, s)
+		} else {
+			_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Error: "unknown screen"})
+		}
 	case "rpc.result": // result of a script->server call
 		if s := h.session(m.Sid); s != nil {
 			s.rt.Resolve(m.ID, m.Value, m.Error)
@@ -308,6 +317,7 @@ func (h *Host) createSession(m link.Msg) {
 	h.sessions[m.Sid] = &sess{
 		term: term, rt: rt, cancel: cancel,
 		rvPath: m.Env[envRvSock], rvTokenFile: m.Env[envRvTokenFile],
+		workDir: m.Env["CHEESE_WORK"],
 	}
 	h.mu.Unlock()
 
@@ -423,6 +433,101 @@ const (
 // a minute; giving up early is what made the old driver abandon a prompt while
 // the session was merely still starting.
 const rvDialWindow = 120 * time.Second
+
+const maxScreenFileBytes = 10 << 20
+
+// putFile stages an uploaded image before its @path is submitted over rendezvous.
+// The acknowledgement is the ordering boundary: the prompt cannot race ahead of
+// the bytes on a remote device.
+func (h *Host) putFile(m link.Msg, s *sess) {
+	reply := func(value any, errStr string) {
+		_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Value: value, Error: errStr})
+	}
+	workDir, err := resolveScreenWorkDir(s.workDir)
+	if err == nil {
+		err = writeScreenFile(workDir, m.Path, m.Data)
+	}
+	if err != nil {
+		reply(nil, fmt.Sprintf("file.put: %v", err))
+		return
+	}
+	reply(map[string]any{"ok": true, "path": m.Path}, "")
+}
+
+func resolveScreenWorkDir(workDir string) (string, error) {
+	if workDir == "" {
+		return "", fmt.Errorf("screen has no work directory")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if workDir == "$HOME" {
+		workDir = home
+	} else if strings.HasPrefix(workDir, "$HOME/") {
+		workDir = filepath.Join(home, strings.TrimPrefix(workDir, "$HOME/"))
+	}
+	if !filepath.IsAbs(workDir) {
+		return "", fmt.Errorf("work directory is not absolute")
+	}
+	return filepath.Clean(workDir), nil
+}
+
+func writeScreenFile(workDir, wirePath, encoded string) error {
+	clean := path.Clean(wirePath)
+	if path.IsAbs(clean) || clean == "." || clean == "uploads" ||
+		!strings.HasPrefix(clean, "uploads/") || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("path must be a file under uploads/")
+	}
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxScreenFileBytes) {
+		return fmt.Errorf("file exceeds %d bytes", maxScreenFileBytes)
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return fmt.Errorf("invalid base64: %w", err)
+	}
+	if len(raw) == 0 || len(raw) > maxScreenFileBytes {
+		return fmt.Errorf("invalid file size %d", len(raw))
+	}
+	root, err := filepath.Abs(workDir)
+	if err != nil {
+		return err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve work directory: %w", err)
+	}
+	target := filepath.Join(root, filepath.FromSlash(clean))
+	parent := filepath.Dir(target)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, realParent)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("upload path escapes screen workspace")
+	}
+	tmp, err := os.CreateTemp(realParent, ".cheese-upload-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	err = tmp.Chmod(0o644)
+	if err == nil {
+		_, err = tmp.Write(raw)
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, filepath.Join(realParent, filepath.Base(target)))
+}
 
 // deliverPrompt hands one turn's prompt to the session over its rendezvous
 // socket and answers the server's rpc.call with the outcome. Failure here is

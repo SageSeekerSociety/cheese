@@ -20,7 +20,7 @@ from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.conclusion.services import ConclusionCardService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
-from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.conftest import wait_work_idle as _wait_work_idle
 
 
 def _project(client) -> dict:
@@ -38,7 +38,7 @@ def _split(client, parent_id: str, title: str) -> dict:
         "data"
     ]
     # The 分身's auto-kickoff turn must finish before the test writes more.
-    _wait_turns_idle()
+    _wait_work_idle()
     return sub
 
 
@@ -83,7 +83,7 @@ def test_conclude_files_a_card_without_touching_the_three_old_side_effects(clien
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
     assert r.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
 
     # 1) the card (new)
     cards = _cards(client, sub["id"])
@@ -112,7 +112,7 @@ def test_conclude_to_an_archived_parent_files_no_card(client):
         f"/api/topics/{sub['id']}/return-conclusion", json={"conclusion": "做完了"}
     )
     assert r.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
     assert _cards(client, sub["id"]) == []
 
 
@@ -129,7 +129,7 @@ def test_turn_end_auto_accepts_the_card_and_archives_the_subtopic(client):
     client.post(
         f"/api/topics/{sub['id']}/return-conclusion", json={"conclusion": "查到了：42"}
     )
-    _wait_turns_idle()
+    _wait_work_idle()
 
     card = _cards(client, sub["id"])[0]
     assert card["status"] == ConclusionStatus.accepted
@@ -302,7 +302,7 @@ def test_need_evidence_sends_the_card_back_and_wakes_the_subtopic(client):
     assert r.status_code == 200
     assert r.json()["data"]["status"] == ConclusionStatus.returned
     assert r.json()["data"]["returned_count"] == 1
-    _wait_turns_idle()
+    _wait_work_idle()
 
     assert _topic_status(client, sub["id"]) != "archived", "打回不归档"
     blocks = client.get(f"/api/topics/{sub['id']}/blocks").json()["data"]["data"]
@@ -336,7 +336,7 @@ def test_need_evidence_is_capped_so_a_card_cannot_ping_pong(client):
         json={"reason": "补第一条"},
     )
     assert first.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
 
     # 子话题补完再回流：同一张卡回到 open，但打回次数留着。
     reopened = _file_card(client, sub["id"], "结论一（补了证据）")

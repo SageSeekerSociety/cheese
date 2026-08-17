@@ -9,7 +9,7 @@ refused with the platform's structured event; unlinked projects are unlimited.
 
 import pytest
 
-from tests.conftest import seed_space, wait_turns_idle
+from tests.conftest import seed_space, wait_work_idle
 from tests.integration.conftest import chat_ws_url
 
 # The stub agent reports usage of 10 input + 5 output tokens per turn; at the
@@ -62,7 +62,7 @@ def _run_turn(client, topic_id: str) -> list[dict]:
             frames.append(frame)
             if frame["type"] in ("done", "error"):
                 break
-    wait_turns_idle()
+    wait_work_idle()
     return frames
 
 

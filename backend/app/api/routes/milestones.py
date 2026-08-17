@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.idempotency import store as idem
@@ -33,7 +33,7 @@ async def create_milestone(
     # to dedup against. No source topic (a human pinning one in the UI) → no
     # continuation → no dedup, same rule as everywhere else.
     continuation = (
-        get_turn_runner().continuation_for(body.source_topic_id)
+        get_work_runner().continuation_for(body.source_topic_id)
         if body.source_topic_id
         else None
     )

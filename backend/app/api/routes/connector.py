@@ -20,6 +20,7 @@ the existing ``/sandbox/hooks/{topic_id}`` endpoint (scoped-token auth + shared
 """
 
 import json
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -50,6 +51,7 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
+logger = logging.getLogger(__name__)
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -208,6 +210,14 @@ async def agent_socket(
     await websocket.accept()
     transport = _WebSocketDeviceTransport(websocket)
     await device_hub.attach_device(device.device_id, transport)  # sends welcome{v}
+    try:
+        from app.api.deps import get_chat_service
+
+        await get_chat_service().recover_hook_subscriptions(device.device_id)
+    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
+        logger.exception(
+            "hook subscription recovery failed for device %s", device.device_id
+        )
     try:
         while True:
             message = await websocket.receive_json()

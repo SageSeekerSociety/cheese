@@ -13,10 +13,11 @@ from app.domain.agent.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    HooksTurnProvider,
+    HooksSessionProvider,
     ScreenSetupError,
+    WorkAttribution,
     hooks_settings,
-    run_hooks_turn,
+    monitor_session_activity,
 )
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 
@@ -74,12 +75,12 @@ def test_baked_forwarder_matches_the_single_source():
 
 async def _drain(queue, **kw):
     events = []
-    async for e in run_hooks_turn(queue=queue, resume_session_id=None, **kw):
+    async for e in monitor_session_activity(queue=queue, resume_session_id=None, **kw):
         events.append(e)
     return events
 
 
-async def test_run_hooks_turn_streams_in_order_and_ends_on_stop():
+async def test_monitor_session_activity_streams_in_order_and_ends_on_stop():
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "SessionStart", "session_id": "s1"})
     queue.put_nowait(
@@ -111,7 +112,7 @@ async def test_run_hooks_turn_streams_in_order_and_ends_on_stop():
     assert events[-1].is_error is False
 
 
-async def test_run_hooks_turn_times_out_with_message_on_silence():
+async def test_monitor_session_activity_times_out_with_message_on_silence():
     queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
     events = await _drain(
         queue, idle_suspect_s=0.05, hard_ceiling_s=0.05, timeout_message="轮次超时"
@@ -122,40 +123,33 @@ async def test_run_hooks_turn_times_out_with_message_on_silence():
     assert events[0].text == "轮次超时"
 
 
-async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
-    monkeypatch, tmp_path
-):
-    """register() claims the topic's queue BEFORE the screen is ready (so no
-    hook is missed) — but that means a straggler from a PREVIOUS, abandoned
-    turn (its own late Stop included, arriving only once its `claude` process
-    finally finishes) can land in the fresh queue before the new turn's prompt
-    is even sent. It must never be mistaken for the new turn's own result."""
+async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
+    """A straggler before screen setup completes has no subscription yet and
+    therefore cannot be mistaken for the new run's result."""
     import uuid as _uuid
 
-    from app.core.config import settings
-    from app.domain.agent import event_spool
-    from app.domain.workspace import service as ws
-
-    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     router = HookRouter()
     project_id = _uuid.uuid4()
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
+    stale_delivered: list[bool] = []
 
-    class _FakeProvider(HooksTurnProvider[str]):
+    class _FakeProvider(HooksSessionProvider[str]):
         name = "fake"
 
         async def _ensure_ready(self, **kwargs):
             # While "waiting for the screen", the abandoned previous turn's
             # `claude` process finally finishes and its late Stop arrives.
-            router.push(
-                topic_key,
-                {
-                    "hook_event_name": "Stop",
-                    "last_assistant_message": "旧turn的过期结果",
-                    "session_id": "s-old",
-                    "_eid": "stale-stop-1",
-                },
+            stale_delivered.append(
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "Stop",
+                        "last_assistant_message": "旧turn的过期结果",
+                        "session_id": "s-old",
+                        "_eid": "stale-stop-1",
+                    },
+                )
             )
             return "screen"
 
@@ -196,10 +190,8 @@ async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
     assert isinstance(result, AgentResult)
     assert result.text == "新turn的真实回复"  # NOT the stale turn's text
 
-    # The stale Stop was never dropped — it's parked for a later reconcile.
-    entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
-    eids = [eid for _path, eid, _payload in entries]
-    assert eids == ["stale-stop-1"]
+    assert stale_delivered == [False]
+    await provider.drop_subscription(topic_id)
 
 
 async def test_failed_precheck_never_touches_the_router():
@@ -208,7 +200,7 @@ async def test_failed_precheck_never_touches_the_router():
     live turn's queue (review finding; matches pre-refactor ordering)."""
     import uuid as _uuid
 
-    class _NoRun(HooksTurnProvider[str]):
+    class _NoRun(HooksSessionProvider[str]):
         name = "no-run"
 
         async def _precheck(self, project_id, topic_id):
@@ -216,7 +208,7 @@ async def test_failed_precheck_never_touches_the_router():
 
     router = HookRouter()
     topic_id = _uuid.uuid4()
-    live_queue = router.register(str(topic_id))  # a "running turn" holds the slot
+    live_sink = router.subscribe(str(topic_id))
 
     provider = _NoRun(router=router, idle_suspect_s=1, hard_ceiling_s=1)
     events = [
@@ -234,7 +226,8 @@ async def test_failed_precheck_never_touches_the_router():
     assert events[0].text == "挡在门外"
     # The live turn's queue is untouched: pushes still reach it.
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is True
-    assert live_queue.qsize() == 1
+    assert live_sink.queue.qsize() == 1
+    router.unsubscribe(str(topic_id), live_sink)
 
 
 async def test_undelivered_prompt_fails_fast_instead_of_waiting_out_the_turn():
@@ -416,7 +409,7 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
     injected: list[str] = []
     started = asyncio.Event()
 
-    class _FakeProvider(HooksTurnProvider[str]):
+    class _FakeProvider(HooksSessionProvider[str]):
         name = "fake"
 
         async def _ensure_ready(self, **kwargs):
@@ -464,9 +457,9 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
     assert isinstance(events[-1], AgentResult)
     assert injected == ["第一条", "[人]: 等一下"]
 
-    # The turn is over: the screen is unpublished again, so a later message
-    # cannot be injected into a window where no hook queue is listening.
+    # The screen and subscription outlive the run, but its attribution is closed.
     assert await provider.deliver(topic_id, "晚") is False
+    await provider.drop_subscription(topic_id)
 
 
 async def test_deliver_reports_false_when_the_screen_refuses():
@@ -478,7 +471,7 @@ async def test_deliver_reports_false_when_the_screen_refuses():
     topic_key = str(topic_id)
     started = asyncio.Event()
 
-    class _FakeProvider(HooksTurnProvider[str]):
+    class _FakeProvider(HooksSessionProvider[str]):
         name = "fake"
 
         async def _ensure_ready(self, **kwargs):
@@ -518,6 +511,7 @@ async def test_deliver_reports_false_when_the_screen_refuses():
     )
     events = await asyncio.wait_for(turn, 1)
     assert isinstance(events[-1], AgentResult)
+    await provider.drop_subscription(topic_id)
 
 
 async def test_deliver_requires_the_matching_prompt_receipt(monkeypatch):
@@ -532,7 +526,7 @@ async def test_deliver_requires_the_matching_prompt_receipt(monkeypatch):
     topic_key = str(topic_id)
     started = asyncio.Event()
 
-    class _FakeProvider(HooksTurnProvider[str]):
+    class _FakeProvider(HooksSessionProvider[str]):
         name = "fake"
 
         async def _ensure_ready(self, **kwargs):
@@ -574,3 +568,89 @@ async def test_deliver_requires_the_matching_prompt_receipt(monkeypatch):
         },
     )
     await asyncio.wait_for(turn, 1)
+    await provider.drop_subscription(topic_id)
+
+
+async def test_subscription_outlives_run_and_drops_only_with_screen():
+    """Stop closes attribution, not the stable screen subscription."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "done",
+                    "_eid": "stop-1",
+                },
+            )
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    assert isinstance(events[-1], AgentResult)
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    assert subscription.current_work is None
+    assert subscription.consumer_task is not None
+    assert not subscription.consumer_task.done()
+    assert await provider.ensure_subscription(project_id, topic_id) is subscription
+
+    await provider.drop_screen_subscription("screen")
+    assert subscription.consumer_task.done()
+    assert router.push(topic_key, {"hook_event_name": "Stop"}) is False
+
+
+async def test_run_refuses_to_clobber_existing_attribution():
+    """A second reader cannot replace the attribution feeding a live run."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+
+    class _FakeProvider(HooksSessionProvider[str]):
+        async def _ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def _send_prompt(self, screen, prompt):
+            return None
+
+    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    open_attribution = WorkAttribution(work_id=_uuid.uuid4(), queue=asyncio.Queue())
+    subscription.current_work = open_attribution
+
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="inspect",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    assert len(events) == 1
+    assert isinstance(events[0], AgentResult)
+    assert events[0].is_error is True
+    assert subscription.current_work is open_attribution
+    await provider.drop_subscription(topic_id)

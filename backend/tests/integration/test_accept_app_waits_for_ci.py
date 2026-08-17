@@ -18,7 +18,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import github_pr
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_accept_pr import FakeGitHubPrClient
 
@@ -316,7 +316,7 @@ def test_red_checks_are_never_merged_no_matter_how_many_polls(client, app_world)
 
     for _ in range(3):
         _poll(client)
-    wait_turns_idle()
+    wait_work_idle()
 
     assert fake.merge_calls == []
     card = _cards(client, tid)[0]
@@ -396,7 +396,7 @@ def test_waiting_note_never_overwrites_a_real_failure(client, app_world):
 
     fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
     _poll(client)
-    wait_turns_idle()
+    wait_work_idle()
     failed_note = _cards(client, tid)[0]["note"]
     assert failed_note.startswith("⚠️")
 
@@ -457,7 +457,7 @@ def test_merge_anyway_merges_and_signs_the_card(client, app_world):
 
     # 先证明机器自己不会合。
     _poll(client)
-    wait_turns_idle()
+    wait_work_idle()
     assert fake.merge_calls == []
 
     r = _merge_anyway(client, cid, "alice", reason="CI runner 挂了，跟这次改动无关")

@@ -172,6 +172,10 @@ class TopicService:
         self._cards = AcceptService(session)
         self._alerts = AlertService(session)
 
+    async def get(self, topic_id: uuid.UUID) -> Topic | None:
+        """Return one topic for cross-domain service callers."""
+        return await self._repo.get(topic_id)
+
     async def create(
         self,
         *,

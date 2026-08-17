@@ -48,6 +48,8 @@ type Msg struct {
 	// Data carries base64-encoded raw terminal bytes for the direct screen
 	// channel (screen.data downstream, screen.input upstream).
 	Data string `json:"data,omitempty"`
+	// Path is a screen-workspace-relative destination for file.put.
+	Path string `json:"path,omitempty"`
 	// One-shot command execution: exec (request) / exec.cancel / exec.result.
 	Cwd       string `json:"cwd,omitempty"`
 	Stdin     string `json:"stdin,omitempty"`   // optional input fed to the command

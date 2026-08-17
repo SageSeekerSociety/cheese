@@ -63,7 +63,7 @@ BLOCKED_EXIT_CODE = 2
 LOG_DIR = Path("logs")
 
 # Keep references so in-flight gate tasks aren't GC'd (same pattern as
-# TurnRunner._tasks). Keyed by card so the sweeper can ask "is THIS card's gate
+# AgentWorkRunner._tasks). Keyed by card so the sweeper can ask "is THIS card's gate
 # still running in this process?" — see gate_sweep.sweep_abandoned_gate_cards.
 # The map is per-process and empty right after a restart, which is exactly the
 # state that makes the startup sweep able to condemn everything it finds.
