@@ -128,6 +128,32 @@ class AlertRepository:
             )
         return stmt
 
+    async def mention_topic_ids(
+        self, topic_ids: list[uuid.UUID], target_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{topic_id: is one of its @s at this user still unread} for every
+        topic here that ever @'d them, in ONE query.
+
+        This is why "被 @ 过" is answerable at all without reading message
+        bodies: an @ writes a row HERE the moment it lands
+        (``ChatService._notify_mentions``), keyed by topic and target, both
+        indexed. Scanning ``blocks`` for the handle would be the slow way to
+        learn something the notification already recorded.
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(Alert.topic_id, func.bool_or(Alert.read_at.is_(None)))
+            .where(
+                Alert.topic_id.in_(topic_ids),
+                Alert.kind == AlertKind.mention,
+                Alert.target_handle == target_handle,
+            )
+            .group_by(Alert.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: bool(unread) for topic_id, unread in rows if topic_id}
+
     async def unread_count(
         self, project_id: uuid.UUID, *, target_handle: str | None = None
     ) -> int:

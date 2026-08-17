@@ -214,10 +214,11 @@ export default defineConfig({
     proxy: {
       // Mirror the production nginx gateway (frontend/nginx.conf): `location /api/
       // { proxy_pass http://backend:8081/; }` strips exactly one `/api` from every
-      // request. The frontend leans on that — api.ts uses BASE='/api/api' for 2.0
-      // routes, and the 知是 1.0 layer rides VITE_API_BASE_URL=/api — so calls
-      // arrive here double- (`/api/api/*`) or single- (`/api/users/*`) prefixed and
-      // must lose exactly one `/api` to hit the real backend route.
+      // request. Every route is bare since #370 retired the 2.0 prefix, so calls
+      // arrive here uniformly single-prefixed (`/api/topics/*`, `/api/users/*`) and
+      // must lose exactly one `/api` to hit the real backend route. That uniformity
+      // is why the two no-strip exceptions this block used to carry (terminal, app
+      // preview) are gone: they existed only for routes that carried their own.
       '/api': {
         // :8081 is where `task dev` puts the backend (backend/Taskfile.yml),
         // what e2e/playwright.config.ts starts, and what nginx talks to in
@@ -228,15 +229,7 @@ export default defineConfig({
         target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081',
         changeOrigin: true,
         ws: true,
-        // Exception: the two iframe proxies — the ttyd terminal
-        // (/api/topics/<id>/terminal/live/) and the running-app preview
-        // (/api/topics/<id>/app/) — are loaded verbatim by an iframe that resolves
-        // its assets/WebSocket against that path, and the backend serves them at
-        // that exact /api-prefixed path, so they must pass through unrewritten
-        // (see routes/terminal.py, routes/app_preview.py — and nginx.conf, which
-        // carries the same exception). Everything else loses one /api like nginx.
-        rewrite: (path) =>
-          /^\/api\/topics\/[^/]+\/(terminal|app)(\/|$)/.test(path) ? path : path.replace(/^\/api/, ''),
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },

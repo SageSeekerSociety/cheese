@@ -51,22 +51,12 @@ function statusDotClass(status: string): string {
   return 'status-dot--warn'
 }
 
-// 返回 goes back to wherever you came from (工作台 / 收件箱 / another member
-// page), not always the overview. Vue Router records the previous in-app location
-// in history.state.back; when it's absent (a deep link / fresh tab) we fall back
-// to the project overview so the button never dead-ends.
-function goBack() {
-  if (window.history.state?.back != null) router.back()
-  else router.push({ name: 'overview', params: { projectId: props.projectId } })
-}
-
-// Clicking a topic opens the 工作台 with that topic pre-selected (?topic=).
-// Without the query, WorkspaceView falls back to the root topic.
+// Clicking a topic opens it in the project frame — this page is inside that
+// frame, so it is a content-area change, not a jump somewhere else.
 function openTopic(topicId: string) {
   router.push({
-    name: 'workspace-project',
-    params: { projectId: props.projectId },
-    query: { topic: topicId },
+    name: 'workspace-topic',
+    params: { projectId: props.projectId, topicId },
   })
 }
 
@@ -107,7 +97,7 @@ onMounted(load)
 
 <template>
   <div class="member-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 920px">
+    <v-container class="py-6 page-container">
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
@@ -116,10 +106,6 @@ onMounted(load)
       </v-alert>
 
       <template v-else>
-        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="mb-3 px-1" @click="goBack">
-          返回
-        </v-btn>
-
         <!-- Profile header band (cover + large avatar) -->
         <v-card class="mb-6 overflow-hidden">
           <div class="profile-cover" />

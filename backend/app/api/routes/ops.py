@@ -17,7 +17,7 @@ from app.domain.ops.registry import describe_registry
 from app.domain.ops.services import OperationRequestService
 from app.domain.project.services import ProjectService
 
-router = APIRouter(prefix="/api", tags=["ops"])
+router = APIRouter(prefix="", tags=["ops"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

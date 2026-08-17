@@ -39,7 +39,7 @@ from app.domain.oauth.services import OAuthService
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/users/me/github-account", tags=["github"])
+router = APIRouter(prefix="/users/me/github-account", tags=["github"])
 
 _PROVIDER_ID = "github_app"
 # Namespaces the reservation keys. The repo-install flow (github_install.py)

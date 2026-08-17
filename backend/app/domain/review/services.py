@@ -30,7 +30,6 @@ from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
@@ -271,6 +270,16 @@ def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
 # 递卡互斥 (2026-08-10): a topic may have at most one card that is still
 # "live" — awaiting a decision, mid-delivery, or blocked mid-accept. Each gets
 # its own message because the way OUT differs (改验收人 / 等交付 / 解冲突).
+#
+# `accepted` joins them for a different reason (2026-08-17): it is not live, it
+# is DONE, and it is what freezes the delivery surface now that a merge no
+# longer archives the topic. Archive used to do double duty — "someone put this
+# away" AND "this branch already landed, stop offering it" — and only the first
+# half is a human's call (#442 decision 1). The second half has to survive on
+# its own, because a card filed on a branch that is already in main opens a PR
+# with no commits: GitHub refuses it (422 No commits between), the platform
+# reads that as a failure and degrades to a local merge, and the card reaches
+# `accepted` having delivered nothing at all.
 _BLOCKED_BY_CARD_MESSAGES = {
     AcceptStatus.pending: "已有待处理的验收卡，请改验收人而不是再递一张",
     AcceptStatus.pending_gate: "已有待处理的验收卡，请改验收人而不是再递一张",
@@ -281,8 +290,34 @@ _BLOCKED_BY_CARD_MESSAGES = {
     AcceptStatus.conflict: (
         "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张"
     ),
+    AcceptStatus.accepted: (
+        "这个话题已经交付过一次：上一张验收卡合并了，这条分支已经在 main 上。"
+        "再递一张开出来的 PR 没有新提交，GitHub 会拒绝，平台会降级成本地合并——"
+        "卡看起来采纳了，实际什么都没交付。\n"
+        "话题没有归档，接着讨论、接着写文档都可以（归档是人的决定，不是合并的"
+        "副作用）；要再交付一份改动，请在房间里开一件新的事——新话题＝从 main "
+        "新切的分支。"
+    ),
 }
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
+
+#: Refusal for a card filed with no commit subject at all. It is long on
+#: purpose: the reader is an agent one turn away from re-filing, and an error
+#: that only says "缺少 change_subject" costs a whole turn to act on. The
+#: example is a real, valid subject — copy-pasteable, not a placeholder.
+_MISSING_SUBJECT = (
+    "递卡必须带提交标题（--subject）。它不是给人看的说明，是这次改动留在 "
+    "git 历史里的那一行：递卡开 PR 用它当标题，采纳时整个分支被压成一个"
+    "提交，标题还是它。\n"
+    "写法：`type(scope): description`，type 取值 "
+    f"{', '.join(commit_message.TYPES)}；英文祈使句，"
+    f"≤{commit_message.MAX_SUBJECT} 字符，结尾不加句号。\n"
+    "例：\n"
+    '  cheese accept-request lisi "最懂这块" \\\n'
+    "    --subject 'fix(accept): open the PR as the requester, not the bot' \\\n"
+    "    --body 'PRs opened with the App token belong to the bot on GitHub, "
+    "so the person whose work it is gets no attribution.'"
+)
 
 #: Where an alembic revision lives. Two live cards each ADDING a file under
 #: here is the one overlap a machine can judge on its own (#314).
@@ -398,6 +433,77 @@ def _diff_touches(paths: tuple[str, ...], changed: list[tuple[str, str]]) -> boo
     return any(_glob_regex(p).match(path) for _, path in changed for p in paths)
 
 
+#: `_required_and_absent` 的结论：名单里缺席的检查中，哪几项对**这次改动**仍然
+#: 必需 —— 外加**这个结论是怎么得出来的**。
+#:
+#: `fallback is None` = 平台真的算过改动范围，这几项该出现而还没出现。
+#: `fallback` 非空 = 范围根本没算出来（认不出基线 / GitHub 没给文件清单），于是
+#: 保守地把带路径条件的项也照旧算必需，`fallback` 就是那句「为什么没算出来」。
+#:
+#: 这两件事以前在卡面上一个字都不差（都写「required 检查还没出现：test」），
+#: 人只能去翻后端日志才分得清 —— 而那份日志的保留期只有「距上次部署多久」。
+@dataclass(frozen=True)
+class _AbsentRequired:
+    names: list[str]
+    fallback: str | None = None
+
+
+def _absent_required_tail(shown: str, fallback: str | None) -> str:
+    """等待提示里 `⏳ 等 CI（…）：` 后面那半句。
+
+    回退的那半句必须自陈是回退：人看到「还没出现」会去 Actions 页面找那个
+    workflow，而回退状态下真正该看的是「这次改动到底碰了什么、这项检查是不是
+    本来就不会触发」——两条完全不同的排查路。"""
+    if fallback is None:
+        return "required 检查还没出现：" + shown
+    return f"平台没能判断这次改动碰了哪些文件（{fallback}），保守起见仍然要求：{shown}"
+
+
+def _absent_required_timeout(
+    shown: str, fallback: str | None, minutes: int
+) -> tuple[str, str]:
+    """等过头交给人时的 (reason, explain) —— 同样要分清等待和回退。
+
+    回退状态下照搬「多半是 workflow 没被触发、被改名或被禁用」是在给人一个平台
+    根本没验证过的判断：它连这次改动碰没碰后端都不知道。"""
+    if fallback is None:
+        return (
+            f"required 检查 {shown} 迟迟没有出现（已等约 {minutes} 分钟）——"
+            "多半是 workflow 没被触发、被改名或被禁用，"
+            "平台不会替人判定它可以不跑",
+            "这不是检查红了，是它根本没报到：平台只能确认「没人跑过这项检查」，"
+            "不能替人认定它不需要跑。",
+        )
+    return (
+        f"required 检查 {shown} 迟迟没有出现（已等约 {minutes} 分钟），而平台"
+        f"没能判断这次改动碰了哪些文件（{fallback}），只能保守地仍然要求它",
+        "平台没算出这次改动的范围，所以不知道这几项检查是「该跑而没跑」还是"
+        "「本来就不会对这次改动触发」——这一条需要人来判断，机器不猜。",
+    )
+
+
+#: 人工放行时「当时检查是什么状态」对应的那半句话。以前它是写死的「明知检查未
+#: 全绿仍合并」，而放行的常见场景之一恰恰是检查**已经全绿**、平台却还没合（比如
+#: 在等一项对这次改动根本不会触发的 required 检查）：2026-08-17 的 PR #520 因此
+#: 在卡上留下了一条自相矛盾的历史 ——「明知检查未全绿仍合并（合并时检查状态：
+#: success（全部 5 项检查通过））」。写错的留痕比没有留痕更糟：事后追责会照着它
+#: 去问一个从没发生过的决定。
+_FORCE_MERGE_VERDICTS = {
+    "failure": "明知检查未全绿仍合并",
+    "success": "当时检查其实已经全绿",
+    "pending": "没等检查跑完",
+    "no_checks": "当时没有任何 CI 跑过这次改动",
+}
+
+
+def _force_merge_verdict(state: str | None) -> str:
+    """`None` = 那一刻根本没读到检查状态（凭据坏了不该把人锁在门外，所以照样
+    放行）——它和「读到了，是红的」是两回事，卡面不能把前者写成后者。"""
+    if state is None:
+        return "当时读不到检查状态"
+    return _FORCE_MERGE_VERDICTS.get(state, f"当时检查状态是 {state}")
+
+
 def approvals_required_of(project: Project | None) -> int:
     """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
     the accepter's own accept counts, so unconfigured projects are unchanged."""
@@ -446,28 +552,35 @@ class AcceptService:
             raise NotFoundError("Accept card not found")
         return card
 
-    async def _release_topic_compute(self, topic: Topic) -> None:
-        """Free a done topic's long-lived compute on 采纳/归档 — the sandbox
-        container(s) AND, when the topic ran on an enrolled device, its screen (plus
-        a remote device's per-topic work dir). The container reaper only ever knew
-        about Docker boxes, so a device screen (and the ``claude`` process behind it)
-        used to leak on the machine forever.
+    async def _release_billed_compute(self, topic: Topic) -> None:
+        """Release the delivered topic's BILLED compute — its Cloud VM — and
+        nothing else.
 
-        Containers and screens are best-effort. A billed Cloud machine is not:
-        archive is its only reclamation lifecycle, so accept must not report
-        success if MicroCloud did not accept deletion."""
-        from app.domain.agent.device_provider import release_topic_screen
-        from app.domain.workspace import service as ws
+        This used to tear down the working surface too (the sandbox container,
+        and a device topic's screen plus its remote work dir). It doesn't any
+        more, because 交付完成 no longer means 话题结束 (#442 decision 1: 一个
+        话题往往是连续的): the room keeps working after the merge, and killing
+        its box mid-life is not free — a rebuilt container loses everything
+        installed inside it (jj, procps, the git identity the test suite needs),
+        so the next turn pays for a teardown nobody asked for. Both surfaces
+        have their own idle reaper (``scheduler.reap_idle_containers`` /
+        ``reap_idle_device_screens``), which is where reclaiming them belongs:
+        the question "is anyone still using this" is about activity, not about
+        whether a branch landed.
 
+        The Cloud VM is the one exception and it stays here, deliberately: it is
+        the only one that costs money per hour and the only one with NO reaper —
+        release is manual-archive-or-nothing (`TopicService._release_cloud_machine`,
+        #442 decision 3). Dropping it here would turn every merged topic into a
+        billed leak that nothing ever collects. So it is not best-effort either:
+        accept must not report success if MicroCloud did not accept deletion.
+
+        Consequence worth knowing: a Cloud-backed topic that just delivered has
+        no VM until someone provisions one again, and `ensure_topic_machine`
+        requires an authorized human caller — so its next turn needs a human to
+        speak. That is the pre-existing trade-off of "archive is the VM's only
+        lifecycle", not a new one; the reclamation policy itself is still open."""
         await self._machines.release_topic_machine(topic.id)
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
-        try:
-            await release_topic_screen(topic.project_id, topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
 
     async def create_card(
         self,
@@ -479,15 +592,24 @@ class AcceptService:
         change_body: str | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
-        # Before anything else touches the DB: a malformed subject is the
-        # filer's to fix in the same breath, and it is the one thing here that
-        # ends up in permanent history.
-        if change_subject:
-            try:
-                change_subject = commit_message.check_subject(change_subject)
-            except commit_message.InvalidSubject as exc:
-                raise ValidationError(str(exc)) from exc
-        # 采纳是一次性交付 (spec §6.3): a frozen topic can't be re-submitted.
+        # Before anything else touches the DB: a missing or malformed subject is
+        # the filer's to fix in the same breath, and it is the one thing here
+        # that ends up in permanent history.
+        #
+        # 2026-08-17: omitting it used to be allowed, and `pr_text` quietly
+        # filled in `chore: <话题标题>`. PR #500 is what that looks like from the
+        # outside — a chat-room name as the title of a merged change. The
+        # fallback stays (rows filed before `change_subject` existed still have
+        # NULL), but nothing new is allowed to reach it.
+        change_subject = (change_subject or "").strip()
+        if not change_subject:
+            raise ValidationError(_MISSING_SUBJECT)
+        try:
+            change_subject = commit_message.check_subject(change_subject)
+        except commit_message.InvalidSubject as exc:
+            raise ValidationError(str(exc)) from exc
+        # 归档是人主动收起来的话题，工作面跟着冻结。它不再是"交付完成"的同义词
+        # (#442 decision 1) —— 那一半由下面的 `accepted` 卡挡着。
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
         # One card at a time, not a broadcast (spec §4.4): re-route / wait
@@ -641,6 +763,40 @@ class AcceptService:
         cards = await self._repo.list_pr_open_on_active_topics()
         return [c.id for c in cards]
 
+    async def anybody_still_waiting(self, topic_ids: list[uuid.UUID]) -> bool:
+        """这些话题里，还有没有一张卡等着人决议 —— 归档前必须问的那一句。
+
+        归档会把非终态的卡当场收敛掉（`review/archive.py`），所以任何**平台自己
+        发起**的归档（结论卡默认采信就是）都得先问这一句，否则会把一张验收人还
+        没看见的卡作废掉。判据（哪些状态算"还等着"）留在本领域，调用方不该自己
+        去数状态——这正是 `close_cards_for_archived_topic` 收敛的那一张表。
+
+        话题是一组而不是一个：归档是级联的，孙子话题的卡会跟着一起被收掉。
+        """
+        return bool(
+            await self._repo.list_live_for_topics(
+                topic_ids, statuses=archive.OPEN_CARD_STATUSES
+            )
+        )
+
+    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
+        """这些话题上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
+
+        给"卡决议之后留一个重新递卡的窗口"用：驳回的意思是回去改了再来，而归档
+        话题递不出新卡，所以窗口从这一刻起算。
+        """
+        return await self._repo.latest_decision_at(topic_ids)
+
+    async def reviewer_topic_ids(
+        self, topic_ids: list[uuid.UUID], reviewer_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{话题: 这上面还有没有一张卡在等这个人} —— 只有点过名给他的话题会出现。
+
+        给话题列表的「与我的相关性」用，一次查完：**在不在 key 里**是「这话题
+        点过我的名」（采纳完也还算我的事），**value** 是「现在就等我动手」。
+        """
+        return await self._repo.reviewer_topic_ids(topic_ids, reviewer_handle)
+
     async def describe(self, card: AcceptCard) -> dict:
         """AcceptCardOut payload enriched with the vote state (approvals live in
         their own table; the requirement is a project setting)."""
@@ -662,31 +818,32 @@ class AcceptService:
         return data
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
-        """Task Template conditions (spec §4.2/§4.4): if a linked template
-        requires a topic like this to be accepted by a mentor, enforce it."""
-        links = await self._projects.list_links(topic.project_id)
-        if not links:
+        """机构协议 (spec §4.2/§4.4): a 赛题 may require a mentor to accept a
+        particular topic, and a project created from that 赛题 accepted the terms.
+
+        Reads them from the 赛题's 项目集 (with the 赛题's own override — #370
+        option (c)), reached through `project.external_task_id`. That is the link
+        the 赛题 page's 「从这道赛题创建项目」 button writes; the cheesex
+        `project_task_links` chain it replaced pointed at a 题目 hierarchy that
+        had no way to be created.
+        """
+        from app.domain.space.models import SpaceCategory
+        from app.domain.task.models import Task
+        from app.domain.task.protocol import resolve
+
+        project = await self._projects.get(topic.project_id)
+        task_id = getattr(project, "external_task_id", None) if project else None
+        if not task_id:
             return
-        tasks = TaskRepository(self._session)
-        templates = TaskTemplateRepository(self._session)
-        conditions: list[dict] = []
-        for link in links:
-            task = await tasks.get(link.task_id)
-            if task is None:
-                continue
-            tmpl = await templates.get(task.template_id)
-            if tmpl is not None:
-                conditions.extend(tmpl.conditions or [])
-        # A condition applies only when its required_topic is non-empty AND
-        # matches this topic. An empty required_topic must NOT match every topic
-        # (that would force mentor review on the whole project).
-        needs_mentor = any(
-            c.get("reviewer_role") == "mentor"
-            and (c.get("required_topic") or "").strip()
-            and c["required_topic"].strip() in topic.title
-            for c in conditions
+        task = await self._session.get(Task, task_id)
+        if task is None:
+            return
+        category = (
+            await self._session.get(SpaceCategory, task.category_id)
+            if getattr(task, "category_id", None)
+            else None
         )
-        if not needs_mentor:
+        if not resolve(category=category, task=task).mentor_required_for(topic.title):
             return
         members = await MemberRepository(self._session).list_for_project(
             topic.project_id
@@ -785,7 +942,9 @@ class AcceptService:
             raise ForbiddenError("你不是这张验收卡指定的验收人，无权采纳")
 
         topic = await self._topic_or_404(card.topic_id)
-        # 采纳一次性 (spec §6.3): can't re-accept an already-archived topic.
+        # 归档会连带终结这个话题上还没决议的卡 (review/archive.py)，所以这里通常
+        # 走不到；留着是为了兜住"归档与采纳同时发生"的竞态。重复采纳本身由上面的
+        # 卡状态闸门挡（一张卡只能 accepted 一次），不再依赖话题被归档。
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能重复采纳")
         project = await self._projects.get(topic.project_id)
@@ -1040,18 +1199,20 @@ class AcceptService:
                 :2000
             ]
 
-        # Topic is done → free its long-lived compute (container + device screen).
-        await self._release_topic_compute(topic)
+        # 这次改动交付完了 → 释放计费算力，工作面留着（见 _release_billed_compute）。
+        await self._release_billed_compute(topic)
 
-        # 采纳即归档 (spec §6.3).
-        topic.status = TopicStatus.archived
+        # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
+        # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
         topic.accepted_by = decided_by
         topic.accepted_at = now
-        topic.archived_at = now
 
         await self._session.flush()
         await self._session.refresh(card)
-        success_msg = f"✅ 话题已被 {decided_by} 采纳并合并。"
+        success_msg = (
+            f"✅ 话题已被 {decided_by} 采纳并合并"
+            "（这一次交付完成了，话题继续活跃——归档由人决定）。"
+        )
         if card.note:
             success_msg += f"\n{card.note}"
         self._notify_merge_result(topic, success_msg)
@@ -1242,19 +1403,32 @@ class AcceptService:
         await self._session.flush()
         return True
 
-    async def _change_author(self, topic: Topic) -> identity.GitIdentity | None:
-        """Whose GitHub account this change should be credited to — the person
-        who opened the topic. None when they never linked one; attribution is a
-        nice-to-have and must never take a merge down with it."""
+    async def _attribution(
+        self, topic: Topic
+    ) -> tuple[str | None, identity.GitIdentity | None]:
+        """Who this change belongs to: (their handle, their git identity).
+
+        The handle goes in `Requested-by:`, the identity in `Co-authored-by:`.
+        Both name the human the topic belongs to — `identity.requester_handle`, not
+        `topic.created_by`, which on a 分身-split room is the 分身 itself and so
+        resolved to no GitHub account at all.
+
+        Either half may be None (no human on the roster, or they never linked
+        GitHub); attribution is a nice-to-have and must never take a merge down
+        with it."""
         try:
-            return await identity.resolve_for_handle(
-                self._session, topic.created_by or ""
+            handle = await identity.requester_handle(self._session, topic)
+            author = (
+                await identity.resolve_for_handle(self._session, handle)
+                if handle
+                else None
             )
         except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
             logger.warning(
                 "could not resolve change author for topic %s", topic.id, exc_info=True
             )
-            return None
+            return None, None
+        return handle, author
 
     async def _resolve_pr_prerequisites(
         self, topic: Topic, decided_by: str
@@ -1316,15 +1490,14 @@ class AcceptService:
         )
         base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         client = github_pr.default_client()
+        requested_by, author = await self._attribution(topic)
         pr = await client.open_pull_request(
             owner=owner,
             repo=repo,
             head=remote_branch,
             base=base,
             title=pr_text.change_subject(card, topic),
-            body=pr_text.pr_body(
-                topic, decided_by, card, await self._change_author(topic)
-            ),
+            body=pr_text.pr_body(topic, decided_by, card, author, requested_by),
             token=token,
         )
 
@@ -1628,32 +1801,26 @@ class AcceptService:
                     client=client,
                 )
                 if absent
-                else []
+                else _AbsentRequired(names=[])
             )
-            if missing:
-                shown = ", ".join(sorted(missing))
+            if missing.names:
+                shown = ", ".join(sorted(missing.names))
                 # 兜底：没有超时的等待会静默卡死。workflow 改名、被禁用、Actions
                 # 额度断供（2026-08-13 真的断过一次）都会让一个该出现的检查永远
                 # 不出现——等过头就交给人，**绝不因为等腻了就自动合并**。
                 if self._required_check_grace_expired(card):
+                    reason, explain = _absent_required_timeout(
+                        shown,
+                        missing.fallback,
+                        settings.accept_required_check_grace_minutes,
+                    )
                     self._note_needs_human(
-                        card=card,
-                        topic=topic,
-                        reason=(
-                            f"required 检查 {shown} 迟迟没有出现"
-                            f"（已等约 {settings.accept_required_check_grace_minutes} "
-                            "分钟）——多半是 workflow 没被触发、被改名或被禁用，"
-                            "平台不会替人判定它可以不跑"
-                        ),
-                        explain=(
-                            "这不是检查红了，是它根本没报到：平台只能确认「没人跑过"
-                            "这项检查」，不能替人认定它不需要跑。"
-                        ),
+                        card=card, topic=topic, reason=reason, explain=explain
                     )
                     await self._session.flush()
                     return
                 self._note_waiting_on_checks(
-                    card=card, tail="required 检查还没出现：" + shown
+                    card=card, tail=_absent_required_tail(shown, missing.fallback)
                 )
                 await self._session.flush()
                 return
@@ -1719,6 +1886,7 @@ class AcceptService:
         # Green → merge now. Trailers go on the merge commit too, not just
         # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
         # squash that means the body field, with the title passed separately.
+        requested_by, author = await self._attribution(topic)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -1726,7 +1894,7 @@ class AcceptService:
             token=creds.write,
             commit_title=pr_text.merge_commit_title(card, topic, number),
             commit_message=pr_text.merge_commit_message(
-                topic, card.decided_by or "", card, await self._change_author(topic)
+                topic, card.decided_by or "", card, author, requested_by
             ),
         )
         if result.sha is None:
@@ -1756,7 +1924,7 @@ class AcceptService:
         repo: str,
         token: str,
         client,
-    ) -> list[str]:
+    ) -> _AbsentRequired:
         """名单里没有出现的那几项检查，哪些对**这次改动**确实是必需的。
 
         带路径条件的项要跟 PR 的实际 diff 对一次：一个纯前端 PR 上 `test`
@@ -1765,13 +1933,18 @@ class AcceptService:
 
         算不出改动范围时**保守处理**（照样算必需）：拿不到 diff 就不知道这次有没有
         碰后端，此时放行等于用一次 API 失败换掉整道阀。等下去不会误合，超时兜底会
-        把它交给人。"""
+        把它交给人。
+
+        但保守回退必须**能被外面看见**：结论一样（照旧必需）不等于理由一样，
+        所以回退时连同「为什么没算出来」一起返回（`_AbsentRequired.fallback`），
+        由卡面如实说出来 —— 它以前只落在 `logger.warning` 里，而后端日志的保留
+        期只有「距上次部署多久」。"""
         from app.domain.workspace import service as ws
 
         names = [r.name for r in absent if not r.paths]
         scoped = [r for r in absent if r.paths]
         if not scoped:
-            return names
+            return _AbsentRequired(names=names)
         try:
             base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         except Exception as exc:  # noqa: BLE001 — 认不出基线就按"仍然必需"处理
@@ -1781,7 +1954,12 @@ class AcceptService:
                 card.id,
                 exc,
             )
-            return names + [r.name for r in scoped]
+            return _AbsentRequired(
+                names=names + [r.name for r in scoped],
+                fallback=f"认不出这个 PR 要合进哪条分支：{type(exc).__name__}: {exc}"[
+                    :200
+                ],
+            )
         changed = await client.compare_files(
             owner=owner, repo=repo, base=base, head=card.pr_head_sha, token=token
         )
@@ -1793,8 +1971,16 @@ class AcceptService:
                 base,
                 card.pr_head_sha,
             )
-            return names + [r.name for r in scoped]
-        return names + [r.name for r in scoped if _diff_touches(r.paths, changed)]
+            return _AbsentRequired(
+                names=names + [r.name for r in scoped],
+                fallback=(
+                    "GitHub 没给出这次改动的文件清单"
+                    "（改动超过 compare API 的 300 文件上限，或返回格式异常）"
+                ),
+            )
+        return _AbsentRequired(
+            names=names + [r.name for r in scoped if _diff_touches(r.paths, changed)]
+        )
 
     def _required_check_grace_expired(self, card: AcceptCard) -> bool:
         """这张卡等一个没出现的 required 检查，是不是已经等过头了。
@@ -2190,16 +2376,17 @@ class AcceptService:
         )
         settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
         card.note = (f"{headline}；{settled}" if headline else settled)[:2000]
-        await self._release_topic_compute(topic)
-        topic.status = TopicStatus.archived
+        await self._release_billed_compute(topic)
+        # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
         topic.accepted_by = by
         topic.accepted_at = now
-        topic.archived_at = now
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"✅ 话题已被 {by} 采纳并归档：PR #{card.pr_number} {how}。\n{card.pr_url}",
+            f"✅ 话题已被 {by} 采纳：PR #{card.pr_number} {how}。\n{card.pr_url}\n"
+            "（这一次交付完成了，话题继续活跃——归档由人决定。要再交付一份改动，"
+            "在房间里开一件新的事。）",
         )
 
     async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
@@ -2575,11 +2762,12 @@ class AcceptService:
             # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
             # body — the branch it came from and who clicked, but nothing at
             # all about what changed.
+            requested_by, author = await self._attribution(topic)
             await client.merge_pr(
                 number,
                 title=pr_text.merge_commit_title(card, topic, number),
                 message=pr_text.merge_commit_message(
-                    topic, decided_by, card, await self._change_author(topic)
+                    topic, decided_by, card, author, requested_by
                 ),
             )
         except GitHubPRMergeBlocked as blocked:
@@ -2655,7 +2843,8 @@ class AcceptService:
         self, card: AcceptCard, topic: Topic, decided_by: str, *, note: str
     ) -> AcceptCard:
         """Post-merge bookkeeping shared by the PR path: sync the platform's
-        main down from upstream (the merge happened THERE), then archive."""
+        main down from upstream (the merge happened THERE), then mark the topic
+        delivered — delivered, not archived (#442 decision 1)."""
         from app.domain.workspace import service as ws
 
         try:
@@ -2679,13 +2868,11 @@ class AcceptService:
         card.decided_at = now
         card.note = note[:2000]
 
-        await self._release_topic_compute(topic)
+        await self._release_billed_compute(topic)
 
-        # 采纳即归档 (spec §6.3).
-        topic.status = TopicStatus.archived
+        # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
         topic.accepted_by = decided_by
         topic.accepted_at = now
-        topic.archived_at = now
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -2734,11 +2921,17 @@ class AcceptService:
         card.decided_by = decided_by
         card.decided_at = datetime.now(UTC)
 
-        # Un-archive the topic: back to active, clear accept/archive markers.
-        topic.status = TopicStatus.active
+        # 撤销的是这次**验收记录**，不是这次合并 —— PR 已经在 main 上了，git 层面
+        # revoke 什么都没撤。所以这里只清交付标记（话题回到"还没交付过"，因此
+        # 又能递卡）。
+        #
+        # 归档状态一律不动，这是 2026-08-17 的对称面：`TopicService.unarchive` 的
+        # docstring 说「取消归档不改写采纳记录，那要用撤回采纳」；反过来同理——
+        # 撤回采纳不改写归档状态，那是人的决定（取消归档）。以前这里要把话题拉回
+        # active，是因为采纳会顺手归档；采纳不再归档之后，一张卡的撤销没有理由
+        # 覆盖某个人「把这个话题收起来」的动作。
         topic.accepted_by = None
         topic.accepted_at = None
-        topic.archived_at = None
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -2803,6 +2996,7 @@ class AcceptService:
         owner, _, repo = card.pr_repo.partition("/")
         client = github_pr.default_client()
         # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
+        state: str | None = None
         try:
             state, tail = await client.check_state(
                 owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
@@ -2812,9 +3006,14 @@ class AcceptService:
             logger.warning(
                 "force-merge check read failed for card %s: %s", card.id, exc
             )
+            state = None
             checks_at_merge = "读不到检查状态"
+        # 读到的状态决定这句话怎么写：全绿时说「明知未全绿」是往历史里写一条从没
+        # 发生过的决定（PR #520 真的这么记了一条）。
+        verdict = _force_merge_verdict(state)
 
         number = card.pr_number
+        requested_by, author = await self._attribution(topic)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2822,7 +3021,7 @@ class AcceptService:
             token=creds.write,
             commit_title=pr_text.merge_commit_title(card, topic, number),
             commit_message=pr_text.merge_commit_message(
-                topic, card.decided_by or "", card, await self._change_author(topic)
+                topic, card.decided_by or "", card, author, requested_by
             ),
         )
         if result.sha is None:
@@ -2834,8 +3033,8 @@ class AcceptService:
         stamp = now.strftime("%Y-%m-%d %H:%M UTC")
         tail_reason = f"，理由：{reason.strip()}" if reason.strip() else ""
         headline = (
-            f"{FORCE_MERGED_PREFIX}：<@{decided_by}> 于 {stamp} 明知检查未全绿仍"
-            f"合并（合并时检查状态：{checks_at_merge}）{tail_reason}"
+            f"{FORCE_MERGED_PREFIX}：<@{decided_by}> 于 {stamp} 人工放行合并"
+            f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
         )
         card.pr_merged_at = now
         card.pr_head_sha = result.sha
@@ -2849,7 +3048,7 @@ class AcceptService:
         )
         self._notify_merge_result(
             topic,
-            f"🔨 <@{decided_by}> 人工放行了 PR #{number}：明知检查未全绿仍合并"
+            f"🔨 <@{decided_by}> 人工放行了 PR #{number}：{verdict}"
             f"（合并时检查状态：{checks_at_merge}）{tail_reason}。\n"
             f"{card.pr_url or ''}",
         )

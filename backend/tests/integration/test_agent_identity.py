@@ -40,10 +40,10 @@ def _seed_agent(handle: str) -> None:
 
 def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
     project_id = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": created_by}
+        "/projects", json={"name": "P", "owner_handle": created_by}
     ).json()["data"]["id"]
     topic_id = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "T", "created_by": created_by},
     ).json()["data"]["id"]
     return project_id, topic_id
@@ -62,7 +62,7 @@ def _turn(client, topic_id: str) -> list[dict]:
 
 
 def _ai_authors(client, topic_id: str) -> set[str]:
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return {b["author"] for b in blocks if b["author_type"] == "ai"}
 
 
@@ -84,13 +84,11 @@ def test_ai_blocks_follow_the_rooms_agent_not_a_fixed_handle(client):
     _, topic_id = _project_and_topic(client)
     _seed_agent("ops")
     r = client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": "ops", "role": "member", "actor": "alice"},
     )
     assert r.status_code == 200
-    r = client.delete(
-        f"/api/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice"
-    )
+    r = client.delete(f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
     assert r.status_code == 200
 
     _turn(client, topic_id)
@@ -103,10 +101,10 @@ def test_the_summon_receipt_carries_the_same_agent(client):
     _, topic_id = _project_and_topic(client)
     _seed_agent("ops")
     client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": "ops", "role": "member", "actor": "alice"},
     )
-    client.delete(f"/api/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
+    client.delete(f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
 
     frames = _turn(client, topic_id)
     ack = next(f for f in frames if f["type"] == "reaction")
@@ -117,15 +115,15 @@ def _swap_agent(client, topic_id: str, handle: str) -> None:
     """Make ``handle`` the room's 芝士 in place of the seeded one."""
     _seed_agent(handle)
     client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": handle, "role": "member", "actor": "alice"},
     )
-    client.delete(f"/api/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
+    client.delete(f"/topics/{topic_id}/members/{_own_agent(topic_id)}?actor=alice")
 
 
 def _remember(client, project_id: str, topic_id: str, fact: str) -> None:
     r = client.post(
-        f"/api/projects/{project_id}/memory",
+        f"/projects/{project_id}/memory",
         json={"content": fact, "topic": topic_id},
     )
     assert r.status_code == 200
@@ -133,7 +131,7 @@ def _remember(client, project_id: str, topic_id: str, fact: str) -> None:
 
 def _recall(client, project_id: str, topic_id: str, query: str) -> list[dict]:
     return client.post(
-        f"/api/projects/{project_id}/memory/search",
+        f"/projects/{project_id}/memory/search",
         json={"query": query, "topic": topic_id},
     ).json()["data"]["hits"]
 
@@ -145,11 +143,11 @@ def test_two_agents_in_one_project_keep_separate_memories(client):
     per-agent key exists for: with a project-wide pool, ops would read what
     cheese wrote.
     """
-    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
     def _topic(title: str) -> str:
         return client.post(
-            "/api/topics",
+            "/topics",
             json={"project_id": project_id, "title": title, "created_by": "alice"},
         ).json()["data"]["id"]
 
@@ -178,11 +176,11 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
     Rooms that accumulated a project pool keep reading it; only new writes are
     per-agent.
     """
-    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
     def _topic(title: str) -> str:
         return client.post(
-            "/api/topics",
+            "/topics",
             json={"project_id": project_id, "title": title, "created_by": "alice"},
         ).json()["data"]["id"]
 
@@ -191,7 +189,7 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
 
     # No topic → the legacy shared pool.
     client.post(
-        f"/api/projects/{project_id}/memory", json={"content": "本项目用 uv 管依赖"}
+        f"/projects/{project_id}/memory", json={"content": "本项目用 uv 管依赖"}
     )
 
     for room in (cheese_room, ops_room):
@@ -211,7 +209,7 @@ def _post_without_summon(client, topic_id: str, content: str, author: str) -> No
 
 def _notifs(client, project_id: str, handle: str) -> list[dict]:
     return client.get(
-        f"/api/projects/{project_id}/alerts",
+        f"/projects/{project_id}/alerts",
         headers=session_auth_headers(handle),
     ).json()["data"]["data"]
 
@@ -228,12 +226,12 @@ def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     # <@handle> resolves against the PROJECT roster, so ops has to be a project
     # member before the room can name it.
     client.post(
-        f"/api/projects/{project_id}/members",
+        f"/projects/{project_id}/members",
         json={"user_handle": "ops", "role": "member"},
         headers=bearer("alice"),  # the project owner — roster writes are guarded
     )
     client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": "ops", "role": "member", "actor": "alice"},
     )
 
@@ -248,7 +246,7 @@ def test_human_members_are_not_mistaken_for_agents(client):
     """A plain member carries no binding, so it never authors AI blocks."""
     _, topic_id = _project_and_topic(client)
     client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     _turn(client, topic_id)
@@ -260,7 +258,7 @@ def test_human_members_are_not_mistaken_for_agents(client):
 
 def _list_memory(client, project_id: str, **params) -> list[dict]:
     query = "&".join(f"{k}={v}" for k, v in params.items())
-    url = f"/api/memory?project_id={project_id}" + (f"&{query}" if query else "")
+    url = f"/memory?project_id={project_id}" + (f"&{query}" if query else "")
     return client.get(url).json()["data"]["data"]
 
 
@@ -268,9 +266,9 @@ def test_listing_a_project_shows_what_its_agents_remembered(client):
     """`cheese remember` always carries a topic, so every agent write lands in
     an agent pool. If listing skipped those, the memory panel showed an empty
     project while the live pool kept growing — unauditable by construction."""
-    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     topic_id = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "T", "created_by": "alice"},
     ).json()["data"]["id"]
 
@@ -285,11 +283,11 @@ def test_listing_a_project_shows_what_its_agents_remembered(client):
 def test_listing_covers_every_agent_pool_in_the_project(client):
     """Two 芝士 keep separate pools; the project view must still see both, and
     `agent_handle` narrows to one."""
-    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
     def _topic(title: str) -> str:
         return client.post(
-            "/api/topics",
+            "/topics",
             json={"project_id": project_id, "title": title, "created_by": "alice"},
         ).json()["data"]["id"]
 
@@ -317,12 +315,12 @@ def test_one_projects_agent_pool_never_leaks_into_another(client):
     """The prefix scan is keyed on this project — a sibling project's identical
     agent handle must not come along."""
     ids = [
-        client.post("/api/projects", json={"name": n}).json()["data"]["id"]
+        client.post("/projects", json={"name": n}).json()["data"]["id"]
         for n in ("P1", "P2")
     ]
     for pid, fact in zip(ids, ("P1 的事", "P2 的事"), strict=True):
         topic_id = client.post(
-            "/api/topics",
+            "/topics",
             json={"project_id": pid, "title": "T", "created_by": "alice"},
         ).json()["data"]["id"]
         _remember(client, pid, topic_id, fact)
@@ -333,15 +331,15 @@ def test_one_projects_agent_pool_never_leaks_into_another(client):
 
 def test_include_agent_false_is_the_way_back_to_the_shared_pool(client):
     """The escape hatch: callers that only want the pre-split project pool."""
-    project_id = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     topic_id = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "T", "created_by": "alice"},
     ).json()["data"]["id"]
 
     _remember(client, project_id, topic_id, "芝士自己记的")
     # No topic → the legacy shared project pool.
-    client.post(f"/api/projects/{project_id}/memory", json={"content": "项目共享的"})
+    client.post(f"/projects/{project_id}/memory", json={"content": "项目共享的"})
 
     assert [
         e["content"] for e in _list_memory(client, project_id, include_agent="false")

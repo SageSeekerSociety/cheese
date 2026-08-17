@@ -15,7 +15,7 @@ from app.core.sandbox_auth import mint_scoped_token
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 

@@ -49,7 +49,7 @@ async def _acting_recipient(resolver: ActorResolver, alert: Alert) -> str:
     )
 
 
-@router.post("/api/projects/{project_id}/alerts")
+@router.post("/projects/{project_id}/alerts")
 async def create_notification(
     project_id: uuid.UUID,
     body: AlertCreate,
@@ -74,7 +74,7 @@ async def create_notification(
     return ok(_dump(alert))
 
 
-@router.get("/api/projects/{project_id}/alerts")
+@router.get("/projects/{project_id}/alerts")
 async def list_notifications(
     project_id: uuid.UUID,
     db: DbSession,
@@ -92,7 +92,7 @@ async def list_notifications(
     return ok(page([_dump(n) for n in items], total))
 
 
-@router.get("/api/projects/{project_id}/inbox")
+@router.get("/projects/{project_id}/inbox")
 async def project_inbox(
     project_id: uuid.UUID,
     db: DbSession,
@@ -106,7 +106,7 @@ async def project_inbox(
     return ok(page([_dump(n) for n in items], total))
 
 
-@router.get("/api/projects/{project_id}/alerts/unread-count")
+@router.get("/projects/{project_id}/alerts/unread-count")
 async def notifications_unread_count(
     project_id: uuid.UUID,
     db: DbSession,
@@ -122,7 +122,7 @@ async def notifications_unread_count(
     return ok({"unread": count})
 
 
-@router.post("/api/projects/{project_id}/alerts/read-all")
+@router.post("/projects/{project_id}/alerts/read-all")
 async def mark_all_notifications_read(
     project_id: uuid.UUID,
     db: DbSession,
@@ -142,7 +142,7 @@ async def mark_all_notifications_read(
     return ok({"marked": marked})
 
 
-@router.post("/api/alerts/{alert_id}/read")
+@router.post("/alerts/{alert_id}/read")
 async def mark_notification_read(
     alert_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -152,7 +152,7 @@ async def mark_notification_read(
     return ok(_dump(await service.mark_read(alert_id)))
 
 
-@router.post("/api/alerts/{alert_id}/feedback")
+@router.post("/alerts/{alert_id}/feedback")
 async def set_notification_feedback(
     alert_id: uuid.UUID,
     body: FeedbackIn,
@@ -165,7 +165,7 @@ async def set_notification_feedback(
     return ok(_dump(await service.set_feedback(alert_id, body.feedback)))
 
 
-@router.post("/api/alerts/{alert_id}/resolve")
+@router.post("/alerts/{alert_id}/resolve")
 async def resolve_notification(
     alert_id: uuid.UUID,
     body: ResolveIn,

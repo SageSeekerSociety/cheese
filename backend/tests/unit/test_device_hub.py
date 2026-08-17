@@ -113,6 +113,36 @@ async def test_call_screen_await_resolved_by_rpc_result():
     assert await fut == {"ok": True}
 
 
+async def test_put_file_waits_for_device_file_result():
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev1", transport)
+    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+
+    import asyncio
+
+    pending = asyncio.create_task(
+        hub.put_file("dev1", screen.sid, "uploads/img-a.png", b"\x89PNG\r\n\x1a\n")
+    )
+    await asyncio.sleep(0)
+    request = transport.sent[-1]
+    assert request["t"] == "file.put"
+    assert request["sid"] == screen.sid
+    assert request["path"] == "uploads/img-a.png"
+    assert base64.b64decode(request["data"]) == b"\x89PNG\r\n\x1a\n"
+
+    await hub.on_device_message(
+        "dev1",
+        {
+            "t": "file.result",
+            "sid": screen.sid,
+            "id": request["id"],
+            "value": {"ok": True},
+        },
+    )
+    assert await pending == {"ok": True}
+
+
 async def test_exposed_screen_fn_answered_via_rpc_result():
     async def echo(hub: DeviceHub, screen: HubScreen, args: list) -> dict:
         return {"echo": args}

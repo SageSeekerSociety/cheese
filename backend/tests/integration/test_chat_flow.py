@@ -10,12 +10,12 @@ from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
-    pr = client.post("/api/projects", json={"name": "Demo", "owner_handle": owner})
+    pr = client.post("/projects", json={"name": "Demo", "owner_handle": owner})
     assert pr.status_code == 200
     project_id = pr.json()["data"]["id"]
 
     tr = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "第一个话题", "created_by": owner},
     )
     assert tr.status_code == 200
@@ -38,8 +38,8 @@ def test_create_and_list_project(client):
     # their token lapsed). Creating anonymously would leave the project with no
     # owner and no roster, so nobody would have a claim on it either.
     headers = session_auth_headers("alice")
-    client.post("/api/projects", json={"name": "P1"}, headers=headers)
-    r = client.get("/api/projects", headers=headers)
+    client.post("/projects", json={"name": "P1"}, headers=headers)
+    r = client.get("/projects", headers=headers)
     body = r.json()
     assert body["code"] == 200
     assert body["data"]["total"] == 1
@@ -48,7 +48,7 @@ def test_create_and_list_project(client):
 
 def test_create_topic_requires_existing_project(client):
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={
             "project_id": "00000000-0000-0000-0000-000000000000",
             "title": "x",
@@ -60,7 +60,7 @@ def test_create_topic_requires_existing_project(client):
 def test_blocks_empty_then_populated_after_chat(client):
     _, topic_id = _create_project_and_topic(client)
 
-    r = client.get(f"/api/topics/{topic_id}/blocks")
+    r = client.get(f"/topics/{topic_id}/blocks")
     assert r.json()["data"]["total"] == 0
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
@@ -95,7 +95,7 @@ def test_blocks_empty_then_populated_after_chat(client):
     assert user["meta"]["consumed_turn"] is None
 
     # Persisted: two blocks now exist in timeline order.
-    r = client.get(f"/api/topics/{topic_id}/blocks")
+    r = client.get(f"/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
     assert [b["author_type"] for b in blocks] == ["human", "ai"]
     assert blocks[0]["meta"]["consumed_turn"]
@@ -152,7 +152,7 @@ def test_message_without_summon_does_not_invoke_cheese(client):
     types = [f["type"] for f in frames]
     assert types == ["user_block", "done"]  # no ✅ ack / assistant_block
 
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
 
 
@@ -163,7 +163,7 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
     # token, so one socket can only ever speak as one person.
     _, topic_id = _create_project_and_topic(client, owner="alice")
     client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:

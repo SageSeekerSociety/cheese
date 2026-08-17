@@ -62,7 +62,7 @@ which was `False` when this was written. It has since been switched on
          → CI runs whatever .github/workflows declares
             → the card's state mirrors the PR's
                → 采纳 = call the merge API                      only when green
-                  → archive the topic
+                  → the topic is marked delivered, and stays active
 ```
 
 > **Update (2026-08-15).** "only when green" is now enforced by the platform,
@@ -112,6 +112,13 @@ which was `False` when this was written. It has since been switched on
   installation token. No path depends on a member's personal token.
 - **Accepting is one action with one meaning.** It merges. It does not start a
   process that merges later.
+- **A merge ends the change, not the room** (#442 decision 1, 2026-08-17). It
+  stamps `accepted_by`/`accepted_at` on the topic and stops there: the topic
+  stays `active`, its sandbox is not torn down, and archiving is a separate
+  thing a person does. What the merge *does* freeze is delivery — the accepted
+  card blocks a second card on the same topic, because that topic's branch is
+  already in `main` and a PR from it would carry no commits. A follow-up change
+  is a new piece of work with a branch cut from today's `main` (eval A4).
 
 ### Card states
 
@@ -125,7 +132,7 @@ reconciles. A local state that disagrees with the forge is always wrong.
 | `checks_pending` | PR is open, checks have not concluded | checks conclude |
 | `checks_failed` | a required check is red | 芝士 pushes a fix → `checks_pending` |
 | `ready` | the forge says it is mergeable | 采纳 → `merged`; close → `closed` |
-| `merged` | merged | topic archived |
+| `merged` | merged | terminal for the card; the topic stays active |
 | `closed` | PR closed without merging | terminal |
 
 `pending_gate`, `gate_failed` and `conflict` are removed. Existing rows keep

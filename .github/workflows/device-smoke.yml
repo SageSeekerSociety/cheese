@@ -1,8 +1,8 @@
 name: Device self-hosting smoke
 
 # Drives ONE real device-backed turn on the dev box and asserts the three
-# properties self-hosting depends on (#94 real worktree, #95 the agent files its
-# own accept card, #96 the chat WS relays frames).
+# properties self-hosting depends on (#94 device clone/push, #95 the agent files
+# its own accept card, #96 the chat WS relays frames).
 #
 # It runs on the dev box's OWN runner and talks to the backend over localhost, so
 # it needs no VPN and no operator on the private network — the box verifies

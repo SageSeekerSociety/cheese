@@ -339,11 +339,12 @@ const navigateToSubproject = (subprojectId: number) => {
     background-color: var(--fill);
   }
 
+  /* 导航选中态不用竖条：底色 + 字重就够了（Slack/Discord 的行选中态也只是
+     底色）。左条纹在这套设计语言里只留给引用块和树的结构线。 */
   &.active-subproject {
     background-color: rgba(var(--v-theme-primary), 0.08);
     color: rgb(var(--v-theme-primary));
     font-weight: 500;
-    border-left: 2px solid rgb(var(--v-theme-primary));
   }
 
   &.collapsed-subproject {

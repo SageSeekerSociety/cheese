@@ -9,7 +9,7 @@ from app.api.deps import get_scheduler_service
 from app.api.response import ok
 from app.domain.scheduler.service import SchedulerService
 
-router = APIRouter(prefix="/api/admin/scheduler", tags=["scheduler"])
+router = APIRouter(prefix="/admin/scheduler", tags=["scheduler"])
 
 SchedulerDep = Annotated[SchedulerService, Depends(get_scheduler_service)]
 

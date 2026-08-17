@@ -1,10 +1,11 @@
-"""市场: resource pools (AI + compute) and the 团队↔题目 matching market.
+"""市场: the resource pools (AI + compute) a project can select from.
 
-The matching market (spec §13 阶段 6): Spaces publish Task Templates (题目),
-teams apply with a Project (应征), the Space accepts → Task + link + 通知.
+It also held a 团队↔题目 matching market on cheesex `task_templates`. That went
+with the 赛题 merge (#370): 知是 already publishes 赛题 and teams already claim
+them, with approval, quota and real-name checks the market never had. Browsing
+and claiming a 赛题 lives on the Space pages.
 """
 
-import uuid
 from dataclasses import asdict
 from typing import Annotated
 
@@ -12,8 +13,8 @@ import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_profile_registry, get_turn_runner
-from app.api.response import ok, page
+from app.api.deps import get_profile_registry, get_work_runner
+from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
 from app.domain.agent.market import (
@@ -22,27 +23,13 @@ from app.domain.agent.market import (
     visibility_listings,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.runtime import TurnRunner
-from app.domain.cx_task.models import TaskApplication
-from app.domain.cx_task.schemas import (
-    ApplicationCreate,
-    ApplicationDecide,
-    MarketTaskOut,
-    TaskApplicationOut,
-)
-from app.domain.cx_task.services import TaskApplicationService, TaskTemplateService
+from app.domain.agent.runtime import AgentWorkRunner
 
-router = APIRouter(prefix="/api/market", tags=["market"])
+router = APIRouter(prefix="/market", tags=["market"])
 
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-Runner = Annotated[TurnRunner, Depends(get_turn_runner)]
-
-
-def _application_out(application: TaskApplication, project_name: str = "") -> dict:
-    out = TaskApplicationOut.model_validate(application).model_dump(mode="json")
-    out["project_name"] = project_name
-    return out
+Runner = Annotated[AgentWorkRunner, Depends(get_work_runner)]
 
 
 @router.get("/pools")
@@ -87,7 +74,7 @@ async def list_nodes(runner: Runner) -> dict:
     (compute_provider) — the platform runs one provider at a time today."""
     from app.domain.workspace import service as ws
 
-    active = runner.active_turns()
+    active = runner.active_work_count()
     current = settings.compute_provider  # "local" | "remote"
 
     local_sandboxed = settings.agent_sandbox_enabled and ws.sandbox_available()
@@ -131,71 +118,3 @@ async def list_nodes(runner: Runner) -> dict:
 
 
 # ---- 题目匹配 (spec §13 阶段 6) ----
-
-
-@router.get("/tasks")
-async def list_market_tasks(db: DbSession, q: str | None = None) -> dict:
-    """All published 题目 (Task Templates) with their Space name; `q` filters
-    by keyword on the template name/description or Space name."""
-    rows = await TaskTemplateService(db).list_published(query=q)
-    items = [
-        MarketTaskOut.model_validate(
-            {
-                "id": template.id,
-                "space_id": template.space_id,
-                "space_name": space_name,
-                "name": template.name,
-                "description": template.description,
-                "resource_pack": template.resource_pack,
-                "conditions": template.conditions,
-                "default_role": template.default_role,
-                "created_at": template.created_at,
-            }
-        ).model_dump(mode="json")
-        for template, space_name in rows
-    ]
-    return ok(page(items, len(items)))
-
-
-@router.post("/tasks/{template_id}/apply")
-async def apply_market_task(
-    template_id: uuid.UUID, body: ApplicationCreate, db: DbSession
-) -> dict:
-    """应征: a team throws its project's hat in the ring. Idempotent — applying
-    again with the same project returns the existing application."""
-    application = await TaskApplicationService(db).apply(
-        template_id=template_id, project_id=body.project_id, pitch=body.pitch
-    )
-    return ok(_application_out(application))
-
-
-@router.get("/tasks/{template_id}/applications")
-async def list_task_applications(template_id: uuid.UUID, db: DbSession) -> dict:
-    """Space side: everyone who applied to this 题目 (no fine-grained Space
-    permissions yet — MVP)."""
-    rows = await TaskApplicationService(db).list_for_template(template_id)
-    items = [_application_out(a, name) for a, name in rows]
-    return ok(page(items, len(items)))
-
-
-@router.post("/applications/{application_id}/accept")
-async def accept_application(
-    application_id: uuid.UUID, body: ApplicationDecide, db: DbSession
-) -> dict:
-    """Accept an 应征: creates the Task + ProjectTaskLink and notifies the
-    project (protocol signed, spec §4.2)."""
-    application = await TaskApplicationService(db).accept(
-        application_id=application_id, decided_by=body.decided_by
-    )
-    return ok(_application_out(application))
-
-
-@router.post("/applications/{application_id}/decline")
-async def decline_application(
-    application_id: uuid.UUID, body: ApplicationDecide, db: DbSession
-) -> dict:
-    """婉拒 an 应征 (the project gets a light notification)."""
-    application = await TaskApplicationService(db).decline(
-        application_id=application_id, decided_by=body.decided_by
-    )
-    return ok(_application_out(application))

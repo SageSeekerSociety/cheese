@@ -22,7 +22,7 @@ def _create(client, name: str, owner: str, team_id: int | None = None) -> dict:
     body: dict = {"name": name, "owner_handle": owner}
     if team_id is not None:
         body["team_id"] = team_id
-    resp = client.post("/api/projects", json=body)
+    resp = client.post("/projects", json=body)
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]
 
@@ -55,7 +55,7 @@ def test_personal_project_links_to_personal_team_at_create(client):
     assert created["team_id"] == tid
 
     # The personal team's 项目 page lists it…
-    listing = client.get(f"/api/projects?team_id={tid}").json()["data"]["data"]
+    listing = client.get(f"/projects?team_id={tid}").json()["data"]["data"]
     names = [p["name"] for p in listing]
     assert "gina-personal" in names
 
@@ -68,7 +68,7 @@ def test_personal_project_links_to_personal_team_at_create(client):
             await s.commit()
 
     asyncio.run(add_legacy())
-    listing = client.get(f"/api/projects?team_id={tid}").json()["data"]["data"]
+    listing = client.get(f"/projects?team_id={tid}").json()["data"]["data"]
     names = [p["name"] for p in listing]
     assert "gina-legacy" in names and "gina-personal" in names
 
@@ -99,5 +99,5 @@ def test_explicit_team_id_sticks_and_unknown_owner_stays_null(client):
     orphan = _create(client, "orphan-proj", "ghost-agent-42")
     assert orphan["team_id"] is None
 
-    listing = client.get(f"/api/projects?team_id={tid}").json()["data"]["data"]
+    listing = client.get(f"/projects?team_id={tid}").json()["data"]["data"]
     assert [p["name"] for p in listing] == ["shared-proj"]

@@ -14,6 +14,7 @@ import pytest
 
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.hooks_substrate import ScreenSetupError
+from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility
@@ -48,15 +49,18 @@ def _online(*ids: str):
     return lambda device_id: device_id in live
 
 
-async def test_first_turn_pins_to_an_online_device():
+async def test_system_choice_pins_the_first_healthy_device_on_the_first_turn():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
-    dev = await _device_on_project(service, project, "box")
+    first = await _device_on_project(service, project, "first")
+    second = await _device_on_project(service, project, "second")
 
-    picked = await resolve_pinned_device(service, _online(dev), project, topic)
-    assert picked == dev
+    picked = await resolve_pinned_device(
+        service, _online(first, second), project, topic
+    )
+    assert picked == first
     # the pin is now durable — recorded on the topic
-    assert await service.topic_device(topic) == dev
+    assert await service.topic_device(topic) == first
     assert (await service.topic_binding(topic)).visibility is Visibility.host
 
 
@@ -73,6 +77,42 @@ async def test_later_turns_return_to_the_pinned_device_never_drift():
         await resolve_pinned_device(service, _online(dev_a, dev_b), project, topic)
         == dev_a
     )
+
+
+async def test_named_machine_is_used_without_consulting_automatic_selection(
+    monkeypatch,
+):
+    service = _service()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    first = await _device_on_project(service, project, "first")
+    named = await _device_on_project(service, project, "named")
+    await service.bind_topic_device(topic, named, Visibility.host)
+
+    async def automatic_selection_must_not_run(*_args, **_kwargs):
+        pytest.fail("a named machine must bypass automatic healthy-device selection")
+
+    monkeypatch.setattr(
+        service, "healthy_devices_for_project", automatic_selection_must_not_run
+    )
+
+    assert (
+        await resolve_pinned_device(service, _online(first, named), project, topic)
+        == named
+    )
+    assert await service.topic_device(topic) == named
+
+
+async def test_named_machine_waits_when_offline_instead_of_using_online_peer():
+    service = _service()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    online_peer = await _device_on_project(service, project, "online peer")
+    named_offline = await _device_on_project(service, project, "named offline")
+    await service.bind_topic_device(topic, named_offline, Visibility.host)
+
+    with pytest.raises(ScreenSetupError) as excinfo:
+        await resolve_pinned_device(service, _online(online_peer), project, topic)
+    assert str(excinfo.value) == DEVICE_OFFLINE_MESSAGE
+    assert await service.topic_device(topic) == named_offline
 
 
 async def test_pinned_device_offline_raises_and_does_not_drift():

@@ -1,6 +1,7 @@
-"""Freeing a topic's compute (on 采纳/archive, via stop_topic_container) must reap
-BOTH backends' boxes. The old code only removed the SDK container, so every
-tmux-backed topic leaked its `cheesex-tmux-*` container forever."""
+"""Freeing a topic's compute. `stop_topic_container` (the idle reaper's tool) must
+reap BOTH backends' boxes — the old code only removed the SDK container, so every
+tmux-backed topic leaked its `cheesex-tmux-*` container forever. The accept path
+no longer calls it at all; see the second half of this file."""
 
 import uuid
 from types import SimpleNamespace
@@ -39,15 +40,18 @@ def test_stop_topic_container_noop_without_docker(monkeypatch):
     assert calls == []  # no docker → never shells out
 
 
-# The accept/archive path frees a topic's compute for BOTH backends: the Docker
-# container AND, when it ran on an enrolled device, its screen. A device screen was
-# never reaped before, so the claude process behind it leaked on the machine.
+# 交付时释放算力，从 2026-08-17 起只包括**计费的**那一件 (#442 decision 1)：
+# 云 VM 按小时烧钱、而且没有 reaper，所以它必须在这里回收；容器和设备屏是可重建
+# 的工作面、各自有闲置回收器，而话题合并之后还要接着用它们，所以不再动。
 
 
 @pytest.mark.anyio
-async def test_accept_release_frees_both_the_container_and_the_device_screen(
-    monkeypatch,
-):
+async def test_delivery_releases_the_cloud_vm_only(monkeypatch):
+    """交付释放计费算力，但不拆工作面：容器不删、设备屏不关。
+
+    合并不再等于话题结束，所以拆掉正在用的箱子是纯粹的损失——重建的容器会丢掉
+    里面装好的一切（jj、procps、测试要用的 git identity）。
+    """
     from app.domain.agent import device_provider
     from app.domain.review.services import AcceptService
 
@@ -65,37 +69,17 @@ async def test_accept_release_frees_both_the_container_and_the_device_screen(
     # The method needs no DB — exercise it on a bare instance.
     svc = AcceptService.__new__(AcceptService)
     svc._machines = AsyncMock()
-    await svc._release_topic_compute(topic)
+    await svc._release_billed_compute(topic)
 
     svc._machines.release_topic_machine.assert_awaited_once_with(tid)
-    assert containers == [tid]  # the sandbox container is freed
-    assert screens == [(pid, tid)]  # AND the device screen (project, topic)
+    assert containers == []  # 沙箱容器留着
+    assert screens == []  # 设备屏也留着
 
 
 @pytest.mark.anyio
-async def test_accept_release_never_fails_the_accept(monkeypatch):
-    """Both halves are best-effort: a docker error or an offline device must not
-    propagate out of the archive path and fail the accept itself."""
-    from app.domain.agent import device_provider
-    from app.domain.review.services import AcceptService
-
-    def boom_container(_tid):
-        raise RuntimeError("docker daemon down")
-
-    async def boom_release(project_id, topic_id, **kw):
-        raise RuntimeError("device channel dropped")
-
-    monkeypatch.setattr(ws, "stop_topic_container", boom_container)
-    monkeypatch.setattr(device_provider, "release_topic_screen", boom_release)
-
-    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
-    svc = AcceptService.__new__(AcceptService)
-    svc._machines = AsyncMock()
-    await svc._release_topic_compute(topic)  # must not raise
-
-
-@pytest.mark.anyio
-async def test_accept_release_propagates_cloud_deletion_failure():
+async def test_delivery_propagates_cloud_deletion_failure():
+    """云 VM 的释放不是 best-effort：MicroCloud 没接受删除，采纳不能报成功——
+    否则一个计费泄漏会永久藏在"已交付"后面，而它没有任何 reaper 兜底。"""
     from app.domain.review.services import AcceptService
 
     topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
@@ -106,4 +90,4 @@ async def test_accept_release_propagates_cloud_deletion_failure():
     )
 
     with pytest.raises(RuntimeError, match="refused deletion"):
-        await svc._release_topic_compute(topic)
+        await svc._release_billed_compute(topic)

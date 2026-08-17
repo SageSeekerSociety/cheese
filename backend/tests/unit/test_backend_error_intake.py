@@ -259,12 +259,12 @@ def test_from_exception_scrubs_credentials_out_of_the_traceback() -> None:
 
 def test_room_from_path_reads_topic_and_project() -> None:
     tid, pid = uuid.uuid4(), uuid.uuid4()
-    assert room_from_path(f"/api/topics/{tid}/blocks") == (None, tid)
-    assert room_from_path(f"/api/projects/{pid}/memory") == (pid, None)
-    assert room_from_path(f"/api/projects/{pid}/topics/{tid}") == (pid, tid)
+    assert room_from_path(f"/topics/{tid}/blocks") == (None, tid)
+    assert room_from_path(f"/projects/{pid}/memory") == (pid, None)
+    assert room_from_path(f"/projects/{pid}/topics/{tid}") == (pid, tid)
 
 
 def test_room_from_path_ignores_paths_that_name_no_room() -> None:
-    assert room_from_path("/api/users/me") == (None, None)
-    assert room_from_path("/api/projects/by-task/abc") == (None, None)
+    assert room_from_path("/users/me") == (None, None)
+    assert room_from_path("/projects/by-task/abc") == (None, None)
     assert room_from_path("/health") == (None, None)

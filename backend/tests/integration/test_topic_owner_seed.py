@@ -28,7 +28,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
-from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
 
@@ -36,17 +36,17 @@ def _project(client, owner: str | None) -> dict:
     body: dict = {"name": "P"}
     if owner is not None:
         body["owner_handle"] = owner
-    return client.post("/api/projects", json=body).json()["data"]
+    return client.post("/projects", json=body).json()["data"]
 
 
 def _roster(client, topic_id: str) -> dict[str, str]:
-    rows = client.get(f"/api/topics/{topic_id}/members").json()["data"]["data"]
+    rows = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
     return {m["member_handle"]: m["role"] for m in rows}
 
 
 def _create_topic(client, project_id: str, **kw) -> dict:
     body = {"project_id": project_id, "title": "T", **kw.pop("json", {})}
-    return client.post("/api/topics", json=body, **kw).json()["data"]
+    return client.post("/topics", json=body, **kw).json()["data"]
 
 
 def _add_project_member(
@@ -55,7 +55,7 @@ def _add_project_member(
     """Seed the project roster as its owner — writing it needs an owner/lead token
     now, so an anonymous POST here would silently 403 and leave the roster empty."""
     r = client.post(
-        f"/api/projects/{project_id}/members",
+        f"/projects/{project_id}/members",
         json={"user_handle": handle, "role": role},
         headers=session_auth_headers(actor),
     )
@@ -209,7 +209,7 @@ def test_subtopic_under_agent_created_room_is_not_ownerless(client):
     room = _create_topic(client, p["id"], json={"created_by": "cheese"})
 
     child = client.post(
-        f"/api/topics/{room['id']}/split",
+        f"/topics/{room['id']}/split",
         json={"title": "分身拆出的子任务", "created_by": "cheese"},
     ).json()["data"]
 
@@ -251,9 +251,9 @@ def test_upgraded_block_falls_back_to_project_owner(client):
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
 
     upgraded = client.post(
-        f"/api/blocks/{block_id}/upgrade", json={"created_by": "cheese"}
+        f"/blocks/{block_id}/upgrade", json={"created_by": "cheese"}
     ).json()["data"]
-    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
+    _wait_work_idle()  # kickoff runs in the background; don't race its writes
 
     assert _roster(client, upgraded["id"]).get("alice") == "owner"
 
@@ -265,8 +265,8 @@ def test_upgraded_block_without_a_creator_is_not_ownerless(client):
     room = _create_topic(client, p["id"], headers=session_auth_headers("alice"))
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
 
-    upgraded = client.post(f"/api/blocks/{block_id}/upgrade", json={}).json()["data"]
-    _wait_turns_idle()
+    upgraded = client.post(f"/blocks/{block_id}/upgrade", json={}).json()["data"]
+    _wait_work_idle()
 
     assert _roster(client, upgraded["id"]).get("alice") == "owner"
 
@@ -279,7 +279,7 @@ def test_owner_can_manage_roster_of_an_agent_created_topic(client):
     topic = _create_topic(client, p["id"], json={"created_by": "cheese"})
 
     r = client.post(
-        f"/api/topics/{topic['id']}/members",
+        f"/topics/{topic['id']}/members",
         json={"handle": "bob", "actor": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -297,7 +297,7 @@ def test_project_lead_can_rescue_a_room_that_lost_its_owner(client):
 
     _add_project_member(client, p["id"], "dana", "lead")
     r = client.post(
-        f"/api/topics/{topic['id']}/members",
+        f"/topics/{topic['id']}/members",
         json={"handle": "dana", "role": "owner", "actor": "dana"},
         headers=session_auth_headers("dana"),
     )
@@ -313,7 +313,7 @@ def test_plain_project_member_cannot_rescue_a_room(client):
 
     _add_project_member(client, p["id"], "erin", "member")
     r = client.post(
-        f"/api/topics/{topic['id']}/members",
+        f"/topics/{topic['id']}/members",
         json={"handle": "erin", "role": "owner", "actor": "erin"},
         headers=session_auth_headers("erin"),
     )
@@ -328,7 +328,7 @@ def test_hatch_closes_once_the_room_has_an_owner_again(client):
     _add_project_member(client, p["id"], "dana", "lead")
 
     r = client.post(
-        f"/api/topics/{topic['id']}/members",
+        f"/topics/{topic['id']}/members",
         json={"handle": "mallory", "role": "member", "actor": "dana"},
         headers=session_auth_headers("dana"),
     )

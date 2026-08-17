@@ -6,22 +6,22 @@ from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 def _project(client) -> str:
     return client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
+        "/projects", json={"name": "P", "owner_handle": "user-1"}
     ).json()["data"]["id"]
 
 
 def test_private_chat_get_or_create_and_hidden_from_tree(client):
     pid = _project(client)
 
-    r1 = client.get(f"/api/projects/{pid}/private-chat?user_handle=user-1")
+    r1 = client.get(f"/projects/{pid}/private-chat?user_handle=user-1")
     assert r1.status_code == 200
     private = r1.json()["data"]
     # Idempotent: same private topic returned.
-    r2 = client.get(f"/api/projects/{pid}/private-chat?user_handle=user-1")
+    r2 = client.get(f"/projects/{pid}/private-chat?user_handle=user-1")
     assert r2.json()["data"]["id"] == private["id"]
 
     members = client.get(
-        f"/api/topics/{private['id']}/members",
+        f"/topics/{private['id']}/members",
         headers=session_auth_headers("user-1"),
     ).json()["data"]["data"]
     assert {m["member_handle"] for m in members} == {
@@ -30,7 +30,7 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     }
 
     # Private chat is NOT part of the topic tree.
-    tree = client.get(f"/api/topics?project_id={pid}").json()["data"]["data"]
+    tree = client.get(f"/topics?project_id={pid}").json()["data"]["data"]
     assert all(t["id"] != private["id"] for t in tree)
 
     # It still works as a chat (stub agent replies when summoned).
@@ -51,28 +51,28 @@ def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(
     pid = _project(client)
     owner_headers = bearer("user-1")
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "bob"},
         headers=owner_headers,
     )
     private = client.get(
-        f"/api/projects/{pid}/private-chat",
+        f"/projects/{pid}/private-chat",
         params={"user_handle": "user-1", "peer_handle": "alice"},
         headers=owner_headers,
     ).json()["data"]
 
     members = client.get(
-        f"/api/topics/{private['id']}/members", headers=owner_headers
+        f"/topics/{private['id']}/members", headers=owner_headers
     ).json()["data"]["data"]
     assert {m["member_handle"] for m in members} == {"alice", "user-1"}
 
     outsider = bearer("bob")
     assert (
-        client.get(f"/api/topics/{private['id']}/blocks", headers=outsider).status_code
+        client.get(f"/topics/{private['id']}/blocks", headers=outsider).status_code
         == 403
     )
     assert (
-        client.get(f"/api/topics/{private['id']}/members", headers=outsider).status_code
+        client.get(f"/topics/{private['id']}/members", headers=outsider).status_code
         == 403
     )
 
@@ -80,16 +80,16 @@ def test_private_human_chat_seeds_both_participants_and_rejects_outsiders(
 def test_member_summary(client, bearer):
     pid = _project(client)
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "user-1"},
         headers=bearer("user-1"),  # the project owner
     )
     client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": pid, "title": "我开的话题", "created_by": "user-1"},
     )
     client.post(
-        f"/api/projects/{pid}/alerts",
+        f"/projects/{pid}/alerts",
         json={
             "level": "light",
             "kind": "decision_request",
@@ -101,7 +101,7 @@ def test_member_summary(client, bearer):
     # The member page resolves the viewer; personal waiting items show only on
     # the member's own page, so read it as user-1.
     s = client.get(
-        f"/api/projects/{pid}/members/user-1/summary", headers=bearer("user-1")
+        f"/projects/{pid}/members/user-1/summary", headers=bearer("user-1")
     ).json()["data"]
     assert s["handle"] == "user-1"
     assert s["role"] == "member"

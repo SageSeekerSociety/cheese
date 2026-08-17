@@ -20,31 +20,31 @@ from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.conclusion.services import ConclusionCardService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
-from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.conftest import wait_work_idle as _wait_work_idle
 
 
 def _project(client) -> dict:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]
 
 
 def _topic(client, project_id: str, title: str = "大话题") -> dict:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": title}
+        "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]
 
 
 def _split(client, parent_id: str, title: str) -> dict:
-    sub = client.post(f"/api/topics/{parent_id}/split", json={"title": title}).json()[
+    sub = client.post(f"/topics/{parent_id}/split", json={"title": title}).json()[
         "data"
     ]
     # The 分身's auto-kickoff turn must finish before the test writes more.
-    _wait_turns_idle()
+    _wait_work_idle()
     return sub
 
 
 def _cards(client, topic_id: str) -> list[dict]:
     """Cards PRODUCED by this topic, newest first."""
-    return client.get(f"/api/topics/{topic_id}/conclusion-cards").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/conclusion-cards").json()["data"]["data"]
 
 
 def _file_card(client, sub_id: str, conclusion: str) -> dict:
@@ -65,7 +65,7 @@ def _file_card(client, sub_id: str, conclusion: str) -> dict:
 
 
 def _topic_status(client, topic_id: str) -> str:
-    return client.get(f"/api/topics/{topic_id}").json()["data"]["status"]
+    return client.get(f"/topics/{topic_id}").json()["data"]["status"]
 
 
 # --- 开卡 (纯加法) ---------------------------------------------------------
@@ -79,11 +79,11 @@ def test_conclude_files_a_card_without_touching_the_three_old_side_effects(clien
     sub = _split(client, parent["id"], "实现数据清洗")
 
     r = client.post(
-        f"/api/topics/{sub['id']}/return-conclusion",
+        f"/topics/{sub['id']}/return-conclusion",
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
     assert r.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
 
     # 1) the card (new)
     cards = _cards(client, sub["id"])
@@ -93,11 +93,11 @@ def test_conclude_files_a_card_without_touching_the_three_old_side_effects(clien
     assert cards[0]["topic_id"] == sub["id"]
 
     # 2) the three old side effects, unchanged
-    blocks = client.get(f"/api/topics/{parent['id']}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{parent['id']}/blocks").json()["data"]["data"]
     assert any("数据清洗完成" in b["content"] for b in blocks), "父话题消息没了"
-    doc = client.get(f"/api/topics/{parent['id']}/doc").json()["data"]
+    doc = client.get(f"/topics/{parent['id']}/doc").json()["data"]
     assert doc is not None and "数据清洗完成" in doc["content"], "父实况文档没织进去"
-    notifs = client.get(f"/api/projects/{p['id']}/alerts").json()["data"]["data"]
+    notifs = client.get(f"/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any("实现数据清洗" in n["title"] for n in notifs), "change_alert 没发"
 
 
@@ -106,13 +106,13 @@ def test_conclude_to_an_archived_parent_files_no_card(client):
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "子活")
-    client.post(f"/api/topics/{parent['id']}/archive", json={})
+    client.post(f"/topics/{parent['id']}/archive", json={})
 
     r = client.post(
-        f"/api/topics/{sub['id']}/return-conclusion", json={"conclusion": "做完了"}
+        f"/topics/{sub['id']}/return-conclusion", json={"conclusion": "做完了"}
     )
     assert r.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
     assert _cards(client, sub["id"]) == []
 
 
@@ -127,9 +127,9 @@ def test_turn_end_auto_accepts_the_card_and_archives_the_subtopic(client):
     sub = _split(client, parent["id"], "查一个数")
 
     client.post(
-        f"/api/topics/{sub['id']}/return-conclusion", json={"conclusion": "查到了：42"}
+        f"/topics/{sub['id']}/return-conclusion", json={"conclusion": "查到了：42"}
     )
-    _wait_turns_idle()
+    _wait_work_idle()
 
     card = _cards(client, sub["id"])[0]
     assert card["status"] == ConclusionStatus.accepted
@@ -272,7 +272,7 @@ def test_accept_route_settles_the_card_and_archives_the_subtopic(client):
     card = _file_card(client, sub["id"], "结论")
 
     r = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/accept",
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/accept",
         json={"decided_by": "user-1"},
     )
     assert r.status_code == 200
@@ -282,7 +282,7 @@ def test_accept_route_settles_the_card_and_archives_the_subtopic(client):
 
     # 结算过的卡不能再结算一次。
     again = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/accept", json={}
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/accept", json={}
     )
     assert again.status_code == 422
 
@@ -294,18 +294,18 @@ def test_need_evidence_sends_the_card_back_and_wakes_the_subtopic(client):
     sub = _split(client, parent["id"], "子活")
     card = _file_card(client, sub["id"], "结论：这样最快")
 
-    before = len(client.get(f"/api/topics/{sub['id']}/blocks").json()["data"]["data"])
+    before = len(client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"])
     r = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
         json={"decided_by": "user-1", "reason": "把基准测试的数跑出来"},
     )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == ConclusionStatus.returned
     assert r.json()["data"]["returned_count"] == 1
-    _wait_turns_idle()
+    _wait_work_idle()
 
     assert _topic_status(client, sub["id"]) != "archived", "打回不归档"
-    blocks = client.get(f"/api/topics/{sub['id']}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"]
     assert len(blocks) > before, "子话题没被叫醒"
     assert any("基准测试" in b["content"] for b in blocks), "要补什么没传到子话题"
 
@@ -317,7 +317,7 @@ def test_need_evidence_requires_a_reason(client):
     card = _file_card(client, sub["id"], "结论")
 
     r = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
         json={"reason": "   "},
     )
     assert r.status_code == 422
@@ -332,11 +332,11 @@ def test_need_evidence_is_capped_so_a_card_cannot_ping_pong(client):
     card = _file_card(client, sub["id"], "结论一")
 
     first = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
         json={"reason": "补第一条"},
     )
     assert first.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
 
     # 子话题补完再回流：同一张卡回到 open，但打回次数留着。
     reopened = _file_card(client, sub["id"], "结论一（补了证据）")
@@ -344,13 +344,13 @@ def test_need_evidence_is_capped_so_a_card_cannot_ping_pong(client):
     assert _cards(client, sub["id"])[0]["status"] == ConclusionStatus.open
 
     second = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/need-evidence",
         json={"reason": "再补一条"},
     )
     assert second.status_code == 422
     # 上限咬住之后，采信这条路还通。
     accept = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/accept", json={}
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/accept", json={}
     )
     assert accept.status_code == 200
 
@@ -364,14 +364,14 @@ def test_escalate_asks_a_human_and_keeps_the_subtopic_alive(client):
     card = _file_card(client, sub["id"], "建议直接上线")
 
     r = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/escalate",
+        f"/topics/{parent['id']}/conclusion-cards/{card['id']}/escalate",
         json={"decided_by": "user-1", "reason": "上线要产品负责人拍板"},
     )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == ConclusionStatus.escalated
     assert _topic_status(client, sub["id"]) != "archived"
 
-    notifs = client.get(f"/api/projects/{p['id']}/alerts").json()["data"]["data"]
+    notifs = client.get(f"/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any(n["kind"] == "decision_request" for n in notifs), "没人被叫来拍板"
 
 
@@ -380,7 +380,7 @@ def test_escalate_requires_a_reason(client):
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "子活")
     card = _file_card(client, sub["id"], "结论")
-    url = f"/api/topics/{parent['id']}/conclusion-cards/{card['id']}/escalate"
+    url = f"/topics/{parent['id']}/conclusion-cards/{card['id']}/escalate"
 
     # 空串被 schema 拦下 (400)，只有空白的被服务层拦下 (422) —— 两层都得拦，
     # 不然「要谁拍什么板」是空的，通知发出去也没人知道要干嘛。
@@ -402,7 +402,7 @@ def test_a_card_addressed_to_another_parent_is_not_settleable_here(client):
     card = _file_card(client, sub["id"], "结论")
 
     r = client.post(
-        f"/api/topics/{other['id']}/conclusion-cards/{card['id']}/accept", json={}
+        f"/topics/{other['id']}/conclusion-cards/{card['id']}/accept", json={}
     )
     assert r.status_code == 404
     assert _cards(client, sub["id"])[0]["status"] == ConclusionStatus.open
@@ -427,7 +427,7 @@ def test_archiving_settles_descendant_cards_instead_of_freezing_them(client):
 
     # 采信儿子的卡 → 儿子归档 → 级联归档孙子。孙子那张卡必须先被结算。
     r = client.post(
-        f"/api/topics/{grandparent['id']}/conclusion-cards/{parent_card['id']}/accept",
+        f"/topics/{grandparent['id']}/conclusion-cards/{parent_card['id']}/accept",
         json={"decided_by": "user-1"},
     )
     assert r.status_code == 200

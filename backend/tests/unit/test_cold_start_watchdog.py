@@ -17,7 +17,7 @@ import uuid
 
 import pytest
 
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
 
 class _Backend:
@@ -80,7 +80,7 @@ class _SpeaksThenHangs(_Backend):
         yield {"type": "done"}  # pragma: no cover
 
 
-async def _error_frame(runner: TurnRunner, backend: _Backend) -> dict:
+async def _error_frame(runner: AgentWorkRunner, backend: _Backend) -> dict:
     """跑一轮，返回它最终那条 error frame。"""
     topic = uuid.uuid4()
     async with runner._broker.subscribe(str(topic)) as q:
@@ -96,7 +96,7 @@ async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling():
     backend = _Mute()
     # 上限 10 秒，保险丝 0.05 秒。保险丝没生效的话这一轮要跑满 10 秒，
     # 下面 2 秒的等待会先超时——「被上限砍」和「被保险丝砍」就是这么分开的。
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
     )
     frame = await asyncio.wait_for(_error_frame(runner, backend), 2)
@@ -112,7 +112,7 @@ async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling():
 async def test_turn_ceiling_alone_does_not_lift_the_fuse():
     # 这条是整个改动里最容易写错的一处。`turn_ceiling` 是碰容器之前发的，
     # 让它把 deadline 推到 900 秒，等于把看门狗对真实故障关掉。
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
     )
     frame = await asyncio.wait_for(
@@ -126,7 +126,7 @@ async def test_turn_ceiling_alone_does_not_lift_the_fuse():
 async def test_first_output_retires_the_fuse_so_a_slow_turn_runs_its_full_ceiling():
     # 开过口的 turn 归上限管：保险丝 0.05 秒、上限 0.6 秒，它必须活过前者、
     # 死在后者，报的也得是老那条超时话术。
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=0.6, first_output_timeout_s=0.05
     )
     frame = await asyncio.wait_for(_error_frame(runner, _SpeaksThenHangs()), 3)
@@ -139,7 +139,9 @@ async def test_first_output_retires_the_fuse_so_a_slow_turn_runs_its_full_ceilin
 async def test_the_fuse_can_be_turned_off():
     # 0 = 关掉。留这个口子是因为判据是启发式的，真出误杀要能一键回到从前——
     # 关掉之后连话术都必须逐字是旧的那条。
-    runner = TurnRunner(InProcessBroker(), turn_timeout_s=0.3, first_output_timeout_s=0)
+    runner = AgentWorkRunner(
+        InProcessBroker(), turn_timeout_s=0.3, first_output_timeout_s=0
+    )
     frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 3)
 
     assert "超时被中断" in frame["message"]
@@ -159,7 +161,7 @@ async def test_known_expired_credential_fast_fails_with_the_true_reason():
     # the credential fuse (0.05s) is what fires — proving the short-circuit is the
     # credential signal, not a small generic fuse. If it did NOT fire, the 30s wall
     # would blow past the 2s wait below.
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(),
         turn_timeout_s=60.0,
         first_output_timeout_s=30.0,
@@ -183,7 +185,7 @@ async def test_known_expired_credential_fast_fails_with_the_true_reason():
 async def test_a_live_credential_keeps_the_generic_cold_start_message():
     # Credential lookup reports a healthy (far-future) expiry → the credential path
     # never engages, and a mute turn falls to the ordinary cold-start message.
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(),
         turn_timeout_s=10.0,
         first_output_timeout_s=0.05,
@@ -201,7 +203,7 @@ async def test_a_live_credential_keeps_the_generic_cold_start_message():
 async def test_no_credential_lookup_leaves_the_fuse_untouched():
     # The default (no lookup wired) must behave exactly as before: a mute turn is
     # the generic cold-start failure, no credential branch anywhere.
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
     )
     frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 2)

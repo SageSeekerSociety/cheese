@@ -1,51 +1,53 @@
-"""Task Template protocol enforcement on accept (spec §4.2/§4.4)."""
+"""机构协议 enforcement on accept (spec §4.2/§4.4, #370).
 
-from tests.conftest import seed_space
+The terms now live on the 项目集 (`space_categories`) with a per-赛题 override,
+and a project accepts them by being created FROM the 赛题 — the link the 赛题
+page's button writes. This used to go through cheesex `task_templates` and a
+`project_task_links` row, a parallel 题目 hierarchy with no way to create it
+from the UI.
+"""
+
+from tests.conftest import seed_task_with_protocol
 from tests.integration.conftest import session_auth_headers
 
 OWNER = "owner-1"
 
 
 def _setup_with_mentor_condition(client) -> tuple[str, str]:
-    """Project linked to a Task whose template requires mentor acceptance for
-    a 结题 topic. Returns (project_id, topic_id of a 结题答辩 topic)."""
-    space_id = seed_space(client, "信院")
-    tmpl = client.post(
-        f"/api/spaces/{space_id}/templates",
-        json={
-            "name": "创研课",
-            "conditions": [{"required_topic": "结题", "reviewer_role": "mentor"}],
-        },
-    ).json()["data"]
-    task = client.post(
-        f"/api/templates/{tmpl['id']}/tasks", json={"title": "题目"}
-    ).json()["data"]
+    """A project created from a 赛题 whose 项目集 requires a mentor to accept a
+    结题 topic. Returns (project_id, topic_id of a 结题答辩 topic)."""
+    task_id = seed_task_with_protocol(
+        client, conditions=[{"required_topic": "结题", "reviewer_role": "mentor"}]
+    )
     p = client.post(
-        "/api/projects", json={"name": "团队", "owner_handle": OWNER}
+        "/projects",
+        json={"name": "团队", "owner_handle": OWNER, "external_task_id": task_id},
     ).json()["data"]
     pid = p["id"]
-    client.post(f"/api/projects/{pid}/tasks", json={"task_id": task["id"]})
     # Roster writes are authorized against a token — go out as the project owner.
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "mentor-1", "role": "mentor"},
         headers=session_auth_headers(OWNER),
     )
     client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "user-1"},
         headers=session_auth_headers(OWNER),
     )
     topic = client.post(
-        "/api/topics", json={"project_id": pid, "title": "结题答辩"}
+        "/topics", json={"project_id": pid, "title": "结题答辩"}
     ).json()["data"]
     return pid, topic["id"]
 
 
 def _card(client, topic_id: str, reviewer: str) -> str:
     return client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+        },
     ).json()["data"]["id"]
 
 
@@ -56,7 +58,7 @@ def test_non_mentor_cannot_accept_protocol_topic(client):
     _, tid = _setup_with_mentor_condition(client)
     card = _card(client, tid, "user-1")
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "user-1"},
         headers=session_auth_headers("user-1"),
     )
@@ -67,10 +69,11 @@ def test_mentor_can_accept(client):
     _, tid = _setup_with_mentor_condition(client)
     card = _card(client, tid, "mentor-1")
     r = client.post(
-        f"/api/accept-cards/{card}/accept",
+        f"/accept-cards/{card}/accept",
         json={"decided_by": "mentor-1"},
         headers=session_auth_headers("mentor-1"),
     )
     assert r.status_code == 200
-    topic = client.get(f"/api/topics/{tid}").json()["data"]
-    assert topic["status"] == "archived"
+    topic = client.get(f"/topics/{tid}").json()["data"]
+    assert topic["status"] == "active"  # 交付完成不归档 (#442 decision 1)
+    assert topic["accepted_by"] == "mentor-1"

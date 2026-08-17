@@ -133,9 +133,9 @@ async def main() -> None:
         # that silence is exactly how this probe broke once.
         post = """
         async ({ topicId, content, token }) => {
-          // window.__cxApi.base, not a hand-written '/api': the gateway strips
-          // exactly one prefix, so the app addresses itself as '/api/api' and a
-          // single one 404s the handshake (frontend/src/api.ts spells this once).
+          // window.__cxApi.base, not a hand-written path: the gateway strips
+          // exactly one `/api`, so the base the app dials with is spelled once,
+          // in frontend/src/api.ts — read it, don't reconstruct it here.
           const ws = new WebSocket(
             `ws://${location.host}${window.__cxApi.base}`
             + `/topics/${topicId}/chat?token=${encodeURIComponent(token)}`);

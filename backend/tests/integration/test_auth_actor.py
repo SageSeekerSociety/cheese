@@ -21,11 +21,11 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},
     ).json()["data"]
     return p["id"], t["id"]
@@ -44,7 +44,7 @@ def test_token_actor_wins_over_body_author(client):
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/api/topics/{tid}/doc",
+        f"/topics/{tid}/doc",
         json={"content": "# hi", "author": "mallory-forged"},
         headers=_bearer(token),
     )
@@ -58,7 +58,7 @@ def test_no_token_falls_back_to_body_author(client):
     _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/api/topics/{tid}/doc",
+        f"/topics/{tid}/doc",
         json={"content": "# hi", "author": "alice"},
     )
     assert r.status_code == 200
@@ -71,7 +71,7 @@ def test_token_outsider_denied_on_rostered_topic(client):
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
     r = client.put(
-        f"/api/topics/{tid}/doc",
+        f"/topics/{tid}/doc",
         json={"content": "# sneaky", "author": "mallory"},
         headers=_bearer(outsider),
     )
@@ -83,7 +83,7 @@ def test_token_owner_allowed(client):
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/api/topics/{tid}/doc",
+        f"/topics/{tid}/doc",
         json={"content": "# ok", "author": "alice"},
         headers=_bearer(token),
     )
@@ -95,7 +95,7 @@ def test_ws_token_pins_message_author(client):
     per-message `author` is ignored."""
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(f"/api/topics/{tid}/chat?token={token}") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat?token={token}") as ws:
         ws.send_json(
             {"type": "message", "content": "hello", "author": "mallory-forged"}
         )
@@ -103,7 +103,7 @@ def test_ws_token_pins_message_author(client):
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):
                 break
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     users = [b for b in blocks if b["content"] == "hello"]
     assert users and all(b["author"] == "alice" for b in users)
 
@@ -112,7 +112,7 @@ def test_ws_outsider_token_rejected(client):
     """越权: an outsider's token on the chat WS is refused before any message."""
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
-    with client.websocket_connect(f"/api/topics/{tid}/chat?token={outsider}") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat?token={outsider}") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
 
@@ -164,7 +164,7 @@ def test_project_member_allowed_even_if_not_in_roster(client):
     asyncio.run(_add_member())
 
     r = client.put(
-        f"/api/topics/{tid}/doc",
+        f"/topics/{tid}/doc",
         json={"content": "# member", "author": "bob"},
         headers=_bearer(token),
     )
@@ -174,13 +174,13 @@ def test_project_member_allowed_even_if_not_in_roster(client):
 @pytest.mark.parametrize(
     "path",
     [
-        "/api/topics/{tid}/doc",
-        "/api/topics/{tid}/docs",
-        "/api/topics/{tid}/comments",
-        "/api/topics/{tid}/transcript",
-        "/api/topics/{tid}/status",
-        "/api/topics/{tid}/progress",
-        "/api/topics/{tid}/children",
+        "/topics/{tid}/doc",
+        "/topics/{tid}/docs",
+        "/topics/{tid}/comments",
+        "/topics/{tid}/transcript",
+        "/topics/{tid}/status",
+        "/topics/{tid}/progress",
+        "/topics/{tid}/children",
     ],
 )
 def test_read_surfaces_deny_the_outsider(client, path):
@@ -199,7 +199,7 @@ def test_topic_list_denies_the_outsider(client):
     it was readable by ANY logged-in caller holding the project id."""
     pid, _ = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
-    r = client.get(f"/api/topics?project_id={pid}", headers=_bearer(outsider))
+    r = client.get(f"/topics?project_id={pid}", headers=_bearer(outsider))
     assert r.status_code == 403, r.text[:120]
 
 
@@ -208,7 +208,7 @@ def test_archive_denies_the_outsider(client):
     topic."""
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
-    r = client.post(f"/api/topics/{tid}/archive", json={}, headers=_bearer(outsider))
+    r = client.post(f"/topics/{tid}/archive", json={}, headers=_bearer(outsider))
     assert r.status_code == 403, r.text[:120]
 
 
@@ -217,9 +217,9 @@ def test_member_still_reads_everything(client):
     token = _login(client, "alice")
     pid, tid = _project_topic(client, owner="alice")
     for path in (
-        f"/api/topics/{tid}/doc",
-        f"/api/topics/{tid}/comments",
-        f"/api/topics?project_id={pid}",
+        f"/topics/{tid}/doc",
+        f"/topics/{tid}/comments",
+        f"/topics?project_id={pid}",
     ):
         r = client.get(path, headers=_bearer(token))
         assert r.status_code == 200, f"{path}: {r.status_code} {r.text[:120]}"
