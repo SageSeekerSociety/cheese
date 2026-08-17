@@ -41,17 +41,7 @@ body,
   gap: 8px;
   border-block-end-width: 1px;
   border-block-end-style: solid;
-  /* 这条线要看得见——它是"侧栏顶栏到此为止"的唯一标记，右边内容区顶栏那条线也
-     落在同一水平上，两条对不齐或有一条读不出来，页面就没有那道横向基线了。
-     原先是 rgba(var(--v-border-color), var(--v-border-opacity))，注释自陈"≈ --line
-     on white"——即按 --surface 选的。但四个侧栏（首页/空间/设置/项目）现在一律
-     坐在 --canvas 上（SecondaryNavigation 的 color="background"），--line 是
-     「--surface 上的发丝线」，压在 canvas 上只剩 17/255 的差，等于没有。这和
-     #526 修选中态是同一个错：按名字选 token，而不是按对 --canvas 的对比度选。
-     --line-2 是设计系统里明写的「需要更明显的分隔线 / 较重分隔线」，也是这套
-     中性 ramp 里最重的一档线；两个主题共用一个值（浅色 #E2E3E6、深色 #3A3E45，
-     token 自己会翻），所以不需要任何 [data-theme] 分支。 */
-  border-block-end-color: var(--line-2);
+  border-block-end-color: rgba(var(--v-border-color), var(--v-border-opacity));
   position: sticky;
   top: 0;
   z-index: 10;
