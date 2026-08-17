@@ -36,6 +36,10 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         accepted_by=None,
         accepted_at=None,
         archived_at=None,
+        # A top-level room: attribution asks whether there is a parent whose
+        # owner should be credited, and a fake missing the field would send it
+        # down its error path instead of its ordinary "nobody to credit" one.
+        parent_id=None,
     )
     project = SimpleNamespace(
         ai_mode=AiMode.collaborative,
@@ -53,9 +57,6 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._projects.get.return_value = project
     service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
-    # Same reason as test_review_pr_claim_existing: the credit lookup reads the
-    # topic's roster, which an AsyncMock session cannot answer.
-    service._attribution = AsyncMock(return_value=(None, None))
     return service, card, topic
 
 

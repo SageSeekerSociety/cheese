@@ -102,7 +102,7 @@ def _driving(monkeypatch, handle: str | None):
 
 
 def _project(client, owner: str) -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]
     return p["id"], p["root_topic_id"]
@@ -136,7 +136,7 @@ def _split(client, parent_id: str, *, by: str) -> str:
     """Split the way `cheese split` does from a 分身's sandbox: no human token,
     the acting handle only in the body."""
     r = client.post(
-        f"/api/topics/{parent_id}/split",
+        f"/topics/{parent_id}/split",
         json={"title": "分身拆出的子任务", "created_by": by},
     )
     assert r.status_code == 200
@@ -144,7 +144,7 @@ def _split(client, parent_id: str, *, by: str) -> str:
 
 
 def _roster(client, topic_id: str) -> dict[str, str]:
-    members = client.get(f"/api/topics/{topic_id}/members").json()["data"]["data"]
+    members = client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
     return {m["member_handle"]: m["role"] for m in members}
 
 
@@ -152,7 +152,7 @@ def _pr_body(client, pid: str, tid: str) -> str:
     from app.domain.review import pr_publish
 
     card = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -202,7 +202,7 @@ def test_a_human_who_splits_it_themselves_still_wins(client, monkeypatch):
     _add_project_member(client, pid, "carol")
 
     r = client.post(
-        f"/api/topics/{root}/split",
+        f"/topics/{root}/split",
         json={"title": "我自己拆的"},
         headers={"Authorization": f"Bearer {session_token('carol')}"},
     )
