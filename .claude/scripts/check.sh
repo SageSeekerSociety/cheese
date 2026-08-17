@@ -47,6 +47,48 @@ FAIL=0
 SKIP=0
 BLOCKED=0
 
+# --- what this change actually touches -------------------------------------
+# Without this every commit paid for every check: a docs-only edit ran ~60s of
+# pytest (and failed outright on a machine with no Postgres), while a
+# frontend-only edit ran that same pytest and got ZERO frontend checks, because
+# everything below cds into backend/. Both halves of that are fixed here.
+#
+# `scope_of` is a pure function over a file list so --self-test can pin it on a
+# host with no repo at all. The rule is deliberately asymmetric: a path is
+# treated as backend-affecting unless it is KNOWN not to be. Getting that
+# backwards would silently skip the suite on a path nobody classified yet, and a
+# check that quietly does not run is the failure mode this whole script exists
+# to prevent.
+scope_of() {
+  local backend=0 frontend=0 path
+  for path in "$@"; do
+    case "$path" in
+      frontend/*) frontend=1 ;;
+      # Neither: prose and CI config cannot change backend behaviour. e2e/ is
+      # its own CI job and never imports the backend package.
+      docs/*|*.md|.github/*|e2e/*|.claude/rules/*|.claude/skills/*) ;;
+      # .claude/scripts/* IS backend-affecting: the guards run against
+      # backend/app, and their own tests live in backend/tests.
+      *) backend=1 ;;
+    esac
+  done
+  # An empty change set means we could not tell — run everything.
+  [ "$#" -eq 0 ] && { echo "backend frontend"; return; }
+  local out=""
+  [ "$backend" = 1 ] && out="backend"
+  [ "$frontend" = 1 ] && out="${out:+$out }frontend"
+  echo "${out:-none}"
+}
+
+# Uncommitted work plus whatever is staged. Not a diff against main: this script
+# answers "is what I have here sound", and a rebase should not silently widen or
+# narrow which checks run.
+changed_paths() {
+  { git -C "$REPO_ROOT" diff --name-only HEAD 2>/dev/null
+    git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null
+  } | sort -u
+}
+
 # The entire bug this script was fixed for lives in these four counters and how
 # they become an exit code, so that translation is a pure function: no I/O, no
 # globals, testable on a host with no toolchain at all (`--self-test`).
@@ -111,9 +153,46 @@ if [ "$SELF_TEST" = "1" ]; then
             ST_FAIL=1
         fi
     done
+    # scope_of: which halves of the tree a change set can affect.
+    scope_case() {
+        local want="$1"; shift
+        local got; got="$(scope_of "$@")"
+        if [ "$got" = "$want" ]; then
+            echo "  ok: scope_of($*) -> $want"
+        else
+            echo "  BAD: scope_of($*) -> '$got', expected '$want'"
+            ST_FAIL=1
+        fi
+    }
+    scope_case "backend frontend"                                     # nothing known → run all
+    scope_case "backend"  backend/app/main.py
+    scope_case "frontend" frontend/src/App.vue
+    scope_case "backend frontend" backend/app/main.py frontend/src/App.vue
+    scope_case "none"     docs/README.md CLAUDE.md .github/workflows/test.yml
+    scope_case "none"     e2e/smoke.spec.ts .claude/rules/frontend.md
+    # A guard script is backend-affecting: it judges backend/app and its tests
+    # live in backend/tests.
+    scope_case "backend"  .claude/scripts/check-repo-rules.sh
+    # Unclassified paths must default to backend, never to skipping it.
+    scope_case "backend"  deploy/deploy-docker.sh
+    scope_case "backend"  some/new/thing.py
+    # One backend file among many harmless ones still pulls the suite in.
+    scope_case "backend"  docs/a.md README.md backend/app/x.py
+
     [ "$ST_FAIL" = 0 ] && echo "self-test: ok" || echo "self-test: FAILED"
     exit "$ST_FAIL"
 fi
+
+# --full means "I want the lot" and overrides the scoping entirely.
+if [ "$FULL" = "1" ]; then
+    SCOPE="backend frontend"
+else
+    # shellcheck disable=SC2046  # word splitting is the point: one arg per path
+    SCOPE="$(scope_of $(changed_paths))"
+fi
+echo "Scope: $SCOPE"
+
+in_scope() { case " $SCOPE " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 cd "$REPO_ROOT/backend"
 
@@ -190,7 +269,10 @@ run_ruff() {
 
 # --- ruff (lint + format, matching CI's test.yml lint job) ---
 echo "==> ruff check + format"
-if [ -x ".venv/bin/ruff" ] || [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
+if ! in_scope backend; then
+    echo "  SKIP: ruff (nothing backend-affecting changed)"
+    ((++SKIP))
+elif [ -x ".venv/bin/ruff" ] || [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
     if run_ruff check . 2>&1 | tail -20 && run_ruff format --check . 2>&1 | tail -20; then
         echo "  PASS: ruff"
         ((++PASS))
@@ -213,7 +295,10 @@ fi
 # environment limitation, not a code issue) instead of stalling the whole
 # gate. The inherited-venv path never hits this (nothing to download again).
 echo "==> pyright"
-if [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
+if ! in_scope backend; then
+    echo "  SKIP: pyright (nothing backend-affecting changed)"
+    ((++SKIP))
+elif [ "${UV_RUN[*]}" = "uv run --no-sync" ]; then
     if "${UV_RUN[@]}" pyright 2>&1 | tail -20; then
         echo "  PASS: pyright"
         ((++PASS))
@@ -234,7 +319,10 @@ fi
 # job so the fork is caught before push. Reads the migration graph only — no
 # DB. BLOCKED (not FAIL) when the venv can't import the app: environment, not code.
 echo "==> alembic heads"
-if HEADS_OUT="$(timeout 60 "${UV_RUN[@]}" alembic heads 2>/dev/null)"; then
+if ! in_scope backend; then
+    echo "  SKIP: alembic heads (nothing backend-affecting changed)"
+    ((++SKIP))
+elif HEADS_OUT="$(timeout 60 "${UV_RUN[@]}" alembic heads 2>/dev/null)"; then
     HEADS_N="$(printf '%s\n' "$HEADS_OUT" | grep -c '(head)')"
     if [ "$HEADS_N" = "1" ]; then
         # The HEAD sentinel must name the tip — it is what turns a concurrent
@@ -329,7 +417,10 @@ run_guard "merging would not fork the alembic chain" "migration fork" \
 
 # --- pytest ---
 echo "==> pytest"
-if [ "$SKIP_TESTS" = "1" ]; then
+if ! in_scope backend; then
+    echo "  SKIP: pytest (nothing backend-affecting changed)"
+    ((++SKIP))
+elif [ "$SKIP_TESTS" = "1" ]; then
     echo "  SKIP: pytest (--no-tests / SKIP_TESTS=1 — no usable Postgres on this host)"
     ((++SKIP))
 # Fail fast (not present, not hanging) when the test DB is unreachable. Without
@@ -375,6 +466,30 @@ elif timeout 120 "${UV_RUN[@]}" pytest tests/ $PYTEST_ARGS --reruns 2 --reruns-d
     ((++PASS))
 else
     blocked "pytest (scratch-venv sync couldn't get it running in time)"
+fi
+
+# --- frontend ---
+# New here: until now this script cd'd into backend/ and ran nothing else, so a
+# frontend-only commit paid ~60s of pytest and got no frontend checks at all —
+# the pre-commit hook documented that as "NOT a considered trade-off — a real
+# gap". These are the two that .claude/rules/frontend.md certifies as runnable
+# anywhere; `typecheck` and `build` are deliberately NOT here because they OOM
+# on a small box, and a check that dies on memory would report as a code
+# failure. CI's frontend.yml owns those.
+echo "==> frontend"
+if ! in_scope frontend; then
+    echo "  SKIP: eslint + stylelint (no frontend changes)"
+    ((++SKIP))
+elif ! command -v pnpm >/dev/null 2>&1; then
+    blocked "frontend lint (pnpm not installed)"
+elif [ ! -d "$REPO_ROOT/frontend/node_modules" ]; then
+    blocked "frontend lint (node_modules missing — run pnpm install in frontend/)"
+elif (cd "$REPO_ROOT/frontend" && pnpm run lint 2>&1 | tail -15 && pnpm run lint:style 2>&1 | tail -15); then
+    echo "  PASS: eslint + stylelint"
+    ((++PASS))
+else
+    echo "  FAIL: frontend lint (eslint or stylelint)"
+    ((++FAIL))
 fi
 
 # --- summary ---
