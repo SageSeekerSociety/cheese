@@ -59,6 +59,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     topic = SimpleNamespace(
         id=card.topic_id,
         project_id=uuid.uuid4(),
+        parent_id=None,
         title="做一个东西",
         status=TopicStatus.active,
         created_by="cheese",
