@@ -475,9 +475,7 @@ def test_merge_anyway_merges_and_signs_the_card(client, app_world):
     assert "明知检查未全绿仍合并" in card["note"]
 
 
-def test_merge_anyway_on_a_green_pr_is_not_recorded_as_knowingly_red(
-    client, app_world
-):
+def test_merge_anyway_on_a_green_pr_is_not_recorded_as_knowingly_red(client, app_world):
     """PR #520 的真实形态：可见的检查全绿，平台却还在等一项 required 检查，人
     直接放行 —— 卡上却记成「明知检查未全绿仍合并（合并时检查状态：success（全部
     5 项检查通过））」，一条自相矛盾的历史。留痕写错比不留痕更糟。"""
