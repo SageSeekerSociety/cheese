@@ -586,12 +586,20 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
     # Injected, not queued: still exactly one active run.
     assert provider.runs == 1
 
-    # The exact lower-layer receipt is the consumed boundary. The marker lands
-    # immediately, not in the original turn's eventual completion path.
+    # The receipt is still the consumed boundary (#539 decision A) — but the
+    # write-accept alone must NOT stamp: until the session's UserPromptSubmit
+    # comes back, the message stays pending so a session death replays it.
     async with factory() as session:
         history = await BlockRepository(session).list_for_topic(topic_id)
     merged = [b for b in history if b.content == "等一下，先别跑"]
     assert len(merged) == 1
+    assert consumed_turn(merged[0]) is None
+
+    # The session consumes the injected text → its receipt stamps the block.
+    await svc.confirm_prompt_receipt(topic_id, provider.delivered[0])
+    async with factory() as session:
+        history = await BlockRepository(session).list_for_topic(topic_id)
+    merged = [b for b in history if b.content == "等一下，先别跑"]
     assert consumed_turn(merged[0]) is not None
 
     provider.release.set()
@@ -680,3 +688,65 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
         if (block.meta or {}).get("event_type") == "delivery_fallback"
     ]
     assert len(persisted) == 1
+
+
+@pytest.mark.anyio
+async def test_midturn_message_stays_pending_until_its_receipt(
+    client, tmp_path, monkeypatch
+):
+    """#539 decision A: deliver() trusts the transport's write-accept, so the
+    consumed stamp moves to the UserPromptSubmit receipt. Before the receipt
+    the message stays pending (a session death replays it — 宁可重复不可丢失);
+    only a receipt carrying the SAME injected text stamps it."""
+    from app.domain.block.models import consumed_turn
+    from app.domain.block.repositories import BlockRepository
+
+    factory = client.test_factory  # type: ignore[attr-defined]
+    svc = ChatService(
+        session_factory=factory,
+        agent=InstantAgent(model="stub"),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topic = await TopicService(session).create(
+            project_id=project.id, title="T", created_by="u"
+        )
+        topic_id: uuid.UUID = topic.id
+        await session.commit()
+
+    _payloads, block_id, block_ids = await svc.post_user_message(
+        topic_id, author="u", content="改一下配色", turn_id=None, reply_to=None
+    )
+
+    delivered_texts: list[str] = []
+
+    async def fake_deliver(tid, text, images=None):
+        delivered_texts.append(text)
+        return True
+
+    monkeypatch.setattr(svc._compute, "deliver", fake_deliver)
+    turn_id = uuid.uuid4()
+    svc._active_turn_ids[topic_id] = turn_id
+
+    assert (
+        await svc.merge_into_running_turn(topic_id, block_ids, "改一下配色", "u")
+        is True
+    )
+    assert len(delivered_texts) == 1
+
+    async def _consumed() -> bool:
+        async with factory() as session:
+            rows = await BlockRepository(session).list_for_topic(topic_id)
+        row = next(b for b in rows if b.id == block_id)
+        return consumed_turn(row) is not None
+
+    # Write accepted but not yet consumed: must stay pending.
+    assert await _consumed() is False
+    # A receipt for some OTHER input must not stamp this message.
+    await svc.confirm_prompt_receipt(topic_id, "别的输入")
+    assert await _consumed() is False
+    # The matching receipt stamps it.
+    await svc.confirm_prompt_receipt(topic_id, delivered_texts[0])
+    assert await _consumed() is True

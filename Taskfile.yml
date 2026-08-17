@@ -77,9 +77,14 @@ tasks:
       - task: be:check:full
 
   hooks:
-    desc: Install the pre-commit hook (a fresh clone has none)
+    desc: Install the git hooks (a fresh clone has none)
     cmds:
-      - bash .claude/scripts/install-hooks.sh
+      - uvx pre-commit install
+
+  guards:
+    desc: Run the pre-commit checks over the whole tree (what CI runs)
+    cmds:
+      - uvx pre-commit run --all-files
 
   infra:
     desc: Start infrastructure services (PG, Valkey)

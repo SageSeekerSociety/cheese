@@ -91,3 +91,61 @@ def test_prompt_section_appended_only_when_meta_present() -> None:
 
 def test_workspace_disk_missing_root_is_none() -> None:
     assert _workspace_disk("/definitely/not/a/real/path") is None
+
+
+def test_the_machines_size_is_stated_when_the_backend_knows_it() -> None:
+    """An agent cannot read its own cgroup limit. Without being told, a build the
+    kernel OOM-kills reads as a broken toolchain rather than a small box — and
+    the usual reaction, retuning --max-old-space-size, cannot help, because V8
+    just climbs until the cgroup kills it again."""
+    lines = _turn_meta_lines(
+        budget_s=900,
+        activity_aware=True,
+        is_resume=False,
+        disk=None,
+        open_cards=None,
+        sandbox=(2048, 2),
+    )
+    joined = "\n".join(lines)
+    assert "2GB" in joined
+    assert "2 核" in joined
+    assert "OOM" in joined
+
+
+def test_a_backend_that_does_not_know_its_size_says_nothing() -> None:
+    """An enrolled machine belongs to someone else and the platform does not set
+    its limits. Inventing a number there would be worse than staying quiet: the
+    agent would skip work it could actually have done."""
+    lines = _turn_meta_lines(
+        budget_s=900, activity_aware=True, is_resume=False, disk=None, open_cards=None
+    )
+    joined = "\n".join(lines)
+    assert "内存" not in joined
+    assert "OOM" not in joined
+
+
+def test_a_fractional_gigabyte_is_not_rounded_to_a_lie() -> None:
+    """512m must not print as '1GB' — the number is only useful if an agent can
+    weigh a command against it."""
+    lines = _turn_meta_lines(
+        budget_s=900,
+        activity_aware=True,
+        is_resume=False,
+        disk=None,
+        open_cards=None,
+        sandbox=(1536, 1),
+    )
+    assert "1.5GB" in "\n".join(lines)
+
+
+def test_the_stated_size_is_the_one_the_container_actually_gets() -> None:
+    """Two places could drift: the docker args and the sentence in the prompt.
+    They read the same constants, and this is what keeps that true."""
+    from app.domain.agent.tmux_provider import (
+        SANDBOX_CORES,
+        SANDBOX_MEMORY_MB,
+        TmuxHooksProvider,
+    )
+
+    assert TmuxHooksProvider.sandbox_memory_mb == SANDBOX_MEMORY_MB
+    assert TmuxHooksProvider.sandbox_cores == SANDBOX_CORES

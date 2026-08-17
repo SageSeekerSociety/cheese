@@ -299,11 +299,12 @@ def test_a_trailing_slash_is_never_a_redirect(lenient_client: TestClient) -> Non
     """One stray `/` must be a 404, not a redirect — behind this gateway a
     slash-redirect cannot be made correct.
 
-    Starlette answers an unmatched `/x/` with a 307 to an ORIGIN-ABSOLUTE
-    `Location`, and the client sends that back through nginx, which strips
-    another segment. The backend cannot repair it, because it cannot know how
-    many prefixes the proxy ahead of it will strip — so `redirect_slashes=False`
-    is the fix rather than a workaround, and this pins it.
+    Starlette answers an unmatched `/x/` with a 307 whose `Location` is
+    ORIGIN-ABSOLUTE and built from the stripped path it was handed, so the
+    browser is sent somewhere with no `/api` on it. `root_path` does not repair
+    that; tests/unit/test_slash_redirect_upstream.py measures the upstream
+    behaviour directly. So `redirect_slashes=False` is the fix rather than a
+    workaround, and this pins it.
 
     It used to be worded as "never reaches the OTHER generation", because the
     second pass landed on 1.0's 赛题 and answered with a success code. There is
