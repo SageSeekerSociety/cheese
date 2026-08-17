@@ -82,7 +82,13 @@ def _topic(client) -> str:
 
 
 def _transcript(client, topic_id: str) -> list[dict]:
+    """施工现场 — event blocks only (that endpoint filters kind=event)."""
     return client.get(f"/api/topics/{topic_id}/transcript").json()["data"]["data"]
+
+
+def _blocks(client, topic_id: str) -> list[dict]:
+    """Everything in the room, messages included."""
+    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 def test_a_subagents_conclusion_lands_in_the_room(client):
@@ -178,7 +184,13 @@ def test_a_broken_workspace_never_fails_the_turn(client, monkeypatch):
 
     topic_id = _topic(client)
     _chat(client, topic_id)
-    blocks = _transcript(client, topic_id)
-    assert not [b for b in blocks if (b.get("meta") or {}).get("changeset")]
+    assert not [
+        b
+        for b in _transcript(client, topic_id)
+        if (b.get("meta") or {}).get("changeset")
+    ]
     # The turn itself still landed 芝士's reply.
-    assert any(b["kind"] == "message" and b["author_type"] == "ai" for b in blocks)
+    assert any(
+        b["kind"] == "message" and b["author_type"] == "ai"
+        for b in _blocks(client, topic_id)
+    )
