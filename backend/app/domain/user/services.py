@@ -16,9 +16,9 @@ from app.domain.user.repositories import (
 
 NICKNAME_MAX_LENGTH = 50
 
-# A nickname must carry at least one letter or CJK ideograph, so that a name made
-# only of punctuation or invisible characters cannot be saved.
-_NICKNAME_MEANINGFUL_RE = re.compile(r"[A-Za-z㐀-䶿一-鿿]")
+# A nickname must carry at least one letter, digit or CJK ideograph, so that a
+# name made only of punctuation or invisible characters cannot be saved.
+_NICKNAME_MEANINGFUL_RE = re.compile(r"[0-9A-Za-z㐀-䶿一-鿿]")
 
 
 def normalize_nickname(raw: str) -> str:
@@ -36,7 +36,7 @@ def normalize_nickname(raw: str) -> str:
         )
     if not _NICKNAME_MEANINGFUL_RE.search(nickname):
         raise UnprocessableEntityError(
-            "Nickname must contain at least one letter or Chinese character"
+            "Nickname must contain at least one letter, digit or Chinese character"
         )
     return nickname
 

@@ -83,8 +83,8 @@ const { handleSubmit, defineField, handleReset, resetForm } = useForm({
         .trim()
         .min(1, '昵称不能为空')
         .max(50, '昵称最多 50 个字符')
-        // 至少有一个汉字或英文字母，挡住纯符号/纯空白的昵称
-        .regex(/[A-Za-z㐀-䶿一-鿿]/, '昵称至少包含一个汉字或英文字母'),
+        // 至少有一个汉字、字母或数字，挡住纯符号/纯空白的昵称
+        .regex(/[0-9A-Za-z㐀-䶿一-鿿]/, '昵称至少包含一个汉字、字母或数字'),
       intro: z.string().max(60),
       avatar: z
         .array(z.instanceof(File).refine((v) => v.size < 2 * 1024 * 1024, { message: '文件大小不能超过 2MB' }))

@@ -151,7 +151,7 @@ class TestUserProfileIntegration:
         )
         assert new_nickname in get_resp.json()["data"]["user"]["nickname"]
 
-    @pytest.mark.parametrize("nickname", ["李", "Z", "  小明  "])
+    @pytest.mark.parametrize("nickname", ["李", "Z", "  小明  ", "2026"])
     def test_update_nickname_shorter_than_four_characters(self, nickname):
         response = self.client.put(
             f"/users/{self.user.user_id}",
@@ -166,7 +166,7 @@ class TestUserProfileIntegration:
         )
         assert get_resp.json()["data"]["user"]["nickname"] == nickname.strip()
 
-    @pytest.mark.parametrize("nickname", ["", "   ", "!!!???", "123456"])
+    @pytest.mark.parametrize("nickname", ["", "   ", "!!!???", "---"])
     def test_update_nickname_rejects_blank_or_symbol_only(self, nickname):
         response = self.client.put(
             f"/users/{self.user.user_id}",

@@ -165,7 +165,9 @@ class TestUserProfileService:
             await service.update_profile(user_id=999, nickname="X")
 
     @pytest.mark.anyio
-    @pytest.mark.parametrize("nickname", ["李", "A", "小明", "a b", "李Lee_2026"])
+    @pytest.mark.parametrize(
+        "nickname", ["李", "A", "小明", "a b", "李Lee_2026", "123456", "7"]
+    )
     async def test_update_profile_accepts_short_nicknames(
         self, service, profile_repo, nickname
     ) -> None:
@@ -198,7 +200,7 @@ class TestUserProfileService:
             ("", "must not be empty"),
             ("   ", "must not be empty"),
             ("!!!???", "at least one letter"),
-            ("123456", "at least one letter"),
+            ("---", "at least one letter"),
             ("😀😀", "at least one letter"),
             ("A" * 51, "at most 50 characters"),
         ],
