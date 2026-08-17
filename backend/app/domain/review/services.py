@@ -416,6 +416,77 @@ def _diff_touches(paths: tuple[str, ...], changed: list[tuple[str, str]]) -> boo
     return any(_glob_regex(p).match(path) for _, path in changed for p in paths)
 
 
+#: `_required_and_absent` 的结论：名单里缺席的检查中，哪几项对**这次改动**仍然
+#: 必需 —— 外加**这个结论是怎么得出来的**。
+#:
+#: `fallback is None` = 平台真的算过改动范围，这几项该出现而还没出现。
+#: `fallback` 非空 = 范围根本没算出来（认不出基线 / GitHub 没给文件清单），于是
+#: 保守地把带路径条件的项也照旧算必需，`fallback` 就是那句「为什么没算出来」。
+#:
+#: 这两件事以前在卡面上一个字都不差（都写「required 检查还没出现：test」），
+#: 人只能去翻后端日志才分得清 —— 而那份日志的保留期只有「距上次部署多久」。
+@dataclass(frozen=True)
+class _AbsentRequired:
+    names: list[str]
+    fallback: str | None = None
+
+
+def _absent_required_tail(shown: str, fallback: str | None) -> str:
+    """等待提示里 `⏳ 等 CI（…）：` 后面那半句。
+
+    回退的那半句必须自陈是回退：人看到「还没出现」会去 Actions 页面找那个
+    workflow，而回退状态下真正该看的是「这次改动到底碰了什么、这项检查是不是
+    本来就不会触发」——两条完全不同的排查路。"""
+    if fallback is None:
+        return "required 检查还没出现：" + shown
+    return f"平台没能判断这次改动碰了哪些文件（{fallback}），保守起见仍然要求：{shown}"
+
+
+def _absent_required_timeout(
+    shown: str, fallback: str | None, minutes: int
+) -> tuple[str, str]:
+    """等过头交给人时的 (reason, explain) —— 同样要分清等待和回退。
+
+    回退状态下照搬「多半是 workflow 没被触发、被改名或被禁用」是在给人一个平台
+    根本没验证过的判断：它连这次改动碰没碰后端都不知道。"""
+    if fallback is None:
+        return (
+            f"required 检查 {shown} 迟迟没有出现（已等约 {minutes} 分钟）——"
+            "多半是 workflow 没被触发、被改名或被禁用，"
+            "平台不会替人判定它可以不跑",
+            "这不是检查红了，是它根本没报到：平台只能确认「没人跑过这项检查」，"
+            "不能替人认定它不需要跑。",
+        )
+    return (
+        f"required 检查 {shown} 迟迟没有出现（已等约 {minutes} 分钟），而平台"
+        f"没能判断这次改动碰了哪些文件（{fallback}），只能保守地仍然要求它",
+        "平台没算出这次改动的范围，所以不知道这几项检查是「该跑而没跑」还是"
+        "「本来就不会对这次改动触发」——这一条需要人来判断，机器不猜。",
+    )
+
+
+#: 人工放行时「当时检查是什么状态」对应的那半句话。以前它是写死的「明知检查未
+#: 全绿仍合并」，而放行的常见场景之一恰恰是检查**已经全绿**、平台却还没合（比如
+#: 在等一项对这次改动根本不会触发的 required 检查）：2026-08-17 的 PR #520 因此
+#: 在卡上留下了一条自相矛盾的历史 ——「明知检查未全绿仍合并（合并时检查状态：
+#: success（全部 5 项检查通过））」。写错的留痕比没有留痕更糟：事后追责会照着它
+#: 去问一个从没发生过的决定。
+_FORCE_MERGE_VERDICTS = {
+    "failure": "明知检查未全绿仍合并",
+    "success": "当时检查其实已经全绿",
+    "pending": "没等检查跑完",
+    "no_checks": "当时没有任何 CI 跑过这次改动",
+}
+
+
+def _force_merge_verdict(state: str | None) -> str:
+    """`None` = 那一刻根本没读到检查状态（凭据坏了不该把人锁在门外，所以照样
+    放行）——它和「读到了，是红的」是两回事，卡面不能把前者写成后者。"""
+    if state is None:
+        return "当时读不到检查状态"
+    return _FORCE_MERGE_VERDICTS.get(state, f"当时检查状态是 {state}")
+
+
 def approvals_required_of(project: Project | None) -> int:
     """主分支保护 (spec §4.4): distinct approvals an accept needs. Default 1 —
     the accepter's own accept counts, so unconfigured projects are unchanged."""
@@ -1690,32 +1761,26 @@ class AcceptService:
                     client=client,
                 )
                 if absent
-                else []
+                else _AbsentRequired(names=[])
             )
-            if missing:
-                shown = ", ".join(sorted(missing))
+            if missing.names:
+                shown = ", ".join(sorted(missing.names))
                 # 兜底：没有超时的等待会静默卡死。workflow 改名、被禁用、Actions
                 # 额度断供（2026-08-13 真的断过一次）都会让一个该出现的检查永远
                 # 不出现——等过头就交给人，**绝不因为等腻了就自动合并**。
                 if self._required_check_grace_expired(card):
+                    reason, explain = _absent_required_timeout(
+                        shown,
+                        missing.fallback,
+                        settings.accept_required_check_grace_minutes,
+                    )
                     self._note_needs_human(
-                        card=card,
-                        topic=topic,
-                        reason=(
-                            f"required 检查 {shown} 迟迟没有出现"
-                            f"（已等约 {settings.accept_required_check_grace_minutes} "
-                            "分钟）——多半是 workflow 没被触发、被改名或被禁用，"
-                            "平台不会替人判定它可以不跑"
-                        ),
-                        explain=(
-                            "这不是检查红了，是它根本没报到：平台只能确认「没人跑过"
-                            "这项检查」，不能替人认定它不需要跑。"
-                        ),
+                        card=card, topic=topic, reason=reason, explain=explain
                     )
                     await self._session.flush()
                     return
                 self._note_waiting_on_checks(
-                    card=card, tail="required 检查还没出现：" + shown
+                    card=card, tail=_absent_required_tail(shown, missing.fallback)
                 )
                 await self._session.flush()
                 return
@@ -1819,7 +1884,7 @@ class AcceptService:
         repo: str,
         token: str,
         client,
-    ) -> list[str]:
+    ) -> _AbsentRequired:
         """名单里没有出现的那几项检查，哪些对**这次改动**确实是必需的。
 
         带路径条件的项要跟 PR 的实际 diff 对一次：一个纯前端 PR 上 `test`
@@ -1828,13 +1893,18 @@ class AcceptService:
 
         算不出改动范围时**保守处理**（照样算必需）：拿不到 diff 就不知道这次有没有
         碰后端，此时放行等于用一次 API 失败换掉整道阀。等下去不会误合，超时兜底会
-        把它交给人。"""
+        把它交给人。
+
+        但保守回退必须**能被外面看见**：结论一样（照旧必需）不等于理由一样，
+        所以回退时连同「为什么没算出来」一起返回（`_AbsentRequired.fallback`），
+        由卡面如实说出来 —— 它以前只落在 `logger.warning` 里，而后端日志的保留
+        期只有「距上次部署多久」。"""
         from app.domain.workspace import service as ws
 
         names = [r.name for r in absent if not r.paths]
         scoped = [r for r in absent if r.paths]
         if not scoped:
-            return names
+            return _AbsentRequired(names=names)
         try:
             base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         except Exception as exc:  # noqa: BLE001 — 认不出基线就按"仍然必需"处理
@@ -1844,7 +1914,12 @@ class AcceptService:
                 card.id,
                 exc,
             )
-            return names + [r.name for r in scoped]
+            return _AbsentRequired(
+                names=names + [r.name for r in scoped],
+                fallback=f"认不出这个 PR 要合进哪条分支：{type(exc).__name__}: {exc}"[
+                    :200
+                ],
+            )
         changed = await client.compare_files(
             owner=owner, repo=repo, base=base, head=card.pr_head_sha, token=token
         )
@@ -1856,8 +1931,16 @@ class AcceptService:
                 base,
                 card.pr_head_sha,
             )
-            return names + [r.name for r in scoped]
-        return names + [r.name for r in scoped if _diff_touches(r.paths, changed)]
+            return _AbsentRequired(
+                names=names + [r.name for r in scoped],
+                fallback=(
+                    "GitHub 没给出这次改动的文件清单"
+                    "（改动超过 compare API 的 300 文件上限，或返回格式异常）"
+                ),
+            )
+        return _AbsentRequired(
+            names=names + [r.name for r in scoped if _diff_touches(r.paths, changed)]
+        )
 
     def _required_check_grace_expired(self, card: AcceptCard) -> bool:
         """这张卡等一个没出现的 required 检查，是不是已经等过头了。
@@ -2867,6 +2950,7 @@ class AcceptService:
         owner, _, repo = card.pr_repo.partition("/")
         client = github_pr.default_client()
         # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
+        state: str | None = None
         try:
             state, tail = await client.check_state(
                 owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
@@ -2876,7 +2960,11 @@ class AcceptService:
             logger.warning(
                 "force-merge check read failed for card %s: %s", card.id, exc
             )
+            state = None
             checks_at_merge = "读不到检查状态"
+        # 读到的状态决定这句话怎么写：全绿时说「明知未全绿」是往历史里写一条从没
+        # 发生过的决定（PR #520 真的这么记了一条）。
+        verdict = _force_merge_verdict(state)
 
         number = card.pr_number
         requested_by, author = await self._attribution(topic)
@@ -2899,8 +2987,8 @@ class AcceptService:
         stamp = now.strftime("%Y-%m-%d %H:%M UTC")
         tail_reason = f"，理由：{reason.strip()}" if reason.strip() else ""
         headline = (
-            f"{FORCE_MERGED_PREFIX}：<@{decided_by}> 于 {stamp} 明知检查未全绿仍"
-            f"合并（合并时检查状态：{checks_at_merge}）{tail_reason}"
+            f"{FORCE_MERGED_PREFIX}：<@{decided_by}> 于 {stamp} 人工放行合并"
+            f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
         )
         card.pr_merged_at = now
         card.pr_head_sha = result.sha
@@ -2914,7 +3002,7 @@ class AcceptService:
         )
         self._notify_merge_result(
             topic,
-            f"🔨 <@{decided_by}> 人工放行了 PR #{number}：明知检查未全绿仍合并"
+            f"🔨 <@{decided_by}> 人工放行了 PR #{number}：{verdict}"
             f"（合并时检查状态：{checks_at_merge}）{tail_reason}。\n"
             f"{card.pr_url or ''}",
         )
