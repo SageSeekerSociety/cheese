@@ -616,9 +616,9 @@ def build_parser() -> argparse.ArgumentParser:
             "闸门跑在另一个容器里,只和你共享 /work,$HOME 不一样——所以「我这儿是绿的」"
             "不等于闸门那儿是绿的。\n"
             "\n"
-            "**--subject 就是这次改动留在 git 历史里的那一行**。递卡会开 PR,采纳会把整个\n"
-            "分支压成一个提交,标题用的就是它。不给的话平台只能拿话题标题凑,历史里会留下\n"
-            "`chore: <话题标题>` 这种没人看得懂的东西。\n"
+            "**--subject 就是这次改动留在 git 历史里的那一行**,必填。递卡会开 PR,采纳会把\n"
+            "整个分支压成一个提交,标题用的就是它。不给就递不出去——后端会当场打回并告诉你\n"
+            "该怎么写。\n"
             "\n"
             "写法(Conventional Commits, 英文祈使句, ≤72 字符, 不加句号):\n"
             "  cheese accept-request lisi \"最懂这块\" \\\n"
@@ -635,8 +635,8 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("reason", nargs="?", default="", help="为什么找这个人验收")
     pa.add_argument(
         "--subject",
-        default=None,
-        help="这次改动的提交标题: `type(scope): description`,英文,≤72 字符",
+        required=True,
+        help="必填。这次改动的提交标题: `type(scope): description`,英文,≤72 字符",
     )
     pa.add_argument(
         "--body", default=None, help="提交正文: 为什么要这次改动(不明显时才写)"
@@ -862,9 +862,6 @@ def main() -> None:
               {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
                "change_subject": a.subject, "change_body": a.body})
         print(f"已把验收卡递给 {a.reviewer}。")
-        if not a.subject:
-            print("[cheese] 没给 --subject:PR 标题和最终的提交标题只能拿话题标题凑。"
-                  "下次递卡带上它。", file=sys.stderr)
     elif a.cmd == "conclude":
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})

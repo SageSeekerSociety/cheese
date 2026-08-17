@@ -160,7 +160,11 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
 
     card = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "u", "routing_reason": ""},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "u",
+            "routing_reason": "",
+        },
     ).json()["data"]["id"]
     r = client.post(
         f"/api/accept-cards/{card}/accept",
@@ -213,7 +217,11 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
 
     card = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "u", "routing_reason": ""},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "u",
+            "routing_reason": "",
+        },
     ).json()["data"]["id"]
     r = client.post(
         f"/api/accept-cards/{card}/accept",
@@ -295,7 +303,11 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
 
     card = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "u", "routing_reason": ""},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "u",
+            "routing_reason": "",
+        },
     ).json()["data"]["id"]
     r = client.post(
         f"/api/accept-cards/{card}/accept",

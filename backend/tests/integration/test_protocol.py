@@ -45,7 +45,10 @@ def _setup_with_mentor_condition(client) -> tuple[str, str]:
 def _card(client, topic_id: str, reviewer: str) -> str:
     return client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+        },
     ).json()["data"]["id"]
 
 

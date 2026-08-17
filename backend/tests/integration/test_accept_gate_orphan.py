@@ -88,7 +88,11 @@ def _latest_card(client, topic_id: str) -> dict:
 def _file_card(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
 
 
@@ -288,7 +292,11 @@ def test_void_rejects_a_card_that_is_already_settled(client):
     tid = _make_topic(client, pid)
     r = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
     )
     card = r.json()["data"]
     assert card["status"] == "pending"

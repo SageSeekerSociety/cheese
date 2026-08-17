@@ -191,7 +191,10 @@ def test_archived_topic_is_frozen(client):
     ).json()["data"]
     card = client.post(
         f"/api/topics/{topic['id']}/accept-card",
-        json={"reviewer_handle": "alice"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+        },
     ).json()["data"]
     client.post(
         f"/api/accept-cards/{card['id']}/accept",
@@ -220,7 +223,11 @@ def test_upgrade_on_archived_topic_rejected(client):
     ).json()["data"]
     block_id = _insert_block(client, p["id"], topic["id"], "某条结论")
     card = client.post(
-        f"/api/topics/{topic['id']}/accept-card", json={"reviewer_handle": "alice"}
+        f"/api/topics/{topic['id']}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+        },
     ).json()["data"]
     client.post(
         f"/api/accept-cards/{card['id']}/accept",

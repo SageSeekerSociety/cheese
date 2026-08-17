@@ -41,7 +41,11 @@ def _task(client, project_id: str, room_id: str, title: str) -> dict:
 def _accept(client, topic_id: str) -> None:
     card = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
     ).json()["data"]
     r = client.post(
         f"/api/accept-cards/{card['id']}/accept",

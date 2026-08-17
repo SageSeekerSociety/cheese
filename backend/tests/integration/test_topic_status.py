@@ -41,7 +41,11 @@ def test_status_includes_cards_with_gate_tail(client):
     tid = _make_topic(client, pid)
     r = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
 

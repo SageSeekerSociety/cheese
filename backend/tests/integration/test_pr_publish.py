@@ -27,7 +27,12 @@ def _make_topic(client, project_id: str) -> str:
 def _make_card(client, topic_id: str, **extra) -> str:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂", **extra},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+            **extra,
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -108,9 +113,7 @@ def test_publication_records_the_pr_on_the_card(client, monkeypatch):
     )
 
     [opened] = _FakeClient.opened
-    # No `--subject` on the card, so the PR admits it: `chore: <话题标题>` is
-    # the fallback, and it is meant to look wrong in a git log.
-    assert opened["title"] == "chore: 做一个东西"
+    assert opened["title"] == "chore(test): file an accept card"
     assert opened["base"] == "main"
     # Routing bookkeeping is gone from the body — a GitHub reviewer needs the
     # change, not the platform's internal handoff.
@@ -334,6 +337,102 @@ def test_a_malformed_subject_is_refused_at_the_card(client, monkeypatch):
     assert r.status_code == 422
     assert "Conventional Commits" in r.text
     assert client.get(f"/api/topics/{tid}/accept-card").json()["data"]["total"] == 0
+
+
+def _forget_the_subject(client, card_id: str) -> None:
+    """Turn a card into a pre-2026-08-17 row: `change_subject` is nullable, and
+    every card filed before the column existed has NULL there. The API can no
+    longer produce one, so this is the only way to reach the fallback."""
+    from sqlalchemy import update
+
+    from app.domain.review.models import AcceptCard
+
+    async def _run() -> None:
+        async with client.test_factory() as db:
+            await db.execute(
+                update(AcceptCard)
+                .where(AcceptCard.id == uuid.UUID(card_id))
+                .values(change_subject=None)
+            )
+            await db.commit()
+
+    asyncio.run(_run())
+
+
+def test_a_legacy_card_still_gets_the_fallback_title(client, monkeypatch):
+    """Requiring a subject at the card must not strand the rows already in the
+    table. Deleting `fallback_subject` would break the PR title and the merge
+    subject of every card filed before the column existed."""
+    _github_world(monkeypatch)
+    from app.domain.review import pr_publish
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _forget_the_subject(client, cid)
+
+    asyncio.run(
+        pr_publish._run(
+            client.test_factory,
+            card_id=uuid.UUID(cid),
+            topic_id=uuid.UUID(tid),
+            project_id=uuid.UUID(pid),
+        )
+    )
+
+    [opened] = _FakeClient.opened
+    # The fallback is meant to look wrong in a git log — that is the point.
+    assert opened["title"] == "chore: 做一个东西"
+
+
+def test_a_card_with_no_subject_at_all_is_refused(client, monkeypatch):
+    """PR #500 landed as `chore: 实况文档改名` — a chat-room name as the title of
+    a merged change — because filing without a subject was allowed and the
+    fallback quietly filled one in. Nothing new may reach that fallback."""
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+
+    r = client.post(f"/api/topics/{tid}/accept-card", json={"reviewer_handle": "alice"})
+
+    assert r.status_code == 422
+    # The refusal has to teach, not just refuse: the reader is an agent one
+    # turn away from re-filing, so the shape AND a copy-pasteable example.
+    assert "type(scope): description" in r.text
+    assert "cheese accept-request" in r.text
+    assert "--subject" in r.text
+    assert client.get(f"/api/topics/{tid}/accept-card").json()["data"]["total"] == 0
+
+
+def test_a_blank_subject_is_refused_like_a_missing_one(client, monkeypatch):
+    """Whitespace is not a subject. Without this the string survives the
+    presence check and `chore: <话题标题>` comes back through `valid_subject`."""
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+
+    r = client.post(
+        f"/api/topics/{tid}/accept-card",
+        json={"reviewer_handle": "alice", "change_subject": "   "},
+    )
+
+    assert r.status_code == 422
+    assert "type(scope): description" in r.text
+    assert client.get(f"/api/topics/{tid}/accept-card").json()["data"]["total"] == 0
+
+
+def test_a_valid_subject_is_stored_verbatim(client, monkeypatch):
+    """The complement of the two refusals: the gate rejects, it does not
+    rewrite. What the filer wrote is what enters history."""
+    _github_world(monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    subject = "fix(accept): require a commit subject when filing a card"
+
+    _make_card(client, tid, change_subject=subject)
+
+    [card] = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    assert card["change_subject"] == subject
 
 
 def test_the_subject_is_visible_on_the_card_before_anyone_accepts(client, monkeypatch):

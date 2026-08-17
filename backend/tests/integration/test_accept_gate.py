@@ -47,7 +47,11 @@ def _set_gate(client, project_id: str, command: str) -> None:
 def _file_card(client, topic_id: str, reviewer: str = "alice") -> dict:
     r = client.post(
         f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -125,7 +129,11 @@ def test_second_card_still_blocked_while_first_is_pending(client):
 
     r = client.post(
         f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "bob", "routing_reason": "x"},
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "bob",
+            "routing_reason": "x",
+        },
     )
     assert r.status_code == 422
     assert "改验收人" in r.json()["message"]

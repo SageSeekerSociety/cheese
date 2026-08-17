@@ -284,6 +284,24 @@ _BLOCKED_BY_CARD_MESSAGES = {
 }
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
+#: Refusal for a card filed with no commit subject at all. It is long on
+#: purpose: the reader is an agent one turn away from re-filing, and an error
+#: that only says "缺少 change_subject" costs a whole turn to act on. The
+#: example is a real, valid subject — copy-pasteable, not a placeholder.
+_MISSING_SUBJECT = (
+    "递卡必须带提交标题（--subject）。它不是给人看的说明，是这次改动留在 "
+    "git 历史里的那一行：递卡开 PR 用它当标题，采纳时整个分支被压成一个"
+    "提交，标题还是它。\n"
+    "写法：`type(scope): description`，type 取值 "
+    f"{', '.join(commit_message.TYPES)}；英文祈使句，"
+    f"≤{commit_message.MAX_SUBJECT} 字符，结尾不加句号。\n"
+    "例：\n"
+    '  cheese accept-request lisi "最懂这块" \\\n'
+    "    --subject 'fix(accept): open the PR as the requester, not the bot' \\\n"
+    "    --body 'PRs opened with the App token belong to the bot on GitHub, "
+    "so the person whose work it is gets no attribution.'"
+)
+
 #: Where an alembic revision lives. Two live cards each ADDING a file under
 #: here is the one overlap a machine can judge on its own (#314).
 _ALEMBIC_VERSIONS_DIR = "alembic/versions/"
@@ -479,14 +497,22 @@ class AcceptService:
         change_body: str | None = None,
     ) -> AcceptCard:
         topic = await self._topic_or_404(topic_id)
-        # Before anything else touches the DB: a malformed subject is the
-        # filer's to fix in the same breath, and it is the one thing here that
-        # ends up in permanent history.
-        if change_subject:
-            try:
-                change_subject = commit_message.check_subject(change_subject)
-            except commit_message.InvalidSubject as exc:
-                raise ValidationError(str(exc)) from exc
+        # Before anything else touches the DB: a missing or malformed subject is
+        # the filer's to fix in the same breath, and it is the one thing here
+        # that ends up in permanent history.
+        #
+        # 2026-08-17: omitting it used to be allowed, and `pr_text` quietly
+        # filled in `chore: <话题标题>`. PR #500 is what that looks like from the
+        # outside — a chat-room name as the title of a merged change. The
+        # fallback stays (rows filed before `change_subject` existed still have
+        # NULL), but nothing new is allowed to reach it.
+        change_subject = (change_subject or "").strip()
+        if not change_subject:
+            raise ValidationError(_MISSING_SUBJECT)
+        try:
+            change_subject = commit_message.check_subject(change_subject)
+        except commit_message.InvalidSubject as exc:
+            raise ValidationError(str(exc)) from exc
         # 采纳是一次性交付 (spec §6.3): a frozen topic can't be re-submitted.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
