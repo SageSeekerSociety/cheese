@@ -459,6 +459,7 @@ def _turn_meta_lines(
     disk: tuple[int, int] | None,
     open_cards: list[AcceptCard] | None,
     progress: list[dict] | None = None,
+    sandbox: tuple[int, int] | None = None,
 ) -> list[str]:
     """盲飞防护: the run facts an agent has no other way to see — its own time
     budget, whether it's a continuation, disk headroom, and where this topic's
@@ -487,6 +488,23 @@ def _turn_meta_lines(
             "- 本轮是自动续跑：上一轮被中断后接着跑。"
             "先确认上一轮做到哪了再继续，别重做。"
         )
+    # 机器有多大: the agent cannot read its own cgroup limit, and the failure it
+    # produces without knowing — a build the kernel OOM-kills — looks like a
+    # broken toolchain rather than a small box. Only the FACT goes here; what to
+    # do about it (try it once anyway, never retune --max-old-space-size, say
+    # plainly that you did not run it) is a principle and lives in the cheese
+    # skill. None means this backend does not know its own size, and then we say
+    # nothing at all rather than invent a number.
+    if sandbox is not None:
+        mem_mb, cores = sandbox
+        gb = mem_mb / 1024
+        shown = f"{gb:.0f}" if gb == int(gb) else f"{gb:.1f}"
+        lines.append(
+            f"- 这台机器：内存 {shown}GB、{cores} 核。吃内存的命令"
+            "（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉——那不是代码"
+            "有问题，也不是工具链坏了。"
+        )
+
     # 进度层: right after the resume line on purpose — that line tells the agent
     # to work out where it got to, and until now the platform gave it nothing to
     # work that out FROM. It is listed for every turn, not just resumes: a topic
@@ -2733,6 +2751,11 @@ class ChatService:
                 disk=_workspace_disk(self._workspace_root),
                 open_cards=open_cards,
                 progress=prior_progress,
+                sandbox=(
+                    (provider.sandbox_memory_mb, provider.sandbox_cores)
+                    if getattr(provider, "sandbox_memory_mb", None)
+                    else None
+                ),
             ),
             stage_guide=(
                 load_scenario(stage_scenario(topic_stage))

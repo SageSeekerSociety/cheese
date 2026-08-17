@@ -306,6 +306,16 @@ async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str
     )
 
 
+# How big a topic's container actually is. Named rather than inlined because the
+# agent inside has to be TOLD: it cannot see its own cgroup limit, and the
+# failure it produces without knowing — a build the kernel OOM-kills — reads
+# like a broken toolchain rather than a small box. `_turn_meta_lines` in chat.py
+# puts it in the prompt as a run fact, next to the time budget and disk
+# headroom, which is the same category: things an agent has no other way to see.
+SANDBOX_MEMORY_MB = 2048
+SANDBOX_CORES = 2
+
+
 class TmuxHooksProvider(HooksSessionProvider[str]):
     """The LOCAL hooks backend: runs interactive `claude` in a per-topic tmux
     session inside a platform container, streaming AgentEvents from Claude Code
@@ -316,6 +326,12 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
     # (see _subscription_args below for how a subscription turn is captured)
 
     name = "tmux-hooks"
+    # What this backend's container is capped at. Read by chat.py through a
+    # getattr, so a backend that genuinely does not know its own size (an
+    # enrolled machine belongs to someone else) simply says nothing rather than
+    # guessing — an invented limit would be worse than none.
+    sandbox_memory_mb = SANDBOX_MEMORY_MB
+    sandbox_cores = SANDBOX_CORES
     _needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
     _timeout_message = f"tmux {TURN_TIMEOUT_MARKER}"
 
@@ -560,9 +576,9 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
             "--network",
             "bridge",
             "--memory",
-            "2g",
+            f"{SANDBOX_MEMORY_MB}m",
             "--cpus",
-            "2",
+            str(SANDBOX_CORES),
             "--pids-limit",
             "512",
             # A crashing node/vite process must not dump its address space into
