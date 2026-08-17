@@ -269,16 +269,17 @@ def test_no_two_routes_want_the_same_url_from_a_caller() -> None:
     """Two routes may never be reachable at the SAME external URL (#370 step 3).
 
     The test above bans duplicate BACKEND paths. This one asks the question a
-    caller asks: given the published mount, what do I type? A 1.0 `/x` is typed
-    `/api/x` and a 2.0 `/api/x` is typed `/api/api/x`, so today they differ — and
-    that difference is the only thing keeping the two generations apart while
-    they still share resource words.
+    caller asks: given the published mount, what do I type? While the two
+    generations shared resource words, a differing answer was the only thing
+    keeping them apart — a 1.0 `/x` was typed `/api/x`, a 2.0 `/api/x` was typed
+    `/api/api/x`.
 
-    It matters most for what comes next: #370 step 2 drops the 2.0 prefix, at
-    which point external URL and backend path become the same string and any
-    surviving shared word becomes a real duplicate. This assertion holds before
-    and after that change, so it is what makes the flattening checkable rather
-    than hopeful.
+    Step 2 removed that difference: external URL is now backend path plus the
+    mount, one shape for everything, so two routes wanting the same URL is no
+    longer softened by a prefix — it is the silent amputation this whole file
+    exists to catch. The assertion held before the flattening and holds after,
+    which is what made the flattening checkable rather than hopeful; what it
+    guards now is every route added from here on.
     """
     claims: dict[tuple[str, str], list[str]] = defaultdict(list)
     for module, routes in _module_routers().items():
