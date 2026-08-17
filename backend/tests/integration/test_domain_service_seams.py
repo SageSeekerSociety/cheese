@@ -48,7 +48,6 @@ async def _space(session) -> int:
     return space.id
 
 
-
 # ---------------------------------------------------------------------------
 # ProjectService.get —— 服务层替掉了直接用 ProjectRepository
 # ---------------------------------------------------------------------------
@@ -67,8 +66,6 @@ async def test_project_service_get_finds_project_and_returns_none_for_unknown(cl
         assert found.id == pid
         # 不存在返回 None，不抛——调用方要的是分支
         assert await service.get(uuid.uuid4()) is None
-
-
 
 
 # ---------------------------------------------------------------------------
