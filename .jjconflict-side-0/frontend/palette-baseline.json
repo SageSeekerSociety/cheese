@@ -1,0 +1,11 @@
+{
+  "_comment": "Frozen Vuetify fixed-palette colour names (color=\"grey-lighten-5\", class=\"bg-white\", …) in templates and script defaults. stylelint cannot see these — it parses CSS, not <template>. The ratchet in .claude/scripts/check-repo-rules.sh blocks any NEW one; these are pre-existing and may only go down. Regenerate with `bash .claude/scripts/check-repo-rules.sh --update-palette-baseline`. See docs/design-system.md.",
+  "files": {
+    "src/components/common/AvatarUploader.vue": 3,
+    "src/components/common/ColorSelector.vue": 1,
+    "src/layouts/account/Account.vue": 1,
+    "src/views/spaces/Index.vue": 1,
+    "src/views/teams/detail/Knowledge.vue": 1,
+    "src/views/user/settings/Profile.vue": 3
+  }
+}

@@ -1,0 +1,192 @@
+# Task Domain Schemas
+
+Task:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    name:
+      type: string
+    description:
+      type: string
+    space:
+      $ref: '../space/schemas.yaml#/Space'
+    category:
+      $ref: '../space/schemas.yaml#/SpaceCategory'
+      nullable: true
+    creator:
+      $ref: '../user/schemas.yaml#/User'
+    status:
+      $ref: '#/TaskStatus'
+    deadline:
+      type: integer
+      format: int64
+      nullable: true
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    participant_count:
+      type: integer
+      format: int64
+    submission_count:
+      type: integer
+      format: int64
+    is_participant:
+      type: boolean
+    rank:
+      type: integer
+      description: Task difficulty rank
+
+TaskStatus:
+  type: string
+  enum:
+    - DRAFT
+    - PENDING_APPROVAL
+    - APPROVED
+    - REJECTED
+    - ACTIVE
+    - CLOSED
+
+TaskParticipant:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    user:
+      $ref: '../user/schemas.yaml#/User'
+    team:
+      $ref: '../team/schemas.yaml#/Team'
+      nullable: true
+    joined_at:
+      type: integer
+      format: int64
+    submission_status:
+      type: string
+      enum: [PENDING, SUBMITTED, REVIEWED]
+
+TaskSubmission:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    participant:
+      $ref: '#/TaskParticipant'
+    version:
+      type: integer
+    content:
+      type: string
+    attachments:
+      type: array
+      items:
+        $ref: '../attachment/schemas.yaml#/Attachment'
+    submitted_at:
+      type: integer
+      format: int64
+    review:
+      $ref: '#/TaskReview'
+      nullable: true
+
+TaskReview:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    reviewer:
+      $ref: '../user/schemas.yaml#/User'
+    score:
+      type: number
+      format: float
+    feedback:
+      type: string
+    reviewed_at:
+      type: integer
+      format: int64
+
+CreateTaskRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    description:
+      type: string
+    spaceId:
+      type: integer
+      format: int64
+    categoryId:
+      type: integer
+      format: int64
+      nullable: true
+    deadline:
+      type: integer
+      format: int64
+      nullable: true
+    rank:
+      type: integer
+  required:
+    - name
+    - spaceId
+
+UpdateTaskRequest:
+  type: object
+  properties:
+    name:
+      type: string
+    description:
+      type: string
+    categoryId:
+      type: integer
+      format: int64
+      nullable: true
+    deadline:
+      type: integer
+      format: int64
+      nullable: true
+    rank:
+      type: integer
+
+AiAdviceConversation:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    task_id:
+      type: integer
+      format: int64
+    user:
+      $ref: '../user/schemas.yaml#/User'
+    title:
+      type: string
+    created_at:
+      type: integer
+      format: int64
+    updated_at:
+      type: integer
+      format: int64
+    message_count:
+      type: integer
+
+AiAdviceMessage:
+  type: object
+  properties:
+    id:
+      type: integer
+      format: int64
+    conversation_id:
+      type: integer
+      format: int64
+    role:
+      type: string
+      enum: [user, assistant]
+    content:
+      type: string
+    created_at:
+      type: integer
+      format: int64

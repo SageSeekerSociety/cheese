@@ -1,0 +1,95 @@
+# Attachment Domain Paths
+
+/attachments:
+  post:
+    summary: Upload attachment
+    operationId: uploadAttachment
+    tags: [Attachments]
+    security:
+      - BearerAuth: []
+    requestBody:
+      content:
+        multipart/form-data:
+          schema:
+            type: object
+            properties:
+              file:
+                type: string
+                format: binary
+              type:
+                type: string
+                enum: [image, video, audio, file]
+            required:
+              - file
+    responses:
+      '200':
+        description: Attachment uploaded
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                      format: int64
+                    url:
+                      type: string
+
+/attachments/{attachmentId}:
+  get:
+    summary: Get attachment detail
+    operationId: getAttachment
+    tags: [Attachments]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/AttachmentId'
+    responses:
+      '200':
+        description: Attachment details
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: integer
+                message:
+                  type: string
+                data:
+                  type: object
+                  properties:
+                    attachment:
+                      $ref: './schemas.yaml#/Attachment'
+  delete:
+    summary: Delete attachment
+    operationId: deleteAttachment
+    tags: [Attachments]
+    security:
+      - BearerAuth: []
+    parameters:
+      - $ref: '../../common/parameters.yaml#/AttachmentId'
+    responses:
+      '204':
+        description: Attachment deleted
+
+/attachments/{attachmentId}/download:
+  get:
+    summary: Download attachment file
+    operationId: downloadAttachment
+    tags: [Attachments]
+    parameters:
+      - $ref: '../../common/parameters.yaml#/AttachmentId'
+    responses:
+      '200':
+        description: Attachment file content
+        content:
+          '*/*':
+            schema:
+              type: string
+              format: binary
