@@ -85,7 +85,7 @@ export const SLASH_ITEMS: SlashItem[] = [
     label: '任务列表',
     icon: 'mdi-format-list-checks',
     hint: 'todo',
-    keywords: ['todo', 'task', 'checkbox', 'rwlb', 'renwu'],
+    keywords: ['todo', 'task', 'checkbox', 'list', 'rwlb', 'renwu', 'liebiao'],
     run: (c) => c.clearNodes().toggleTaskList(),
   },
   {

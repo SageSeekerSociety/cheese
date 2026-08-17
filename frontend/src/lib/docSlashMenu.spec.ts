@@ -27,6 +27,8 @@ describe('slash 菜单的筛选', () => {
     expect(keys('bt')).toEqual(['h1', 'h2', 'h3'])
     expect(keys('biaoti')).toEqual(['h1', 'h2', 'h3'])
     expect(keys('renwu')).toEqual(['task'])
+    // 任务列表 也是一种列表：搜「列表」找不到它，是它自己漏了关键词。
+    expect(keys('liebiao')).toEqual(['bullet', 'ordered', 'task'])
     expect(keys('fgx')).toEqual(['hr'])
   })
 
