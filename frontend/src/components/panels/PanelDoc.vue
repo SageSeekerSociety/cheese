@@ -17,7 +17,7 @@ import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { Suggestion } from '@tiptap/suggestion'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
-import { getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../../api'
+import { addComment, getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../../api'
 // The editor schema + round-trip fidelity machinery live in docMarkdown.ts —
 // ONE extension list shared with the corpus tests, so "what the tests prove"
 // and "what the editor runs" can never drift apart. (History: TipTap without
@@ -61,9 +61,6 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  // 段落评论复用底部主输入框: a selection's 评论 CTA was clicked — the parent
-  // flips its composer into comment mode, carrying the anchor + quoted span.
-  (e: 'comment-intent', payload: { anchorId: string | null; quote: string }): void
 }>()
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
@@ -334,13 +331,13 @@ async function pulse() {
     pulsing.value = false
   }, 1200)
 }
-// refreshComments: the parent composer posts comments in comment mode and asks
-// the panel to refresh its lists (drawer + in-doc 常驻评论区).
+// The comment input lives here now, so the reload after posting is a local
+// call — nobody outside asks for it any more.
 async function refreshComments() {
   const tid = props.topic?.id
   if (tid) await loadComments(tid).catch(() => {})
 }
-defineExpose({ pulse, highlightTurn, refreshComments })
+defineExpose({ pulse, highlightTurn })
 
 const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 
@@ -394,6 +391,57 @@ async function loadComments(tid: string) {
 const commentsFolded = ref(false)
 
 const AUTHOR = myHandle()
+
+// ---- 评论归评论区 (规则 5) ----
+// Writing a comment used to retarget the workspace's shared input bar: the same
+// box sent chat messages, and a chip was the only thing distinguishing the two.
+// So the box under the conversation was sometimes not addressing the
+// conversation, and the paragraph being annotated was in the other column.
+// The input now lives where the comments do, next to what it is about.
+const commentDraft = ref<{ anchorId: string | null; quote: string } | null>(null)
+const commentText = ref('')
+const commentSending = ref(false)
+const commentInput = ref<{ focus?: () => void } | null>(null)
+
+function openCommentDraft(target: { anchorId: string | null; quote: string }) {
+  commentsFolded.value = false
+  commentDraft.value = target
+  commentText.value = ''
+  void nextTick(() => commentInput.value?.focus?.())
+}
+
+function cancelCommentDraft() {
+  commentDraft.value = null
+  commentText.value = ''
+}
+
+async function submitComment() {
+  const tid = props.topic?.id
+  const target = commentDraft.value
+  const text = commentText.value.trim()
+  if (!tid || !target || !text || commentSending.value) return
+  commentSending.value = true
+  try {
+    await addComment(tid, text, AUTHOR, target.anchorId ?? undefined, target.quote)
+    cancelCommentDraft()
+    await refreshComments()
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '评论失败'
+  } finally {
+    commentSending.value = false
+  }
+}
+
+function onCommentKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    cancelCommentDraft()
+    return
+  }
+  if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return
+  e.preventDefault()
+  void submitComment()
+}
 
 const editable = ref(true)
 const loading = ref(false)
@@ -1102,9 +1150,7 @@ async function commentOnSelection() {
   const anchor =
     cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length ? null : nodes[cta.nodeIndex].id
   commentCta.value = null
-  // 复用底部主输入框: hand the anchor + quote to the parent composer, which
-  // flips into comment mode (quote chip + Esc/✕ to exit).
-  emit('comment-intent', { anchorId: anchor, quote: cta.quote })
+  openCommentDraft({ anchorId: anchor, quote: cta.quote })
 }
 
 // Guard: when we programmatically setContent from a server reload we don't want
@@ -1680,8 +1726,8 @@ onBeforeUnmount(() => {
                carry a quote chip that scrolls + flashes their paragraph;
                page-level comments render plain. -->
             <div class="doc-comments">
-              <!-- Collapsible head; ONE 写评论 action that reuses the main
-                 composer in comment mode — the doc never grows its own input. -->
+              <!-- Collapsible head; ONE 写评论 action, and it opens the input
+                 that lives right here — 批注归批注，聊天归聊天. -->
               <div class="doc-comments__head">
                 <button
                   type="button"
@@ -1705,10 +1751,48 @@ onBeforeUnmount(() => {
                   variant="tonal"
                   color="primary"
                   title="写评论"
-                  @click="emit('comment-intent', { anchorId: null, quote: '' })"
+                  @click="openCommentDraft({ anchorId: null, quote: '' })"
                 />
               </div>
               <template v-if="!commentsFolded">
+                <!-- 写评论: anchored to a paragraph when it came from a
+                   selection, page-level when it came from the ＋. -->
+                <div v-if="commentDraft" class="comment-draft">
+                  <div v-if="commentDraft.quote" class="comment-draft__quote">
+                    <v-icon size="13" class="c-faint">mdi-format-quote-close</v-icon>
+                    {{ commentDraft.quote }}
+                  </div>
+                  <v-textarea
+                    ref="commentInput"
+                    v-model="commentText"
+                    variant="plain"
+                    rows="2"
+                    auto-grow
+                    max-rows="6"
+                    hide-details
+                    density="compact"
+                    autofocus
+                    class="comment-draft__input"
+                    placeholder="输入评论…"
+                    title="Enter 发送，Shift+Enter 换行"
+                    @keydown="onCommentKey"
+                  />
+                  <div class="d-flex align-center ga-2 justify-end">
+                    <v-btn size="small" variant="text" :disabled="commentSending" @click="cancelCommentDraft">
+                      取消
+                    </v-btn>
+                    <v-btn
+                      size="small"
+                      color="primary"
+                      variant="flat"
+                      :loading="commentSending"
+                      :disabled="!commentText.trim()"
+                      @click="submitComment"
+                    >
+                      评论
+                    </v-btn>
+                  </div>
+                </div>
                 <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
                   <span class="doc-comments__avatar">
                     {{ (c.author || '?').slice(0, 1).toUpperCase() }}
@@ -2144,6 +2228,25 @@ onBeforeUnmount(() => {
   margin: 40px auto 0;
   padding-top: 14px;
   border-top: 1px solid var(--line-2);
+}
+/* 写评论的输入框，长在评论区里。区块靠留白和一层浅底分出来，不用卡片也不用左条纹。 */
+.comment-draft {
+  margin: 8px 0 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--fill);
+}
+.comment-draft__quote {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.comment-draft__input :deep(textarea) {
+  font-size: 14px;
+  line-height: 1.6;
 }
 .doc-comments__head {
   display: flex;

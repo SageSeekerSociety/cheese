@@ -5,7 +5,7 @@ import type { CardPhase, TopicPhase } from '@/lib/topicState'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { addComment, attachmentRawUrl } from '@/api'
+import { attachmentRawUrl } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
@@ -63,7 +63,6 @@ const panelRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
   openFile?: (path: string) => void
-  refreshComments?: () => Promise<void>
 } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
 
@@ -153,11 +152,6 @@ watch(
   }
 )
 
-// ---- 评论模式 (飞书 docs 风): the doc tab's selection CTA hands the anchor +
-// quoted span here; the SAME composer then posts a comment instead of a chat
-// message. A quote chip above the input shows the target; Esc / the ✕ exits. ----
-const commentIntent = ref<{ anchorId: string | null; quote: string } | null>(null)
-const commentSending = ref(false)
 const composerInput = ref<{ focus?: () => void } | null>(null)
 
 // 切换后把焦点还给输入框。不还的话 chip 自己一直握着焦点，用户接下来按的那次
@@ -169,31 +163,7 @@ function toggleSummon() {
   void nextTick(() => composerInput.value?.focus?.())
 }
 
-function onCommentIntent(payload: { anchorId: string | null; quote: string }) {
-  commentIntent.value = payload
-  void nextTick(() => composerInput.value?.focus?.())
-}
-
-async function sendDraft() {
-  // Comment mode: the composer's send posts a doc comment (existing comments
-  // API, same anchor/quote the drawer flow used), then returns to message mode.
-  if (commentIntent.value) {
-    const tid = selectedTopic.value?.id
-    const text = draft.value.trim()
-    if (!tid || !text || commentSending.value) return
-    commentSending.value = true
-    try {
-      await addComment(tid, text, AUTHOR, commentIntent.value.anchorId ?? undefined, commentIntent.value.quote)
-      draft.value = ''
-      commentIntent.value = null
-      void panelRef.value?.refreshComments?.()
-    } catch (e) {
-      store.reportError(e, '评论失败')
-    } finally {
-      commentSending.value = false
-    }
-    return
-  }
+function sendDraft() {
   const ok = chatRef.value?.send(expandMentions(draft.value), summon.value, pendingAtts.value.slice())
   if (ok) {
     draft.value = ''
@@ -284,12 +254,6 @@ function isImeKey(e: KeyboardEvent) {
 }
 
 function onComposerKey(e: KeyboardEvent) {
-  // Esc leaves comment mode, back to the normal message composer.
-  if (e.key === 'Escape' && commentIntent.value) {
-    e.preventDefault()
-    commentIntent.value = null
-    return
-  }
   if (e.key !== 'Enter' || e.shiftKey) return
   // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
   if (isImeKey(e)) return
@@ -299,9 +263,8 @@ function onComposerKey(e: KeyboardEvent) {
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
   e.preventDefault()
-  // While the @-menu is open, Enter picks the first match instead of sending
-  // (@-mentions don't apply to doc comments, so comment mode skips this).
-  if (!commentIntent.value && mentionMatches.value.length) {
+  // While the @-menu is open, Enter picks the first match instead of sending.
+  if (mentionMatches.value.length) {
     pickMention(mentionMatches.value[0])
     return
   }
@@ -413,7 +376,6 @@ watch(
     working.value = false
     workingSince.value = null
     clearPendingAtts() // pending images belong to the topic they were typed in
-    commentIntent.value = null // a comment target belongs to its topic's doc
     if (id) store.markRead(id)
   },
   { immediate: true }
@@ -493,7 +455,6 @@ watch(
           :phase="phase"
           @open-topic="openTopic"
           @mention-click="handleMentionClick"
-          @comment-intent="onCommentIntent"
           @update:tab="onPanelTab"
         />
       </div>
@@ -526,18 +487,8 @@ watch(
                first message. Keyed by topic so it reloads on switch. -->
           <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
         </div>
-        <!-- 评论模式: quote chip above the input — what this send will
-             comment on. The ✕ button / Esc exits back to normal message mode. -->
-        <div v-if="commentIntent" class="comment-mode-chip">
-          <v-icon size="14" class="comment-mode-chip__icon"> mdi-comment-quote-outline </v-icon>
-          <span class="comment-mode-chip__label">评论</span>
-          <span class="comment-mode-chip__quote">{{ commentIntent.quote }}</span>
-          <button type="button" class="comment-mode-chip__x" title="退出评论模式" @click="commentIntent = null">
-            <v-icon size="13">mdi-close</v-icon>
-          </button>
-        </div>
         <!-- @-autocomplete: pick a teammate / topic while typing @ -->
-        <div v-if="mentionMatches.length && !commentIntent" class="mention-menu">
+        <div v-if="mentionMatches.length" class="mention-menu">
           <button
             v-for="(mm, i) in mentionMatches"
             :key="mm.kind + mm.insert"
@@ -585,8 +536,8 @@ watch(
             hide-details
             density="comfortable"
             class="composer-input flex-grow-1"
-            :placeholder="commentIntent ? '输入评论…' : summon ? '告诉芝士要做什么…' : '输入消息…'"
-            :disabled="!composerReady && !commentIntent"
+            :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
+            :disabled="!composerReady"
             @keydown="onComposerKey"
             @paste="onComposerPaste"
             @compositionstart="onCompositionStart"
@@ -613,8 +564,7 @@ watch(
             variant="flat"
             icon="mdi-send"
             size="small"
-            :loading="commentSending"
-            :disabled="commentIntent ? !draft.trim() : !composerReady || (!draft.trim() && !pendingAtts.length)"
+            :disabled="!composerReady || (!draft.trim() && !pendingAtts.length)"
             @click="sendDraft"
           />
         </div>
@@ -687,54 +637,6 @@ watch(
 .att-remove:hover {
   color: var(--ink);
 }
-/* 评论模式 quote chip: the doc span this composer send will comment on. */
-.comment-mode-chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-  padding: 5px 10px;
-  /* 强调靠 wash 底色 + 行内的琥珀图标，不靠左竖条：左条纹在这套设计语言里只
-     留给引用块和树的结构线。四角同圆之后它读起来才是一颗 chip。 */
-  border-radius: var(--radius-md);
-  background: rgba(var(--v-theme-primary), 0.07);
-}
-.comment-mode-chip__icon {
-  color: rgb(var(--v-theme-primary));
-  flex: 0 0 auto;
-}
-.comment-mode-chip__label {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgb(var(--v-theme-primary));
-  flex: 0 0 auto;
-}
-.comment-mode-chip__quote {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.comment-mode-chip__x {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  padding: 2px 4px;
-  line-height: 1;
-  cursor: pointer;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--faint);
-}
-.comment-mode-chip__x:hover {
-  color: var(--muted);
-  background: rgba(var(--v-theme-primary), 0.1);
-}
-
 /* @-autocomplete dropdown (§3.1.1) */
 .mention-menu {
   display: flex;

@@ -62,7 +62,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
-  (e: 'comment-intent', payload: { anchorId: string | null; quote: string }): void
   (e: 'update:tab', key: string): void
 }>()
 
@@ -309,10 +308,7 @@ async function openFile(path: string) {
   await nextTick()
   await changesRef.value?.openFile(path)
 }
-async function refreshComments() {
-  await docRef.value?.refreshComments()
-}
-defineExpose({ pulse, highlightTurn, openFile, refreshComments })
+defineExpose({ pulse, highlightTurn, openFile })
 </script>
 
 <template>
@@ -368,7 +364,6 @@ defineExpose({ pulse, highlightTurn, openFile, refreshComments })
           :topic-list="topicList"
           @open-topic="emit('open-topic', $event)"
           @mention-click="emit('mention-click', $event)"
-          @comment-intent="emit('comment-intent', $event)"
           @open-file="openFile"
         />
         <PanelSite
