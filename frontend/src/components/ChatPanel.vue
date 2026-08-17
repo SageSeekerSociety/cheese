@@ -45,6 +45,7 @@ import {
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
+import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
@@ -81,6 +82,9 @@ const props = withDefaults(
     // PRs — the root topic (本体) and the 1:1 private chat are NOT, so they use
     // the plain chat header instead.
     prHeader?: boolean
+    // No header at all. 工作台 puts ONE topic header above both columns (see
+    // TopicHeader.vue), so the chat column must not draw a second one under it.
+    hideHeader?: boolean
     // Project roster (handle→name) so <@handle> mention tokens render as chips.
     members?: ProjectMemberRow[]
     // Project topics (id→title) so <#topicId> reference tokens render as chips.
@@ -93,6 +97,7 @@ const props = withDefaults(
     defaultSummon: false,
     showComposer: false,
     prHeader: false,
+    hideHeader: false,
     members: () => [],
     topicList: () => [],
     titleOverride: null,
@@ -819,16 +824,11 @@ function isRunStart(i: number): boolean {
   return prev.author !== cur.author || prev.author_type !== cur.author_type
 }
 
-// ---- Topic header state — product language, not git's (去 PR 化). The
-// branch/merge machinery is real underneath, but a normal user shouldn't
-// need to read git to know where a topic stands.
-const prShortId = computed(() => props.topic?.id.slice(0, 6) ?? '')
-const prState = computed(() => {
-  const s = props.topic?.status
-  if (s === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
-  if (s === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
-  return { label: '进行中', cls: 'pr-state--open' }
-})
+// ---- Topic header state. The labels live in lib/topicState.ts because the
+// 工作台's own topic header renders the same badge — one table, so the two can
+// never disagree about what `archived` is called.
+const prShortId = computed(() => topicShortId(props.topic?.id))
+const prState = computed(() => topicStateBadge(props.topic?.status))
 
 // ---- Self-contained composer (only when showComposer) ----
 const draft = ref('')
@@ -1025,7 +1025,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <!-- GitHub-PR-style header (Fix 4): only for real work topics (话题 = PR).
            The root topic (本体) and private chat use the plain header below. -->
-      <div v-if="prHeader" class="pr-header px-4 py-3">
+      <div v-if="!hideHeader && prHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2 flex-wrap">
           <span class="pr-title t-title">{{ topic.title }}</span>
           <span class="pr-num t-meta">#{{ prShortId }}</span>
@@ -1040,7 +1040,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
-      <div v-else class="pr-header px-4 py-3">
+      <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2">
           <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
