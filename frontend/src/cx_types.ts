@@ -679,13 +679,23 @@ export interface TopicComputeVisibility {
   notice: string
 }
 
+export interface TopicComputeDevice {
+  device_id: string
+  name: string
+  online: boolean
+}
+
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
 // `current` is effective (topic → project sticky → team default → platform);
 // `locked` freezes the picker once the topic has run (session started);
 // `inherited` = still following project/team/platform defaults (no own choice yet);
-// `sticky` = project sticky if present, otherwise the team/platform default.
+// `sticky` = project sticky if present, otherwise the team/platform default;
+// `device_id` is the self-hosted machine pinned to this topic, or null while
+// 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
   current: string
+  device_id: string | null
+  devices: TopicComputeDevice[]
   locked: boolean
   inherited: boolean
   sticky: string

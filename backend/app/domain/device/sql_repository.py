@@ -312,7 +312,7 @@ class SqlDeviceRepository:
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
     ) -> None:
-        # write-once: never overwrite an existing pin (affinity is permanent).
+        # write-once: never overwrite an existing pin (affinity never drifts).
         if await self._session.get(DeviceTopicRow, topic_id) is not None:
             return
         self._session.add(

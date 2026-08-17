@@ -25,8 +25,10 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
+from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
+    COMPUTE_DEVICE,
     MACHINE_VISIBILITY_NOTICE,
     VISIBILITY_HOST,
     compute_default_name,
@@ -38,6 +40,8 @@ from app.domain.agent.runtime import TurnRunner
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.device.supply import Visibility
+from app.domain.device.wiring import sql_device_service
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.machine.services import MachineService
@@ -616,28 +620,40 @@ async def get_topic_compute_profile(
     if project is not None and project.team_id is not None:
         team = await TeamRepository(db).get_by_id(project.team_id)
         team_default = team.compute_profile if team is not None else None
+    current = topic.compute_profile or sticky or team_default or compute_default_name()
     device_online = await project_device_online(db, topic.project_id)
+    device_service = sql_device_service(db)
+    devices = await device_service.list_devices_for_project(topic.project_id)
     # #282 §四 / #358 · whether THIS topic's agent can see the whole machine. The
     # effective answer is the visibility on the topic↔machine binding (device
     # affinity freezes a topic to one machine on its first turn); a topic
     # on platform compute or not yet pinned has none. Surfaced so the room can show
     # a visible safety badge for a Hosted Machine turn instead of the platform
     # granting whole-machine access silently (原则八).
-    from app.domain.device.wiring import sql_device_service
-
-    device_service = sql_device_service(db)
     binding = await device_service.topic_binding(topic_id)
     effective_visibility: str | None = None
     if binding is not None:
         effective_visibility = binding.visibility.value
     return ok(
         {
-            "current": (
-                topic.compute_profile
-                or sticky
-                or team_default
-                or compute_default_name()
+            "current": current,
+            # A machine id only has selection meaning under the self-hosted pool.
+            # Cloud also records its connector in device_topic, but that endpoint is
+            # an implementation detail of the freshly provisioned topic machine, not
+            # a machine the person chose from a list.
+            "device_id": (
+                binding.device_id
+                if current == COMPUTE_DEVICE and binding is not None
+                else None
             ),
+            "devices": [
+                {
+                    "device_id": device.device_id,
+                    "name": device.name,
+                    "online": device_hub.is_online(device.device_id),
+                }
+                for device in devices
+            ],
             "locked": topic.session_id is not None,
             "inherited": topic.compute_profile is None,
             "sticky": sticky or team_default or compute_default_name(),
@@ -677,18 +693,60 @@ async def set_topic_compute_profile(
     if topic.session_id is not None:
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
+    raw_device_id = body.get("device_id")
+    if raw_device_id is not None and not isinstance(raw_device_id, str):
+        raise ValidationError("device_id 必须是字符串")
+    device_id = (raw_device_id or "").strip() or None
+    if name != COMPUTE_DEVICE and device_id is not None:
+        raise ValidationError("只有自托管设备可以指定 device_id")
+
     device_online = await project_device_online(db, topic.project_id)
     allowed = {v.id for v in compute_selectable(settings, device_online=device_online)}
-    if name not in allowed:
+    # A named self-hosted machine may deliberately be offline: the topic is pinned
+    # now and waits for that exact box. The automatic option keeps the old rule and
+    # is selectable only when at least one project-scoped device is online.
+    if name not in allowed and not (name == COMPUTE_DEVICE and device_id is not None):
         raise ValidationError(f"算力池 {name!r} 尚未接入，暂不可选")
     if name == COMPUTE_CLOUD:
         await MachineService(db).require_create_authority(topic.project_id, actor)
+
+    device_service = sql_device_service(db)
+    if device_id is not None:
+        scoped_devices = await device_service.list_devices_for_project(topic.project_id)
+        if device_id not in {device.device_id for device in scoped_devices}:
+            raise ValidationError("设备不属于当前项目")
+
+    # A pre-turn choice has no worktree/session state yet, so it remains editable.
+    # Release then bind preserves bind_topic_device's write-once contract: the bind
+    # itself never overwrites, while an explicit user change before the lock removes
+    # the obsolete choice first. Selecting Cloud or 「系统挑一台」 leaves no pin;
+    # the latter is frozen by resolve_pinned_device on the first turn as before.
+    binding = await device_service.topic_binding(topic_id)
+    if binding is not None and (
+        name != COMPUTE_DEVICE or binding.device_id != device_id
+    ):
+        await device_service.release_topic_device(
+            topic_id, reason="compute choice changed before the first turn"
+        )
+        binding = None
+    if name == COMPUTE_DEVICE and device_id is not None and binding is None:
+        await device_service.bind_topic_device(
+            topic_id, device_id, visibility=Visibility.host
+        )
+
     topic.compute_profile = name
     project = await ProjectRepository(db).get(topic.project_id)
     if project is not None:
         project.settings = {**(project.settings or {}), "compute_profile": name}
     await db.flush()
-    return ok({"current": name, "locked": False, "inherited": False})
+    return ok(
+        {
+            "current": name,
+            "device_id": device_id if name == COMPUTE_DEVICE else None,
+            "locked": False,
+            "inherited": False,
+        }
+    )
 
 
 @router.post("/{topic_id}/ask")

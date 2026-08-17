@@ -117,7 +117,7 @@ class InMemoryDeviceRepository:
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
     ) -> None:
-        # write-once: an existing pin is permanent (affinity never drifts).
+        # write-once: never overwrite an existing pin (affinity never drifts).
         self._topic_device.setdefault(
             topic_id,
             TopicDevice(topic_id=topic_id, device_id=device_id, visibility=visibility),
