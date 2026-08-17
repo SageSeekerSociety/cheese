@@ -3040,6 +3040,16 @@ class ChatService:
                 on_mark=_register_work,
                 **model_kwargs,
             )
+            # Internal frame: `inject_work` returned, so the transport accepted
+            # the write — which IS delivery (#563, per #487's contract that a
+            # write either reaches the process or errors). The runtime records
+            # that as a fact against the durable in-flight registry. Without it
+            # the orphan sweep has to infer arrival after a restart, from
+            # whether 芝士 happened to produce a block before the process died,
+            # and so calls a prompt that landed two seconds earlier undelivered
+            # and re-sends it. Nothing but the runtime acts on this, so it never
+            # reaches the broker.
+            yield {"type": "prompt_delivered"}
             if ready is False:
                 marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
                 payload = await self.post_system_event(

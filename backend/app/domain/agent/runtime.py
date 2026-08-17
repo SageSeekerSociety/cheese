@@ -161,6 +161,38 @@ def _continuation_of(turn_id: str, info: dict) -> uuid.UUID:
     return uuid.uuid4()
 
 
+def _mark_delivered(turn_id: uuid.UUID) -> Callable[[dict], None]:
+    """Stamp one in-flight entry as proven delivered, in place.
+
+    Best-effort by design: an entry already claimed by a sweep is simply gone,
+    and re-adding it would resurrect work nobody is waiting for."""
+
+    def _mutate(reg: dict) -> None:
+        entry = reg.get(str(turn_id))
+        if isinstance(entry, dict):
+            entry["delivered_at"] = time.time()
+
+    return _mutate
+
+
+def _entry_resendable(info: dict) -> bool:
+    """May the orphan sweep re-deliver this entry by re-submitting its content?
+
+    A current backend decides this where the turn starts (see ``_execute``) and
+    writes the answer down. A LEGACY entry — written by the process generation
+    this one just replaced — has no such field, and is judged by the rule that
+    was in force when it was written: human-authored, not an auto-resume. Ruling
+    those out instead would make the deploy that ships this field strand exactly
+    the in-flight prompts the field exists to protect."""
+    if "resendable" in info:
+        return bool(info["resendable"])
+    return (
+        not info.get("is_resume")
+        and str(info.get("author") or "system") != "system"
+        and bool(str(info.get("content") or "").strip())
+    )
+
+
 # Channel = the topic id (str). Frames are the same dicts converse yields.
 Frame = dict
 
@@ -674,6 +706,9 @@ class AgentWorkRunner:
         prompt). No human message is posted — the agent speaks for itself; the
         pre-built kickoff frame stream rides the same _run pipeline (telemetry,
         timeout, failure events) via the `frames` override."""
+        # Imported here, not at module scope: chat imports this module back.
+        from app.domain.agent.chat import KICKOFF_PROMPT
+
         turn_id = uuid.uuid4()
         frames = chat_service.kickoff(topic_id=topic_id, turn_id=turn_id, prompt=prompt)
         task = asyncio.create_task(
@@ -682,7 +717,12 @@ class AgentWorkRunner:
                 topic_id,
                 turn_id,
                 author="system",
-                content=prompt or "",
+                # The RESOLVED prompt, not the argument: `kickoff` substitutes
+                # KICKOFF_PROMPT for None, and this text is the only copy the
+                # orphan sweep has if a deploy kills the turn before the session
+                # hears it. Recording "" would make a 分身's first turn the one
+                # kind of work the platform cannot re-deliver.
+                content=prompt or KICKOFF_PROMPT,
                 summon=True,
                 frames=frames,
             )
@@ -1021,32 +1061,50 @@ class AgentWorkRunner:
 
         The default is to ATTACH — post the verdict, then let the spool
         reconcile land whatever the surviving claude sends back (see
-        `ChatService.settle_spool`). Evidence that claude received the task:
+        `ChatService.settle_spool`). Evidence that claude received the task,
+        best first:
 
-        - an AI-authored block bearing the turn's id (the live hook/stream path
-          persisted it — claude acted, so it heard), or
+        - **the entry's own `delivered_at` stamp** — the transport accepted the
+          write (#563) and the runtime recorded it before dying. First-hand, and
+          the only source that is true the instant the prompt lands.
+        - an AI-authored block bearing the turn's id — claude acted, so it
+          heard. Second-hand, and it only becomes true once claude has produced
+          something, so a prompt that arrived seconds before the process died
+          leaves no trace here. Kept for entries written before the stamp
+          existed, and as a backstop for a death between the write and the
+          stamp.
         - anything in the topic's durable spool beyond SessionStart (hooks that
           arrived with nobody listening; they cannot be pinned to one turn, so
           they veto every re-send on the topic).
 
-        A re-send happens only for a topic with NO such trace, and then only
-        for the newest human-authored orphan: the pending-message mechanism
-        re-hands its ORIGINAL text (an interrupted turn never stamps its inputs
-        consumed), the rest are folded into the same prompt. A probe failure
-        counts as evidence — when we cannot know, speaking is the riskier
-        side."""
+        A re-send happens only for a topic with NO such trace, and then only for
+        its newest re-sendable orphan (see `_execute` for what that means): the
+        pending-message mechanism re-hands its ORIGINAL text (an interrupted turn
+        never stamps its inputs consumed), the rest are folded into the same
+        prompt. A probe failure counts as evidence — when we cannot know, acting
+        is the riskier side.
+
+        Whose turn it was does not enter into it. A deploy that strands 平台's
+        own work — a 分身's kickoff, 验收卡被驳回, CI 红了 — strands it just as
+        permanently as a person's message, and the room shows nothing either
+        way. Re-sending it is what keeps the platform working rather than merely
+        quiet."""
         turn_uuids: list[uuid.UUID] = []
         for tid, _info in entries:
             try:
                 turn_uuids.append(uuid.UUID(tid))
             except ValueError:
                 continue
-        delivered: set[str] = set()
+        # First-hand: the transport accepted the write (#563) and the runtime
+        # wrote that down before this process died. Needs no probe and no
+        # database, and is true from the instant the prompt lands rather than
+        # from whenever 芝士 first produces something.
+        delivered = {tid for tid, info in entries if info.get("delivered_at")}
         spool_trace = False
         probe_ok = False
         try:
             evidence = await chat_service.orphan_turn_evidence(topic_id, turn_uuids)
-            delivered = {str(t) for t in evidence.get("delivered", ())}
+            delivered |= {str(t) for t in evidence.get("delivered", ())}
             spool_trace = bool(evidence.get("spool"))
             probe_ok = True
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
@@ -1059,77 +1117,73 @@ class AgentWorkRunner:
                 (tid, info)
                 for tid, info in entries
                 if tid not in delivered
-                and not info.get("is_resume")
-                # Only a HUMAN prompt is worth repeating; entries from before
-                # the author field existed stay on the ask-a-human path.
-                and str(info.get("author") or "system") != "system"
+                # Decided where the turn starts (see `_execute`): it holds for a
+                # person's message and for every platform task alike.
+                and _entry_resendable(info)
                 and now - float(info.get("started_at", 0)) <= self.ORPHAN_STALE_S
             ]
             if candidates:
                 resend = max(candidates, key=lambda e: float(e[1].get("started_at", 0)))
 
-        others = len(entries) - len(delivered) - (1 if resend else 0)
-        # 平台提示统一契约: 每一支都是「房间里一行 `text` + 展开才看的 `detail`」。
-        # 长的那几句（现场还在干什么、排队的消息怎么办）挪进 detail，不删。
-        deploy_detail = ""
-        deploy_who = WHO_PLATFORM
-        if not allow_actions:
-            # This topic's remedy was already taken by the wedged branch — its
-            # coming resume turn picks any pending message up; just say so.
-            # 这条本来就一句话，没有可折叠的东西 —— detail 留空，别拿正文复读一遍
-            # 去填展开区（那只会让人点开一次就再也不点了）。
-            text = (
-                f"⚠️ 同一次中断还波及了本话题的另外 {len(entries)} 轮；"
-                "它们的消息和进展会并入接下来的轮次。"
-            )
-        elif attach and resend is not None:
-            text = "⚠️ 平台部署中断了本话题的几个轮次，平台在自动收尾。"
-            deploy_detail = (
-                "已送达的任务现场还在继续干，进展和收尾会自动落回这里；"
-                "没送到的消息马上原样重发一次（排队中的消息会一并带上）。"
-            )
-        elif attach:
-            text = "⚠️ 上一轮被平台部署中断，现场大概率还在干活。"
-            deploy_detail = (
-                "芝士在中断前已经收到任务，现场大概率还在干活：它送回的进展和收尾"
-                "会继续自动落回这里；要是迟迟没动静，再 @ 芝士 接手。"
-            )
-            if others > 0:
-                deploy_detail += (
-                    f"（另有 {others} 轮排队中的消息会在下一轮开始时一并交给芝士。）"
-                )
-        elif resend is not None:
-            text = "⚠️ 上一轮被平台部署中断，消息马上原样重发一次。"
-            deploy_detail = "消息还没送到芝士那边；平台马上原样自动重发一次。"
-            if others > 0:
-                deploy_detail += f"（同批被中断的另外 {others} 轮消息也会一并带上。）"
-        else:
+        # 一次部署把这个话题的轮次打断了，接下来会发生什么，决定要不要说话。
+        #
+        # 绝大多数情况平台自己就收拾干净了：送达过的，现场根本没死，订阅跟着屏幕
+        # 活（#508），它送回的东西继续实时落回房间；没送达的，下面无条件原样重发
+        # 一次。两种都不出声 —— 期望的就是它正常工作，正常工作没有可通报的。
+        #
+        # （这条事件原来每个被打断的轮次都发一次，理由是 #316：部署静默打断轮次、
+        # 房间里不留痕迹，查的人只能猜，为此误诊过两次（#188）。那是取消 turn 之前
+        # 的世界 —— 那时后端一死，会话的输出要等 spool 收口才浮出来，房间看着像
+        # 停了。现在没有那个断裂，理由跟着不成立。）
+        #
+        # 剩下真正会伤到人的只有一种：消息卡在「已落库」和「已送进会话」中间，
+        # 而且平台明确不会替他重发。这时候用户的话是真的消失了，芝士永远不会回，
+        # 房间里也没有任何别的东西会显示这件事 —— 不说，没人知道要再问一次。
+        # 两条路能走到这儿：
+        #
+        # - 搁得太久（越过 ORPHAN_STALE_S，2 小时）。扫描每 300 秒一轮、外加启动
+        #   时一次，所以要越过它，平台得连着两小时没能扫 —— 那是一次宕机，不是一
+        #   次部署。这时自动重发多半已经不是他要的了，得他自己决定还发不发。
+        # - 这轮本身是一次自动续跑（`resendable` 为假）。"从上一轮的断点继续"
+        #   对一个从没听过任务的会话没有意义，平台不会再自动跑第二次。
+        stranded = allow_actions and probe_ok and not attach and resend is None
+        if stranded and entries:
             newest = max(entries, key=lambda e: float(e[1].get("started_at", 0)))
             age_s = now - float(newest[1].get("started_at", 0))
-            why = (
-                f"已经中断 {round(age_s / 60)} 分钟，太久，不自动重发"
-                if age_s > self.ORPHAN_STALE_S
-                else "这些轮次都是平台自动发起的，不再自动连跑"
+            stale = age_s > self.ORPHAN_STALE_S
+            # 平台提示统一契约: 房间里一行 `text`，展开才看的长文进 meta.detail。
+            text = (
+                f"⚠️ 这条消息没送到芝士那边（平台重启时丢的），"
+                f"已经搁了 {round(age_s / 60)} 分钟，太久了，平台不替你重发。"
+                if stale
+                else (
+                    "⚠️ 上一次自动续跑被平台重启打断了，没送到芝士那边，"
+                    "平台不再自动重试。"
+                )
             )
-            text = f"⚠️ 上一轮被平台部署中断，消息多半没送到，{why}。"
-            deploy_detail = (
-                "没有迹象表明消息送到了芝士那边。"
+            detail = (
+                "没有迹象表明消息送到了芝士那边，而它搁置得太久，"
+                "自动重发多半已经不是你要的了。"
                 "需要继续的话 @ 芝士，之前的消息会一并带上。"
+                if stale
+                else (
+                    "自动续跑只跑一次，不连着自动重试。已完成的改动都还在工作区里"
+                    "—— 需要继续的话 @ 芝士，它会从断点接着做。"
+                )
             )
-            # 平台不再自动做任何事了 —— 这条要人来。
-            deploy_who = WHO_HUMAN
-        await self._post_orphan_event(
-            chat_service,
-            topic_id,
-            text,
-            notice(
-                EVENT_DEPLOY_INTERRUPTED,
-                severity=SEVERITY_WARN,
-                who=deploy_who,
-                detail=deploy_detail or None,
-                detail_label="详细说明" if deploy_detail else None,
-            ),
-        )
+            await self._post_orphan_event(
+                chat_service,
+                topic_id,
+                text,
+                notice(
+                    EVENT_DEPLOY_INTERRUPTED,
+                    severity=SEVERITY_WARN,
+                    # 平台不再自动做任何事了 —— 这条要人来。
+                    who=WHO_HUMAN,
+                    detail=detail,
+                    detail_label="详细说明",
+                ),
+            )
         if not allow_actions:
             return 0
         if attach:
@@ -1609,11 +1663,24 @@ class AgentWorkRunner:
             # under the SAME continuation, or every key the dead turn claimed
             # stops matching and its side effects are all repeated.
             "continuation_id": str(continuation_id),
-            # Who started the turn and with what — the sweep's re-send path
-            # (#316) may only re-deliver a HUMAN prompt, and when nothing is
-            # pending in the topic the stored text is the only copy of it.
+            # Who started the turn and with what. When nothing is pending in the
+            # topic — every platform-authored turn, and any human message whose
+            # block the deploy beat — this stored text is the only copy of it.
             "author": author,
             "content": content,
+            # May the sweep re-deliver this turn by re-submitting `content`?
+            #
+            # Yes for anything whose content IS the task: a person's message, a
+            # 分身's kickoff prompt, and every platform nudge (验收卡被驳回、
+            # 上游合并冲突、CI 红了、后台任务跑完了). Each is a standalone
+            # instruction, and re-sending it verbatim is the whole of what "the
+            # work still happens" means.
+            #
+            # No for a resume nudge. "从上一轮的断点继续" says nothing to a
+            # session that never heard the task, and re-issuing it is exactly
+            # what stacked five zombie turns on one topic in a day (#324).
+            "resendable": bool(content.strip())
+            and (not is_resume or resume_reason == self.RESEND_REASON),
         }
         _mutate_inflight(lambda reg: reg.__setitem__(str(turn_id), entry))
         # Same instant, no await in between: a sweep can never observe this turn
@@ -1722,6 +1789,13 @@ class AgentWorkRunner:
                     # call persists no Block, so without this a turn legitimately
                     # grinding through tools looks identical to a wedged one.
                     self._last_frame_at[str(turn_id)] = time.monotonic()
+                    if kind == "prompt_delivered":
+                        # The transport accepted the write. Stamp the durable
+                        # registry NOW: if this process dies a moment later, the
+                        # sweep reads a fact instead of guessing from side
+                        # effects that may not exist yet.
+                        _mutate_inflight(_mark_delivered(turn_id))
+                        continue
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
                         # `topic_work()` reads this so `cheese status` reports the

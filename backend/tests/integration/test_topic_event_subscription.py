@@ -526,6 +526,41 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     await provider.drop_subscription(topic_id)
 
 
+async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -> None:
+    """`converse` must emit `prompt_delivered` once the transport took the write.
+
+    The runtime stamps the durable in-flight registry on that frame, which is
+    what lets a restart tell "the prompt never arrived" from "it arrived and
+    芝士 had not produced anything yet". Nothing else observes the frame, so
+    without this test it can stop being emitted with no visible symptom — until
+    a deploy re-sends a prompt 芝士 already has.
+
+    A refused write raises out of `inject_work` instead, so reaching this frame
+    is itself the acceptance (#563)."""
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    del project_id
+    provider = _IdleHooksProvider(router=HookRouter())
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+
+    frames = await _drain(
+        service.converse(
+            topic_id=topic_id,
+            author="u1",
+            content="Do the thing",
+            summon=True,
+        )
+    )
+    assert "prompt_delivered" in [frame["type"] for frame in frames]
+    await provider.drop_subscription(topic_id)
+
+
 async def test_session_timeout_retires_activity_but_keeps_subscription(
     client, tmp_path
 ) -> None:
