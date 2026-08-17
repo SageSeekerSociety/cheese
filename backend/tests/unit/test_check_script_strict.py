@@ -97,6 +97,17 @@ def _fake_repo(
     for name, body in venv_tools.items():
         _write_exe(repo / "backend" / ".venv" / "bin" / name, body)
     _write_exe(repo / "fakebin" / "uv", uv)
+    # `check.sh` wraps some steps in `timeout`, which is GNU coreutils and lives
+    # in /usr/bin on Linux but nowhere on the PATH these tests allow on macOS
+    # (`fakebin:/usr/bin:/bin`). Without it the alembic step came back BLOCKED
+    # here and green on CI — a five-test split that reads as "macOS is broken"
+    # when it is really "the stub bin was missing one tool". Stubbing it keeps
+    # the isolation the restricted PATH exists for and makes the result the
+    # same on both platforms; the duration is irrelevant to what is asserted.
+    _write_exe(
+        repo / "fakebin" / "timeout",
+        '#!/usr/bin/env bash\nshift\nexec "$@"\n',
+    )
     return repo
 
 
