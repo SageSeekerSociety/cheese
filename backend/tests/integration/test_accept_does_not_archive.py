@@ -30,9 +30,7 @@ def _project(client) -> str:
 
 
 def _topic(client, project_id: str) -> str:
-    r = client.post(
-        "/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -117,8 +115,7 @@ def test_revoking_does_not_undo_a_persons_archive(client):
     cid = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]["id"]
 
     assert (
-        client.post(f"/topics/{tid}/archive", json={"by": "alice"}).status_code
-        == 200
+        client.post(f"/topics/{tid}/archive", json={"by": "alice"}).status_code == 200
     )
     assert _state(client, tid)["status"] == "archived"
 
@@ -166,8 +163,7 @@ def test_manual_archive_still_archives_and_still_freezes_new_cards(client):
 
     # 取消归档回到可递卡。
     assert (
-        client.post(f"/topics/{tid}/unarchive", json={"by": "alice"}).status_code
-        == 200
+        client.post(f"/topics/{tid}/unarchive", json={"by": "alice"}).status_code == 200
     )
     assert _card(client, tid).status_code == 200
 

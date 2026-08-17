@@ -156,9 +156,7 @@ def test_upgrade_on_archived_topic_rejected(client):
     ).json()["data"]
     block_id = _insert_block(client, p["id"], topic["id"], "某条结论")
     assert (
-        client.post(
-            f"/topics/{topic['id']}/archive", json={"by": "alice"}
-        ).status_code
+        client.post(f"/topics/{topic['id']}/archive", json={"by": "alice"}).status_code
         == 200
     )
     r = client.post(f"/blocks/{block_id}/upgrade", json={"created_by": "alice"})
