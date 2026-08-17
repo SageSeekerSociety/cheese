@@ -168,10 +168,13 @@ watch(
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
-  min-height: var(--app-page-header-height, 48px);
+  /* 页头基线：和左边侧栏顶栏、上面内容区页头是同一条线，所以高度和底线都读同一
+     个 token。这里曾经是 min-height，成员头像那一列一长就能把这条头顶高，两条线
+     于是错开——顶栏的高度不是内容说了算的。 */
+  height: var(--app-page-header-height);
   padding: 0 12px;
   background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  border-bottom: var(--app-page-header-rule);
 }
 .topic-header__title {
   line-height: 1.3;
