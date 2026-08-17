@@ -1,8 +1,10 @@
 import asyncio
+import re
 from collections.abc import Sequence
 
 import bcrypt
 
+from app.core.errors import UnprocessableEntityError
 from app.domain.identity.handles import is_reserved_username
 from app.domain.user.models import User, UserProfile
 from app.domain.user.repositories import (
@@ -11,6 +13,33 @@ from app.domain.user.repositories import (
     UserRepository,
     UserStatisticsRepository,
 )
+
+
+NICKNAME_MAX_LENGTH = 50
+
+# A nickname must carry at least one letter or CJK ideograph, so that a name made
+# only of punctuation or invisible characters cannot be saved.
+_NICKNAME_MEANINGFUL_RE = re.compile(r"[A-Za-z㐀-䶿一-鿿]")
+
+
+def normalize_nickname(raw: str) -> str:
+    """Trim a user-supplied nickname and reject the unusable ones.
+
+    Length beyond emptiness is not constrained on purpose: the only rules are
+    non-empty, within the storage bound, and containing something readable.
+    """
+    nickname = raw.strip()
+    if not nickname:
+        raise UnprocessableEntityError("Nickname must not be empty")
+    if len(nickname) > NICKNAME_MAX_LENGTH:
+        raise UnprocessableEntityError(
+            f"Nickname must be at most {NICKNAME_MAX_LENGTH} characters"
+        )
+    if not _NICKNAME_MEANINGFUL_RE.search(nickname):
+        raise UnprocessableEntityError(
+            "Nickname must contain at least one letter or Chinese character"
+        )
+    return nickname
 
 
 class UserService:
@@ -37,6 +66,8 @@ class UserProfileService:
         intro: str | None = None,
         avatar_id: int | None = None,
     ) -> None:
+        if nickname is not None:
+            nickname = normalize_nickname(nickname)
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
         if profile is None:
             from app.core.errors import NotFoundError
