@@ -599,6 +599,70 @@ frontmatter 就写着 `tools: Bash, Read` / `model: sonnet`）。
 - **MCP server 配置**：我们的工具是平台内置的（cheese CLI ＋ Claude Code 内置），没有 MCP 生态需求。
 - **triggers / subscribe**：我们用 @提及 ＋ summon，语义已经清楚，不需要再加一套触发规则。
 
+### 12.4 @fulu 的 agent 池构想（2026-08-17）：两条对、一条要改
+
+构想原文：①有一个 agent 池，可以自己创建 agent，每个 agent 的 harness 工程 / skill / mcp / memory
+分别管理；②创建话题时弹窗选用哪个 agent；③每个话题是一个独立 session，但 session 内它可以管理
+自己的记忆，形成良性循环。
+
+**①② 成立，而且和这份文档 §2.3 从代码侧得出的结论撞上了。**
+§2.3 的核实结论是：agent handle 今天是 `cheese-<话题 id 前 12 位 hex>`，**纯函数派生、每个话题
+自动生一个**，于是记忆池 key `(project_id, agent_handle)` 的真实粒度是**话题**而不是芝士。
+「从池里选一个 agent」这个动作，正是把身份从话题解绑 —— 产品侧和代码侧想到的是同一件事。
+地基也已经有一半：`expert_roles` / `custom_roles` 两张表（§12.2）、roster 本来就支持多个 agent 座位
+（`agent_handles()` 返回列表，注释写着 "a room may host more than one 芝士"）。
+
+**③ 前半句对（每个话题一个独立 session），后半句必须改：记忆要跟 agent 走，不能跟 session 走。**
+
+buzz 就是这么做的，而且证据在加密方式里：engram 事件由 **agent 自己的密钥签名**，
+用 `conversation_key(agent_secret, owner_pubkey)` 加密，`d_tag = HMAC(K_c, slug)`
+—— **整条链里没有 channel**。同一个 agent 在所有频道共享同一份记忆。
+`SessionState.core_sections`（`channel_id → 渲染好的 core`）只是**渲染缓存**
+（注释：session 创建时填一次、中途不刷新），不是「每个频道一份记忆」。
+
+为什么这一条不能含糊：**如果记忆在 session 内管理，记忆就绑在 (agent, 话题) 上，
+那 agent 池立刻失去意义** —— 同一个 agent 被派去做两件事，两边学到的东西互不知道，
+它就不是「同一个 agent」，只是「同一份出厂设置的两个副本」。
+而这正是我们今天已经踩到的坑（§1.3），③ 的后半句等于把这个坑固化成设计。
+
+**「良性循环」恰恰要求记忆跨话题**：agent 在 A 话题学到「这个项目的 CI 要跑十几分钟」，
+在 B 话题就该知道。记忆锁在 session 里，循环就断在话题边界上。
+
+正确的形状：
+
+```
+agent（池里的一个身份）
+ ├─ 出厂设置：harness / skills / mcp / model / effort   ← 创建时定，可改版
+ ├─ 记忆：跟身份走，跨它所在的所有话题累积            ← 不跟 session
+ └─ session：每个 (agent, 话题) 一个，可丢可重建       ← 用完即弃
+```
+
+### 12.5 修正我上一轮关于 MCP 的判断
+
+§12.3 里我写「不建议抄 MCP 配置，我们的工具是内置的」。**那是在「只有一个芝士」的前提下说的，
+前提变了，结论要改**：一旦有 agent 池，不同类型的 agent 本来就需要不同的外部工具
+（一个连飞书、一个连数据库、一个只读代码），per-agent MCP 就有了意义。
+Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的配置。
+
+### 12.6 三件要一起想清楚的
+
+1. **harness 要下沉到 agent 级。** 现在 `settings.agent_backend`（tmux / device / sdk）是**全局**的，
+   不是 per-agent。「每个 agent 自己的 harness 工程」意味着这个选择要跟着 agent 走。
+2. **谁是主体：agent 订阅房间，还是房间邀请 agent？** buzz 是前者（persona frontmatter 里
+   `subscribe: ["#security-reviews"]`，agent 主动订阅频道）；「建话题时弹窗选」是后者。
+   后者更贴合我们「话题＝群聊」的产品直觉，但要想清楚：**弹窗选的是初始值，后面还能不能加/换**
+   （roster 支持多 agent，所以技术上能）。
+3. **session 数量的生命周期又回来了。** ③ 意味着 session 数 = 房间数 × 该房间里的 agent 数，
+   叠加「容器不回收」就是只涨不跌。buzz 一个进程的并发 session 上限是 8。
+   所以 §2.4 那条「主动轮换 session」不能一直搁置 —— 不是现在做，但要记在账上。
+
+### 12.7 和正在跑的那件活是配套的
+
+「容器按房间分配」那件活正在做的事情之一，就是**把 `CHEESE_TOPIC` / `CHEESE_TOKEN` 从容器 env
+移到 per-session 注入**。那正是这套设计的地基：一个容器（房间）里跑多个 session
+（每个 agent × 每件活一个），恰好是 buzz 的形状（一个进程挂多个频道的 session）。
+所以这三条构想不需要等 —— 地基已经在铺了。
+
 ## 13. 核实依据
 
 本方案每一条「现状」都读过代码。核实过程、逐条证据、以及与 spec / fusion-design / accept-is-merge /
