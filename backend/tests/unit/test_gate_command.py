@@ -1,6 +1,7 @@
 """The gate command crosses only a constrained Docker argv boundary."""
 
 import subprocess
+import uuid
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -75,12 +76,16 @@ def test_worktree_is_mounted_where_the_agent_built_its_venv(
 
     seen: dict = {}
     monkeypatch.setattr(subprocess, "Popen", popen)
-    run_check_command(tmp_path, "true")
+    # A worktree named the way the platform names one, so the comparison below
+    # is against the sandbox's real answer for a real topic.
+    expected = sandbox_topic_workdir(uuid.uuid4())
+    worktree = tmp_path / Path(expected).name
+    worktree.mkdir()
+    run_check_command(worktree, "true")
 
-    expected = sandbox_topic_workdir(tmp_path.resolve().name)
     argv = seen["argv"]
     mount = argv[argv.index("--mount") + 1]
-    assert mount == f"type=bind,source={tmp_path.resolve()},target={expected}"
+    assert mount == f"type=bind,source={worktree.resolve()},target={expected}"
     assert argv[argv.index("--workdir") + 1] == expected
 
 

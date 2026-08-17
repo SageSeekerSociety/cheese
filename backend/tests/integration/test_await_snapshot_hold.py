@@ -99,7 +99,7 @@ def _head_commit(project: uuid.UUID, topic: uuid.UUID) -> str:
 def _worktree_with_committed_fix(project: uuid.UUID, topic: uuid.UUID):
     """A topic whose finished work (the fix) is already on the branch — the state
     the incident started from."""
-    wt = ws._ensure_worktree(project, ws.branch_for_topic(topic))
+    wt = ws._ensure_worktree(project, topic)
     (wt / "app.py").write_text("def load(path):\n" + FIX)
     ws.snapshot_worktree(project, topic, "修复 + 测试")
     assert FIX in _on_branch(project, topic, "app.py")

@@ -109,7 +109,7 @@ def test_clone_forks_transcript_onto_target(client, monkeypatch, tmp_path):
     dst_file = clone.transcript_file(
         dst_dir,
         new_sid,
-        cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(uuid.UUID(dst))),
+        cwd=ws.sandbox_topic_workdir(uuid.UUID(dst)),
     )
     assert dst_file.is_file()
     body = dst_file.read_text(encoding="utf-8")

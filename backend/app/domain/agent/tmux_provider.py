@@ -474,9 +474,9 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
         # mount is load-bearing (hardlinks cannot cross bind mounts) and what
         # it means for same-project isolation. The workdir is the topic's REAL
         # path under that mount, not a /work remap, for the same reason.
-        branch = ws.branch_for_topic(uuid.UUID(env["CHEESE_TOPIC"]))
+        topic_id = uuid.UUID(env["CHEESE_TOPIC"])
         project_mounts = ws.sandbox_project_mounts(
-            uuid.UUID(env["CHEESE_PROJECT"]), branch
+            uuid.UUID(env["CHEESE_PROJECT"]), topic_id
         )
         args = [
             "run",
@@ -496,7 +496,7 @@ class TmuxHooksProvider(HooksTurnProvider[str]):
             *_subscription_args(),
             *project_mounts,
             "-w",
-            ws.sandbox_topic_workdir(branch),
+            ws.sandbox_topic_workdir(topic_id),
         ]
         args += _cheese_cli_mount(env["SBX_SESSION"])
         args += [

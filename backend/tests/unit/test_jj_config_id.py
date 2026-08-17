@@ -48,8 +48,8 @@ def test_identity_survives_without_per_repo_config(project):
     """Dropping per-repo config must not cost the 芝士 authorship it carried —
     an empty author would quietly corrupt every snapshot's history."""
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     (wt / "hello.txt").write_text("hi\n", encoding="utf-8")
     ws._jj(wt, "commit", "-m", "work")  # noqa: SLF001
@@ -71,8 +71,8 @@ def test_jj_recovers_from_a_config_id_it_cannot_read(project):
     """The reported outage, reproduced: an unreadable config-id in the shared
     store used to fail EVERY jj call. The next call must clear it and succeed."""
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     poisoned = _config_id(repo)
     poisoned.write_text("7dedcf902b99dde332d6", encoding="utf-8")
@@ -91,8 +91,8 @@ def test_new_topics_still_start_after_the_store_is_poisoned(project):
     poisoned.write_text("7dedcf902b99dde332d6", encoding="utf-8")
     os.chmod(poisoned, 0o000)
 
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     assert (wt / ".jj").exists()
     assert not poisoned.exists()
@@ -115,8 +115,8 @@ def test_an_undeletable_config_id_reports_the_real_cause(project, monkeypatch):
     """When the store itself is not writable the repair cannot run, and the user
     must not be told the AI service failed. Name the file and the fix."""
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     poisoned = _config_id(repo)
     poisoned.write_text("7dedcf902b99dde332d6", encoding="utf-8")
