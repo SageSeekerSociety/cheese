@@ -39,14 +39,20 @@ const props = withDefaults(
     workingSince?: number | null
     // Project topics (A2): 文档 resolves live-ref badges and <#id> chips with it.
     topicList?: Topic[]
+    // Which tab the URL asks for (`?tab=`). The address is the page's business,
+    // so TopicView owns it and this component only reports its own moves — that
+    // keeps the panel mountable without a router, which is how its four suites
+    // exercise it. An unknown or absent value leaves the choice here.
+    tab?: string
   }>(),
-  { worklog: () => [], working: false, workingSince: null, topicList: () => [] }
+  { worklog: () => [], working: false, workingSince: null, topicList: () => [], tab: undefined }
 )
 
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'comment-intent', payload: { anchorId: string | null; quote: string }): void
+  (e: 'update:tab', key: string): void
 }>()
 
 type TabKey = 'doc' | 'site' | 'changes' | 'preview'
@@ -61,14 +67,36 @@ const ALL_TABS: TabDef[] = [
   { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
   { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
 ]
-const tab = ref<TabKey>('doc')
+const active = ref<TabKey>('doc')
+
+/** The URL's answer, if it names a tab that exists. */
+function tabFromUrl(): TabKey | null {
+  const asked = props.tab
+  return ALL_TABS.some((t) => t.key === asked) ? (asked as TabKey) : null
+}
+
+// Every move the panel makes goes through here, so the address always says what
+// is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
+function setTab(key: TabKey) {
+  active.value = key
+  emit('update:tab', key)
+}
+
+// Back / forward, or someone pasting a link into the open topic.
+watch(
+  () => props.tab,
+  () => {
+    const asked = tabFromUrl()
+    if (asked && asked !== active.value) active.value = asked
+  }
+)
 
 // A tab mounts the first time it is selected and then stays mounted — which is
 // what the drawer effectively did with its state (openPath, expanded folders,
 // the transcript all survived a close/open). 文档 is mounted from the start
 // because it is the default tab and its editor is expensive to rebuild.
 const mounted = ref<Set<TabKey>>(new Set<TabKey>(['doc']))
-watch(tab, (k) => {
+watch(active, (k) => {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 })
 
@@ -125,7 +153,7 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
   // Opening a topic must not greet the reader with a dot for something that was
   // already there before they arrived, and a poll while 预览 is open is looking
   // at it.
-  if (opts.seen || tab.value === 'preview') markPreviewSeen(id)
+  if (opts.seen || active.value === 'preview') markPreviewSeen(id)
   else previewLatest.value = id
 }
 
@@ -158,7 +186,7 @@ function tabIsOffered(key: TabKey): boolean {
   // The tab you are ON never disappears from under you. A topic whose changes
   // just merged, or whose preview 芝士 retracted, would otherwise close the
   // thing you were reading — the same rule as 「信号上 Tab，不抢占视图」.
-  if (key === tab.value) return true
+  if (key === active.value) return true
   if (key === 'doc') return true
   // 现场 is where 芝士 works: it is there once the topic has run, and from the
   // first moment of the first turn (before the session id is captured).
@@ -172,12 +200,14 @@ const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
 // tab 栏教不了任何东西，只是一条占着 33px 的横线。
 const showTabBar = computed(() => tabs.value.length > 1)
 
-// Topic switch: back to 文档, and baseline the dot against whatever this topic
-// already had so opening a topic never greets you with a hint for old work.
+// Topic switch: the address decides, 文档 when it says nothing. Baseline the dot
+// against whatever this topic already had, so opening a topic — including
+// straight onto 预览 from someone's link — never greets you with a hint for work
+// that was there before you arrived.
 watch(
   () => props.topic?.id,
   (id) => {
-    tab.value = 'doc'
+    active.value = tabFromUrl() ?? 'doc'
     markPreviewSeen(null)
     summary.value = { changedFiles: [], hasRun: false }
     if (id) {
@@ -190,15 +220,15 @@ watch(
 
 // ---- The panel's outward API (TopicView holds a ref) ----
 function pulse() {
-  tab.value = 'doc'
+  setTab('doc')
   void nextTick(() => docRef.value?.pulse())
 }
 function highlightTurn(turnId: string) {
-  tab.value = 'doc'
+  setTab('doc')
   void nextTick(() => docRef.value?.highlightTurn(turnId))
 }
 async function openFile(path: string) {
-  tab.value = 'changes'
+  setTab('changes')
   await nextTick()
   await changesRef.value?.openFile(path)
 }
@@ -225,10 +255,10 @@ defineExpose({ pulse, highlightTurn, openFile, refreshComments })
           type="button"
           role="tab"
           class="tabbar__tab"
-          :class="{ 'tabbar__tab--on': tab === t.key }"
-          :aria-selected="tab === t.key"
+          :class="{ 'tabbar__tab--on': active === t.key }"
+          :aria-selected="active === t.key"
           :title="t.key === 'preview' && previewHasNew ? `${t.label}（有新内容）` : t.label"
-          @click="tab = t.key"
+          @click="setTab(t.key)"
         >
           <v-icon size="16">{{ t.icon }}</v-icon>
           {{ t.label }}
@@ -240,7 +270,7 @@ defineExpose({ pulse, highlightTurn, openFile, refreshComments })
 
       <div class="tabbody">
         <PanelDoc
-          v-show="tab === 'doc'"
+          v-show="active === 'doc'"
           ref="docRef"
           :topic="topic"
           :activity-tick="activityTick"
@@ -252,28 +282,28 @@ defineExpose({ pulse, highlightTurn, openFile, refreshComments })
         />
         <PanelSite
           v-if="mounted.has('site')"
-          v-show="tab === 'site'"
+          v-show="active === 'site'"
           :topic="topic"
           :worklog="worklog"
           :working="working"
           :working-since="workingSince"
-          :active="tab === 'site'"
+          :active="active === 'site'"
         />
         <PanelChanges
           v-if="mounted.has('changes')"
-          v-show="tab === 'changes'"
+          v-show="active === 'changes'"
           ref="changesRef"
           :topic-id="topicId"
           :project-id="projectId"
-          :active="tab === 'changes'"
+          :active="active === 'changes'"
           :refresh-tick="refreshTick"
         />
         <PanelPreview
           v-if="mounted.has('preview')"
-          v-show="tab === 'preview'"
+          v-show="active === 'preview'"
           :topic-id="topicId"
           :project-id="projectId"
-          :active="tab === 'preview'"
+          :active="active === 'preview'"
           :refresh-tick="refreshTick"
           @loaded="markPreviewSeen"
         />

@@ -2,7 +2,7 @@
 import type { ChatAttachment, Topic } from '@/cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { addComment, attachmentRawUrl } from '@/api'
 import ChatPanel from '@/components/ChatPanel.vue'
@@ -23,7 +23,22 @@ defineOptions({ name: 'TopicView' })
 
 const props = defineProps<{ projectId: string; topicId: string }>()
 const router = useRouter()
+const route = useRoute()
 const store = useWorkspaceStore()
+
+// 「你在看什么」进 URL (提案 A): which tab of the work panel is open, so
+// 「你来看一眼这个 diff」 is a link someone can send. The panel reports its own
+// moves; the address is this page's business, not the panel's.
+const panelTab = computed(() => {
+  const q = route.query.tab
+  return typeof q === 'string' ? q : undefined
+})
+function onPanelTab(key: string) {
+  if (panelTab.value === key) return
+  // replace, not push: a tab is where you are looking, not somewhere you went.
+  // Pushing would make Back walk the tabs instead of leaving the topic.
+  void router.replace({ query: { ...route.query, tab: key } })
+}
 
 const AUTHOR = myHandle()
 
@@ -445,9 +460,11 @@ watch(
           :working="working"
           :working-since="workingSince"
           :topic-list="store.topics"
+          :tab="panelTab"
           @open-topic="openTopic"
           @mention-click="handleMentionClick"
           @comment-intent="onCommentIntent"
+          @update:tab="onPanelTab"
         />
       </div>
 

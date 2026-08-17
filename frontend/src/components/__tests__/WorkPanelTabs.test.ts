@@ -249,6 +249,49 @@ describe('工作面板 · Tab 容器', () => {
     expect(visible(container, '.panel-changes')).toBe(true)
   })
 
+  // 「你在看什么」进 URL：面板只报告自己的动作，地址由 TopicView 持有——所以这里
+  // 钉的是那份合同的两半（收 tab、发 update:tab），不是路由本身。
+  it('地址点名了 tab 就开在那个 tab 上，不是文档', async () => {
+    const { container } = mountPanel('topic-A', { tab: 'changes' })
+    await flush()
+
+    expect(visible(container, '.panel-changes')).toBe(true)
+    expect(visible(container, '.doc')).toBe(false)
+  })
+
+  it('地址给的 tab 不认识就退回文档，不是空面板', async () => {
+    const { container } = mountPanel('topic-A', { tab: '资源' })
+    await flush()
+    expect(visible(container, '.doc')).toBe(true)
+  })
+
+  it('切 tab 会把新的 tab 报出去，地址才跟得上', async () => {
+    const { container, emitted } = mountPanel()
+    await flush()
+    await openTab(container, '改动')
+
+    expect(emitted()['update:tab']).toContainEqual(['changes'])
+  })
+
+  it('从别处打开一个文件也算换 tab，一样报出去', async () => {
+    getDoc.mockResolvedValue({ content: '详见 <&a.py> 这个文件\n' })
+    const { container, emitted } = mountPanel()
+    await flush()
+
+    await fireEvent.click(container.querySelector<HTMLElement>('.doc-editor .mention.file-ref')!)
+    await flush()
+
+    expect(emitted()['update:tab']).toContainEqual(['changes'])
+  })
+
+  it('直接开在预览上，不会顶着一个「有新内容」的提示', async () => {
+    getPreview.mockResolvedValue({ kind: 'file', path: 'r.html', mime: 'text/html', artifact_id: 'a1' })
+    const { container } = mountPanel('topic-A', { tab: 'preview' })
+    await flush()
+
+    expect(tabButton(container, '预览').getAttribute('title')).toBe('预览')
+  })
+
   it('换话题回到文档 tab（旧行为：切话题会把抽屉关掉）', async () => {
     const { container, rerender } = mountPanel('topic-A')
     await flush()
