@@ -423,6 +423,54 @@ subagent 的返回只回到 spawner 的上下文里。
 判据从「任务大小」换成一句可判定的话：**它的结论要不要被别人看见、要不要能被中途纠正？**
 要 → 卡；不要 → subagent + 结论回吐。
 
+### 9.1 母子共用一个容器（@fulu 2026-08-17 提议）：可行，而且是配套的必需项
+
+**先说最大的意外：文件可见性早就不是障碍了。** `sandbox_project_mounts`
+（<&backend/app/domain/workspace/service.py>）的 Isolation note 原话：
+
+> every topic sandbox of a project **sees (and can write) its sibling topics' worktrees**.
+> That is not a new trust boundary — the same containers already share the project's writable
+> `.jj`/`.git` stores, so **same-project topics were never isolated from each other**.
+
+因为 hardlink 不能跨 bind mount（jj 的 store 用硬链接），所以它是**一个 mount 挂整棵**
+`.worktrees/<project_id>/` 树。也就是说：**子话题的工作区此刻就已经在母话题的容器里**，
+共用容器不需要新开任何访问权限，同项目话题之间本来就没有隔离。
+
+**真正 per-topic、必须改的只有四样**：
+
+| 现在按话题定死的东西 | 改成 |
+|---|---|
+| 容器名 `container_name(topic_id)` | 按**房间** id 命名 |
+| 工作目录（`/work` 这个固定 remap） | 树里的真实路径（`SANDBOX_TOPICS_ROOT/topic_<hex>`，已经在容器里） |
+| **容器 env 里烤着的 `CHEESE_TOPIC` + `CHEESE_TOKEN`** | 移到**每个 tmux session 的环境**（tmux 原生支持 per-session env） |
+| `/home/node/.claude`（session 目录挂载） | 挂上一层，容纳同房间多个话题 |
+
+第三行是主要工作量，但它**顺带修掉一个已知故障**：`_hook_token_dead` 的 docstring 记着——
+token 是容器创建时烤进 env 的、永不刷新，而签名密钥在部署没钉 `SANDBOX_TOKEN` 时是
+**每个后端进程一个随机值**，于是**后端每重启一次，所有存量容器的 hook token 同时失效**，
+话题从此再也不能回话（现在靠"发现聋了就重建容器"兜底，代价是丢掉 tmux session）。
+改成 per-session 注入之后，这个 bug 自然消失。
+
+**最重要的判断：共用容器不是省钱的优化，而是「容器不回收」这条决定的必要前提。**
+
+- 不回收 ＋ 每话题一个容器 ⇒ 容器数只涨不跌，× 2GB，**先崩的是内存**；
+- 不回收 ＋ 每房间一个容器 ⇒ 容器数跟着**房间数**走，而房间数是人的数量级。
+
+这两条决定是配套的，应该一起做，不该分开评估。
+
+**要接受的三个代价**：
+
+1. **资源共享**：一个容器 `--memory 2g --cpus 2` 现在要服务整个房间。本项目 `pnpm run build`
+   单独就能吃满 2GB（实测 OOM）。所以**共用的同时必须提配额**——建议按房间给 4–6GB / 4 CPU，
+   否则「并行拆三个子话题」会变成互相挤。
+2. **故障域合并**：一个话题把容器 OOM 掉，同房间其他话题一起死。今天它们是隔离的。
+3. **jj 撞锁概率上升**：共享 store 今天就有，但同容器内并发更容易撞。
+
+**推荐的分配规则**：容器的身份从 `topic_id` 换成**房间 id**（root/topic 那一层），
+母话题和它派出的所有 task 共用一个。规则明确，不需要「看情况共用」。
+后续如果峰值确实挤，可以再加一条「跑全量测试/构建这种重活时临时独占一个容器」——
+但那是优化，不是第一版。
+
 ## 10. 核实依据
 
 本方案每一条「现状」都读过代码。核实过程、逐条证据、以及与 spec / fusion-design / accept-is-merge /
