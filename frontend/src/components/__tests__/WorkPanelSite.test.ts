@@ -1,4 +1,4 @@
-/** 现场 panel: it must open at the NEWEST entry, not the oldest.
+/** 现场 tab: it must open at the NEWEST entry, not the oldest.
  *
  * 现场 是施工日志 —— 打开它是为了看"刚刚发生了什么"。时间线按时间正序渲染
  * (和聊天一样，最早的在最上面)，所以"最新"就是滚动容器的底部。历史行为是停在
@@ -48,7 +48,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import DocPanel from '../DocPanel.vue'
+import WorkPanel from '../WorkPanel.vue'
 
 /** Whatever the layout would have been — only "did it go to the bottom" matters. */
 const SCROLL_HEIGHT = 4321
@@ -71,7 +71,7 @@ function block(id: string, content: string): Block {
 
 function mountPanel(id: string) {
   const vuetify = createVuetify({ components, directives })
-  return render(DocPanel, {
+  return render(WorkPanel, {
     props: { topic: topic(id), activityTick: 0 },
     global: { plugins: [vuetify] },
   })
@@ -86,16 +86,16 @@ function buttons(container: Element): HTMLButtonElement[] {
   return Array.from(container.querySelectorAll('button'))
 }
 
-async function openTool(container: Element, label: string) {
-  const btn = buttons(container).find((b) => b.getAttribute('title')?.includes(label))
-  expect(btn, `找不到 ${label} 工具按钮`).toBeTruthy()
+async function openTab(container: Element, label: string) {
+  const btn = buttons(container).find((b) => b.getAttribute('title') === label)
+  expect(btn, `找不到 ${label} tab`).toBeTruthy()
   await fireEvent.click(btn!)
   await flush()
 }
 
-function scrollBox(container: Element): HTMLElement {
-  const el = container.querySelector<HTMLElement>('.tool-content')
-  expect(el, '找不到抽屉的滚动容器').toBeTruthy()
+function scrollBox(container: Element, selector: string): HTMLElement {
+  const el = container.querySelector<HTMLElement>(selector)
+  expect(el, `找不到 ${selector} 滚动容器`).toBeTruthy()
   return el!
 }
 
@@ -135,18 +135,18 @@ describe('现场面板', () => {
   it('打开现场，停在最新的一条(底部)，而不是最早的那条', async () => {
     const { container } = mountPanel('topic-A')
     await flush()
-    await openTool(container, '现场')
+    await openTab(container, '现场')
 
     expect(container.textContent).toContain('最新的一条')
-    expect(scrollBox(container).scrollTop).toBe(SCROLL_HEIGHT)
+    expect(scrollBox(container, '.panel-site').scrollTop).toBe(SCROLL_HEIGHT)
   })
 
-  it('只有现场这样开在末尾，别的面板照旧从头看', async () => {
+  it('只有现场这样开在末尾，别的 tab 照旧从头看', async () => {
     const { container } = mountPanel('topic-A')
     await flush()
-    await openTool(container, 'Git')
+    await openTab(container, '改动')
 
-    expect(scrollBox(container).scrollTop).toBe(0)
+    expect(scrollBox(container, '.changes-scroll').scrollTop).toBe(0)
   })
 
   // 参数预览那一行是 white-space: pre-wrap 的，所以模板里的换行和缩进会被原样
@@ -165,7 +165,7 @@ describe('现场面板', () => {
     })
     const { container } = mountPanel('topic-A')
     await flush()
-    await openTool(container, '现场')
+    await openTab(container, '现场')
 
     const arg = container.querySelector('[data-testid="site-act-arg"]')
     expect(arg, '找不到参数预览').toBeTruthy()

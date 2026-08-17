@@ -61,7 +61,7 @@ function renderMarkdown(text: string): string {
 
 // ---- 章程: the root topic's living doc (改了就等于给芝士下指令). The rich
 // editor (DocEditor) owns loading/saving the doc's markdown via the same
-// getDoc/putDoc API DocPanel uses. Like the workspace DocPanel, it is ALWAYS
+// getDoc/putDoc API PanelDoc uses. Like the workspace PanelDoc, it is ALWAYS
 // editable and autosaves (debounce + ⌘S + blur) — no 编辑 toggle. Here we only
 // mirror the save-status indicator it emits. ----
 const rootTopicId = ref<string | null>(null)
