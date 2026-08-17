@@ -23,7 +23,7 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import gate_sweep
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
 
@@ -35,12 +35,12 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
+        "/topics", json={"project_id": project_id, "title": "做一个东西"}
     ).json()["data"]["id"]
 
 
@@ -80,20 +80,24 @@ def _orphan_card(client) -> tuple[str, str]:
 
 
 def _latest_card(client, topic_id: str) -> dict:
-    cards = client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
+    cards = client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
     assert cards
     return cards[0]
 
 
 def _file_card(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
 
 
 def _sweep(client) -> dict:
-    r = client.post("/api/admin/scheduler/sweep-abandoned-gates")
+    r = client.post("/admin/scheduler/sweep-abandoned-gates")
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -113,7 +117,7 @@ def _blocks_text(client, topic_id: str) -> str:
     正文里，它在 `meta.detail`（前端折叠展示，芝士照样从 API 读全量）。所以断言
     「说没说这句话」必须把两半都算上 —— 见 `tests/integration/conftest.room_text`。
     """
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return room_text(blocks)
 
 
@@ -164,7 +168,7 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
     text = ""
     deadline = time.time() + 10
     while time.time() < deadline:
-        wait_turns_idle()
+        wait_work_idle()
         text = _blocks_text(client, tid)
         if "闸门没跑完" in text:
             break
@@ -202,7 +206,7 @@ def _void(client, card_id: str, handle: str | None = None, note: str = "", **kw)
     if handle is not None:
         headers.update(session_auth_headers(handle))
     return client.post(
-        f"/api/accept-cards/{card_id}/void", json={"note": note}, headers=headers, **kw
+        f"/accept-cards/{card_id}/void", json={"note": note}, headers=headers, **kw
     )
 
 
@@ -236,13 +240,13 @@ def test_void_puts_the_card_in_a_terminal_state_never_back_to_pending(client):
     # 终态：不能被采纳，也不能被驳回。
     assert (
         client.post(
-            f"/api/accept-cards/{card_id}/accept", json={"decided_by": "alice"}
+            f"/accept-cards/{card_id}/accept", json={"decided_by": "alice"}
         ).status_code
         == 422
     )
     assert (
         client.post(
-            f"/api/accept-cards/{card_id}/reject", json={"decided_by": "alice"}
+            f"/accept-cards/{card_id}/reject", json={"decided_by": "alice"}
         ).status_code
         == 422
     )
@@ -250,10 +254,10 @@ def test_void_puts_the_card_in_a_terminal_state_never_back_to_pending(client):
 
 def test_project_lead_can_void_but_an_ordinary_member_cannot(client):
     tid, card_id = _orphan_card(client)
-    pid = client.get(f"/api/topics/{tid}").json()["data"]["project_id"]
+    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
     for handle, role in (("lead-user", "lead"), ("member-user", "member")):
         r = client.post(
-            f"/api/projects/{pid}/members", json={"user_handle": handle, "role": role}
+            f"/projects/{pid}/members", json={"user_handle": handle, "role": role}
         )
         assert r.status_code == 200
 
@@ -267,7 +271,7 @@ def test_project_lead_can_void_but_an_ordinary_member_cannot(client):
 
 def test_void_requires_a_logged_in_human(client):
     tid, card_id = _orphan_card(client)
-    pid = client.get(f"/api/topics/{tid}").json()["data"]["project_id"]
+    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
 
     # 匿名（全局 sandbox token 仍在，证明它不足以顶一个身份）。
     client.headers.pop("Authorization")
@@ -287,15 +291,17 @@ def test_void_rejects_a_card_that_is_already_settled(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     r = client.post(
-        f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        f"/topics/{tid}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
     )
     card = r.json()["data"]
     assert card["status"] == "pending"
 
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
-    )
+    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
     assert r.status_code == 200
 
     r = _void(client, card["id"], "alice")

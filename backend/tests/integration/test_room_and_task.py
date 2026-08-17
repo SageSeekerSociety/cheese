@@ -10,13 +10,13 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def _room(client, project_id: str, title: str = "运维") -> str:
     """A child of the project root — a place you talk in."""
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": title, "created_by": "alice"},
     )
     assert r.status_code == 200
@@ -26,7 +26,7 @@ def _room(client, project_id: str, title: str = "运维") -> str:
 def _task(client, project_id: str, room_id: str, title: str) -> dict:
     """A child of a room — one piece of work."""
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={
             "project_id": project_id,
             "title": title,
@@ -40,11 +40,15 @@ def _task(client, project_id: str, room_id: str, title: str) -> dict:
 
 def _accept(client, topic_id: str) -> None:
     card = client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
     ).json()["data"]
     r = client.post(
-        f"/api/accept-cards/{card['id']}/accept",
+        f"/accept-cards/{card['id']}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -52,13 +56,13 @@ def _accept(client, topic_id: str) -> None:
 
 
 def _status(client, topic_id: str) -> str:
-    return client.get(f"/api/topics/{topic_id}").json()["data"]["status"]
+    return client.get(f"/topics/{topic_id}").json()["data"]["status"]
 
 
 def test_work_inside_a_room_is_a_task_not_a_nested_room(client):
     project_id = _project(client)
     room_id = _room(client, project_id)
-    assert client.get(f"/api/topics/{room_id}").json()["data"]["kind"] == "topic"
+    assert client.get(f"/topics/{room_id}").json()["data"]["kind"] == "topic"
     assert _task(client, project_id, room_id, "修登录")["kind"] == "task"
 
 
@@ -67,6 +71,11 @@ def test_accepting_a_task_leaves_its_room_open(client):
 
     Before tasks existed, this accept archived the only object there was, and
     the room, its roster and its history went with it.
+
+    Since #442 decision 1 the accept doesn't archive the task either: it marks
+    it delivered (`accepted_at`) and stops. 「这件事做完了」lives on the card;
+    putting the row away is a person's decision, and often nobody needs to —
+    the follow-up conversation happens right there.
     """
     project_id = _project(client)
     room_id = _room(client, project_id)
@@ -74,7 +83,9 @@ def test_accepting_a_task_leaves_its_room_open(client):
 
     _accept(client, task["id"])
 
-    assert _status(client, task["id"]) == "archived"
+    delivered = client.get(f"/topics/{task['id']}").json()["data"]
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     assert _status(client, room_id) == "active"
 
 
@@ -101,7 +112,7 @@ def test_archiving_the_room_still_takes_its_tasks(client):
     room_id = _room(client, project_id)
     task = _task(client, project_id, room_id, "修登录")
 
-    r = client.post(f"/api/topics/{room_id}/archive", json={"by": "alice"})
+    r = client.post(f"/topics/{room_id}/archive", json={"by": "alice"})
     assert r.status_code == 200
 
     assert _status(client, room_id) == "archived"

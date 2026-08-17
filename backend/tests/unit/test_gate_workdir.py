@@ -2,9 +2,9 @@
 
 这不是洁癖，是闸门能不能跑起来的唯一条件。`uv`/`pip` 生成的 console script
 （pyright、pytest、alembic）会把自己 venv 的**绝对路径**烤进 shebang。分身的沙箱
-把工作树跑在 `/topics/<branch>`（tmux_provider 里写着「the topic's REAL path
+把工作树跑在 `/topics/topic_<hex8>`（tmux_provider 里写着「the topic's REAL path
 under that mount, not a /work remap」——硬链接不能跨 bind mount），所以那些脚本
-的第一行指向 `/topics/<branch>/.venv/bin/python`。闸门要是把同一份工作树挂到
+的第一行指向 `/topics/topic_<hex8>/.venv/bin/python`。闸门要是把同一份工作树挂到
 `/work`，这行路径在容器里就不存在，`.venv/bin/pyright` 直接 exec 失败。
 
 坏就坏在它**不响**：闸门照样启动，ruff 照样 PASS（原生二进制，没有 shebang），
@@ -20,8 +20,6 @@ under that mount, not a /work remap」——硬链接不能跨 bind mount），�
 import uuid
 from pathlib import Path
 
-import pytest
-
 from app.domain.workspace.service import (
     SANDBOX_TOPICS_ROOT,
     _worktree_path,
@@ -30,25 +28,18 @@ from app.domain.workspace.service import (
 )
 
 
-@pytest.mark.parametrize(
-    "branch",
-    [
-        "topic_bdf6626e",
-        "topic/bdf6626e",  # 带斜杠的分支名，两边都要折成下划线
-        "topic_bdf6626e-d3be-400a-b352-ac598b91959b",
-        "feature/a/b/c",
-    ],
-)
-def test_the_gate_lands_on_the_exact_path_the_sandbox_used(branch: str):
+def test_the_gate_lands_on_the_exact_path_the_sandbox_used():
     """闸门算出来的容器内路径，必须和沙箱的工作目录逐字相同。
 
     差一个字符，venv 里所有 console script 的 shebang 就都指不到东西。
     """
     project_id = uuid.uuid4()
 
-    assert gate_workdir_for(_worktree_path(project_id, branch)) == (
-        sandbox_topic_workdir(branch)
-    )
+    for _ in range(4):  # 目录名由话题 id 派生，多取几个 id 免得撞上巧合
+        topic_id = uuid.uuid4()
+        assert gate_workdir_for(_worktree_path(project_id, topic_id)) == (
+            sandbox_topic_workdir(topic_id)
+        )
 
 
 def test_the_gate_path_lives_under_the_topics_mount():

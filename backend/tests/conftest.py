@@ -76,7 +76,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB
 os.environ["CHEESEX_TEST_NULLPOOL"] = "1"
 
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
-from app.api.deps import get_broker, get_chat_service, get_turn_runner  # noqa: E402
+from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
@@ -98,15 +98,15 @@ settings.memory_backend = "db"
 settings.authz_enforce_topic_access = True
 
 
-def wait_turns_idle() -> None:
+def wait_work_idle() -> None:
     """Block until background turns (e.g. the 分身 kickoff a /split submits)
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test truncates, the test flakes.
     Returns as soon as they're idle; the generous ceiling only matters under heavy
     parallel/external load, when a turn can take much longer than usual."""
-    runner = get_turn_runner()
+    runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
-        if runner.active_turns() == 0:
+        if runner.active_work_count() == 0:
             return
         time.sleep(0.01)
 
@@ -229,7 +229,7 @@ def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
         yield c
         # Drain background turns BEFORE leaving the TestClient context:
         # disposing the engine under a running kickoff turn makes flakes.
-        wait_turns_idle()
+        wait_work_idle()
 
     app.dependency_overrides.clear()
     asyncio.run(engine.dispose())
@@ -540,6 +540,83 @@ def seed_space(client: TestClient, name: str = "信院") -> int:
             session.add(space)
             await session.flush()
             holder["id"] = space.id
+            await session.commit()
+
+    _asyncio.run(_seed())
+    return holder["id"]
+
+
+def seed_task_with_protocol(
+    client: TestClient,
+    *,
+    conditions: list[dict] | None = None,
+    resource_pack: dict | None = None,
+    default_role: str | None = None,
+    override: dict | None = None,
+    space_id: int | None = None,
+) -> int:
+    """A 项目集 carrying 机构协议 + one 赛题 under it; returns the 赛题's int id.
+
+    Seeded through the DB because the 知是 publish flow needs an authenticated
+    space admin and a filled form, and none of that is what the protocol tests
+    are about. `override` populates the 赛题's own `protocol_override` (#370
+    option (c)).
+    """
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.space.models import Space, SpaceCategory
+    from app.domain.task.models import Task
+
+    holder: dict[str, int] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            now = datetime.now(UTC)
+            owning_space = space_id
+            if owning_space is None:
+                space = Space(
+                    name=f"信院-{datetime.now(UTC).timestamp()}",
+                    intro="",
+                    description="",
+                    announcements=[],
+                    task_templates=[],
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(space)
+                await session.flush()
+                owning_space = space.id
+            category = SpaceCategory(
+                space_id=owning_space,
+                name="创研课 2026 秋",
+                description="",
+                display_order=0,
+                resource_pack=resource_pack or {},
+                conditions=conditions or [],
+                default_role=default_role,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(category)
+            await session.flush()
+            task = Task(
+                name="题目",
+                intro="",
+                description="",
+                protocol_override=override,
+                creator_id=1,
+                space_id=owning_space,
+                category_id=category.id,
+                submitter_type=0,
+                approved=0,
+                default_deadline=0,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(task)
+            await session.flush()
+            holder["id"] = task.id
             await session.commit()
 
     _asyncio.run(_seed())

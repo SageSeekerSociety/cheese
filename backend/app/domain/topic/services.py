@@ -7,6 +7,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 
 import difflib
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import overload
 
@@ -27,6 +28,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.services import AcceptService
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import (
     SortOrder,
@@ -143,6 +145,20 @@ def _stall_block_summary(block: Block | None) -> dict | None:
     }
 
 
+@dataclass(frozen=True)
+class TopicRelevance:
+    """What a topic is to one particular person (与我的相关性, C2).
+
+    See ``TopicOut.i_participate``/``awaits_me`` for the field-level contract.
+    Two booleans instead of one enum so that "am I involved" and "is it on my
+    desk" stay separable: the sidebar folds on the first and overrides that
+    fold on the second.
+    """
+
+    i_participate: bool = False
+    awaits_me: bool = False
+
+
 class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -150,6 +166,15 @@ class TopicService:
         self._projects = ProjectRepository(session)
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
+        # 与我的相关性 asks three other domains the same question at once, and
+        # asks each through its own service — the roster, the accept cards and
+        # the @-notifications each decide for themselves what "mine" means.
+        self._cards = AcceptService(session)
+        self._alerts = AlertService(session)
+
+    async def get(self, topic_id: uuid.UUID) -> Topic | None:
+        """Return one topic for cross-domain service callers."""
+        return await self._repo.get(topic_id)
 
     async def create(
         self,
@@ -309,6 +334,50 @@ class TopicService:
         self, topic_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         return await self._repo.last_activity_for_topics(topic_ids)
+
+    async def relevance_for_topics(
+        self, topics: list[Topic], viewer_handle: str | None
+    ) -> dict[uuid.UUID, TopicRelevance]:
+        """{topic_id: 与我的相关性} for a batch of topics (C2).
+
+        THREE queries, whatever the batch size — one per way of being involved
+        that lives in another table (roster, accept cards, @-notifications).
+        Creation is the fourth way and costs nothing: ``created_by`` is already
+        on the rows the caller handed in. The list endpoint returns a whole
+        project at once, so a per-topic probe here would be a hundred round
+        trips to render a sidebar.
+
+        ``viewer_handle`` is passed IN rather than read from an auth context:
+        the caller resolved the actor at the trust boundary, and a service that
+        went looking for the request's identity would be unusable from anywhere
+        that has no request (the digest builders, tests, 分身 turns).
+        Anonymous/unknown callers relate to nothing — every topic comes back
+        with both booleans false, which is also the pre-C2 behaviour.
+        """
+        if viewer_handle is None or not topics:
+            return {}
+        topic_ids = [t.id for t in topics]
+        roster = await self._members.topic_ids_for_member(topic_ids, viewer_handle)
+        cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
+        mentions = await self._alerts.mention_topic_ids(topic_ids, viewer_handle)
+        relevance: dict[uuid.UUID, TopicRelevance] = {}
+        for topic in topics:
+            awaits = cards.get(topic.id, False) or mentions.get(topic.id, False)
+            participates = (
+                topic.id in roster
+                or topic.created_by == viewer_handle
+                or topic.id in cards
+                or topic.id in mentions
+            )
+            relevance[topic.id] = TopicRelevance(
+                # Being awaited is a way of being involved, so it implies
+                # participation: a card can be routed to someone who never
+                # opened the topic, and the whole point of `awaits_me` is that
+                # it must not end up folded away under 「其他话题」.
+                i_participate=participates or awaits,
+                awaits_me=awaits,
+            )
+        return relevance
 
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
@@ -694,7 +763,7 @@ class TopicService:
                 new_session_id=new_sid,
                 # Claude resolves --resume under the slug of the cwd it runs
                 # with, so the fork must land under the TARGET topic's workdir.
-                target_cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(target.id)),
+                target_cwd=ws.sandbox_topic_workdir(target.id),
             )
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
@@ -809,6 +878,29 @@ class TopicService:
                     node_type=node.node_type,
                     struct_order=order,
                 )
+
+    async def add_relay_block(
+        self, *, target: Topic, sender: Topic, label: str, text: str
+    ) -> Block:
+        """母子传话's message block (see `app.domain.topic.relay`).
+
+        Lives here, not in `relay.py`, for one reason: writing a Block from
+        another domain's repository is the debt `tests/unit/test_domain_import_
+        guard.py` ratchets down, and this service already carries that exemption.
+        Same authorship rule as `return_conclusion` below — the RECEIVING room's
+        芝士 is the author, because a message from someone who is not on that
+        roster reads as a ghost; `refs` links back to the sender.
+        """
+        author = await self._members.resolve_agent_handle(target.id)
+        return await self._blocks.add(
+            project_id=target.project_id,
+            topic_id=target.id,
+            author=author,
+            author_type=AuthorType.ai,
+            content=f"【{label}｜{sender.title}】\n{text}",
+            kind=BlockKind.message,
+            refs=[str(sender.id)],
+        )
 
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str

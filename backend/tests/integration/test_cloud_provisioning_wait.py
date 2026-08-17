@@ -17,11 +17,11 @@ from tests.integration.conftest import chat_ws_url
 
 
 def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_path):
-    project_id = client.post("/api/projects", json={"name": "Cloud wait"}).json()[
-        "data"
-    ]["id"]
+    project_id = client.post("/projects", json={"name": "Cloud wait"}).json()["data"][
+        "id"
+    ]
     topic_id = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "Boot", "created_by": "user-1"},
     ).json()["data"]["id"]
 

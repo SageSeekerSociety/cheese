@@ -23,14 +23,15 @@ approver's own token instead, so `GitHubAppTokens`'s write-mint stays solely
 `GitHubPRClient`'s concern.
 """
 
+import functools
 import logging
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 
@@ -1152,6 +1153,36 @@ class GitHubPRMergeBlocked(GitHubPRError):
     """The merge was refused because the PR is not mergeable (conflict)."""
 
 
+def _as_pr_error[**P, R](
+    fn: Callable[P, Awaitable[R]],
+) -> Callable[P, Coroutine[Any, Any, R]]:
+    """Translate a failure to *reach* GitHub into this module's own error.
+
+    Every caller already handles `GitHubPRError`; none of them handled a raw
+    `httpx.ConnectError`, so a DNS blip or a TLS handshake that never finished
+    came out of `pr_view` unchanged and became a 500 with a traceback in the room
+    (`/pr-checks` polls every few seconds, so it was a 500 every few seconds).
+    Unreachable is not a different KIND of failure from "GitHub said no" for
+    anyone upstream — it is the same "I could not learn the PR's state", and
+    that is what the error class already claims to mean.
+
+    Wrapping the whole method, not just the request, is deliberate: minting the
+    installation token (`GitHubAppTokens`) talks to GitHub too, so the network
+    can drop on that line just as easily as on the call after it.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return await fn(*args, **kwargs)
+        except httpx.RequestError as exc:
+            raise GitHubPRError(
+                f"GitHub unreachable ({type(exc).__name__}: {exc})"[:300]
+            ) from exc
+
+    return wrapper
+
+
 class GitHubPRClient:
     def __init__(
         self,
@@ -1178,6 +1209,7 @@ class GitHubPRClient:
             "Accept": "application/vnd.github+json",
         }
 
+    @_as_pr_error
     async def open_pr(
         self,
         *,
@@ -1241,6 +1273,7 @@ class GitHubPRClient:
                 f"PR creation failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )
 
+    @_as_pr_error
     async def pr_view(self, number: int) -> dict:
         token, _ = await self._tokens.write_token()
         async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
@@ -1253,6 +1286,7 @@ class GitHubPRClient:
             )
         return resp.json()
 
+    @_as_pr_error
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
         """Merge the PR using `settings.accept_pr_merge_method` — same reason
         as the 两阶段采纳 client above: this used to hardcode a merge commit,
@@ -1283,6 +1317,7 @@ class GitHubPRClient:
             f"PR merge failed (HTTP {resp.status_code}): {resp.text[:300]}"
         )
 
+    @_as_pr_error
     async def check_runs(self, ref: str) -> list[dict]:
         """Simplified check runs for a ref (branch name or sha) — display only.
 

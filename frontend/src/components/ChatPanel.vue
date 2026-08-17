@@ -45,6 +45,7 @@ import {
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
+import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
@@ -75,12 +76,15 @@ const props = withDefaults(
     defaultSummon?: boolean
     // Render a self-contained composer at the bottom (used when ChatPanel is
     // dropped in standalone, e.g. the 私聊 1:1 chat in the main area). For work
-    // topics WorkspaceView keeps its own spanning composer and leaves this off.
+    // topics TopicView keeps its own spanning composer and leaves this off.
     showComposer?: boolean
     // Show the GitHub-PR-style header (话题 = PR). Only real work topics are
     // PRs — the root topic (本体) and the 1:1 private chat are NOT, so they use
     // the plain chat header instead.
     prHeader?: boolean
+    // No header at all. 工作台 puts ONE topic header above both columns (see
+    // TopicHeader.vue), so the chat column must not draw a second one under it.
+    hideHeader?: boolean
     // Project roster (handle→name) so <@handle> mention tokens render as chips.
     members?: ProjectMemberRow[]
     // Project topics (id→title) so <#topicId> reference tokens render as chips.
@@ -93,6 +97,7 @@ const props = withDefaults(
     defaultSummon: false,
     showComposer: false,
     prHeader: false,
+    hideHeader: false,
     members: () => [],
     topicList: () => [],
     titleOverride: null,
@@ -582,9 +587,8 @@ function handleFrame(frame: WsServerFrame) {
       todoRestored.value = true
       break
     case 'done':
-      // `done` closes one request stream. A mid-turn merged message has its own
-      // done while the original turn remains active, so lifecycle markers own
-      // the running indicator whenever they are present.
+      // Mid-session messages fold into the existing Claude run and emit no
+      // separate completion frame. Lifecycle markers own the running indicator.
       if (activeTurnIds.value.size === 0) {
         awaitingReply.value = false
         todoRestored.value = true
@@ -688,7 +692,7 @@ async function loadTopic(topic: Topic) {
 }
 
 // Send a message. `summon` (= @芝士) asks 芝士 to reply; when false the message
-// is just posted (spec §7.1 默认不 @). The composer lives in WorkspaceView and
+// is just posted (spec §7.1 默认不 @). The composer lives in TopicView and
 // drives this via the exposed ref, so the input bar can span chat + doc.
 // B3: reply target — the message this next send threads under (reply_to).
 const replyTarget = ref<Block | null>(null)
@@ -820,23 +824,18 @@ function isRunStart(i: number): boolean {
   return prev.author !== cur.author || prev.author_type !== cur.author_type
 }
 
-// ---- Topic header state — product language, not git's (去 PR 化). The
-// branch/merge machinery is real underneath, but a normal user shouldn't
-// need to read git to know where a topic stands.
-const prShortId = computed(() => props.topic?.id.slice(0, 6) ?? '')
-const prState = computed(() => {
-  const s = props.topic?.status
-  if (s === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
-  if (s === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
-  return { label: '进行中', cls: 'pr-state--open' }
-})
+// ---- Topic header state. The labels live in lib/topicState.ts because the
+// 工作台's own topic header renders the same badge — one table, so the two can
+// never disagree about what `archived` is called.
+const prShortId = computed(() => topicShortId(props.topic?.id))
+const prState = computed(() => topicStateBadge(props.topic?.status))
 
 // ---- Self-contained composer (only when showComposer) ----
 const draft = ref('')
 const summon = ref(props.defaultSummon)
 const composerInput = ref<{ focus?: () => void } | null>(null)
 
-// 同 WorkspaceView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
+// 同 TopicView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
 // 按的那次 Enter 打在 chip 上，把刚点亮的 @芝士 又静默关掉且不发送。
 function toggleSummon() {
   summon.value = !summon.value
@@ -845,7 +844,7 @@ function toggleSummon() {
 
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
-// Mirrors WorkspaceView's composer so the root-topic and 私聊 composers get the
+// Mirrors TopicView's composer so the root-topic and 私聊 composers get the
 // same picker.
 const mentionQuery = computed(() => {
   const m = draft.value.match(/@([^\s@]*)$/)
@@ -946,7 +945,7 @@ function sendDraft() {
   }
 }
 
-// IME (输入法) guard — see WorkspaceView.vue for the full story: Safari fires
+// IME (输入法) guard — see TopicView.vue for the full story: Safari fires
 // compositionend BEFORE the commit-Enter keydown, which then looks like a
 // plain Enter. Track composition ourselves and swallow the trailing Enter.
 let composing = false
@@ -1026,7 +1025,7 @@ onBeforeUnmount(() => {
     <template v-else>
       <!-- GitHub-PR-style header (Fix 4): only for real work topics (话题 = PR).
            The root topic (本体) and private chat use the plain header below. -->
-      <div v-if="prHeader" class="pr-header px-4 py-3">
+      <div v-if="!hideHeader && prHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2 flex-wrap">
           <span class="pr-title t-title">{{ topic.title }}</span>
           <span class="pr-num t-meta">#{{ prShortId }}</span>
@@ -1041,7 +1040,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
-      <div v-else class="pr-header px-4 py-3">
+      <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2">
           <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
@@ -1535,11 +1534,11 @@ onBeforeUnmount(() => {
   color: var(--muted);
   margin: 2px 0 0;
 }
+/* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
 .todo-list {
   list-style: none;
   margin: 2px 0 6px;
   padding: 6px 10px;
-  border-left: 2px solid var(--accent);
   background: rgba(var(--v-theme-primary), 0.05);
   border-radius: var(--radius-sm);
 }
@@ -1585,7 +1584,7 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
-/* @-autocomplete popup — mirrors WorkspaceView's composer picker. */
+/* @-autocomplete popup — mirrors TopicView's composer picker. */
 .mention-menu {
   display: flex;
   flex-direction: column;

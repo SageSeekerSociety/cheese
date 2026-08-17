@@ -10,13 +10,13 @@ def _iso(dt: datetime) -> str:
 
 
 def _create_project(client, name: str = "Demo") -> str:
-    r = client.post("/api/projects", json={"name": name})
+    r = client.post("/projects", json={"name": name})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _add_milestone(client, project_id: str, **body) -> dict:
-    r = client.post(f"/api/projects/{project_id}/milestones", json=body)
+    r = client.post(f"/projects/{project_id}/milestones", json=body)
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -33,13 +33,13 @@ def test_overdue_milestone_becomes_missed_and_leaves_calendar(client):
     )
 
     # Calendar (countdown) only shows the genuinely future one.
-    cal = client.get(f"/api/projects/{pid}/calendar").json()["data"]["data"]
+    cal = client.get(f"/projects/{pid}/calendar").json()["data"]["data"]
     titles = [m["title"] for m in cal]
     assert titles == ["未来"]
     assert cal[0]["id"] == future["id"]
 
     # The full list shows the overdue one flipped to missed.
-    allm = client.get(f"/api/projects/{pid}/milestones").json()["data"]["data"]
+    allm = client.get(f"/projects/{pid}/milestones").json()["data"]["data"]
     by_title = {m["title"]: m for m in allm}
     assert by_title["已逾期"]["status"] == "missed"
     assert by_title["未来"]["status"] == "upcoming"
@@ -64,7 +64,7 @@ def test_create_milestone(client):
 
 
 def test_create_milestone_unknown_project_404(client):
-    r = client.post(f"/api/projects/{NIL_UUID}/milestones", json={"title": "x"})
+    r = client.post(f"/projects/{NIL_UUID}/milestones", json={"title": "x"})
     assert r.status_code == 404
 
 
@@ -74,7 +74,7 @@ def test_list_orders_by_due_date_nulls_last(client):
     _add_milestone(client, project_id, title="no-date")
     _add_milestone(client, project_id, title="sooner", due_date="2026-06-01T00:00:00Z")
 
-    r = client.get(f"/api/projects/{project_id}/milestones")
+    r = client.get(f"/projects/{project_id}/milestones")
     body = r.json()
     assert body["code"] == 200
     assert body["data"]["total"] == 3
@@ -83,7 +83,7 @@ def test_list_orders_by_due_date_nulls_last(client):
 
 
 def test_list_unknown_project_404(client):
-    r = client.get(f"/api/projects/{NIL_UUID}/milestones")
+    r = client.get(f"/projects/{NIL_UUID}/milestones")
     assert r.status_code == 404
 
 
@@ -104,10 +104,10 @@ def test_calendar_filters_upcoming_and_dated(client):
     done = _add_milestone(
         client, project_id, title="done", due_date=_iso(now - timedelta(days=30))
     )
-    r = client.put(f"/api/milestones/{done['id']}", json={"status": "done"})
+    r = client.put(f"/milestones/{done['id']}", json={"status": "done"})
     assert r.status_code == 200
 
-    r = client.get(f"/api/projects/{project_id}/calendar")
+    r = client.get(f"/projects/{project_id}/calendar")
     body = r.json()
     assert body["code"] == 200
     titles = [m["title"] for m in body["data"]["data"]]
@@ -116,7 +116,7 @@ def test_calendar_filters_upcoming_and_dated(client):
 
 
 def test_calendar_unknown_project_404(client):
-    r = client.get(f"/api/projects/{NIL_UUID}/calendar")
+    r = client.get(f"/projects/{NIL_UUID}/calendar")
     assert r.status_code == 404
 
 
@@ -125,7 +125,7 @@ def test_update_status_and_fields(client):
     m = _add_milestone(client, project_id, title="t", due_date="2026-09-01T00:00:00Z")
 
     r = client.put(
-        f"/api/milestones/{m['id']}",
+        f"/milestones/{m['id']}",
         json={"title": "结题", "status": "missed"},
     )
     assert r.status_code == 200
@@ -140,13 +140,13 @@ def test_update_can_clear_due_date(client):
     project_id = _create_project(client)
     m = _add_milestone(client, project_id, title="t", due_date="2026-09-01T00:00:00Z")
 
-    r = client.put(f"/api/milestones/{m['id']}", json={"due_date": None})
+    r = client.put(f"/milestones/{m['id']}", json={"due_date": None})
     assert r.status_code == 200
     assert r.json()["data"]["due_date"] is None
 
 
 def test_update_unknown_404(client):
-    r = client.put(f"/api/milestones/{NIL_UUID}", json={"title": "x"})
+    r = client.put(f"/milestones/{NIL_UUID}", json={"title": "x"})
     assert r.status_code == 404
 
 
@@ -154,13 +154,13 @@ def test_delete_milestone(client):
     project_id = _create_project(client)
     m = _add_milestone(client, project_id, title="t")
 
-    r = client.delete(f"/api/milestones/{m['id']}")
+    r = client.delete(f"/milestones/{m['id']}")
     assert r.status_code == 200
 
-    r = client.get(f"/api/projects/{project_id}/milestones")
+    r = client.get(f"/projects/{project_id}/milestones")
     assert r.json()["data"]["total"] == 0
 
 
 def test_delete_unknown_404(client):
-    r = client.delete(f"/api/milestones/{NIL_UUID}")
+    r = client.delete(f"/milestones/{NIL_UUID}")
     assert r.status_code == 404

@@ -20,14 +20,14 @@ def _project(client, owner: str | None = None) -> dict:
     body: dict = {"name": "P"}
     if owner is not None:
         body["owner_handle"] = owner
-    r = client.post("/api/projects", json=body, headers=session_auth_headers("alice"))
+    r = client.post("/projects", json=body, headers=session_auth_headers("alice"))
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
 def _add_member(client, project_id: str, handle: str, role: str, *, actor: str) -> None:
     r = client.post(
-        f"/api/projects/{project_id}/members",
+        f"/projects/{project_id}/members",
         json={"user_handle": handle, "role": role},
         headers=session_auth_headers(actor),
     )
@@ -36,14 +36,14 @@ def _add_member(client, project_id: str, handle: str, role: str, *, actor: str) 
 
 def _set_owner(client, project_id: str, handle: str, *, actor: str):
     return client.put(
-        f"/api/projects/{project_id}/owner",
+        f"/projects/{project_id}/owner",
         json={"owner_handle": handle},
         headers=session_auth_headers(actor),
     )
 
 
 def _owner_of(client, project_id: str) -> str | None:
-    return client.get(f"/api/projects/{project_id}").json()["data"]["owner_handle"]
+    return client.get(f"/projects/{project_id}").json()["data"]["owner_handle"]
 
 
 def test_the_owner_can_hand_the_project_to_another_member(client):
@@ -89,7 +89,7 @@ def test_an_outsider_cannot_take_the_project(client):
 def test_an_anonymous_caller_cannot_take_the_project(client):
     p = _project(client, owner="alice")
 
-    r = client.put(f"/api/projects/{p['id']}/owner", json={"owner_handle": "mallory"})
+    r = client.put(f"/projects/{p['id']}/owner", json={"owner_handle": "mallory"})
 
     assert r.status_code == 404
     assert _owner_of(client, p["id"]) == "alice"
@@ -113,7 +113,7 @@ def test_an_empty_handle_is_rejected_rather_than_blanking_the_owner(client):
     p = _project(client, owner="alice")
 
     r = client.put(
-        f"/api/projects/{p['id']}/owner",
+        f"/projects/{p['id']}/owner",
         json={"owner_handle": "   "},
         headers=session_auth_headers("alice"),
     )
@@ -124,7 +124,7 @@ def test_an_empty_handle_is_rejected_rather_than_blanking_the_owner(client):
 
 def test_a_missing_project_is_a_404_not_a_500(client):
     r = client.put(
-        f"/api/projects/{uuid.uuid4()}/owner",
+        f"/projects/{uuid.uuid4()}/owner",
         json={"owner_handle": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -147,7 +147,7 @@ def test_creating_a_project_without_a_real_owner_says_so(client, caplog):
     not know", and the warning below is what keeps it from being silent.
     """
     with caplog.at_level("WARNING", logger="cheesex.projects"):
-        r = client.post("/api/projects", json={"name": "无主项目"})
+        r = client.post("/projects", json={"name": "无主项目"})
 
     assert r.status_code == 200
     assert r.json()["data"]["owner_handle"] is None

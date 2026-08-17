@@ -4,7 +4,10 @@ A Topic = one session = one git branch (spec §6). Topics form a tree via
 parent_id: the root topic is the project itself, children are work threads,
 grandchildren are sub-tasks where 芝士's 分身 works.
 
-Lifecycle (spec §6.3): active → (Accept = merge) → archived. Conversation can
+Lifecycle: active → archived, and ONLY a person moves it (#442 decision 1). A
+merge no longer archives anything — it stamps `accepted_by`/`accepted_at`
+("这一次交付完成了") and leaves the topic active, because a topic is usually
+continuous and the next piece of work happens in the same room. Conversation can
 still be appended after archive. session_id holds the resumable Claude Agent
 SDK session (spec §9).
 """
@@ -116,7 +119,8 @@ class Topic(UuidPk, Timestamps, Base):
         nullable=True,
     )
 
-    # Accept / archive (spec §6.3).
+    # 交付标记：合并那一刻自动打上（review/services.py），撤回采纳会清掉。
+    # 归档是独立的、人为的动作 —— archived_at 与这两个字段互不牵连。
     accepted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

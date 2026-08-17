@@ -25,13 +25,14 @@ def _load():
     return mod
 
 
-def test_api_root_strips_api_prefix(monkeypatch):
+@pytest.mark.parametrize(
+    "base",
+    ("http://host.docker.internal:8099", "https://cheese.example/api"),
+)
+def test_api_root_preserves_the_selected_transport_surface(monkeypatch, base):
     cli = _load()
-    monkeypatch.setattr(cli, "API", "http://host.docker.internal:8099/api")
-    assert cli._api_root() == "http://host.docker.internal:8099"
-    # No /api suffix → returned unchanged.
-    monkeypatch.setattr(cli, "API", "http://localhost:9000")
-    assert cli._api_root() == "http://localhost:9000"
+    monkeypatch.setattr(cli, "API", base)
+    assert cli._api_root() == base
 
 
 def test_api_subcommand_parses_method_and_path(monkeypatch):
@@ -361,6 +362,53 @@ def test_await_report_retries_before_giving_up(monkeypatch, tmp_path):
 # stale (it is generated from this code) used to be empty at the subcommand
 # level, so every semantic lived in prose that drifted. These two tests keep it
 # from emptying out again.
+
+
+def test_accept_request_without_a_subject_never_reaches_the_backend(
+    monkeypatch, capsys
+):
+    """The subject is required, and the CLI must refuse BEFORE the POST — a card
+    that is already filed cannot be un-filed, so a warning printed afterwards
+    (which is what this used to do) taught nobody anything."""
+    cli = _load()
+    calls: list[tuple] = []
+    monkeypatch.setattr(cli, "_call", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "accept-request", "alice", "最懂"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code != 0
+    assert calls == []
+    assert "--subject" in capsys.readouterr().err
+
+
+def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
+    cli = _load()
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        cli, "_call", lambda m, p, d=None: sent.append({"p": p, "d": d})
+    )
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "cheese",
+            "accept-request",
+            "alice",
+            "最懂",
+            "--subject",
+            "fix(accept): require a commit subject",
+        ],
+    )
+
+    cli.main()
+
+    [call] = sent
+    assert call["p"] == "/topics/t-1/accept-card"
+    assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
 
 
 def _subparsers(parser):

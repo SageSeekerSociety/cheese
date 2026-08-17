@@ -18,7 +18,7 @@ from app.domain.topic_membership.schemas import (
 )
 from app.domain.topic_membership.services import TopicMemberService
 
-router = APIRouter(prefix="/api/topics", tags=["topic-members"])
+router = APIRouter(prefix="/topics", tags=["topic-members"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

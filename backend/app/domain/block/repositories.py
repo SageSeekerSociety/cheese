@@ -3,10 +3,11 @@
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import Text, cast, func, or_, select, tuple_
+from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.turn_context import current_turn_id
+from app.core.work_context import current_work_id
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
@@ -56,7 +57,7 @@ class BlockRepository:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
         if turn_id is None:
-            turn_id = current_turn_id.get()
+            turn_id = current_work_id.get()
         # Explicit null means "tracked and still pending". Without that marker,
         # legacy compatibility has to infer consumption from the last AI block;
         # a newer, receipted mid-turn message could then move that positional
@@ -90,6 +91,32 @@ class BlockRepository:
 
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
+
+    async def has_eid(self, topic_id: uuid.UUID, eid: str) -> bool:
+        """Whether this topic already materialized a hook event id."""
+        return await self.has_any_eid(topic_id, [eid])
+
+    async def has_any_eid(self, topic_id: uuid.UUID, eids: list[str]) -> bool:
+        """Whether ANY of these hook event ids is already materialized —
+        matching ``meta.eid`` or a coalesced message's ``meta.eids`` list, so
+        a redelivered flush of an already-landed message is recognized by
+        whichever of its constituent ids it arrives under."""
+        if not eids:
+            return False
+        stmt = (
+            select(Block.id)
+            .where(
+                Block.topic_id == topic_id,
+                or_(
+                    Block.meta["eid"].as_string().in_(eids),
+                    # meta is JSON (not JSONB); cast the array for `?|`
+                    # (jsonb "contains any of these strings").
+                    cast(Block.meta["eids"], JSONB).op("?|")(array(eids, type_=Text)),
+                ),
+            )
+            .limit(1)
+        )
+        return await self._session.scalar(stmt) is not None
 
     async def delete(self, block: Block) -> None:
         await self._session.delete(block)

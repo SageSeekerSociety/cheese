@@ -12,7 +12,6 @@ from app.domain.project.models import (
     Project,
     ProjectGitInstallation,
     ProjectMember,
-    ProjectTaskLink,
 )
 from app.domain.user.models import User, UserProfile
 
@@ -102,36 +101,6 @@ class ProjectRepository:
         project.settings = settings
         await self._session.flush()
 
-    async def link_task(
-        self, *, project_id: uuid.UUID, task_id: uuid.UUID
-    ) -> ProjectTaskLink:
-        link = ProjectTaskLink(project_id=project_id, task_id=task_id)
-        self._session.add(link)
-        await self._session.flush()
-        await self._session.refresh(link)
-        return link
-
-    async def unlink_task(self, *, project_id: uuid.UUID, task_id: uuid.UUID) -> bool:
-        link = await self.get_link(project_id=project_id, task_id=task_id)
-        if link is None:
-            return False
-        await self._session.delete(link)
-        await self._session.flush()
-        return True
-
-    async def get_link(
-        self, *, project_id: uuid.UUID, task_id: uuid.UUID
-    ) -> ProjectTaskLink | None:
-        stmt = select(ProjectTaskLink).where(
-            ProjectTaskLink.project_id == project_id,
-            ProjectTaskLink.task_id == task_id,
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def list_links(self, project_id: uuid.UUID) -> list[ProjectTaskLink]:
-        stmt = select(ProjectTaskLink).where(ProjectTaskLink.project_id == project_id)
-        return list((await self._session.scalars(stmt)).all())
-
     async def list_members(self, project_id: uuid.UUID) -> list[dict]:
         """Project roster: each member's handle, display name, avatar and role —
         used to inject 芝士's teammate context, to resolve @mentions to a handle,
@@ -178,8 +147,24 @@ class ProjectRepository:
             for (h, role, name, avatar_id, avatar_type) in rows
         ]
 
-    async def list_projects_for_task(self, task_id: uuid.UUID) -> list[ProjectTaskLink]:
-        stmt = select(ProjectTaskLink).where(ProjectTaskLink.task_id == task_id)
+    async def list_ids_for_space_tasks(self, space_id: int) -> list[uuid.UUID]:
+        """Project ids for every 赛题 published under this Space (机构看板).
+
+        One query rather than a walk: the 赛题 already carry `space_id`, and a
+        project names the 赛题 it was created from, so the board is a join and
+        not a four-level traversal through a parallel hierarchy (#370).
+        """
+        from app.domain.task.models import Task
+
+        stmt = (
+            select(Project.id)
+            .where(
+                Project.external_task_id.in_(
+                    select(Task.id).where(Task.space_id == space_id)
+                )
+            )
+            .order_by(Project.created_at.asc())
+        )
         return list((await self._session.scalars(stmt)).all())
 
     async def list_for_external_task(self, task_id: int) -> list[Project]:

@@ -84,8 +84,7 @@ hook 全静默：PreToolUse 开头响一次、PostToolUse 结束才响、中间�
   `exec` 在设备上跑一段 `sh`：按 claude 进程自己的 `CHEESE_TOPIC` 环境变量在
   `/proc` 里精确匹配本话题的 claude 是否还活着，打印 `alive`/`dead`/`unknown`。
   只有明确 `dead` 才判死；`unknown`（非 Linux / environ 不可读）、exec 报错、非零
-  退出一律保守判活，探测抖动绝不误杀。co-located（后端本机）与 remote 都走同一条
-  `exec`，不按 co-location 分叉。
+  退出一律保守判活，探测抖动绝不误杀。所有 Device 都走同一条 `exec`。
 - `compute.py` / `config.py`：device 直接复用 `settings.agent_idle_suspect_s` /
   `settings.agent_turn_hard_ceiling_s`（与本地 tmux 同源，共一套旋钮）；删掉
   `device_turn_timeout_s`。

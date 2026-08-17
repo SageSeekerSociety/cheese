@@ -309,10 +309,25 @@ class SqlDeviceRepository:
             visibility=row.visibility,
         )
 
+    async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]:
+        rows = (
+            await self._session.scalars(
+                select(DeviceTopicRow).where(DeviceTopicRow.device_id == device_id)
+            )
+        ).all()
+        return [
+            TopicDevice(
+                topic_id=row.topic_id,
+                device_id=row.device_id,
+                visibility=row.visibility,
+            )
+            for row in rows
+        ]
+
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
     ) -> None:
-        # write-once: never overwrite an existing pin (affinity is permanent).
+        # write-once: never overwrite an existing pin (affinity never drifts).
         if await self._session.get(DeviceTopicRow, topic_id) is not None:
             return
         self._session.add(

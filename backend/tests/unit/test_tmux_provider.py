@@ -381,8 +381,10 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
     assert isinstance(events[3], AgentResult) and events[3].text == "搞定"
     assert events[3].is_error is False
     assert _stub_env["prompt"] == "帮我看下"
-    # The queue is released after the turn (next push finds no listener).
-    assert router.push(topic_key, {"x": 1}) is False
+    # Stop closes only the run marker; the screen subscription stays live.
+    assert router.push(topic_key, {"x": 1}) is True
+    await provider.drop_subscription(topic_id)
+    assert router.push(topic_key, {"x": 2}) is False
 
 
 @pytest.mark.anyio
@@ -613,3 +615,54 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
     remaining = claims["exp"] - int(time.time())
     assert remaining > 7 * 24 * 3600  # rules out the 3600s per-turn default
     assert SESSION_TOKEN_TTL_S - 300 < remaining <= SESSION_TOKEN_TTL_S + 5
+
+
+@pytest.mark.anyio
+async def test_drop_control_also_drops_the_container_subscription():
+    router = HookRouter()
+    provider = TmuxHooksProvider(image="img:test", router=router)
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = "topic-box"
+
+    await provider.drop_control("topic-box")
+
+    assert subscription.consumer_task is not None
+    assert subscription.consumer_task.done()
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+
+
+@pytest.mark.anyio
+async def test_restart_recovery_subscribes_running_topic_containers(monkeypatch):
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_docker(*args: str, stdin=None):
+        calls.append(args)
+        if args and args[0] == "ps":
+            return 0, "topic-box\n", ""
+        if args and args[0] == "inspect":
+            return (
+                0,
+                f"CHEESE_PROJECT={project_id}\nCHEESE_TOPIC={topic_id}\n",
+                "",
+            )
+        return 1, "", "unexpected"
+
+    monkeypatch.setattr(tp, "_docker", fake_docker)
+    router = HookRouter()
+    provider = TmuxHooksProvider(image="img:test", router=router)
+
+    recovered = await provider.recover_subscriptions()
+
+    assert len(recovered) == 1
+    assert recovered[0].project_id == project_id
+    assert recovered[0].topic_id == topic_id
+    assert not recovered[0].ready.is_set()
+    assert provider._live[topic_id] == "topic-box"
+    assert calls[0][0] == "ps"
+
+    recovered[0].ready.set()
+    router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
+    await recovered[0].sink.queue.join()
+    await provider.drop_subscription(topic_id)

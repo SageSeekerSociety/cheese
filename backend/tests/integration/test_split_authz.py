@@ -18,14 +18,14 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]
     return p["id"], p["root_topic_id"]
 
 
 def _members(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/members").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/members").json()["data"]["data"]
 
 
 def test_split_outsider_token_denied(client):
@@ -34,7 +34,7 @@ def test_split_outsider_token_denied(client):
     _, tid = _project_topic(client, owner="alice")
     outsider = _login("mallory")
     r = client.post(
-        f"/api/topics/{tid}/split",
+        f"/topics/{tid}/split",
         json={"title": "偷偷拆一个", "created_by": "mallory"},
         headers=_bearer(outsider),
     )
@@ -46,7 +46,7 @@ def test_split_owner_allowed_and_child_roster_has_owner(client):
     _, tid = _project_topic(client, owner="alice")
     token = _login("alice")
     r = client.post(
-        f"/api/topics/{tid}/split",
+        f"/topics/{tid}/split",
         json={"title": "子任务"},
         headers=_bearer(token),
     )
@@ -63,7 +63,7 @@ def test_split_ignores_forged_created_by_in_body(client):
     _, tid = _project_topic(client, owner="alice")
     token = _login("alice")
     r = client.post(
-        f"/api/topics/{tid}/split",
+        f"/topics/{tid}/split",
         json={"title": "子任务", "created_by": "mallory-forged"},
         headers=_bearer(token),
     )
@@ -84,7 +84,7 @@ def test_split_by_cheese_agent_defaults_owner_to_parent_owner(client):
     real human owner, who becomes the child's owner too (not just a member)."""
     _, tid = _project_topic(client, owner="alice")
     r = client.post(
-        f"/api/topics/{tid}/split",
+        f"/topics/{tid}/split",
         json={"title": "分身拆出的子任务", "created_by": "cheese"},
     )
     assert r.status_code == 200
@@ -98,7 +98,7 @@ def test_split_with_no_identified_human_still_gets_parent_owner(client):
     """Even a bare Phase-0 call with no `created_by` at all (no token, no body
     field) must not leave the child ownerless."""
     _, tid = _project_topic(client, owner="alice")
-    r = client.post(f"/api/topics/{tid}/split", json={"title": "无发起人拆分"})
+    r = client.post(f"/topics/{tid}/split", json={"title": "无发起人拆分"})
     assert r.status_code == 200
     sub = r.json()["data"]
 
@@ -133,7 +133,7 @@ def test_project_member_can_split_even_if_not_on_topic_roster(client):
     asyncio.run(_add_member())
 
     r = client.post(
-        f"/api/topics/{tid}/split",
+        f"/topics/{tid}/split",
         json={"title": "bob 拆的子任务"},
         headers=_bearer(token),
     )

@@ -42,7 +42,7 @@ def _subject(wt) -> str:
 def _dirty_topic(project: uuid.UUID) -> tuple[uuid.UUID, object]:
     ws.ensure_repo(project)
     topic_id = uuid.uuid4()
-    wt = ws._ensure_worktree(project, ws.branch_for_topic(topic_id))  # noqa: SLF001
+    wt = ws._ensure_worktree(project, topic_id)  # noqa: SLF001
     (wt / "hello.txt").write_text("hi\n", encoding="utf-8")
     return topic_id, wt
 

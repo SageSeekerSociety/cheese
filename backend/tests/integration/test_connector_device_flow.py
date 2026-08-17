@@ -22,7 +22,7 @@ def _bearer(token: str) -> dict:
 def test_full_device_flow_start_approve_poll(client):
     # A project the device will be bound to.
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     token = _login(client, "alice")
 
@@ -152,7 +152,7 @@ def test_agent_ws_rejects_unknown_token(client):
             ws.receive_text()  # should not get here; the server closes 1008
 
 
-def test_agent_ws_does_not_park_a_session_idle_in_transaction(client):
+def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatch):
     """#356 regression, against a real Postgres.
 
     The device control channel stays connected for the machine's whole uptime, and
@@ -180,8 +180,18 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client):
     )
     assert connect.status_code == 200, connect.text
     poll = client.post("/connector/auth/device/poll", json={"device_code": code}).json()
+    device_id = poll["device_id"]
     device_token = poll["token"]
     assert device_token
+
+    recovered: list[str] = []
+
+    class Chat:
+        async def recover_hook_subscriptions(self, connected_device_id: str) -> int:
+            recovered.append(connected_device_id)
+            return 0
+
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
 
     async def _parked_on_device_team() -> int:
         # Superuser test role → pg_stat_activity exposes other backends' query text,
@@ -212,3 +222,4 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client):
         f"the device control channel left {parked} session(s) idle-in-transaction on "
         "the device_team read — the #356 leak that blocks device-table migrations"
     )
+    assert recovered == [device_id]

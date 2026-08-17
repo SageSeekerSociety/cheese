@@ -419,19 +419,39 @@ def _base_branch(repo: Path) -> str:
     return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() or DEFAULT_BRANCH
 
 
-def _worktree_path(project_id: uuid.UUID, branch: str) -> Path:
-    safe = branch.replace("/", "_")
+def _topic_dirname(topic_id: uuid.UUID) -> str:
+    """On-disk (and in-container) name of a topic's workspace directory.
+
+    Derived from the topic id ALONE — deliberately not from `branch_for_topic`,
+    even though the two agree today (`topic/<hex8>` → `topic_<hex8>`). The
+    directory name is baked into things that survive a rename and cannot be
+    migrated cheaply: the jj workspace name, the relative `.jj/repo` pointer
+    inside every worktree (whose depth `sandbox_vcs_mounts` reproduces), the
+    container workdir, and — through that workdir — the tmux session name the
+    device backend hashes, so a changed path retires a live claude session and
+    drops its context. Naming the branch is a git-side decision; it must not be
+    able to move anyone's files.
+    """
+    return f"topic_{topic_id.hex[:8]}"
+
+
+def _worktree_path(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     return (
-        Path(settings.workspace_root) / ".worktrees" / str(project_id) / safe
+        Path(settings.workspace_root)
+        / ".worktrees"
+        / str(project_id)
+        / _topic_dirname(topic_id)
     ).resolve()
 
 
-def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
+def _ensure_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """每话题一个独立 jj workspace（沙箱地基）：分身在自己的工作目录里干活，
-    jj 自动快照其改动；并行话题互不覆盖。导出一个同名 git 分支供采纳/diff。"""
+    jj 自动快照其改动；并行话题互不覆盖。导出一个 git 分支（`branch_for_topic`）
+    供采纳/diff——分支名与工作区目录名各自独立派生，见 `_topic_dirname`。"""
     main = ensure_repo(project_id)
     _ensure_base_commit(main)  # a workspace needs a base commit to fork from
-    wt = _worktree_path(project_id, branch)
+    branch = branch_for_topic(topic_id)
+    wt = _worktree_path(project_id, topic_id)
     if (wt / ".jj").exists():  # already a jj workspace
         return wt
     # Migrate a stale git worktree left by the pre-jj design.
@@ -442,7 +462,7 @@ def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
             pass
         shutil.rmtree(wt, ignore_errors=True)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    _jj(main, "workspace", "add", "--name", branch.replace("/", "_"), str(wt))
+    _jj(main, "workspace", "add", "--name", _topic_dirname(topic_id), str(wt))
     # Export a git branch (= jj bookmark) for this topic so merge/diff use git.
     _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
     _jj(wt, "git", "export")
@@ -456,14 +476,17 @@ SANDBOX_WORKDIR = "/work"
 
 
 def sandbox_vcs_mounts(
-    project_id: uuid.UUID, branch: str, *, container_workdir: str = SANDBOX_WORKDIR
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    container_workdir: str = SANDBOX_WORKDIR,
 ) -> list[str]:
     """Extra `docker run -v` args so a topic's jj workspace resolves inside its
     sandbox container.
 
     `jj workspace add` (_ensure_worktree above) writes `<worktree>/.jj/repo` as
     a path *relative to the real host directory nesting* between the worktree
-    (workspace_root/.worktrees/<project>/<branch>) and the project's shared
+    (workspace_root/.worktrees/<project>/topic_<hex8>) and the project's shared
     main repo (workspace_root/<project>) — e.g. `../../../../<project_id>/.jj
     /repo`. A sandbox container only ever gets the worktree, remapped to
     SANDBOX_WORKDIR (much shallower than the host tree), so that relative
@@ -479,7 +502,7 @@ def sandbox_vcs_mounts(
     (backend catch-up/diff/log, outside any container) is untouched — only the
     container's extra mounts change."""
     main = _repo(project_id)
-    wt = _worktree_path(project_id, branch)
+    wt = _worktree_path(project_id, topic_id)
     # Full (since=0) repair right before the store is handed to a container:
     # _jj's per-call repair only covers what THAT call wrote, so a repo whose
     # metadata predates this behaviour — every repo already on disk — would stay
@@ -555,11 +578,11 @@ _SANDBOX_STORES = (
 )
 
 
-def sandbox_topic_workdir(branch: str) -> str:
+def sandbox_topic_workdir(topic_id: uuid.UUID) -> str:
     """A topic's worktree path inside the tmux sandbox — its REAL path under the
     project-tree mount (not a per-topic remap), so hardlinks to the shared
     stores on the same mount work."""
-    return f"{SANDBOX_TOPICS_ROOT}/{branch.replace('/', '_')}"
+    return f"{SANDBOX_TOPICS_ROOT}/{_topic_dirname(topic_id)}"
 
 
 def gate_workdir_for(worktree: Path) -> str:
@@ -568,9 +591,9 @@ def gate_workdir_for(worktree: Path) -> str:
     Not a free choice: it has to be the SAME absolute path the agent's own
     sandbox used, because that is the path baked into every console script the
     agent's `uv sync` created. `_worktree_path` names the directory
-    ``branch.replace("/", "_")`` and `sandbox_topic_workdir` builds the
+    ``_topic_dirname(topic_id)`` and `sandbox_topic_workdir` builds the
     container path from exactly that, so the host directory's own name is
-    enough — a gate needs no branch argument to agree with the sandbox.
+    enough — a gate needs no topic argument to agree with the sandbox.
     """
     return f"{SANDBOX_TOPICS_ROOT}/{worktree.name}"
 
@@ -596,7 +619,7 @@ def sandbox_store_env(root: Path) -> list[str]:
     return env_args
 
 
-def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
+def sandbox_project_mounts(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     """`docker run` args mounting the project's `.worktrees` tree (topics +
     shared stores, one mount — see SANDBOX_TOPICS_ROOT) plus the jj/git store
     mounts anchored to the topic's in-container workdir, plus the store env.
@@ -610,15 +633,15 @@ def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
     containers already share the project's writable `.jj`/`.git` stores, so
     same-project topics were never isolated from each other; cross-project
     isolation is unchanged."""
-    root = _worktree_path(project_id, branch).parent
+    root = _worktree_path(project_id, topic_id).parent
     root.mkdir(parents=True, exist_ok=True)
     env_args = sandbox_store_env(root)
-    workdir = sandbox_topic_workdir(branch)
+    workdir = sandbox_topic_workdir(topic_id)
     return [
         "-v",
         f"{root}:{SANDBOX_TOPICS_ROOT}",
         *env_args,
-        *sandbox_vcs_mounts(project_id, branch, container_workdir=workdir),
+        *sandbox_vcs_mounts(project_id, topic_id, container_workdir=workdir),
     ]
 
 
@@ -684,9 +707,8 @@ def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
     for project-level (no topic)."""
     if topic_id is None:
         return ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
-    _catch_up_with_branch(project_id, wt, branch)
+    wt = _ensure_worktree(project_id, topic_id)
+    _catch_up_with_branch(project_id, wt, branch_for_topic(topic_id))
     return wt
 
 
@@ -1517,7 +1539,7 @@ def prepare_conflict_resolution(
     合并提交，冲突以标记形式materialize 在文件里；返回冲突文件列表。芝士改完文件、
     平台照常快照（merge commit 连同解决一起入 bookmark），重试采纳即可干净合并。"""
     branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
+    wt = _ensure_worktree(project_id, topic_id)
     base = _base_branch(ensure_repo(project_id))
     # The workspace's jj view lags the git side — pull the base branch's latest
     # commits in first, or the merge would use a stale bookmark (and possibly
@@ -1560,7 +1582,7 @@ def prepare_upstream_conflict_resolution(
     upstream_sha = _git(repo, "rev-parse", _upstream_ref(repo)).strip()
     base = _base_branch(repo)
     branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
+    wt = _ensure_worktree(project_id, topic_id)
     # The workspace's jj view lags the git side — import first, or the merge
     # would run against a stale base (and possibly see no conflict at all).
     try:
@@ -1795,6 +1817,7 @@ def _remote_default_branch(repo: Path, url: str, env: dict[str, str]) -> str | N
 def _sync_remote_base_into_topic_branch(
     project_id: uuid.UUID,
     repo: Path,
+    topic_id: uuid.UUID,
     branch: str,
     *,
     url: str,
@@ -1890,11 +1913,13 @@ def _sync_remote_base_into_topic_branch(
         _git(repo, "update-ref", f"refs/heads/{branch}", new_sha, old_sha)
     except ValidationError:
         return {"synced": False, "reason": "话题分支被并发更新，本次未同步"}
-    _catch_up_topic_workspace(project_id, branch)
+    _catch_up_topic_workspace(project_id, topic_id, branch)
     return {"synced": True, "base": default, "head": new_sha}
 
 
-def _catch_up_topic_workspace(project_id: uuid.UUID, branch: str) -> None:
+def _catch_up_topic_workspace(
+    project_id: uuid.UUID, topic_id: uuid.UUID, branch: str
+) -> None:
     """Let the topic's jj workspace see a commit that reached its git branch
     from outside (here: the sync merge above).
 
@@ -1904,7 +1929,7 @@ def _catch_up_topic_workspace(project_id: uuid.UUID, branch: str) -> None:
     and turning the following re-push into a rejected non-fast-forward. Purely
     best-effort: the git ref is what gets pushed, so a jj hiccup must not fail
     the push."""
-    wt = _worktree_path(project_id, branch)
+    wt = _worktree_path(project_id, topic_id)
     if not (wt / ".jj").exists():
         return  # no workspace yet — nothing to catch up
     try:
@@ -1969,7 +1994,7 @@ def push_topic_branch_for_github_pr(
         if not _is_workflow_permission_rejection(str(exc)):
             raise
         synced = _sync_remote_base_into_topic_branch(
-            project_id, repo_path, branch, url=url, env=env
+            project_id, repo_path, topic_id, branch, url=url, env=env
         )
         if not synced.get("synced"):
             raise ValidationError(
@@ -1986,7 +2011,7 @@ def push_topic_branch_for_github_pr(
 def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """Host path of a topic's git worktree (created on demand), world-writable so
     the sandbox container's non-root `node` user can write into the mount."""
-    wt = _ensure_worktree(project_id, branch_for_topic(topic_id))
+    wt = _ensure_worktree(project_id, topic_id)
     import os
 
     os.chmod(wt, 0o777)
@@ -2104,7 +2129,7 @@ def has_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     """Whether this topic already has a jj workspace on disk. Read-only probe:
     unlike `_ensure_worktree` it creates nothing, so a caller that only wants to
     snapshot existing work can ask without conjuring a repo as a side effect."""
-    return (_worktree_path(project_id, branch_for_topic(topic_id)) / ".jj").exists()
+    return (_worktree_path(project_id, topic_id) / ".jj").exists()
 
 
 # ---- Automatic commit messages ---------------------------------------------
@@ -2149,7 +2174,7 @@ def snapshot_worktree(
     from app.domain.agent import awaited_tasks  # local: it imports this module
 
     branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
+    wt = _ensure_worktree(project_id, topic_id)
     if not _jj(wt, "diff", "-s").strip():
         return  # nothing changed this turn
     held = awaited_tasks.snapshot_hold(topic_id)
@@ -2175,8 +2200,44 @@ def snapshot_worktree(
     _jj(wt, "git", "export")
 
 
-def sandbox_available() -> bool:
+# `docker info` costs ~50ms, and the answer changes only when someone starts or
+# stops the daemon — so it is cached for this long rather than paid per call.
+_SANDBOX_PROBE_TTL_S = 30.0
+_sandbox_probe: tuple[float, bool] | None = None
+
+
+def docker_installed() -> bool:
+    """The binary is on PATH. Says nothing about whether it can be used."""
     return shutil.which("docker") is not None
+
+
+def sandbox_available() -> bool:
+    """The sandbox can actually run something — the binary exists AND its daemon
+    answers.
+
+    The binary alone used to be the whole check, which is wrong in the one case
+    that happens most: docker installed, daemon not started. Callers then took
+    the "yes" and failed inside `docker run`, and the message they printed said
+    docker was not FOUND — naming the one problem the host did not have."""
+    global _sandbox_probe
+    if not docker_installed():
+        return False
+    now = time.monotonic()
+    if _sandbox_probe is not None and now - _sandbox_probe[0] < _SANDBOX_PROBE_TTL_S:
+        return _sandbox_probe[1]
+    try:
+        ok = (
+            subprocess.run(  # noqa: S603 — fixed argv, no shell
+                ["docker", "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True,
+                timeout=5,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    _sandbox_probe = (now, ok)
+    return ok
 
 
 def exec_in_sandbox(
@@ -2194,15 +2255,17 @@ def exec_in_sandbox(
         return {
             "exit_code": -1,
             "stdout": "",
-            "stderr": "sandbox 不可用：未找到 docker（需要 Docker 在运行）",
+            "stderr": (
+                "sandbox 不可用：未找到 docker"
+                if not docker_installed()
+                else "sandbox 不可用：docker 已安装但守护进程没有响应"
+            ),
         }
     # A topic's tree is a jj workspace whose .jj/repo pointer only resolves
     # with the main repo's store mounted too (see sandbox_vcs_mounts); the
     # project-level tree (topic_id=None) IS the main repo, no extra mount needed.
     vcs_mounts = (
-        sandbox_vcs_mounts(project_id, branch_for_topic(topic_id))
-        if topic_id is not None
-        else []
+        sandbox_vcs_mounts(project_id, topic_id) if topic_id is not None else []
     )
     try:
         result = subprocess.run(
@@ -2313,6 +2376,9 @@ def stop_topic_container(topic_id: uuid.UUID) -> None:
     recreated. Best-effort: a missing container is fine. Freeing BOTH matters
     because a topic may have run on either backend and each leaves its own box;
     reaping only the SDK one (the old behavior) leaked every tmux container forever."""
+    from app.domain.agent.hooks_substrate import schedule_topic_subscription_drop
+
+    schedule_topic_subscription_drop(topic_id)
     if not sandbox_available():
         return
     for name in (container_name(topic_id), tmux_container_name(topic_id)):
@@ -2347,6 +2413,9 @@ def list_sandbox_containers() -> list[str]:
 def remove_container(name: str) -> None:
     """Remove ONE container by exact name (the idle reaper's primitive).
     Best-effort; a missing container is fine."""
+    from app.domain.agent.hooks_substrate import schedule_screen_subscription_drop
+
+    schedule_screen_subscription_drop(name)
     if not sandbox_available():
         return
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)

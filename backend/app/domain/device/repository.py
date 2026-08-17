@@ -117,15 +117,18 @@ class DeviceRepository(Protocol):
     async def unassign_team(self, device_id: str, team_id: int) -> None: ...
     async def list_team_ids(self, device_id: str) -> list[int]: ...
 
-    # topic→device pin (affinity, v4): the device a topic is frozen to on its
-    # first turn. ``bind`` is write-once — an existing pin is never overwritten.
+    # topic→device pin (affinity, v4): a named choice is bound before the first
+    # turn; 「系统挑一台」 binds the device that first turn selects. ``bind`` is
+    # write-once — an existing pin is never overwritten.
     async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None: ...
+    async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]: ...
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
     ) -> None: ...
     # Drop a topic's pin so it can be re-pinned elsewhere. The ONLY way past
-    # write-once: an explicit, reasoned release (#186 换身体), never a silent
-    # fallback inside the resolver — that was the original drift bug.
+    # write-once: an explicit pre-turn choice change or a reasoned release
+    # (#186 换身体), never a silent fallback inside the resolver — that was the
+    # original drift bug.
     async def release_topic_device(self, topic_id: uuid.UUID) -> None: ...
 
     # machine health (#186): failure streak + quarantine, one row per device,

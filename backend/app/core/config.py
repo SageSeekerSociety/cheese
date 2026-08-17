@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     # minutes), not a normal-case limit — on timeout the turn is cancelled, which
     # releases the lock and tears down the in-container claude process.
     #
-    # Still governs: TurnRunner's outer transport-independent wrap for the SDK
+    # Still governs: AgentWorkRunner's outer transport-independent wrap for the SDK
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
     # backends — LOCAL tmux AND remote device — no longer use this for their
@@ -209,17 +209,16 @@ class Settings(BaseSettings):
     # needs a listener that speaks CONNECT, which reverse mode does not.
     subscription_proxy_connect_port: int = 8444
     # Host a DEVICE reaches the CONNECT listener at. Empty = subscription_proxy_host,
-    # which is right for a co-located device (the box's own bridge address). A
-    # REMOTE device needs an address that resolves from its network — until one is
-    # published, remote subscription turns fail on connect (loud, not silent).
+    # which must resolve from every enrolled device's network. Otherwise configure
+    # a tunnel; an unreachable direct address fails on connect (loud, not silent).
     subscription_device_proxy_host: str = ""
-    # Where a REMOTE machine reaches the tunnel (`wss://…/llm/tunnel`), when it
+    # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
     # cannot reach the CONNECT listener directly. On the ghg network it cannot:
     # measured 2026-08-14, packets to the box's listener port never reach its NIC,
     # dropped at a hypervisor bridge the box can neither see nor change — while
     # the gateway path those machines already use for the connector works and
-    # carries websockets. Set this to that path and remote subscription turns ride
-    # it instead. Empty = no tunnel, and a remote machine falls back to dialling
+    # carries websockets. Set this to that path and device subscription turns ride
+    # it instead. Empty = no tunnel, and a device falls back to dialling
     # `subscription_device_proxy_host` directly (right for a flat network, and the
     # behaviour every deployment has today).
     subscription_tunnel_url: str = ""
@@ -266,13 +265,6 @@ class Settings(BaseSettings):
     # lands on the SPA, which answers 200/405 and drops every agent event
     # silently (dev, 2026-08-08: the machine worked, the platform saw nothing).
     connector_public_base: str = "http://localhost:8099"
-    # Single-box self-hosting (fusion §5): the host path where enrolled devices see
-    # this backend's `workspace_root`. When set, a device screen runs directly in the
-    # topic's REAL worktree (the container worktree path translated to this host root)
-    # instead of an empty scratch dir — so device edits flow through the normal
-    # snapshot/accept path, no clone/sync and no out-of-band writes. Leave empty when
-    # devices are remote (they own their own tree; a clone/sync path is separate).
-    device_shared_workspace_host_root: str = ""
     # Optional per-install-origin override for the device's persistent control
     # channel, keyed by the origin install.sh was fetched from and mapping to a
     # plain http(s) origin that CAN carry WebSockets, e.g.
@@ -347,7 +339,7 @@ class Settings(BaseSettings):
     # reachable FROM the node — host.docker.internal works when the node is local).
     compute_provider: str = "local"
     cheesed_url: str = "http://localhost:8100"
-    cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
+    cheesed_cheese_api: str = "http://host.docker.internal:8099"
     sandbox_image: str = "cheesex-agent-sandbox:latest"
     # Machine quality gates use a disposable sibling container and never the
     # backend process. Keep this explicit so operators can ship a test-toolchain
@@ -358,11 +350,32 @@ class Settings(BaseSettings):
     quality_gate_pids_limit: int = 512
     sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
-    sandbox_api_base: str = "http://host.docker.internal:8099/api"
+    # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
+    # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
+    # #370 step 2 the platform routes are bare — `{base}/projects/…`.
+    #
+    # A box whose .env still carries the old `…/api` value keeps working:
+    # `agent_api_base()` strips one trailing `/api` and the boot warning names
+    # the box so it can be cleaned up. Silently 404ing every `cheese` call would
+    # look exactly like an agent that decided not to use its tools.
+    sandbox_api_base: str = "http://host.docker.internal:8099"
     # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
     # cheese write-API isn't open on the bind address. Empty → generated per
     # process (fine for a single worker; pin it for multi-worker deployments).
     sandbox_token: str = ""
+
+    def agent_api_base(self) -> str:
+        """`sandbox_api_base` with a stale trailing `/api` removed.
+
+        The CLI talks to the backend port directly, so its base is the app root.
+        It used to be the root plus `/api`, because the platform routes carried
+        that prefix; #370 step 2 flattened them. Normalising here means a box
+        that has not updated its .env keeps working instead of having every
+        platform action 404 — a failure that reads as "the agent chose not to
+        use its tools", which is the worst possible way to learn about it.
+        """
+        base = self.sandbox_api_base.rstrip("/")
+        return base[: -len("/api")] if base.endswith("/api") else base
 
     def agent_env(self) -> dict[str, str]:
         """Env vars passed to the SDK/CLI to select the model provider."""
@@ -402,14 +415,14 @@ class Settings(BaseSettings):
     # its transcript anyway.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
-    # Seconds between orphan sweeps (TurnRunner.sweep_orphans). On by default,
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
-    # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
+    # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.
     turn_silence_timeout_s: float = 1800.0
     # How long a topic may sit on a mid-turn block before `/topics/{id}/status`
     # calls it stalled. Lower than the sweep's ceiling above on purpose: this

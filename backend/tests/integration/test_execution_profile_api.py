@@ -23,22 +23,22 @@ def _registry() -> ProfileRegistry:
 
 
 def _project(client, owner: str) -> str:
-    return client.post(
-        "/api/projects", json={"name": "P", "owner_handle": owner}
-    ).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
+        "data"
+    ]["id"]
 
 
 def test_non_dogfood_project_sees_only_default(client):
     client.app.dependency_overrides[get_profile_registry] = _registry
     try:
         pid = _project(client, "student-1")
-        body = client.get(f"/api/projects/{pid}/execution-profiles").json()["data"]
+        body = client.get(f"/projects/{pid}/execution-profiles").json()["data"]
         assert body["current"] == "default"
         assert [p["name"] for p in body["profiles"]] == ["default"]
 
         # Setting the testing profile is rejected for a non-dogfood owner.
         r = client.put(
-            f"/api/projects/{pid}/execution-profile", json={"profile": "claude-opus"}
+            f"/projects/{pid}/execution-profile", json={"profile": "claude-opus"}
         )
         assert r.status_code == 422
     finally:
@@ -51,19 +51,19 @@ def test_dogfood_owner_can_select_testing_profile(client):
         pid = _project(client, "andyl")
         names = [
             p["name"]
-            for p in client.get(f"/api/projects/{pid}/execution-profiles").json()[
-                "data"
-            ]["profiles"]
+            for p in client.get(f"/projects/{pid}/execution-profiles").json()["data"][
+                "profiles"
+            ]
         ]
         assert names == ["default", "claude-opus"]
 
         r = client.put(
-            f"/api/projects/{pid}/execution-profile", json={"profile": "claude-opus"}
+            f"/projects/{pid}/execution-profile", json={"profile": "claude-opus"}
         )
         assert r.status_code == 200
         assert r.json()["data"]["current"] == "claude-opus"
         # persisted
-        cur = client.get(f"/api/projects/{pid}/execution-profiles").json()["data"][
+        cur = client.get(f"/projects/{pid}/execution-profiles").json()["data"][
             "current"
         ]
         assert cur == "claude-opus"

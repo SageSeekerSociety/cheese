@@ -17,7 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError
 from app.domain.alert.repositories import AlertRepository
 from app.domain.block.models import AuthorType, Block
-from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.membership.repositories import MemberRepository
 from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
@@ -35,8 +34,6 @@ class DashboardService:
         self._notifs = AlertRepository(session)
         self._members = MemberRepository(session)
         self._spaces = SpaceRepository(session)
-        self._templates = TaskTemplateRepository(session)
-        self._tasks = TaskRepository(session)
 
     async def _project_card(self, project_id: uuid.UUID) -> dict | None:
         project = await self._projects.get(project_id)
@@ -291,17 +288,11 @@ class DashboardService:
         space = await self._spaces.get_by_id(space_id)
         if space is None:
             raise NotFoundError("Space not found")
-        # Space → templates → tasks → linked projects (deduped).
-        project_ids: list[uuid.UUID] = []
-        seen: set[uuid.UUID] = set()
-        for template in await self._templates.list_for_space(space_id):
-            for task in await self._tasks.list_for_template(template.id):
-                for link in await self._projects.list_projects_for_task(task.id):
-                    if link.project_id not in seen:
-                        seen.add(link.project_id)
-                        project_ids.append(link.project_id)
+        # Space → its 赛题 → the projects created from them (#370). This used to
+        # walk Space → cheesex templates → cheesex tasks → project_task_links, a
+        # hierarchy parallel to the one the 赛题 already form.
         cards = []
-        for pid in project_ids:
+        for pid in await self._projects.list_ids_for_space_tasks(space_id):
             card = await self._project_card(pid)
             if card is not None:
                 cards.append(card)

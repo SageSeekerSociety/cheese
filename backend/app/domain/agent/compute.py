@@ -19,7 +19,7 @@ import subprocess
 import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
@@ -35,6 +35,13 @@ from app.domain.agent.service import (
 )
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
+
+if TYPE_CHECKING:
+    from app.domain.agent.hooks_substrate import (
+        HookActivityConsumer,
+        HookEventConsumer,
+        TopicSubscription,
+    )
 
 # Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
 # chat.py, which imports this module).
@@ -91,7 +98,9 @@ class ComputeProvider(Protocol):
         images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """Inject text into the turn already running on this topic, if this
         transport can. False = "I have no live screen for it" — the caller then
         runs an ordinary turn. Only the hooks-driven backends (a long-lived
@@ -187,11 +196,9 @@ class LocalDockerProvider:
             # ws.sandbox_vcs_mounts) — the shim (claude-sbx) appends them to
             # `docker run` as extra `-v` args, space-joined since deterministic
             # workspace_root/UUID paths never contain whitespace.
-            "SBX_VCS_MOUNTS": " ".join(
-                ws.sandbox_vcs_mounts(project_id, ws.branch_for_topic(topic_id))
-            ),
+            "SBX_VCS_MOUNTS": " ".join(ws.sandbox_vcs_mounts(project_id, topic_id)),
             "SBX_SESSION": str(ws.session_dir(project_id, topic_id)),
-            "CHEESE_API": settings.sandbox_api_base,
+            "CHEESE_API": settings.agent_api_base(),
             "CHEESE_PROJECT": str(project_id),
             "CHEESE_TOPIC": str(topic_id),
             # Which 分身 this sandbox is (分身独立身份) — the same identity its
@@ -257,10 +264,13 @@ class LocalDockerProvider:
             images=images,
         )
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """No live screen to inject into: this provider runs the SDK per turn, so
         between turns there is no process to talk to and during one the turn owns
         the stream. The caller falls back to running its own turn."""
+        del images
         return False
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
@@ -340,10 +350,13 @@ class RemoteCheesedProvider:
                     if line.strip():
                         yield event_from_dict(json.loads(line))
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """Not relayed: the node's turn is an NDJSON stream this side consumes,
         with no back-channel into the running screen. Wiring one is a node RPC
         change, not something to fake here."""
+        del images
         return False
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
@@ -443,16 +456,49 @@ class ComputePool:
                 return provider.activity_status(topic_id)
         return None
 
-    async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
         """Inject text into whichever provider is currently running a turn on
         this topic. Asks every provider rather than resolving the topic's
         configured one: only a provider that HAS a live screen for this exact
         topic can answer True, so the first True is the right one — and it needs
         no DB read on the hot path where a human is waiting."""
         for provider in self._providers.values():
-            if await provider.deliver(topic_id, text):
+            delivered = (
+                await provider.deliver(topic_id, text, images=images)
+                if images
+                else await provider.deliver(topic_id, text)
+            )
+            if delivered:
                 return True
         return False
+
+    def bind_hook_event_consumer(
+        self,
+        consumer: "HookEventConsumer",
+        activity_consumer: "HookActivityConsumer | None" = None,
+    ) -> None:
+        """Give hooks providers the room-side persistence and activity owners."""
+        from app.domain.agent.hooks_substrate import HooksSessionProvider
+
+        for provider in self._providers.values():
+            if isinstance(provider, HooksSessionProvider):
+                provider.bind_event_consumer(consumer)
+                if activity_consumer is not None:
+                    provider.bind_activity_consumer(activity_consumer)
+
+    async def recover_hook_subscriptions(
+        self, device_id: str | None = None
+    ) -> list["TopicSubscription"]:
+        """Recover subscriptions for screens that survived this process."""
+        from app.domain.agent.hooks_substrate import HooksSessionProvider
+
+        recovered: list[TopicSubscription] = []
+        for provider in self._providers.values():
+            if isinstance(provider, HooksSessionProvider):
+                recovered.extend(await provider.recover_subscriptions(device_id))
+        return recovered
 
     def has(self, provider_id: str) -> bool:
         return provider_id in self._providers
@@ -544,3 +590,27 @@ def build_compute_pool(
     else:
         default_name = local.name
     return ComputePool(providers, default_name)
+
+
+def app_preview_reachable(compute_profile: str | None) -> bool:
+    """Can 运行环境预览 exist for a topic running on this compute at all?
+
+    The feature resolves the app port a *docker container on the backend's own
+    host* publishes (``workspace.app_endpoint`` → ``docker port``). That mapping
+    exists only when the topic's box IS a container here. A turn running on
+    someone's enrolled machine (``device``) or on a leased Cloud machine
+    (``cloud`` — a DeviceProvider subclass) has no container on this host, so the
+    lookup returns None for a reason that has nothing to do with the app: there
+    is no path from the platform to that port, and there never was.
+
+    Without this distinction both cases collapse into "container down", and the
+    panel tells those users to @ 芝士 again to bring up a box that is not coming.
+    """
+    from app.domain.agent.market import compute_default_name
+    from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+    local_box = {TmuxHooksProvider.name, LocalDockerProvider.name}
+    # A topic that has an app artifact has necessarily run a turn, and the first
+    # turn pins `topic.compute_profile` — so the sticky project/team chain is
+    # already collapsed into it and only the deployment default is left to apply.
+    return (compute_profile or compute_default_name()) in local_box

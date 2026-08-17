@@ -13,16 +13,16 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.main import app
 
 
 def _project_and_topic(client) -> tuple[str, str]:
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     tid = client.post(
-        "/api/topics", json={"project_id": pid, "title": "做一个东西"}
+        "/topics", json={"project_id": pid, "title": "做一个东西"}
     ).json()["data"]["id"]
     return pid, tid
 
@@ -73,7 +73,7 @@ def _tool_block(client, pid: str, tid: str, *, age: timedelta) -> None:
 
 
 def _stall(client, topic_id: str) -> dict:
-    r = client.get(f"/api/topics/{topic_id}/status")
+    r = client.get(f"/topics/{topic_id}/status")
     assert r.status_code == 200
     return r.json()["data"]["stall"]
 
@@ -165,15 +165,15 @@ class _RunnerWithLiveTurn:
         self._topic_id = topic_id
         self._silent_for_s = silent_for_s
 
-    def live_turn_for_topic(self, topic_id: uuid.UUID) -> dict | None:
+    def live_work_for_topic(self, topic_id: uuid.UUID) -> dict | None:
         if str(topic_id) != self._topic_id:
             return None
         return {"turn_id": "t-1", "silent_for_s": self._silent_for_s}
 
-    def topic_turn(self, topic_id: uuid.UUID) -> dict | None:
+    def topic_work(self, topic_id: uuid.UUID) -> dict | None:
         return None
 
-    def active_turns(self) -> int:
+    def active_work_count(self) -> int:
         return 1
 
     def project_queue_depth(self, project_id: uuid.UUID | str) -> int:
@@ -189,7 +189,7 @@ def test_a_turn_still_running_is_never_called_dead(client):
     _tool_block(client, pid, tid, age=timedelta(hours=3))
     assert _stall(client, tid)["stalled"] is True  # ...with no turn running
 
-    app.dependency_overrides[get_turn_runner] = lambda: _RunnerWithLiveTurn(
+    app.dependency_overrides[get_work_runner] = lambda: _RunnerWithLiveTurn(
         tid, silent_for_s=12.0
     )
     try:
@@ -197,7 +197,7 @@ def test_a_turn_still_running_is_never_called_dead(client):
         assert stall["stalled"] is False
         assert stall["live_turn"]["silent_for_s"] == 12.0
     finally:
-        app.dependency_overrides.pop(get_turn_runner, None)
+        app.dependency_overrides.pop(get_work_runner, None)
 
 
 def test_a_turn_that_is_live_but_long_silent_is_still_caught(client):
@@ -207,7 +207,7 @@ def test_a_turn_that_is_live_but_long_silent_is_still_caught(client):
     pid, tid = _project_and_topic(client)
     _tool_block(client, pid, tid, age=timedelta(hours=3))
 
-    app.dependency_overrides[get_turn_runner] = lambda: _RunnerWithLiveTurn(
+    app.dependency_overrides[get_work_runner] = lambda: _RunnerWithLiveTurn(
         tid, silent_for_s=3 * 3600
     )
     try:
@@ -216,4 +216,4 @@ def test_a_turn_that_is_live_but_long_silent_is_still_caught(client):
         # Named apart from the process-is-gone case: this one still holds a task.
         assert stall["reason"] == "silent_turn"
     finally:
-        app.dependency_overrides.pop(get_turn_runner, None)
+        app.dependency_overrides.pop(get_work_runner, None)

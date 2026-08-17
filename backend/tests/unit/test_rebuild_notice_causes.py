@@ -24,9 +24,7 @@ IMAGE = "the-current-image"
 
 
 def _provider() -> TmuxHooksProvider:
-    p = TmuxHooksProvider.__new__(TmuxHooksProvider)
-    p._image = IMAGE  # type: ignore[attr-defined]
-    return p
+    return TmuxHooksProvider(image=IMAGE)
 
 
 async def _false() -> bool:

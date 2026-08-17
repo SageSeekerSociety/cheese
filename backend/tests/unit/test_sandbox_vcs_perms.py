@@ -52,8 +52,8 @@ def _both_jj_trees(wt: Path) -> list[Path]:
 def test_metadata_written_after_creation_stays_readable(project):
     """The reported bug: a worktree is readable when created, then the next jj
     call writes a 0600 operation and the sandbox can no longer read history."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     (wt / "hello.txt").write_text("hi\n", encoding="utf-8")
     ws._jj(wt, "commit", "-m", "later work")  # noqa: SLF001
@@ -65,8 +65,8 @@ def test_metadata_written_after_creation_stays_readable(project):
 def test_the_newest_operation_is_readable(project):
     """Narrowest form of the failure: jj reads the op log head on every command,
     so ONE unreadable operation file breaks every jj call in the sandbox."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
     (wt / "a.txt").write_text("a\n", encoding="utf-8")
     ws._jj(wt, "commit", "-m", "work")  # noqa: SLF001
 
@@ -81,8 +81,8 @@ def test_the_newest_operation_is_readable(project):
 def test_a_failing_jj_call_still_repairs_modes(project):
     """A failed call writes operations too, and leaves the sandbox just as
     broken — so the repair must not sit behind the returncode check."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
     victim = wt / ".jj" / "working_copy" / "checkout"
     victim.chmod(0o600)
 
@@ -96,8 +96,8 @@ def test_the_store_root_is_writable_for_jjs_secure_config(project):
     """jj writes a temp file into the store root to resolve its "secure config"
     before running ANY command — read-only there fails with "Failed to
     determine the secure config for a repo" even for `jj log`."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
     ws._jj(wt, "status")  # noqa: SLF001
 
     assert _both_jj_trees(wt)[1].stat().st_mode & 0o002
@@ -108,12 +108,12 @@ def test_mounting_for_a_sandbox_repairs_metadata_written_earlier(project):
     disk — is never covered by the per-call repair, which only fixes what THAT
     call wrote. Handing the store to a container is the moment it must be
     right."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
     victim = wt / ".jj" / "working_copy" / "checkout"
     victim.chmod(0o600)  # stands in for pre-existing 0600 metadata
 
-    ws.sandbox_vcs_mounts(project, branch, container_workdir="/work")
+    ws.sandbox_vcs_mounts(project, topic, container_workdir="/work")
 
     assert victim.stat().st_mode & 0o004
 
@@ -122,8 +122,8 @@ def test_op_log_writes_stay_denied(project):
     """Read access must not become write access: a sandbox reads history with
     --ignore-working-copy. If one topic's agent could write the shared op log,
     it could corrupt every other topic's history."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
     ws._jj(wt, "status")  # noqa: SLF001
 
     ops = _both_jj_trees(wt)[1] / "op_store" / "operations"

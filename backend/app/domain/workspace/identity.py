@@ -14,11 +14,12 @@ private, unverified, or simply different from the one they signed up with, and
 any of those makes the commit unlinked again. The numeric id is what GitHub
 matches on, which is why the login alone is not enough.
 
-Who this names: the person who OPENED the topic. They asked for the change and
-they are the one accountable for it; the agent typed it. That the agent typed it
-is not hidden — every such commit rides a PR whose body carries `Cheese-Topic:`
-and whose subject 芝士 wrote, and the platform's own commits (repo init, upstream
-merges) keep the 芝士 identity because nobody asked for those.
+Who this names: the human the topic BELONGS TO — its roster owner, see
+`requester_handle`. They asked for the change and they are the one accountable
+for it; the agent typed it. That the agent typed it is not hidden — every such
+commit rides a PR whose body carries `Cheese-Topic:` and whose subject 芝士
+wrote, and the platform's own commits (repo init, upstream merges) keep the 芝士
+identity because nobody asked for those.
 
 One knob, not two: git carries author and committer separately, but jj 0.43 sets
 both from JJ_USER/JJ_EMAIL and has no `--author`. So an attributed commit is
@@ -31,9 +32,13 @@ import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
+from app.domain.identity.handles import looks_like_agent_handle
+
+if TYPE_CHECKING:
+    from app.domain.topic.models import Topic
 
 logger = logging.getLogger("cheesex.workspace.identity")
 
@@ -67,6 +72,7 @@ __all__ = [
     "noreply_email",
     "read",
     "remember",
+    "requester_handle",
     "resolve_for_handle",
     "session_dir",
     "sync_for_topic",
@@ -126,6 +132,40 @@ async def resolve_for_handle(session: Any, handle: str) -> GitIdentity | None:
     return identity_from_profile(*found)
 
 
+async def requester_handle(session: Any, topic: "Topic") -> str | None:
+    """The handle of the human a topic's work belongs to — the one name behind
+    `Requested-by:`, the git author of its commits, and the account the PR is
+    opened under.
+
+    NOT ``topic.created_by``. A 分身 splits its sub-topics under its OWN handle
+    (``cheese-<hex12>``, see ``identity.handles``), so on every split topic
+    ``created_by`` names a robot that has no GitHub account, and every one of
+    those attributions silently degraded: the PR opened as ``cheesex-app[bot]``,
+    its body said ``Requested-by: cheese-a7a0268b``, and the commits carried no
+    ``Co-authored-by`` at all (PR #500, #504). The roster already knows better —
+    ``TopicService.split_to_subtopic`` walks a ladder (creator if human, else the
+    parent room's owner, else the project's) precisely to seed a real human as
+    the child's owner. This reads that answer instead of re-deriving it.
+
+    Falls back to ``created_by``, which is what every caller used before: a room
+    a human opened directly is unaffected (owner and creator are the same
+    person), and a room where no human can be found behaves exactly as it does
+    today rather than worse. Best-effort by construction — attribution must
+    never be the reason a PR fails to open, so a broken roster read is logged
+    and swallowed.
+    """
+    owner: str | None = None
+    try:
+        from app.domain.topic_membership.services import TopicMemberService
+
+        owner = await TopicMemberService(session).owner_of(topic.id)
+    except Exception:  # noqa: BLE001 — attribution never fails its caller
+        logger.info("could not read roster owner for topic %s", topic.id, exc_info=True)
+    if owner and not looks_like_agent_handle(owner):
+        return owner
+    return topic.created_by or None
+
+
 def read(project_id: uuid.UUID, topic_id: uuid.UUID) -> GitIdentity | None:
     """The remembered author for this topic. Synchronous and DB-free on purpose:
     `snapshot_worktree` runs in a worker thread with no session."""
@@ -157,12 +197,16 @@ def remember(project_id: uuid.UUID, topic_id: uuid.UUID, identity: GitIdentity) 
         logger.warning("could not persist git identity for topic %s", topic_id)
 
 
-async def sync_for_topic(
-    session: Any, project_id: uuid.UUID, topic_id: uuid.UUID, handle: str | None
-) -> None:
+async def sync_for_topic(session: Any, topic: "Topic") -> None:
     """Refresh the remembered author from the DB. Called once per turn — the
     connection can appear (someone links GitHub mid-project) or change, and a
-    topic created before this existed has no sidecar at all."""
+    topic created before this existed has no sidecar at all.
+
+    Takes the topic rather than a handle so that WHO a topic belongs to is
+    decided in one place (`requester_handle`) instead of at each call site —
+    passing ``topic.created_by`` here is what left every 分身-split room
+    committing as 芝士."""
+    handle = await requester_handle(session, topic)
     if not handle:
         return
     try:
@@ -171,7 +215,7 @@ async def sync_for_topic(
         logger.exception("could not resolve git identity for %s", handle)
         return
     if identity is not None:
-        remember(project_id, topic_id, identity)
+        remember(topic.project_id, topic.id, identity)
 
 
 def coauthored_by(identity: GitIdentity | None) -> str | None:
