@@ -6,8 +6,7 @@ token a device screen would receive, as shell-friendly `KEY=value` lines:
     PROJECT=<uuid>
     TOPIC=<uuid>
     TOKEN=<scoped token>
-    WORKTREE=<container path of the topic worktree>
-    HOSTTREE=<same worktree as the co-located DEVICE sees it>
+    BRANCH=<topic branch the device clones and pushes>
 
 No agent turn is summoned, so this costs nothing at the model provider.
 """
@@ -18,7 +17,6 @@ import os
 import sys
 import urllib.request
 import uuid
-from pathlib import Path
 
 BASE = os.environ.get("BASE", "http://localhost:8081").rstrip("/")
 PROJECT_NAME = os.environ.get("PROJECT_NAME", "cheese 自建")
@@ -29,7 +27,6 @@ async def main() -> int:
     from sqlalchemy import select
 
     from app.common.auth import create_access_token
-    from app.core.config import settings
     from app.core.db import async_session_factory
     from app.core.sandbox_auth import mint_scoped_token
     from app.domain.device.models import DeviceProjectRow
@@ -82,22 +79,11 @@ async def main() -> int:
     with urllib.request.urlopen(req, timeout=60) as resp:
         topic_id = uuid.UUID(json.loads(resp.read())["data"]["id"])
 
-    worktree = ws.topic_worktree(project.id, topic_id).resolve()
-    host_root = settings.device_shared_workspace_host_root.strip()
-    hosttree = ""
-    if host_root:
-        try:
-            rel = worktree.relative_to(Path(settings.workspace_root).resolve())
-            hosttree = str(Path(host_root) / rel)
-        except ValueError:
-            hosttree = ""
-
     scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(topic_id))
     print(f"PROJECT={project.id}")
     print(f"TOPIC={topic_id}")
     print(f"TOKEN={scoped}")
-    print(f"WORKTREE={worktree}")
-    print(f"HOSTTREE={hosttree}")
+    print(f"BRANCH={ws.branch_for_topic(topic_id)}")
     return 0
 
 
