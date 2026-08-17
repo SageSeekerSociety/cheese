@@ -3,7 +3,9 @@
 
 代码/文件的事用原生工具（Bash/Write/Read）；改平台状态的事用本 CLI。
 环境变量（容器注入）：
-  CHEESE_API     平台 API 基址，如 http://host.docker.internal:8099/api
+  CHEESE_API     后端基址，路由路径直接接在它后面。网关后面是 <origin>/api
+                 （那段 /api 是挂载前缀，不能剥）；直连后端端口则是
+                 http://host.docker.internal:8099
   CHEESE_PROJECT 当前项目 id
   CHEESE_TOPIC   当前话题 id
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
@@ -37,7 +39,19 @@ import sys
 import urllib.error
 import urllib.request
 
-API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099/api").rstrip("/")
+# The backend base, as reachable from wherever this CLI runs. Every route path
+# hangs directly off it — append and send, never rewrite. The two deployments
+# differ only in what the base is, which is exactly what the spec advertises as
+# its `servers`: `<origin>/api` behind the gateway (nginx forwards `location
+# /api/` to the backend, stripping that one segment), and `<host>:<port>` when
+# something talks to the backend port with no gateway in front.
+#
+# So a trailing `/api` here is NOT a redundant prefix to be tidied away — it is
+# the gateway mount, and it is load-bearing. Stripping it does not 404, which is
+# what makes the mistake expensive: the gateway answers `/sandbox/github-token`
+# with the SPA's index.html at **200**, so the failure surfaces as a
+# JSONDecodeError somewhere downstream instead of an HTTP error at the call.
+API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
@@ -90,12 +104,6 @@ def _need(name: str, value: str) -> str:
         print(f"[cheese] 缺少 {name}（环境变量未注入）", file=sys.stderr)
         sys.exit(2)
     return value
-
-
-def _api_root() -> str:
-    """The app root (where /openapi.json lives), i.e. CHEESE_API without the
-    trailing /api mount prefix."""
-    return API[: -len("/api")] if API.endswith("/api") else API
 
 
 def _raw_request(method: str, path: str, data: str | None) -> None:
@@ -387,7 +395,7 @@ def _print_api_index() -> None:
     """List available operations from our FastAPI /openapi.json (like Restish,
     but built from OUR live spec). Lets `cheese api` self-describe what raw calls
     are possible without hardcoding anything."""
-    url = f"{_api_root()}/openapi.json"
+    url = f"{API}/openapi.json"
     try:
         with urllib.request.urlopen(url, timeout=20) as r:
             spec = json.load(r)
@@ -911,10 +919,9 @@ def main() -> None:
         _call("POST", f"/projects/{proj}/milestones", body)
         print(f"已钉里程碑：{a.title}")
     elif a.cmd == "gh-token":
-        # Root-mounted like /llm (not under /api): build from the api root.
         # stdout carries ONLY the token so `GH_TOKEN=$(cheese gh-token)` works;
         # the expiry note goes to stderr.
-        req = urllib.request.Request(f"{_api_root()}/sandbox/github-token")
+        req = urllib.request.Request(f"{API}/sandbox/github-token")
         if TOKEN:
             req.add_header("X-Cheese-Token", TOKEN)
         try:

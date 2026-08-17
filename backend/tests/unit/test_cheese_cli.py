@@ -25,13 +25,57 @@ def _load():
     return mod
 
 
-def test_api_root_strips_api_prefix(monkeypatch):
+def _url_opened(cli, monkeypatch, argv: list[str]) -> str:
+    """The URL this command hands to urllib — the thing a caller actually sends,
+    which is what these tests are about. Both commands under test die once the
+    request fails (one propagates, one catches and exits), so either exit is
+    fine; the URL was already captured by then."""
+    seen: list[str] = []
+
+    def _capture(req, *a, **kw):
+        seen.append(req if isinstance(req, str) else req.full_url)
+        raise OSError("stop here — the URL is all we wanted")
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", _capture)
+    monkeypatch.setattr(cli.sys, "argv", argv)
+    with pytest.raises((OSError, SystemExit)):
+        cli.main()
+    assert len(seen) == 1, f"expected exactly one request, got {seen}"
+    return seen[0]
+
+
+def test_gateway_mount_prefix_is_not_stripped_from_api(monkeypatch):
+    """A trailing /api in CHEESE_API is the gateway's mount prefix, not a
+    redundant segment: nginx forwards `location /api/` to the backend and strips
+    exactly that one segment, so <origin>/api IS the backend base. The spec says
+    so itself — it advertises both `/api` (through the app origin) and `/`
+    (straight at the backend port) as its `servers`.
+
+    Stripping it is expensive to notice because it does not 404: the gateway
+    hands any unrouted path to the SPA, so the request comes back **200
+    text/html** and blows up later as a JSON parse error far from the cause.
+    """
+    for base in (
+        "https://gateway.example.com/api",  # behind the gateway
+        "http://host.docker.internal:8099",  # straight at the backend port
+    ):
+        cli = _load()
+        monkeypatch.setattr(cli, "API", base)
+        monkeypatch.setattr(cli, "TOKEN", "")
+
+        got = _url_opened(cli, monkeypatch, ["cheese", "gh-token"])
+        assert got == f"{base}/sandbox/github-token"
+
+        got = _url_opened(cli, monkeypatch, ["cheese", "api"])
+        assert got == f"{base}/openapi.json"
+
+
+def test_no_call_site_rewrites_the_api_base(monkeypatch):
+    """The invariant behind the test above, stated once: routes are appended to
+    CHEESE_API verbatim. A helper that rewrites the base is how the bug came
+    back last time, so nothing here may reintroduce one."""
     cli = _load()
-    monkeypatch.setattr(cli, "API", "http://host.docker.internal:8099/api")
-    assert cli._api_root() == "http://host.docker.internal:8099"
-    # No /api suffix → returned unchanged.
-    monkeypatch.setattr(cli, "API", "http://localhost:9000")
-    assert cli._api_root() == "http://localhost:9000"
+    assert not hasattr(cli, "_api_root")
 
 
 def test_api_subcommand_parses_method_and_path(monkeypatch):
