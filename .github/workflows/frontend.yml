@@ -63,7 +63,7 @@ defaults:
 
 jobs:
   check:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: [self-hosted, cheese-ci-any]
     # Measured locally: install ~40s, eslint ~90s, vitest ~56s. The margin
     # covers a cold pnpm store without letting a wedged run bill for an hour.
     timeout-minutes: 15
@@ -95,8 +95,11 @@ jobs:
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.local/share/pnpm/store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
+          # runner.arch, not just runner.os: `runner.os` is "Linux" on both
+          # x64 and arm64, so without it the two architectures share one pnpm
+          # store and the platform-specific binaries in it.
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
