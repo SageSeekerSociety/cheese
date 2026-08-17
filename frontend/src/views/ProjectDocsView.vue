@@ -222,21 +222,21 @@ watch([kind, () => props.projectId], load)
              (drag handle, tables, task lists, code highlighting), persisted via
              the same getDoc/putDoc API. ===== -->
         <template v-else-if="kind === 'charter'">
-          <v-card class="charter-card">
-            <div class="charter-body">
-              <DocEditor
-                v-if="rootTopicId"
-                :topic-id="rootTopicId"
-                :editable="true"
-                placeholder="芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。"
-                @saving="onCharterSaving"
-                @saved="onCharterSaved"
-                @dirty="onCharterDirty"
-                @error="onCharterError"
-              />
-              <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有可编辑的章程文档</div>
-            </div>
-          </v-card>
+          <!-- 一整篇文档，不是列表里的一个对象 —— 根面是白底之后，把它框进一张
+               白卡片只是给白底加了个轮廓。直接铺在页面上。 -->
+          <div class="charter-body">
+            <DocEditor
+              v-if="rootTopicId"
+              :topic-id="rootTopicId"
+              :editable="true"
+              placeholder="芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。"
+              @saving="onCharterSaving"
+              @saved="onCharterSaved"
+              @dirty="onCharterDirty"
+              @error="onCharterError"
+            />
+            <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有可编辑的章程文档</div>
+          </div>
         </template>
 
         <!-- ===== 决策记录 ===== -->
@@ -246,8 +246,10 @@ watch([kind, () => props.projectId], load)
             <div class="text-caption mt-1">芝士在协作中定下关键决策时会记到这里</div>
           </div>
           <div v-else class="d-flex flex-column ga-3">
+            <!-- 一条决策是列表里真正可拿起的对象（有自己的日期、正文和「来自
+                 话题」入口），所以卡片形态保留。左侧那条 3px 竖条删掉：区块强调
+                 不用左条纹，卡片自己的 --line 描边已经把边界说清楚了。 -->
             <v-card v-for="d in decisions" :key="d.id" class="decision-card">
-              <div class="decision-bar" />
               <div class="pa-4">
                 <div class="d-flex align-center ga-2 mb-2">
                   <v-icon size="17" class="c-faint"> mdi-clipboard-text-clock-outline </v-icon>
@@ -276,20 +278,18 @@ watch([kind, () => props.projectId], load)
             <div>暂无周报</div>
             <div class="text-caption mt-1">周报由芝士定期产出</div>
           </div>
-          <div v-else class="d-flex flex-column ga-3">
-            <router-link v-for="t in weeklies" :key="t.id" class="weekly-link" :to="topicTo(t.id)">
-              <v-card class="weekly-card">
-                <div class="pa-4 d-flex align-center ga-3">
-                  <v-icon size="20" class="c-faint"> mdi-calendar-week-outline </v-icon>
-                  <div class="flex-grow-1" style="min-width: 0">
-                    <div class="t-body text-truncate" style="font-weight: 500; color: var(--ink)">
-                      {{ t.title }}
-                    </div>
-                    <div class="t-meta">{{ fmtDate(t.created_at) }}</div>
-                  </div>
-                  <v-icon size="18" class="c-faint">mdi-chevron-right</v-icon>
+          <!-- 一份周报整卡就是一个链接：没有卡内操作、没有第二层信息，它是导航
+               行不是对象卡。改成带发丝线的行列表，和总览页的成员列表同一套语法。 -->
+          <div v-else class="weekly-list">
+            <router-link v-for="t in weeklies" :key="t.id" class="weekly-row" :to="topicTo(t.id)">
+              <v-icon size="18" class="c-faint">mdi-calendar-week-outline</v-icon>
+              <div class="flex-grow-1" style="min-width: 0">
+                <div class="t-body text-truncate" style="font-weight: 500; color: var(--ink)">
+                  {{ t.title }}
                 </div>
-              </v-card>
+                <div class="t-meta">{{ fmtDate(t.created_at) }}</div>
+              </div>
+              <v-icon size="18" class="c-faint">mdi-chevron-right</v-icon>
             </router-link>
           </div>
         </template>
@@ -299,8 +299,9 @@ watch([kind, () => props.projectId], load)
 </template>
 
 <style scoped>
+/* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图、总览同一层关系。 */
 .docs-page {
-  background: var(--canvas);
+  background: var(--surface);
 }
 
 /* 四种文档的切换带。它以前是侧栏里四行常驻的一级导航，占着黄金位养的却是四个
@@ -309,35 +310,32 @@ watch([kind, () => props.projectId], load)
   border-bottom: 1px solid var(--line);
 }
 
-/* 章程 card: a clean document sheet. */
-.charter-card {
-  background: var(--surface);
-}
+/* 章程: 页面本身就是那张纸。左右不再补内边距 —— DocEditor 自带 56px 的左侧
+   拖拽手柄槽，再叠一层会把正文推得离页头更远。 */
 .charter-body {
-  padding: 28px 32px;
+  padding: 4px 0 40px;
 }
 
-/* 决策记录 cards: quiet left rule (源自原始话题) — neutral, not amber. */
+/* 决策记录: 一条决策 = 一个对象，卡片保留（描边来自全局 VCard 默认的
+   flat + border=thin，没有阴影）。 */
 .decision-card {
-  position: relative;
+  /* 正文里的长表格/代码块不许冲出 12px 圆角。 */
   overflow: hidden;
 }
-.decision-bar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--line-2);
-}
 
-/* 周报集 link cards. */
-.weekly-link {
+/* 周报集: 行列表，靠发丝线分隔。列表不自带顶边 —— 上面 .docs-tabs 的底边线就
+   是它的顶边，再画一条会在 24px 之内出现两条平行的满宽横线。 */
+.weekly-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--line);
   text-decoration: none;
   color: inherit;
-}
-.weekly-card {
   transition: background 0.12s ease;
 }
-.weekly-card:hover {
+.weekly-row:hover {
   background: var(--fill);
 }
 
