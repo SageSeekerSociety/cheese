@@ -1016,3 +1016,32 @@ async def test_a_deaf_session_is_restarted_without_touching_the_box(
     # Losing the conversation must be said out loud, and attributed to the topic
     # that actually lost it — not to the room.
     assert _announced == [(task_id, "token")]
+
+
+@pytest.mark.anyio
+async def test_rebuilding_a_box_is_announced_to_every_topic_in_it(
+    _room_box, monkeypatch
+):
+    """A box serves a whole room, so destroying it ends EVERY topic's
+    conversation in it. Telling only the topic whose turn noticed leaves the
+    siblings' agents restarted with no memory and nothing in their rooms saying
+    why — the same silence the token-rebuild notice was added to fix, just
+    moved from one topic to the rest of the room."""
+    box = _room_box
+    project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rooms = {room_id: room_id, task_id: room_id}
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
+    )
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    await _bring_up(provider, box, project_id, room_id, room_id)
+    await _bring_up(provider, box, project_id, task_id, room_id)
+    _announced.clear()
+
+    # The image moved under the running box — a whole-box rebuild.
+    provider._image = "img:newer"
+    await _bring_up(provider, box, project_id, room_id, room_id)
+
+    told = {topic for topic, _ in _announced}
+    assert told == {room_id, task_id}, "a sibling lost its session in silence"
+    assert {cause for _, cause in _announced} == {"image"}

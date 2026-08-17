@@ -2487,17 +2487,22 @@ def session_env_var(container: str, session: str, key: str) -> str | None:
 def topic_port_slot(topic_id: uuid.UUID) -> int:
     """The port slot the topic's live tmux session holds, or 0.
 
-    0 is the honest fallback for "no live session to ask" — it is also the slot a
-    lone topic gets, so a box that predates slots keeps answering on :3000."""
-    room = room_for_topic(topic_id)
+    0 is the honest fallback for "no live session to ask", and it is also the
+    slot the first topic in a box gets — so a box that predates slots keeps
+    answering on the conventional ports.
+
+    That fallback is why there is deliberately NO lookup against the legacy
+    session name here. `tmux show-environment -t cheese` falls back to PREFIX
+    matching, and ``cheese`` is a prefix of every per-topic session name, so on
+    a box that has any live topic it would answer with a SIBLING's slot — a
+    wrong preview port rather than a missing one. A legacy session carries no
+    slot variable anyway, so the only value such a lookup could ever return
+    correctly is the 0 this already returns."""
     raw = session_env_var(
-        tmux_container_name(room), tmux_session_name(topic_id), "CHEESE_PORT_SLOT"
+        tmux_container_name(room_for_topic(topic_id)),
+        tmux_session_name(topic_id),
+        "CHEESE_PORT_SLOT",
     )
-    if raw is None and room == topic_id:
-        # A box created before per-topic sessions calls its session "cheese".
-        raw = session_env_var(
-            tmux_container_name(room), LEGACY_TMUX_SESSION, "CHEESE_PORT_SLOT"
-        )
     return int(raw) if raw is not None and raw.isdigit() else 0
 
 

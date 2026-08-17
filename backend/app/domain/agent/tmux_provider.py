@@ -557,7 +557,14 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
             ),
             None,
         )
+        bereaved: list[uuid.UUID] = []
         if cause is not None:
+            # WHO loses a session, recorded before the box goes: a box serves a
+            # whole room, so destroying it ends every topic's conversation in
+            # it, not just the one whose turn happened to notice. Announcing
+            # only to this topic would leave the siblings' agents restarted with
+            # no memory and nothing in their rooms saying why.
+            bereaved = [topic for _, topic in await self._live_sessions(name)]
             await self.drop_container_controls(name)
             await _docker("rm", "-f", name)
             exists = False
@@ -565,11 +572,12 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
             await self._create_container(name, env, topic_id)
             if cause is not None:
                 # The old box (and anything running in it — the interactive
-                # session, background processes) is gone with no other
-                # warning; tell the topic (best-effort, never blocks the turn).
-                # `cause` is None only on a FIRST creation, where nothing was
-                # destroyed and there is nothing to announce.
-                await warn_container_rebuilt(topic_id, cause)
+                # sessions, background processes) is gone with no other
+                # warning; tell every topic that had one (best-effort, never
+                # blocks the turn). `cause` is None only on a FIRST creation,
+                # where nothing was destroyed and there is nothing to announce.
+                for topic in dict.fromkeys([topic_id, *bereaved]):
+                    await warn_container_rebuilt(topic, cause)
             return name
         rc, running, _ = await _docker("inspect", "-f", "{{.State.Running}}", name)
         if running.strip() != "true":

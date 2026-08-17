@@ -452,6 +452,13 @@ class Settings(BaseSettings):
     # should track work in flight, and a box whose room nobody has touched
     # since yesterday is paying rent for a conversation that will resume from
     # its transcript anyway.
+    #
+    # 8 hours holds even though one box now serves a whole room (2026-08-17
+    # decision). What changed is not the threshold but what "idle" MEASURES:
+    # `reap_idle_containers` takes the room's last activity AND its tasks'.
+    # Judging the room alone would destroy a box with live work in it the
+    # moment the room's own timeline went quiet — and a room whose work has
+    # been split out is quiet by design, so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,

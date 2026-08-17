@@ -168,3 +168,29 @@ def test_a_topics_session_name_is_its_own(_rooms):
     # Sessions are discovered by prefix after a restart, so the legacy name has
     # to remain a prefix of the new scheme or recovery silently finds nothing.
     assert ws.tmux_session_name(a).startswith(ws.LEGACY_TMUX_SESSION)
+
+
+def test_the_slot_lookup_never_prefix_matches_a_siblings_session(_rooms, monkeypatch):
+    """`tmux -t <name>` falls back to PREFIX matching, and the legacy session
+    name ``cheese`` is a prefix of every per-topic name — so a lookup written
+    against the legacy name would hand a topic with no live session its
+    SIBLING's preview port. Missing is fine; wrong is not."""
+    asked: list[list[str]] = []
+
+    class _Missing:
+        returncode = 1
+        stdout = ""
+        stderr = "session not found"
+
+    def _run(argv, **_kwargs):
+        asked.append(list(argv))
+        return _Missing()
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    room, task = uuid.uuid4(), uuid.uuid4()
+    ws.bind_room(task, room)
+
+    assert ws.topic_port_slot(task) == 0
+    targets = [c[c.index("-t") + 1] for c in asked if "-t" in c]
+    assert targets == [ws.tmux_session_name(task)]
+    assert ws.LEGACY_TMUX_SESSION not in targets
