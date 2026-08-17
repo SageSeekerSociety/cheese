@@ -33,6 +33,25 @@ def _suite(slug: str, status: str = "queued") -> dict:
     return {"app": {"slug": slug}, "status": status, "conclusion": None}
 
 
+def _run(
+    name: str,
+    *,
+    status: str = "completed",
+    conclusion: str | None = "success",
+    slug: str = "github-actions",
+) -> dict:
+    """One check-run as GitHub returns it. `app.slug` is not decoration: a
+    commit's check-runs are a shared bulletin board (copilot's reviewer,
+    codecov, …) and only the github-actions ones are the CI this platform
+    gates on."""
+    return {
+        "name": name,
+        "status": status,
+        "conclusion": conclusion,
+        "app": {"slug": slug},
+    }
+
+
 class _FakeClock:
     """A controllable monotonic clock — lets tests cross the grace-period
     boundary without a real sleep."""
@@ -75,10 +94,7 @@ def _routed(*, check_runs: httpx.Response, check_suites: httpx.Response):
 async def test_real_checks_success_when_all_completed_ok():
     handler = _routed(
         check_runs=_check_runs_response(
-            [
-                {"name": "test", "status": "completed", "conclusion": "success"},
-                {"name": "lint", "status": "completed", "conclusion": "neutral"},
-            ]
+            [_run("test"), _run("lint", conclusion="neutral")]
         ),
         check_suites=_check_suites_response([]),  # must not even be called
     )
@@ -93,10 +109,7 @@ async def test_real_checks_success_when_all_completed_ok():
 async def test_real_checks_pending_when_one_still_running():
     handler = _routed(
         check_runs=_check_runs_response(
-            [
-                {"name": "test", "status": "completed", "conclusion": "success"},
-                {"name": "e2e", "status": "in_progress", "conclusion": None},
-            ]
+            [_run("test"), _run("e2e", status="in_progress", conclusion=None)]
         ),
         check_suites=_check_suites_response([]),
     )
@@ -112,8 +125,8 @@ async def test_real_checks_failure_wins_even_with_others_still_running():
     handler = _routed(
         check_runs=_check_runs_response(
             [
-                {"name": "test", "status": "completed", "conclusion": "failure"},
-                {"name": "e2e", "status": "in_progress", "conclusion": None},
+                _run("test", conclusion="failure"),
+                _run("e2e", status="in_progress", conclusion=None),
             ]
         ),
         check_suites=_check_suites_response([]),
@@ -123,6 +136,114 @@ async def test_real_checks_failure_wins_even_with_others_still_running():
     )
     assert state == "failure"
     assert "test" in tail
+
+
+# ---- only OUR check-runs colour the ref ---------------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_third_party_red_check_run_does_not_redden_the_ref():
+    """PR #506, 2026-08-17: every Actions check green,
+    `copilot-pull-request-reviewer` red. GitHub itself called that PR `clean`;
+    the platform read the ref as failed and summoned 芝士 to fix a review
+    bot's opinion — which no commit of its can turn green, so the card could
+    never merge. A commit's check-runs are a shared bulletin board; only the
+    workflows' runs are the CI this platform gates on."""
+    handler = _routed(
+        check_runs=_check_runs_response(
+            [
+                _run("test"),
+                _run("lint"),
+                _run(
+                    "copilot-pull-request-reviewer",
+                    conclusion="failure",
+                    slug="copilot-pull-request-reviewer",
+                ),
+            ]
+        ),
+        check_suites=_check_suites_response([]),  # must not even be consulted
+    )
+    state, tail = await _client(handler).check_state(
+        owner="acme", repo="widgets", ref="pr506", token="t"
+    )
+    assert state == "success"
+    assert "2" in tail  # ours, counted; the reviewer's is not one of ours
+
+
+@pytest.mark.anyio
+async def test_a_third_party_pending_check_run_does_not_hold_the_ref_back():
+    """The same filter on the waiting side. codecov can sit `queued`
+    indefinitely on its own (observed on a real docs-only PR) — waiting on it
+    would park a green card at pr_open forever."""
+    handler = _routed(
+        check_runs=_check_runs_response(
+            [
+                _run("test"),
+                _run("codecov/patch", status="queued", conclusion=None, slug="codecov"),
+            ]
+        ),
+        check_suites=_check_suites_response([]),
+    )
+    state, _ = await _client(handler).check_state(
+        owner="acme", repo="widgets", ref="mixed", token="t"
+    )
+    assert state == "success"
+
+
+@pytest.mark.anyio
+async def test_a_run_with_no_identifiable_app_is_not_treated_as_ours():
+    """Fail closed on an unrecognisable payload: an unattributable run must not
+    get to colour the ref. Being wrong this way lands on the zero-check
+    resolution, which is already built to be careful; being wrong the other way
+    lets one stranger sink or stall a card."""
+    handler = _routed(
+        check_runs=_check_runs_response(
+            [{"name": "mystery", "status": "completed", "conclusion": "failure"}]
+        ),
+        check_suites=_check_suites_response([_suite("github-actions", "queued")]),
+    )
+    state, _ = await _client(handler).check_state(
+        owner="acme", repo="widgets", ref="odd", token="t"
+    )
+    assert state == "pending"
+
+
+@pytest.mark.anyio
+async def test_third_party_runs_only_still_resolves_like_zero_checks():
+    """Once the strangers are discounted there may be NOTHING left, and that
+    has to fall back onto the existing zero-check resolution unchanged
+    (pending → grace → no_checks) rather than reading as success — a ref no
+    workflow of ours ever touched has not been tested.
+
+    Note the third-party runs are present the whole time: before this filter
+    they made `check_state` return early, so the grace bookkeeping never even
+    ran for a ref like this."""
+    handler = _routed(
+        check_runs=_check_runs_response(
+            [
+                _run("codecov/patch", slug="codecov"),
+                _run(
+                    "copilot-pull-request-reviewer",
+                    conclusion="failure",
+                    slug="copilot-pull-request-reviewer",
+                ),
+            ]
+        ),
+        check_suites=_check_suites_response([]),
+    )
+    clock = _FakeClock()
+    client = _client(handler, clock=clock, grace_s=120.0)
+
+    state, _ = await client.check_state(
+        owner="acme", repo="widgets", ref="strangers", token="t"
+    )
+    assert state == "pending"
+
+    clock.advance(120.0)
+    state, _ = await client.check_state(
+        owner="acme", repo="widgets", ref="strangers", token="t"
+    )
+    assert state == "no_checks"
 
 
 # ---- zero check-runs: the ambiguous branch this fix resolves ------------------
@@ -275,9 +396,7 @@ async def test_check_runs_appearing_clears_zero_checks_bookkeeping():
         calls["n"] += 1
         if calls["n"] == 1:
             return _check_runs_response([])
-        return _check_runs_response(
-            [{"name": "test", "status": "queued", "conclusion": None}]
-        )
+        return _check_runs_response([_run("test", status="queued", conclusion=None)])
 
     clock = _FakeClock()
     client = _client(handler, clock=clock, grace_s=120.0)
@@ -515,6 +634,77 @@ async def test_status_merged_with_unparseable_time_still_reports_the_merge():
     assert status.merged is True
     assert status.merge_commit_sha == "abc123"
     assert status.merged_at is None
+
+
+@pytest.mark.anyio
+async def test_status_carries_githubs_own_conflict_verdict():
+    """Shapes taken from this repo on 2026-08-17: #474 and #200 both report
+    `mergeable: false` / `mergeable_state: "dirty"`. It is a pure git verdict —
+    this repo has no branch protection at all and it works anyway — which is
+    what makes it usable instead of inferring conflicts from a refused
+    merge."""
+    status = await _status(
+        {
+            "state": "open",
+            "merged": False,
+            "mergeable": False,
+            "mergeable_state": "dirty",
+            "head": {"sha": "abc", "ref": "topic/deadbeef"},
+        }
+    )
+
+    assert status.mergeable is False
+    assert status.mergeable_state == "dirty"
+
+
+@pytest.mark.anyio
+async def test_status_keeps_a_null_mergeable_as_unknown():
+    """GitHub computes `mergeable` in the background and answers `null` until
+    it lands (this very GET is what schedules the work). It must survive as
+    None: collapsing it to False blocks every freshly-pushed PR, collapsing it
+    to True makes the conflict gate a coin flip."""
+    status = await _status(
+        {
+            "state": "open",
+            "merged": False,
+            "mergeable": None,
+            "mergeable_state": "unknown",
+            "head": {"sha": "abc"},
+        }
+    )
+
+    assert status.mergeable is None
+    assert status.mergeable_state == "unknown"
+
+
+@pytest.mark.anyio
+async def test_status_of_a_mergeable_pr_says_so():
+    """#509 (`true`/`unstable` — a non-required check is red) and #506
+    (`true`/`clean`) on 2026-08-17. Neither is a conflict."""
+    for state in ("clean", "unstable"):
+        status = await _status(
+            {
+                "state": "open",
+                "merged": False,
+                "mergeable": True,
+                "mergeable_state": state,
+                "head": {"sha": "abc"},
+            }
+        )
+        assert status.mergeable is True
+        assert status.mergeable_state == state
+
+
+@pytest.mark.anyio
+async def test_status_from_an_older_payload_without_the_fields_is_unknown():
+    """Absent ≠ false. A payload that never carried these keys must read as
+    "don't know", the same as an explicit null."""
+    status = await _status(
+        {"state": "open", "merged": False, "head": {"sha": "abc"}},
+    )
+
+    assert status.mergeable is None
+    assert status.mergeable_state == ""
 
 
 @pytest.mark.anyio

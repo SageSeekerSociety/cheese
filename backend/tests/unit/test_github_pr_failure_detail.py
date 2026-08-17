@@ -43,6 +43,10 @@ def _check_run(**overrides) -> dict:
         "details_url": _JOB_URL,
         # Actions really does leave both null — the detail lives in the log.
         "output": {"title": None, "summary": None, "annotations_count": 2},
+        # Which app posted it. Not decoration: only github-actions runs are the
+        # CI this platform gates on, so this is what decides whether a run is
+        # looked at at all.
+        "app": {"slug": "github-actions"},
     }
     run.update(overrides)
     return run
@@ -151,23 +155,32 @@ async def test_unreachable_log_still_delivers_headline_and_link():
 @pytest.mark.anyio
 async def test_non_actions_check_run_is_not_sent_to_the_jobs_api():
     """Other apps publish check-runs too, and their ids are not job ids —
-    asking the jobs API about one just 404s. Their `output` is used instead,
-    which for them is actually populated."""
+    asking the jobs API about one just 404s.
+
+    Since 2026-08-17 the guarantee is stronger than "don't ask the jobs API":
+    a stranger's red check-run does not make the ref red at all. PR #506 had
+    every Actions check green and only `copilot-pull-request-reviewer` red;
+    the platform read that as CI failing and summoned 芝士 to fix a review
+    bot's opinion, which no commit of its can turn green. GitHub itself called
+    that PR `clean`."""
     recorder = _Recorder(
         runs=[
+            _check_run(name="test", conclusion="success"),
             _check_run(
                 name="codecov/patch",
                 html_url="https://app.codecov.io/gh/acme/widgets/pull/7",
                 details_url="https://app.codecov.io/gh/acme/widgets/pull/7",
                 output={"title": "60% of diff hit", "summary": "target 80%"},
-            )
+                app={"slug": "codecov"},
+            ),
         ]
     )
-    _, tail = await _check(recorder)
+    state, tail = await _check(recorder)
 
+    assert state == "success"
     assert not any("/actions/jobs/" in url for url in recorder.urls())
-    assert "60% of diff hit" in tail
-    assert "target 80%" in tail
+    assert "codecov" not in tail
+    assert "60% of diff hit" not in tail
 
 
 @pytest.mark.anyio

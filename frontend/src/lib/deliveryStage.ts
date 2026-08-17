@@ -41,8 +41,9 @@ export function deliveryStageOf(card: Pick<AcceptCard, 'stages'>): DeliveryStage
 }
 
 // 后端把交付途中的阶段信息/故障写在卡的 `note` 上，并用 emoji 前缀区分严重程度
-// （services.py: `⚠️` 检查未通过/轮询暂停、`🚫` GitHub 拒绝合并、`✋` 三个例外
-// 之一命中、平台拒绝免人自动合并）。这里只把前缀翻成一个颜色，不解析文案。
+// （services.py: `⚠️` 检查未通过/轮询暂停、`🚫` PR 合不进去（GitHub 拒绝合并，
+// 或分支有冲突）、`✋` 三个例外之一命中、平台拒绝免人自动合并）。这里只把前缀
+// 翻成一个颜色，不解析文案。
 export function deliveryNoteTone(note: string): 'error' | 'info' | null {
   const text = note.trim()
   if (!text) return null

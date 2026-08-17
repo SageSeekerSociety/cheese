@@ -326,6 +326,27 @@ def _is_prod_base(base: str) -> bool:
     return base.strip().lower() in _PROD_BASE_BRANCHES
 
 
+def _pr_is_conflicted(status: "PullRequestStatus") -> bool:
+    """Does GitHub say this PR conflicts with its base?
+
+    Two fields for one fact, both consulted because they are populated by the
+    same background computation and either can be the one that has landed:
+    `mergeable is False` and `mergeable_state == "dirty"`.
+
+    `mergeable is None` is **not** a conflict — it is GitHub answering "I
+    haven't worked it out yet" (the GET itself is what schedules the work), so
+    it must not be collapsed into either verdict. `is False` rather than a
+    falsy test is exactly that distinction.
+
+    Nothing here looks at `mergeable_state in ("blocked", "behind")`: those
+    require branch protection, which this repo's GitHub plan cannot buy
+    (`GET /rulesets` → 403 "Upgrade to GitHub Pro"), so they never appear.
+    """
+    return (
+        status.mergeable is False or status.mergeable_state.strip().lower() == "dirty"
+    )
+
+
 def _is_migration_path(path: str) -> bool:
     """迁移文件——改数据库结构的东西，人授权时没看见就不该跟着自动合进去。"""
     return (
@@ -1605,6 +1626,45 @@ class AcceptService:
             card.note = ""
             await self._session.flush()
 
+        # 冲突排在判检查颜色之前 (2026-08-17). GitHub 自己就知道这个 PR 合不合得
+        # 上 —— `mergeable` / `mergeable_state` 是纯 git 判定，跟 CI、跟分支保护、
+        # 跟仓库套餐都无关。平台以前从不问它，只靠「调合并 → 被拒 → 解析错误文
+        # 案」倒推；而红 CI、required 缺席、基线落后都会在合并调用之前 return，那
+        # 一步经常根本走不到，于是真冲突的卡一声不响地停在 pr_open。
+        #
+        # 顺序也是有意的：冲突的 PR 无论检查什么颜色都合不进去，而且解完冲突 CI
+        # 还要重跑一轮，所以等它绿是白等。放在「PR 被人合了 / 被关了」之后——那两
+        # 件事已经决定了卡的归宿，轮不到冲突说话；放在重推之后——芝士刚解完冲突的
+        # 提交必须先推上去，否则这里一 return 就把它自己的修复挡在门外。
+        #
+        # `pushed` 那一轮跳过：`status` 是推之前读的，正好会把刚解完冲突的这一轮
+        # 冤枉一次。`mergeable is None` 也跳过 —— 那是 GitHub 还在后台算（请求本身
+        # 触发计算），是「还不知道」，不是「没冲突」，下一轮再看。
+        #
+        # 🌿 分支分叉 / ⚠️ 重推失败 也跳过，理由和 `_nudge_pr_fix` 让它们压住 CI
+        # 失败通知是同一个：这两条描述的是**本地这一侧**更具体的故障，而且必须先
+        # 解决——冲突要靠芝士在工作区里合，可它的提交现在根本推不上去。盖掉它们
+        # 只会把唯一说清「推不动」的那句话换成一句它做不到的要求。
+        if (
+            not pushed
+            and not card.note.startswith(_REPUSH_DIVERGED_PREFIX)
+            and not card.note.startswith(_REPUSH_FAILED_PREFIX)
+            and _pr_is_conflicted(status)
+        ):
+            self._note_merge_blocked(
+                card=card,
+                topic=topic,
+                headline="这个分支和目标分支有冲突",
+                reason=(
+                    f"GitHub 说 mergeable={status.mergeable}、"
+                    f"mergeable_state={status.mergeable_state or '未提供'}"
+                ),
+                chat_service=chat_service,
+                runner=runner,
+            )
+            await self._session.flush()
+            return
+
         state, tail = await client.check_state(
             owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
         )
@@ -1710,7 +1770,16 @@ class AcceptService:
                 await self._session.flush()
                 return
             updated = await client.update_branch(
-                owner=owner, repo=repo, number=card.pr_number or 0, token=creds.read
+                # WRITE mint. This commits to the head branch; the read mint
+                # (App 装机 token 的六项权限全是 read) takes a flat 403 that
+                # `advance_pr_card` swallows into a log line before anything is
+                # written to the card — so the card just says "等 CI" forever.
+                # Same mistake this call site had from #470 until 2026-08-17;
+                # the merge call two blocks down always used `creds.write`.
+                owner=owner,
+                repo=repo,
+                number=card.pr_number or 0,
+                token=creds.write,
             )
             outcome = (
                 "已自动更新分支，等新一轮 CI。"
@@ -2053,8 +2122,9 @@ class AcceptService:
         reason: str,
         chat_service,
         runner,
+        headline: str = "GitHub 拒绝合并",
     ) -> None:
-        """Put GitHub's merge refusal on the card's `note` AND wake 芝士 up.
+        """Put "this PR cannot be merged" on the card's `note` AND wake 芝士 up.
         Before this existed a refusal left `note` empty, so a permanently-
         unmergeable PR looked exactly like a healthy one still waiting on CI.
 
@@ -2080,10 +2150,17 @@ class AcceptService:
           overwritten — that note describes a merged PR whose deploy broke,
           which is strictly more urgent than "not merged yet" — and, since it
           returns before the write, never summons either.
+
+        `headline` says WHICH way it cannot be merged, because there are now
+        two callers and only one of them involves GitHub refusing anything: the
+        conflict gate reads `mergeable` BEFORE the checks are judged, so it can
+        fire while CI is still red or still running. The wording used to be
+        hardcoded to "检查全绿，但 GitHub 拒绝合并" — on that path it would have
+        been a confident falsehood about the state of CI.
         """
         if card.note.startswith("❌"):
             return
-        note = f"🚫 PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并（{reason}）"
+        note = f"🚫 PR #{card.pr_number} 合不进去：{headline}（{reason}）"
         note = note[:2000]
         if card.note == note:
             return
@@ -2094,8 +2171,7 @@ class AcceptService:
             topic.id,
             author="system",
             content=(
-                f"PR #{card.pr_number}（{card.pr_url}）的检查全绿，"
-                "但 GitHub 拒绝合并：\n"
+                f"PR #{card.pr_number}（{card.pr_url}）现在合不进去：{headline}。\n"
                 f"```\n{reason[:1500]}\n```\n"
                 "最常见的原因是这个分支和主分支冲突了。请在这个话题的工作区里把主分支"
                 "合并进来、解决冲突后提交（不需要、也没法自己推到 GitHub），平台会自动"
@@ -2107,8 +2183,9 @@ class AcceptService:
             # 平台提示统一契约: the room gets one line; GitHub's own words ride in
             # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
             # the same 1500-char bound the message body always used). `content`
-            # above is unchanged and still goes to 芝士 as the prompt.
-            nudge_event=f"🚫 PR #{card.pr_number} 全绿但 GitHub 拒绝合并 · 芝士在解",
+            # above is the prompt 芝士 gets, and it is the only place the fix
+            # instructions live.
+            nudge_event=f"🚫 PR #{card.pr_number} 合不进去（{headline}）· 芝士在解",
             nudge_meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
