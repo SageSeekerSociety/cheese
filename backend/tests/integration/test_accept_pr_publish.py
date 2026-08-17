@@ -486,7 +486,7 @@ def test_pr_checks_answers_available_false_when_github_is_unreachable(
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=7)
 
-    r = client.get(f"/api/topics/{tid}/pr-checks")
+    r = client.get(f"/topics/{tid}/pr-checks")
 
     assert r.status_code == 200
     data = r.json()["data"]
@@ -523,7 +523,7 @@ def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypat
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=7)
 
-    r = client.get(f"/api/topics/{tid}/pr-checks")
+    r = client.get(f"/topics/{tid}/pr-checks")
 
     assert r.status_code == 200
     assert r.json()["data"]["available"] is False
