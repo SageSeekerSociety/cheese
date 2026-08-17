@@ -14,7 +14,7 @@
 import asyncio
 import uuid
 
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
 # Reuse the 两阶段采纳 harness instead of rebuilding it — see
@@ -319,7 +319,7 @@ def test_poll_pause_note_does_not_swallow_a_later_ci_failure(client, monkeypatch
             "pytest: 7 failed",
         )
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
 
         # 芝士必须被叫到，note 必须换成 CI 失败
         blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
@@ -409,7 +409,7 @@ def test_repush_failure_still_outranks_a_ci_failure(client, monkeypatch):
             "pytest: 2 failed",
         )
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
 
         note = _cards(client, tid)[0]["note"]
         assert note.startswith("⚠️ 平台自动重推失败")

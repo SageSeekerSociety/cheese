@@ -7,7 +7,7 @@ power going out. So every side effect an auto-resumed turn could repeat carries
 a durable key, and this file asserts the property one action at a time.
 
 The key is scoped to the **continuation** — the logical unit of work that a turn
-and all of its auto-resumes share (``TurnRunner.continuation_for``). That is
+and all of its auto-resumes share (``AgentWorkRunner.continuation_for``). That is
 what makes "the resumed 芝士 re-doing it" and "someone legitimately doing the
 same thing next week" distinguishable at all; see ``domain.idempotency.keys``.
 
@@ -31,7 +31,7 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.service import (
     AgentMessage,
@@ -58,7 +58,7 @@ def in_a_turn(monkeypatch):
     Production gets this from the runner's live lifecycle record; a test that
     started a real background turn just to read one uuid back out would be
     testing the turn machinery, not the dedup."""
-    runner = get_turn_runner()
+    runner = get_work_runner()
     monkeypatch.setattr(runner, "continuation_for", lambda _topic_id: CONTINUATION)
     return runner
 
@@ -309,7 +309,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
     rule deliberately: outside an automatic turn there is no continuation and
     no dedup. A human pressing 记决策 twice means it twice — the risk this whole
     mechanism exists for is created by 自动续跑, not by people."""
-    runner = get_turn_runner()
+    runner = get_work_runner()
     monkeypatch.setattr(runner, "continuation_for", lambda _topic_id: None)
     kickoffs: list[uuid.UUID] = []
     monkeypatch.setattr(

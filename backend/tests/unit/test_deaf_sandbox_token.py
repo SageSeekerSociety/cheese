@@ -142,8 +142,7 @@ async def test_a_dead_token_actually_triggers_a_rebuild(monkeypatch):
             return 0, env_line, ""
         return 0, "", ""
 
-    provider = TmuxHooksProvider.__new__(TmuxHooksProvider)
-    provider._image = "the-current-image"  # type: ignore[attr-defined]
+    provider = TmuxHooksProvider(image="the-current-image")
     created: list[str] = []
 
     async def _create(name: str, env: dict) -> None:

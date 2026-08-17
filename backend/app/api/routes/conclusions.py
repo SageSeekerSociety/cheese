@@ -20,11 +20,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_chat_service, get_turn_runner
+from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.conclusion.schemas import (
     ConclusionCardOut,
@@ -79,7 +79,7 @@ async def need_evidence(
     body: NeedEvidenceIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """补证据 —— costs a whole turn (the sub-topic is woken), which is precisely
     the asymmetry that makes 采信 the path of least resistance."""

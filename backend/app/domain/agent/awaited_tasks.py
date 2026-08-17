@@ -100,7 +100,7 @@ class AwaitedTask:
     started_at: float = field(default_factory=time.time)
 
 
-# Process-global, like TurnRunner._tasks and HookRouter: a restart forgets
+# Process-global, like AgentWorkRunner._tasks and HookRouter: a restart forgets
 # in-flight tasks. For the WAKE half that costs one wake (the child's report 404s
 # and it gives up) and corrupts nothing, and persisting would not buy much — a
 # container rebuild kills the child that was going to report anyway.

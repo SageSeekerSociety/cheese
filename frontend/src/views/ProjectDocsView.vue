@@ -3,6 +3,7 @@ import type { MemoryEntryOut } from '../api'
 import type { Block, Topic } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 
@@ -24,8 +25,18 @@ const props = defineProps<{
 }>()
 
 const AUTHOR = myHandle()
+const router = useRouter()
 
 const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
+
+// 四种文档的切换住在这一页里，不在侧栏——它们是一份文档的四个面，占不起侧栏
+// 四行黄金位。切换仍然是一次 router.push：一 kind 一址的承诺不变，所以每一个
+// tab 都能收藏、能分享、刷新回到同一页。
+function openKind(next: unknown) {
+  const k = String(next) as Kind
+  if (k === kind.value) return
+  void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: k } })
+}
 
 const TITLES: Record<Kind, string> = {
   charter: '章程',
@@ -141,7 +152,7 @@ watch([kind, () => props.projectId], load)
 <template>
   <div class="docs-page fill-height overflow-y-auto">
     <v-container class="py-6 page-container">
-      <div class="mb-6">
+      <div class="mb-4">
         <div class="t-eyebrow mb-1">{{ OVERLINES[kind] }}</div>
         <div class="d-flex align-center flex-wrap ga-3">
           <h1 class="t-page-title" style="font-size: 27px">{{ TITLES[kind] }}</h1>
@@ -157,6 +168,16 @@ watch([kind, () => props.projectId], load)
         </div>
         <div v-if="kind === 'charter'" class="t-meta mt-1">改了就等于给芝士下指令</div>
       </div>
+
+      <v-tabs
+        :model-value="kind"
+        density="compact"
+        color="primary"
+        class="docs-tabs mb-6"
+        @update:model-value="openKind"
+      >
+        <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ TITLES[k] }}</v-tab>
+      </v-tabs>
 
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
@@ -280,6 +301,12 @@ watch([kind, () => props.projectId], load)
 <style scoped>
 .docs-page {
   background: var(--canvas);
+}
+
+/* 四种文档的切换带。它以前是侧栏里四行常驻的一级导航，占着黄金位养的却是四个
+   二级页面；收成这一条 tab 带之后，侧栏只留一行「项目文档」。 */
+.docs-tabs {
+  border-bottom: 1px solid var(--line);
 }
 
 /* 章程 card: a clean document sheet. */

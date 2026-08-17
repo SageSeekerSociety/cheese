@@ -33,7 +33,7 @@ from app.domain.agent.platform_notices import (
     WHO_CHEESE,
     notice,
 )
-from app.domain.agent.runtime import TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -61,7 +61,7 @@ async def dispatch(
     *,
     requested_by: str,
     chat: ChatService,
-    runner: TurnRunner,
+    runner: AgentWorkRunner,
 ) -> dict | None:
     """Materialize the aborted upstream merge in a fresh task and summon 芝士.
 

@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_profile_registry, get_turn_runner
+from app.api.deps import get_profile_registry, get_work_runner
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.db import get_db
@@ -22,7 +22,7 @@ from app.domain.agent.market import (
     visibility_listings,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.runtime import TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.cx_task.models import TaskApplication
 from app.domain.cx_task.schemas import (
     ApplicationCreate,
@@ -36,7 +36,7 @@ router = APIRouter(prefix="/api/market", tags=["market"])
 
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]
-Runner = Annotated[TurnRunner, Depends(get_turn_runner)]
+Runner = Annotated[AgentWorkRunner, Depends(get_work_runner)]
 
 
 def _application_out(application: TaskApplication, project_name: str = "") -> dict:
@@ -87,7 +87,7 @@ async def list_nodes(runner: Runner) -> dict:
     (compute_provider) — the platform runs one provider at a time today."""
     from app.domain.workspace import service as ws
 
-    active = runner.active_turns()
+    active = runner.active_work_count()
     current = settings.compute_provider  # "local" | "remote"
 
     local_sandboxed = settings.agent_sandbox_enabled and ws.sandbox_available()

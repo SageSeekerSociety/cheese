@@ -87,6 +87,35 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def reviewer_topic_ids(
+        self, topic_ids: list[uuid.UUID], reviewer_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{topic_id: is one of its cards still waiting on this reviewer} for
+        every topic here that ever routed a card to them, in ONE query.
+
+        Two facts in one row because they come from the same scan and the
+        sidebar needs both: *being named* on a card is a lasting relationship
+        with the topic (it stays yours after you accept it), while *pending* is
+        the transient "this is on your desk right now". `pending` alone is the
+        waiting state — a card in `pending_gate`/`gate_failed`/`conflict` is
+        with 芝士, and one in `pr_open`/`accepted` has already been decided.
+        """
+        if not topic_ids:
+            return {}
+        stmt = (
+            select(
+                AcceptCard.topic_id,
+                func.bool_or(AcceptCard.status == AcceptStatus.pending),
+            )
+            .where(
+                AcceptCard.topic_id.in_(topic_ids),
+                AcceptCard.reviewer_handle == reviewer_handle,
+            )
+            .group_by(AcceptCard.topic_id)
+        )
+        rows = (await self._session.execute(stmt)).all()
+        return {topic_id: bool(waiting) for topic_id, waiting in rows}
+
     async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
         """When a card on these topics last changed hands — NULL if there are no
         cards at all.

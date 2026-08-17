@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.domain.agent import awaited_tasks
 from app.domain.workspace import service as ws
 from app.main import app
@@ -44,9 +44,9 @@ class FakeRunner:
 def runner():
     fake = FakeRunner()
     awaited_tasks.reset()
-    app.dependency_overrides[get_turn_runner] = lambda: fake
+    app.dependency_overrides[get_work_runner] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_turn_runner, None)
+    app.dependency_overrides.pop(get_work_runner, None)
     awaited_tasks.reset()
 
 

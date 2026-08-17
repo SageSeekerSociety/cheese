@@ -21,10 +21,10 @@ vi.mock('@/api', async () => {
 import ChatPanel from './ChatPanel.vue'
 
 const topic: Topic = {
-  id: 'turn-lifecycle-topic',
+  id: 'session-activity-topic',
   project_id: 'p1',
   parent_id: null,
-  title: 'Turn lifecycle',
+  title: 'Session activity',
   kind: 'topic',
   status: 'active',
   created_by: 'u',
@@ -59,7 +59,7 @@ const assistantBlock: Block = {
   topic_id: topic.id,
   kind: 'message',
   author_type: 'ai',
-  author: 'cheese-turn',
+  author: 'cheese-session',
   content: 'Still working.',
   created_at: '2026-08-17T00:00:01Z',
 } as Block
@@ -75,8 +75,8 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeWebSocket)
 })
 
-describe('explicit turn lifecycle', () => {
-  it('keeps the working indicator until every active turn finishes', async () => {
+describe('session activity', () => {
+  it('keeps the working indicator until every active work id finishes', async () => {
     const vuetify = createVuetify({ components, directives })
     const view = render(ChatPanel, {
       props: { topic, topicList: [topic] },

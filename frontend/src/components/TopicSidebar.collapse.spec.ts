@@ -11,6 +11,7 @@ import * as components from 'vuetify/components'
 import { VLayout } from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
+import { createPinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import TopicSidebar from './TopicSidebar.vue'
@@ -60,6 +61,8 @@ const Host = defineComponent({
 
 function mount(inner: Record<string, unknown>) {
   const vuetify = createVuetify({ components, directives })
+  // 侧栏走全站的 SecondaryNavigation 外壳（背景层 + 圆角 + 移动端 temporary），
+  // 它读 navigation store，所以这里得有 pinia。
   return render(Host, {
     props: {
       inner: {
@@ -72,7 +75,7 @@ function mount(inner: Record<string, unknown>) {
         ...inner,
       },
     },
-    global: { plugins: [vuetify, router] },
+    global: { plugins: [vuetify, router, createPinia()] },
   })
 }
 

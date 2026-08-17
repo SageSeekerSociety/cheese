@@ -49,8 +49,8 @@ export interface Topic {
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
-  // 本轮是否在跑（TurnRunner, 内存态）——和 status/归档完全分开：一个话题可以
-  // 是 active 且空闲，也可以是 active 且正在跑一轮。只有 list/get 话题时才带。
+  // In-memory session activity, independent of topic status and archival state.
+  // Present only on topic list/get responses.
   running?: boolean
 }
 
@@ -382,6 +382,14 @@ export interface PreviewInfo {
   // 应用没在跑" — without it both looked like an empty white frame.
   url?: string | null
   container_up?: boolean
+  // kind=app: whether this topic's runtime can host a live app AT ALL. A topic
+  // running on someone's own machine has no container here to publish the port,
+  // so `container_up` is false for a machine that is perfectly alive — telling
+  // those users to summon 芝士 again waits on a box that is never coming.
+  supported?: boolean
+  // Which artifact this is. Distinguishes "芝士 pointed at something new" from
+  // "the same preview, re-fetched" — re-pointing at the same path is new too.
+  artifact_id?: string
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).

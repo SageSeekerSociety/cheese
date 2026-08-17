@@ -74,6 +74,19 @@ class AlertService:
     ) -> int:
         return await self._repo.unread_count(project_id, target_handle=target_handle)
 
+    async def mention_topic_ids(
+        self, topic_ids: list[uuid.UUID], target_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{topic_id: still has an unread @ at this user} for the topics here
+        that ever @'d them, in ONE query.
+
+        Exposed as a service read because 与我的相关性 (topic list) needs "被 @
+        过" and "@我 的未读" per topic, and this domain is the only place that
+        knows: an @ is recorded HERE when it lands, so the answer never
+        requires reading message text.
+        """
+        return await self._repo.mention_topic_ids(topic_ids, target_handle)
+
     async def mark_all_read(
         self, project_id: uuid.UUID, *, target_handle: str | None = None
     ) -> int:

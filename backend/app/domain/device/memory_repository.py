@@ -114,6 +114,13 @@ class InMemoryDeviceRepository:
     async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None:
         return self._topic_device.get(topic_id)
 
+    async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]:
+        return [
+            binding
+            for binding in self._topic_device.values()
+            if binding.device_id == device_id
+        ]
+
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
     ) -> None:

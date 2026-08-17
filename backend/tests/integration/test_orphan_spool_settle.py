@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import runtime as rt
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent.service import AgentResult, AgentService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -200,7 +200,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
         },
     )
 
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     assert await runner.resume_orphans(svc) == 0  # attach — nothing re-prompted
 
     async def _final_landed() -> bool:
@@ -266,16 +266,16 @@ async def test_zero_evidence_orphan_resends_the_original_text(
         }
     )
     # Collapse the 3s re-send delay, keep the real path.
-    real_resend = TurnRunner._schedule_resend
+    real_resend = AgentWorkRunner._schedule_resend
     monkeypatch.setattr(
-        TurnRunner,
+        AgentWorkRunner,
         "_schedule_resend",
         lambda self, chat, topic_id, after_s, content, **kw: real_resend(
             self, chat, topic_id, 0.0, content, **kw
         ),
     )
 
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     assert await runner.resume_orphans(svc) == 1
     for _ in range(300):
         if agent.prompts:
