@@ -12,14 +12,14 @@ from app.core.sandbox_auth import mint_scoped_token
 
 
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "git 项目"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "git 项目"}).json()["data"]["id"]
 
 
 def test_a_project_token_advertises_that_projects_refs(client):
     pid = _project(client)
     token = mint_scoped_token(project_id=pid)
     r = client.get(
-        f"/api/projects/{pid}/git/info/refs?service=git-upload-pack",
+        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
         headers={"X-Cheese-Token": token},
     )
     assert r.status_code == 200
@@ -29,7 +29,7 @@ def test_a_project_token_advertises_that_projects_refs(client):
 
 def test_no_token_gets_nothing(client):
     pid = _project(client)
-    r = client.get(f"/api/projects/{pid}/git/info/refs?service=git-upload-pack")
+    r = client.get(f"/projects/{pid}/git/info/refs?service=git-upload-pack")
     assert r.status_code == 401, "this endpoint hands out a whole repository"
 
 
@@ -37,7 +37,7 @@ def test_another_projects_token_is_not_a_key_to_this_one(client):
     mine = _project(client)
     other = _project(client)
     r = client.get(
-        f"/api/projects/{mine}/git/info/refs?service=git-upload-pack",
+        f"/projects/{mine}/git/info/refs?service=git-upload-pack",
         headers={"X-Cheese-Token": mint_scoped_token(project_id=other)},
     )
     assert r.status_code == 401
@@ -50,7 +50,7 @@ def test_pushing_is_enabled_on_the_repo(client):
 
     pid = _project(client)
     client.get(
-        f"/api/projects/{pid}/git/info/refs?service=git-upload-pack",
+        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
         headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
     )
     repo: Path = ws.ensure_repo(uuid.UUID(pid))
@@ -82,7 +82,7 @@ def test_a_push_keeps_jj_and_git_from_diverging(client, monkeypatch):
     monkeypatch.setattr(git_http.subprocess, "run", spy)
     pid = _project(client)
     client.post(
-        f"/api/projects/{pid}/git/git-receive-pack",
+        f"/projects/{pid}/git/git-receive-pack",
         headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
         content=b"0000",
     )

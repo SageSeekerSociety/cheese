@@ -15,9 +15,7 @@ from app.domain.workspace import service as ws
 
 
 def _mkproject(client) -> uuid.UUID:
-    resp = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()
+    resp = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()
     return uuid.UUID(resp["data"]["id"])
 
 
@@ -64,13 +62,13 @@ def test_topic_branch_isolated_then_merged(client):
 
     assert ws.merge_topic(pid, tid)["merged"] is True
     # The base branch now contains the file (browsable via the API).
-    files = client.get(f"/api/projects/{pid}/files", headers=_owner(client)).json()[
+    files = client.get(f"/projects/{pid}/files", headers=_owner(client)).json()["data"][
         "data"
-    ]["data"]
+    ]
     assert any(f["path"] == "feat.txt" for f in files)
-    log = client.get(f"/api/projects/{pid}/git/log", headers=_owner(client)).json()[
+    log = client.get(f"/projects/{pid}/git/log", headers=_owner(client)).json()["data"][
         "data"
-    ]["data"]
+    ]
     assert len(log) >= 1
 
 
@@ -110,13 +108,13 @@ def test_file_endpoints_survive_the_agent_using_jj(client):
     )
 
     listed = client.get(
-        f"/api/projects/{pid}/files", params={"topic": str(tid)}, headers=_owner(client)
+        f"/projects/{pid}/files", params={"topic": str(tid)}, headers=_owner(client)
     )
     assert listed.status_code == 200
     assert any(f["path"] == "note.md" for f in listed.json()["data"]["data"])
 
     body = client.get(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"topic": str(tid), "path": "note.md"},
         headers=_owner(client),
     )
@@ -127,7 +125,7 @@ def test_file_endpoints_survive_the_agent_using_jj(client):
     _native_edit(pid, other, "other.md", "still fine\n")
     assert (
         client.get(
-            f"/api/projects/{pid}/files",
+            f"/projects/{pid}/files",
             params={"topic": str(other)},
             headers=_owner(client),
         ).status_code
@@ -167,7 +165,7 @@ def test_exec_in_sandbox_runs_code_and_blocks_network(client):
 def test_git_diff_rejects_option_injection(client):
     pid = _mkproject(client)
     r = client.get(
-        f"/api/projects/{pid}/git/diff",
+        f"/projects/{pid}/git/diff",
         params={"ref": "--help"},
         headers=_owner(client),
     )

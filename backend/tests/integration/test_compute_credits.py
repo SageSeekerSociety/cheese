@@ -25,7 +25,7 @@ def _mk_project(client, name: str = "Demo", *, from_task: int | None = None) -> 
     body: dict = {"name": name}
     if from_task is not None:
         body["external_task_id"] = from_task
-    r = client.post("/api/projects", json=body)
+    r = client.post("/projects", json=body)
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -63,14 +63,14 @@ def _add_grant(client, project_id: str, credits: float, source_task_id: int) -> 
 
 
 def _credits(client, project_id: str) -> dict:
-    r = client.get(f"/api/projects/{project_id}/credits")
+    r = client.get(f"/projects/{project_id}/credits")
     assert r.status_code == 200
     return r.json()["data"]
 
 
 def _mk_topic(client, project_id: str) -> str:
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "聊聊", "created_by": "u1"},
     )
     assert r.status_code == 200
@@ -172,16 +172,16 @@ def test_exhausted_credits_refuse_next_turn(client):
     assert not any(t == "assistant_block" for t in types)
 
     # The refusal event is persisted in the topic 现场 (survives reload).
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert any("算力额度已用完" in b["content"] for b in blocks)
 
     # And no further credits were burned by the refused turn.
-    after = client.get(f"/api/projects/{project_id}/credits").json()["data"]
+    after = client.get(f"/projects/{project_id}/credits").json()["data"]
     assert after["credits_used"] == pytest.approx(data["credits_used"])
 
 
 def test_market_nodes_board(client):
-    r = client.get("/api/market/nodes")
+    r = client.get("/market/nodes")
     assert r.status_code == 200
     data = r.json()["data"]
     ids = [n["id"] for n in data["nodes"]]

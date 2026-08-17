@@ -71,7 +71,7 @@ def _github_world(monkeypatch, *, connected: dict[str, str]) -> None:
 
 
 def _project(client, owner: str) -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]
     return p["id"], p["root_topic_id"]
@@ -81,7 +81,7 @@ def _split(client, parent_id: str, *, by: str) -> str:
     """Split as `by` would: no human token, the handle only in the body — the
     exact shape `cheese split` sends from a 分身's sandbox."""
     r = client.post(
-        f"/api/topics/{parent_id}/split",
+        f"/topics/{parent_id}/split",
         json={"title": "分身拆出的子任务", "created_by": by},
     )
     assert r.status_code == 200
@@ -90,7 +90,7 @@ def _split(client, parent_id: str, *, by: str) -> str:
 
 def _card(client, topic_id: str) -> str:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/accept-card",
         json={
             "reviewer_handle": "alice",
             "routing_reason": "最懂",
@@ -156,7 +156,7 @@ def test_a_room_with_no_human_owner_behaves_exactly_as_before(client, monkeypatc
     rather than raising or dropping the trailer."""
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     pid, root = p["id"], p["root_topic_id"]
     agent = f"cheese-{uuid.uuid4().hex[:12]}"
     tid = _split(client, root, by=agent)
@@ -174,7 +174,7 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
 
     pid, _ = _project(client, owner="alice")
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": pid, "title": "做一个东西", "created_by": "alice"},
     )
     tid = r.json()["data"]["id"]
@@ -218,7 +218,7 @@ def test_the_commit_author_sidecar_names_the_human_too(client, monkeypatch, tmp_
     asyncio.run(_sync())
 
     who = identity.read(
-        uuid.UUID(client.get(f"/api/topics/{tid}").json()["data"]["project_id"]),
+        uuid.UUID(client.get(f"/topics/{tid}").json()["data"]["project_id"]),
         uuid.UUID(tid),
     )
     assert who == identity.GitIdentity("Alice", "583231+alice@users.noreply.github.com")

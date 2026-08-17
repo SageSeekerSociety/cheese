@@ -64,12 +64,12 @@ def in_a_turn(monkeypatch):
 
 
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def _topic(client, project_id: str, title: str = "母话题") -> str:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": title}
+        "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]["id"]
 
 
@@ -193,8 +193,8 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     tid = _topic(client, pid)
     body = {"title": "数据清洗", "brief": "把脏数据洗掉", "created_by": "cheese"}
 
-    first = client.post(f"/api/topics/{tid}/split", json=body)
-    second = client.post(f"/api/topics/{tid}/split", json=body)
+    first = client.post(f"/topics/{tid}/split", json=body)
+    second = client.post(f"/topics/{tid}/split", json=body)
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
 
@@ -221,8 +221,8 @@ def test_decision_is_recorded_once(client, in_a_turn):
     tid = _topic(client, pid)
     body = {"decision": "用 item-based CF"}
 
-    assert client.post(f"/api/topics/{tid}/decision", json=body).status_code == 200
-    assert client.post(f"/api/topics/{tid}/decision", json=body).status_code == 200
+    assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
+    assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
 
     rows = asyncio.run(
         _count(
@@ -250,8 +250,8 @@ def test_milestone_is_pinned_once(client, in_a_turn):
         "source_topic_id": tid,
     }
 
-    assert client.post(f"/api/projects/{pid}/milestones", json=body).status_code == 200
-    assert client.post(f"/api/projects/{pid}/milestones", json=body).status_code == 200
+    assert client.post(f"/projects/{pid}/milestones", json=body).status_code == 200
+    assert client.post(f"/projects/{pid}/milestones", json=body).status_code == 200
 
     rows = asyncio.run(
         _count(
@@ -279,7 +279,7 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
     tid = _topic(client, pid)
 
     first = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
@@ -290,7 +290,7 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
     assert first.status_code == 200, first.text
 
     second = client.post(
-        f"/api/topics/{tid}/accept-card",
+        f"/topics/{tid}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
@@ -323,13 +323,13 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
     for _ in range(2):
         assert (
             client.post(
-                f"/api/topics/{tid}/decision", json={"decision": "同一条"}
+                f"/topics/{tid}/decision", json={"decision": "同一条"}
             ).status_code
             == 200
         )
         assert (
             client.post(
-                f"/api/projects/{pid}/milestones",
+                f"/projects/{pid}/milestones",
                 json={
                     "title": "同一个",
                     "due_date": "2026-06-20",
@@ -340,7 +340,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
         )
         assert (
             client.post(
-                f"/api/topics/{tid}/split",
+                f"/topics/{tid}/split",
                 json={"title": "同一个子话题", "created_by": "cheese"},
             ).status_code
             == 200

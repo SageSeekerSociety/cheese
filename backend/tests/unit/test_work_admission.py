@@ -22,6 +22,7 @@ class FakeChat:
     def __init__(self, policy: dict | None):
         self.policy = policy
         self.system_events: list[str] = []
+        self.system_event_meta: list[dict | None] = []
         self.running = 0
         self.max_running = 0
         self.converse_calls: list[dict] = []
@@ -38,7 +39,11 @@ class FakeChat:
         meta: dict | None = None,
     ) -> dict:
         self.system_events.append(content)
-        return {"content": content}
+        self.system_event_meta.append(meta)
+        return {"content": content, "meta": meta}
+
+    def has_running_turn(self, topic_id: uuid.UUID) -> bool:
+        return False
 
     async def post_user_message(self, topic_id, **kwargs):
         self.converse_calls.append({"received": True, **kwargs})
@@ -61,7 +66,7 @@ class FakeChat:
         return payloads, ids[0], ids
 
     async def merge_into_running_turn(self, *args):
-        return False
+        return None
 
     async def converse(self, **kwargs):
         self.converse_calls.append(kwargs)
@@ -83,6 +88,16 @@ async def _until(cond, timeout: float = 2.0) -> None:
     async with asyncio.timeout(timeout):
         while not cond():
             await asyncio.sleep(0.01)
+
+
+async def _frames_through(queue, final_type: str) -> list[dict]:
+    frames = []
+    async with asyncio.timeout(2.0):
+        while True:
+            frame = await queue.get()
+            frames.append(frame)
+            if frame["type"] == final_type:
+                return frames
 
 
 def _runner() -> tuple[AgentWorkRunner, InProcessBroker]:
@@ -248,6 +263,72 @@ async def test_unsummoned_message_never_touches_turn_admission():
         assert (await queue.get())["type"] == "user_block"
         assert (await queue.get())["type"] == "done"
     assert runner.active_work_count() == 0
+
+
+@pytest.mark.anyio
+async def test_normal_message_without_live_work_queues_without_fallback_error():
+    class Prepared(FakeChat):
+        async def converse_prepared(self, **kwargs):
+            yield {"type": "done"}
+
+    chat = Prepared(None)
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.submit_message(
+            chat, topic, author="u", content="正常开工", summon=True
+        )
+        frames = await _frames_through(queue, "turn_finished")
+
+    assert [frame["type"] for frame in frames] == [
+        "user_block",
+        "turn_started",
+        "done",
+        "turn_finished",
+    ]
+    assert chat.system_events == []
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("delivery_result", [False, None])
+async def test_live_delivery_fallback_reports_error_then_runs_normally(
+    delivery_result,
+):
+    class FailedLiveDelivery(FakeChat):
+        def has_running_turn(self, topic_id: uuid.UUID) -> bool:
+            return True
+
+        async def merge_into_running_turn(self, *args):
+            return delivery_result
+
+        async def converse_prepared(self, **kwargs):
+            yield {"type": "done"}
+
+    chat = FailedLiveDelivery(None)
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.submit_message(
+            chat, topic, author="u", content="补充一条", summon=True
+        )
+        frames = await _frames_through(queue, "turn_finished")
+
+    assert [frame["type"] for frame in frames] == [
+        "user_block",
+        "event_block",
+        "turn_started",
+        "done",
+        "turn_finished",
+    ]
+    assert "实时送入当前会话失败" in frames[1]["block"]["content"]
+    assert frames[1]["block"]["meta"]["event_type"] == "delivery_fallback"
+    assert frames[1]["block"]["meta"]["severity"] == "error"
+    assert frames[1]["block"]["meta"]["who"] == "platform"
+    assert len(chat.converse_calls) == 1
+    await _until(lambda: runner.active_work_count() == 0)
 
 
 @pytest.mark.anyio

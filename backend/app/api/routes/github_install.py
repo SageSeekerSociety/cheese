@@ -61,7 +61,7 @@ def _settings_redirect(project_id: uuid.UUID | None, **query: str) -> RedirectRe
     return RedirectResponse(url, status_code=302)
 
 
-@router.get("/api/projects/{project_id}/github/connection")
+@router.get("/projects/{project_id}/github/connection")
 async def get_github_connection(
     project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> dict:
@@ -79,7 +79,7 @@ async def get_github_connection(
     )
 
 
-@router.post("/api/projects/{project_id}/github/connect")
+@router.post("/projects/{project_id}/github/connect")
 async def connect_github_repo(
     project_id: uuid.UUID,
     resolver: ActorResolverDep,
@@ -153,7 +153,7 @@ async def connect_github_repo(
     return ok({"connected": False, "install_url": url})
 
 
-@router.get("/api/projects/{project_id}/github/install-url")
+@router.get("/projects/{project_id}/github/install-url")
 async def get_github_install_url(
     project_id: uuid.UUID, db: AsyncSession = Depends(get_db)
 ) -> dict:

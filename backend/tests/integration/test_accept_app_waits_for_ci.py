@@ -26,22 +26,20 @@ REPO = "acme/widgets"
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -54,22 +52,22 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
 
 def _accept(client, card_id: str, handle: str = "alice"):
     return client.post(
-        f"/api/accept-cards/{card_id}/accept",
+        f"/accept-cards/{card_id}/accept",
         json={"decided_by": handle},
         headers=session_auth_headers(handle),
     )
 
 
 def _cards(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
 
 
 def _topic(client, topic_id: str) -> dict:
-    return client.get(f"/api/topics/{topic_id}").json()["data"]
+    return client.get(f"/topics/{topic_id}").json()["data"]
 
 
 def _poll(client) -> dict:
-    r = client.post("/api/admin/scheduler/poll-open-prs")
+    r = client.post("/admin/scheduler/poll-open-prs")
     assert r.status_code == 200
     return r.json()["data"]
 
@@ -330,7 +328,7 @@ def test_red_checks_are_never_merged_no_matter_how_many_polls(client, app_world)
     # （`app/domain/agent/platform_notices.py`，来自 #429/#447）把 content 压成一行
     # ≤40 字的人话，原话/日志/检查名一律收进 meta.detail 由前端折叠展示。该钉死的
     # 性质是「房间里读得到是哪项检查红的」，不是「它躺在哪个字段」。
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     contents = "\n".join(
         f"{b.get('content') or ''}\n{(b.get('meta') or {}).get('detail') or ''}"
         for b in blocks
@@ -416,7 +414,7 @@ def _merge_anyway(
     if handle is not None:
         headers.update(session_auth_headers(handle))
     return client.post(
-        f"/api/accept-cards/{card_id}/merge-anyway",
+        f"/accept-cards/{card_id}/merge-anyway",
         json={"reason": reason},
         headers=headers,
         **kw,

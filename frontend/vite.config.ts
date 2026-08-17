@@ -228,15 +228,7 @@ export default defineConfig({
         target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081',
         changeOrigin: true,
         ws: true,
-        // Exception: the two iframe proxies — the ttyd terminal
-        // (/api/topics/<id>/terminal/live/) and the running-app preview
-        // (/api/topics/<id>/app/) — are loaded verbatim by an iframe that resolves
-        // its assets/WebSocket against that path, and the backend serves them at
-        // that exact /api-prefixed path, so they must pass through unrewritten
-        // (see routes/terminal.py, routes/app_preview.py — and nginx.conf, which
-        // carries the same exception). Everything else loses one /api like nginx.
-        rewrite: (path) =>
-          /^\/api\/topics\/[^/]+\/(terminal|app)(\/|$)/.test(path) ? path : path.replace(/^\/api/, ''),
+        rewrite: (path) => path.replace(/^\/api/, ''),
       },
       // Unlike /api, the backend serves /connector/* natively — no strip (matches nginx).
       '/connector': { target: process.env.BACKEND_URL ?? 'http://127.0.0.1:8081', changeOrigin: true, ws: true },

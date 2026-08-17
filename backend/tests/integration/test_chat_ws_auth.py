@@ -24,18 +24,18 @@ from tests.integration.conftest import chat_ws_url, session_token
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},
     ).json()["data"]
     return p["id"], t["id"]
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 def test_expired_token_is_refused_not_downgraded(client):
@@ -43,7 +43,7 @@ def test_expired_token_is_refused_not_downgraded(client):
     _, tid = _project_topic(client, owner="alice")
     stale = session_token("alice", ttl_s=-60)
 
-    with client.websocket_connect(f"/api/topics/{tid}/chat?token={stale}") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat?token={stale}") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "auth_expired"
@@ -57,7 +57,7 @@ def test_expired_token_is_refused_not_downgraded(client):
 def test_garbage_token_is_refused(client):
     """A malformed token is the same failure as an expired one, not 'no token'."""
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(f"/api/topics/{tid}/chat?token=not-a-jwt") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat?token=not-a-jwt") as ws:
         frame = ws.receive_json()
     assert frame["type"] == "error"
     assert frame["code"] == "auth_expired"
@@ -67,7 +67,7 @@ def test_garbage_token_is_refused(client):
 def test_tokenless_socket_cannot_post_as_anyone(client):
     """No token at all → refused, so `author` in the body can't be forged."""
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(f"/api/topics/{tid}/chat") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
         assert frame["code"] == "auth_required"
@@ -123,7 +123,7 @@ def test_anonymous_escape_hatch_never_covers_a_bad_token(client, monkeypatch):
     monkeypatch.setattr(settings, "chat_ws_allow_anonymous", True)
     _, tid = _project_topic(client, owner="alice")
 
-    with client.websocket_connect(f"/api/topics/{tid}/chat") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat") as ws:
         ws.send_json({"type": "message", "content": "harness", "author": "harness"})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass
@@ -132,6 +132,6 @@ def test_anonymous_escape_hatch_never_covers_a_bad_token(client, monkeypatch):
     ]
 
     stale = session_token("alice", ttl_s=-60)
-    with client.websocket_connect(f"/api/topics/{tid}/chat?token={stale}") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat?token={stale}") as ws:
         frame = ws.receive_json()
     assert frame["code"] == "auth_expired"

@@ -42,7 +42,7 @@ from app.core.db import get_db
 from app.core.errors import NotFoundError
 from app.domain.workspace import service as ws
 
-router = APIRouter(prefix="/api/topics", tags=["preview"])
+router = APIRouter(prefix="/topics", tags=["preview"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -55,18 +55,14 @@ COOKIE_NAME = "cheesex_proxy"
 _ROOT_ABSOLUTE_ATTR = re.compile(r"""(\s(?:src|href|action)\s*=\s*["'])/(?!/)""")
 
 
+#: What the BROWSER asks for. Since the 2.0 prefix was flattened (#370 step 2)
+#: this is no longer the same string as the route's own path (`/topics/…/app`):
+#: it is the gateway mount plus that path. Both the cookie scope and the
+#: root-absolute URL rewriting below have to speak the browser's language — the
+#: page resolves its assets against `location.pathname`, which never saw the
+#: strip — so this constant must NOT be flattened along with the route.
 def _prefix(topic_id: uuid.UUID) -> str:
-    return f"/api/topics/{topic_id}/app"
-
-
-def _cookie_path(request: Request) -> str:
-    """The browser-visible ``…/app`` prefix of this request, so the cookie covers
-    the app's sub-requests and nothing else. Derived from the live path rather
-    than hard-coded, so it stays right behind any external prefix."""
-    path = request.url.path
-    marker = "/app"
-    idx = path.find(marker)
-    return path[: idx + len(marker)] if idx != -1 else path
+    return proxy.browser_path(f"/topics/{topic_id}/app")
 
 
 def _rewrite_html(body: bytes, prefix: str) -> bytes:
@@ -136,7 +132,7 @@ async def app_proxy_http(
             media_type=response.media_type,
         )
     return proxy.attach_cookie(
-        response, request, cookie_name=COOKIE_NAME, cookie_path=_cookie_path(request)
+        response, request, cookie_name=COOKIE_NAME, cookie_path=_prefix(topic_id)
     )
 
 
