@@ -30,7 +30,6 @@ from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.cx_task.repositories import TaskRepository, TaskTemplateRepository
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
@@ -688,31 +687,32 @@ class AcceptService:
         return data
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
-        """Task Template conditions (spec §4.2/§4.4): if a linked template
-        requires a topic like this to be accepted by a mentor, enforce it."""
-        links = await self._projects.list_links(topic.project_id)
-        if not links:
+        """机构协议 (spec §4.2/§4.4): a 赛题 may require a mentor to accept a
+        particular topic, and a project created from that 赛题 accepted the terms.
+
+        Reads them from the 赛题's 项目集 (with the 赛题's own override — #370
+        option (c)), reached through `project.external_task_id`. That is the link
+        the 赛题 page's 「从这道赛题创建项目」 button writes; the cheesex
+        `project_task_links` chain it replaced pointed at a 题目 hierarchy that
+        had no way to be created.
+        """
+        from app.domain.space.models import SpaceCategory
+        from app.domain.task.models import Task
+        from app.domain.task.protocol import resolve
+
+        project = await self._projects.get(topic.project_id)
+        task_id = getattr(project, "external_task_id", None) if project else None
+        if not task_id:
             return
-        tasks = TaskRepository(self._session)
-        templates = TaskTemplateRepository(self._session)
-        conditions: list[dict] = []
-        for link in links:
-            task = await tasks.get(link.task_id)
-            if task is None:
-                continue
-            tmpl = await templates.get(task.template_id)
-            if tmpl is not None:
-                conditions.extend(tmpl.conditions or [])
-        # A condition applies only when its required_topic is non-empty AND
-        # matches this topic. An empty required_topic must NOT match every topic
-        # (that would force mentor review on the whole project).
-        needs_mentor = any(
-            c.get("reviewer_role") == "mentor"
-            and (c.get("required_topic") or "").strip()
-            and c["required_topic"].strip() in topic.title
-            for c in conditions
+        task = await self._session.get(Task, task_id)
+        if task is None:
+            return
+        category = (
+            await self._session.get(SpaceCategory, task.category_id)
+            if getattr(task, "category_id", None)
+            else None
         )
-        if not needs_mentor:
+        if not resolve(category=category, task=task).mentor_required_for(topic.title):
             return
         members = await MemberRepository(self._session).list_for_project(
             topic.project_id

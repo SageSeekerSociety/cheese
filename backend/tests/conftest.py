@@ -546,6 +546,79 @@ def seed_space(client: TestClient, name: str = "信院") -> int:
     return holder["id"]
 
 
+def seed_task_with_protocol(
+    client: TestClient,
+    *,
+    conditions: list[dict] | None = None,
+    resource_pack: dict | None = None,
+    default_role: str | None = None,
+    override: dict | None = None,
+) -> int:
+    """A 项目集 carrying 机构协议 + one 赛题 under it; returns the 赛题's int id.
+
+    Seeded through the DB because the 知是 publish flow needs an authenticated
+    space admin and a filled form, and none of that is what the protocol tests
+    are about. `override` populates the 赛题's own `protocol_override` (#370
+    option (c)).
+    """
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from app.domain.space.models import Space, SpaceCategory
+    from app.domain.task.models import Task
+
+    holder: dict[str, int] = {}
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            now = datetime.now(UTC)
+            space = Space(
+                name=f"信院-{datetime.now(UTC).timestamp()}",
+                intro="",
+                description="",
+                announcements=[],
+                task_templates=[],
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(space)
+            await session.flush()
+            category = SpaceCategory(
+                space_id=space.id,
+                name="创研课 2026 秋",
+                description="",
+                display_order=0,
+                resource_pack=resource_pack or {},
+                conditions=conditions or [],
+                default_role=default_role,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(category)
+            await session.flush()
+            task = Task(
+                name="题目",
+                intro="",
+                description="",
+                protocol_override=override,
+                creator_id=1,
+                space_id=space.id,
+                category_id=category.id,
+                submitter_type=0,
+                approved=0,
+                default_deadline=0,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(task)
+            await session.flush()
+            holder["id"] = task.id
+            await session.commit()
+
+    _asyncio.run(_seed())
+    return holder["id"]
+
+
 def seed_user(client: TestClient, handle: str) -> str:
     """Get-or-create a real 知是 User for ``handle`` and return a session token
     whose ``sub`` is the int user id (so ActorResolver resolves ``user_id``).

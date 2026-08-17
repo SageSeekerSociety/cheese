@@ -53,6 +53,15 @@ class ProjectService:
             team_id=team_id,
             external_task_id=external_task_id,
         )
+        # 接受协议 (#370, 时机决定 (i)): a project created FROM a 赛题 accepts its
+        # 项目集's terms at that moment — the institution's 资源包 is issued and
+        # its default expert role inherited. This used to happen when a project
+        # linked a cheesex `task`, a parallel hierarchy with no UI to create it;
+        # the 赛题 page's 「从这道赛题创建项目」 button is where it really happens.
+        # Deliberately NOT at 领取 time: a team claims a 赛题 before any project
+        # exists, and nothing yet needs "a team holding unspent credits".
+        if external_task_id is not None:
+            await self._accept_task_protocol(project, external_task_id)
         root = await self._topics.add(
             project_id=project.id,
             title=f"{name} · 项目总览",
@@ -121,6 +130,41 @@ class ProjectService:
                 )
                 projects.sort(key=lambda p: p.created_at, reverse=True)
         return projects
+
+    async def _accept_task_protocol(self, project: Project, task_id: int) -> None:
+        """Apply the 赛题's 机构协议 to a freshly created project (#370).
+
+        Resolves the terms from the 赛题's 项目集 (with the 赛题's own override,
+        option (c)) and does the two things accepting a protocol means: inherit
+        the default expert role when the project has none, and issue the 资源包's
+        compute credits. A project with NO grant stays unmetered — spec §4 项目
+        自治 — so an unlinked project is untouched by all of this.
+
+        Best-effort: a 赛题 that has gone missing, or one whose 项目集 offers
+        nothing, leaves the project exactly as it was. Creating a project must
+        not fail because an institution left its resource pack empty.
+        """
+        from app.domain.space.models import SpaceCategory
+        from app.domain.task.models import Task
+        from app.domain.task.protocol import resolve
+
+        task = await self._session.get(Task, task_id)
+        if task is None:
+            return
+        category = (
+            await self._session.get(SpaceCategory, task.category_id)
+            if getattr(task, "category_id", None)
+            else None
+        )
+        protocol = resolve(category=category, task=task)
+        if not project.expert_role and protocol.default_role:
+            project.expert_role = protocol.default_role
+        if protocol.compute_credits > 0:
+            await self._grants.grant(
+                project_id=project.id,
+                source_task_id=None,
+                credits_total=protocol.compute_credits,
+            )
 
     async def link_task(
         self, *, project_id: uuid.UUID, task_id: uuid.UUID
