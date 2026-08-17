@@ -907,6 +907,13 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
  * 删掉这一行，线就会静默消失，而且沙箱里跑不了渲染、任何测试都抓不到。 */
 .rail-header {
   width: 100%;
+  /* 三段式里它是第一段，必须和第三段 .rail-foot 一样退出收缩：中段 .rail-scroll
+     的 flex-basis 是 auto = 它那一长列话题的内容高度，几十个话题就足以把整列撑得
+     比侧栏高。弹性盒于是按各自 basis 分摊收缩量，这一条虽只有 48px 也照分，一路
+     被压到自己的最小内容高度（8+8 内边距 + 一行字 ≈ 38px）为止——右边内容区顶栏
+     钉死在 48px，两条分隔线就再也接不上。中段自己有 overflow-y:auto，min-height
+     解析为 0，该吸收收缩量的本来就是它。 */
+  flex: none;
   border: 0;
   border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   background: none;
