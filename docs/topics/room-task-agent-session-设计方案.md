@@ -706,6 +706,51 @@ Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的
    归到项目默认 agent 名下，还是留成只读历史？**先量数量级**（有多少个 `cheese-*` handle、
    各自多少条），再定。
 
+### 12.9 拍板：task 用当前 agent；「芝士」就是池里的默认 agent（@fulu 2026-08-17）
+
+两条都成立。第二条比它听起来更划算：**它同时是存量记忆的归并方案**——不用造新概念，
+现状就是「池里已经有一个 agent 叫芝士」，只是今天没被当成「池里的一个」。
+而且 `cheese` 这个 handle **已经有 25 条记忆**（见下），不是空的。
+
+#### 实测：这个项目现在有 36 个记忆池、155 条、42455 字符
+
+`GET /api/memory?project_id=…` 实测（2026-08-17）：
+
+| 池 | 条数 | 字符 |
+|---|---|---|
+| `project:<项目id>`（分池前的共享池） | 59 | 14176 |
+| `agent_project:…:cheese`（**平台级 handle 的池**） | 25 | 7806 |
+| 其余 **34 个** `agent_project:…:cheese-<话题hex>` | 各 2–11，多数 2 | 合计约 20473 |
+
+两个结论：
+
+**① 34 个 per-topic 池平均 2 条 —— per-topic 分池把记忆碎成了粉末。**
+每个话题的分身学到两三条就结束了，然后那个池永久孤立、再没人读。
+这组数字本身就是「记忆不该按话题分池」的证据。
+
+**② 归并必须和「core ＋ 按需检索」同一批做，不能先合并后优化。**
+合并后是 155 条 / 42455 字符，而注入预算是 **50 条 / 20000 字符**
+（`MEMORY_INJECTION_LIMIT` / `MEMORY_INJECTION_CHAR_BUDGET`）。
+也就是合并当天：**105 条进不来（68%），字符超预算一倍多**。
+虽然 prompt 会如实报「另有 105 条没放进来」，但那等于告诉芝士「你的记忆大部分不在场」——
+比分池更糟。所以顺序只能是：先有 core ＋ 按需检索，再归并。
+
+#### 还剩四个问题
+
+1. **`cheese` 这个 handle 现在兼任两个身份。** `handles.py` 的注释写着它是
+   *"the fallback identity: what a token that names no 分身 resolves to"* ——
+   **认不出身份的调用会解析成 `cheese`**。如果 `cheese` 同时是有记忆池的默认 agent，
+   那些认不出来的写入就会落进默认 agent 的池。不严重，但最好给「认不出」一个单独的 sentinel。
+2. **「换 agent」必须重开 session。** 一个房间跑到一半换成另一个 agent（比如换成运维芝士），
+   接着用同一份 transcript 会人格分裂 —— 所以换 agent ≈ 重开会话，是**有代价的动作**，
+   不是切个开关。设计上要明说，UI 上要提示。
+3. **范围要分两层**：类型（出厂设置：harness / skills / mcp / model / effort）**可以跨项目共享**
+   （`expert_roles.project_id` 为 NULL 就是平台预设，这个机制已经在）；
+   **记忆必须项目内**（`agent_project` scope 本来就是 project ＋ handle）。
+   正好对应 buzz 的 persona（可分发）vs engram（community-local）。
+4. **默认 agent 应该是项目级可覆盖的设置**，不是平台硬编码 —— 某个项目想把默认换成自己定制的
+   角色，应该允许（`project.settings` 里一个字段）。
+
 ## 13. 核实依据
 
 本方案每一条「现状」都读过代码。核实过程、逐条证据、以及与 spec / fusion-design / accept-is-merge /
