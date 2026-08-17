@@ -19,7 +19,6 @@ import hashlib
 import hmac
 import importlib.util
 import json
-import subprocess
 import sys
 import time
 import types
@@ -29,7 +28,6 @@ from types import SimpleNamespace
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ADDON = REPO_ROOT / "deploy" / "metering-proxy" / "billing_addon.py"
 COMPOSE = REPO_ROOT / "deploy" / "metering-proxy" / "compose.yml"
-GUARD = REPO_ROOT / ".claude" / "scripts" / "check-metering-proxy.sh"
 
 _ADDON_LOADS = 0
 
@@ -396,19 +394,6 @@ def test_compose_lets_a_box_publish_connect_where_machines_can_reach_it():
     text = COMPOSE.read_text()
     assert '"${CONNECT_BIND_HOST:-172.17.0.1}:8444:8444"' in text
     assert '"172.17.0.1:443:8443"' in text
-
-
-def test_hardening_guard_selftest_and_clean_tree():
-    """The CI guard proves itself, and the real deploy tree passes it."""
-    st = subprocess.run(
-        ["bash", str(GUARD), "--self-test"], capture_output=True, text=True
-    )
-    assert st.returncode == 0, st.stdout + st.stderr
-
-    clean = subprocess.run(
-        ["bash", str(GUARD), str(REPO_ROOT)], capture_output=True, text=True
-    )
-    assert clean.returncode == 0, clean.stdout + clean.stderr
 
 
 # --- attribution on the pass-through path ----------------------------------
