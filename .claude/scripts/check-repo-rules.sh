@@ -12,8 +12,14 @@
 # principles: a rule a script already enforces does not need a second home, and
 # a second home is somewhere it can drift out of sync with what actually runs.
 #
-# Deliberately NOT here: rules a real linter already covers (ruff/pyright), and
-# rules no honest pattern can express. A guard that misfires is worse than no
+# Deliberately NOT here: rules a real linter already covers, and rules no honest
+# pattern can express. That first category is checked periodically rather than
+# assumed — the builtin-shadowing rule lived here until ruff's A003 was found to
+# do the same job across every builtin instead of four hand-listed ones, and
+# ruff's DTZ turned out to cover a case (`now()` with no tz at all) that the
+# hand-rolled datetime rule below never did. What remains below is what ruff
+# genuinely cannot see: markdown, .vue templates, cross-file duplication, and
+# the shape of a function name. A guard that misfires is worse than no
 # guard: people learn to bypass it, and then it protects nothing.
 #
 # Usage: check-repo-rules.sh [root]        check a tree (default: repo root)
@@ -48,34 +54,6 @@ check_naive_datetime() {
   echo "FAIL: naive datetime (tzinfo=None) in app code"
   report "naive datetime (tzinfo=None) — every DB column is TIMESTAMPTZ" \
     "use datetime.now(UTC); to compare, make the other side aware instead" "$hits"
-}
-
-# Rule 2 — do not name methods list/set/dict/type; they shadow builtins.
-# A method whose name genuinely IS the domain term
-# (prometheus's Gauge.set) may opt out with a marker comment, which keeps the
-# exception visible at the definition rather than buried in this script.
-#
-# The marker counts on the def line OR the line above it. Same-line only would
-# make this rule fight ruff's 88-column limit: any honest justification pushes
-# the def past E501, and a guard whose escape hatch trips another gate just
-# teaches people to delete the guard.
-check_builtin_shadowing() {
-  local hits
-  hits="$(find "$ROOT/backend/app" -name '*.py' -type f -print0 2>/dev/null \
-    | xargs -0 -r awk '
-        FNR == 1 { prev = "" }
-        {
-          if ($0 ~ /^[[:space:]]+(async )?def (list|set|dict|type)\(/ &&
-              $0 !~ /allow-builtin-shadow/ && prev !~ /allow-builtin-shadow/)
-            printf "%s:%d:%s\n", FILENAME, FNR, $0
-          prev = $0
-        }
-      ' || true)"
-  [ -z "$hits" ] && return 0
-  echo "FAIL: method name shadows a builtin"
-  report "method name shadows a builtin (list/set/dict/type)" \
-    "rename it, or add '# allow-builtin-shadow: <reason>' on that line or the one above" \
-    "$hits"
 }
 
 # Rule 3 — raise app.core.errors classes, never a raw HTTPException.
@@ -273,7 +251,6 @@ check_platform_cli_in_claude_md() {
 
 run_all() {
   check_naive_datetime
-  check_builtin_shadowing
   check_raw_http_exception
   check_duplicate_topic_docs
   check_supply_reverse_lookup
@@ -333,22 +310,6 @@ if [ "$SELF_TEST" = 1 ]; then
   printf 'd = d.replace(tzinfo=None)\n' > "$tmp/backend/app/core/bad_dt.py"
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "tzinfo=None must fail"
   rm "$tmp/backend/app/core/bad_dt.py"
-
-  printf 'class C:\n    def set(self, v):\n        pass\n' > "$tmp/backend/app/core/bad_name.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a builtin-shadowing method must fail"
-  printf 'class C:\n    def set(self, v):  # allow-builtin-shadow: gauge API\n        pass\n' \
-    > "$tmp/backend/app/core/bad_name.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a same-line opt-out marker must be honoured"
-  # The line above counts too, so a long justification does not have to collide
-  # with ruff's 88-column limit.
-  printf 'class C:\n    # allow-builtin-shadow: gauge API\n    def set(self, v):\n        pass\n' \
-    > "$tmp/backend/app/core/bad_name.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "a previous-line opt-out marker must be honoured"
-  # But only the line immediately above — a marker two lines up is not consent.
-  printf 'class C:\n    # allow-builtin-shadow: gauge API\n\n    def set(self, v):\n        pass\n' \
-    > "$tmp/backend/app/core/bad_name.py"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "a marker two lines up must not count"
-  rm "$tmp/backend/app/core/bad_name.py"
 
   printf 'raise HTTPException(404)\n' > "$tmp/backend/app/domain/bad_err.py"
   bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "HTTPException in domain must fail"
@@ -479,7 +440,7 @@ if [ "$SELF_TEST" = 1 ]; then
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "naming the product in a rule must pass"
   rm -rf "$tmp/backend/sandbox" "$tmp/.claude"
 
-  echo "PASS: check-repo-rules self-test (7 rules, scoping, opt-out and palette ratchet verified)"
+  echo "PASS: check-repo-rules self-test (6 rules, scoping and the palette ratchet verified)"
   exit 0
 fi
 
@@ -489,4 +450,4 @@ if [ "$FAILED" = 1 ]; then
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md)"
