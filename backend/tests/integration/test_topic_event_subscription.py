@@ -26,6 +26,7 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
+from app.domain.usage.repositories import UsageRepository
 from app.domain.workspace import service as ws
 
 pytestmark = pytest.mark.anyio
@@ -209,6 +210,15 @@ async def test_human_summon_uses_message_id_as_work_attribution(
 
     assert user["turn_id"] == user["id"]
     assert answer["turn_id"] == user["id"]
+    async with factory() as session:
+        usage = (
+            await session.scalars(
+                select(ResourceUsage).where(ResourceUsage.topic_id == topic_id)
+            )
+        ).one()
+        aggregate = await UsageRepository(session).for_topic(topic_id)
+    assert str(usage.turn_id) == user["id"]
+    assert aggregate["turns"] == 1
 
 
 async def test_hook_without_a_live_run_reaches_the_room_from_spool(
