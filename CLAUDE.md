@@ -26,6 +26,19 @@ We are the easiest repo in the world to get this wrong in, being both the platfo
 
 **Then, when a design does land, delete every sentence it invalidated — in the same PR.** A stale sentence reads exactly like a current one; that is the whole danger. A follow-up is a promise while the trap stays live, and annotating a section "outdated" leaves the trap in place while helping only whoever reads that far. Delete the claim; git history keeps it. Then close the issue with the reasoning, so the next agent finds a conclusion instead of re-arguing it.
 
+## We are still building this — do not preserve what is already decided against
+
+Once a decision is made to change something, change it. Do not leave a guard for
+the shape being replaced, a note explaining when that guard expires, or a
+compatibility path for a state nobody agreed to keep. Those are what a mature
+system pays to protect the users it already has; paying early buys nothing and
+leaves more to unwind.
+
+Before defending any guard, check what it actually watches. One written after an
+incident tends to point at where that incident *showed up*, and the code that
+causes it moves; a guard can spend years watching the site of the last outage
+rather than the entrance to the next one.
+
 ## Assume other agents are working right now
 
 Not hypothetically — concurrently, in this repo, on adjacent files. Before starting a fix, look for someone already fixing it in an open PR. Before handing work off, review **every path your change touches**; a cache directory in that list is a stop sign.

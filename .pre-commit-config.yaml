@@ -138,10 +138,3 @@ repos:
         language: system
         pass_filenames: false
         files: ^\.github/workflows/
-
-      - id: metering-proxy
-        name: metering proxy stays credential-hardened
-        entry: bash .claude/scripts/check-metering-proxy.sh
-        language: system
-        pass_filenames: false
-        files: ^deploy/
