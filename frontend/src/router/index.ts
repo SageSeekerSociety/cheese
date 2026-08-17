@@ -10,6 +10,7 @@ import QuestionRoutes from './question'
 import SpacesRoutes from './spaces'
 import TeamsRoutes from './teams'
 import UserRoutes from './user'
+import { workspaceRoutes } from './workspaceRoutes'
 
 import { usePageTitleStore } from '@/stores/title'
 
@@ -37,62 +38,7 @@ const routes: RouteRecordRaw[] = [
   // of the workspace routes below, since one of its rules matches the same path
   // shape and is distinguished only by the id being numeric.
   ...legacyProjectRedirects,
-  {
-    name: 'workspace-project',
-    path: '/projects/:projectId',
-    component: () => import('@/views/WorkspaceView.vue'),
-    props: true,
-    meta: { title: '项目工作台', isFullPage: true },
-  },
-  {
-    name: 'overview',
-    path: '/projects/:projectId/overview',
-    component: () => import('@/views/OverviewView.vue'),
-    props: true,
-    meta: { title: '总览', isFullPage: true },
-  },
-  {
-    name: 'calendar',
-    path: '/projects/:projectId/calendar',
-    component: () => import('@/views/CalendarView.vue'),
-    props: true,
-    meta: { title: '日历', isFullPage: true },
-  },
-  {
-    name: 'project-charter',
-    path: '/projects/:projectId/charter',
-    component: () => import('@/views/ProjectDocsView.vue'),
-    props: true,
-    meta: { title: '项目章程', isFullPage: true },
-  },
-  {
-    name: 'project-decisions',
-    path: '/projects/:projectId/decisions',
-    component: () => import('@/views/ProjectDocsView.vue'),
-    props: true,
-    meta: { title: '决策记录', isFullPage: true },
-  },
-  {
-    name: 'project-weeklies',
-    path: '/projects/:projectId/weeklies',
-    component: () => import('@/views/ProjectDocsView.vue'),
-    props: true,
-    meta: { title: '周报', isFullPage: true },
-  },
-  {
-    name: 'project-settings',
-    path: '/projects/:projectId/settings',
-    component: () => import('@/views/ProjectSettingsView.vue'),
-    props: true,
-    meta: { title: '项目设置', isFullPage: true },
-  },
-  {
-    name: 'member',
-    path: '/projects/:projectId/members/:handle',
-    component: () => import('@/views/MemberView.vue'),
-    props: true,
-    meta: { title: '成员', isFullPage: true },
-  },
+  workspaceRoutes,
   {
     name: 'my-devices',
     path: '/my/devices',

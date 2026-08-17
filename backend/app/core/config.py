@@ -134,7 +134,7 @@ class Settings(BaseSettings):
     # minutes), not a normal-case limit — on timeout the turn is cancelled, which
     # releases the lock and tears down the in-container claude process.
     #
-    # Still governs: TurnRunner's outer transport-independent wrap for the SDK
+    # Still governs: AgentWorkRunner's outer transport-independent wrap for the SDK
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
     # backends — LOCAL tmux AND remote device — no longer use this for their
@@ -402,14 +402,14 @@ class Settings(BaseSettings):
     # its transcript anyway.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
-    # Seconds between orphan sweeps (TurnRunner.sweep_orphans). On by default,
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
-    # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
+    # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.
     turn_silence_timeout_s: float = 1800.0
     # How long a topic may sit on a mid-turn block before `/topics/{id}/status`
     # calls it stalled. Lower than the sweep's ceiling above on purpose: this

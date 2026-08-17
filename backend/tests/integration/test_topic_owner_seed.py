@@ -28,7 +28,7 @@ from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import Topic, TopicMembership, TopicRole
-from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
 
@@ -253,7 +253,7 @@ def test_upgraded_block_falls_back_to_project_owner(client):
     upgraded = client.post(
         f"/api/blocks/{block_id}/upgrade", json={"created_by": "cheese"}
     ).json()["data"]
-    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
+    _wait_work_idle()  # kickoff runs in the background; don't race its writes
 
     assert _roster(client, upgraded["id"]).get("alice") == "owner"
 
@@ -266,7 +266,7 @@ def test_upgraded_block_without_a_creator_is_not_ownerless(client):
     block_id = _insert_block(client, p["id"], room["id"], "这块值得单独开一个话题")
 
     upgraded = client.post(f"/api/blocks/{block_id}/upgrade", json={}).json()["data"]
-    _wait_turns_idle()
+    _wait_work_idle()
 
     assert _roster(client, upgraded["id"]).get("alice") == "owner"
 

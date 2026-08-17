@@ -1,8 +1,8 @@
-"""TurnRunner admission: project concurrency gate + credit exhaustion (§9.1).
+"""AgentWorkRunner admission: project concurrency gate + credit exhaustion (§9.1).
 
 Functional tests against a fake ChatService: the runner must (a) run at most
-max_concurrent_turns turns per project at once, queueing the rest FIFO with a
-visible "排队中" system event, and (b) refuse a turn outright when the
+max_concurrent_turns work items per project at once, queueing the rest FIFO with a
+visible "排队中" system event, and (b) refuse work outright when the
 project's compute credits are exhausted — landing the human's message but
 posting the platform's exhaustion event instead of running the agent.
 """
@@ -12,7 +12,7 @@ import uuid
 
 import pytest
 
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
 
 class FakeChat:
@@ -27,7 +27,7 @@ class FakeChat:
         self.converse_calls: list[dict] = []
         self.release = asyncio.Event()
 
-    async def turn_policy(self, topic_id: uuid.UUID) -> dict | None:
+    async def work_policy(self, topic_id: uuid.UUID) -> dict | None:
         return self.policy
 
     async def post_system_event(
@@ -42,7 +42,23 @@ class FakeChat:
 
     async def post_user_message(self, topic_id, **kwargs):
         self.converse_calls.append({"received": True, **kwargs})
-        return ([{"content": kwargs["content"]}], uuid.uuid4())
+        ids = []
+        payloads = []
+        if kwargs["content"]:
+            block_id = uuid.uuid4()
+            ids.append(block_id)
+            payloads.append({"id": str(block_id), "content": kwargs["content"]})
+        for attachment in kwargs.get("attachments") or []:
+            block_id = uuid.uuid4()
+            ids.append(block_id)
+            payloads.append(
+                {
+                    "id": str(block_id),
+                    "content": attachment["path"],
+                    "kind": "attachment",
+                }
+            )
+        return payloads, ids[0], ids
 
     async def merge_into_running_turn(self, *args):
         return False
@@ -69,9 +85,9 @@ async def _until(cond, timeout: float = 2.0) -> None:
             await asyncio.sleep(0.01)
 
 
-def _runner() -> tuple[TurnRunner, InProcessBroker]:
+def _runner() -> tuple[AgentWorkRunner, InProcessBroker]:
     broker = InProcessBroker()
-    return TurnRunner(broker, turn_timeout_s=5.0), broker
+    return AgentWorkRunner(broker, turn_timeout_s=5.0), broker
 
 
 @pytest.mark.anyio
@@ -107,7 +123,7 @@ async def test_concurrency_gate_queues_and_announces_position():
     # Release: all three turns complete, never more than one at a time.
     chat.release.set()
     await _until(lambda: len(chat.converse_calls) == 3 and chat.running == 0)
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
     assert chat.max_running == 1
 
 
@@ -130,7 +146,7 @@ async def test_concurrency_gate_allows_up_to_limit_without_queueing():
     assert chat.system_events == []
 
     chat.release.set()
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
     assert chat.max_running == 2
 
 
@@ -165,7 +181,7 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
     # The refusal is the PLATFORM's structured copy, in the topic 现场.
     assert any("算力额度已用完" in e for e in chat.system_events)
     assert "算力额度已用完" in frames[-1]["message"]
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
 
 
 @pytest.mark.anyio
@@ -176,7 +192,7 @@ async def test_unknown_policy_admits_ungated():
     runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
     await _until(lambda: chat.running == 1)
     chat.release.set()
-    await _until(lambda: runner.active_turns() == 0)
+    await _until(lambda: runner.active_work_count() == 0)
     assert len(chat.converse_calls) == 1
 
 
@@ -219,7 +235,7 @@ async def test_received_message_lands_before_credit_refusal():
 @pytest.mark.anyio
 async def test_unsummoned_message_never_touches_turn_admission():
     class PostOnly(FakeChat):
-        async def turn_policy(self, topic_id):
+        async def work_policy(self, topic_id):
             raise AssertionError("plain messages do not enter the turn gate")
 
     chat = PostOnly(None)
@@ -231,22 +247,27 @@ async def test_unsummoned_message_never_touches_turn_admission():
         )
         assert (await queue.get())["type"] == "user_block"
         assert (await queue.get())["type"] == "done"
-    assert runner.active_turns() == 0
+    assert runner.active_work_count() == 0
 
 
 @pytest.mark.anyio
-async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
+async def test_receipted_mid_session_message_has_no_second_done():
     class MergeIntoLive(FakeChat):
-        async def turn_policy(self, topic_id):
+        def __init__(self):
+            super().__init__(None)
+            self.merged: tuple | None = None
+
+        async def work_policy(self, topic_id):
             raise AssertionError("a delivered mid-turn message needs no new turn")
 
         async def merge_into_running_turn(self, *args):
+            self.merged = args
             return True
 
         async def ack_summon(self, block_id, topic_id):
             return {"block_id": str(block_id), "reactions": []}
 
-    chat = MergeIntoLive(None)
+    chat = MergeIntoLive()
     runner, broker = _runner()
     topic = uuid.uuid4()
     await broker.publish(
@@ -259,9 +280,63 @@ async def test_receipted_mid_turn_message_does_not_start_or_end_another_turn():
         )
         frames = []
         async with asyncio.timeout(2):
-            while len(frames) < 3:
+            while len(frames) < 2:
                 frames.append(await queue.get())
 
-    assert [frame["type"] for frame in frames] == ["user_block", "reaction", "done"]
+    assert [frame["type"] for frame in frames] == ["user_block", "reaction"]
+    assert chat.merged is not None
+    assert chat.merged[2:] == ("补充一条", "u", None)
     assert broker.active_turn_ids(str(topic)) == ["already-running"]
-    await _until(lambda: runner.active_turns() == 0)
+    assert runner.active_work_count() == 1
+    await broker.publish(
+        str(topic), {"type": "turn_finished", "turn_id": "already-running"}
+    )
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_image_only_message_can_merge_into_live_session():
+    class MergeIntoLive(FakeChat):
+        def __init__(self):
+            super().__init__(None)
+            self.merged: tuple | None = None
+
+        async def work_policy(self, topic_id):
+            raise AssertionError("a delivered image needs no new work item")
+
+        async def merge_into_running_turn(self, *args):
+            self.merged = args
+            return True
+
+        async def ack_summon(self, block_id, topic_id):
+            return {"block_id": str(block_id), "reactions": []}
+
+    chat = MergeIntoLive()
+    runner, broker = _runner()
+    topic = uuid.uuid4()
+    await broker.publish(
+        str(topic), {"type": "turn_started", "turn_id": "already-running"}
+    )
+    attachment = {"path": "uploads/img-a.png", "mime": "image/png"}
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.submit_message(
+            chat,
+            topic,
+            author="u",
+            content="",
+            attachments=[attachment],
+            summon=True,
+        )
+        frames = [await queue.get(), await queue.get()]
+
+    assert [frame["type"] for frame in frames] == ["user_block", "reaction"]
+    assert chat.merged is not None
+    block_ids = chat.merged[1]
+    assert len(block_ids) == 1
+    assert chat.merged[2:] == ("", "u", [attachment])
+
+    await broker.publish(
+        str(topic), {"type": "turn_finished", "turn_id": "already-running"}
+    )
+    await _until(lambda: runner.active_work_count() == 0)

@@ -10,7 +10,7 @@ the platform's structured event; a project belonging to no 赛题 is unlimited.
 
 import pytest
 
-from tests.conftest import seed_task_with_protocol, wait_turns_idle
+from tests.conftest import seed_task_with_protocol, wait_work_idle
 from tests.integration.conftest import chat_ws_url
 
 # The stub agent reports usage of 10 input + 5 output tokens per turn; at the
@@ -87,7 +87,7 @@ def _run_turn(client, topic_id: str) -> list[dict]:
             frames.append(frame)
             if frame["type"] in ("done", "error"):
                 break
-    wait_turns_idle()
+    wait_work_idle()
     return frames
 
 

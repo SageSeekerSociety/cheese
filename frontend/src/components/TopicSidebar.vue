@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import type { TopicSortField, TopicSortOrder } from '../api'
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { relTime } from '../lib/relTime'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import { ancestorPathIds, loadCollapsedTopics, saveCollapsedTopics, visibleRows } from '../lib/topicTree'
 import { avatarColor } from '../utils/avatar'
 
+import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 
 const props = defineProps<{
@@ -26,8 +26,9 @@ const props = defineProps<{
   meHandle?: string
   // The peer handle whose DM is currently open (for active highlighting), or null.
   activePeer?: string | null
-  // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'),
-  // or null when none — so the rail can show it active.
+  // Which 项目文档 is open in the main area ('charter'|'decisions'|'weeklies'|
+  // 'memory'), or null when none — the rail shows ONE 项目文档 row, active for
+  // any of them, because which document is open is the page's business now.
   activeDocs?: string | null
   // Drawer width (px), made resizable by the parent.
   width?: number
@@ -36,17 +37,10 @@ const props = defineProps<{
   // 私聊未读: {peerHandle: count}, `cheese` = the 芝士 DM. Separate from
   // unreadMap because DM rows are built from the roster and have no topic id.
   privateUnreadMap?: Record<string, number>
-  // 话题列表排序: the backend field/direction currently applied — the sort
-  // menu just reflects and changes this, the actual ordering comes back
-  // from the server in `topics` (so tree/sibling order stays consistent).
-  topicSort?: TopicSortField
-  topicOrder?: TopicSortOrder
 }>()
 
 const emit = defineEmits<{
-  (e: 'select-project', id: string): void
   (e: 'select-topic', id: string): void
-  (e: 'create-project', name: string): void
   (e: 'create-topic', title: string): void
   (e: 'split-topic', payload: { topicId: string; title: string }): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
@@ -58,12 +52,11 @@ const emit = defineEmits<{
   (e: 'select-private'): void
   // Open a person-to-person DM with the given member handle (飞书私聊 conversation).
   (e: 'select-peer-dm', handle: string): void
-  // Open a 项目文档 (章程/决策记录/周报集) in the main area, keeping the rail.
+  // Open 项目文档 in the main area. The rail always asks for 章程 — the page
+  // itself carries the tabs that reach the other three.
   (e: 'select-docs', kind: 'charter' | 'decisions' | 'weeklies' | 'memory'): void
   // Live drawer width while dragging the right edge.
   (e: 'update:width', w: number): void
-  // Sort menu picked a new field/direction for the topic list.
-  (e: 'update:topic-sort', payload: { sort: TopicSortField; order: TopicSortOrder }): void
 }>()
 
 // Drag the rail's right edge — emit the cursor's x (= rail width from the left).
@@ -82,64 +75,25 @@ function startResize(e: MouseEvent) {
   document.body.style.userSelect = 'none'
 }
 
-// 项目级页面（总览/日历/设置）住在项目头下（界面级合入 IA：不在顶栏）。
+// 项目级页面（总览/日历）住在话题列表最上面的置顶行里，和话题行同一种视觉
+// 语法——它们和这个侧栏里的其他一切一样，只换内容区。项目设置不在这里：它是
+// 一年点两次的东西，收进项目头的 ⋯ 菜单。
 const router = useRouter()
-// Below this drawer width the 总览/日历/设置 labels are dropped — just the icons,
-// so the row never wraps into an awkward two-line cramp on a narrow rail.
-const narrowPages = computed(() => (props.width ?? 280) < 216)
-
-// 私聊 DM list: the OTHER project members (each a person you can 1:1 DM). 芝士
-// gets its own dedicated row above, and you don't DM yourself.
-const peerDms = computed(() =>
-  (props.members ?? [])
-    .filter((m) => m.user_handle !== props.meHandle && !m.agent)
-    .map((m) => ({
-      handle: m.user_handle,
-      name: m.name || m.user_handle,
-    }))
-)
+const route = useRoute()
 
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
-  { key: 'project-settings', label: '设置', icon: 'mdi-cog-outline' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
   router.push({ name, params: { projectId: props.selectedProjectId } })
 }
 
-// Project switcher dropdown. Only the caret opens it (the #activator); clicking
-// the bar opens 本体. Width is captured from the 本体 box so they line up.
-const bentaiMain = ref<HTMLElement | null>(null)
-const switcherOpen = ref(false)
-const switcherWidth = ref(248)
-function captureSwitcherWidth() {
-  if (bentaiMain.value) switcherWidth.value = bentaiMain.value.offsetWidth
-}
-
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
 function newTopic() {
   emit('create-topic', '')
-}
-
-// ----- 话题列表排序 -----
-// Four fixed combinations (field × direction) — a picker, not a builder, so a
-// v-menu list beats a two-axis control for this small a option set.
-const SORT_OPTIONS: Array<{ sort: TopicSortField; order: TopicSortOrder; label: string }> = [
-  { sort: 'last_activity_at', order: 'desc', label: '最后活动 · 新到旧' },
-  { sort: 'last_activity_at', order: 'asc', label: '最后活动 · 旧到新' },
-  { sort: 'title', order: 'asc', label: '标题 · A→Z' },
-  { sort: 'title', order: 'desc', label: '标题 · Z→A' },
-]
-const sortMenuOpen = ref(false)
-const currentSortLabel = computed(
-  () => SORT_OPTIONS.find((o) => o.sort === props.topicSort && o.order === props.topicOrder)?.label ?? '排序'
-)
-function pickSort(opt: { sort: TopicSortField; order: TopicSortOrder }) {
-  sortMenuOpen.value = false
-  emit('update:topic-sort', opt)
 }
 
 // ----- Topic tree -----
@@ -202,8 +156,8 @@ const tree = computed<TreeRow[]>(() => {
     for (const child of childrenOf.get(t.id) ?? []) visit(child, depth + 1)
   }
 
-  // The root topic (本体) is the rail header, not a list row — show its children
-  // (work topics) at depth 0, then any other top-level topics.
+  // The root topic (本体) has its own pinned 全局 row above the list — show its
+  // children (work topics) at depth 0, then any other top-level topics.
   const idSet = new Set(all.map((t) => t.id))
   const roots = all.filter((t) => !t.parent_id || !idSet.has(t.parent_id))
   const rootTopicNode = roots.find((t) => inferKind(t) === 'root')
@@ -251,6 +205,33 @@ function privateUnreadOf(handle: string): number {
 // Unread hiding inside the collapsed archived group still deserves a hint.
 const archivedUnread = computed<number>(() => archivedRows.value.reduce((sum, t) => sum + unreadOf(t.id), 0))
 
+// ---- 私聊 (C3): the rail's tail, not the end of the scroll ----
+// 全体成员常驻是这一区原来的形态，结果是话题一多、未读徽标就滚出屏幕——恰好在
+// 最需要看见它的时候。现在只留「有事的人」：芝士 + 有未读的 + 正在聊的那一个，
+// 其余全部收进「发起私聊」。
+//
+// 评审处方里还有一条「最近有消息的人」，这一轮做不了：接口只回未读计数
+// (privateUnreadMap)，没有任何「上次有消息是什么时候」的时间戳，而为一条排序
+// 规则去改后端不在这条线的范围里。所以退化成「有未读的」。
+const peerDms = computed(() =>
+  (props.members ?? [])
+    .filter((m) => m.user_handle !== props.meHandle && !m.agent)
+    .map((m) => ({
+      handle: m.user_handle,
+      name: m.name || m.user_handle,
+    }))
+)
+const visibleDms = computed(() =>
+  peerDms.value.filter((d) => privateUnreadOf(d.handle) > 0 || props.activePeer === d.handle)
+)
+const hiddenDmHandles = computed(() => new Set(visibleDms.value.map((d) => d.handle)))
+const otherDms = computed(() => peerDms.value.filter((d) => !hiddenDmHandles.value.has(d.handle)))
+const startDmOpen = ref(false)
+function startDm(handle: string) {
+  startDmOpen.value = false
+  emit('select-peer-dm', handle)
+}
+
 // ---- 子话题折叠 ----
 // 范式跟底部的「已归档」分组一致（一个 chevron 收起一堆行），只是这里的开关
 // 长在每一个有子话题的行上。行的可见性/未读聚合是纯逻辑，住在 lib/topicTree.ts
@@ -290,15 +271,17 @@ function toggleCollapse(id: string) {
   saveCollapsedTopics(props.selectedProjectId, next)
 }
 
-// The root topic (本体) — represented by the rail header (a selector + a click
-// target), not a list row. And the current project's display name.
+// The root topic (本体) — the pinned 「全局」 row at the top of the list. And
+// the current project's display name, which is now pure identity: the project
+// header is a label, not a button that opens a room nobody could guess at.
 const rootTopic = computed<Topic | null>(() => props.topics.find((t) => inferKind(t) === 'root') ?? null)
 const currentProjectName = computed<string>(
   () => props.projects.find((p) => p.id === props.selectedProjectId)?.name ?? '选择项目'
 )
 
 // Inline rename (pattern mirrors MyDevicesView's rename-in-place): a click on
-// the pencil swaps the title span for a text field; enter/blur commits.
+// 重命名 in the row's ⋯ menu swaps the title span for a text field; enter/blur
+// commits.
 const renamingTopicId = ref<string | null>(null)
 const draftTitle = ref('')
 
@@ -324,95 +307,121 @@ function onSplit(t: Topic) {
   emit('split-topic', { topicId: t.id, title: '' })
 }
 
-// 项目文档 (spec §7.1): 章程 / 决策记录 / 周报集 open INSIDE the 工作台 (keeping
-// the left rail), via the docs mode — not a separate full-screen route. Active
-// state comes from the parent's current docs kind.
-const onCharter = computed(() => props.activeDocs === 'charter')
-const onDecisions = computed(() => props.activeDocs === 'decisions')
-const onWeeklies = computed(() => props.activeDocs === 'weeklies')
-const onMemory = computed(() => props.activeDocs === 'memory')
+// 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
+// 尾巴。菜单展开期间那一颗必须留在屏幕上——它是菜单的 activator，跟着 hover
+// 一起消失的话，鼠标一移进菜单，菜单自己就塌了。
+const actionsMenuFor = ref<string | null>(null)
+function setActionsMenu(topicId: string, open: boolean) {
+  actionsMenuFor.value = open ? topicId : null
+}
+
+// 项目文档 (C4): 章程 / 决策记录 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
+// 四选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
+// 这一行在任何一种文档打开时都是选中态。
+const onDocs = computed(() => !!props.activeDocs)
+
+// 一列图标，一列文字。深度 0 的话题行是「8px 起 + 18px 的折叠开关占位」，所以
+// 没有开关的行必须自己补上这 18px，否则它们的图标整整靠左一格。写在 style 上
+// 而不是 scoped class 里：Vuetify 的 `.v-list--nav .v-list-item` 内边距比单个
+// scoped 类更特化，话题行本来也是这么压住它的。
+const PINNED_INDENT = { paddingInlineStart: '8px' } // 模板里自带占位 span
+const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，直接补齐
 </script>
 
 <template>
-  <v-navigation-drawer permanent :width="width ?? 280" color="surface" border="e">
+  <SecondaryNavigation :width="width ?? 280" custom-class="topic-rail">
     <!-- Drag handle on the right edge to resize the rail. -->
     <div class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
+    <!-- 三段式 (C3): 头固定 / 中段唯一滚动 / 尾固定。私聊和它的未读徽标在
+         话题列表滚到底时必须还在屏幕上。 -->
     <div class="d-flex flex-column fill-height">
-      <!-- 本体 = 项目 = 根话题: one flush header that opens the 本体 (root topic)
-           on click, and switches projects via the caret menu. -->
-      <div class="bentai-bar" :class="{ 'is-active': !!rootTopic && rootTopic.id === selectedTopicId }">
-        <button
-          ref="bentaiMain"
-          type="button"
-          class="bentai-bar__main"
-          @click="rootTopic && emit('select-topic', rootTopic.id)"
-        >
-          <v-icon size="18" class="bentai-bar__icon">mdi-hexagon-outline</v-icon>
-          <span class="bentai-bar__name">{{ currentProjectName }}</span>
-          <span class="chip-neutral">全局</span>
-          <span v-if="rootTopic && unreadOf(rootTopic.id) > 0" class="unread-badge">{{
-            unreadLabel(rootTopic.id)
-          }}</span>
-        </button>
-        <!-- 切换项目已回归左侧 rail（每个项目一个图标）——此处不再放切换器。 -->
+      <!-- 项目头 = 纯标识 + 一个 ⋯ 菜单。48px 基线 (.sidebar-header) 和首页
+           侧栏头、内容区 PageHeader 共用，三条标题线才落在同一水平上。 -->
+      <div class="sidebar-header rail-header">
+        <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
+        <v-menu location="bottom end">
+          <template #activator="{ props: menuProps }">
+            <v-btn
+              v-bind="menuProps"
+              icon="mdi-dots-horizontal"
+              size="x-small"
+              variant="text"
+              class="rail-header__menu"
+              title="项目菜单"
+            />
+          </template>
+          <v-list density="compact" nav>
+            <v-list-item
+              prepend-icon="mdi-cog-outline"
+              title="项目设置"
+              :disabled="!selectedProjectId"
+              @click="openProjectPage('project-settings')"
+            />
+          </v-list>
+        </v-menu>
       </div>
 
-      <!-- 项目级页面（总览/日历/设置）: Slack 式置顶行，属项目上下文而非顶栏。 -->
-      <div v-if="selectedProjectId" class="proj-pages" :class="{ 'proj-pages--compact': narrowPages }">
-        <button
-          v-for="p in projectPages"
-          :key="p.key"
-          type="button"
-          class="proj-pages__item"
-          :title="p.label"
-          @click="openProjectPage(p.key)"
-        >
-          <v-icon size="15">{{ p.icon }}</v-icon>
-          <span v-if="!narrowPages">{{ p.label }}</span>
-        </button>
-      </div>
-
-      <v-divider />
-
-      <!-- Scrollable lists -->
-      <div class="flex-grow-1 overflow-y-auto">
+      <!-- 中段：这个侧栏里唯一会滚的东西 -->
+      <div class="rail-scroll flex-grow-1 overflow-y-auto">
         <template v-if="!selectedProjectId">
           <div class="t-body c-muted pa-4">先选择一个项目</div>
         </template>
         <template v-else>
+          <!-- 置顶行 (C1): 全局房间 + 总览 + 日历。和话题行同一种语法——同图标
+               槽、同缩进基准、同选中态、同未读角标，所以「点它会发生什么」不用
+               另学一遍。 -->
+          <v-list density="compact" nav class="py-0 pt-1">
+            <v-list-item
+              v-if="rootTopic"
+              :active="rootTopic.id === selectedTopicId"
+              rounded="lg"
+              class="nav-row pinned-row"
+              :class="{ 'is-active': rootTopic.id === selectedTopicId }"
+              :style="PINNED_INDENT"
+              @click="emit('select-topic', rootTopic.id)"
+            >
+              <template #prepend>
+                <span class="subtree-toggle subtree-toggle--empty" />
+                <span class="row-glyph-wrap">
+                  <v-icon
+                    size="16"
+                    class="row-glyph"
+                    :class="{ 'row-glyph--unread': unreadOf(rootTopic.id) > 0 }"
+                    icon="mdi-pound"
+                  />
+                </span>
+              </template>
+              <v-list-item-title :class="{ 'title-unread': unreadOf(rootTopic.id) > 0 }">全局</v-list-item-title>
+              <template #append>
+                <span v-if="unreadOf(rootTopic.id) > 0" class="unread-badge">{{ unreadLabel(rootTopic.id) }}</span>
+              </template>
+            </v-list-item>
+
+            <v-list-item
+              v-for="p in projectPages"
+              :key="p.key"
+              :active="route.name === p.key"
+              rounded="lg"
+              class="nav-row pinned-row"
+              :class="{ 'is-active': route.name === p.key }"
+              :style="PINNED_INDENT"
+              @click="openProjectPage(p.key)"
+            >
+              <template #prepend>
+                <span class="subtree-toggle subtree-toggle--empty" />
+                <span class="row-glyph-wrap">
+                  <v-icon size="16" class="row-glyph" :icon="p.icon" />
+                </span>
+              </template>
+              <v-list-item-title>{{ p.label }}</v-list-item-title>
+            </v-list-item>
+          </v-list>
+
+          <v-divider class="mx-3 my-1" />
+
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <div class="d-flex align-center ga-1">
-              <v-menu v-model="sortMenuOpen" location="bottom end">
-                <template #activator="{ props: menuProps }">
-                  <v-btn
-                    v-bind="menuProps"
-                    icon="mdi-sort"
-                    size="x-small"
-                    variant="text"
-                    :title="`排序：${currentSortLabel}`"
-                  />
-                </template>
-                <v-list density="compact" nav>
-                  <v-list-item
-                    v-for="opt in SORT_OPTIONS"
-                    :key="`${opt.sort}-${opt.order}`"
-                    :active="opt.sort === topicSort && opt.order === topicOrder"
-                    @click="pickSort(opt)"
-                  >
-                    <v-list-item-title class="t-body">{{ opt.label }}</v-list-item-title>
-                  </v-list-item>
-                </v-list>
-              </v-menu>
-              <v-btn
-                icon="mdi-plus"
-                size="x-small"
-                variant="tonal"
-                color="primary"
-                title="新建话题"
-                @click="newTopic"
-              />
-            </div>
+            <v-btn icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" @click="newTopic" />
           </div>
 
           <div v-if="loadingTopics" class="px-4 py-2">
@@ -429,6 +438,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
               :class="{
                 'is-active': row.topic.id === selectedTopicId,
                 'is-sub': row.depth > 0,
+                'is-menu-open': actionsMenuFor === row.topic.id,
               }"
               :style="{
                 paddingInlineStart: 8 + row.depth * 20 + 'px',
@@ -518,32 +528,41 @@ const onMemory = computed(() => props.activeDocs === 'memory')
                      "最后有动静是什么时候"，只用在 last_activity_at 缺席的接口
                      返回上（新建/改名/归档的响应体）。 -->
                 <span v-else class="row-time">{{ relTime(row.topic.last_activity_at ?? row.topic.updated_at) }}</span>
-                <!-- hover 浮出的操作层：绝对定位覆盖行尾，不占布局宽度 -->
+                <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
                 <div class="row-actions" @click.stop>
-                  <v-btn
-                    icon="mdi-pencil-outline"
-                    size="small"
-                    variant="text"
-                    density="comfortable"
-                    title="重命名"
-                    @click.stop="startRename(row.topic)"
-                  />
-                  <v-btn
-                    icon="mdi-archive-arrow-down-outline"
-                    size="small"
-                    variant="text"
-                    density="comfortable"
-                    title="归档话题"
-                    @click.stop="emit('archive-topic', row.topic.id)"
-                  />
-                  <v-btn
-                    icon="mdi-source-branch-plus"
-                    size="small"
-                    variant="text"
-                    density="comfortable"
-                    title="拆出子话题"
-                    @click.stop="onSplit(row.topic)"
-                  />
+                  <v-menu
+                    :model-value="actionsMenuFor === row.topic.id"
+                    location="bottom end"
+                    @update:model-value="(open: boolean) => setActionsMenu(row.topic.id, open)"
+                  >
+                    <template #activator="{ props: menuProps }">
+                      <v-btn
+                        v-bind="menuProps"
+                        icon="mdi-dots-horizontal"
+                        size="small"
+                        variant="text"
+                        density="comfortable"
+                        title="更多操作"
+                        class="row-actions__btn"
+                      />
+                    </template>
+                    <v-list density="compact" nav>
+                      <v-list-item prepend-icon="mdi-pencil-outline" title="重命名" @click="startRename(row.topic)" />
+                      <v-list-item
+                        prepend-icon="mdi-archive-arrow-down-outline"
+                        title="归档"
+                        @click="emit('archive-topic', row.topic.id)"
+                      />
+                      <!-- 拆出子话题点一下就真的建一个话题并打开它——比上面两条
+                           重一个量级，所以在菜单里单独隔一组，不和改名并排。 -->
+                      <v-divider class="my-1" />
+                      <v-list-item
+                        prepend-icon="mdi-source-branch-plus"
+                        title="拆出子话题"
+                        @click="onSplit(row.topic)"
+                      />
+                    </v-list>
+                  </v-menu>
                 </div>
               </template>
             </v-list-item>
@@ -604,114 +623,104 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 
           <v-divider class="mx-3 my-1" />
 
-          <!-- 项目文档 -->
-          <div class="t-eyebrow side-subhead">项目文档</div>
+          <!-- 项目文档 (C4): 一行。四种文档的切换在页面里，不在这条黄金位上。 -->
           <v-list density="compact" nav class="py-0">
             <v-list-item
-              :active="onCharter"
-              :disabled="!selectedProjectId"
+              :active="onDocs"
               rounded="lg"
-              class="nav-row"
-              :class="{ 'is-active': onCharter }"
+              class="nav-row docs-row"
+              :class="{ 'is-active': onDocs }"
+              :style="FLAT_ROW_INDENT"
               prepend-icon="mdi-file-document-outline"
-              title="章程"
+              title="项目文档"
               @click="emit('select-docs', 'charter')"
             />
-            <v-list-item
-              :active="onDecisions"
-              :disabled="!selectedProjectId"
-              rounded="lg"
-              class="nav-row"
-              :class="{ 'is-active': onDecisions }"
-              prepend-icon="mdi-clipboard-text-clock-outline"
-              title="决策记录"
-              @click="emit('select-docs', 'decisions')"
-            />
-            <v-list-item
-              :active="onWeeklies"
-              :disabled="!selectedProjectId"
-              rounded="lg"
-              class="nav-row"
-              :class="{ 'is-active': onWeeklies }"
-              prepend-icon="mdi-calendar-week-outline"
-              title="周报集"
-              @click="emit('select-docs', 'weeklies')"
-            />
-            <v-list-item
-              :active="onMemory"
-              :disabled="!selectedProjectId"
-              rounded="lg"
-              class="nav-row"
-              :class="{ 'is-active': onMemory }"
-              prepend-icon="mdi-brain"
-              title="记忆"
-              @click="emit('select-docs', 'memory')"
-            />
-          </v-list>
-
-          <v-divider class="mx-3 my-1" />
-
-          <!-- 私聊 (飞书私聊): 1:1 conversations — 芝士 plus each other project
-               member — each opens as a normal chat in the main area. -->
-          <div class="t-eyebrow side-subhead">私聊</div>
-          <v-list density="compact" nav class="py-0">
-            <v-list-item
-              :active="privateActive"
-              rounded="lg"
-              class="nav-row private-row"
-              :class="{ 'is-active': privateActive }"
-              @click="emit('select-private')"
-            >
-              <template #prepend>
-                <!-- 芝士头像放进与图标同宽 (16px) 的定宽槽并居中：头像 18px，
-                     视觉上与话题/项目文档那一列的 ~16px 图标同大，icon-left 与
-                     text-left 都能和那一列对齐。 -->
-                <span class="private-avatar-slot">
-                  <CheeseAvatar :size="18" />
-                </span>
-              </template>
-              <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)"> 芝士 </v-list-item-title>
-              <template #append>
-                <span v-if="privateUnreadOf('cheese') > 0" class="unread-badge">
-                  {{ countLabel(privateUnreadOf('cheese')) }}
-                </span>
-              </template>
-            </v-list-item>
-
-            <!-- Person-to-person DMs: one row per OTHER project member. -->
-            <v-list-item
-              v-for="dm in peerDms"
-              :key="dm.handle"
-              :active="activePeer === dm.handle"
-              rounded="lg"
-              class="nav-row private-row"
-              :class="{ 'is-active': activePeer === dm.handle }"
-              @click="emit('select-peer-dm', dm.handle)"
-            >
-              <template #prepend>
-                <span class="private-avatar-slot">
-                  <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
-                    dm.name.slice(0, 1).toUpperCase()
-                  }}</span>
-                </span>
-              </template>
-              <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
-                {{ dm.name }}
-              </v-list-item-title>
-              <template #append>
-                <span v-if="privateUnreadOf(dm.handle) > 0" class="unread-badge">
-                  {{ countLabel(privateUnreadOf(dm.handle)) }}
-                </span>
-              </template>
-            </v-list-item>
           </v-list>
         </template>
+      </div>
+
+      <!-- 尾固定 (C3): 私聊。不随话题列表滚动——未读徽标必须一直在屏幕上。 -->
+      <div v-if="selectedProjectId" class="rail-foot">
+        <v-divider />
+        <div class="t-eyebrow side-subhead side-subhead--row">
+          <span>私聊</span>
+          <v-menu v-if="otherDms.length" v-model="startDmOpen" location="top end">
+            <template #activator="{ props: menuProps }">
+              <v-btn v-bind="menuProps" icon="mdi-plus" size="x-small" variant="text" title="发起私聊" />
+            </template>
+            <v-list density="compact" nav max-height="320">
+              <v-list-item v-for="dm in otherDms" :key="dm.handle" @click="startDm(dm.handle)">
+                <template #prepend>
+                  <span class="private-avatar-slot">
+                    <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
+                      dm.name.slice(0, 1).toUpperCase()
+                    }}</span>
+                  </span>
+                </template>
+                <v-list-item-title class="t-body">{{ dm.name }}</v-list-item-title>
+              </v-list-item>
+            </v-list>
+          </v-menu>
+        </div>
+        <v-list density="compact" nav class="py-0 pb-2">
+          <v-list-item
+            :active="privateActive"
+            rounded="lg"
+            class="nav-row private-row"
+            :class="{ 'is-active': privateActive }"
+            :style="FLAT_ROW_INDENT"
+            @click="emit('select-private')"
+          >
+            <template #prepend>
+              <!-- 芝士头像放进与图标同宽 (16px) 的定宽槽并居中：头像 18px，
+                   视觉上与话题/项目文档那一列的 ~16px 图标同大，icon-left 与
+                   text-left 都能和那一列对齐。 -->
+              <span class="private-avatar-slot">
+                <CheeseAvatar :size="18" />
+              </span>
+            </template>
+            <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)"> 芝士 </v-list-item-title>
+            <template #append>
+              <span v-if="privateUnreadOf('cheese') > 0" class="unread-badge">
+                {{ countLabel(privateUnreadOf('cheese')) }}
+              </span>
+            </template>
+          </v-list-item>
+
+          <!-- 有事的人才常驻：有未读的，加上正在聊的那一个。 -->
+          <v-list-item
+            v-for="dm in visibleDms"
+            :key="dm.handle"
+            :active="activePeer === dm.handle"
+            rounded="lg"
+            class="nav-row private-row"
+            :class="{ 'is-active': activePeer === dm.handle }"
+            :style="FLAT_ROW_INDENT"
+            @click="emit('select-peer-dm', dm.handle)"
+          >
+            <template #prepend>
+              <span class="private-avatar-slot">
+                <span class="dm-avatar" :style="{ backgroundColor: avatarColor(dm.handle) }">{{
+                  dm.name.slice(0, 1).toUpperCase()
+                }}</span>
+              </span>
+            </template>
+            <v-list-item-title class="t-body" style="font-weight: 500; color: var(--ink)">
+              {{ dm.name }}
+            </v-list-item-title>
+            <template #append>
+              <span v-if="privateUnreadOf(dm.handle) > 0" class="unread-badge">
+                {{ countLabel(privateUnreadOf(dm.handle)) }}
+              </span>
+            </template>
+          </v-list-item>
+        </v-list>
       </div>
 
       <!-- 新建项目 moved to the project rail's + (App.vue) — one affordance,
            Discord-style. The create-project emit stays for API compatibility. -->
     </div>
-  </v-navigation-drawer>
+  </SecondaryNavigation>
 </template>
 
 <style scoped>
@@ -750,72 +759,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   padding-inline-end: 8px;
 }
 
-/* 本体 = 项目 header row: flush-left (the topic tree's parent, not deeper). */
-.bentai-bar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 6px 6px 10px;
-}
-
-/* 项目级页面行 (总览/日历/设置) — quiet, Slack-pinned-row feel. */
-.proj-pages {
-  display: flex;
-  gap: 4px;
-  padding: 0 10px 8px;
-}
-.proj-pages__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 9px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--fill);
-  color: var(--muted);
-  font-size: 12px;
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    color 120ms ease;
-}
-.proj-pages__item:hover {
-  background: var(--fill-2);
-  color: var(--ink);
-}
-/* narrow rail: icon-only, evenly spread, no label wrap */
-.proj-pages--compact .proj-pages__item {
-  flex: 1;
-  justify-content: center;
-  padding: 6px 0;
-}
-.bentai-bar__main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 6px;
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.12s ease;
-}
-.bentai-bar__main:hover {
-  background: var(--fill);
-}
-.bentai-bar.is-active .bentai-bar__main {
-  background: var(--fill);
-}
-.bentai-bar__icon {
-  flex: none;
-  color: var(--muted);
-}
-.bentai-bar.is-active .bentai-bar__icon {
-  color: var(--accent);
-}
-.bentai-bar__name {
-  flex: 1;
+/* 项目头：纯标识。高度和分隔线来自全局 .sidebar-header (48px 基线)，这里只补
+   名字的排版和 ⋯ 的静默配色。 */
+.rail-header__name {
   min-width: 0;
   font-size: 14px;
   font-weight: 600;
@@ -823,6 +769,18 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.rail-header__menu {
+  flex: none;
+  color: var(--muted);
+}
+
+/* 三段式：中段是这个侧栏里唯一的滚动容器，尾段永远贴着底。
+   尾段自己有上限：一屋子人同时来消息时，它不能反过来把话题列表挤没。 */
+.rail-foot {
+  flex: none;
+  max-height: 40%;
+  overflow-y: auto;
 }
 
 /* Unread: the row's title carries the signal. */
@@ -849,8 +807,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   font-size: 13.5px;
 }
 
-/* Active row: --fill bg + 2px --accent left bar + --ink text. NOT a tinted
-   amber fill. Kill Vuetify's default active overlay so no amber bleeds in. */
+/* Active row: --fill bg + --ink text. 没有琥珀左竖条——选中态靠底色和字重就够
+   了（Slack/Discord 的行选中态也只是底色），左条纹在这套设计语言里只留给引用
+   块和树的结构线。Kill Vuetify's default active overlay so no amber bleeds in. */
 .topic-row.is-active,
 .nav-row.is-active {
   background: var(--fill);
@@ -858,18 +817,6 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 .topic-row.is-active :deep(.v-list-item__overlay),
 .nav-row.is-active :deep(.v-list-item__overlay) {
   opacity: 0 !important;
-}
-.topic-row.is-active::before,
-.nav-row.is-active::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  background: var(--accent);
 }
 .topic-row.is-active :deep(.v-list-item-title),
 .nav-row.is-active :deep(.v-list-item-title) {
@@ -956,8 +903,8 @@ const onMemory = computed(() => props.activeDocs === 'memory')
 }
 /* 核心修正：Vuetify 的 prepend spacer 默认 ~32px，把图标和标题隔出一条鸿沟，
    稀释了一切缩进关系。压到 8px，缩进的台阶才立得起来。
-   nav-row (项目文档/私聊) 必须共用同一套：否则图标虽同列，文字却各自缩进
-   （话题 24px、项目文档 56px、私聊 32px），三列文字对不齐。 */
+   nav-row (置顶行/项目文档/私聊) 必须共用同一套：否则图标虽同列，文字却各自
+   缩进（话题 24px、项目文档 56px、私聊 32px），三列文字对不齐。 */
 .topic-row :deep(.v-list-item__spacer),
 .nav-row :deep(.v-list-item__spacer) {
   width: 8px !important;
@@ -1064,7 +1011,9 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   height: 6px;
   border-radius: 50%;
   background: var(--ok);
-  box-shadow: 0 0 0 1.5px var(--surface);
+  /* 描边取侧栏自己的底色 (--canvas)，不是 --surface：这条 rail 现在坐在
+     background 层上，用白色描边会在浅色主题下多出一圈亮边。 */
+  box-shadow: 0 0 0 1.5px var(--canvas);
   animation: running-dot-pulse 1.6s ease-in-out infinite;
 }
 @keyframes running-dot-pulse {
@@ -1078,7 +1027,8 @@ const onMemory = computed(() => props.activeDocs === 'memory')
     transform: scale(0.7);
   }
 }
-/* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。 */
+/* 分身组的竖向引导线：把一串子话题挂在父话题下（Linear/Notion 树形手法）。
+   这是结构线，不是强调条——左条纹禁令不管它。 */
 .topic-row.is-sub::before {
   content: '';
   position: absolute;
@@ -1115,7 +1065,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   transition: opacity 0.1s ease;
   color: var(--muted);
 }
-/* 工具条里的每颗按钮要有自己的悬停反馈——否则不像能按的东西。
+/* 工具条里的那颗 ⋯ 要有自己的悬停反馈——否则不像能按的东西。
    舒适可点，但必须小于行高（~36px）：25px 按钮 + 16px 图标，稳稳落在行内。 */
 .row-actions :deep(.v-btn) {
   width: 25px;
@@ -1130,7 +1080,7 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   background: var(--fill);
   color: var(--text);
 }
-/* 取消归档按钮与归档/拆分同属一个按钮家族：同样的 25px 方盒、7px 圆角、
+/* 取消归档按钮与 ⋯ 同属一个按钮家族：同样的 25px 方盒、7px 圆角、
    16px 图标、琥珀强调 + hover 反馈，避免归档区里出现一颗尺寸/配色不一致的按钮。 */
 .split-btn {
   width: 25px;
@@ -1146,16 +1096,21 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   background: var(--fill);
   color: var(--accent);
 }
+/* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
+   鼠标一离开行、菜单就没了根。 */
 .topic-row:hover .row-actions,
-.topic-row:focus-within .row-actions {
+.topic-row:focus-within .row-actions,
+.topic-row.is-menu-open .row-actions {
   opacity: 1;
   pointer-events: auto;
 }
 /* While the actions are out, the count steps aside (they share the tail). */
 .topic-row:hover .unread-badge,
 .topic-row:focus-within .unread-badge,
+.topic-row.is-menu-open .unread-badge,
 .topic-row:hover .row-time,
-.topic-row:focus-within .row-time {
+.topic-row:focus-within .row-time,
+.topic-row.is-menu-open .row-time {
   opacity: 0;
 }
 .row-time {
@@ -1166,64 +1121,5 @@ const onMemory = computed(() => props.activeDocs === 'memory')
   /* 纯展示元素：绝不吃鼠标——hover 时它只是隐形，曾把整个操作工具条挡成
      "点不动"（playwright 抓的现行：row-time intercepts pointer events）。 */
   pointer-events: none;
-}
-</style>
-
-<!-- Non-scoped: the project switcher renders in a teleported v-menu overlay,
-     so scoped styles wouldn't reach it. Tokens are global (:root). -->
-<style>
-.proj-switcher {
-  min-width: 248px;
-  padding: 6px;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 12px;
-  box-shadow: var(--shadow-2);
-}
-.proj-switcher__head {
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--faint);
-  padding: 6px 10px 4px;
-}
-.proj-switcher__row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 9px 10px;
-  border-radius: 8px;
-  text-align: left;
-  cursor: pointer;
-  color: var(--text);
-  transition: background 0.12s ease;
-}
-.proj-switcher__row:hover {
-  background: var(--fill);
-}
-.proj-switcher__row.is-active {
-  background: var(--accent-wash);
-}
-.proj-switcher__icon {
-  flex: none;
-  color: var(--muted);
-}
-.proj-switcher__row.is-active .proj-switcher__icon {
-  color: var(--accent);
-}
-.proj-switcher__name {
-  flex: 1;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.proj-switcher__check {
-  flex: none;
-  color: var(--accent);
 }
 </style>

@@ -1,7 +1,7 @@
 """Chat WebSocket route.
 
 The WS is a SUBSCRIBER, not the turn's owner (design §4 / v2 R1). A client
-message is `submit`ted to the TurnRunner, which runs the turn as a background job
+message is `submit`ted to the AgentWorkRunner, which runs the turn as a background job
 and publishes its frames to the Broker; this connection relays whatever frames
 land on the topic channel. So a disconnect only drops the subscription — the turn
 keeps running and persisting (invariant 2: the job doesn't depend on who watches),
@@ -40,12 +40,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from app.api.auth import ActorResolver
-from app.api.deps import get_broker, get_chat_service, get_turn_runner
+from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.core.config import settings
 from app.core.errors import AppError, ForbiddenError
 from app.core.obs import get_logger
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.authz.policy import refuse_unauthenticated_chat
 from app.domain.identity.actor import Actor
 
@@ -58,7 +58,7 @@ async def chat(
     websocket: WebSocket,
     topic_id: uuid.UUID,
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
 ) -> None:
     await websocket.accept()
@@ -152,7 +152,7 @@ async def chat(
                     await send({"type": "error", "message": "empty content"})
                     continue
                 # Await only the short durable receive. Any model work is still
-                # background-owned by TurnRunner and survives this socket.
+                # background-owned by AgentWorkRunner and survives this socket.
                 try:
                     await runner.submit_message(
                         chat_service,

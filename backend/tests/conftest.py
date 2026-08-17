@@ -76,7 +76,7 @@ TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", f"{_PG_BASE}/{_CLIENT_DB
 os.environ["CHEESEX_TEST_NULLPOOL"] = "1"
 
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
-from app.api.deps import get_broker, get_chat_service, get_turn_runner  # noqa: E402
+from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
@@ -98,15 +98,15 @@ settings.memory_backend = "db"
 settings.authz_enforce_topic_access = True
 
 
-def wait_turns_idle() -> None:
+def wait_work_idle() -> None:
     """Block until background turns (e.g. the 分身 kickoff a /split submits)
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test truncates, the test flakes.
     Returns as soon as they're idle; the generous ceiling only matters under heavy
     parallel/external load, when a turn can take much longer than usual."""
-    runner = get_turn_runner()
+    runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
-        if runner.active_turns() == 0:
+        if runner.active_work_count() == 0:
             return
         time.sleep(0.01)
 
@@ -229,7 +229,7 @@ def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
         yield c
         # Drain background turns BEFORE leaving the TestClient context:
         # disposing the engine under a running kickoff turn makes flakes.
-        wait_turns_idle()
+        wait_work_idle()
 
     app.dependency_overrides.clear()
     asyncio.run(engine.dispose())

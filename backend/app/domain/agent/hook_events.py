@@ -9,8 +9,7 @@ docker-free core of the tmux backend:
 - ``translate_hook`` maps ONE hook payload to an AgentEvent (spec §9.1: the
   platform observes 芝士 through structured events, never by parsing prose).
 - ``HookRouter`` fans hook POSTs (from the /sandbox/hooks endpoint) to the
-  asyncio.Queue of the turn currently running for that topic. Turns are
-  serialized per topic (topic lock), so at most one queue is active per topic.
+  long-lived sink owned by that topic's interactive screen.
 
 Event mapping (verified in the spike, docs/tmux-backend-spike.md):
   SessionStart{session_id}                → AgentSessionInfo
@@ -21,6 +20,7 @@ Event mapping (verified in the spike, docs/tmux-backend-spike.md):
 """
 
 import asyncio
+from dataclasses import dataclass, field
 
 from app.domain.agent.service import (
     AgentDeliveryFailure,
@@ -140,63 +140,44 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
     return None
 
 
-class HookRouter:
-    """Process-global router from topic id → the active turn's event queue.
+@dataclass(eq=False)
+class HookSink:
+    """One screen-lifetime hook inbox."""
 
-    The /sandbox/hooks endpoint calls ``push``; TmuxHooksProvider.run_turn holds
-    the matching queue via ``register`` for the duration of the turn. Both run on
-    the same asyncio loop (uvicorn worker), so put_nowait is safe and lock-free.
-    Turns are serialized per topic, so one queue per topic is sufficient."""
+    queue: asyncio.Queue[dict] = field(default_factory=asyncio.Queue)
+
+
+class HookRouter:
+    """Process-global router from topic id to a screen-lifetime hook sink.
+
+    The endpoint and provider run on the same asyncio loop, so ``put_nowait`` is
+    safe. Re-subscribing is idempotent: a second caller gets the existing sink
+    instead of replacing it and starving its consumer.
+    """
 
     def __init__(self) -> None:
-        self._queues: dict[str, asyncio.Queue[dict]] = {}
+        self._sinks: dict[str, HookSink] = {}
 
-    def register(self, topic_id: str) -> asyncio.Queue[dict]:
-        """Claim the topic's slot for this turn and return its fresh queue. A new
-        queue REPLACES any stale one (a previous turn that failed to clean up)."""
-        queue: asyncio.Queue[dict] = asyncio.Queue()
-        self._queues[topic_id] = queue
-        return queue
+    def subscribe(self, topic_id: str) -> HookSink:
+        """Return the topic's stable sink, creating it on first live screen."""
+        sink = self._sinks.get(topic_id)
+        if sink is None:
+            sink = HookSink()
+            self._sinks[topic_id] = sink
+        return sink
 
-    def unregister(self, topic_id: str, queue: asyncio.Queue[dict]) -> None:
-        """Release the topic's slot — but only if it still holds OUR queue, so a
-        late cleanup never evicts the next turn's already-registered queue."""
-        if self._queues.get(topic_id) is queue:
-            self._queues.pop(topic_id, None)
+    def unsubscribe(self, topic_id: str, sink: HookSink) -> None:
+        """Release a screen's sink without evicting a newer replacement."""
+        if self._sinks.get(topic_id) is sink:
+            self._sinks.pop(topic_id, None)
 
     def push(self, topic_id: str, hook: dict) -> bool:
-        """Enqueue a hook payload for the topic's active turn. Returns False when
-        no turn is listening (hook arrived outside a run_turn window) so the
-        endpoint can report it instead of silently dropping."""
-        queue = self._queues.get(topic_id)
-        if queue is None:
+        """Enqueue a hook payload for the topic's subscribed screen."""
+        sink = self._sinks.get(topic_id)
+        if sink is None:
             return False
-        queue.put_nowait(hook)
+        sink.queue.put_nowait(hook)
         return True
-
-    def drain(self, topic_id: str) -> list[dict]:
-        """Empty the topic's active queue and return whatever was pending.
-
-        register() claims the topic's slot BEFORE the screen is ready / the
-        prompt is sent (so no hook is missed) — but that means a straggler
-        from a PREVIOUS, abandoned turn (e.g. its own late Stop, arriving
-        after we gave up on it but before its underlying `claude` process
-        actually finished) can land in the fresh queue during that gap, ahead
-        of any event the new turn will ever produce. Since nothing has been
-        sent to `claude` yet at drain time, anything already queued here
-        CANNOT belong to the turn about to start — the caller must treat it
-        like a hook that arrived outside any window (park it), never as this
-        turn's own events (a stale Stop must never end the wrong turn)."""
-        queue = self._queues.get(topic_id)
-        if queue is None:
-            return []
-        drained: list[dict] = []
-        while True:
-            try:
-                drained.append(queue.get_nowait())
-            except asyncio.QueueEmpty:
-                break
-        return drained
 
 
 # Shared singleton: the endpoint and the provider import this same instance.

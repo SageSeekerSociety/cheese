@@ -45,7 +45,7 @@ def test_a_topic_worktree_listing_reflects_what_was_pushed(tmp_path, monkeypatch
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
     branch = ws.branch_for_topic(topic)
-    ws._ensure_worktree(project, branch)
+    ws._ensure_worktree(project, topic)
     _configure_for_push(repo)
 
     import subprocess
@@ -117,7 +117,7 @@ def test_an_uncommitted_local_edit_is_never_swept_aside(tmp_path, monkeypatch):
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
     branch = ws.branch_for_topic(topic)
-    wt = ws._ensure_worktree(project, branch)
+    wt = ws._ensure_worktree(project, topic)
 
     (wt / "being_edited.txt").write_text("a human is typing here\n")
     _push_a_file(repo, tmp_path, branch, "from_machine.txt")
@@ -135,7 +135,7 @@ def test_a_clean_workspace_picks_the_push_up(tmp_path, monkeypatch):
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
     branch = ws.branch_for_topic(topic)
-    ws._ensure_worktree(project, branch)
+    ws._ensure_worktree(project, topic)
 
     _push_a_file(repo, tmp_path, branch, "landed.txt")
 

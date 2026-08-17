@@ -1,4 +1,4 @@
-"""TurnRunner + InProcessBroker: background turns, WS-as-subscriber (design §4)."""
+"""AgentWorkRunner + InProcessBroker: background turns, WS-as-subscriber (design §4)."""
 
 import asyncio
 import errno
@@ -7,7 +7,7 @@ import uuid
 
 import pytest
 
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.identity.actor import Actor
 
 
@@ -109,7 +109,7 @@ async def test_buffer_drops_after_turn_so_fresh_subscriber_replays_nothing():
 @pytest.mark.anyio
 async def test_runner_publishes_turn_frames_to_subscribers():
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     chat = _FakeChat(
         [{"type": "user_block"}, {"type": "delta", "text": "x"}, {"type": "done"}]
     )
@@ -137,7 +137,7 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(tmp_path, monkeyp
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     chat = _FakeChat(
         [
             {"type": "waiting", "state": "cloud_provisioning"},
@@ -159,10 +159,10 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(tmp_path, monkeyp
         provision_actor=actor,
     )
     async with asyncio.timeout(1):
-        while not chat.ran or runner.active_turns():
+        while not chat.ran or runner.active_work_count():
             await asyncio.sleep(0.01)
 
-    assert runner.recent_turns()[0]["status"] == "waiting"
+    assert runner.recent_work()[0]["status"] == "waiting"
     assert chat.kwargs["provision_actor"] is actor
     assert scheduled == []
 
@@ -187,7 +187,7 @@ async def test_submit_kickoff_runs_first_turn_without_user_block():
     # 分身自动开工 (spec §8.4): a split sub-topic's first turn starts by itself;
     # the frame stream carries the 分身's own opening, never a user_block.
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     chat = _FakeKickoffChat()
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as q:
@@ -208,7 +208,7 @@ async def test_turn_runs_to_completion_without_a_subscriber():
     # The job does not depend on who is watching (invariant 2): no subscriber,
     # the turn still runs.
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     chat = _FakeChat([{"type": "done"}])
     runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
     for _ in range(50):
@@ -223,7 +223,7 @@ async def test_wedged_turn_times_out_and_is_cancelled():
     # R8: a turn that never finishes must not hold on forever. With a tiny budget
     # it is interrupted (error frame) and the converse generator is cancelled.
     broker = InProcessBroker()
-    runner = TurnRunner(broker, turn_timeout_s=0.05)
+    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
     cancelled = asyncio.Event()
 
     class _Hang:
@@ -260,9 +260,9 @@ async def test_wedged_turn_times_out_and_is_cancelled():
 @pytest.mark.anyio
 async def test_turn_ceiling_frame_reschedules_the_outer_timeout():
     """The tmux backend signals its OWN (longer) ceiling via a `turn_ceiling`
-    frame — TurnRunner must reschedule its outer wall-clock wrap to that value."""
+    frame — AgentWorkRunner must reschedule its outer wall-clock wrap to that value."""
     broker = InProcessBroker()
-    runner = TurnRunner(broker, turn_timeout_s=0.05)  # the generic default
+    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)  # the generic default
 
     class _LongTmuxTurn:
         async def converse(self, **_):
@@ -283,7 +283,7 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout():
 @pytest.mark.anyio
 async def test_topic_turn_reports_the_rescheduled_ceiling():
     broker = InProcessBroker()
-    runner = TurnRunner(broker, turn_timeout_s=0.05)
+    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
 
     class _Turn:
         async def converse(self, **_):
@@ -294,7 +294,7 @@ async def test_topic_turn_reports_the_rescheduled_ceiling():
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_Turn(), topic, author="u", content="hi", summon=True)
         await _next_frame(q, "done", timeout=2)
-    rec = runner.topic_turn(topic)
+    rec = runner.topic_work(topic)
     assert rec is not None
     assert rec["ceiling_s"] == 123
 
@@ -304,10 +304,10 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
     """F: the timeline message a timed-out turn posts used to drop the actual
     timeout value entirely ("⚠️ 芝士这轮超时被中断了..." with no number) —
     only logger.warning had it, and agent has no host SSH to read logger. The
-    message must carry the SAME effective ceiling `topic_turn()`/`cheese
+    message must carry the SAME effective ceiling `topic_work()`/`cheese
     status` report, plus roughly how long it actually ran."""
     broker = InProcessBroker()
-    runner = TurnRunner(broker, turn_timeout_s=1.0)
+    runner = AgentWorkRunner(broker, turn_timeout_s=1.0)
 
     class _Hang:
         def __init__(self) -> None:
@@ -350,7 +350,7 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
     net or the backend's real, much longer ceiling" is unanswerable without
     host SSH."""
     broker = InProcessBroker()
-    runner = TurnRunner(broker, turn_timeout_s=0.05)  # tiny generic default
+    runner = AgentWorkRunner(broker, turn_timeout_s=0.05)  # tiny generic default
 
     class _Hang:
         def __init__(self) -> None:
@@ -386,7 +386,7 @@ async def test_running_topic_ids_reports_only_in_flight_turns():
     # Bulk signal for the sidebar's「芝士还在跑」indicator: a topic whose turn
     # already finished must drop out, one still mid-flight must show up.
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
 
     class _SlowTurn:
         async def converse(self, **_):
@@ -417,7 +417,7 @@ async def test_running_topic_ids_reports_only_in_flight_turns():
 @pytest.mark.anyio
 async def test_runner_publishes_friendly_error_on_failure():
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
 
     class _Boom:
         async def converse(self, **_):
@@ -437,7 +437,7 @@ async def test_turn_failure_lands_in_the_timeline():
     reload, scrolls with the flow) and marks the error frame persisted=True so
     the client doesn't double-show a banner."""
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
 
     class _Boom:
         def __init__(self) -> None:
@@ -483,7 +483,7 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
     monkeypatch, failure, expected_code
 ):
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
 
     class _Full:
         def __init__(self) -> None:
@@ -536,7 +536,7 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
 
     monkeypatch.setattr(asyncio, "sleep", _instant)
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
 
     class _Svc:
         def __init__(self) -> None:
@@ -572,9 +572,9 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_second_failure_explicitly_hands_control_to_a_human(monkeypatch):
+async def test_repeated_platform_failure_stays_platform_owned(monkeypatch):
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
 
     class _BoomAgain:
         def __init__(self) -> None:
@@ -588,10 +588,13 @@ async def test_second_failure_explicitly_hands_control_to_a_human(monkeypatch):
             self.events.append((content, meta))
             return {"id": "sys", "kind": "event", "content": content, "meta": meta}
 
-    def unexpected_resume(*_args, **_kwargs):
-        pytest.fail("a failed automatic retry must not schedule a third turn")
+    scheduled: list[tuple[tuple, dict]] = []
 
-    monkeypatch.setattr(runner, "_schedule_resume", unexpected_resume)
+    monkeypatch.setattr(
+        runner,
+        "_schedule_resume",
+        lambda *args, **kwargs: scheduled.append((args, kwargs)),
+    )
     svc = _BoomAgain()
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as queue:
@@ -606,9 +609,10 @@ async def test_second_failure_explicitly_hands_control_to_a_human(monkeypatch):
         error = await _next_frame(queue, "error")
 
     text, meta = svc.events[0]
-    assert "需要人来处理" in text
-    assert meta["who"] == "human"
-    assert "自动重试已经用完" in meta["detail"]
+    assert "需要人来处理" not in text
+    assert meta["who"] == "platform"
+    assert "自动恢复" in meta["detail"]
+    assert len(scheduled) == 1
     assert error["message"] == text
 
 
@@ -655,7 +659,7 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     )
 
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     scheduled: list[tuple[uuid.UUID, str]] = []
     monkeypatch.setattr(
         runner,
@@ -732,7 +736,7 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
         }
     )
 
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()  # this process really is running it
     runner._live["live"] = task
     runner._last_frame_at["live"] = time.monotonic()
@@ -776,7 +780,7 @@ async def test_periodic_sweep_ignores_a_just_started_turn(tmp_path, monkeypatch)
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     class _Chat:
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
@@ -809,7 +813,7 @@ async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
         }
     )
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     seen: list[dict] = []
 
     async def _capture(channel, frame):
@@ -849,7 +853,7 @@ async def test_turn_registers_and_clears_inflight(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     chat = _FakeChat([{"type": "done"}])
     runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
     for _ in range(200):
@@ -928,7 +932,7 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
     runner._live["wedged"] = task
     # Both signals cold: no frame for 8h, and the topic's newest block is 8h old.
@@ -983,7 +987,7 @@ async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch)
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
     runner._live["busy"] = task
     runner._last_frame_at["busy"] = time.monotonic() - 5  # a tool frame just now
@@ -1021,7 +1025,7 @@ async def test_sweep_spares_live_turns_when_the_activity_probe_fails(
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
     runner._live["live"] = task
     runner._last_frame_at["live"] = time.monotonic() - 9 * 3600
@@ -1059,7 +1063,7 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
     runner._live["wedged"] = task
     runner._last_frame_at["wedged"] = time.monotonic() - 2700
@@ -1113,7 +1117,7 @@ async def test_sweep_keeps_a_turn_that_registered_while_it_was_probing(
             }
         }
     )
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
     runner._live["wedged"] = task
     runner._last_frame_at["wedged"] = time.monotonic() - 8 * 3600
@@ -1156,9 +1160,9 @@ async def test_live_turn_for_topic_tracks_a_running_turn(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     broker = InProcessBroker()
-    runner = TurnRunner(broker)
+    runner = AgentWorkRunner(broker)
     topic = uuid.uuid4()
-    assert runner.live_turn_for_topic(topic) is None
+    assert runner.live_work_for_topic(topic) is None
 
     streaming = asyncio.Event()
     finish = asyncio.Event()
@@ -1172,18 +1176,18 @@ async def test_live_turn_for_topic_tracks_a_running_turn(tmp_path, monkeypatch):
 
     turn_id = runner.submit(_Slow(), topic, author="u", content="hi", summon=True)
     await asyncio.wait_for(streaming.wait(), 1)
-    live = runner.live_turn_for_topic(topic)
+    live = runner.live_work_for_topic(topic)
     assert live is not None
     assert live["turn_id"] == str(turn_id)
     assert live["silent_for_s"] < 5  # a frame just went out
-    assert runner.live_turn_for_topic(uuid.uuid4()) is None  # scoped to its topic
+    assert runner.live_work_for_topic(uuid.uuid4()) is None  # scoped to its topic
 
     finish.set()
     for _ in range(50):
         await asyncio.sleep(0)
-        if runner.live_turn_for_topic(topic) is None:
+        if runner.live_work_for_topic(topic) is None:
             break
-    assert runner.live_turn_for_topic(topic) is None
+    assert runner.live_work_for_topic(topic) is None
 
 
 @pytest.mark.anyio
@@ -1205,7 +1209,7 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
 
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     broker = InProcessBroker()
-    runner = TurnRunner(broker, turn_timeout_s=300)
+    runner = AgentWorkRunner(broker, turn_timeout_s=300)
     topic = uuid.uuid4()
     streaming = asyncio.Event()
 
@@ -1243,6 +1247,6 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
             break
 
     assert topic not in runner.running_topic_ids()
-    assert runner.topic_turn(topic)["status"] != "running"
+    assert runner.topic_work(topic)["status"] != "running"
     # A reconnecting client must not be told the dead turn is still streaming.
     assert broker.in_flight(str(topic)) is False

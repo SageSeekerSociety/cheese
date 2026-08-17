@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -109,6 +110,20 @@ def _backdate(path, age_s: float) -> None:
     os.utime(path, (now - age_s, now - age_s))
 
 
+# `_lock_held_by_a_live_process` answers "is anyone holding this open?" by
+# scanning /proc/*/fd, and fails OPEN where it cannot look — so on a host
+# without /proc it reports every lock as held and nothing is ever stale. That is
+# the correct production behaviour (the backend runs on Linux, and inferring
+# staleness from a probe that saw nothing would delete a live lock), but it
+# means the branch these two cover does not exist off Linux. Skipping says so;
+# passing them by weakening the probe would trade a real safety property for a
+# green macOS run.
+_NEEDS_PROC = pytest.mark.skipif(
+    not Path("/proc").is_dir(),
+    reason="_lock_held_by_a_live_process scans /proc, which this host lacks",
+)
+
+
 class TestLockStaleness:
     """2026-08-09 incident, round 2: a redeploy SIGKILLed the backend
     mid-checkout in the SHARED repo directory (not an isolated worktree —
@@ -123,6 +138,7 @@ class TestLockStaleness:
         lock.write_text("")
         assert ws._is_lock_stale(lock, age_threshold_s=60) is False
 
+    @_NEEDS_PROC
     def test_old_unheld_lock_is_stale(self, tmp_path):
         lock = tmp_path / "index.lock"
         lock.write_text("")
@@ -247,6 +263,7 @@ class TestSyncSharedCheckout:
 
         assert not [r for r in caplog.records if r.levelname == "WARNING"]
 
+    @_NEEDS_PROC
     def test_stale_lock_is_cleared_and_checkout_proceeds(self, tmp_path):
         repo = self._repo(tmp_path)
         sha = subprocess.run(  # noqa: S607
@@ -372,3 +389,37 @@ class TestReapOrphanedMergeWorktrees:
         ws._reap_orphaned_merge_worktrees(repo, pid)
 
         assert fresh.exists()
+
+
+class TestSandboxAvailability:
+    """`sandbox_available` gates every caller that would otherwise fail inside
+    `docker run`, so it has to mean "usable", not "installed"."""
+
+    def test_missing_binary_is_unavailable(self, monkeypatch):
+        monkeypatch.setattr(ws.shutil, "which", lambda _name: None)
+        ws._sandbox_probe = None
+        assert ws.sandbox_available() is False
+
+    def test_installed_but_dead_daemon_is_unavailable(self, monkeypatch):
+        """The case that actually happens, and the one the old binary-only check
+        got wrong: docker on PATH, daemon not started."""
+        monkeypatch.setattr(ws.shutil, "which", lambda _name: "/usr/bin/docker")
+        monkeypatch.setattr(
+            ws.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1)
+        )
+        ws._sandbox_probe = None
+        assert ws.sandbox_available() is False
+
+    def test_live_daemon_is_available_and_probed_once(self, monkeypatch):
+        monkeypatch.setattr(ws.shutil, "which", lambda _name: "/usr/bin/docker")
+        calls = []
+
+        def _run(*a, **k):
+            calls.append(a)
+            return subprocess.CompletedProcess(a, 0)
+
+        monkeypatch.setattr(ws.subprocess, "run", _run)
+        ws._sandbox_probe = None
+        assert ws.sandbox_available() is True
+        assert ws.sandbox_available() is True
+        assert len(calls) == 1, "the probe is cached, not paid per call"

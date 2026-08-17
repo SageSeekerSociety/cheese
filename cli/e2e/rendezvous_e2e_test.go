@@ -17,8 +17,12 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"net/http"
 	"os"
 	"os/exec"
@@ -236,6 +240,19 @@ func startRendezvousClaude(t *testing.T) *rvFixture {
 	apiBase := startMockAPI(t, markFile, mark)
 
 	home := realTempDir(t)
+	// Claude Code can finish the prompt while a short-lived plugin staging task
+	// is still unwinding. Session cleanup runs before this callback (LIFO); retry
+	// the exact test home so TempDir's own cleanup cannot lose a race with that
+	// exiting child and turn a passed transport assertion into directory-not-empty.
+	t.Cleanup(func() {
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if err := os.RemoveAll(home); err == nil || time.Now().After(deadline) {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
 	configDir := filepath.Join(home, ".claude")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -342,6 +359,80 @@ func TestRendezvousDeliversCJKInANarrowPane(t *testing.T) {
 		t.Fatalf("reply: %v", err)
 	}
 	waitFor(t, "the CJK prompt to be acted on", 150*time.Second,
+		func() bool { return f.marks() >= 1 },
+		func() { t.Logf("--- pane ---\n%s", f.pane()) })
+}
+
+// A rendezvous reply can only carry text.  Image parity therefore depends on
+// Claude Code resolving an @-mentioned local image through its own native
+// prompt attachment path — the same model-facing image block produced by a
+// clipboard paste — rather than on the model deciding to call Read later.
+// Assert the actual /v1/messages body: a path rendered in the pane is not proof
+// that the image bytes reached the model.
+func TestRendezvousImagePathBecomesNativeImageBlock(t *testing.T) {
+	f := startRendezvousClaude(t)
+
+	img := image.NewRGBA(image.Rect(0, 0, 2, 1))
+	img.Set(0, 0, color.RGBA{R: 255, A: 255})
+	img.Set(1, 0, color.RGBA{B: 255, A: 255})
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatalf("encode test image: %v", err)
+	}
+	imagePath := filepath.Join(filepath.Dir(f.markFile), "rendezvous-image.png")
+	if err := os.WriteFile(imagePath, encoded.Bytes(), 0o644); err != nil {
+		t.Fatalf("write test image: %v", err)
+	}
+
+	const marker = "RVIMAGE-001"
+	prompt := marker + " Describe the image attached from @rendezvous-image.png"
+	if err := f.client.Reply(prompt); err != nil {
+		t.Fatalf("reply with image path: %v", err)
+	}
+	waitFor(t, "the image prompt to reach the model", 150*time.Second, func() bool {
+		body, err := f.lastModelRequest()
+		return err == nil && strings.Contains(body, marker)
+	}, func() {
+		t.Logf("--- pane ---\n%s", f.pane())
+		f.dumpTranscript(t, marker)
+	})
+
+	body, err := f.lastModelRequest()
+	if err != nil {
+		t.Fatalf("read recorded model request: %v", err)
+	}
+	wantBase64 := base64.StdEncoding.EncodeToString(encoded.Bytes())
+	var request struct {
+		JSON struct {
+			Messages []struct {
+				Content any `json:"content"`
+			} `json:"messages"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal([]byte(body), &request); err != nil {
+		t.Fatalf("decode recorded model request: %v; request: %.2000s", err, body)
+	}
+	found := false
+	for _, message := range request.JSON.Messages {
+		blocks, ok := message.Content.([]any)
+		if !ok {
+			continue
+		}
+		for _, rawBlock := range blocks {
+			block, ok := rawBlock.(map[string]any)
+			if !ok || block["type"] != "image" {
+				continue
+			}
+			source, ok := block["source"].(map[string]any)
+			if ok && source["media_type"] == "image/png" && source["data"] == wantBase64 {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("@-mentioned image did not become a native image block; request: %.2000s", body)
+	}
+	waitFor(t, "the image prompt to finish", 150*time.Second,
 		func() bool { return f.marks() >= 1 },
 		func() { t.Logf("--- pane ---\n%s", f.pane()) })
 }

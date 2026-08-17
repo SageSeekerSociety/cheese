@@ -58,11 +58,11 @@ class SchedulerService:
         The startup one only ever runs when the PROCESS restarts, but a turn can
         die without taking the process with it (container recreate, OOM-killed
         child, sandbox image swap). Nothing re-read the registry in that case, so
-        the topic stayed `active` forever — see TurnRunner.sweep_orphans."""
-        from app.api.deps import get_turn_runner
+        the topic stayed `active` forever — see AgentWorkRunner.sweep_orphans."""
+        from app.api.deps import get_work_runner
         from app.core.config import settings
 
-        return await get_turn_runner().sweep_orphans(
+        return await get_work_runner().sweep_orphans(
             self._chat,
             last_activity=self.last_block_at,
             silence_s=settings.turn_silence_timeout_s,
@@ -72,7 +72,7 @@ class SchedulerService:
         self, topic_ids: set[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         """Newest block timestamp per topic — the liveness probe the orphan sweep
-        judges silence on. Lives here rather than in TurnRunner because the runner
+        judges silence on. Lives here rather than in AgentWorkRunner because the runner
         has no DB binding, and it is the same signal a human reads off the topic
         (「最后一块是几点」), which is what makes a sweep verdict checkable."""
         if not topic_ids:
@@ -201,10 +201,10 @@ class SchedulerService:
         reuses an already-open resolution task, so repeating this on an interval
         cannot pile up duplicates, and a project with no owner is skipped rather
         than dispatched into nowhere."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.workspace import upstream_conflict
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
         synced = 0
         dispatched = 0
         errors: list[str] = []
@@ -243,10 +243,10 @@ class SchedulerService:
         machine (check PR CI → merge → check deploy workflow → archive).
         One DB transaction per card so one card's failure can't roll back
         another's progress."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.review.services import AcceptService
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
         checked = 0
         errors: list[str] = []
         async with self._sessions() as session:
@@ -274,10 +274,10 @@ class SchedulerService:
         runner is gone, so their topic stops being unable to file a new card.
         The actual rules (and why a periodic sweep is needed on top of the
         startup one) live in review/gate_sweep.py."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.review import gate_sweep
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
 
         def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
             runner.submit(
@@ -300,9 +300,17 @@ class SchedulerService:
         ran at all (queued behind a wedged turn, refused on credits, killed by a
         deploy). 默认采信 must not depend on any turn actually happening.
         One transaction per sweep — the cards are independent but few.
+
+        Second job, same shape: pay back the archives 采信 deferred because the
+        sub-topic still held an undecided accept card. That deferral is what
+        keeps a reviewer's card from being revoked out from under them; this is
+        what keeps the deferral from turning into a never-archived sub-topic.
         """
         from app.domain.conclusion.services import ConclusionCardService
 
+        errors: list[str] = []
+        settled: list[uuid.UUID] = []
+        archived: list[uuid.UUID] = []
         async with self._sessions() as session:
             try:
                 settled = await ConclusionCardService(session).sweep_expired()
@@ -311,8 +319,20 @@ class SchedulerService:
             except Exception as exc:  # noqa: BLE001 — maintenance must survive
                 await session.rollback()
                 logger.exception("conclusion card sweep failed")
-                return {"settled": 0, "errors": [str(exc)]}
-        return {"settled": len(settled), "errors": []}
+                errors.append(str(exc))
+        # 归档补账走**自己的**事务：默认采信是主机制，补账是它的尾巴，尾巴出错
+        # 不能把已经结算好的卡一起回滚掉。
+        async with self._sessions() as session:
+            try:
+                service = ConclusionCardService(session)
+                archived = await service.sweep_deferred_archives()
+                if archived:
+                    await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("deferred archive sweep failed")
+                errors.append(str(exc))
+        return {"settled": len(settled), "archived": len(archived), "errors": errors}
 
 
 class SchedulerRunner:
@@ -558,7 +578,7 @@ class ConclusionSweepRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._scheduler.sweep_conclusion_cards()
-                if result["settled"] or result["errors"]:
+                if result["settled"] or result["archived"] or result["errors"]:
                     logger.info("conclusion sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("conclusion sweep failed")

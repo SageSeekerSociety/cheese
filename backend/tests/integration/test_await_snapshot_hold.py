@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.domain.agent import awaited_tasks
 from app.domain.workspace import service as ws
 from app.main import app
@@ -44,9 +44,9 @@ class FakeRunner:
 def runner():
     fake = FakeRunner()
     awaited_tasks.reset()
-    app.dependency_overrides[get_turn_runner] = lambda: fake
+    app.dependency_overrides[get_work_runner] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_turn_runner, None)
+    app.dependency_overrides.pop(get_work_runner, None)
     awaited_tasks.reset()
 
 
@@ -99,7 +99,7 @@ def _head_commit(project: uuid.UUID, topic: uuid.UUID) -> str:
 def _worktree_with_committed_fix(project: uuid.UUID, topic: uuid.UUID):
     """A topic whose finished work (the fix) is already on the branch — the state
     the incident started from."""
-    wt = ws._ensure_worktree(project, ws.branch_for_topic(topic))
+    wt = ws._ensure_worktree(project, topic)
     (wt / "app.py").write_text("def load(path):\n" + FIX)
     ws.snapshot_worktree(project, topic, "修复 + 测试")
     assert FIX in _on_branch(project, topic, "app.py")

@@ -32,7 +32,7 @@ import pytest
 from app.domain.review import gate
 from app.domain.review.services import _NUDGE_TAIL_LIMIT
 from app.domain.workspace import service as ws
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端
 # （房间里落下什么块），没有理由再造一套。
@@ -50,7 +50,7 @@ def _blocks(client, topic_id: str) -> list[dict]:
 def _wait_for_event(client, topic_id: str, event_type: str, *, timeout: float = 10.0):
     """等那条系统事件落库。
 
-    `runner.submit` 是 fire-and-forget，所以单靠 `wait_turns_idle()` 会有竞态：
+    `runner.submit` 是 fire-and-forget，所以单靠 `wait_work_idle()` 会有竞态：
     轮次还没注册进 runner 时它就返回了（test_upstream.py 里有一次 CI 首跑就挂的
     记录）。这里跟 test_accept_gate_orphan.py 一样，轮询到出现为止。
     """
@@ -58,7 +58,7 @@ def _wait_for_event(client, topic_id: str, event_type: str, *, timeout: float = 
 
     deadline = time.time() + timeout
     while time.time() < deadline:
-        wait_turns_idle()
+        wait_work_idle()
         for block in _blocks(client, topic_id):
             if (block.get("meta") or {}).get("event_type") == event_type:
                 return block
@@ -147,7 +147,7 @@ def test_ci_failure_still_hands_the_agent_the_whole_instruction(
         )
         _poll(client)
         _wait_for_event(client, tid, "ci_failed")
-        wait_turns_idle()
+        wait_work_idle()
 
         prompt = stub_agent.last_prompt or ""
         assert "pytest: 3 failed" in prompt

@@ -666,6 +666,40 @@ class AcceptService:
         cards = await self._repo.list_pr_open_on_active_topics()
         return [c.id for c in cards]
 
+    async def anybody_still_waiting(self, topic_ids: list[uuid.UUID]) -> bool:
+        """这些话题里，还有没有一张卡等着人决议 —— 归档前必须问的那一句。
+
+        归档会把非终态的卡当场收敛掉（`review/archive.py`），所以任何**平台自己
+        发起**的归档（结论卡默认采信就是）都得先问这一句，否则会把一张验收人还
+        没看见的卡作废掉。判据（哪些状态算"还等着"）留在本领域，调用方不该自己
+        去数状态——这正是 `close_cards_for_archived_topic` 收敛的那一张表。
+
+        话题是一组而不是一个：归档是级联的，孙子话题的卡会跟着一起被收掉。
+        """
+        return bool(
+            await self._repo.list_live_for_topics(
+                topic_ids, statuses=archive.OPEN_CARD_STATUSES
+            )
+        )
+
+    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
+        """这些话题上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
+
+        给"卡决议之后留一个重新递卡的窗口"用：驳回的意思是回去改了再来，而归档
+        话题递不出新卡，所以窗口从这一刻起算。
+        """
+        return await self._repo.latest_decision_at(topic_ids)
+
+    async def reviewer_topic_ids(
+        self, topic_ids: list[uuid.UUID], reviewer_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{话题: 这上面还有没有一张卡在等这个人} —— 只有点过名给他的话题会出现。
+
+        给话题列表的「与我的相关性」用，一次查完：**在不在 key 里**是「这话题
+        点过我的名」（采纳完也还算我的事），**value** 是「现在就等我动手」。
+        """
+        return await self._repo.reviewer_topic_ids(topic_ids, reviewer_handle)
+
     async def describe(self, card: AcceptCard) -> dict:
         """AcceptCardOut payload enriched with the vote state (approvals live in
         their own table; the requirement is a project setting)."""
@@ -1268,19 +1302,32 @@ class AcceptService:
         await self._session.flush()
         return True
 
-    async def _change_author(self, topic: Topic) -> identity.GitIdentity | None:
-        """Whose GitHub account this change should be credited to — the person
-        who opened the topic. None when they never linked one; attribution is a
-        nice-to-have and must never take a merge down with it."""
+    async def _attribution(
+        self, topic: Topic
+    ) -> tuple[str | None, identity.GitIdentity | None]:
+        """Who this change belongs to: (their handle, their git identity).
+
+        The handle goes in `Requested-by:`, the identity in `Co-authored-by:`.
+        Both name the human the topic belongs to — `identity.requester_handle`, not
+        `topic.created_by`, which on a 分身-split room is the 分身 itself and so
+        resolved to no GitHub account at all.
+
+        Either half may be None (no human on the roster, or they never linked
+        GitHub); attribution is a nice-to-have and must never take a merge down
+        with it."""
         try:
-            return await identity.resolve_for_handle(
-                self._session, topic.created_by or ""
+            handle = await identity.requester_handle(self._session, topic)
+            author = (
+                await identity.resolve_for_handle(self._session, handle)
+                if handle
+                else None
             )
         except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
             logger.warning(
                 "could not resolve change author for topic %s", topic.id, exc_info=True
             )
-            return None
+            return None, None
+        return handle, author
 
     async def _resolve_pr_prerequisites(
         self, topic: Topic, decided_by: str
@@ -1342,15 +1389,14 @@ class AcceptService:
         )
         base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         client = github_pr.default_client()
+        requested_by, author = await self._attribution(topic)
         pr = await client.open_pull_request(
             owner=owner,
             repo=repo,
             head=remote_branch,
             base=base,
             title=pr_text.change_subject(card, topic),
-            body=pr_text.pr_body(
-                topic, decided_by, card, await self._change_author(topic)
-            ),
+            body=pr_text.pr_body(topic, decided_by, card, author, requested_by),
             token=token,
         )
 
@@ -1745,6 +1791,7 @@ class AcceptService:
         # Green → merge now. Trailers go on the merge commit too, not just
         # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
         # squash that means the body field, with the title passed separately.
+        requested_by, author = await self._attribution(topic)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -1752,7 +1799,7 @@ class AcceptService:
             token=creds.write,
             commit_title=pr_text.merge_commit_title(card, topic, number),
             commit_message=pr_text.merge_commit_message(
-                topic, card.decided_by or "", card, await self._change_author(topic)
+                topic, card.decided_by or "", card, author, requested_by
             ),
         )
         if result.sha is None:
@@ -2601,11 +2648,12 @@ class AcceptService:
             # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
             # body — the branch it came from and who clicked, but nothing at
             # all about what changed.
+            requested_by, author = await self._attribution(topic)
             await client.merge_pr(
                 number,
                 title=pr_text.merge_commit_title(card, topic, number),
                 message=pr_text.merge_commit_message(
-                    topic, decided_by, card, await self._change_author(topic)
+                    topic, decided_by, card, author, requested_by
                 ),
             )
         except GitHubPRMergeBlocked as blocked:
@@ -2841,6 +2889,7 @@ class AcceptService:
             checks_at_merge = "读不到检查状态"
 
         number = card.pr_number
+        requested_by, author = await self._attribution(topic)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2848,7 +2897,7 @@ class AcceptService:
             token=creds.write,
             commit_title=pr_text.merge_commit_title(card, topic, number),
             commit_message=pr_text.merge_commit_message(
-                topic, card.decided_by or "", card, await self._change_author(topic)
+                topic, card.decided_by or "", card, author, requested_by
             ),
         )
         if result.sha is None:

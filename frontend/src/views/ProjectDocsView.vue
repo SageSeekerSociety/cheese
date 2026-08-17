@@ -3,7 +3,7 @@ import type { MemoryEntryOut } from '../api'
 import type { Block, Topic } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 
@@ -12,26 +12,31 @@ import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
-// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
-// route or embedded inside the 工作台 (keeping the left rail) — `kind`/`embedded`
-// override the route when embedded.
+// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
+// (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
+// is a route parameter, not a route NAME: as three separate named routes this
+// page could be reached two different ways (a sidebar swap and a full-page push)
+// that led to two different places under the same words.
 type Kind = 'charter' | 'decisions' | 'weeklies' | 'memory'
+const KINDS: readonly Kind[] = ['charter', 'decisions', 'weeklies', 'memory']
 const props = defineProps<{
   projectId: string
-  kind?: Kind
-  embedded?: boolean
+  kind?: string
 }>()
-const route = useRoute()
 
 const AUTHOR = myHandle()
+const router = useRouter()
 
-// Which document to show: an explicit prop (embedded) wins over the route name.
-const kind = computed<Kind>(() => {
-  if (props.kind) return props.kind
-  if (route.name === 'project-decisions') return 'decisions'
-  if (route.name === 'project-weeklies') return 'weeklies'
-  return 'charter'
-})
+const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
+
+// 四种文档的切换住在这一页里，不在侧栏——它们是一份文档的四个面，占不起侧栏
+// 四行黄金位。切换仍然是一次 router.push：一 kind 一址的承诺不变，所以每一个
+// tab 都能收藏、能分享、刷新回到同一页。
+function openKind(next: unknown) {
+  const k = String(next) as Kind
+  if (k === kind.value) return
+  void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: k } })
+}
 
 const TITLES: Record<Kind, string> = {
   charter: '章程',
@@ -132,43 +137,22 @@ async function load() {
   }
 }
 
-// 返回工作台: project workspace (defaults to the root topic).
-const workspaceTo = { name: 'workspace-project', params: { projectId: props.projectId } }
-
-// A source-topic link: open the workspace AND pre-select that topic via ?topic=.
-// Without the query, WorkspaceView always falls back to the root topic.
+// A source-topic link: open that topic in the same project frame.
 function topicTo(topicId: string | null | undefined) {
-  if (!topicId) return workspaceTo
-  return {
-    name: 'workspace-project',
-    params: { projectId: props.projectId },
-    query: { topic: topicId },
-  }
+  if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
+  return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
 
-watch(() => [props.projectId, route.name], load)
 onMounted(load)
-// Embedded in the workspace the component persists across 章程/决策/周报/记忆
-// switches — each switch must refetch or the new page shows stale/empty data.
+// The component persists across 章程/决策/周报/记忆 switches (same route record,
+// different param) — each switch must refetch or the new page shows stale data.
 watch([kind, () => props.projectId], load)
 </script>
 
 <template>
   <div class="docs-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 920px">
-      <!-- Header (the back link is redundant when embedded — the rail is there) -->
-      <v-btn
-        v-if="!props.embedded"
-        :to="workspaceTo"
-        variant="text"
-        size="small"
-        prepend-icon="mdi-arrow-left"
-        class="mb-3 px-1"
-      >
-        返回工作台
-      </v-btn>
-
-      <div class="mb-6">
+    <v-container class="py-6 page-container">
+      <div class="mb-4">
         <div class="t-eyebrow mb-1">{{ OVERLINES[kind] }}</div>
         <div class="d-flex align-center flex-wrap ga-3">
           <h1 class="t-page-title" style="font-size: 27px">{{ TITLES[kind] }}</h1>
@@ -184,6 +168,16 @@ watch([kind, () => props.projectId], load)
         </div>
         <div v-if="kind === 'charter'" class="t-meta mt-1">改了就等于给芝士下指令</div>
       </div>
+
+      <v-tabs
+        :model-value="kind"
+        density="compact"
+        color="primary"
+        class="docs-tabs mb-6"
+        @update:model-value="openKind"
+      >
+        <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ TITLES[k] }}</v-tab>
+      </v-tabs>
 
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
@@ -307,6 +301,12 @@ watch([kind, () => props.projectId], load)
 <style scoped>
 .docs-page {
   background: var(--canvas);
+}
+
+/* 四种文档的切换带。它以前是侧栏里四行常驻的一级导航，占着黄金位养的却是四个
+   二级页面；收成这一条 tab 带之后，侧栏只留一行「项目文档」。 */
+.docs-tabs {
+  border-bottom: 1px solid var(--line);
 }
 
 /* 章程 card: a clean document sheet. */

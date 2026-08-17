@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,8 +11,8 @@ from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceProvider
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
-from app.domain.device.repository import Device
-from app.domain.device.supply import Supply
+from app.domain.device.repository import Device, TopicDevice
+from app.domain.device.supply import Supply, Visibility
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +40,7 @@ class FakeHub:
         self.prompts: list[list] = []
         self.reasserted: list[str] = []  # sids re-sent as adopt-creates
         self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
+        self.files: list[tuple[str, str, bytes]] = []  # (sid, path, bytes)
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -82,6 +84,10 @@ class FakeHub:
         return "call1"
 
     async def await_call(self, device_id, call_id, timeout=30):
+        return {"ok": True}
+
+    async def put_file(self, device_id, sid, path, data, timeout=30):
+        self.files.append((sid, path, data))
         return {"ok": True}
 
 
@@ -140,6 +146,92 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[0], AgentSessionInfo)
     assert isinstance(events[1], AgentMessage) and events[1].text == "2"
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
+
+
+async def test_remote_image_is_staged_before_rendezvous_prompt(monkeypatch):
+    hub = FakeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    async def remote(_device_id):
+        return False
+
+    monkeypatch.setattr(provider, "_is_co_located", remote)
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.ws.read_file_bytes",
+        lambda project, path, topic_id=None: b"exact-image-bytes",
+    )
+
+    events, task = await _run(
+        provider,
+        project_id=project_id,
+        topic_id=topic_id,
+        prompt="[u] sent an image",
+        system_prompt="",
+        resume_session_id=None,
+        images=[{"path": "uploads/img-a.png", "media_type": "image/png"}],
+    )
+    await asyncio.sleep(0.05)
+
+    assert hub.files == [("s1", "uploads/img-a.png", b"exact-image-bytes")]
+    assert hub.prompts == [["[u] sent an image\n\n@uploads/img-a.png"]]
+    router.push(
+        str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
+    )
+    await asyncio.wait_for(task, timeout=5)
+    assert events[-1].text == "ok"
+
+
+async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, _model, key):
+            if key == topic_id:
+                return SimpleNamespace(id=topic_id, project_id=project_id)
+            return None
+
+    class Service:
+        async def list_topic_bindings(self, device_id):
+            assert device_id == "dev1"
+            return [
+                TopicDevice(
+                    topic_id=topic_id,
+                    device_id=device_id,
+                    visibility=Visibility.host,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.sql_device_service",
+        lambda _session: Service(),
+    )
+    router = HookRouter()
+    provider = DeviceProvider(
+        hub=FakeHub(),  # type: ignore[arg-type]
+        router=router,
+        session_factory=Session,  # type: ignore[arg-type]
+    )
+
+    recovered = await provider.recover_subscriptions("dev1")
+
+    assert len(recovered) == 1
+    assert recovered[0].project_id == project_id
+    assert recovered[0].topic_id == topic_id
+    assert provider._subscription_devices[topic_id] == "dev1"
+    recovered[0].ready.set()
+    router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
+    await recovered[0].sink.queue.join()
+
+    await provider.drop_device_subscriptions("dev1")
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
 
 
 async def test_a_reported_delivery_failure_is_resent_immediately():
@@ -1124,7 +1216,7 @@ def test_a_remote_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
 
 
 # --- turn 活跃度检测 (the device half): two-layer timeout + liveness probe -------
-# The shared two-layer loop (`run_hooks_turn` idle-suspect / hard-ceiling +
+# The shared two-layer loop (`monitor_session_activity` idle-suspect / hard-ceiling +
 # `confirm_alive`) is exercised in test_hooks_substrate.py; these cover what is
 # device-SPECIFIC: the two layers are no longer collapsed into one deadline, the
 # device's own `_confirm_alive` maps a process-tree probe to a liveness verdict,
@@ -1155,7 +1247,7 @@ def test_device_splits_the_two_timeout_layers_instead_of_collapsing_them():
     was 'kill unconditionally at 900s' — a long-but-silent foreground command (a
     20-minute pytest emits no interim hook) died at minute 15. The layers must now
     be distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
-    the value TurnRunner reschedules its outer wall-clock wrap to."""
+    the value AgentWorkRunner reschedules its outer wall-clock wrap to."""
     prov = DeviceProvider(hub=FakeHub())
     assert prov._idle_suspect_s == 300.0
     assert prov._hard_ceiling_s == 10800.0

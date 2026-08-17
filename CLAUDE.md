@@ -4,6 +4,16 @@ Monorepo: `backend/` (Python/FastAPI) + `frontend/` (Vue 3) + `cli/` (Go) + `e2e
 
 Procedural guidance lives in `.claude/` (skills, path-scoped rules, agents, scripts — `ls .claude/` is the inventory), not in always-on prose here: review → `cheese-py-code-review` skill, post-pull → `post-pull` skill, running tests where there is no docker → `.claude/scripts/dev-db.sh` (see Testing); area-specific pitfalls (migrations, backend tests, e2e) live in `.claude/rules/` and load automatically when you touch matching files. This file holds only the always-relevant conventions below.
 
+## The person in the room is a product user, not the platform operator
+
+Own diagnosis and recovery yourself. Never ask the person in the room to inspect
+logs, rerun infrastructure commands, repair authentication, fix a machine, or
+decide how an execution failure should be retried. Record the exact evidence,
+use the platform's recovery paths, and keep retrying at a bounded cadence when
+recovery is possible. Ask that person only for a product decision or for a
+credential, approval, payment, or physical action that only they can provide;
+when that exception applies, name the one required action plainly.
+
 **Where a tool can describe itself, let it.** Run any bundled CLI (`cheese`,
 `task`, `.claude/scripts/*.sh`) with `--help` to discover its flags, arguments
 and usage — that layer is generated from the code, so it cannot go stale. Prose
@@ -11,6 +21,40 @@ here and in `.claude/` documents **only what `--help` cannot tell you**: why a
 thing exists, the pitfalls, the output contract, and when *not* to reach for it.
 Adding a flag should never oblige anyone to edit a markdown file; if you catch
 yourself restating a flag list in prose, delete the prose instead.
+
+## Before you fix anything: read the issues, then `docs/`
+
+**The current design lives in issues, not in `docs/`.** The machine shapes
+(#358), the compute model (#282, #442), the delivery transport (#480, #487) —
+each was last argued in an issue thread, and any doc mentioning it was written
+before that argument finished. So the order is **issues that own the area →
+`docs/` → the code**. Starting from `docs/` means implementing a design that was
+already superseded, and nothing in the file will tell you.
+
+Issues are readable from a sandbox — `cheese gh-token`, see Sandbox Capability
+Boundaries below. Search the open ones for the subsystem you are about to touch
+*before* you plan the fix, not after.
+
+**The division of labour** — issues carry what is still being decided plus the
+argument for why it was decided that way; they *are* our ADRs, and an open state
+is itself the statement "not settled". `docs/` carries only two things:
+constraints you must obey while changing code, and how the thing currently
+behaves. The test is **"if this paragraph goes stale, who notices?"** If the
+answer is "nobody, until someone follows it into a mistake", it belongs in an
+issue.
+
+**Settling a design obliges you to clean `docs/` in the same PR.** The moment a
+design ships, every sentence describing the old one becomes a trap: it reads as
+current, so the next reader reaches a confident wrong conclusion with nothing to
+signal the error. Fixing it in a follow-up is a promise, and the trap is live
+meanwhile. Do not annotate it either ("this section is outdated") — that leaves
+the trap in place and only helps whoever reads that far. **Delete the claim**;
+git history keeps it. Then close the issue the PR settled, with the reasoning,
+so the next agent finds a conclusion instead of re-litigating it.
+
+**`docs/` is strictly engineering documentation.** Product proposals, marketing
+copy, operational plans, competition materials: never committed — stage them in
+`tmp/` (gitignored) and upload to the Feishu wiki.
 
 ## Version control is jj, not git
 
@@ -37,8 +81,9 @@ Real incident (2026-08-11, PR #267): an agent reported "the change went to the P
 branch with the snapshot"; the tip had not moved and the conflict was still
 there. It was not lying — it had no way to look. So anything about remote state
 (pushed, merged, conflict resolved, CI green) is a **claim, not an observation**:
-label it unverified and let a human confirm. What you *can* verify is local —
-`jj log`, `jj status`, and `jj diff` against `main@upstream`.
+label it unverified and leave remote verification to the platform workflow; do
+not make the person in the room operate the platform for you. What you *can*
+verify is local — `jj log`, `jj status`, and `jj diff` against `main@upstream`.
 
 Command mapping — `jj log`, `jj status`, `jj diff`, `jj file show -r <rev> <path>`,
 `jj bookmark list`. Two habits do not carry over: there is **no staging area**
@@ -49,7 +94,10 @@ configured, so anything you would push must go through the platform.
 Your workspace can be **behind `main@upstream`** — sub-topic workspaces are cut
 when the topic is split, and main moves. Before editing a file other agents also
 touch, diff it against `main@upstream` and rebase; editing on a stale base is how
-you silently revert someone's merged PR.
+you silently revert someone's merged PR. To git that is an ordinary modification,
+not a conflict, so it merges clean and no check catches it: **if you are editing
+a file you did not create, say so in your report** so the platform-side
+integration check can cover it.
 
 ## Development Commands
 
@@ -67,50 +115,27 @@ After `git pull`: `bash .claude/scripts/post-pull.sh`
 
 ## Sandbox Capability Boundaries
 
-Read this before you plan work that touches VCS, CI, or the network. These are
-**not** hypotheticals — every "can't" below was reproduced in an agent sandbox.
-The dangerous ones are the tools that **fail silently or report success**.
-
-### What works
+Every "can't" here was reproduced in an agent sandbox; none is hypothetical.
 
 | Need | The supported path |
 |---|---|
-| Read anything on GitHub — CI logs, check runs, issue bodies, PR review comments, files outside your workspace | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it. It prints on stderr exactly what this token may read, plus copy-paste commands for each — **read those lines before concluding you can't** |
+| Read anything on GitHub — CI logs, check runs, **issue bodies and comments**, PR review comments, files outside your workspace | `cheese gh-token` mints a ~1h read-only GitHub token → `GH_TOKEN=$(cheese gh-token) gh api ...`. **This is the only sanctioned route**, and nothing else in the repo will lead you to it. It prints on stderr exactly what this token may read, plus copy-paste commands for each — **read those lines before concluding you can't** |
 | Run the DB-backed test suite without docker | `.claude/scripts/dev-db.sh` (see Testing) |
 | Long-running commands | `cheese await` — the platform wakes the topic with the exit code, instead of you blocking |
 
-### What does not work
+That token is read-only and its scope is **not a constant**: it is whatever the
+platform's GitHub App holds, narrowed to `read`, so a permission an admin has
+not granted returns **403 Resource not accessible by integration**, while one
+granted this morning starts working with no deploy. The `cheese gh-token` print
+is the source of truth — not this file, not your memory of last week. What is
+fixed is the ceiling: nothing a sandbox is handed can ever write. Hit a 403 on
+something you genuinely need to read? **Say so in your report** — the fix is an
+App permission an admin can add, not a workaround, and not a human pasting the
+content in for you.
 
-- **`jj git fetch` / `jj git push` are unavailable.** The box ships git 2.39.5;
-  jj requires >= 2.41. The failure is explicit, so this one at least tells you:
-  `Error: Git does not recognize required option: porcelain`.
-  **You cannot sync with upstream from inside the sandbox.** Do not plan around
-  "I'll rebase onto latest main first" — you can't see latest main.
-- **The `gh` token is read-only, and its exact scope is not a constant.** It is
-  whatever the platform's GitHub App holds, narrowed to `read` — so a permission
-  an org admin has not granted comes back as **403 Resource not accessible by
-  integration**, and one they granted this morning starts working without a
-  deploy. `cheese gh-token` prints the current list; **that print is the source
-  of truth, not this file and not your memory of last week.** What is fixed is
-  the ceiling: nothing a sandbox is handed can ever write.
-  If you hit a 403 on something you genuinely need to read, say so in your
-  report — the fix is an App permission an admin can add, not a workaround, and
-  not a human pasting the content in for you.
-
-### Failures that look like success
-
-- **A push that reports success but lands nothing** (seen in #267). After any
-  push, **read the branch tip SHA back and confirm it changed**. A report of
-  "pushed successfully" that was never verified against the remote tip is not
-  evidence of anything.
-- **Checks that pass on a stale base.** Your workspace can be days behind main,
-  and editing a file another PR already changed is, to git, an ordinary
-  modification — not a conflict. It merges cleanly and **silently reverts the
-  other change**. If you are editing a file you did not create, say so in your
-  report so a human can check.
-
-Neither of these raises an error, and neither is caught by tests or lint. The
-only defense is writing the boundary down — which is what this section is.
+Everything else the sandbox cannot do — no remote traffic, no way to observe the
+remote, checks that pass on a stale base — has one cause and is covered under
+**Version control is jj, not git** above.
 
 ## Python Conventions
 
@@ -322,8 +347,17 @@ as the bot's, the account is not connected.
 
 ## Documentation Map
 
-Engineering docs live in `docs/` (git). **`docs/` is strictly for engineering documentation.** Non-engineering content (product proposals, marketing copy, operational plans, competition materials) must never be committed — stage in `tmp/` (gitignored) if Feishu is unavailable, then upload to the wiki when access is restored. Product-direction docs (vision, feedback) are canonical in the **team Feishu wiki** — no local copies are kept (staleness risk) — links in `docs/README.md`, fetch on demand via the lark skills. Real-name application materials live only in a restricted Feishu Drive folder, never in git.
+[`docs/README.md`](docs/README.md) is the index — grouped by what goes stale
+first, with anything superseded by an issue or never implemented flagged as
+such, so you know before opening it whether it still counts. What may live in
+`docs/` at all is settled above, under **Before you fix anything**.
 
-To find or edit Feishu content, use the lark skills (`.claude/skills/lark-*`) and search at need (`lark-cli docs +search --profile cheese`) — do not maintain a static doc inventory here.
+Product-direction docs (vision, feedback) are canonical in the **team Feishu
+wiki**, and no local copy is kept — a copy goes stale without anyone noticing,
+which is the failure this whole section exists to prevent. Links are in
+`docs/README.md`; fetch on demand via the lark skills (`.claude/skills/lark-*`,
+`lark-cli docs +search --profile cheese`) rather than maintaining a static
+inventory here. Real-name application materials live only in a restricted Feishu
+Drive folder, never in git.
 
 **lark-cli profile**: the team shares one Feishu org; all lark-cli Feishu operations must pass `--profile cheese` (app `cli_a97ca79454785bd5`, the only profile with drive/docs scopes). `no_token`/`403`/`no authority` almost always means a wrong profile, not a permission or cross-tenant problem. Setup, credential sync, and a troubleshooting table live in [`docs/feishu-lark.md`](docs/feishu-lark.md).

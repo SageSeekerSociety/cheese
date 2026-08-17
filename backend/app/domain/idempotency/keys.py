@@ -11,7 +11,7 @@ directions:
 
 The thing that satisfies both is the **continuation id**: the id of the logical
 unit of work, which a turn and every auto-resume of it share (see
-``TurnRunner._execute``). Scoping keys to it means the dedup window is exactly
+``AgentWorkRunner._execute``). Scoping keys to it means the dedup window is exactly
 "this piece of work and its retries" — no wider, no narrower.
 
 With no continuation id (a human clicking in the UI, a turn outside the runner)

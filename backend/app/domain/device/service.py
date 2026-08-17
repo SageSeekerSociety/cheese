@@ -326,6 +326,10 @@ class DeviceService:
     async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None:
         return await self._repo.topic_binding(topic_id)
 
+    async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]:
+        """Topics whose durable affinity points at ``device_id``."""
+        return await self._repo.list_topic_bindings(device_id)
+
     async def bind_topic_device(
         self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
     ) -> None:

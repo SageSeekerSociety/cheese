@@ -8,7 +8,11 @@ the person who asked for it.
 
 import json
 import uuid
+from types import SimpleNamespace
 
+import pytest
+
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import identity
 
 
@@ -93,6 +97,70 @@ def test_coauthor_trailer_is_omitted_for_the_platform_itself():
     assert identity.coauthored_by(
         identity.GitIdentity("octocat", "583231+octocat@users.noreply.github.com")
     ) == ("Co-authored-by: octocat <583231+octocat@users.noreply.github.com>")
+
+
+def _topic(created_by: str | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(), project_id=uuid.uuid4(), created_by=created_by
+    )
+
+
+def _roster_owner(monkeypatch, answer):
+    """Stand in for the room's roster. `answer` is a handle, None, or an
+    exception to raise."""
+
+    async def _owner_of(_self, _topic_id):
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    monkeypatch.setattr(TopicMemberService, "owner_of", _owner_of)
+
+
+@pytest.mark.anyio
+async def test_requester_is_the_rooms_human_owner_not_the_agent_that_split_it(
+    monkeypatch,
+):
+    """The bug (PR #500, #504): a 分身 splits its sub-topics under its own
+    `cheese-<hex12>` handle, so `created_by` named a robot with no GitHub
+    account — the PR opened as the bot and the commits credited nobody. The
+    roster already recorded the real human; this reads it."""
+    _roster_owner(monkeypatch, "alice")
+    who = await identity.requester_handle(None, _topic("cheese-a7a0268b96ff"))
+    assert who == "alice"
+
+
+@pytest.mark.anyio
+async def test_a_room_a_human_opened_is_unchanged(monkeypatch):
+    """Owner and creator are the same person there — the answer must not move."""
+    _roster_owner(monkeypatch, "alice")
+    assert await identity.requester_handle(None, _topic("alice")) == "alice"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "roster",
+    [
+        pytest.param("cheese", id="owner_is_the_platform_agent"),
+        pytest.param("cheese-a7a0268b96ff", id="owner_is_a_topic_agent"),
+        pytest.param(None, id="room_has_no_owner"),
+        pytest.param(RuntimeError("roster unreadable"), id="roster_read_blew_up"),
+    ],
+)
+async def test_no_human_on_the_roster_falls_back_to_created_by(monkeypatch, roster):
+    """Every failure mode lands on the PREVIOUS behaviour, never worse than it
+    and never an exception: attribution must not be why a PR fails to open."""
+    _roster_owner(monkeypatch, roster)
+    assert await identity.requester_handle(None, _topic("bob")) == "bob"
+
+
+@pytest.mark.anyio
+async def test_nobody_at_all_resolves_to_nobody(monkeypatch):
+    """No owner and no creator — callers must get None, not an empty handle
+    they would go on to look up."""
+    _roster_owner(monkeypatch, None)
+    assert await identity.requester_handle(None, _topic(None)) is None
+    assert await identity.requester_handle(None, _topic("")) is None
 
 
 def test_session_sidecars_share_one_base_directory(tmp_path, monkeypatch):

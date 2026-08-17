@@ -4,7 +4,7 @@ import asyncio
 import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
-from tests.conftest import wait_turns_idle as _wait_turns_idle
+from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
 
@@ -60,7 +60,7 @@ def test_upgrade_block_to_topic(client):
 
     r = client.post(f"/api/blocks/{block_id}/upgrade", json={"created_by": "user-1"})
     assert r.status_code == 200
-    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
+    _wait_work_idle()  # kickoff runs in the background; don't race its writes
     new_topic = r.json()["data"]
     assert new_topic["parent_id"] == topic["id"]
     assert new_topic["kind"] == "task"  # work inside a room, not a nested room
@@ -83,7 +83,7 @@ def test_upgrade_block_to_topic(client):
     r2 = client.post(f"/api/blocks/{block_id}/upgrade", json={})
     assert r2.status_code == 200
     assert r2.json()["data"]["id"] == new_topic["id"]
-    _wait_turns_idle()
+    _wait_work_idle()
     blocks2 = client.get(f"/api/topics/{new_topic['id']}/blocks").json()["data"]["data"]
     msgs2 = [b for b in blocks2 if b["kind"] == "message"]
     assert len(msgs2) == len(msgs)  # no second kickoff turn
@@ -113,7 +113,7 @@ def test_upgrade_doc_node_to_subtopic(client):
         f"/api/blocks/{target['id']}/upgrade", json={"created_by": "user-1"}
     )
     assert r.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
     sub = r.json()["data"]
     assert sub["parent_id"] == topic["id"]
     assert sub["kind"] == "task"
@@ -193,7 +193,7 @@ def test_upgrade_from_private_chat_lands_under_root(client):
     topic = client.post(
         f"/api/blocks/{block_id}/upgrade", json={"created_by": "user-1"}
     ).json()["data"]
-    _wait_turns_idle()
+    _wait_work_idle()
     assert topic["parent_id"] == p["root_topic_id"]
     assert topic["kind"] == "topic"
     # Privacy: the private chat's doc is never copied into the public topic.
@@ -224,7 +224,7 @@ def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
             "brief": "把 10 万条借阅日志去重、去空值，产出干净数据集",
         },
     ).json()["data"]
-    _wait_turns_idle()  # kickoff runs in the background; don't race its writes
+    _wait_work_idle()  # kickoff runs in the background; don't race its writes
 
     # The brief IS the child's living doc, parent doc copied verbatim below it.
     doc = client.get(f"/api/topics/{sub['id']}/doc").json()["data"]
@@ -235,7 +235,7 @@ def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
 
     # Auto-kickoff (spec §8.4): the 分身's own opening shows up without anyone
     # posting — and it is the FIRST message (no canned template before it).
-    _wait_turns_idle()
+    _wait_work_idle()
     blocks = client.get(f"/api/topics/{sub['id']}/blocks").json()["data"]["data"]
     msgs = [b for b in blocks if b["kind"] == "message"]
     assert msgs, "分身没有自动开工（没等到它的开场白）"
@@ -253,7 +253,7 @@ def test_split_without_brief_still_seeds_doc(client):
     sub = client.post(
         f"/api/topics/{topic['id']}/split", json={"title": "小任务"}
     ).json()["data"]
-    _wait_turns_idle()
+    _wait_work_idle()
     doc = client.get(f"/api/topics/{sub['id']}/doc").json()["data"]
     assert doc is not None
     assert "拆分时没有附说明" in doc["content"]
@@ -274,7 +274,7 @@ def test_split_and_return_conclusion(client):
     assert sub["kind"] == "task"
     # Let the 分身's auto-kickoff finish before writing more to the shared
     # in-memory DB (otherwise the two interleave on one SQLite connection).
-    _wait_turns_idle()
+    _wait_work_idle()
 
     # Sub-topic shows up under children.
     children = client.get(f"/api/topics/{topic['id']}/children").json()["data"]["data"]
@@ -286,7 +286,7 @@ def test_split_and_return_conclusion(client):
         json={"conclusion": "数据清洗完成，去重后剩 8000 条"},
     )
     assert r.status_code == 200
-    _wait_turns_idle()
+    _wait_work_idle()
     parent_blocks = client.get(f"/api/topics/{topic['id']}/blocks").json()["data"][
         "data"
     ]
