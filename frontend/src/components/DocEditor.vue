@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// A self-contained living-doc editor: the same tiptap experience as DocPanel
+// A self-contained living-doc editor: the same tiptap experience as PanelDoc
 // (drag handle, StarterKit + tables + task lists + code highlighting), but
 // WITHOUT the workspace chrome (comments, live-refs, tool drawers, git panels).
 //
 // It reuses the ONE shared extension list from docMarkdown.ts — so this editor
-// and DocPanel can never drift apart on schema/round-trip fidelity — and the
+// and PanelDoc can never drift apart on schema/round-trip fidelity — and the
 // same getDoc/putDoc API + autosave contract, so 项目文档 edits persist exactly
 // like the workspace doc does.
 import type { Node as PMNode } from '@tiptap/pm/model'
@@ -246,7 +246,7 @@ onBeforeUnmount(() => {
         {{ placeholder }}
       </div>
       <!-- Feishu-style left gutter block handles: ＋ inserts below, ⠿ reorders.
-           Edit mode only, exactly like DocPanel. -->
+           Edit mode only, exactly like PanelDoc. -->
       <DragHandle v-if="editor && editable" :editor="editor" :on-node-change="onNodeChange" class="doc-handle">
         <button
           type="button"
@@ -267,7 +267,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* Mirrors DocPanel's editor styling so 项目文档 reads identically to the
+/* Mirrors PanelDoc's editor styling so 项目文档 reads identically to the
    workspace doc. Kept to the CORE surface (no workspace-only selectors like
    comments / live-refs / mentions). */
 .doc-editor-wrap {
@@ -278,7 +278,7 @@ onBeforeUnmount(() => {
   /* Left gutter that hosts the Feishu-style drag handle. The DragHandle plugin
      pins the handle's RIGHT edge to the text's left edge and it extends ~56px
      leftward; without a dedicated gutter it overflows the panel's left boundary
-     (like DocPanel's .doc-page padding, this reserves the room WITHIN the
+     (like PanelDoc's .doc-page padding, this reserves the room WITHIN the
      editor so the ＋/⠿ handle sits neatly left of the text, never clipped). */
   padding-left: 56px;
 }
@@ -383,7 +383,7 @@ onBeforeUnmount(() => {
   color: var(--muted);
 }
 
-/* ---- Document typography: matches DocPanel. ---- */
+/* ---- Document typography: matches PanelDoc. ---- */
 .doc-editor :deep(h1) {
   font-size: 1.6em;
   font-weight: 650;
@@ -527,7 +527,7 @@ onBeforeUnmount(() => {
   font-size: inherit;
 }
 /* lowlight token colors — the --code-* palette from style.css, shared with
-   DocPanel and with CodeEditor's Monaco theme. See the note in DocPanel.vue. */
+   PanelDoc and with CodeEditor's Monaco theme. See the note in PanelDoc.vue. */
 .doc-editor :deep(.hljs-comment),
 .doc-editor :deep(.hljs-quote) {
   color: var(--code-comment);

@@ -204,13 +204,9 @@ class _RecordingHub:
 
 
 @pytest.mark.anyio
-async def test_device_screen_opens_with_the_system_prompt(monkeypatch):
-    async def co_located(_device_id: str) -> bool:
-        return False
-
+async def test_device_screen_opens_with_the_system_prompt():
     hub = _RecordingHub()
     provider = DeviceProvider(hub=hub, public_base="http://cheese.test")  # type: ignore[arg-type]
-    monkeypatch.setattr(provider, "_is_co_located", co_located)
 
     await provider._ensure_screen(
         device_id="dev1",

@@ -1,4 +1,5 @@
-/** 文件 panel: a save must land in the topic the user is actually looking at.
+/** 改动 tab · 文件半边: a save must land in the topic the user is actually
+ * looking at.
  *
  * The panel kept `openPath` and the editor draft across a topic switch. Open a
  * file in topic A, switch to topic B, press 保存 — and A's draft was written
@@ -8,6 +9,10 @@
  *
  * Also pinned: binary and oversized files open read-only (no 保存 button), and a
  * save carries the version it was based on so the backend can reject a lost race.
+ *
+ * (Was DocPanelFiles.test.ts against the 文件 drawer. That drawer is now the 文件
+ * half of the 改动 tab; every assertion below is unchanged, which is the point —
+ * the切分 was supposed to move this code, not alter it.)
  */
 import type { FileContent, Topic } from '../../cx_types'
 
@@ -55,7 +60,7 @@ vi.mock('../../api', async () => {
   }
 })
 
-import DocPanel from '../DocPanel.vue'
+import WorkPanel from '../WorkPanel.vue'
 
 function topic(id: string): Topic {
   return { id, project_id: 'p1', title: `话题 ${id}`, status: 'active' } as Topic
@@ -67,7 +72,7 @@ function textFile(path: string, content: string, version = 'v1'): FileContent {
 
 function mountPanel(id: string) {
   const vuetify = createVuetify({ components, directives })
-  return render(DocPanel, {
+  return render(WorkPanel, {
     props: { topic: topic(id), activityTick: 0 },
     global: { plugins: [vuetify] },
   })
@@ -88,11 +93,15 @@ function editor(container: Element): HTMLTextAreaElement | null {
   return container.querySelector('.stub-editor')
 }
 
-/** Open the 文件 drawer. */
+/** Select the 改动 tab, then its 文件 half. */
 async function openFilesTool(container: Element) {
-  const btn = buttons(container).find((b) => b.getAttribute('title')?.includes('文件'))
-  expect(btn, '找不到 文件 工具按钮').toBeTruthy()
-  await fireEvent.click(btn!)
+  const tab = buttons(container).find((b) => b.getAttribute('title') === '改动')
+  expect(tab, '找不到 改动 tab').toBeTruthy()
+  await fireEvent.click(tab!)
+  await flush()
+  const seg = buttonByText(container, '文件')
+  expect(seg, '找不到 文件 分段').toBeTruthy()
+  await fireEvent.click(seg!)
   await flush()
 }
 
@@ -132,7 +141,7 @@ describe('文件面板', () => {
     readFile.mockResolvedValue(textFile('a.py', 'B 话题的内容\n', 'vB'))
     await rerender({ topic: topic('topic-B'), activityTick: 0 })
     await flush()
-    await openFilesTool(container) // the drawer closed with the switch
+    await openFilesTool(container) // the panel went back to 文档 with the switch
 
     expect(editor(container)!.value).toBe('B 话题的内容\n')
   })

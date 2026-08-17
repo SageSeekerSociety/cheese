@@ -55,6 +55,11 @@ class AgentMessage:
     # Stable per-event id on the hooks path (see AgentToolUse.eid) so the spool
     # reconcile can dedup a backfilled message against its live delivery.
     eid: str | None = None
+    # On the hooks path a message arrives as several MessageDisplay flushes,
+    # each with its own event id; the assembled message carries every one so
+    # dedup (live and reconcile) recognizes any constituent flush. Holds eid
+    # too when set. Empty off the hooks path (sdk backend).
+    eids: tuple[str, ...] = ()
 
 
 @dataclass

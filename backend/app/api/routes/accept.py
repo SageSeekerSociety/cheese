@@ -12,7 +12,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError
+from app.core.errors import AuthenticationRequiredError, BaseError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.platform_notices import (
@@ -92,38 +92,53 @@ async def topic_pr_checks(topic_id: uuid.UUID, db: DbSession) -> dict:
     """PR-based accept (#188 §5.1): live PR + check-run state for the newest
     card that rides a PR. Display only — never blocks anything. Answers
     {"available": false} instead of erroring so every caller (card UI, CLI)
-    can poll it unconditionally."""
+    can poll it unconditionally.
+
+    "Never erroring" has to hold for the whole body, not just the two GitHub
+    calls it used to guard: this endpoint is polled on a timer, so anything
+    that escapes here is not one 500 — it is a 500 every few seconds, each one
+    posting a traceback into the room (`report_unhandled_to_room`). That is
+    how a GitHub TLS blip turned into a wall of stack traces on 2026-08-17.
+    The failure is still logged, and its reason is handed to the caller."""
+    try:
+        return ok(await _pr_checks_payload(topic_id, db))
+    except BaseError:
+        raise  # 404 for a topic that does not exist stays a 404
+    except Exception as exc:  # noqa: BLE001 — display-only endpoint, see above
+        logger.exception("pr-checks read failed for topic %s", topic_id)
+        return ok({"available": False, "reason": f"{type(exc).__name__}: {exc}"[:200]})
+
+
+async def _pr_checks_payload(topic_id: uuid.UUID, db: AsyncSession) -> dict:
     svc = AcceptService(db)
     cards, _ = await svc.list_for_topic(topic_id)
     card = next((c for c in cards if c.pr_number is not None), None)
     if card is None or card.pr_number is None:
-        return ok({"available": False})
+        return {"available": False}
     topic = await svc._topic_or_404(topic_id)
     # #192: the installation to mint from is resolved per-project, not global.
     tokens = await github_app_tokens_for_project(topic.project_id, db)
     if tokens is None:
-        return ok({"available": False})
+        return {"available": False}
     upstream = await asyncio.to_thread(ws.get_upstream, topic.project_id)
     parsed = parse_github_repo(upstream)
     if parsed is None:
-        return ok({"available": False})
+        return {"available": False}
     client = GitHubPRClient(*parsed, tokens)
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
         checks = await client.check_runs(head_sha or ws.branch_for_topic(topic_id))
     except GitHubPRError as exc:
-        return ok({"available": False, "reason": str(exc)[:200]})
-    return ok(
-        {
-            "available": True,
-            "pr_number": card.pr_number,
-            "pr_url": card.pr_url,
-            "state": "merged" if view.get("merged") else view.get("state"),
-            "mergeable": view.get("mergeable"),
-            "checks": checks,
-        }
-    )
+        return {"available": False, "reason": str(exc)[:200]}
+    return {
+        "available": True,
+        "pr_number": card.pr_number,
+        "pr_url": card.pr_url,
+        "state": "merged" if view.get("merged") else view.get("state"),
+        "mergeable": view.get("mergeable"),
+        "checks": checks,
+    }
 
 
 @router.post("/accept-cards/{card_id}/approve")
