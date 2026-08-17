@@ -739,6 +739,17 @@ class _FakeBox:
                 if token == "-v"
             ]
             return 0, "", ""
+        if args[0] == "rm":
+            # Destroying the box destroys every session in it. A fake that kept
+            # them would answer `has-session` yes on a box that was just
+            # recreated, sending the caller down the deaf-session path and
+            # announcing a spurious "token" rebuild on top of the real one.
+            name = args[-1]
+            self.containers.discard(name)
+            self.mounts.pop(name, None)
+            for key in [k for k in self.sessions if k[0] == name]:
+                del self.sessions[key]
+            return 0, "", ""
         if args[0] == "inspect" and "{{.Config.Image}}" in args:
             return (0, "img:test", "") if args[-1] in self.containers else (1, "", "")
         if args[0] == "inspect" and "{{.State.Running}}" in args:
