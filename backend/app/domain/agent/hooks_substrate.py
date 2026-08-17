@@ -440,11 +440,14 @@ class HooksSessionProvider[ScreenT]:
         self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
         self._event_consumer: HookEventConsumer | None = None
         self._activity_consumer: HookActivityConsumer | None = None
-        # A transport write is not delivery. One waiter per topic tracks the
-        # exact UserPromptSubmit hook proving Claude Code accepted a mid-turn
-        # message into its own input queue.
         self._delivery_locks: dict[uuid.UUID, asyncio.Lock] = {}
-        self._delivery_receipts: dict[uuid.UUID, tuple[str, asyncio.Future[bool]]] = {}
+        # Every UserPromptSubmit is reported here (#539 decision A): the
+        # transport write is delivery — this hook is the CONSUMPTION record,
+        # which is when the consumed stamp belongs, however late it fires.
+        self._receipt_consumer: Callable[[uuid.UUID, str], Awaitable[None]] | None = (
+            None
+        )
+        self._receipt_tasks: set[asyncio.Task[None]] = set()
         _PROVIDERS.add(self)
 
     @property
@@ -458,6 +461,14 @@ class HooksSessionProvider[ScreenT]:
     def bind_event_consumer(self, consumer: HookEventConsumer) -> None:
         """Bind the room persistence and broadcast callback owned by ChatService."""
         self._event_consumer = consumer
+
+    def bind_receipt_consumer(
+        self, consumer: Callable[[uuid.UUID, str], Awaitable[None]]
+    ) -> None:
+        """Bind the owner of prompt receipts: every UserPromptSubmit the
+        screen emits is reported as ``(topic_id, prompt_text)`` — ChatService
+        matches it against messages it injected and stamps them consumed."""
+        self._receipt_consumer = consumer
 
     def bind_activity_consumer(self, consumer: HookActivityConsumer) -> None:
         """Bind the room's session-activity lifecycle callback."""
@@ -498,24 +509,11 @@ class HooksSessionProvider[ScreenT]:
                 )
                 return False
             delivered_text = _prompt_with_native_images(text, images)
-            receipt: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
-            self._delivery_receipts[topic_id] = (delivered_text, receipt)
             try:
                 if images:
                     await self._send_prompt(screen, delivered_text, images=images)
                 else:
                     await self._send_prompt(screen, delivered_text)
-                try:
-                    return await asyncio.wait_for(receipt, timeout=DELIVERY_TIMEOUT_S)
-                except TimeoutError:
-                    logger.warning(
-                        "mid-turn delivery receipt timed out after %.0fs "
-                        "(topic=%s) — the message IS in the session's queue if "
-                        "the inject landed; falling back to a fresh turn",
-                        DELIVERY_TIMEOUT_S,
-                        topic_id,
-                    )
-                    return False
             except ScreenSetupError as exc:
                 logger.warning(
                     "mid-turn delivery failed at screen setup (topic=%s): %s",
@@ -528,28 +526,36 @@ class HooksSessionProvider[ScreenT]:
                     "deliver into running turn failed (topic=%s)", topic_id
                 )
                 return False
-            finally:
-                pending = self._delivery_receipts.get(topic_id)
-                if pending is not None and pending[1] is receipt:
-                    self._delivery_receipts.pop(topic_id, None)
+            # The write was accepted — that IS delivery (#539 decision A, per
+            # #487's transport contract: a write either reaches the process or
+            # errors). UserPromptSubmit fires when the session CONSUMES the
+            # message — often much later on a busy session — so it must never
+            # gate this verdict; it arrives through _observe_delivery_hook and
+            # stamps the message consumed then.
+            return True
 
     def _observe_delivery_hook(self, topic_id: uuid.UUID, hook: dict) -> None:
-        pending = self._delivery_receipts.get(topic_id)
-        if pending is None:
-            return
-        expected, receipt = pending
         event_name = str(hook.get("hook_event_name") or hook.get("hookEventName") or "")
-        if (
-            event_name == "UserPromptSubmit"
-            and hook.get("prompt") == expected
-            and not receipt.done()
-        ):
-            receipt.set_result(True)
+        if event_name != "UserPromptSubmit":
+            return
+        prompt = hook.get("prompt")
+        if not isinstance(prompt, str):
+            return
+        logger.info(
+            "prompt receipt: session consumed an input (topic=%s, %d chars)",
+            topic_id,
+            len(prompt),
+        )
+        consumer = self._receipt_consumer
+        if consumer is None:
+            return
 
-    def _finish_delivery_wait(self, topic_id: uuid.UUID) -> None:
-        pending = self._delivery_receipts.pop(topic_id, None)
-        if pending is not None and not pending[1].done():
-            pending[1].set_result(False)
+        async def _report() -> None:
+            await consumer(topic_id, prompt)
+
+        task = asyncio.create_task(_report())
+        self._receipt_tasks.add(task)
+        task.add_done_callback(self._receipt_tasks.discard)
 
     async def ensure_subscription(
         self,
@@ -591,7 +597,6 @@ class HooksSessionProvider[ScreenT]:
         """Drop the sink and consumer after the topic's screen is known dead."""
         subscription = self._subscriptions.pop(topic_id, None)
         self._live.pop(topic_id, None)
-        self._finish_delivery_wait(topic_id)
         if subscription is None:
             return
         subscription.current_work = None
@@ -1152,7 +1157,6 @@ class HooksSessionProvider[ScreenT]:
                     except asyncio.CancelledError:
                         pass
         finally:
-            self._finish_delivery_wait(topic_id)
             subscription = self._subscriptions.get(topic_id)
             if (
                 attribution is not None

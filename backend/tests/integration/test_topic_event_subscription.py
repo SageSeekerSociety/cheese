@@ -294,10 +294,18 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
     assert not first.done()
     assert provider.runs == 1
     assert provider.delivered == ["[u2]: Also handle B"]
+    # #539 decision A: the write-accept delivered it, but the consumed stamp
+    # waits for the session's UserPromptSubmit receipt — until then the
+    # message stays pending so a session death replays it.
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     delivered = [block for block in rows if block.content == "Also handle B"]
     assert len(delivered) == 1
+    assert consumed_turn(delivered[0]) is None
+    await service.confirm_prompt_receipt(topic_id, provider.delivered[0])
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(topic_id)
+    delivered = [block for block in rows if block.content == "Also handle B"]
     assert consumed_turn(delivered[0]) is not None
 
     provider.release.set()
