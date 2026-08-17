@@ -21,6 +21,15 @@ sudo usermod -aG docker "$(whoami)" 2>/dev/null || true
 ./config.sh --unattended --url "$REPO_URL" --token "$TOKEN" \
   --name "$NAME" --labels cheese-ci --replace 2>&1 | tail -3
 
+# Cache downloaded action archives across jobs. Without this the runner pulls
+# every action's tarball from codeload.github.com on EVERY job; with three
+# runners behind one exit IP a busy afternoon trips GitHub's anonymous rate
+# limit and jobs die at checkout with 429 before running anything (#562,
+# 2026-08-17 — the main source of that day's "randomly red" CI).
+mkdir -p "$HOME/actions-runner/action-archive-cache"
+grep -q ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env 2>/dev/null || \
+  echo "ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=$HOME/actions-runner/action-archive-cache" >> .env
+
 sudo ./svc.sh install "$(whoami)" 2>&1 | tail -1
 sudo ./svc.sh start 2>&1 | tail -1
 
