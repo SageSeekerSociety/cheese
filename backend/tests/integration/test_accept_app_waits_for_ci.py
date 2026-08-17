@@ -940,16 +940,34 @@ def test_the_fallback_note_still_does_not_churn(client, app_world):
     assert _cards(client, tid)[0]["note"] == first
 
 
+def _set_note(client, card_id: str, note: str) -> None:
+    """直接把一条 note 摆到卡上 —— 用来立起「已经有更高优先级的 note」这个前提。
+
+    不走「让 CI 真的红一次」那条路：那会叫醒芝士，于是测试得等一个 agent 轮次
+    静默下来 —— 而这里要证的性质跟这条 note 是怎么来的毫无关系，只跟「它已经在
+    卡上」有关。少绑一个 helper，就少一次因为别人重构那个 helper 而假红。"""
+    import asyncio
+    import uuid
+
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(card_id))
+            assert card is not None
+            card.note = note
+            await session.commit()
+
+    asyncio.run(_do())
+
+
 def test_the_fallback_note_never_overwrites_a_real_failure(client, app_world):
     """新文案照样是 note 家族里优先级最低的那条：⚠️（要人动手）不许被它盖掉。"""
     fake = app_world["fake"]
     tid, cid, number, head_sha = _authorized(client, app_world)
 
-    fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
-    _poll(client)
-    wait_turns_idle()
-    failed_note = _cards(client, tid)[0]["note"]
-    assert failed_note.startswith("⚠️")
+    failed_note = "⚠️ CI 检查未通过：Backend Test: failure"
+    _set_note(client, cid, failed_note)
 
     fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
     fake.check_names_by_sha[head_sha] = {"guards", "lint"}
