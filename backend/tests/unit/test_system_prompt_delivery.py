@@ -83,12 +83,16 @@ async def test_tmux_launch_carries_the_system_prompt(monkeypatch, tmp_path):
     router = HookRouter()
     provider = TmuxHooksProvider(image="img:test", router=router)
 
+    topic_id = uuid.uuid4()
     await _one_turn(
-        provider, router, uuid.uuid4(), system_prompt=_PROMPT, resume_session_id=None
+        provider, router, topic_id, system_prompt=_PROMPT, resume_session_id=None
     )
 
     launch = " ".join(next(c for c in calls if "new-session" in c))
-    assert f"{_FLAG} /home/node/.claude/cheese-system-prompt.md" in launch
+    # The path is the SESSION's own config dir, not a fixed ~/.claude: a box
+    # hosts a whole room, so every topic in it would otherwise be launched
+    # against one shared prompt file — whichever topic wrote it last.
+    assert f"{_FLAG} {tp.ws.sandbox_session_dir(topic_id)}/cheese" in launch
     written = (session_dir / "cheese-system-prompt.md").read_text(encoding="utf-8")
     assert written == _PROMPT
 

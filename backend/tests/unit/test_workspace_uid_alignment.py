@@ -101,10 +101,10 @@ async def test_sandbox_container_is_started_as_that_user(project, monkeypatch):
     await provider._create_container(  # noqa: SLF001
         "cheesex-tmux-test",
         {
+            # A box is a ROOM's now, so its env names the room, never a topic.
             "CHEESE_PROJECT": str(project),
-            "CHEESE_TOPIC": str(topic),
-            "SBX_WORKTREE": str(ws.topic_worktree(project, topic)),
-            "SBX_SESSION": str(ws.session_dir(project, topic)),
+            "CHEESE_ROOM": str(topic),
+            "SBX_SESSIONS": str(ws.sessions_root(project)),
         },
     )
     args = captured[-1]

@@ -49,6 +49,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
 from app.domain.agent import awaited_tasks, clone, provider_env
@@ -382,11 +384,17 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
         router: HookRouter | None = None,
         idle_suspect_s: float = 300.0,
         hard_ceiling_s: float = 10800.0,
+        session_factory: async_sessionmaker | None = None,
     ) -> None:
         super().__init__(
             router=router, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
         )
         self._image = image
+        # Only `_room_id` uses it — the transport itself is DB-free, but which
+        # BOX a topic belongs to is a fact about the topic tree. Injectable for
+        # the same reason as CloudProvider's: the process-wide factory points at
+        # the deployment's database, which a test is not running against.
+        self._session_factory = session_factory
         # One control-mode connection per SCREEN, reused across turns — the
         # client attaches to a named session, so a box hosting a room needs one
         # per topic, not one per box.
@@ -762,6 +770,11 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
                     "kill-session",
                     "-t",
                     screen.session,
+                )
+                # The conversation is gone with no other warning; tell the topic
+                # (best-effort, never blocks the turn).
+                await warn_container_rebuilt(
+                    uuid.UUID(session_env["CHEESE_TOPIC"]), "token"
                 )
             else:
                 # Re-pin every turn: a session created before the geometry pin
@@ -1284,11 +1297,15 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
         try:
             from sqlalchemy import select
 
-            from app.core.db import async_session_factory
             from app.domain.topic.models import Topic, TopicKind
 
+            factory = self._session_factory
+            if factory is None:
+                from app.core.db import async_session_factory
+
+                factory = async_session_factory
             rooms = (TopicKind.root, TopicKind.topic)
-            async with async_session_factory() as session:
+            async with factory() as session:
                 current = topic_id
                 for _ in range(_MAX_ROOM_WALK):
                     row = (
