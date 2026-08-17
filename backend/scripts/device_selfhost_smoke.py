@@ -127,7 +127,7 @@ async def main() -> int:
     topic_id = uuid.UUID(
         api(
             "POST",
-            "/api/topics",
+            "/topics",
             token,
             {"project_id": str(project_id), "title": f"设备自托管冒烟 {MARKER}"},
         )["data"]["id"]
@@ -163,7 +163,7 @@ async def main() -> int:
 
     frames: list[dict] = []
     url = f"{BASE.replace('http://', 'ws://').replace('https://', 'wss://')}"
-    url += f"/api/topics/{topic_id}/chat?token={token}"
+    url += f"/topics/{topic_id}/chat?token={token}"
     async with websockets.connect(url, open_timeout=20) as sock:
         await sock.send(
             json.dumps({"type": "message", "content": PROMPT, "summon": True})
@@ -218,7 +218,7 @@ async def main() -> int:
     # The device push and the card land as the request finishes; give them a short
     # grace window rather than reading the instant the stream goes quiet.
     for _ in range(20):
-        cards_now = api("GET", f"/api/topics/{topic_id}/accept-card", token)["data"]
+        cards_now = api("GET", f"/topics/{topic_id}/accept-card", token)["data"]
         seen = MARKER in branch_readme()
         if seen and int(cards_now.get("total") or 0) > 0:
             break
@@ -247,7 +247,7 @@ async def main() -> int:
             )
         )
 
-    cards = api("GET", f"/api/topics/{topic_id}/accept-card", token)["data"]
+    cards = api("GET", f"/topics/{topic_id}/accept-card", token)["data"]
     filed = int(cards.get("total") or 0) > 0
     results.append(
         (

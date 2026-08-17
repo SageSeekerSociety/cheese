@@ -47,7 +47,7 @@ async def main() -> int:
         project_id = topic.project_id if topic is not None else None
 
     req = urllib.request.Request(
-        f"{BASE}/api/topics/{TOPIC_ID}/accept-card",
+        f"{BASE}/topics/{TOPIC_ID}/accept-card",
         headers={"Authorization": f"Bearer {token}"},
     )
     with urllib.request.urlopen(req, timeout=60) as resp:

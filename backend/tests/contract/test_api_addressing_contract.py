@@ -353,3 +353,30 @@ def test_the_deployed_gateway_still_strips_what_the_schema_assumes() -> None:
         "proxy_pass lost its trailing slash, so nginx no longer strips /api — "
         "the schema's published server is now wrong by one segment"
     )
+
+
+def test_direct_backend_scripts_do_not_add_the_gateway_mount() -> None:
+    """A caller on backend port 8081 uses app paths; only nginx adds /api.
+
+    These scripts bypass the gateway, so a stale prefix makes the check lie.
+    """
+    direct_scripts = (
+        "backend/scripts/chat_send_probe.py",
+        "backend/scripts/device_capability_setup.py",
+        "backend/scripts/device_capability_verify.py",
+        "backend/scripts/device_selfhost_smoke.py",
+        "backend/scripts/e2e_scroll_memory.py",
+        "backend/scripts/machine_chain_check.py",
+        "backend/scripts/sim_real.py",
+    )
+
+    for relative_path in direct_scripts:
+        source = (_REPO_ROOT / relative_path).read_text()
+        assert not re.search(r"[\"']/api/", source), (
+            f"{relative_path} adds the public /api mount to a direct backend call"
+        )
+
+    workflow = (_REPO_ROOT / ".github/workflows/device-wiring.yml").read_text()
+    assert ":8081/api" not in workflow, (
+        "the device wiring runner talks to port 8081 directly, without /api"
+    )

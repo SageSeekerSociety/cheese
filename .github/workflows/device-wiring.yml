@@ -124,7 +124,9 @@ jobs:
           MARKER="cap-$(date +%s)-$RANDOM"
           DEVICE_TREE="$PWD/tmp/device-capability-$TOPIC"
           CLI_PROBE="$PWD/tmp/device-capability-cli-$TOPIC"
-          REMOTE="http://192.168.16.5:8081/api/projects/$PROJECT/git"
+          # Port 8081 is the backend app itself. Only the public nginx gateway
+          # adds and strips /api, so direct device probes use bare route paths.
+          REMOTE="http://192.168.16.5:8081/projects/$PROJECT/git"
           case "$DEVICE_TREE" in
             "$PWD"/tmp/device-capability-*) ;;
             *) echo "FAIL  unsafe device tree path: $DEVICE_TREE"; exit 1 ;;
@@ -156,7 +158,7 @@ jobs:
           curl -sS -f -m 15 -H "X-Cheese-Token: $TOKEN" \
             "http://192.168.16.5:8081/sandbox/cli/cheese" -o "$CLI_PROBE" || true
           chmod +x "$CLI_PROBE" 2>/dev/null || true
-          out="$(CHEESE_API=http://192.168.16.5:8081/api CHEESE_PROJECT="$PROJECT" \
+          out="$(CHEESE_API=http://192.168.16.5:8081 CHEESE_PROJECT="$PROJECT" \
                  CHEESE_TOPIC="$TOPIC" CHEESE_TOKEN="$TOKEN" CHEESE_AUTHOR=cheese \
                  python3 "$CLI_PROBE" accept-request andy "设备能力检查" 2>&1 || true)"
           echo "cli said: $(printf '%s' "$out" | head -c 200)"
