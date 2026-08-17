@@ -75,4 +75,5 @@ def test_mentor_can_accept(client):
     )
     assert r.status_code == 200
     topic = client.get(f"/topics/{tid}").json()["data"]
-    assert topic["status"] == "archived"
+    assert topic["status"] == "active"  # 交付完成不归档 (#442 decision 1)
+    assert topic["accepted_by"] == "mentor-1"

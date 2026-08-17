@@ -270,6 +270,16 @@ def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
 # 递卡互斥 (2026-08-10): a topic may have at most one card that is still
 # "live" — awaiting a decision, mid-delivery, or blocked mid-accept. Each gets
 # its own message because the way OUT differs (改验收人 / 等交付 / 解冲突).
+#
+# `accepted` joins them for a different reason (2026-08-17): it is not live, it
+# is DONE, and it is what freezes the delivery surface now that a merge no
+# longer archives the topic. Archive used to do double duty — "someone put this
+# away" AND "this branch already landed, stop offering it" — and only the first
+# half is a human's call (#442 decision 1). The second half has to survive on
+# its own, because a card filed on a branch that is already in main opens a PR
+# with no commits: GitHub refuses it (422 No commits between), the platform
+# reads that as a failure and degrades to a local merge, and the card reaches
+# `accepted` having delivered nothing at all.
 _BLOCKED_BY_CARD_MESSAGES = {
     AcceptStatus.pending: "已有待处理的验收卡，请改验收人而不是再递一张",
     AcceptStatus.pending_gate: "已有待处理的验收卡，请改验收人而不是再递一张",
@@ -279,6 +289,14 @@ _BLOCKED_BY_CARD_MESSAGES = {
     ),
     AcceptStatus.conflict: (
         "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张"
+    ),
+    AcceptStatus.accepted: (
+        "这个话题已经交付过一次：上一张验收卡合并了，这条分支已经在 main 上。"
+        "再递一张开出来的 PR 没有新提交，GitHub 会拒绝，平台会降级成本地合并——"
+        "卡看起来采纳了，实际什么都没交付。\n"
+        "话题没有归档，接着讨论、接着写文档都可以（归档是人的决定，不是合并的"
+        "副作用）；要再交付一份改动，请在房间里开一件新的事——新话题＝从 main "
+        "新切的分支。"
     ),
 }
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
@@ -463,28 +481,35 @@ class AcceptService:
             raise NotFoundError("Accept card not found")
         return card
 
-    async def _release_topic_compute(self, topic: Topic) -> None:
-        """Free a done topic's long-lived compute on 采纳/归档 — the sandbox
-        container(s) AND, when the topic ran on an enrolled device, its screen (plus
-        a remote device's per-topic work dir). The container reaper only ever knew
-        about Docker boxes, so a device screen (and the ``claude`` process behind it)
-        used to leak on the machine forever.
+    async def _release_billed_compute(self, topic: Topic) -> None:
+        """Release the delivered topic's BILLED compute — its Cloud VM — and
+        nothing else.
 
-        Containers and screens are best-effort. A billed Cloud machine is not:
-        archive is its only reclamation lifecycle, so accept must not report
-        success if MicroCloud did not accept deletion."""
-        from app.domain.agent.device_provider import release_topic_screen
-        from app.domain.workspace import service as ws
+        This used to tear down the working surface too (the sandbox container,
+        and a device topic's screen plus its remote work dir). It doesn't any
+        more, because 交付完成 no longer means 话题结束 (#442 decision 1: 一个
+        话题往往是连续的): the room keeps working after the merge, and killing
+        its box mid-life is not free — a rebuilt container loses everything
+        installed inside it (jj, procps, the git identity the test suite needs),
+        so the next turn pays for a teardown nobody asked for. Both surfaces
+        have their own idle reaper (``scheduler.reap_idle_containers`` /
+        ``reap_idle_device_screens``), which is where reclaiming them belongs:
+        the question "is anyone still using this" is about activity, not about
+        whether a branch landed.
 
+        The Cloud VM is the one exception and it stays here, deliberately: it is
+        the only one that costs money per hour and the only one with NO reaper —
+        release is manual-archive-or-nothing (`TopicService._release_cloud_machine`,
+        #442 decision 3). Dropping it here would turn every merged topic into a
+        billed leak that nothing ever collects. So it is not best-effort either:
+        accept must not report success if MicroCloud did not accept deletion.
+
+        Consequence worth knowing: a Cloud-backed topic that just delivered has
+        no VM until someone provisions one again, and `ensure_topic_machine`
+        requires an authorized human caller — so its next turn needs a human to
+        speak. That is the pre-existing trade-off of "archive is the VM's only
+        lifecycle", not a new one; the reclamation policy itself is still open."""
         await self._machines.release_topic_machine(topic.id)
-        try:
-            ws.stop_topic_container(topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
-        try:
-            await release_topic_screen(topic.project_id, topic.id)
-        except Exception:  # noqa: BLE001 — best effort, never fatal
-            pass
 
     async def create_card(
         self,
@@ -512,7 +537,8 @@ class AcceptService:
             change_subject = commit_message.check_subject(change_subject)
         except commit_message.InvalidSubject as exc:
             raise ValidationError(str(exc)) from exc
-        # 采纳是一次性交付 (spec §6.3): a frozen topic can't be re-submitted.
+        # 归档是人主动收起来的话题，工作面跟着冻结。它不再是"交付完成"的同义词
+        # (#442 decision 1) —— 那一半由下面的 `accepted` 卡挡着。
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能再递验收卡")
         # One card at a time, not a broadcast (spec §4.4): re-route / wait
@@ -845,7 +871,9 @@ class AcceptService:
             raise ForbiddenError("你不是这张验收卡指定的验收人，无权采纳")
 
         topic = await self._topic_or_404(card.topic_id)
-        # 采纳一次性 (spec §6.3): can't re-accept an already-archived topic.
+        # 归档会连带终结这个话题上还没决议的卡 (review/archive.py)，所以这里通常
+        # 走不到；留着是为了兜住"归档与采纳同时发生"的竞态。重复采纳本身由上面的
+        # 卡状态闸门挡（一张卡只能 accepted 一次），不再依赖话题被归档。
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，不能重复采纳")
         project = await self._projects.get(topic.project_id)
@@ -1100,18 +1128,20 @@ class AcceptService:
                 :2000
             ]
 
-        # Topic is done → free its long-lived compute (container + device screen).
-        await self._release_topic_compute(topic)
+        # 这次改动交付完了 → 释放计费算力，工作面留着（见 _release_billed_compute）。
+        await self._release_billed_compute(topic)
 
-        # 采纳即归档 (spec §6.3).
-        topic.status = TopicStatus.archived
+        # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
+        # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
         topic.accepted_by = decided_by
         topic.accepted_at = now
-        topic.archived_at = now
 
         await self._session.flush()
         await self._session.refresh(card)
-        success_msg = f"✅ 话题已被 {decided_by} 采纳并合并。"
+        success_msg = (
+            f"✅ 话题已被 {decided_by} 采纳并合并"
+            "（这一次交付完成了，话题继续活跃——归档由人决定）。"
+        )
         if card.note:
             success_msg += f"\n{card.note}"
         self._notify_merge_result(topic, success_msg)
@@ -2263,16 +2293,17 @@ class AcceptService:
         )
         settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
         card.note = (f"{headline}；{settled}" if headline else settled)[:2000]
-        await self._release_topic_compute(topic)
-        topic.status = TopicStatus.archived
+        await self._release_billed_compute(topic)
+        # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
         topic.accepted_by = by
         topic.accepted_at = now
-        topic.archived_at = now
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"✅ 话题已被 {by} 采纳并归档：PR #{card.pr_number} {how}。\n{card.pr_url}",
+            f"✅ 话题已被 {by} 采纳：PR #{card.pr_number} {how}。\n{card.pr_url}\n"
+            "（这一次交付完成了，话题继续活跃——归档由人决定。要再交付一份改动，"
+            "在房间里开一件新的事。）",
         )
 
     async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
@@ -2729,7 +2760,8 @@ class AcceptService:
         self, card: AcceptCard, topic: Topic, decided_by: str, *, note: str
     ) -> AcceptCard:
         """Post-merge bookkeeping shared by the PR path: sync the platform's
-        main down from upstream (the merge happened THERE), then archive."""
+        main down from upstream (the merge happened THERE), then mark the topic
+        delivered — delivered, not archived (#442 decision 1)."""
         from app.domain.workspace import service as ws
 
         try:
@@ -2753,13 +2785,11 @@ class AcceptService:
         card.decided_at = now
         card.note = note[:2000]
 
-        await self._release_topic_compute(topic)
+        await self._release_billed_compute(topic)
 
-        # 采纳即归档 (spec §6.3).
-        topic.status = TopicStatus.archived
+        # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
         topic.accepted_by = decided_by
         topic.accepted_at = now
-        topic.archived_at = now
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -2808,11 +2838,17 @@ class AcceptService:
         card.decided_by = decided_by
         card.decided_at = datetime.now(UTC)
 
-        # Un-archive the topic: back to active, clear accept/archive markers.
-        topic.status = TopicStatus.active
+        # 撤销的是这次**验收记录**，不是这次合并 —— PR 已经在 main 上了，git 层面
+        # revoke 什么都没撤。所以这里只清交付标记（话题回到"还没交付过"，因此
+        # 又能递卡）。
+        #
+        # 归档状态一律不动，这是 2026-08-17 的对称面：`TopicService.unarchive` 的
+        # docstring 说「取消归档不改写采纳记录，那要用撤回采纳」；反过来同理——
+        # 撤回采纳不改写归档状态，那是人的决定（取消归档）。以前这里要把话题拉回
+        # active，是因为采纳会顺手归档；采纳不再归档之后，一张卡的撤销没有理由
+        # 覆盖某个人「把这个话题收起来」的动作。
         topic.accepted_by = None
         topic.accepted_at = None
-        topic.archived_at = None
 
         await self._session.flush()
         await self._session.refresh(card)

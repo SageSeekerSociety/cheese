@@ -5,7 +5,6 @@ import uuid
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.conftest import wait_work_idle as _wait_work_idle
-from tests.integration.conftest import session_auth_headers
 
 
 def _project(client, **kw) -> dict:
@@ -124,23 +123,17 @@ def test_upgrade_doc_node_to_subtopic(client):
 
 
 def test_archived_topic_is_frozen(client):
-    # 归档后工作面冻结 (spec §6.3): no split, no doc edit on an archived topic.
+    # 归档后工作面冻结: no split, no doc edit on an archived topic.
+    #
+    # 归档现在只有一条入口 —— 人点的那一下 (#442 decision 1)。这个测试以前借
+    # 「采纳即归档」拿到归档状态；采纳不再归档之后，它显式走归档端点，测的东西
+    # 反而更贴题了。
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "交付物"}
     ).json()["data"]
-    card = client.post(
-        f"/topics/{topic['id']}/accept-card",
-        json={
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": "alice",
-        },
-    ).json()["data"]
-    client.post(
-        f"/accept-cards/{card['id']}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
+    r = client.post(f"/topics/{topic['id']}/archive", json={"by": "alice"})
+    assert r.status_code == 200
     got = client.get(f"/topics/{topic['id']}").json()["data"]
     assert got["status"] == "archived"
 
@@ -162,17 +155,11 @@ def test_upgrade_on_archived_topic_rejected(client):
         "/topics", json={"project_id": p["id"], "title": "交付"}
     ).json()["data"]
     block_id = _insert_block(client, p["id"], topic["id"], "某条结论")
-    card = client.post(
-        f"/topics/{topic['id']}/accept-card",
-        json={
-            "change_subject": "chore(test): file an accept card",
-            "reviewer_handle": "alice",
-        },
-    ).json()["data"]
-    client.post(
-        f"/accept-cards/{card['id']}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
+    assert (
+        client.post(
+            f"/topics/{topic['id']}/archive", json={"by": "alice"}
+        ).status_code
+        == 200
     )
     r = client.post(f"/blocks/{block_id}/upgrade", json={"created_by": "alice"})
     assert r.status_code == 422

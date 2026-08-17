@@ -300,7 +300,10 @@ def test_green_checks_merge_and_archive_on_the_next_poll(client, app_world):
     assert [m["number"] for m in fake.merge_calls] == [number]
     card = _cards(client, tid)[0]
     assert card["status"] == "accepted"
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     assert app_world["local_merges"] == []
 
 
@@ -464,7 +467,10 @@ def test_merge_anyway_merges_and_signs_the_card(client, app_world):
 
     assert [m["number"] for m in fake.merge_calls] == [number]
     assert card["status"] == "accepted"
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     # 署名：谁、理由、以及合并那一刻检查到底是什么状态。
     assert "alice" in card["note"]
     assert "CI runner 挂了" in card["note"]
@@ -507,7 +513,10 @@ def test_poll_advances_even_when_the_approver_has_no_github_account(
 
     assert [m["number"] for m in fake.merge_calls] == [number]
     assert _cards(client, tid)[0]["status"] == "accepted"
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     # 用的确实是 App 的 token（accept 时一次 + 轮询时至少一次）。
     assert _FakeTokens.minted_write >= 2
 
@@ -659,7 +668,10 @@ def test_card_that_already_rides_a_pr_waits_too(client, app_world):
     app_world["fake"].check_state_by_sha[f"sha-{branch}-1"] = ("success", "全部通过")
     _poll(client)
     assert [m["number"] for m in app_world["fake"].merge_calls] == [7]
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
 
 
 def test_pr_open_failure_stops_the_accept_and_lands_on_the_card(client, app_world):
@@ -727,7 +739,10 @@ def test_pr_already_merged_on_github_is_taken_as_the_accept(
     r = _accept(client, cid)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "accepted"
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     assert fake.merge_calls == []  # 平台没有再合一次
     assert app_world["local_merges"] == []
 
@@ -746,7 +761,10 @@ def test_discussion_topic_needs_no_pr_and_still_accepts(client, app_world, monke
     r = _accept(client, cid)
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "accepted"
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     assert app_world["opened"] == []
     assert app_world["fake"].merge_calls == []
 
@@ -788,7 +806,10 @@ def test_a_required_check_the_diff_cannot_trigger_is_not_required(client, app_wo
     _poll(client)
 
     assert [m["number"] for m in fake.merge_calls] == [number]
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
 
 
 def test_a_required_check_missing_too_long_goes_to_a_human(client, app_world):
@@ -853,4 +874,7 @@ def test_current_base_and_full_roster_still_merge(client, app_world):
     _poll(client)
 
     assert [m["number"] for m in fake.merge_calls] == [number]
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
