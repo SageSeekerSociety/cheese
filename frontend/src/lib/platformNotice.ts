@@ -69,7 +69,7 @@ export type PlatformNotice =
     }
   /** 后端报错：本来就是目标形态，原样保留（它是这套东西的样板）。 */
   | { mode: 'backend-error'; error: BackendErrorPresentation }
-  /** 芝士这轮干的活（更新了活文档 / 递出了验收卡…）。 */
+  /** 芝士这轮干的活（更新了实况文档 / 递出了验收卡…）。 */
   | { mode: 'action'; resource: string; text: string }
   /** 折叠行：一行 summary + ×N + who 尾标，原文在展开区。 */
   | {

@@ -191,7 +191,7 @@ describe('文件面板', () => {
     await openFilesTool(container)
 
     expect(editor(container)).toBeNull()
-    expect(container.textContent).toContain('二进制文件，不能当文本编辑')
+    expect(container.textContent).toContain('二进制文件，不能按文本编辑')
     expect(buttonByText(container, '保存')).toBeUndefined()
   })
 
