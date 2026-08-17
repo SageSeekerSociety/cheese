@@ -79,6 +79,11 @@ async def main() -> int:
     with urllib.request.urlopen(req, timeout=60) as resp:
         topic_id = uuid.UUID(json.loads(resp.read())["data"]["id"])
 
+    # A production turn materialises the canonical topic branch before the
+    # DeviceProvider launches. The probe must reproduce that prerequisite; the
+    # device still obtains the branch only by cloning it over smart HTTP.
+    ws.topic_worktree(project.id, topic_id)
+
     scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(topic_id))
     print(f"PROJECT={project.id}")
     print(f"TOPIC={topic_id}")

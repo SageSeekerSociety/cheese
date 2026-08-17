@@ -162,7 +162,9 @@ jobs:
           chmod +x "$CLI_PROBE" 2>/dev/null || true
           out="$(CHEESE_API=http://192.168.16.5:8081 CHEESE_PROJECT="$PROJECT" \
                  CHEESE_TOPIC="$TOPIC" CHEESE_TOKEN="$TOKEN" CHEESE_AUTHOR=cheese \
-                 python3 "$CLI_PROBE" accept-request andy "设备能力检查" 2>&1 || true)"
+                 python3 "$CLI_PROBE" accept-request andy "设备能力检查" \
+                   --subject "test(device): verify clone and platform CLI wiring" \
+                   2>&1 || true)"
           echo "cli said: $(printf '%s' "$out" | head -c 200)"
 
           verify="$(docker exec -w /app -e PYTHONPATH=/app cheese-backend-1 \
