@@ -75,7 +75,7 @@ const props = withDefaults(
     defaultSummon?: boolean
     // Render a self-contained composer at the bottom (used when ChatPanel is
     // dropped in standalone, e.g. the 私聊 1:1 chat in the main area). For work
-    // topics WorkspaceView keeps its own spanning composer and leaves this off.
+    // topics TopicView keeps its own spanning composer and leaves this off.
     showComposer?: boolean
     // Show the GitHub-PR-style header (话题 = PR). Only real work topics are
     // PRs — the root topic (本体) and the 1:1 private chat are NOT, so they use
@@ -688,7 +688,7 @@ async function loadTopic(topic: Topic) {
 }
 
 // Send a message. `summon` (= @芝士) asks 芝士 to reply; when false the message
-// is just posted (spec §7.1 默认不 @). The composer lives in WorkspaceView and
+// is just posted (spec §7.1 默认不 @). The composer lives in TopicView and
 // drives this via the exposed ref, so the input bar can span chat + doc.
 // B3: reply target — the message this next send threads under (reply_to).
 const replyTarget = ref<Block | null>(null)
@@ -836,7 +836,7 @@ const draft = ref('')
 const summon = ref(props.defaultSummon)
 const composerInput = ref<{ focus?: () => void } | null>(null)
 
-// 同 WorkspaceView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
+// 同 TopicView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
 // 按的那次 Enter 打在 chip 上，把刚点亮的 @芝士 又静默关掉且不发送。
 function toggleSummon() {
   summon.value = !summon.value
@@ -845,7 +845,7 @@ function toggleSummon() {
 
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
-// Mirrors WorkspaceView's composer so the root-topic and 私聊 composers get the
+// Mirrors TopicView's composer so the root-topic and 私聊 composers get the
 // same picker.
 const mentionQuery = computed(() => {
   const m = draft.value.match(/@([^\s@]*)$/)
@@ -946,7 +946,7 @@ function sendDraft() {
   }
 }
 
-// IME (输入法) guard — see WorkspaceView.vue for the full story: Safari fires
+// IME (输入法) guard — see TopicView.vue for the full story: Safari fires
 // compositionend BEFORE the commit-Enter keydown, which then looks like a
 // plain Enter. Track composition ourselves and swallow the trailing Enter.
 let composing = false
@@ -1585,7 +1585,7 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
-/* @-autocomplete popup — mirrors WorkspaceView's composer picker. */
+/* @-autocomplete popup — mirrors TopicView's composer picker. */
 .mention-menu {
   display: flex;
   flex-direction: column;

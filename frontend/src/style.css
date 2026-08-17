@@ -117,6 +117,10 @@
   --radius-lg: 12px; /* cards, panels, dialogs */
   --radius-pill: 999px; /* pills, circular avatars */
 
+  /* ---- Page width ---- */
+  --page-w: 920px; /* reading and forms — the default */
+  --page-w-wide: 1100px; /* multi-column dashboards */
+
   /* ---- Type ---- */
   --font-sans:
     'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
@@ -386,6 +390,17 @@ button:not(.v-btn) {
   background: none;
   font: inherit;
   color: inherit;
+}
+
+/* Page content width. Two values, both named — 项目内的页面（总览/日历/设置/
+   成员/项目文档）以前每个自己写一个数字（1100/820/900/920/920），因为它们各
+   自是一个整页、没有共同的框架可依。现在它们都住在项目框架里，宽度就该是框架
+   的属性。`--page-w-wide` 只给仪表盘那类多列内容，其余一律 `--page-w`。 */
+.page-container {
+  max-width: var(--page-w);
+}
+.page-container--wide {
+  max-width: var(--page-w-wide);
 }
 
 /* Crisp keyboard focus (a11y floor) — soft amber ring. */

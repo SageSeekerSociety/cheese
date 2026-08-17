@@ -3,7 +3,6 @@ import type { MemoryEntryOut } from '../api'
 import type { Block, Topic } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
 
@@ -12,26 +11,21 @@ import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
-// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
-// route or embedded inside the 工作台 (keeping the left rail) — `kind`/`embedded`
-// override the route when embedded.
+// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
+// (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
+// is a route parameter, not a route NAME: as three separate named routes this
+// page could be reached two different ways (a sidebar swap and a full-page push)
+// that led to two different places under the same words.
 type Kind = 'charter' | 'decisions' | 'weeklies' | 'memory'
+const KINDS: readonly Kind[] = ['charter', 'decisions', 'weeklies', 'memory']
 const props = defineProps<{
   projectId: string
-  kind?: Kind
-  embedded?: boolean
+  kind?: string
 }>()
-const route = useRoute()
 
 const AUTHOR = myHandle()
 
-// Which document to show: an explicit prop (embedded) wins over the route name.
-const kind = computed<Kind>(() => {
-  if (props.kind) return props.kind
-  if (route.name === 'project-decisions') return 'decisions'
-  if (route.name === 'project-weeklies') return 'weeklies'
-  return 'charter'
-})
+const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
 
 const TITLES: Record<Kind, string> = {
   charter: '章程',
@@ -132,42 +126,21 @@ async function load() {
   }
 }
 
-// 返回工作台: project workspace (defaults to the root topic).
-const workspaceTo = { name: 'workspace-project', params: { projectId: props.projectId } }
-
-// A source-topic link: open the workspace AND pre-select that topic via ?topic=.
-// Without the query, WorkspaceView always falls back to the root topic.
+// A source-topic link: open that topic in the same project frame.
 function topicTo(topicId: string | null | undefined) {
-  if (!topicId) return workspaceTo
-  return {
-    name: 'workspace-project',
-    params: { projectId: props.projectId },
-    query: { topic: topicId },
-  }
+  if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
+  return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
 
-watch(() => [props.projectId, route.name], load)
 onMounted(load)
-// Embedded in the workspace the component persists across 章程/决策/周报/记忆
-// switches — each switch must refetch or the new page shows stale/empty data.
+// The component persists across 章程/决策/周报/记忆 switches (same route record,
+// different param) — each switch must refetch or the new page shows stale data.
 watch([kind, () => props.projectId], load)
 </script>
 
 <template>
   <div class="docs-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 920px">
-      <!-- Header (the back link is redundant when embedded — the rail is there) -->
-      <v-btn
-        v-if="!props.embedded"
-        :to="workspaceTo"
-        variant="text"
-        size="small"
-        prepend-icon="mdi-arrow-left"
-        class="mb-3 px-1"
-      >
-        返回工作台
-      </v-btn>
-
+    <v-container class="py-6 page-container">
       <div class="mb-6">
         <div class="t-eyebrow mb-1">{{ OVERLINES[kind] }}</div>
         <div class="d-flex align-center flex-wrap ga-3">

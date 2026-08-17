@@ -67,7 +67,7 @@ const props = withDefaults(
   defineProps<{
     topic: Topic | null
     // Bumped by the parent on AI activity (turn-done / update_doc tool) so the
-    // panel reloads the doc 芝士 just wrote. See WorkspaceView activityTick.
+    // panel reloads the doc 芝士 just wrote. See TopicView activityTick.
     activityTick: number
     // 施工现场: this topic's AI tool-action log, shown in the 现场 drawer.
     // platform: amber dot (cheese action) vs neutral dot (plain work).

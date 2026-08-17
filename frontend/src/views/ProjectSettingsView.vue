@@ -361,13 +361,6 @@ function consumeGithubCallbackNotice() {
   router.replace({ query: rest })
 }
 
-// Back to wherever you came from (the workspace, via the gear), with an overview
-// fallback for a deep link — same pattern as the member page.
-function goBack() {
-  if (window.history.state?.back != null) router.back()
-  else router.push({ name: 'overview', params: { projectId: props.projectId } })
-}
-
 onMounted(() => {
   consumeGithubCallbackNotice()
   load()
@@ -378,9 +371,8 @@ watch(() => props.projectId, load)
 
 <template>
   <div class="settings-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 900px">
+    <v-container class="py-6 page-container">
       <div class="d-flex align-center mb-4">
-        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="px-1" @click="goBack"> 返回 </v-btn>
         <v-spacer />
         <v-btn
           variant="text"

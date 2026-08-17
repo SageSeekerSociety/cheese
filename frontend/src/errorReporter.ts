@@ -32,11 +32,17 @@ function fingerprint(e: PendingError): string {
   return `${e.message}\n${(e.stack || '').split('\n')[0]}\n${e.source || ''}`
 }
 
-// Project/topic from the URL (workspace keeps ?topic= in sync — WorkspaceView).
+// Project/topic straight out of the path — `/projects/<uuid>/topics/<uuid>`.
+// Both used to be read from elsewhere (`/project/` singular, and a `?topic=`
+// query), and both had gone stale: a rename moved the first and the topic left
+// the query string when it became a path segment. An error report is the one
+// place where a silently-null field looks exactly like "no topic was open".
+const UUID = '[0-9a-f][0-9a-f-]{34}[0-9a-f]'
+const WORKSPACE_PATH = new RegExp(`/projects/(${UUID})(?:/topics/(${UUID}))?`, 'i')
+
 function context(): { projectId: string | null; topicId: string | null } {
-  const m = location.pathname.match(/\/project\/([0-9a-f][0-9a-f-]{34}[0-9a-f])/i)
-  const topic = new URLSearchParams(location.search).get('topic')
-  return { projectId: m ? m[1] : null, topicId: topic }
+  const m = WORKSPACE_PATH.exec(location.pathname)
+  return { projectId: m?.[1] ?? null, topicId: m?.[2] ?? null }
 }
 
 export function reportError(message: string, stack?: string, source?: string): void {
