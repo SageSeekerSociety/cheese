@@ -878,13 +878,23 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   padding-inline-end: 8px;
 }
 
-/* 项目头：整块是菜单的 activator。高度、内边距、底部分隔线都来自全局
-   .sidebar-header (48px 基线)，这里只把 <button> 的浏览器默认样式抹平——
-   注意只抹左右和上边框，底边那条分隔线是 .sidebar-header 画的，不能连坐。 */
+/* 项目头：整块是菜单的 activator。高度和内边距来自全局 .sidebar-header
+   (48px 基线)。
+ *
+ * 底部那条分隔线必须在这里再声明一遍，不能指望全局 .sidebar-header 那条。
+ * 原因是 style.css 的 `button:not(.v-btn) { border: none }`——那条选择器权重是
+ * (0,1,1)，压过 .sidebar-header 的 (0,1,0)，而这条 rail 是四个侧栏里唯一把
+ * .sidebar-header 放在 <button> 上的（首页/空间/设置都是 <div>），所以**只有
+ * 工作台**这条线被抹掉了，其余三个照常显示。那条 reset 自己的注释也写明了这个
+ * 约定：「buttons that declare their own border override this」。
+ *
+ * 颜色和 .sidebar-header / PageHeader 完全一致（Vuetify 那对 border token），
+ * 不是 --line/--line-2：目标是和右边内容区顶栏那条线同款同高，能接成一条。
+ * 删掉这一行，线就会静默消失，而且沙箱里跑不了渲染、任何测试都抓不到。 */
 .rail-header {
   width: 100%;
-  border-inline: 0;
-  border-block-start: 0;
+  border: 0;
+  border-block-end: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   background: none;
   font: inherit;
   color: inherit;
@@ -895,6 +905,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+
 .rail-header__caret {
   flex: none;
   color: var(--muted);
