@@ -98,7 +98,7 @@ function editor(container: Element): HTMLTextAreaElement | null {
 
 /** Select the 改动 tab, then its 文件 half. */
 async function openFilesTool(container: Element) {
-  const tab = buttons(container).find((b) => b.getAttribute('title') === '改动')
+  const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
   expect(tab, '找不到 改动 tab').toBeTruthy()
   await fireEvent.click(tab!)
   await flush()

@@ -90,7 +90,7 @@ function buttons(container: Element): HTMLButtonElement[] {
 }
 
 async function openTab(container: Element, label: string) {
-  const btn = buttons(container).find((b) => b.getAttribute('title') === label)
+  const btn = buttons(container).find((b) => b.getAttribute('title')?.startsWith(label))
   expect(btn, `找不到 ${label} tab`).toBeTruthy()
   await fireEvent.click(btn!)
   await flush()

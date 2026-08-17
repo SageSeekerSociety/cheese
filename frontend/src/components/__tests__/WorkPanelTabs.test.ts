@@ -292,6 +292,47 @@ describe('工作面板 · Tab 容器', () => {
     expect(tabButton(container, '预览').getAttribute('title')).toBe('预览')
   })
 
+  // 规则 2: 信号上 Tab，不抢占视图。
+  it('芝士开工时现场 tab 上有脉冲点，但视图不动', async () => {
+    const { container, rerender } = mountPanel()
+    await flush()
+    expect(container.querySelector('.tabbar__pulse')).toBeNull()
+
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: true })
+    await flush()
+
+    expect(container.querySelector('.tabbar__pulse')).toBeTruthy()
+    expect(tabButton(container, '现场').getAttribute('title')).toContain('芝士正在工作')
+    expect(visible(container, '.doc')).toBe(true)
+  })
+
+  it('改动 tab 上是文件数；进话题时已有的改动不算「新」', async () => {
+    getTopicWorkSummary.mockResolvedValue({ changed_files: ['a.py', 'b.py'], has_run: true })
+    const { container } = mountPanel()
+    await flush()
+
+    const count = container.querySelector('.tabbar__count')
+    expect(count?.textContent).toBe('2')
+    expect(count?.classList.contains('tabbar__count--new')).toBe(false)
+  })
+
+  it('一轮跑完多出来的改动才是「新」的，而且不会把人切过去', async () => {
+    const { container, rerender } = mountPanel()
+    await flush()
+
+    getTopicWorkSummary.mockResolvedValue({ changed_files: ['a.py', 'b.py'], has_run: true })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: true })
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: false })
+    await flush()
+
+    expect(container.querySelector('.tabbar__count')?.classList.contains('tabbar__count--new')).toBe(true)
+    expect(visible(container, '.doc')).toBe(true)
+
+    // 看过就不再是新的。
+    await openTab(container, '改动')
+    expect(container.querySelector('.tabbar__count')?.classList.contains('tabbar__count--new')).toBe(false)
+  })
+
   it('换话题回到文档 tab（旧行为：切话题会把抽屉关掉）', async () => {
     const { container, rerender } = mountPanel('topic-A')
     await flush()

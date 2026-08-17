@@ -79,6 +79,7 @@ function tabFromUrl(): TabKey | null {
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
 function setTab(key: TabKey) {
   active.value = key
+  if (key === 'changes') markChangesSeen()
   emit('update:tab', key)
 }
 
@@ -166,7 +167,7 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
 // vs 任务型 would have been a guess about capability rather than a reading of it.
 const summary = ref<{ changedFiles: string[]; hasRun: boolean }>({ changedFiles: [], hasRun: false })
 
-async function pollWorkSummary() {
+async function pollWorkSummary(opts: { seen?: boolean } = {}) {
   const tid = props.topic?.id
   const pid = props.topic?.project_id
   if (!tid || !pid) return
@@ -180,6 +181,21 @@ async function pollWorkSummary() {
   }
   if (props.topic?.id !== tid) return
   summary.value = { changedFiles: next.changed_files, hasRun: next.has_run }
+  // Arriving at a topic that already had changes is not news, exactly as it is
+  // not news for the preview — the hint means 「这一轮干出来的」.
+  if (opts.seen || active.value === 'changes') markChangesSeen()
+}
+
+// ---- 「改动变了」 on the 改动 tab, same shape as the preview's dot ----
+// The count is the size of the review surface and is always worth showing; what
+// needs a colour is 「这些改动是你上次看过之后才有的」. 芝士 works for minutes at a
+// time and the reader is usually on 文档 while it does, so without this the only
+// way to learn a turn produced anything was to click and compare.
+const changesKey = computed(() => summary.value.changedFiles.join('\n'))
+const changesSeen = ref<string>('')
+const changesHasNew = computed(() => !!changesKey.value && changesKey.value !== changesSeen.value)
+function markChangesSeen() {
+  changesSeen.value = changesKey.value
 }
 
 function tabIsOffered(key: TabKey): boolean {
@@ -196,6 +212,17 @@ function tabIsOffered(key: TabKey): boolean {
 }
 
 const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
+
+/** What the signal on a tab means, for people who reach it by hover or reader. */
+function tabTitle(t: TabDef): string {
+  if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
+  if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
+  if (t.key === 'changes' && summary.value.changedFiles.length) {
+    const n = summary.value.changedFiles.length
+    return changesHasNew.value ? `${t.label}（${n} 个文件，有新改动）` : `${t.label}（${n} 个文件）`
+  }
+  return t.label
+}
 // 房间型话题（谁也没在里面干过活）就只剩文档一个 tab —— 一条只有一个选项的
 // tab 栏教不了任何东西，只是一条占着 33px 的横线。
 const showTabBar = computed(() => tabs.value.length > 1)
@@ -210,9 +237,10 @@ watch(
     active.value = tabFromUrl() ?? 'doc'
     markPreviewSeen(null)
     summary.value = { changedFiles: [], hasRun: false }
+    changesSeen.value = ''
     if (id) {
       void pollPreviewPointer({ seen: true })
-      void pollWorkSummary()
+      void pollWorkSummary({ seen: true })
     }
   },
   { immediate: true }
@@ -257,14 +285,28 @@ defineExpose({ pulse, highlightTurn, openFile, refreshComments })
           class="tabbar__tab"
           :class="{ 'tabbar__tab--on': active === t.key }"
           :aria-selected="active === t.key"
-          :title="t.key === 'preview' && previewHasNew ? `${t.label}（有新内容）` : t.label"
+          :title="tabTitle(t)"
           @click="setTab(t.key)"
         >
           <v-icon size="16">{{ t.icon }}</v-icon>
           {{ t.label }}
+          <!-- 信号上 Tab，不抢占视图: 芝士 works for minutes at a time and the
+               reader is usually somewhere else while it does, so what it
+               produced has to be visible from the tab it produced it on. None
+               of these ever selects a tab for you. -->
+          <span v-if="t.key === 'site' && working" class="tabbar__pulse" />
           <!-- A dot, not a count: there is only ever one current preview, so a
                number would be noise. -->
           <span v-if="t.key === 'preview' && previewHasNew" class="tabbar__dot" />
+          <!-- 改动 is the opposite: how much there is to review is the useful
+               part, so the count carries the signal and turns amber when it is
+               work you have not looked at yet. -->
+          <span
+            v-if="t.key === 'changes' && summary.changedFiles.length"
+            class="tabbar__count"
+            :class="{ 'tabbar__count--new': changesHasNew }"
+            >{{ summary.changedFiles.length }}</span
+          >
         </button>
       </div>
 
@@ -357,12 +399,45 @@ defineExpose({ pulse, highlightTurn, openFile, refreshComments })
   height: 2px;
   background: var(--ink);
 }
-/* 有新内容 —— 唯一允许在这里出现的琥珀。 */
+/* 有新内容 —— 琥珀在这条 tab 栏里只给「有东西等你看」，不给选中态。 */
 .tabbar__dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--accent);
+}
+/* 芝士正在这个 tab 后面干活。呼吸而不是常亮：常亮说的是「有个东西」，呼吸说的
+   是「正在发生」，而现场这一片的全部意义就是后者。 */
+.tabbar__pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: tabbar-breathe 1.6s ease-in-out infinite;
+}
+@keyframes tabbar-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tabbar__pulse {
+    animation: none;
+  }
+}
+/* 改动的规模。默认是中性的事实，只有「你还没看过的那些」才配琥珀。 */
+.tabbar__count {
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--faint);
+}
+.tabbar__count--new {
+  color: var(--accent);
 }
 .tabbody {
   position: relative;
