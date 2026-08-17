@@ -62,7 +62,7 @@ def _unregister(screen: HubScreen) -> None:
 
 def test_project_member_may_watch_screen(client):
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     alice = _login(client, "alice")
     screen = _register_screen(
@@ -84,7 +84,7 @@ def test_project_member_may_watch_screen(client):
 
 def test_outsider_cannot_watch_screen(client):
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     bob = _login(client, "bob")  # logged in, but not in alice's project/topic
     screen = _register_screen(
@@ -115,10 +115,10 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
     """A cheese write carrying ``X-Cheese-Screen`` acts as the screen's agent-user
     (device agent-as-user), not the generic 芝士 nor the body's author."""
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
-        "/api/topics", json={"project_id": project["id"], "title": "T"}
+        "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]
     screen = _register_screen(
         project_id=uuid.UUID(project["id"]),
@@ -127,7 +127,7 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
     )
     try:
         r = client.put(
-            f"/api/topics/{topic['id']}/doc",
+            f"/topics/{topic['id']}/doc",
             json={"content": "# hi", "author": "someone-forged"},
             headers={"X-Cheese-Screen": screen.token},
         )
@@ -139,14 +139,14 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
 
 def test_cheese_call_without_screen_header_is_not_the_agent(client):
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     topic = client.post(
-        "/api/topics", json={"project_id": project["id"], "title": "T"}
+        "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]
     # No X-Cheese-Screen → the screen attribution never fires (author is the fallback).
     r = client.put(
-        f"/api/topics/{topic['id']}/doc",
+        f"/topics/{topic['id']}/doc",
         json={"content": "# hi", "author": "human-alice"},
     )
     assert r.status_code == 200, r.text
@@ -169,7 +169,7 @@ def _enroll_device(client, owner_token: str, project_id: str | None = None) -> d
 
 def test_my_devices_list_rename_and_unbind(client):
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     alice = _login_real(client, "alice")
     enrolled = _enroll_device(client, alice, project_id=project["id"])
@@ -246,7 +246,7 @@ def test_a_member_can_type_into_the_screen(client, monkeypatch):
     monkeypatch.setattr(device_hub, "viewer_input", _capture)
 
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     alice = _login(client, "alice")
     screen = _register_screen(
@@ -282,7 +282,7 @@ def test_keystrokes_before_attaching_are_dropped(client, monkeypatch):
     monkeypatch.setattr(device_hub, "viewer_input", _capture)
 
     project = client.post(
-        "/api/projects", json={"name": "P2", "owner_handle": "alice"}
+        "/projects", json={"name": "P2", "owner_handle": "alice"}
     ).json()["data"]
     alice = _login(client, "alice")
     screen = _register_screen(

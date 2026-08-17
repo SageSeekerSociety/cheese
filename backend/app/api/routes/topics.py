@@ -72,7 +72,7 @@ from app.domain.usage.repositories import ComputeGrantRepository, UsageRepositor
 from app.domain.webhook import service as webhook_service
 from app.domain.workspace import service as ws
 
-router = APIRouter(prefix="/api/topics", tags=["topics"])
+router = APIRouter(prefix="/topics", tags=["topics"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -1570,7 +1570,7 @@ async def attachment_raw(
 
 # Per-project unread map lives under /api/projects (a "/unread" path under
 # /api/topics would be shadowed by the /{topic_id} route). Separate router.
-project_router = APIRouter(prefix="/api/projects", tags=["topics"])
+project_router = APIRouter(prefix="/projects", tags=["topics"])
 
 
 @project_router.get("/{project_id}/topic-unread")
@@ -1619,7 +1619,7 @@ async def project_private_unread(
 
 
 # Block upgrade lives here (it produces a topic). Separate router prefix.
-block_router = APIRouter(prefix="/api/blocks", tags=["topics"])
+block_router = APIRouter(prefix="/blocks", tags=["topics"])
 
 
 @block_router.post("/{block_id}/upgrade")

@@ -12,7 +12,7 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -56,7 +56,7 @@ def test_connect_uses_the_existing_installation(client, monkeypatch):
     pid = _make_project(client)
 
     r = client.post(
-        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+        f"/projects/{pid}/github/connect", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200
     data = r.json()["data"]
@@ -64,7 +64,7 @@ def test_connect_uses_the_existing_installation(client, monkeypatch):
     assert data["repo"] == "acme/widgets"
 
     # The connection is recorded — the status endpoint sees it too.
-    conn = client.get(f"/api/projects/{pid}/github/connection").json()["data"]
+    conn = client.get(f"/projects/{pid}/github/connection").json()["data"]
     assert conn == {"connected": True, "repo": "acme/widgets", "account": "acme"}
 
 
@@ -78,7 +78,7 @@ def test_connect_falls_back_to_the_install_url(client, monkeypatch):
     pid = _make_project(client)
 
     r = client.post(
-        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+        f"/projects/{pid}/github/connect", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200
     data = r.json()["data"]
@@ -96,7 +96,7 @@ def test_connect_skips_github_without_a_github_upstream(client, monkeypatch):
     pid = _make_project(client)
 
     r = client.post(
-        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+        f"/projects/{pid}/github/connect", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200
     assert r.json()["data"]["connected"] is False
@@ -115,11 +115,11 @@ def test_connect_is_idempotent_once_connected(client, monkeypatch):
     pid = _make_project(client)
 
     first = client.post(
-        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+        f"/projects/{pid}/github/connect", headers=session_auth_headers("alice")
     )
     assert first.json()["data"]["connected"] is True
     second = client.post(
-        f"/api/projects/{pid}/github/connect", headers=session_auth_headers("alice")
+        f"/projects/{pid}/github/connect", headers=session_auth_headers("alice")
     )
     assert second.json()["data"]["connected"] is True
     assert second.json()["data"]["repo"] == "acme/widgets"
@@ -135,5 +135,5 @@ def test_connect_requires_auth(client, monkeypatch):
     )
     pid = _make_project(client)
 
-    r = client.post(f"/api/projects/{pid}/github/connect")
+    r = client.post(f"/projects/{pid}/github/connect")
     assert r.status_code == 401

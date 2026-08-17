@@ -40,7 +40,7 @@ from app.domain.conclusion.services import (
 
 logger = logging.getLogger("cheesex.conclusion")
 
-router = APIRouter(prefix="/api", tags=["conclusion"])
+router = APIRouter(prefix="", tags=["conclusion"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

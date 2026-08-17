@@ -27,7 +27,7 @@ def _now() -> datetime:
 
 def _project(client, name: str = "P") -> str:
     return client.post(
-        "/api/projects", json={"name": name, "owner_handle": "andyl"}
+        "/projects", json={"name": name, "owner_handle": "andyl"}
     ).json()["data"]["id"]
 
 

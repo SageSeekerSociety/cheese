@@ -30,22 +30,20 @@ from tests.integration.conftest import room_text, session_auth_headers
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/accept-card",
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
@@ -57,11 +55,11 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
 
 
 def _topic(client, topic_id: str) -> dict:
-    return client.get(f"/api/topics/{topic_id}").json()["data"]
+    return client.get(f"/topics/{topic_id}").json()["data"]
 
 
 def _cards_for_topic(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
 
 
 def _deployed_job(name: str = "deploy") -> github_pr.WorkflowJob:
@@ -370,7 +368,7 @@ def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
 
 
 def _poll(client) -> dict:
-    r = client.post("/api/admin/scheduler/poll-open-prs")
+    r = client.post("/admin/scheduler/poll-open-prs")
     assert r.status_code == 200
     return r.json()["data"]
 
@@ -383,7 +381,7 @@ def test_accept_with_token_opens_pr_topic_stays_active(client, monkeypatch):
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -427,7 +425,7 @@ def test_accept_pr_open_failure_degrades_with_github_call_failed_reason(
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -450,7 +448,7 @@ def test_poll_ci_pending_no_change(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -486,7 +484,7 @@ def test_poll_token_gone_pauses_with_visible_reason(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -517,7 +515,7 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -558,7 +556,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -568,7 +566,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
 
         _poll(client)
         wait_work_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         # 平台提示统一契约: 房间里是一行 + 折叠的 `meta.detail`（`room_text` 把两半
         # 都算上），而**行动指引整段只进芝士的 prompt**，房间里根本不显示 —— 所以
@@ -591,7 +589,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         # Polling again with the SAME failing commit must not spam a second nudge.
         _poll(client)
         wait_work_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert contents.count("pytest: 3 failed") == nudge_count
 
@@ -605,7 +603,7 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         fake.check_state_by_sha[new_sha] = ("failure", "pytest: 1 failed now")
         _poll(client)
         wait_work_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "pytest: 1 failed now" in contents
     finally:
@@ -651,7 +649,7 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
 
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -721,7 +719,7 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
 
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -826,7 +824,7 @@ def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)  # born pending, no App PR recorded yet
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -970,7 +968,7 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     cid = _make_card(client, tid)
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -1058,7 +1056,7 @@ def test_accept_claims_the_pr_that_already_exists_on_the_branch(client, monkeypa
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -1117,7 +1115,7 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -1141,7 +1139,7 @@ def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -1160,7 +1158,7 @@ def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1202,7 +1200,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1214,7 +1212,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
 
         _poll(client)
         wait_work_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "Pull Request has merge conflicts" in contents
         # Must be actionable from inside the sandbox: 芝士 has no GitHub
@@ -1227,7 +1225,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         # Same refusal next tick → no second summon.
         _poll(client)
         wait_work_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert contents.count("Pull Request has merge conflicts") == first_count
 
@@ -1235,7 +1233,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         fake.merge_blocked_by_number[number] = "HTTP 409：Head branch was modified"
         _poll(client)
         wait_work_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "Head branch was modified" in contents
 
@@ -1254,7 +1252,7 @@ def test_poll_merge_refusal_reason_updates_when_it_changes(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1287,7 +1285,7 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1323,7 +1321,7 @@ def _accept_to_pr_open(client, monkeypatch) -> tuple[FakeGitHubPrClient, str, in
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     accepted = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     ).json()["data"]

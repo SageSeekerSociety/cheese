@@ -53,9 +53,9 @@ def stub_agent() -> MultiMessageAgent:
 
 
 def _run_turn(client) -> tuple[str, list[dict]]:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "alice"},
     ).json()["data"]
     with client.websocket_connect(chat_ws_url(t["id"], "alice")) as ws:
@@ -98,7 +98,7 @@ def test_each_message_boundary_lands_as_own_block(client):
 
 def test_result_text_is_not_duplicated_as_extra_block(client):
     topic_id, _frames = _run_turn(client)
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     ai_messages = [
         b for b in blocks if b["author_type"] == "ai" and b["kind"] == "message"
     ]

@@ -48,10 +48,10 @@ def runner():
 
 
 def _topic(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    return client.post(
-        "/api/topics", json={"project_id": p["id"], "title": "T"}
-    ).json()["data"]["id"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    return client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
+        "data"
+    ]["id"]
 
 
 def _register(client, tid: str, **over) -> dict:
@@ -62,7 +62,7 @@ def _register(client, tid: str, **over) -> dict:
         "log_path": "/home/node/.cheese/await/run.log",
     }
     body.update(over)
-    r = client.post(f"/api/topics/{tid}/background-task", json=body)
+    r = client.post(f"/topics/{tid}/background-task", json=body)
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -71,14 +71,14 @@ def _done(client, tid: str, task: dict, **over):
     body = {"exit_code": 0, "tail": "12 passed", "duration_s": 2400.0}
     body.update(over)
     return client.post(
-        f"/api/topics/{tid}/background-task/{task['task_id']}/done",
+        f"/topics/{tid}/background-task/{task['task_id']}/done",
         json=body,
         headers={"X-Cheese-Token": task["wake_token"]},
     )
 
 
 def _blocks(client, tid: str) -> list[dict]:
-    return client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
 
 
 def test_a_finished_task_wakes_the_topic_with_its_result(client, runner):
@@ -168,7 +168,7 @@ def test_registration_is_capped_per_topic(client, runner):
     for _ in range(awaited_tasks.MAX_ACTIVE_PER_TOPIC):
         _register(client, tid)
     r = client.post(
-        f"/api/topics/{tid}/background-task",
+        f"/topics/{tid}/background-task",
         json={"command": "sleep 1", "label": "", "timeout_s": 60, "log_path": "/x"},
     )
     assert r.status_code == 409
@@ -211,7 +211,7 @@ def test_an_archived_topic_refuses_new_background_tasks(client, runner):
     tid = _topic(client)
     _archive(client, tid)
     r = client.post(
-        f"/api/topics/{tid}/background-task",
+        f"/topics/{tid}/background-task",
         json={"command": "sleep 1", "label": "", "timeout_s": 60, "log_path": "/x"},
     )
     assert r.status_code == 422
@@ -242,7 +242,7 @@ def test_a_report_needs_the_wake_token(client, runner):
     tid = _topic(client)
     task = _register(client, tid)
     r = client.post(
-        f"/api/topics/{tid}/background-task/{task['task_id']}/done",
+        f"/topics/{tid}/background-task/{task['task_id']}/done",
         json={"exit_code": 0, "tail": "", "duration_s": 1.0},
         headers={"X-Cheese-Token": "not-a-real-token"},
     )

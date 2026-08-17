@@ -41,6 +41,7 @@ from app.domain.agent.platform_notices import (
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
+    delivery_fallback_notice,
     notice,
 )
 from app.domain.identity.actor import Actor
@@ -586,6 +587,13 @@ class AgentWorkRunner:
         metered work. Keeping those as two operations makes the ordering real:
         the project queue and credit gate can delay/refuse only the latter.
         """
+        channel = str(topic_id)
+        # Capture the user's arrival-time expectation before the database write.
+        # The live session may finish while the message is being persisted; that
+        # race is still a delivery fallback, not an ordinary idle-topic message.
+        live_delivery_expected = chat_service.has_running_turn(topic_id) or bool(
+            self._broker.active_turn_ids(channel)
+        )
         payloads, user_block_id, user_block_ids = await chat_service.post_user_message(
             topic_id,
             author=author,
@@ -595,7 +603,6 @@ class AgentWorkRunner:
             attachments=attachments,
         )
         turn_id = user_block_id
-        channel = str(topic_id)
         for payload in payloads:
             await self._broker.publish(
                 channel, {"type": "user_block", "block": payload}
@@ -619,6 +626,7 @@ class AgentWorkRunner:
                 provision_actor=provision_actor,
                 landed_user_block_id=user_block_id,
                 landed_user_block_ids=user_block_ids,
+                live_delivery_expected=live_delivery_expected,
             )
         )
         self._tasks.add(task)
@@ -1373,6 +1381,10 @@ class AgentWorkRunner:
         # still pending admission and may instead merge into a live turn.
         landed_user_block_id: uuid.UUID | None = None,
         landed_user_block_ids: list[uuid.UUID] | None = None,
+        # True when live work existed as this human message arrived. If that
+        # work disappears before injection, normal queueing is still a fallback
+        # and must be reported as an error.
+        live_delivery_expected: bool = False,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
     ) -> None:
@@ -1385,11 +1397,20 @@ class AgentWorkRunner:
                 author,
                 attachments,
             )
-            if delivered:
+            if delivered is True:
                 ack = await chat_service.ack_summon(landed_user_block_id, topic_id)
                 if ack is not None:
                     await self._broker.publish(channel, {"type": "reaction", **ack})
                 return
+            if delivered is False or live_delivery_expected:
+                fallback_text, fallback_meta = delivery_fallback_notice()
+                await self._post_event(
+                    chat_service,
+                    topic_id,
+                    turn_id,
+                    fallback_text,
+                    meta=fallback_meta,
+                )
 
         # 算力闸 (spec §9.1): refuse on exhausted credits, queue when the
         # project's concurrent-turn ceiling is reached. Both states are posted

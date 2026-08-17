@@ -30,7 +30,7 @@ from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.user.repositories import UserRepository
 
-router = APIRouter(prefix="/api/projects", tags=["agent-credential"])
+router = APIRouter(prefix="/projects", tags=["agent-credential"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

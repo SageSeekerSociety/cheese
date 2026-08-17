@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { Project, ProjectMemberRow, Topic } from '../cx_types'
+import type { VisibleRow } from '../lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { relTime } from '../lib/relTime'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import { ancestorPathIds, loadCollapsedTopics, saveCollapsedTopics, visibleRows } from '../lib/topicTree'
 import { avatarColor } from '../utils/avatar'
@@ -255,13 +255,48 @@ watch(
 // 里面的那个话题"永远不会被折叠藏掉。用 reveal 而不是"自动展开"，是为了不把
 // 用户自己设的折叠状态在导航时偷偷改写——离开之后那一支照旧是收起来的。
 const selectedPath = computed(() => ancestorPathIds(props.topics, props.selectedTopicId))
+
+// 状态查表：折叠聚合要按 id 问「这个话题在跑吗 / 在等人吗」，而拍平树里只留了
+// id。走一遍 props.topics 建索引，别在每一行上做线性查找。
+const topicById = computed(() => new Map(props.topics.map((t) => [t.id, t])))
+function runningOf(id: string): boolean {
+  return topicById.value.get(id)?.running === true
+}
+function awaitsOf(id: string): boolean {
+  return topicById.value.get(id)?.awaits_me === true
+}
+
 const visibleTree = computed(() =>
   visibleRows(activeTree.value, {
     collapsed: collapsedIds.value,
     reveal: selectedPath.value,
     unreadOf,
+    runningOf,
+    awaitsOf,
   })
 )
+
+// ---- 行左边那一个 16px 槽 ----
+// 一个槽，按优先级换租客：有子话题 → 折叠开关；否则「等你处理」→ 琥珀点；
+// 否则「芝士在跑」→ 绿呼吸点；都没有就空着（空槽仍占 16px，否则同层级的标题
+// 左缘会参差）。原先 chevron 和状态点各占一槽，叶子行那 16px 是纯占位。
+//
+// 有子话题的行，chevron 顶掉了状态点，所以它自己带状态色——而且是「自己的 +
+// 收起来的后代的」并成一个信号。收起来的父话题会把子话题的呼吸点整个藏掉是原
+// 先的一个 bug（只有未读会聚合，"在跑" 不聚合），合槽顺手修掉它。展开一层就能
+// 分清动静是本行的还是子话题的，扫侧栏时要的本来就是"这里面有动静"。
+function rowAwaits(row: VisibleRow<Topic>): boolean {
+  return row.topic.awaits_me === true || row.hiddenAwaits
+}
+function rowRunning(row: VisibleRow<Topic>): boolean {
+  return row.topic.running === true || row.hiddenRunning
+}
+function toggleTitle(row: VisibleRow<Topic>): string {
+  if (!row.collapsed) return '收起子话题'
+  if (row.hiddenAwaits) return '展开子话题：里面有事等你处理'
+  if (row.hiddenRunning) return '展开子话题：芝士正在里面工作'
+  return '展开子话题'
+}
 
 function toggleCollapse(id: string) {
   const next = new Set(collapsedIds.value)
@@ -320,12 +355,12 @@ function setActionsMenu(topicId: string, open: boolean) {
 // 这一行在任何一种文档打开时都是选中态。
 const onDocs = computed(() => !!props.activeDocs)
 
-// 一列图标，一列文字。深度 0 的话题行是「8px 起 + 18px 的折叠开关占位」，所以
-// 没有开关的行必须自己补上这 18px，否则它们的图标整整靠左一格。写在 style 上
-// 而不是 scoped class 里：Vuetify 的 `.v-list--nav .v-list-item` 内边距比单个
-// scoped 类更特化，话题行本来也是这么压住它的。
-const PINNED_INDENT = { paddingInlineStart: '8px' } // 模板里自带占位 span
-const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，直接补齐
+// 一列图标，一列文字。侧栏里每一行的左侧都是「8px 起 + 一个 16px 槽」——话题行
+// 是折叠开关/状态点，置顶行是自己的图标，项目文档/私聊是图标或头像。所以缩进
+// 只有一个值了（折叠开关不再单独占一列，见上面的合槽说明）。写在 style 上而不是
+// scoped class 里：Vuetify 的 `.v-list--nav .v-list-item` 内边距比单个 scoped
+// 类更特化，话题行本来也是这么压住它的。
+const ROW_INDENT = { paddingInlineStart: '8px' }
 </script>
 
 <template>
@@ -335,31 +370,35 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
     <!-- 三段式 (C3): 头固定 / 中段唯一滚动 / 尾固定。私聊和它的未读徽标在
          话题列表滚到底时必须还在屏幕上。 -->
     <div class="d-flex flex-column fill-height">
-      <!-- 项目头 = 纯标识 + 一个 ⋯ 菜单。48px 基线 (.sidebar-header) 和首页
-           侧栏头、内容区 PageHeader 共用，三条标题线才落在同一水平上。 -->
-      <div class="sidebar-header rail-header">
-        <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
-        <v-menu location="bottom end">
-          <template #activator="{ props: menuProps }">
-            <v-btn
-              v-bind="menuProps"
-              icon="mdi-dots-horizontal"
-              size="x-small"
-              variant="text"
-              class="rail-header__menu"
-              title="项目菜单"
-            />
-          </template>
-          <v-list density="compact" nav>
-            <v-list-item
-              prepend-icon="mdi-cog-outline"
-              title="项目设置"
-              :disabled="!selectedProjectId"
-              @click="openProjectPage('project-settings')"
-            />
-          </v-list>
-        </v-menu>
-      </div>
+      <!-- 项目头 = 标识 + 菜单，整块可点。48px 基线 (.sidebar-header) 和首页
+           侧栏头、内容区 PageHeader 共用，三条标题线才落在同一水平上。
+           activator 用 <button> 而不是 <div>（SpaceSidebar 那个先例是裸 div）：
+           整块可点就得整块可聚焦、能用回车/空格打开，否则键盘用户够不着项目
+           设置。右边的 chevron 只是"这里能展开"的指示，不再是唯一的靶子——所以
+           它是 v-icon 不是 v-btn，按钮套按钮既非法也抢焦点。 -->
+      <v-menu location="bottom end">
+        <template #activator="{ isActive, props: menuProps }">
+          <button
+            v-bind="menuProps"
+            type="button"
+            class="sidebar-header sidebar-header-menu rail-header"
+            :class="{ 'sidebar-header-menu-active': isActive }"
+            title="项目菜单"
+          >
+            <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
+            <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
+            <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
+          </button>
+        </template>
+        <v-list density="compact" nav>
+          <v-list-item
+            prepend-icon="mdi-cog-outline"
+            title="项目设置"
+            :disabled="!selectedProjectId"
+            @click="openProjectPage('project-settings')"
+          />
+        </v-list>
+      </v-menu>
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div class="rail-scroll flex-grow-1 overflow-y-auto">
@@ -377,12 +416,13 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
               rounded="lg"
               class="nav-row pinned-row"
               :class="{ 'is-active': rootTopic.id === selectedTopicId }"
-              :style="PINNED_INDENT"
+              :style="ROW_INDENT"
               @click="emit('select-topic', rootTopic.id)"
             >
               <template #prepend>
-                <span class="subtree-toggle subtree-toggle--empty" />
-                <span class="row-glyph-wrap">
+                <!-- 置顶行的槽住的是它自己的图标：# / 总览 / 日历 三个各不相同，
+                     是能区分行的信息，不是话题行上那种每行一模一样的装饰。 -->
+                <span class="row-slot">
                   <v-icon
                     size="16"
                     class="row-glyph"
@@ -404,12 +444,11 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
               rounded="lg"
               class="nav-row pinned-row"
               :class="{ 'is-active': route.name === p.key }"
-              :style="PINNED_INDENT"
+              :style="ROW_INDENT"
               @click="openProjectPage(p.key)"
             >
               <template #prepend>
-                <span class="subtree-toggle subtree-toggle--empty" />
-                <span class="row-glyph-wrap">
+                <span class="row-slot">
                   <v-icon size="16" class="row-glyph" :icon="p.icon" />
                 </span>
               </template>
@@ -446,39 +485,38 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
               }"
               @click="emit('select-topic', row.topic.id)"
             >
-              <!-- 干净行 + 前置图标做身份锚（混合版）：图标未读变琥珀，
-                   种类标签仍不要（缩进表达层级），操作 hover 才浮现。 -->
+              <!-- 干净行：左边只有一个 16px 槽（状态，或顶替它的折叠开关），
+                   身份靠标题本身，种类标签不要（缩进表达层级），操作 hover 才浮现。
+                   原先这里还有一颗每行都一样的装饰图标——同一层级里人人相同的标记
+                   区分不了任何东西，删掉了。 -->
               <template #prepend>
-                <!-- 折叠开关：只有真有子话题的行才画，没有的行留同宽占位，
-                     免得两种行的图标错开一列。 -->
                 <button
                   v-if="row.hasChildren"
                   type="button"
-                  class="subtree-toggle"
-                  :title="row.collapsed ? '展开子话题' : '收起子话题'"
+                  class="row-slot subtree-toggle"
+                  :class="{
+                    'subtree-toggle--awaits': rowAwaits(row),
+                    'subtree-toggle--running': !rowAwaits(row) && rowRunning(row),
+                  }"
+                  :title="toggleTitle(row)"
                   :aria-expanded="!row.collapsed"
                   @click.stop="toggleCollapse(row.topic.id)"
                 >
-                  <v-icon size="15" class="c-faint">
+                  <v-icon size="15">
                     {{ row.collapsed ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
                   </v-icon>
                 </button>
-                <span v-else class="subtree-toggle subtree-toggle--empty" />
-                <span class="row-glyph-wrap">
-                  <v-icon
-                    v-if="row.depth === 0"
-                    size="16"
-                    class="row-glyph"
-                    :class="{ 'row-glyph--unread': row.unreadTotal > 0 }"
-                    icon="mdi-message-text-outline"
-                  />
-                  <!-- 分身不用钩子箭头：树的结构交给缩进 + 竖向引导线，
-                       行内只留一个小圆点做锚（未读转琥珀）。 -->
-                  <span v-else class="row-glyph row-glyph--dot" :class="{ 'row-glyph--unread': row.unreadTotal > 0 }" />
-                  <!-- 芝士还在这个话题里跑这一轮：呼吸点，人凭它判断啥时候
-                       该派下一个任务——和归档/采纳状态无关，只是本轮有没有跑完。 -->
-                  <span v-if="row.topic.running" class="running-dot" title="芝士正在这个话题里工作" />
+                <!-- 等你处理：有点名给你的验收卡，或有 @你 的未读。排在"在跑"
+                     前面——芝士在忙是它的事，等你做事才是你的事。 -->
+                <span v-else-if="row.topic.awaits_me" class="row-slot">
+                  <span class="await-dot" title="有事等你处理" />
                 </span>
+                <!-- 芝士还在这个话题里工作：呼吸点，人凭它判断啥时候该派下一个
+                     任务——和归档/采纳状态无关，只是这会儿有没有跑完。 -->
+                <span v-else-if="row.topic.running" class="row-slot">
+                  <span class="running-dot" title="芝士正在这个话题里工作" />
+                </span>
+                <span v-else class="row-slot" />
               </template>
               <v-list-item-title class="d-flex align-center topic-title">
                 <v-text-field
@@ -523,11 +561,6 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
                   :title="row.hiddenUnread > 0 ? `含收起的子话题 ${row.hiddenUnread} 条新消息` : undefined"
                   >{{ countLabel(row.unreadTotal) }}</span
                 >
-                <!-- items 感的右锚：没未读时给最后活跃时间（真实信息，非装饰）。
-                     updated_at 是兜底：它只在话题行自己被改过时才动，回答不了
-                     "最后有动静是什么时候"，只用在 last_activity_at 缺席的接口
-                     返回上（新建/改名/归档的响应体）。 -->
-                <span v-else class="row-time">{{ relTime(row.topic.last_activity_at ?? row.topic.updated_at) }}</span>
                 <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度 -->
                 <div class="row-actions" @click.stop>
                   <v-menu
@@ -630,7 +663,7 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
               rounded="lg"
               class="nav-row docs-row"
               :class="{ 'is-active': onDocs }"
-              :style="FLAT_ROW_INDENT"
+              :style="ROW_INDENT"
               prepend-icon="mdi-file-document-outline"
               title="项目文档"
               @click="emit('select-docs', 'charter')"
@@ -668,7 +701,7 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
             rounded="lg"
             class="nav-row private-row"
             :class="{ 'is-active': privateActive }"
-            :style="FLAT_ROW_INDENT"
+            :style="ROW_INDENT"
             @click="emit('select-private')"
           >
             <template #prepend>
@@ -695,7 +728,7 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
             rounded="lg"
             class="nav-row private-row"
             :class="{ 'is-active': activePeer === dm.handle }"
-            :style="FLAT_ROW_INDENT"
+            :style="ROW_INDENT"
             @click="emit('select-peer-dm', dm.handle)"
           >
             <template #prepend>
@@ -759,8 +792,27 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
   padding-inline-end: 8px;
 }
 
-/* 项目头：纯标识。高度和分隔线来自全局 .sidebar-header (48px 基线)，这里只补
-   名字的排版和 ⋯ 的静默配色。 */
+/* 项目头：整块是菜单的 activator。高度、内边距、底部分隔线都来自全局
+   .sidebar-header (48px 基线)，这里只把 <button> 的浏览器默认样式抹平——
+   注意只抹左右和上边框，底边那条分隔线是 .sidebar-header 画的，不能连坐。 */
+.rail-header {
+  width: 100%;
+  border-inline: 0;
+  border-block-start: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.rail-header:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.rail-header__caret {
+  flex: none;
+  color: var(--muted);
+}
 .rail-header__name {
   min-width: 0;
   font-size: 14px;
@@ -769,10 +821,6 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.rail-header__menu {
-  flex: none;
-  color: var(--muted);
 }
 
 /* 三段式：中段是这个侧栏里唯一的滚动容器，尾段永远贴着底。
@@ -807,12 +855,26 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
   font-size: 13.5px;
 }
 
-/* Active row: --fill bg + --ink text. 没有琥珀左竖条——选中态靠底色和字重就够
-   了（Slack/Discord 的行选中态也只是底色），左条纹在这套设计语言里只留给引用
-   块和树的结构线。Kill Vuetify's default active overlay so no amber bleeds in. */
+/* 三态：静默（透明，露出 rail 的 --canvas）/ hover --fill-2 / 选中 --line-2。
+   没有琥珀左竖条——选中态靠底色和字重就够了（Slack/Discord 的行选中态也只是
+   底色），左条纹在这套设计语言里只留给引用块和树的结构线。
+
+   为什么不是 --fill：--fill 的定义就是「hover on --surface」，而这条 rail 现在
+   坐在 --canvas 上。浅色主题里 --fill #f4f5f7 压在 --canvas #f7f8fa 上对比度
+   只有 1.027:1（3/255），等于看不见；hover 还用同一个值，两态也彼此不可分。
+
+   为什么两个主题共用一组 token：三档明暗次序在两个主题间是反的（浅色
+   surface > canvas > fill > fill-2，深色 fill-2 > fill > surface > canvas），
+   所以选的依据是**对 --canvas 的对比度**而不是名字。--fill-2 → --line-2 这一
+   对在两个主题下都是单调递增地离开 canvas：
+     浅色 canvas #f7f8fa：fill-2 1.083:1 → line-2 1.208:1（两者之间 1.115:1）
+     深色 canvas #141517：fill-2 1.301:1 → line-2 1.701:1（两者之间 1.308:1）
+   所以不需要任何 [data-theme='dark'] 分支。--line-2 是拿来当底色用的，它在
+   ramp 上正好是"比 fill-2 再深一档"的那个中性色，不是新造的颜色。
+   Kill Vuetify's default active overlay so no amber bleeds in. */
 .topic-row.is-active,
 .nav-row.is-active {
-  background: var(--fill);
+  background: var(--line-2);
 }
 .topic-row.is-active :deep(.v-list-item__overlay),
 .nav-row.is-active :deep(.v-list-item__overlay) {
@@ -952,45 +1014,63 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
   font-weight: 600;
   line-height: 1;
 }
-/* Item 感（混合版）：前置图标做行的身份锚，未读转琥珀。 */
+/* 置顶行的图标：# / 总览 / 日历，三个各不相同所以留着；未读转琥珀。 */
 .row-glyph {
   color: var(--faint);
-}
-.row-glyph--dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  margin-left: 5px;
-  flex: none;
 }
 .row-glyph--unread {
   color: var(--accent);
 }
-.row-glyph-wrap {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
 
-/* 子话题折叠开关：定宽槽，没有子话题的行放同宽占位，图标列才不会错开。 */
-.subtree-toggle {
+/* 行左边那一个 16px 定宽槽。所有行共用（话题行的状态/开关、置顶行的图标），
+   所以图标列和文字列在整条侧栏上都成列。空槽也占满 16px：同层级的标题左缘
+   必须齐，参差比多一点留白难看得多。 */
+.row-slot {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 16px;
   height: 16px;
-  margin-right: 2px;
+}
+
+/* 子话题折叠开关：占同一个槽，顶替状态点。 */
+.subtree-toggle {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.subtree-toggle:hover {
-  background: var(--fill);
+/* 开关不给底色 hover：它坐在的行底色有三档（静默/hover/选中），任何一个固定
+   的底色 token 都会在其中某一档上糊掉。改成图标本身变深——16px 的小控件靠
+   墨色变化做反馈就够，也不用跟行底色抢层次。 */
+.subtree-toggle :deep(.v-icon) {
+  color: var(--faint);
 }
-.subtree-toggle--empty {
-  cursor: default;
-  pointer-events: none;
+.subtree-toggle:hover :deep(.v-icon) {
+  color: var(--text);
+}
+/* 收起来的父话题会把子话题的状态整个藏掉（未读会聚合，"在跑"和"等你"原先不会）
+   ——开关自己带聚合色补上：琥珀 = 里面有事等你，绿 = 里面芝士在跑。展开着的行
+   则表示本行自己的状态，因为槽被开关占了。hover 不改这两个颜色，状态优先于反馈。 */
+/* !important 是被逼的，不是偷懒：上面 .topic-row.is-active :deep(.v-icon) 为了
+   压住 Vuetify 的琥珀 active overlay 用了 !important，选中的那一行会连带把这里
+   的状态色刷成 --muted——正好是"这一行收起来了、里面有事等你"最该看见的时候。 */
+.subtree-toggle--awaits :deep(.v-icon),
+.subtree-toggle--awaits:hover :deep(.v-icon) {
+  color: var(--accent) !important;
+}
+.subtree-toggle--running :deep(.v-icon),
+.subtree-toggle--running:hover :deep(.v-icon) {
+  color: var(--ok) !important;
+}
+
+/* 等你处理：琥珀实心点 + 一圈 accent-wash 光晕。跟绿色呼吸点靠三个通道区分
+   （颜色 / 有没有光晕 / 动不动），不是只靠颜色——红绿色觉障碍下也分得开。 */
+.await-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
 }
 /* 收起来了收了几个——形态沿用「已归档」那颗计数丸。 */
 .subtree-count {
@@ -1002,18 +1082,15 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
   padding: 1px 6px;
   font-variant-numeric: tabular-nums;
 }
-/* 呼吸点：芝士还在这一轮里工作，跟归档/采纳状态无关。 */
+/* 呼吸点：芝士还在这一轮里工作，跟归档/采纳状态无关。
+   原先它绝对定位挂在装饰图标的右下角，所以需要一圈底色描边把自己从图标上抠
+   出来。现在它独占那个槽、周围没有东西可压，描边就只剩害处了——行底色有三档，
+   固定取 --canvas 的描边在 hover 和选中的行上会露出一圈错色的边。 */
 .running-dot {
-  position: absolute;
-  right: -3px;
-  bottom: -3px;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--ok);
-  /* 描边取侧栏自己的底色 (--canvas)，不是 --surface：这条 rail 现在坐在
-     background 层上，用白色描边会在浅色主题下多出一圈亮边。 */
-  box-shadow: 0 0 0 1.5px var(--canvas);
   animation: running-dot-pulse 1.6s ease-in-out infinite;
 }
 @keyframes running-dot-pulse {
@@ -1038,8 +1115,14 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
   width: 1px;
   background: var(--line-2);
 }
-.topic-row:hover {
-  background: var(--fill);
+.topic-row:hover,
+.nav-row:hover {
+  background: var(--fill-2);
+}
+/* 选中的行 hover 不能倒退回 hover 档——否则鼠标一扫过，选中态反而变浅。 */
+.topic-row.is-active:hover,
+.nav-row.is-active:hover {
+  background: var(--line-2);
 }
 .title-unread {
   color: var(--text);
@@ -1107,19 +1190,7 @@ const FLAT_ROW_INDENT = { paddingInlineStart: '26px' } // 没有占位 span，�
 /* While the actions are out, the count steps aside (they share the tail). */
 .topic-row:hover .unread-badge,
 .topic-row:focus-within .unread-badge,
-.topic-row.is-menu-open .unread-badge,
-.topic-row:hover .row-time,
-.topic-row:focus-within .row-time,
-.topic-row.is-menu-open .row-time {
+.topic-row.is-menu-open .unread-badge {
   opacity: 0;
-}
-.row-time {
-  flex: none;
-  color: var(--faint);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  /* 纯展示元素：绝不吃鼠标——hover 时它只是隐形，曾把整个操作工具条挡成
-     "点不动"（playwright 抓的现行：row-time intercepts pointer events）。 */
-  pointer-events: none;
 }
 </style>

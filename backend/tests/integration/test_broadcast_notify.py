@@ -4,9 +4,9 @@ from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _project_topic(client, created_by: str = "alice") -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": created_by},
     ).json()["data"]
     return p["id"], t["id"]
@@ -14,7 +14,7 @@ def _project_topic(client, created_by: str = "alice") -> tuple[str, str]:
 
 def _add(client, tid: str, handle: str, actor: str = "alice") -> None:
     r = client.post(
-        f"/api/topics/{tid}/members",
+        f"/topics/{tid}/members",
         json={"handle": handle, "role": "member", "actor": actor},
     )
     assert r.status_code == 200
@@ -33,7 +33,7 @@ def _post(ws, content: str) -> None:
 
 def _notifs(client, pid: str, handle: str) -> list[dict]:
     return client.get(
-        f"/api/projects/{pid}/alerts",
+        f"/projects/{pid}/alerts",
         headers=session_auth_headers(handle),
     ).json()["data"]["data"]
 
