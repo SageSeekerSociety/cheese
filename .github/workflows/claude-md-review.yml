@@ -1,0 +1,58 @@
+name: CLAUDE.md Review Gate
+
+# CLAUDE.md loads in full on every turn of every session. A wrong line in it is
+# not one wrong file — it is a standing instruction every agent obeys until a
+# person happens to notice, and nothing in CI notices for you. That asymmetry is
+# why this one file needs a human's approval when nothing else in the repo does.
+#
+# This is a check rather than a protected branch because GitHub refuses both
+# protected branches and CODEOWNERS-required review on this repo's plan
+# ("Upgrade to GitHub Pro or make this repository public", HTTP 403). A check can
+# be merged past; a protected branch cannot. If the plan changes, move the rule
+# into branch protection and delete this workflow.
+#
+# `pull_request_review` has no path filter — GitHub does not offer one for that
+# event — so the script re-derives whether the PR touches CLAUDE.md from the API
+# rather than trusting the trigger. That also makes the two events take exactly
+# the same code path.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'CLAUDE.md'
+  # Without this the gate would go red once and stay red: approving a PR does not
+  # re-run its pull_request checks, so there would be no way to turn it green
+  # short of pushing an empty commit.
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: claude-md-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # On the cheese-ci pool, not ubuntu-latest: the org's Actions billing lapsed on
+  # 2026-08-13 and every hosted job is refused before it starts.
+  review-gate:
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The gate proves its own decision logic before being trusted to judge —
+      # a gate that silently stopped counting approvals looks exactly like a
+      # repo where everyone got their review.
+      - name: Gate self-test
+        run: python3 .claude/scripts/check-claude-md-review.py --self-test
+
+      - name: A human must have approved this CLAUDE.md change
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 .claude/scripts/check-claude-md-review.py \
+            --pr "${{ github.event.pull_request.number }}"
