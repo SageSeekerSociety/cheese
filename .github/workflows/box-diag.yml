@@ -76,6 +76,18 @@ jobs:
         run: |
           docker ps --format '{{.Names}}  {{.Image}}' | grep -v cheesex-tmux || true
           df -h / | tail -1
+      - name: Backend log tail
+        # The backend process's own stdout is not reachable any other way: the
+        # box has no public inbound, `backend_log.py` is a POST-only intake, and
+        # no route reads logs back. So a maintenance loop that is failing every
+        # tick — `pr poll failed`, the orphan sweep, the reaper — is invisible
+        # from outside while the symptom (a card that never advances) is not.
+        #
+        # Fixed tail, no parameters: same rule as every other probe in this file
+        # (see the header) — a grep pattern or a line count taken from workflow
+        # input is a remote shell with extra steps. Grep locally in the run log.
+        run: |
+          docker logs --tail 400 --timestamps cheese-backend-1 2>&1 || true
 
   prod-box:
     runs-on: [self-hosted, cheese-prod]
