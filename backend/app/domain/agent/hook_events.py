@@ -15,12 +15,13 @@ Event mapping (verified in the spike, docs/tmux-backend-spike.md):
   SessionStart{session_id}                → AgentSessionInfo
   PreToolUse{tool_name, tool_input}       → AgentToolUse
   MessageDisplay{delta} (non-empty)       → AgentMessage (discrete message)
-  PostToolUse{...}                        → (ignored — no matching AgentEvent)
+  PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
   Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
 """
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 from app.domain.agent.service import (
     AgentDeliveryFailure,
@@ -28,10 +29,17 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentToolResult,
     AgentToolUse,
     AgentUsage,
 )
 from app.domain.usage.tokens import input_output_tokens
+
+# The tools whose RETURN value the room needs (see AgentToolResult): a subagent
+# reports only to whoever spawned it, so without this the timeline shows the
+# question and never the answer. Both names are live — `Task` is the older CLI's
+# name for `Agent` and either can arrive depending on the box's image age.
+_SUBAGENT_TOOLS = {"Task", "Agent"}
 
 
 def _hook_event_name(hook: dict) -> str:
@@ -57,6 +65,27 @@ def _usage_from_hook(hook: dict) -> AgentUsage:
     )
 
 
+def _tool_response_text(response: Any) -> str:
+    """The text a tool returned, out of whichever shape Claude Code used.
+
+    Deliberately shape-tolerant rather than shape-asserting: the payload for the
+    subagent tools has been a plain string, a list of content blocks, and a dict
+    wrapping that list at different CLI versions, and a hook we cannot read is
+    indistinguishable in the room from a subagent that returned nothing.
+    """
+    if isinstance(response, str):
+        return response.strip()
+    if isinstance(response, dict):
+        for key in ("content", "text", "output", "result"):
+            if key in response:
+                return _tool_response_text(response[key])
+        return ""
+    if isinstance(response, list):
+        parts = [_tool_response_text(item) for item in response]
+        return "\n".join(part for part in parts if part).strip()
+    return ""
+
+
 def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
     """One hook payload → one AgentEvent, or None when the hook has no
     platform-visible counterpart (e.g. PostToolUse). A returned AgentResult
@@ -73,6 +102,29 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
         return AgentToolUse(
             name=str(hook.get("tool_name") or ""),
             input=tool_input if isinstance(tool_input, dict) else {},
+            eid=eid if isinstance(eid, str) else None,
+        )
+
+    if event == "PostToolUse":
+        # Only the subagent tools. Surfacing every tool's return would double the
+        # 现场 timeline to say what its effect already says, and a Read's return
+        # is the whole file — the room is for people to read.
+        name = str(hook.get("tool_name") or "")
+        if name not in _SUBAGENT_TOOLS:
+            return None
+        text = _tool_response_text(hook.get("tool_response"))
+        if not text:
+            return None
+        tool_input = hook.get("tool_input")
+        eid = hook.get("_eid")
+        return AgentToolResult(
+            name=name,
+            text=text,
+            description=(
+                str(tool_input.get("description") or "")
+                if isinstance(tool_input, dict)
+                else ""
+            ),
             eid=eid if isinstance(eid, str) else None,
         )
 
@@ -136,7 +188,7 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
             usage=_usage_from_hook(hook),
         )
 
-    # PostToolUse and any unmapped event: nothing to surface.
+    # Any unmapped event: nothing to surface.
     return None
 
 

@@ -70,6 +70,28 @@ class AgentToolUse:
 
 
 @dataclass
+class AgentToolResult:
+    """What a tool handed BACK to 芝士 — carried for the subagent tools only.
+
+    Every other tool's return value is already visible in the room through its
+    effect (a file changed, a command's output scrolled past). A subagent's is
+    not: it goes straight into the spawner's context and dies with the
+    container's transcript, so the room sees "派了一个分身去查 X" and never what
+    the answer was. That is the one return worth an event of its own.
+
+    ``description`` is the spawning call's own one-liner, repeated here so the
+    conclusion can be labelled with the question it answers without the UI
+    having to pair two blocks up.
+    """
+
+    name: str
+    text: str
+    description: str = ""
+    # Stable per-event id, same contract as AgentToolUse.eid.
+    eid: str | None = None
+
+
+@dataclass
 class AgentUsage:
     """Token/cost accounting for one turn (spec §9.1/§10.2)."""
 
@@ -125,7 +147,14 @@ class AgentResult:
     rate_limit: dict | None = None
 
 
-AgentEvent = AgentDelta | AgentMessage | AgentToolUse | AgentSessionInfo | AgentResult
+AgentEvent = (
+    AgentDelta
+    | AgentMessage
+    | AgentToolUse
+    | AgentToolResult
+    | AgentSessionInfo
+    | AgentResult
+)
 
 
 def event_to_dict(event: AgentEvent) -> dict:
@@ -136,6 +165,14 @@ def event_to_dict(event: AgentEvent) -> dict:
         return {"t": "message", "text": event.text, "eid": event.eid}
     if isinstance(event, AgentToolUse):
         return {"t": "tool", "name": event.name, "input": event.input, "eid": event.eid}
+    if isinstance(event, AgentToolResult):
+        return {
+            "t": "tool_result",
+            "name": event.name,
+            "text": event.text,
+            "description": event.description,
+            "eid": event.eid,
+        }
     if isinstance(event, AgentSessionInfo):
         return {"t": "session", "session_id": event.session_id}
     usage = event.usage
@@ -168,6 +205,13 @@ def event_from_dict(d: dict) -> AgentEvent:
     if kind == "tool":
         return AgentToolUse(
             name=d.get("name", ""), input=d.get("input") or {}, eid=d.get("eid")
+        )
+    if kind == "tool_result":
+        return AgentToolResult(
+            name=d.get("name", ""),
+            text=d.get("text", ""),
+            description=d.get("description", "") or "",
+            eid=d.get("eid"),
         )
     if kind == "session":
         return AgentSessionInfo(session_id=d.get("session_id", ""))
