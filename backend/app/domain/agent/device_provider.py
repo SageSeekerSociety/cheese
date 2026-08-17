@@ -790,7 +790,13 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             work_dir=work_dir,
             model=model,
             extra_env=model_env,
-            api_base=f"{self._public_base}/api",
+            # The base already maps 1:1 onto the backend root (see
+            # settings.connector_public_base), and every backend route is bare
+            # since #370 step 2 — so the CLI's base IS that base. Appending
+            # another `/api` was right only while the 2.0 routes carried their
+            # own prefix; afterwards it injected `<origin>/api/api` and every
+            # `cheese` command in a device sandbox 404'd with 话题不存在.
+            api_base=self._public_base,
             cli_url=f"{self._public_base}/sandbox/cli/cheese",
             project_id=str(project_id),
             topic_id=str(topic_id),
@@ -801,9 +807,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             # token the platform CLI already uses from this machine — one
             # convention, so there is a single place to be wrong about the prefix.
             git_remote=(
-                None
-                if co_located
-                else f"{self._public_base}/api/projects/{project_id}/git"
+                None if co_located else f"{self._public_base}/projects/{project_id}/git"
             ),
             git_branch=ws.branch_for_topic(topic_id),
             system_prompt=system_prompt,
