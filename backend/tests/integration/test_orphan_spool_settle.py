@@ -160,7 +160,8 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
 ):
     """The full chain of the incident fix: orphan turn + a Stop in the spool →
     the sweep attaches (no prompt reaches the agent), and the settle it
-    schedules finishes the turn on its own."""
+    schedules finishes the turn on its own — saying nothing, because from the
+    room's side nothing broke."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     factory = client.test_factory
@@ -187,6 +188,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
                 "is_resume": False,
                 "author": "u",
                 "content": "把测试跑绿",
+                "resendable": True,
             }
         }
     )
@@ -216,12 +218,18 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
+    # Nothing is announced. #316 added a verdict here because a restart left the
+    # room looking dead — the backend half died and the session's output only
+    # resurfaced later out of the spool. Retiring the turn (#508) removed that
+    # break: the subscription lives with the screen and reattaches, so 芝士's
+    # output keeps landing. The platform attached, the settle landed the Stop,
+    # and there is no anomaly left for a person to act on.
     verdicts = [
         b
         for b in rows
         if b.author_type == AuthorType.system and "部署中断" in (b.content or "")
     ]
-    assert len(verdicts) == 1  # the room was told, honestly and once
+    assert verdicts == []
     assert rt._load_inflight() == {}
 
 
@@ -262,6 +270,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
                 "is_resume": False,
                 "author": "u",
                 "content": "修一下登录页",
+                "resendable": True,
             }
         }
     )
