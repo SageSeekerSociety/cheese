@@ -2200,8 +2200,44 @@ def snapshot_worktree(
     _jj(wt, "git", "export")
 
 
-def sandbox_available() -> bool:
+# `docker info` costs ~50ms, and the answer changes only when someone starts or
+# stops the daemon — so it is cached for this long rather than paid per call.
+_SANDBOX_PROBE_TTL_S = 30.0
+_sandbox_probe: tuple[float, bool] | None = None
+
+
+def docker_installed() -> bool:
+    """The binary is on PATH. Says nothing about whether it can be used."""
     return shutil.which("docker") is not None
+
+
+def sandbox_available() -> bool:
+    """The sandbox can actually run something — the binary exists AND its daemon
+    answers.
+
+    The binary alone used to be the whole check, which is wrong in the one case
+    that happens most: docker installed, daemon not started. Callers then took
+    the "yes" and failed inside `docker run`, and the message they printed said
+    docker was not FOUND — naming the one problem the host did not have."""
+    global _sandbox_probe
+    if not docker_installed():
+        return False
+    now = time.monotonic()
+    if _sandbox_probe is not None and now - _sandbox_probe[0] < _SANDBOX_PROBE_TTL_S:
+        return _sandbox_probe[1]
+    try:
+        ok = (
+            subprocess.run(  # noqa: S603 — fixed argv, no shell
+                ["docker", "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True,
+                timeout=5,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    _sandbox_probe = (now, ok)
+    return ok
 
 
 def exec_in_sandbox(
@@ -2219,7 +2255,11 @@ def exec_in_sandbox(
         return {
             "exit_code": -1,
             "stdout": "",
-            "stderr": "sandbox 不可用：未找到 docker（需要 Docker 在运行）",
+            "stderr": (
+                "sandbox 不可用：未找到 docker"
+                if not docker_installed()
+                else "sandbox 不可用：docker 已安装但守护进程没有响应"
+            ),
         }
     # A topic's tree is a jj workspace whose .jj/repo pointer only resolves
     # with the main repo's store mounted too (see sandbox_vcs_mounts); the
