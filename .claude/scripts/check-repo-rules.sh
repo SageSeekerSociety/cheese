@@ -249,15 +249,24 @@ check_fixed_palette() {
 # product, the skill's path, and `cheese` among the CLIs that describe
 # themselves — and it does all three.
 check_platform_cli_in_claude_md() {
-  local skill="$ROOT/backend/sandbox/skills/cheese/SKILL.md" subs hits
-  [ -f "$skill" ] && [ -f "$ROOT/CLAUDE.md" ] || return 0
+  local skill="$ROOT/backend/sandbox/skills/cheese/SKILL.md" subs hits targets=()
+  [ -f "$skill" ] || return 0
+  [ -f "$ROOT/CLAUDE.md" ] && targets+=("$ROOT/CLAUDE.md")
+  # .claude/rules/ too, and not as an afterthought: the leak this guard was
+  # written for turned up there next, in a rules file that was ENTIRELY platform
+  # knowledge (cheese gh-token, the App's permission model, how to pull CI logs
+  # from a sandbox) while this guard watched only CLAUDE.md. Same reasoning, and
+  # rules are worse in one way — they carry a `paths:` trigger, so platform
+  # knowledge filed under one gets loaded on an unrelated criterion.
+  for f in "$ROOT"/.claude/rules/*.md; do [ -e "$f" ] && targets+=("$f"); done
+  [ ${#targets[@]} -eq 0 ] && return 0
   subs="$(grep -oE '`cheese [a-z][a-z-]*' "$skill" 2>/dev/null \
     | sed 's/.*cheese //' | sort -u | paste -sd'|' -)"
   [ -z "$subs" ] && return 0
-  hits="$(grep -nE "cheese ($subs)\b" "$ROOT/CLAUDE.md" 2>/dev/null || true)"
+  hits="$(grep -nE "cheese ($subs)\b" "${targets[@]}" 2>/dev/null || true)"
   [ -z "$hits" ] && return 0
-  echo "FAIL: platform CLI documented in CLAUDE.md"
-  report "the cheese CLI in CLAUDE.md — a hosted repo never sees this file" \
+  echo "FAIL: platform CLI documented in a file only this repo sees"
+  report "the cheese CLI in CLAUDE.md / .claude/rules — a hosted repo never sees either" \
     "move it to backend/sandbox/skills/cheese/SKILL.md, which every session's system prompt already carries" \
     "$hits"
 }
@@ -458,7 +467,17 @@ if [ "$SELF_TEST" = 1 ]; then
   # A subcommand the skill does not document is not this guard's business.
   printf '# Project\n\nRun `cheese frobnicate` daily.\n' > "$tmp/CLAUDE.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an undocumented subcommand must not fire"
-  rm -rf "$tmp/backend/sandbox" "$tmp/CLAUDE.md"
+  # The same leak in .claude/rules/ — where it actually turned up, after this
+  # guard had been watching CLAUDE.md alone.
+  rm -f "$tmp/CLAUDE.md"
+  mkdir -p "$tmp/.claude/rules"
+  printf -- '---\npaths:\n  - "backend/**"\n---\n\nPublish with `cheese doc set ./x.md`.\n' \
+    > "$tmp/.claude/rules/leaky.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the cheese CLI in .claude/rules must fail"
+  printf -- '---\npaths:\n  - "backend/**"\n---\n\nThe `cheese` CLI is elsewhere.\n' \
+    > "$tmp/.claude/rules/leaky.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "naming the product in a rule must pass"
+  rm -rf "$tmp/backend/sandbox" "$tmp/.claude"
 
   echo "PASS: check-repo-rules self-test (7 rules, scoping, opt-out and palette ratchet verified)"
   exit 0

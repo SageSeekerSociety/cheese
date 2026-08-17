@@ -87,13 +87,15 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese members` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
 | `cheese await "<命令>" [--label "..."] [--timeout 3600]` | **要等几分钟以上的命令一律走它**(全量检查、构建、长跑脚本)。命令在后台跑,本命令立刻返回;跑完平台会**自动开一轮新的**把你叫醒,并带上退出码、耗时和输出尾巴。**丢给它之后就可以放心结束本轮**——别为了等一个后台任务而干等或反复轮询,那会把话题冻死 |
 | `cheese status` | 平台状态快照:本轮运行状态(正常运行中/疑似卡死/接近硬顶,tmux 后端才有活跃度信号)、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先跑它,别去轮询原始 API |
-| `cheese gh-token` | 铸一个只读 GitHub token(约 1 小时过期),用来读这个仓库:CI/CD、issue 正文与评论、PR 与评审意见、工作区以外的仓库文件。**能读什么以它 stderr 打的那几行为准**(权限随平台 GitHub App 的授权变,不是固定清单),那几行会连仓库名和可直接抄的命令一起给你。**别因为"我大概没权限"就让人替你把 issue 正文贴进来——先铸出来看一眼** |
+| `cheese gh-token` | 铸一个只读 GitHub token(约 1 小时过期),用来读这个仓库:CI/CD、issue 正文与评论、PR 与评审意见、工作区以外的仓库文件。**能读什么以它 stderr 打的那几行为准**(权限随平台 GitHub App 的授权变,不是固定清单),那几行会连仓库名和可直接抄的命令一起给你。**别因为"我大概没权限"就让人替你把 issue 正文贴进来——先铸出来看一眼**。真撞上 403 且确实需要,**在报告里写明缺哪一项权限**——那是管理员在 App 设置里加一项就能解决的事,不是绕路 |
 | `cheese --version` | 打印本 CLI 的源码指纹。怀疑容器里这份跟后端不同版时用它核对(挂载来自后端每轮 stage 的那份) |
 | `cheese artifact <文件> [--as html\|svg]` | 把工作区里的产物设为**当前预览**,渲染进右侧预览窗口 |
 | `cheese serve ["说明"]` | 把**容器里跑起来的应用**设为当前预览。先把 dev server 起在 `0.0.0.0:$CHEESE_APP_PORT`(注意不能只绑 localhost;vite 要 `--host 0.0.0.0`,uvicorn 要 `--host 0.0.0.0`),后台运行(`nohup ... &`),验证 `curl localhost:$CHEESE_APP_PORT` 通了再 serve。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样。**页面经后端反代挂在 `$CHEESE_APP_BASE` 这个子路径下**:会发根绝对资源 URL 的 dev server(vite 的 `/@vite/client`)要按这个 base 起(`vite --base=$CHEESE_APP_BASE --host 0.0.0.0`),否则用户那边只有白框 |
 | `cheese api <METHOD> <path> [--data '<json>']` | **原始 API 逃生口(兜底,不推荐)**。上面的 curated 命令覆盖 80% 场景,优先用它们(语义清晰、有校验)。只有当没有对应的 curated 命令时,才用 `cheese api` 直接打后端。无参 `cheese api` 会列出所有可用操作。它**仍走容器已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用 curated 就别用它 |
 
 > `cheese api` 与被禁止的裸 `curl` 的区别:`cheese api` 带上容器的 `CHEESE_TOKEN`、经平台鉴权、可追溯——是**受控**的原始通道;裸 `curl`/翻 session 文件仍然禁止。逃生口只是"少校验的原始通道",不改变鉴权纪律。
+
+**CI 红了自己去读,别等人贴。** `export GH_TOKEN=$(cheese gh-token)` 之后:`gh api repos/<o>/<r>/commits/<sha>/check-runs` 看哪个挂了,`gh api repos/<o>/<r>/actions/jobs/<job_id>/logs` 拉全文。四个只有踩过才知道的点:`<job_id>` **不是 run id**,是 check-run 的 `html_url` 里 `/job/` 后面那串(别的 App 也发 check-run,把它们的 id 丢进 jobs API 只会 404);`output.summary` 是空的(GitHub 文档说在那里,Actions 自己留成 null,细节走 `/check-runs/<id>/annotations`);**只 grep `##[error]` 会一无所获**——失败的 step 吐的是 `##[error]Process completed with exit code 1.`,真正说明问题的是**它上面那一行**,要连着前十几行一起看;日志会 302 到第三方存储的预签名 URL,`gh api` 处理好了,手写 `curl -L` 注意别把 `Authorization` 跟着重定向送出去。
 
 **做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese artifact report.html` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
 

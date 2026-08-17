@@ -112,9 +112,8 @@ pnpm run lint:style:update   # after fixing some, ratchet the baseline DOWN
 Palette NAMES are a **separate** gate, because stylelint parses CSS and can
 therefore never see a `<template>` attribute or a `<script>` prop default. It
 lives in `.claude/scripts/check-repo-rules.sh` with its own frozen baseline
-(`frontend/palette-baseline.json`, 10 hits in 6 files as of 2026-08-16, down
-from 111 in 40) and runs in `task
-check`, in the accept-card quality gate, and in CI's Repo Guards:
+(`frontend/palette-baseline.json`) and runs in `task check` and in CI's Repo
+Guards:
 
 ```bash
 bash .claude/scripts/check-repo-rules.sh                            # check
