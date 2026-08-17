@@ -1314,6 +1314,57 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(tmp_path, monke
 
 
 @pytest.mark.anyio
+async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(
+    tmp_path, monkeypatch
+):
+    """The `prompt_delivered` frame must reach the durable registry.
+
+    This wiring has no other symptom. If the frame stopped being emitted or
+    stopped being handled, every turn would quietly go back to being judged by
+    whether 芝士 happened to produce a block first — visible only later, as
+    duplicate re-sends after a deploy. So the stamp is read WHILE the turn is
+    still running: its own completion path removes the entry at the end."""
+    from app.domain.agent import runtime as rt
+
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    stamped = asyncio.Event()
+    release = asyncio.Event()
+
+    class _GatedChat:
+        """Yields the delivery frame, then holds the turn open so the test can
+        look at the registry the way a dying process would leave it."""
+
+        async def converse(self, **kwargs):
+            yield {"type": "prompt_delivered"}
+            await asyncio.sleep(0)
+            stamped.set()
+            await release.wait()
+            yield {"type": "done"}
+
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic = uuid.uuid4()
+    seen: list[str] = []
+
+    async with broker.subscribe(str(topic)) as q:
+        turn_id = runner.submit(
+            _GatedChat(), topic, author="u", content="hi", summon=True
+        )
+        await asyncio.wait_for(stamped.wait(), 1)
+        entry = rt._load_inflight()[str(turn_id)]
+        assert entry["delivered_at"] > 0
+        release.set()
+        while True:
+            frame = await asyncio.wait_for(q.get(), 1)
+            seen.append(frame["type"])
+            if frame["type"] == "turn_finished":
+                break
+
+    # Internal frame: the runtime consumes it, the room never sees it.
+    assert seen == ["turn_started", "done", "turn_finished"]
+
+
+@pytest.mark.anyio
 async def test_a_legacy_entry_is_judged_by_the_rule_it_was_written_under(
     tmp_path, monkeypatch
 ):

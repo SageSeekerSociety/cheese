@@ -161,6 +161,20 @@ def _continuation_of(turn_id: str, info: dict) -> uuid.UUID:
     return uuid.uuid4()
 
 
+def _mark_delivered(turn_id: uuid.UUID) -> Callable[[dict], None]:
+    """Stamp one in-flight entry as proven delivered, in place.
+
+    Best-effort by design: an entry already claimed by a sweep is simply gone,
+    and re-adding it would resurrect work nobody is waiting for."""
+
+    def _mutate(reg: dict) -> None:
+        entry = reg.get(str(turn_id))
+        if isinstance(entry, dict):
+            entry["delivered_at"] = time.time()
+
+    return _mutate
+
+
 def _entry_resendable(info: dict) -> bool:
     """May the orphan sweep re-deliver this entry by re-submitting its content?
 
@@ -1047,10 +1061,18 @@ class AgentWorkRunner:
 
         The default is to ATTACH — post the verdict, then let the spool
         reconcile land whatever the surviving claude sends back (see
-        `ChatService.settle_spool`). Evidence that claude received the task:
+        `ChatService.settle_spool`). Evidence that claude received the task,
+        best first:
 
-        - an AI-authored block bearing the turn's id (the live hook/stream path
-          persisted it — claude acted, so it heard), or
+        - **the entry's own `delivered_at` stamp** — the transport accepted the
+          write (#563) and the runtime recorded it before dying. First-hand, and
+          the only source that is true the instant the prompt lands.
+        - an AI-authored block bearing the turn's id — claude acted, so it
+          heard. Second-hand, and it only becomes true once claude has produced
+          something, so a prompt that arrived seconds before the process died
+          leaves no trace here. Kept for entries written before the stamp
+          existed, and as a backstop for a death between the write and the
+          stamp.
         - anything in the topic's durable spool beyond SessionStart (hooks that
           arrived with nobody listening; they cannot be pinned to one turn, so
           they veto every re-send on the topic).
@@ -1073,12 +1095,16 @@ class AgentWorkRunner:
                 turn_uuids.append(uuid.UUID(tid))
             except ValueError:
                 continue
-        delivered: set[str] = set()
+        # First-hand: the transport accepted the write (#563) and the runtime
+        # wrote that down before this process died. Needs no probe and no
+        # database, and is true from the instant the prompt lands rather than
+        # from whenever 芝士 first produces something.
+        delivered = {tid for tid, info in entries if info.get("delivered_at")}
         spool_trace = False
         probe_ok = False
         try:
             evidence = await chat_service.orphan_turn_evidence(topic_id, turn_uuids)
-            delivered = {str(t) for t in evidence.get("delivered", ())}
+            delivered |= {str(t) for t in evidence.get("delivered", ())}
             spool_trace = bool(evidence.get("spool"))
             probe_ok = True
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
@@ -1763,6 +1789,13 @@ class AgentWorkRunner:
                     # call persists no Block, so without this a turn legitimately
                     # grinding through tools looks identical to a wedged one.
                     self._last_frame_at[str(turn_id)] = time.monotonic()
+                    if kind == "prompt_delivered":
+                        # The transport accepted the write. Stamp the durable
+                        # registry NOW: if this process dies a moment later, the
+                        # sweep reads a fact instead of guessing from side
+                        # effects that may not exist yet.
+                        _mutate_inflight(_mark_delivered(turn_id))
+                        continue
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
                         # `topic_work()` reads this so `cheese status` reports the

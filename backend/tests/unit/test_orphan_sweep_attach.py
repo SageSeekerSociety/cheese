@@ -129,6 +129,33 @@ async def test_delivered_orphan_attaches_instead_of_reprompting(tmp_path, monkey
 
 
 @pytest.mark.anyio
+async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
+    tmp_path, monkeypatch
+):
+    """The prompt landed two seconds before the process died.
+
+    The transport accepted the write, so that fact was recorded when it
+    happened. The second-hand evidence cannot see it — claude had no time to
+    write a block and its first hooks had not arrived — so judging by that
+    alone re-sends a prompt 芝士 is already working on, and the person gets
+    answered twice."""
+    _instant_sleep(monkeypatch)
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic, turn = uuid.uuid4(), uuid.uuid4()
+    entry = _entry(topic, age_s=90)
+    entry["delivered_at"] = _time.time() - 88
+    rt._save_inflight({str(turn): entry})
+    chat = _Chat()  # no AI block, empty spool: the old evidence sees nothing
+    runner = AgentWorkRunner(InProcessBroker())
+
+    assert await runner.resume_orphans(chat) == 0
+    await _drain(chat, rounds=50)
+    assert chat.converse_calls == []  # NOT re-sent
+    assert chat.settled == [topic]  # attached instead
+    assert chat.events == []
+
+
+@pytest.mark.anyio
 async def test_spool_trace_attaches_and_vetoes_every_resend(tmp_path, monkeypatch):
     """A Stop (or any non-SessionStart hook) parked in the topic's spool proves
     a claude has been talking. It carries no turn id, so it vetoes re-sending
