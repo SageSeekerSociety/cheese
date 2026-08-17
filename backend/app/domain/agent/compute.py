@@ -544,3 +544,27 @@ def build_compute_pool(
     else:
         default_name = local.name
     return ComputePool(providers, default_name)
+
+
+def app_preview_reachable(compute_profile: str | None) -> bool:
+    """Can 运行环境预览 exist for a topic running on this compute at all?
+
+    The feature resolves the app port a *docker container on the backend's own
+    host* publishes (``workspace.app_endpoint`` → ``docker port``). That mapping
+    exists only when the topic's box IS a container here. A turn running on
+    someone's enrolled machine (``device``) or on a leased Cloud machine
+    (``cloud`` — a DeviceProvider subclass) has no container on this host, so the
+    lookup returns None for a reason that has nothing to do with the app: there
+    is no path from the platform to that port, and there never was.
+
+    Without this distinction both cases collapse into "container down", and the
+    panel tells those users to @ 芝士 again to bring up a box that is not coming.
+    """
+    from app.domain.agent.market import compute_default_name
+    from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+    local_box = {TmuxHooksProvider.name, LocalDockerProvider.name}
+    # A topic that has an app artifact has necessarily run a turn, and the first
+    # turn pins `topic.compute_profile` — so the sticky project/team chain is
+    # already collapsed into it and only the deployment default is left to apply.
+    return (compute_profile or compute_default_name()) in local_box

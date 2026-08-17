@@ -688,6 +688,11 @@ const previewNamed = ref(false)
 const previewAppUrl = ref<string | null>(null)
 const previewAppNote = ref<string>('')
 const previewContainerUp = ref(false)
+// Whether this topic's runtime can host a live app at all. False → there is no
+// container here to reach, so 「再 @ 它一次即可拉起」 is a lie: it waits on a box
+// that is never coming. Defaults to true so an older backend, which does not send
+// the field, keeps the copy it used to show.
+const previewAppSupported = ref(true)
 // What 芝士 named, app or file — so a read failure can say WHICH artifact broke.
 const previewNamedPath = ref<string>('')
 // Failures, kept apart from "nothing is set". Collapsing them (the old
@@ -696,6 +701,42 @@ const previewNamedPath = ref<string>('')
 // nobody reported it.
 const previewError = ref<string | null>(null)
 const previewReadError = ref<string | null>(null)
+// 「有新内容」 on the 预览 tab. An artifact is deliberately NOT a chat message
+// (it is a pointer, not something 芝士 said), and the drawer is closed by
+// default — so 芝士 could produce something worth looking at and the only way to
+// find out was to open the tab on a hunch. These two ids are the whole
+// mechanism: what the server currently points at, and what this reader has
+// already had on screen.
+const previewLatestArtifact = ref<string | null>(null)
+const previewSeenArtifact = ref<string | null>(null)
+const previewHasNew = computed(
+  () => !!previewLatestArtifact.value && previewLatestArtifact.value !== previewSeenArtifact.value
+)
+function markPreviewSeen(id?: string | null) {
+  previewLatestArtifact.value = id ?? null
+  previewSeenArtifact.value = id ?? null
+}
+// Fetch the POINTER only (no file read, no cookie priming) so the dot can appear
+// while the drawer is shut. Cheap enough to run on every turn boundary.
+async function pollPreviewPointer(opts: { seen?: boolean } = {}) {
+  const tid = props.topic?.id
+  if (!tid) return
+  let art: PreviewInfo | null = null
+  try {
+    art = await getPreview(tid)
+  } catch {
+    // A failed poll is not a state — leave the dot as it was. The real load
+    // reports errors; this one only ever adds a hint.
+    return
+  }
+  if (props.topic?.id !== tid) return
+  const id = art?.artifact_id ?? null
+  // Opening a topic must not greet the reader with a dot for something that was
+  // already there before they arrived, and a poll while the panel is open is
+  // looking at it.
+  if (opts.seen || (drawerOpen.value && openTool.value === 'preview')) markPreviewSeen(id)
+  else previewLatestArtifact.value = id
+}
 // 全屏预览 (Claude Artifacts style): the same content, workspace-covering.
 const previewFull = ref(false)
 // Esc closes it. The overlay div carried a `@keydown.esc`, but a plain div is
@@ -797,12 +838,20 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       // first-*.html fallback proudly served frontend/index.html — an SPA
       // shell that renders blank — which is exactly why the spec says the
       // platform never picks the preview itself.
-      previewAppUrl.value = null
-      previewAppNote.value = ''
-      previewContainerUp.value = false
-      previewError.value = null
-      previewReadError.value = null
-      previewNamedPath.value = ''
+      //
+      // A silent re-fetch must NOT blank these first. Clearing `previewAppUrl`
+      // unmounts the iframe, so the running app the reader is looking at would
+      // reload from scratch every refresh tick; below, each value is only
+      // assigned when it actually changed, for the same reason.
+      if (!opts.silent) {
+        previewAppUrl.value = null
+        previewAppNote.value = ''
+        previewContainerUp.value = false
+        previewAppSupported.value = true
+        previewError.value = null
+        previewReadError.value = null
+        previewNamedPath.value = ''
+      }
       let art: PreviewInfo | null
       try {
         art = await getPreview(tid)
@@ -815,13 +864,21 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
         return
       }
       if (props.topic?.id !== tid) return
+      previewError.value = null
+      markPreviewSeen(art?.artifact_id)
       if (art && art.kind === 'app') {
         previewNamed.value = true
         previewAppNote.value = art.path
         previewNamedPath.value = art.path
         previewContainerUp.value = !!art.container_up
+        previewAppSupported.value = art.supported !== false
+        previewReadError.value = null
         previewFile.value = null
-        if (art.url) {
+        // Only on a url the frame does not already have: the proxy re-attaches
+        // the cookie on every request it forwards, so an app already on screen
+        // keeps its own credential alive and re-priming it each refresh tick
+        // would be a request that buys nothing.
+        if (art.url && art.url !== previewAppUrl.value) {
           // The frame carries no credential of its own (a ?token= would be
           // readable by whatever the agent is serving), so hand the browser the
           // scoped cookie FIRST — otherwise its very first request 404s and the
@@ -840,13 +897,21 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
         previewNamed.value = true
         previewNamedPath.value = art.path
         previewMime.value = art.mime || 'text/html'
+        previewAppUrl.value = null
+        previewAppNote.value = ''
         try {
           const content = await readFile(pid, art.path, tid)
           // Guard against a topic switch mid-flight — this await was the one
           // fetch in the drawer without it, so a slow read could paint topic A's
           // artifact into topic B's panel.
           if (props.topic?.id !== tid) return
-          previewFile.value = content
+          previewReadError.value = null
+          // Same anti-flicker rule: an identical string reassigned would still
+          // rebind `srcdoc` and reload the artifact, losing whatever state the
+          // reader had built up inside it.
+          if (content.content !== previewFile.value?.content || content.path !== previewFile.value?.path) {
+            previewFile.value = content
+          }
         } catch (e) {
           if (props.topic?.id !== tid) return
           previewFile.value = null
@@ -855,6 +920,7 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
       } else {
         previewNamed.value = false
         previewFile.value = null
+        previewAppUrl.value = null
       }
     }
   } catch (e) {
@@ -869,9 +935,15 @@ async function loadTool(key: string, opts: { silent?: boolean } = {}) {
 
 // Panels that go stale while you watch them: 芝士 commits mid-look and the Git
 // panel still shows the moment it was opened; a turn finishes and 资源 still
-// shows the count from before. Both re-fetch on a timer, and immediately when a
-// turn ends (the moment their numbers actually change).
-const REFRESHABLE = new Set(['git', 'resources'])
+// shows the count from before; 芝士 repoints the preview, or the app it started
+// dies, and the frame keeps showing the moment the panel was opened. All
+// re-fetch on a timer, and immediately when a turn ends (the moment their
+// numbers actually change).
+//
+// 预览 is only safe in here because its silent path never blanks state and never
+// reassigns an unchanged value — see `loadTool`. Blanking would reload the app
+// in the iframe every tick, which is worse than the staleness it fixes.
+const REFRESHABLE = new Set(['git', 'resources', 'preview'])
 const TOOL_REFRESH_MS = 20_000
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -904,7 +976,12 @@ watch(
 watch(
   () => props.working,
   (now, before) => {
-    if (before && !now) refreshTool()
+    if (!before || now) return
+    refreshTool()
+    // A turn ending is when 芝士 has just finished pointing at things, so it is
+    // the one moment worth checking the preview pointer even with the drawer
+    // shut — that is what raises 「有新内容」 on the tab.
+    void pollPreviewPointer()
   }
 )
 
@@ -2138,7 +2215,12 @@ watch(
     previewFile.value = null
     previewError.value = null
     previewReadError.value = null
+    previewAppSupported.value = true
     previewFull.value = false
+    // Baseline the 有新内容 dot against whatever this topic already had, so
+    // opening a topic never greets you with a hint for old work.
+    markPreviewSeen(null)
+    if (id) void pollPreviewPointer({ seen: true })
     // …and the previous topic's file + draft, which would otherwise be saved
     // into THIS topic's worktree the next time 保存 is pressed.
     resetFilePanel()
@@ -2237,13 +2319,18 @@ onBeforeUnmount(() => {
         <v-btn
           v-for="t in TOOLS"
           :key="t.key"
-          :icon="t.icon"
+          icon
           size="small"
           variant="text"
           :class="openTool === t.key && drawerOpen ? 'tool-btn--active' : 'c-muted'"
-          :title="t.label"
+          :title="t.key === 'preview' && previewHasNew ? `${t.label}（有新内容）` : t.label"
           @click="toggleTool(t.key)"
-        />
+        >
+          <v-icon>{{ t.icon }}</v-icon>
+          <!-- A dot, not a count: there is only ever one current preview, so a
+             number would be noise. -->
+          <v-badge v-if="t.key === 'preview' && previewHasNew" color="primary" floating dot />
+        </v-btn>
       </v-toolbar>
 
       <!-- 军规 1 notices. Above the stage so they show in BOTH visual and
@@ -2889,14 +2976,32 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
                 <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
-                  <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
-                  <div>应用暂时不在线</div>
-                  <div v-if="previewContainerUp" class="text-caption mt-1">
-                    运行环境还在，但应用没有响应。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
-                  </div>
-                  <div v-else class="text-caption mt-1">
-                    芝士登记过一个运行中的应用，但它的运行环境当前没在跑。再 @ 它一次即可拉起。
-                  </div>
+                  <!-- Three states, and they are not interchangeable. The third
+                     one used to be shown as the second, which told people to
+                     summon 芝士 again for a runtime that was never going to
+                     appear — the app and its machine were both fine, the
+                     platform simply has no route to them. -->
+                  <template v-if="!previewAppSupported">
+                    <v-icon size="32" class="text-disabled mb-2">mdi-cloud-off-outline</v-icon>
+                    <div>这里看不到运行中的应用</div>
+                    <div class="text-caption mt-1">
+                      这个话题运行在自己的设备上，平台还没有通往它的预览通道。要看结果，可以请芝士把页面导出成文件再预览。
+                    </div>
+                  </template>
+                  <template v-else-if="previewContainerUp">
+                    <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
+                    <div>应用暂时不在线</div>
+                    <div class="text-caption mt-1">
+                      运行环境还在，但应用没有响应。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
+                    </div>
+                  </template>
+                  <template v-else>
+                    <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
+                    <div>应用暂时不在线</div>
+                    <div class="text-caption mt-1">
+                      芝士登记过一个运行中的应用，但它的运行环境当前没在跑。再 @ 它一次即可拉起。
+                    </div>
+                  </template>
                 </div>
                 <div v-else-if="previewFile" class="preview-wrap">
                   <div class="preview-bar text-caption px-3 pt-2">
