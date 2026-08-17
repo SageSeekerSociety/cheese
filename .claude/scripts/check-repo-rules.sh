@@ -3,10 +3,14 @@
 #
 # WHY THIS EXISTS: a rule that lives only in prose decays. The proof is in this
 # repo — .claude/rules/backend-tests.md says "Eight files already carry a
-# copy-pasted _auth() helper — don't add a ninth", and there are now nine. Every
-# rule enforced below is one CLAUDE.md already states as absolute, so this
-# script changes nothing about what is allowed; it only moves the enforcement
-# from "the agent remembered to read the rules" to "the build is red".
+# copy-pasted _auth() helper — don't add a ninth", and there are now nine. So
+# these rules are enforced rather than asked for: the difference is between "the
+# agent remembered to read the rules" and "the build is red".
+#
+# Each rule below is STATED here, next to its enforcement, and nowhere else.
+# They used to be written in CLAUDE.md too, until that file was cut back to
+# principles: a rule a script already enforces does not need a second home, and
+# a second home is somewhere it can drift out of sync with what actually runs.
 #
 # Deliberately NOT here: rules a real linter already covers (ruff/pyright), and
 # rules no honest pattern can express. A guard that misfires is worse than no
@@ -34,9 +38,9 @@ report() {
   FAILED=1
 }
 
-# Rule 1 — CLAUDE.md, Datetime: "Always pass datetime.now(UTC) (timezone-aware).
-# Never use .replace(tzinfo=None)." Every DB column is TIMESTAMPTZ, so a naive
-# datetime does not raise — it silently reads as UTC and shifts the value.
+# Rule 1 — always pass datetime.now(UTC); never .replace(tzinfo=None). Every DB
+# column is TIMESTAMPTZ, so a naive datetime does not raise — it silently reads
+# as UTC and shifts the value.
 check_naive_datetime() {
   local hits
   hits="$(grep -rn --include='*.py' 'tzinfo=None' "$ROOT/backend/app" 2>/dev/null || true)"
@@ -46,8 +50,8 @@ check_naive_datetime() {
     "use datetime.now(UTC); to compare, make the other side aware instead" "$hits"
 }
 
-# Rule 2 — CLAUDE.md, Python Conventions: "Do NOT name methods list, set, dict,
-# type — they shadow builtins." A method whose name genuinely IS the domain term
+# Rule 2 — do not name methods list/set/dict/type; they shadow builtins.
+# A method whose name genuinely IS the domain term
 # (prometheus's Gauge.set) may opt out with a marker comment, which keeps the
 # exception visible at the definition rather than buried in this script.
 #
@@ -74,8 +78,8 @@ check_builtin_shadowing() {
     "$hits"
 }
 
-# Rule 3 — CLAUDE.md, API Design: "Errors: use app.core.errors classes, not raw
-# HTTPException." Scoped to the domain layer on purpose: app/core/errors.py has
+# Rule 3 — raise app.core.errors classes, never a raw HTTPException.
+# Scoped to the domain layer on purpose: app/core/errors.py has
 # to import it to install the handler, and a route may still translate a
 # third-party failure. Business logic raising HTTPException is the actual defect
 # — it drags a transport concern into the service layer and bypasses the
@@ -228,7 +232,7 @@ check_fixed_palette() {
     "$hits"
 }
 
-# Rule 7 — CLAUDE.md, "This repo does not adapt to the platform": a repository
+# Rule 7 — CLAUDE.md's "This repo does not adapt to the platform": a repository
 # must never have to change in order to be hosted, so nothing equally true of
 # every hosted repo belongs in THIS repo's CLAUDE.md. The `cheese` CLI is the
 # sharpest form of that leak. It already reaches every hosted repo through
@@ -463,7 +467,7 @@ fi
 run_all
 if [ "$FAILED" = 1 ]; then
   echo ""
-  echo "These rules are stated as absolute in CLAUDE.md; this script only enforces them."
+  echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
 echo "PASS: repo rules (naive datetime, builtin shadowing, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md)"
