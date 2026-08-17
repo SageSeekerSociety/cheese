@@ -1,8 +1,9 @@
 """Integration tests for the Accept-card / Review domain (spec §4.4, §6.3).
 
 Exercises the 验收 state machine through the FastAPI TestClient on an in-memory
-SQLite DB: create card -> accept (archives topic), the AI-can't-accept-own
-rule, double-accept, reject, and revoke (un-archives topic).
+SQLite DB: create card -> accept (marks the topic delivered, does NOT archive
+it), the AI-can't-accept-own rule, double-accept, reject, and revoke (clears the
+delivery marker).
 
 The decision endpoints (accept/reject/revoke/reassign/approve) require a real
 authenticated actor (Authorization: Bearer <session token>) and, for
@@ -79,7 +80,7 @@ def test_list_cards_newest_first(client):
     assert items[0]["reviewer_handle"] == "bob"
 
 
-def test_accept_happy_path_archives_topic(client):
+def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
@@ -95,10 +96,12 @@ def test_accept_happy_path_archives_topic(client):
     assert card["decided_by"] == "alice"
     assert card["decided_at"] is not None
 
-    # 采纳即归档 (spec §6.3): topic now archived with accept markers.
+    # 交付完成 ≠ 话题结束 (#442 decision 1): 打上交付标记，话题照样活着。
     r = client.get(f"/topics/{tid}")
     topic = r.json()["data"]
-    assert topic["status"] == "archived"
+    assert topic["status"] == "active"
+    assert topic["accepted_by"] == "alice"
+    assert topic["accepted_at"] is not None
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "accepted"
@@ -218,7 +221,7 @@ def test_reject_then_accept_422(client):
     assert r.status_code == 422
 
 
-def test_revoke_accepted_card_unarchives_topic(client):
+def test_revoke_clears_the_delivery_marker(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
@@ -228,7 +231,7 @@ def test_revoke_accepted_card_unarchives_topic(client):
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
     r = client.post(
         f"/accept-cards/{cid}/revoke",
@@ -238,8 +241,12 @@ def test_revoke_accepted_card_unarchives_topic(client):
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "revoked"
 
-    # Topic back to active (spec §6.3: accept is revocable).
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
+    # 撤回采纳把话题带回"还没交付过" (spec §6.3: accept is revocable)，
+    # 于是又能递卡了；status 一直是 active，撤销不碰归档。
+    topic = client.get(f"/topics/{tid}").json()["data"]
+    assert topic["status"] == "active"
+    assert topic["accepted_by"] is None
+    assert topic["accepted_at"] is None
 
 
 def test_revoke_non_accepted_card_422(client):
@@ -272,8 +279,9 @@ def test_only_one_pending_card_per_topic(client):
     assert r.status_code == 422
 
 
-def test_no_new_card_on_archived_topic(client):
-    # 采纳一次性 (spec §6.3): after accept the topic is frozen — no new card.
+def test_no_new_card_after_delivery(client):
+    # 防空 PR: 分支已经在 main 上，再递一张开出来的 PR 没有新提交。话题不归档，
+    # 挡住第二张卡的是那张 accepted 的卡本身 (#442 decision 1)。
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
@@ -291,6 +299,9 @@ def test_no_new_card_on_archived_topic(client):
         },
     )
     assert r.status_code == 422
+    assert "已经交付过一次" in r.json()["message"]
+    # 话题没有被归档 —— 冻结的只是"再交付一份"。
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_revoke_requires_authority(client):
@@ -310,7 +321,7 @@ def test_revoke_requires_authority(client):
         headers=session_auth_headers("stranger"),
     )
     assert r.status_code == 422
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
     r = client.post(
         f"/accept-cards/{cid}/revoke",
@@ -318,7 +329,7 @@ def test_revoke_requires_authority(client):
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] is None
 
 
 def test_revoke_404_for_missing_card(client):

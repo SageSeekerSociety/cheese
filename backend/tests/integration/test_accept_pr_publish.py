@@ -214,8 +214,10 @@ def test_pr_card_is_accepted_by_merging_the_pr(client, pr_world):
     assert len(pr_world["pushes"]) == 1  # last-minute edits re-pushed pre-merge
     assert len(pr_world["syncs"]) == 1
 
-    # 采纳即归档.
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    # 交付完成 ≠ 话题结束 (#442 decision 1)：打交付标记，话题不归档。
+    topic = client.get(f"/topics/{tid}").json()["data"]
+    assert topic["status"] == "active"
+    assert topic["accepted_by"] == "alice"
 
 
 def test_pr_merge_refusal_lands_in_the_conflict_flow(client, pr_world):
@@ -248,7 +250,7 @@ def test_pr_merge_refusal_lands_in_the_conflict_flow(client, pr_world):
     )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "accepted"
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 def test_github_down_falls_back_to_the_local_path(client, pr_world):
@@ -271,7 +273,7 @@ def test_github_down_falls_back_to_the_local_path(client, pr_world):
     card = r.json()["data"]
     assert card["status"] == "accepted"
     assert pr_world["local_merges"] != []
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
     # 可见性: 之前这个降级只有 logger.exception，卡片上完全看不出走过 PR
     # 路径又失败了——现在原因(哪个PR、GitHub报了什么)必须留在 note 上。
     assert "未走 PR 采纳" in card["note"]
@@ -608,7 +610,7 @@ def test_discussion_topic_on_bound_project_accepts_without_forge_label(
     assert "未接 GitHub" not in (card["note"] or "")
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # noop merge — nothing bypassed
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 @pytest.mark.parametrize("missing", ["upstream", "installation"])
@@ -646,7 +648,7 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     assert "⚠️" not in card["note"]
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # the only accept such a project has
-    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 # ---- CI 镜像与 405 如实转译 (#362, 对齐 GitHub) ------------------------------

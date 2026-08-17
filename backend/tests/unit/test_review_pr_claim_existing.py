@@ -164,8 +164,9 @@ async def test_claimed_pr_puts_the_card_on_the_pr_path(monkeypatch):
     assert card.pr_repo == "acme/widgets"
     assert card.pr_head_sha == PUSHED_SHA
     assert card.pr_merged_at is None
-    # 归档卡在部署成功那一步，不是采纳这一步 — a claimed PR is no different.
+    # 采纳只是授权，卡还在 pr_open 等 CI —— 交付标记要等合并才落。
     assert topic.status == TopicStatus.active
+    assert topic.accepted_at is None
     assert topic.archived_at is None
     # No degrade happened, so no degrade wording leaked onto the note.
     assert "未走 PR 采纳" not in card.note
@@ -218,7 +219,10 @@ async def test_other_github_failures_still_degrade_and_say_so(monkeypatch):
     assert card.pr_number is None
     assert card.note.startswith("⚠️ 未走 PR 采纳（GitHub 侧调用失败：")
     assert "已合并并推送到上游 origin/main" in card.note
-    assert topic.status == TopicStatus.archived
+    # 交付完成 ≠ 话题结束 (#442 decision 1)：本地合并这条路同样不归档。
+    assert topic.status == TopicStatus.active
+    assert topic.accepted_at is not None
+    assert topic.archived_at is None
 
     assert len(posted) == 1
     (message,) = posted
