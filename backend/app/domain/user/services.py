@@ -14,7 +14,6 @@ from app.domain.user.repositories import (
     UserStatisticsRepository,
 )
 
-
 NICKNAME_MAX_LENGTH = 50
 
 # A nickname must carry at least one letter or CJK ideograph, so that a name made
