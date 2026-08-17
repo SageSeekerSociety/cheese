@@ -57,6 +57,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentService,
     AgentSessionInfo,
+    AgentToolResult,
     AgentToolUse,
     AgentUsage,
 )
@@ -124,6 +125,12 @@ class _HookWorkState:
     assistant_count: int = 0
     todo: list[dict] = field(default_factory=list)
     actions: list[str] = field(default_factory=list)
+    # The topic branch's commits as of turn start — what makes "this turn's
+    # changes" answerable at turn end. A task rather than a value, because the
+    # read shells out to git and creates the repo on first use; see where it is
+    # started. `None` (or a read that failed) means the turn lands NO change
+    # summary rather than a wrong one: with no baseline, every commit looks new.
+    known_commits: asyncio.Task[set[str] | None] | None = None
 
 
 # How long a message's spooled flushes may sit incomplete (no final flush, no
@@ -275,6 +282,140 @@ def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
     if preview:
         meta["arg"] = preview
     return meta
+
+
+# 分身回吐 (§9 可见性): a subagent reports to whoever spawned it and nothing else,
+# so the room used to see 「派分身去查 X」 and never the answer. Its conclusion
+# lands as its own 现场 event — CAPPED, because the room is a place people read:
+# a subagent can return thousands of words and pasting them here would bury the
+# conversation instead of informing it. The full text is in the transcript; what
+# the room needs is enough to tell "it answered the question" from "it went off
+# the rails", which is the whole point of making it visible.
+_SUBAGENT_RESULT_MAX = 500
+
+
+def _subagent_event_text(description: str, result: str) -> str:
+    """现场 line for a returning subagent: "分身查完了：<问题>\\n<结论摘要>".
+
+    NOTE the deliberate absence of ``meta.tool`` on the block this text goes on
+    (see _subagent_result_meta): the UI translates meta.tool through its own verb
+    table, and a name that table doesn't know renders raw. Leaving it off routes
+    this block down the content-text path, which reads correctly with no frontend
+    change — while the structured fields ride along for when there is one.
+    """
+    summary = " ".join(result.split())
+    if len(summary) > _SUBAGENT_RESULT_MAX:
+        summary = summary[:_SUBAGENT_RESULT_MAX] + "…"
+    head = " ".join(description.split())[:80]
+    verb = f"分身查完了：{head}" if head else "分身查完了"
+    return f"{verb}\n{summary}" if summary else verb
+
+
+def _subagent_result_meta(name: str, description: str, result: str) -> dict:
+    """Structured payload for a subagent conclusion.
+
+    ``truncated`` is what tells a future UI that an 「展开」 affordance has
+    something behind it, instead of it having to compare lengths against a
+    constant that lives on the other side of the wire.
+    """
+    summary = " ".join(result.split())
+    return {
+        "platform": False,  # the agent's own work, not a platform action
+        "subagent": {
+            "tool": name,
+            "description": " ".join(description.split())[:120],
+            "summary": summary[:_SUBAGENT_RESULT_MAX],
+            "truncated": len(summary) > _SUBAGENT_RESULT_MAX,
+        },
+    }
+
+
+# 一轮的改动汇总 (§8.4 commit 可视化): what this turn did to the topic branch, as
+# ONE event at turn end. Bounded on purpose — the ask was "改了几个文件、大致
+# 增删量，能点开看 diff", NOT the diff body: a 2000-line diff pasted into the
+# timeline is the definition of 刷屏, and the diff panel already renders it well.
+_CHANGE_FILES_LISTED = 12  # paths named in the event's text and in meta.files
+_CHANGE_COMMIT_WALK = 30  # how far back we look for commits new to this turn
+
+# "diff --git a/<old> b/<new>", with git's quoting when a path needs it. The
+# b-side is the path AFTER the change, which is where a rename should be filed.
+_DIFF_HEADER_RE = re.compile(r'^diff --git "?a/.+?"? "?b/(?P<path>.+?)"?$')
+
+
+@dataclass
+class _Changeset:
+    """What one turn did to the topic branch."""
+
+    commits: list[str]  # newest first; commits[0] is what a UI opens
+    files: list[dict]
+
+
+def _diff_file_stats(diff: str) -> list[dict]:
+    """Per-file added/removed line counts parsed out of a unified diff.
+
+    Counted from the diff text rather than asked of git with ``--numstat``
+    because the only workspace readers available here return diff bodies; the
+    parse is the cheaper half of that trade (the body is already in memory).
+
+    Content lines are counted only INSIDE a hunk. Skipping "+++"/"---" by prefix
+    instead would silently drop a deleted line whose own text starts with "--".
+    """
+    stats: list[dict] = []
+    current: dict | None = None
+    in_hunk = False
+    for line in diff.splitlines():
+        header = _DIFF_HEADER_RE.match(line)
+        if header is not None:
+            current = {"path": header.group("path"), "added": 0, "removed": 0}
+            stats.append(current)
+            in_hunk = False
+            continue
+        if current is None:
+            continue
+        if line.startswith("@@"):
+            in_hunk = True
+            continue
+        if not in_hunk:
+            continue  # index / mode / rename / ---+++ headers
+        if line.startswith("+"):
+            current["added"] += 1
+        elif line.startswith("-"):
+            current["removed"] += 1
+    return stats
+
+
+def _format_change_summary(files: list[dict]) -> str:
+    """现场 line for a turn's changes: a headline plus the paths it touched."""
+    added = sum(f["added"] for f in files)
+    removed = sum(f["removed"] for f in files)
+    head = f"这一轮改了 {len(files)} 个文件（+{added} -{removed}）"
+    listed = [f["path"] for f in files[:_CHANGE_FILES_LISTED]]
+    rest = len(files) - len(listed)
+    if rest > 0:
+        listed.append(f"…另 {rest} 个")
+    return f"{head}\n{' · '.join(listed)}" if listed else head
+
+
+def _change_summary_meta(changeset: _Changeset) -> dict:
+    """Structured payload for a turn's change summary.
+
+    ``commit`` is the newest of the turn's commits and the ref a UI should open:
+    ``GET /api/projects/{project}/git/diff?ref=<commit>`` already serves exactly
+    that diff, so 「点开看 diff」 needs no new endpoint.
+    """
+    files = changeset.files
+    return {
+        "platform": True,  # the platform's own bookkeeping, not something 芝士 did
+        "changeset": {
+            "commit": changeset.commits[0] if changeset.commits else None,
+            "commits": changeset.commits,
+            "files_total": len(files),
+            "added": sum(f["added"] for f in files),
+            "removed": sum(f["removed"] for f in files),
+            "files": files[:_CHANGE_FILES_LISTED],
+            "files_omitted": max(0, len(files) - _CHANGE_FILES_LISTED),
+        },
+    }
 
 
 # Claude Code's structured Task tools → a live working-log todo (§3.1.1). These
@@ -1722,6 +1863,17 @@ class ChatService:
                     resource = _cheese_resource(str(args.get("command", "")))
                     if resource in _ACTION_LABEL and resource not in state.actions:
                         state.actions.append(resource)
+        elif isinstance(event, AgentToolResult):
+            payload = await self._persist_subagent_result(
+                project_id=project_id,
+                topic_id=topic_id,
+                event=event,
+                turn_id=turn_id,
+                eid=eid,
+                platform_unsolicited=platform_unsolicited,
+            )
+            if payload is not None:
+                frame = {"type": "event_block", "block": payload}
         elif isinstance(event, AgentResult):
             if event.session_id:
                 await self._save_session_pointer(topic_id, event.session_id)
@@ -1845,6 +1997,22 @@ class ChatService:
             await session.commit()
 
         state.provider.checkpoint(state.project_id, state.topic_id)
+        # AFTER the checkpoint: that is what turns this turn's edits into the
+        # commit the summary is about.
+        changeset = await self._turn_changeset(
+            state.project_id,
+            state.topic_id,
+            None if state.known_commits is None else await state.known_commits,
+        )
+        if changeset is not None:
+            payload = await self._persist_change_summary(
+                project_id=state.project_id,
+                topic_id=state.topic_id,
+                turn_id=state.work_id,
+                changeset=changeset,
+            )
+            if payload is not None:
+                action_frames.append({"type": "event_block", "block": payload})
         if not result.is_error:
             self._schedule_memory_extraction(
                 topic_id=state.topic_id,
@@ -2172,7 +2340,35 @@ class ChatService:
         spool reconcile can dedup a backfilled copy against this live one. Returns
         the persisted block payload so a caller (live path or spool reconcile) can
         broadcast it as a WS frame."""
-        meta = _tool_event_meta(name, tool_input, platform=platform)
+        return await self._persist_room_event(
+            project_id=project_id,
+            topic_id=topic_id,
+            content=_format_tool_event(name, tool_input),
+            meta=_tool_event_meta(name, tool_input, platform=platform),
+            turn_id=turn_id,
+            eid=eid,
+            backfilled=backfilled,
+            platform_unsolicited=platform_unsolicited,
+        )
+
+    async def _persist_room_event(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        content: str,
+        meta: dict,
+        turn_id: uuid.UUID | None,
+        eid: str | None = None,
+        backfilled: bool = False,
+        platform_unsolicited: bool = False,
+    ) -> dict | None:
+        """One 现场 event block, committed NOW and deduped by event-id.
+
+        Shared by everything the room learns mid-turn — a tool call, a subagent's
+        conclusion, the turn's change summary — so all three get the same
+        durability and idempotency contract instead of three copies of it that
+        drift. Returns None when this event-id already landed."""
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
@@ -2188,7 +2384,7 @@ class ChatService:
                 topic_id=topic_id,
                 author=await self._agent_handle(session, topic_id),
                 author_type=AuthorType.ai,
-                content=_format_tool_event(name, tool_input),
+                content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
                 meta=meta,
@@ -2196,6 +2392,113 @@ class ChatService:
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
         return payload
+
+    async def _persist_subagent_result(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        event: AgentToolResult,
+        turn_id: uuid.UUID | None,
+        eid: str | None = None,
+        backfilled: bool = False,
+        platform_unsolicited: bool = False,
+    ) -> dict | None:
+        """Land a returning subagent's conclusion in the room timeline."""
+        return await self._persist_room_event(
+            project_id=project_id,
+            topic_id=topic_id,
+            content=_subagent_event_text(event.description, event.text),
+            meta=_subagent_result_meta(event.name, event.description, event.text),
+            turn_id=turn_id,
+            eid=eid or event.eid,
+            backfilled=backfilled,
+            platform_unsolicited=platform_unsolicited,
+        )
+
+    async def _turn_changeset(
+        self,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        known_commits: set[str] | None,
+    ) -> _Changeset | None:
+        """This turn's net effect on the topic branch, or None when there is none.
+
+        Called AFTER the provider's checkpoint, which is what turns the turn's
+        native edits into a commit — so "the commits that were not there at turn
+        start" is exactly this turn's work. Best-effort and off the event loop:
+        the numbers are a courtesy, and no turn should die (or stall) over them.
+        """
+        if known_commits is None:
+            return None
+
+        def _collect() -> _Changeset | None:
+            commits = [
+                row["hash"]
+                for row in ws.git_log(
+                    project_id, limit=_CHANGE_COMMIT_WALK, topic_id=topic_id
+                )
+            ]
+            fresh = [h for h in commits if h not in known_commits]
+            if not fresh:
+                return None
+            totals: dict[str, dict] = {}
+            for sha in fresh:
+                for entry in _diff_file_stats(ws.git_diff(project_id, ref=sha)):
+                    acc = totals.setdefault(
+                        entry["path"],
+                        {"path": entry["path"], "added": 0, "removed": 0},
+                    )
+                    acc["added"] += entry["added"]
+                    acc["removed"] += entry["removed"]
+            files = sorted(
+                totals.values(), key=lambda f: (-(f["added"] + f["removed"]), f["path"])
+            )
+            if not files:
+                return None  # a commit that changed nothing (empty snapshot)
+            return _Changeset(commits=fresh, files=files)
+
+        try:
+            return await asyncio.to_thread(_collect)
+        except Exception:  # noqa: BLE001 — never fail a turn over its summary
+            logger.warning("change summary failed for topic %s", topic_id)
+            return None
+
+    async def _known_commits(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> set[str] | None:
+        """The topic branch's commits right now — the baseline the turn's change
+        summary is measured against. None when it cannot be read (see
+        _HookWorkState.known_commits)."""
+        try:
+            return await asyncio.to_thread(
+                lambda: {
+                    row["hash"]
+                    for row in ws.git_log(
+                        project_id, limit=_CHANGE_COMMIT_WALK, topic_id=topic_id
+                    )
+                }
+            )
+        except Exception:  # noqa: BLE001 — no baseline just means no summary
+            logger.warning("commit baseline unreadable for topic %s", topic_id)
+            return None
+
+    async def _persist_change_summary(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID | None,
+        changeset: _Changeset,
+    ) -> dict | None:
+        """Land 「这一轮改了 N 个文件」 in the room timeline."""
+        return await self._persist_room_event(
+            project_id=project_id,
+            topic_id=topic_id,
+            content=_format_change_summary(changeset.files),
+            meta=_change_summary_meta(changeset),
+            turn_id=turn_id,
+        )
 
     async def _reconcile_spool(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
@@ -2331,6 +2634,25 @@ class ChatService:
                             continue
                         recovered += 1
                         yield {"type": "assistant_block", "block": block_payload}
+                        continue
+                    if isinstance(event, AgentToolResult):
+                        # A subagent's conclusion whose live delivery was lost. Worth
+                        # backfilling for the same reason it is worth showing at all:
+                        # without it the timeline keeps the question and loses the
+                        # answer, and 现场 history is what a late reader reads.
+                        block_payload = await self._persist_subagent_result(
+                            project_id=project_id,
+                            topic_id=topic_id,
+                            event=event,
+                            turn_id=turn_id,
+                            eid=eid,
+                            backfilled=True,
+                        )
+                        seen.add(eid)
+                        if block_payload is None:
+                            continue
+                        recovered += 1
+                        yield {"type": "event_block", "block": block_payload}
                         continue
                     if not isinstance(event, AgentToolUse):
                         continue  # SessionStart has no historical counterpart
@@ -2995,6 +3317,17 @@ class ChatService:
         todo: list[dict] = []
         if prior_progress:
             yield {"type": "todo", "items": prior_progress, "restored": True}
+        # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
+        # but deliberately NOT awaited here: git_log ensures the repo exists, and
+        # on a cold project that is a git init plus a jj colocate. Awaited in
+        # front of the provider, that delay is charged to the start of every
+        # turn, and a turn cancelled inside the window dies before it can store
+        # its session id. What it measures only becomes commits at the
+        # checkpoint, so finishing the read any time before turn end is soon
+        # enough. Both backends need it, and the hooks backend returns from this
+        # function long before its turn ends — so it is started once here and
+        # carried on the work state rather than read twice in two places.
+        known_commits = asyncio.ensure_future(self._known_commits(project_id, topic_id))
         if isinstance(provider, HooksSessionProvider):
             marked_work_ids: list[uuid.UUID] = []
 
@@ -3019,6 +3352,7 @@ class ChatService:
                         acting_agent=acting_agent,
                         user_text=prompt_text,
                         started_at=datetime.now(UTC),
+                        known_commits=known_commits,
                     )
                     return
                 state.pending_ids.update(pending_ids)
@@ -3181,6 +3515,21 @@ class ChatService:
                             yield {"type": "state", "resource": resource}
                             if resource in _ACTION_LABEL and resource not in actions:
                                 actions.append(resource)
+                elif isinstance(event, AgentToolResult):
+                    # 分身回吐: same dedup contract as a tool call — the device
+                    # drainer re-sends after a lost ack.
+                    if event.eid and event.eid in seen_eids:
+                        continue
+                    if event.eid:
+                        seen_eids.add(event.eid)
+                    payload = await self._persist_subagent_result(
+                        project_id=project_id,
+                        topic_id=topic_id,
+                        event=event,
+                        turn_id=turn_id,
+                    )
+                    if payload is not None:
+                        yield {"type": "event_block", "block": payload}
                 elif isinstance(event, AgentResult):
                     final_text = event.text
                     new_session_id = event.session_id
@@ -3580,6 +3929,22 @@ class ChatService:
         # step (R2/R9); it's best-effort and never fails the turn.
         provider.checkpoint(project_id, topic_id)
 
+        # 一轮的改动汇总: read AFTER the checkpoint, because the checkpoint is what
+        # made this turn's edits into a commit.
+        changeset = await self._turn_changeset(
+            project_id, topic_id, await known_commits
+        )
+        change_payload = (
+            None
+            if changeset is None
+            else await self._persist_change_summary(
+                project_id=project_id,
+                topic_id=topic_id,
+                turn_id=turn_id,
+                changeset=changeset,
+            )
+        )
+
         # 知识沉淀是副产品 (spec §8.4): hand the finished exchange to OpenViking
         # for background memory extraction. The extractor's LLM decides what is
         # memory-worthy (规则4) — fire-and-forget, never delays/fails the turn.
@@ -3598,6 +3963,8 @@ class ChatService:
             yield {"type": "assistant_block", "block": assistant_payload}
         for payload in action_payloads:
             yield {"type": "event_block", "block": payload}
+        if change_payload is not None:
+            yield {"type": "event_block", "block": change_payload}
         yield {"type": "done"}
 
     def _schedule_memory_extraction(

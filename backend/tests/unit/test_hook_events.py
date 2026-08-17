@@ -57,7 +57,9 @@ def test_message_display_blank_is_dropped():
     assert translate_hook({"hook_event_name": "MessageDisplay"}) is None
 
 
-def test_post_tool_use_has_no_event():
+def test_post_tool_use_of_a_plain_tool_has_no_event():
+    """Only the subagent tools surface their return value (test_subagent_result_
+    events.py) — everything else's is already visible through its effect."""
     assert (
         translate_hook(
             {"hook_event_name": "PostToolUse", "tool_name": "Bash", "duration_ms": 5}
