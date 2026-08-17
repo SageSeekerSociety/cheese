@@ -22,6 +22,11 @@
 # the shape of a function name. A guard that misfires is worse than no
 # guard: people learn to bypass it, and then it protects nothing.
 #
+# Numbering has a hole in it (there is no Rule 2): that one checked for methods
+# named after builtins, and ruff's A003 does the same job across every builtin
+# rather than four hand-listed ones, so it was deleted rather than renumbered.
+# Renumbering would break the references in git history and in the sibling rules.
+#
 # Usage: check-repo-rules.sh [root]        check a tree (default: repo root)
 #        check-repo-rules.sh --self-test   prove each rule fires and is scoped
 #        check-repo-rules.sh --update-palette-baseline [root]
