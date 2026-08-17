@@ -1242,19 +1242,32 @@ class AcceptService:
         await self._session.flush()
         return True
 
-    async def _change_author(self, topic: Topic) -> identity.GitIdentity | None:
-        """Whose GitHub account this change should be credited to — the person
-        who opened the topic. None when they never linked one; attribution is a
-        nice-to-have and must never take a merge down with it."""
+    async def _attribution(
+        self, topic: Topic
+    ) -> tuple[str | None, identity.GitIdentity | None]:
+        """Who this change belongs to: (their handle, their git identity).
+
+        The handle goes in `Requested-by:`, the identity in `Co-authored-by:`.
+        Both name the human the topic belongs to — `identity.requester_handle`, not
+        `topic.created_by`, which on a 分身-split room is the 分身 itself and so
+        resolved to no GitHub account at all.
+
+        Either half may be None (no human on the roster, or they never linked
+        GitHub); attribution is a nice-to-have and must never take a merge down
+        with it."""
         try:
-            return await identity.resolve_for_handle(
-                self._session, topic.created_by or ""
+            handle = await identity.requester_handle(self._session, topic)
+            author = (
+                await identity.resolve_for_handle(self._session, handle)
+                if handle
+                else None
             )
         except Exception:  # noqa: BLE001 — a trailer is not worth failing a merge
             logger.warning(
                 "could not resolve change author for topic %s", topic.id, exc_info=True
             )
-            return None
+            return None, None
+        return handle, author
 
     async def _resolve_pr_prerequisites(
         self, topic: Topic, decided_by: str
@@ -1316,15 +1329,14 @@ class AcceptService:
         )
         base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         client = github_pr.default_client()
+        requested_by, author = await self._attribution(topic)
         pr = await client.open_pull_request(
             owner=owner,
             repo=repo,
             head=remote_branch,
             base=base,
             title=pr_text.change_subject(card, topic),
-            body=pr_text.pr_body(
-                topic, decided_by, card, await self._change_author(topic)
-            ),
+            body=pr_text.pr_body(topic, decided_by, card, author, requested_by),
             token=token,
         )
 
@@ -1719,6 +1731,7 @@ class AcceptService:
         # Green → merge now. Trailers go on the merge commit too, not just
         # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
         # squash that means the body field, with the title passed separately.
+        requested_by, author = await self._attribution(topic)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -1726,7 +1739,7 @@ class AcceptService:
             token=creds.write,
             commit_title=pr_text.merge_commit_title(card, topic, number),
             commit_message=pr_text.merge_commit_message(
-                topic, card.decided_by or "", card, await self._change_author(topic)
+                topic, card.decided_by or "", card, author, requested_by
             ),
         )
         if result.sha is None:
@@ -2575,11 +2588,12 @@ class AcceptService:
             # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
             # body — the branch it came from and who clicked, but nothing at
             # all about what changed.
+            requested_by, author = await self._attribution(topic)
             await client.merge_pr(
                 number,
                 title=pr_text.merge_commit_title(card, topic, number),
                 message=pr_text.merge_commit_message(
-                    topic, decided_by, card, await self._change_author(topic)
+                    topic, decided_by, card, author, requested_by
                 ),
             )
         except GitHubPRMergeBlocked as blocked:
@@ -2815,6 +2829,7 @@ class AcceptService:
             checks_at_merge = "读不到检查状态"
 
         number = card.pr_number
+        requested_by, author = await self._attribution(topic)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2822,7 +2837,7 @@ class AcceptService:
             token=creds.write,
             commit_title=pr_text.merge_commit_title(card, topic, number),
             commit_message=pr_text.merge_commit_message(
-                topic, card.decided_by or "", card, await self._change_author(topic)
+                topic, card.decided_by or "", card, author, requested_by
             ),
         )
         if result.sha is None:

@@ -2179,9 +2179,7 @@ class ChatService:
             # first topic, and topics that predate this have no record at all.
             # Best-effort by construction — see workspace/identity.py.
             if not is_private:
-                await ws_identity.sync_for_topic(
-                    session, topic.project_id, topic.id, topic.created_by
-                )
+                await ws_identity.sync_for_topic(session, topic)
             resume_session_id = topic.session_id
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
