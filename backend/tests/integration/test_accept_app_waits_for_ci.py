@@ -469,6 +469,51 @@ def test_merge_anyway_merges_and_signs_the_card(client, app_world):
     assert "alice" in card["note"]
     assert "CI runner 挂了" in card["note"]
     assert "failure" in card["note"]
+    # 这一次检查确实是红的，所以「明知未全绿」是如实记录。
+    assert "明知检查未全绿仍合并" in card["note"]
+
+
+def test_merge_anyway_on_a_green_pr_is_not_recorded_as_knowingly_red(client, app_world):
+    """PR #520 的真实形态：可见的检查全绿，平台却还在等一项 required 检查，人
+    直接放行 —— 卡上却记成「明知检查未全绿仍合并（合并时检查状态：success（全部
+    5 项检查通过））」，一条自相矛盾的历史。留痕写错比不留痕更糟。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "全部 5 项检查通过")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}  # required 的 test 缺席
+    fake.files_by_sha[head_sha] = [("modified", "backend/app/domain/x.py")]
+    _poll(client)
+    assert fake.merge_calls == []  # 机器自己不合，卡就卡在这里
+
+    r = _merge_anyway(client, cid, "alice", reason="test 这次根本不该跑")
+    assert r.status_code == 200, r.text
+    note = r.json()["data"]["note"]
+
+    assert [m["number"] for m in fake.merge_calls] == [number]
+    assert "明知检查未全绿" not in note  # 当时并没有「未全绿」这回事
+    assert "全绿" in note  # 如实说：当时读到的是全绿
+    assert "success" in note  # 原始状态照旧留痕
+    assert "alice" in note and "test 这次根本不该跑" in note
+
+
+def test_merge_anyway_when_the_check_state_is_unreadable_says_so(client, app_world):
+    """凭据坏了不该把人锁在门外（照样放行），但「读不到」不能被写成「明知红着合」。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    async def _explode(*_a, **_kw):
+        raise RuntimeError("GitHub 连不上")
+
+    fake.check_state = _explode  # type: ignore[method-assign]
+
+    r = _merge_anyway(client, cid, "alice", reason="CI 读不到，但改动我看过了")
+    assert r.status_code == 200, r.text
+    note = r.json()["data"]["note"]
+
+    assert [m["number"] for m in fake.merge_calls] == [number]
+    assert "读不到检查状态" in note
+    assert "明知检查未全绿" not in note
 
 
 def test_merge_anyway_is_refused_once_the_card_is_settled(client, app_world):
@@ -769,6 +814,9 @@ def test_a_required_check_that_never_appeared_blocks_the_merge(client, app_world
     card = _cards(client, tid)[0]
     assert card["status"] == "pr_open"
     assert "test" in card["note"]  # 卡面说清在等哪个
+    # 这是真的在等一个该出现的检查 —— 措辞不许掺进「平台没判断出来」那一层。
+    assert "required 检查还没出现" in card["note"]
+    assert "没能判断" not in card["note"]
 
 
 def test_a_required_check_the_diff_cannot_trigger_is_not_required(client, app_world):
@@ -823,6 +871,128 @@ def test_scope_unknown_keeps_a_required_check_required(client, app_world):
 
     assert fake.merge_calls == []
     assert _cards(client, tid)[0]["status"] == "pr_open"
+
+
+# ---- 卡面要分清「在等」和「没算出来、于是保守地仍然要求」(2026-08-17) ---------
+#
+# 两条保守回退（认不出基线 / GitHub 没给文件清单）以前只写 logger.warning，卡面
+# 落的是跟真等待一模一样的一句话。后端日志的保留期只有「距上次部署多久」，所以
+# 事后没有任何地方能回答「那次到底是在等 test，还是平台压根没判断出来」。
+
+
+def test_scope_unknown_says_on_the_card_that_it_is_a_fallback(client, app_world):
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}
+    fake.files_by_sha[head_sha] = None  # compare 截断
+    _poll(client)
+
+    note = _cards(client, tid)[0]["note"]
+    assert note.startswith("⏳ 等 CI")
+    assert "没能判断这次改动碰了哪些文件" in note  # 自陈是回退
+    assert "文件清单" in note  # 具体原因，不是笼统一句「出错了」
+    assert "test" in note  # 仍然要求哪几项
+    assert "required 检查还没出现" not in note  # 不再冒充真等待
+
+
+def test_unresolvable_base_says_on_the_card_that_it_is_a_fallback(
+    client, app_world, monkeypatch
+):
+    """另一条回退：连这个 PR 要合进哪条分支都认不出来，自然也算不出改动范围。"""
+    from app.domain.workspace import service as ws
+
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}
+
+    def _no_base(_pid):
+        raise RuntimeError("upstream remote 读不到")
+
+    monkeypatch.setattr(ws, "pr_base_branch", _no_base)
+    _poll(client)
+
+    assert fake.merge_calls == []
+    note = _cards(client, tid)[0]["note"]
+    assert note.startswith("⏳ 等 CI")
+    assert "没能判断这次改动碰了哪些文件" in note
+    assert "upstream remote 读不到" in note  # 异常摘要，不是一句「内部错误」
+    assert "required 检查还没出现" not in note
+
+
+def test_the_fallback_note_still_does_not_churn(client, app_world):
+    """新文案照样受防抖约束：轮询每 60 秒一次，同一个状态不许每轮重写一遍。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}
+    fake.files_by_sha[head_sha] = None
+    _poll(client)
+    first = _cards(client, tid)[0]["note"]
+    _poll(client)
+    _poll(client)
+    assert _cards(client, tid)[0]["note"] == first
+
+
+def _set_note(client, card_id: str, note: str) -> None:
+    """直接把一条 note 摆到卡上 —— 用来立起「已经有更高优先级的 note」这个前提。
+
+    不走「让 CI 真的红一次」那条路：那会叫醒芝士，于是测试得等一个 agent 轮次
+    静默下来 —— 而这里要证的性质跟这条 note 是怎么来的毫无关系，只跟「它已经在
+    卡上」有关。少绑一个 helper，就少一次因为别人重构那个 helper 而假红。"""
+    import asyncio
+    import uuid
+
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do() -> None:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(card_id))
+            assert card is not None
+            card.note = note
+            await session.commit()
+
+    asyncio.run(_do())
+
+
+def test_the_fallback_note_never_overwrites_a_real_failure(client, app_world):
+    """新文案照样是 note 家族里优先级最低的那条：⚠️（要人动手）不许被它盖掉。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    failed_note = "⚠️ CI 检查未通过：Backend Test: failure"
+    _set_note(client, cid, failed_note)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}
+    fake.files_by_sha[head_sha] = None
+    _poll(client)
+
+    assert _cards(client, tid)[0]["note"] == failed_note
+    assert fake.merge_calls == []
+
+
+def test_a_fallback_that_times_out_does_not_blame_the_workflow(client, app_world):
+    """等过头照样交给人（✋），但理由要说的是「平台没算出改动范围」，而不是
+    「多半是 workflow 被改名了」—— 后者平台根本没验证过。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
+    fake.check_names_by_sha[head_sha] = {"guards", "lint"}
+    fake.files_by_sha[head_sha] = None
+    _age_decision(client, cid, minutes=999)
+    _poll(client)
+
+    assert fake.merge_calls == []
+    note = _cards(client, tid)[0]["note"]
+    assert note.startswith("✋")
+    assert "没能判断这次改动碰了哪些文件" in note
+    assert "被改名" not in note
 
 
 def test_a_stale_base_gets_updated_not_merged(client, app_world):
