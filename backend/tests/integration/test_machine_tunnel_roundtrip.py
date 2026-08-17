@@ -162,11 +162,12 @@ def test_a_payload_larger_than_one_frame_arrives_whole(live_stack):
 
 
 def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack, monkeypatch):
-    """`claude` waiting on a CONNECT that will never be answered looks exactly
-    like a stalled model — the most expensive failure to diagnose. A refused
-    upgrade must reach it as a closed socket."""
-    _, meter, _ = live_stack
-    api_port = _free_port()  # nothing here; stands in for any upgrade failure
+    """`claude` waiting on a CONNECT that can never succeed looks exactly
+    like a stalled model — the most expensive failure to diagnose. A REFUSED
+    upgrade (the backend answered and said no: bad token) must reach it as a
+    closed socket, on the first attempt — the patience window is only for
+    ABSENCE (see test_a_restarting_backend_is_ridden_out)."""
+    _, meter, api_port = live_stack  # a REAL backend, refusing the bad token
     port = _free_port()
     threading.Thread(
         target=machine_tunnel.serve,
@@ -193,6 +194,83 @@ def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack, monkeyp
         except ConnectionResetError:
             pass
     assert not meter.received
+
+
+def test_a_restarting_backend_is_ridden_out_not_surfaced(live_stack, monkeypatch):
+    """A deploy swaps the backend container for tens of seconds (#551). A
+    CONNECT arriving in that window must be HELD and completed when the
+    backend returns — not answered with a closed socket, which claude renders
+    as 'Unable to connect to API' (measured across 7 deploys, 2026-08-17)."""
+    helper_port_ignored, meter, api_port = live_stack
+    monkeypatch.setattr(machine_tunnel, "_OPEN_RETRY_START_S", 0.2)
+
+    # The backend's stand-in starts DEAD: a port with nothing listening, that
+    # a forwarder to the real backend claims only after the client is already
+    # waiting — exactly a container swap seen from the machine.
+    late_port = _free_port()
+    port = _free_port()
+    token = mint_scoped_token(project_id=_PROJECT)
+    threading.Thread(
+        target=machine_tunnel.serve,
+        args=(port, f"ws://127.0.0.1:{late_port}/llm/tunnel", token),
+        daemon=True,
+    ).start()
+    for _ in range(100):
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.05)
+
+    def _pipe(a: socket.socket, b: socket.socket) -> None:
+        try:
+            while True:
+                data = a.recv(65536)
+                if not data:
+                    break
+                b.sendall(data)
+        except OSError:
+            pass
+        for s in (a, b):
+            try:
+                s.close()
+            except OSError:
+                pass
+
+    def _forwarder_comes_up() -> None:
+        time.sleep(1.0)  # the client is already inside the patience window
+        server = socket.socket()
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", late_port))
+        server.listen(8)
+        while True:
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                return
+            upstream = socket.create_connection(("127.0.0.1", api_port))
+            threading.Thread(target=_pipe, args=(conn, upstream), daemon=True).start()
+            threading.Thread(target=_pipe, args=(upstream, conn), daemon=True).start()
+
+    threading.Thread(target=_forwarder_comes_up, daemon=True).start()
+
+    payload = b"held across the deploy window"
+    with socket.create_connection(("127.0.0.1", port), timeout=30) as client:
+        client.settimeout(30)
+        client.sendall(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n\r\n")
+        # This first read spans the whole patience window: the backend was not
+        # there when the CONNECT went in, and the echo can only arrive after
+        # the helper outwaited the outage.
+        head_echo = client.recv(4096)
+        assert head_echo, "the held CONNECT must complete, not be closed"
+        assert b"CONNECT API.ANTHROPIC.COM:443" in head_echo
+        client.sendall(payload)
+        seen = bytearray()
+        while len(seen) < len(payload):
+            chunk = client.recv(4096)
+            assert chunk, "the pipe must stay open after the ride-out"
+            seen.extend(chunk)
+    assert bytes(seen) == payload.upper()
 
 
 def test_a_refreshed_token_takes_effect_without_restarting_the_helper(live_stack):
