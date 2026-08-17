@@ -60,8 +60,8 @@ onMounted(load)
         <!-- 题目匹配: Space 发布的题目 + 团队应征 (spec §13 阶段 6) -->
         <v-window-item value="tasks">
           <p class="t-body c-muted mb-5" style="max-width: 660px">
-            机构（Space）把 <strong>题目</strong> 发布到市场；团队用自己的项目
-            <strong>应征</strong>。应征被接受后，项目自动链接到题目——资源包与条件即刻生效 （签下协议）。
+            机构把 <strong>题目</strong> 发布到市场；团队用自己的项目
+            <strong>应征</strong>。应征被接受后，项目自动链接到题目，资源包与条件即刻生效。
           </p>
           <TaskMarket />
         </v-window-item>
@@ -69,8 +69,8 @@ onMounted(load)
         <!-- 算力资源: the original resource-pool catalog, moved verbatim. -->
         <v-window-item value="pools">
           <p class="t-body c-muted mb-5" style="max-width: 660px">
-            知是把 <strong>AI 模型</strong> 和 <strong>算力</strong> 都看成资源池。默认的池平台已经补贴，
-            开箱即用；更强的模型、你自己的机器、或带 GPU 的算力也在这里上架。 在任意项目的
+            知是把 <strong>AI 模型</strong> 和 <strong>算力</strong> 都看作资源池。默认的资源池由平台补贴，
+            开箱即用；更强的模型、你自己的机器、带 GPU 的算力也在这里上架。在任意项目的
             <strong>设置 → 资源池</strong> 里挑选要用的池。
           </p>
 
@@ -90,7 +90,7 @@ onMounted(load)
               <div class="market-group__head">
                 <v-icon size="20" class="me-2 c-muted">mdi-brain</v-icon>
                 <h2 class="market-group__title">AI 模型</h2>
-                <span class="market-group__hint c-faint">一次对话跑在哪个模型上</span>
+                <span class="market-group__hint c-faint">每次对话使用的模型</span>
               </div>
               <div class="market-grid">
                 <article
@@ -110,7 +110,7 @@ onMounted(load)
                     <span v-if="p.available" class="pool-card__ok">
                       <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
                     </span>
-                    <span v-else class="pool-card__soon-tag">敬请期待 / 按需开通</span>
+                    <span v-else class="pool-card__soon-tag">暂未开通</span>
                   </div>
                 </article>
               </div>
@@ -120,7 +120,7 @@ onMounted(load)
               <div class="market-group__head">
                 <v-icon size="20" class="me-2 c-muted">mdi-server</v-icon>
                 <h2 class="market-group__title">算力</h2>
-                <span class="market-group__hint c-faint">干活（跑沙箱）用哪台机器</span>
+                <span class="market-group__hint c-faint">运行任务的机器</span>
               </div>
               <div class="market-grid">
                 <article
@@ -140,7 +140,7 @@ onMounted(load)
                     <span v-if="p.available" class="pool-card__ok">
                       <v-icon size="14">mdi-check-circle</v-icon> 可在项目里选用
                     </span>
-                    <span v-else class="pool-card__soon-tag">敬请期待 / 按需开通</span>
+                    <span v-else class="pool-card__soon-tag">暂未开通</span>
                   </div>
                 </article>
               </div>
@@ -205,7 +205,8 @@ onMounted(load)
   font-size: 0.68rem;
   font-weight: 500;
   padding: 1px 8px;
-  border-radius: 10px;
+  /* 小标签 → --radius-sm，和 .chip-neutral / .ln-tag 同档（原来是 10px，不在阶梯上）。 */
+  border-radius: var(--radius-sm);
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.1);
 }
@@ -214,7 +215,7 @@ onMounted(load)
   color: var(--muted);
   border: 1px solid rgba(var(--v-border-color), 0.7);
   padding: 0 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
 }
 .pool-card__title {
   font-size: 1rem;

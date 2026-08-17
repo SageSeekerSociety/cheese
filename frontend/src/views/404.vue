@@ -5,7 +5,7 @@
         <v-sheet flat rounded="lg">
           <v-empty-state
             title="404"
-            text="这里什么都没有"
+            text="页面不存在"
             icon="mdi-alert-circle"
             action-text="返回首页"
             @click:action="goHome"
