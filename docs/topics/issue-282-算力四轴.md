@@ -286,8 +286,6 @@ UPDATE device SET supply='cloud'
 
 > 顺带一条给 CLAUDE.md 的更正：那份文档把 `test_machine_service.py` 的失败归给 no-procps，实测**根因是缺 `ssh-keygen`（openssh-client）**，报错也不是 `'kill'` 而是 `'ssh-keygen'`。没有改 CLAUDE.md——那是共享文件，等你点头。
 
-**实现时发现的一件事，比预想的更实**：反查不是「以后可能有人写」，是**已经在跑的生产代码**——`ProjectMachineRepository.is_provisioned_device()` 用「machine 表里有没有一行指向这个 device」判断 device 是否与后端共享文件系统（co-location），而共享判错是**静默失败**：launcher 会 `mkdir -p` 任何给它的路径，于是芝士在一个空目录里开轮次。已改为读 `device.supply`，该反查方法删除（它只有这一个调用者），顺带断掉了 agent 层对 machine 层的一处跨域 import。
-
 **接下来**：
 1. 决定 1 阻塞在两条前置上：**补 owner**（前置 A）与**推送重试上界**（前置 B）；N/M 还阻塞在 billing 轴的计费粒度上。
 2. **工作树回收**（归档话题的可重建目录）可以独立于以上全部先做——它不依赖 supply、不依赖 billing、不需要任何新字段，只需要「归档 + 只删可重建物」这一条判据，是本 issue 里唯一现在就能落地且能立刻还出 150G+ 的一格。

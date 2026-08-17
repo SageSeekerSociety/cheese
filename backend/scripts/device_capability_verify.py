@@ -4,8 +4,7 @@ Given a topic id, reports (as `KEY=value` lines) the two facts the device
 capability checks care about:
 
     CARDS=<accept cards filed on the topic>      # the shipped `cheese` CLI works
-    MARKER=<1|0>                                 # the device wrote into the topic's
-                                                 # REAL worktree (co-located #94)
+    MARKER=<1|0>                                 # the device pushed its topic branch
 
 Usage: python device_capability_verify.py <topic_id> [marker]
 """
@@ -13,6 +12,7 @@ Usage: python device_capability_verify.py <topic_id> [marker]
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import urllib.request
 import uuid
@@ -56,10 +56,14 @@ async def main() -> int:
 
     seen = 0
     if MARKER and project_id is not None:
-        probe = ws.topic_worktree(project_id, TOPIC_ID) / "DEVICE_PROBE.txt"
-        if probe.exists() and MARKER in probe.read_text(
-            encoding="utf-8", errors="ignore"
-        ):
+        result = subprocess.run(
+            ["git", "show", f"{ws.branch_for_topic(TOPIC_ID)}:DEVICE_PROBE.txt"],
+            cwd=ws.ensure_repo(project_id),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0 and MARKER in result.stdout:
             seen = 1
     print(f"MARKER={seen}")
     return 0

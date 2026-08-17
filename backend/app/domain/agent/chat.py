@@ -2222,9 +2222,8 @@ class ChatService:
 
         The route is a fact about where the PROVIDER actually sends the turn's
         traffic. On a subscription deployment the device provider builds the
-        same metering-proxy env the tmux provider does (#325 G2: co-located and
-        remote devices alike — the machine never holds a credential, so there is
-        nothing "unsafe for remote" about it), so its route is "subscription"
+        same metering-proxy env the tmux provider does (#325 G2: the device never
+        holds a credential), so its route is "subscription"
         and its spend is metered by the proxy's usage log. Only WITHOUT the
         subscription does a device turn ride /llm → gateway. Labeling device
         turns "subscription" while their traffic went through /llm was a real

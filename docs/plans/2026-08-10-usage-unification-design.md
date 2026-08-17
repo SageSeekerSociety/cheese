@@ -93,13 +93,13 @@ It moves into the repo (`deploy/metering-proxy/`), gaining:
 - the admission call above;
 - compose + runbook, wired to `SUBSCRIPTION_TOKEN_CAP`.
 
-### local converges on device (direction, not this change)
+### local and device share a substrate, not a filesystem
 
 With routes provider-decided and both meters unified, the remaining divergence
-is transport (in-container tmux vs machine screen) and env assembly. The end
-state (issue #218): the local sandbox enrolls as a co-located device and the
-tmux provider becomes a special case of the device provider. Not attempted
-here; this design removes the accounting reasons the two paths differed.
+is transport (in-container tmux vs machine screen) and env assembly. They remain
+separate isolation domains: local owns the backend topic workspace, while every
+Device owns an independent checkout and syncs through git/file transfer. This
+design removes the accounting reasons their shared substrate once differed.
 
 ## Delivery
 
