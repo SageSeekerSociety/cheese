@@ -276,10 +276,13 @@ async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T>
   return (await res.json()) as T
 }
 
-// 知是 1.0 routers are bare (`/users`, `/spaces`, …) and reach the backend
-// through exactly one `/api` prefix — see BASE's comment above for why that's
-// different from 2.0's doubled `/api/api`. Mirrors `request`'s envelope unwrap
-// and auth header, minus the 2.0-specific GET retry.
+// Mirrors `request`'s envelope unwrap and auth header, minus the GET retry.
+//
+// It exists because 1.0 was single-prefixed while 2.0 was doubled, and that
+// reason is gone: since #370 step 2 `BASE` is `/api` too, so the two differ
+// ONLY by that retry. Folding them together is worth doing and is not a
+// rename — it decides whether 1.0 calls start being retried, or 2.0 calls stop
+// being — so it wants its own change, not a drive-by.
 async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,
