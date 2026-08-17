@@ -45,6 +45,7 @@ from app.domain.device.supply import Visibility
 from app.domain.device.wiring import sql_device_service
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.identity.actor import Actor
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
@@ -63,7 +64,7 @@ from app.domain.topic.schemas import (
     TopicOut,
     UpgradeBlockIn,
 )
-from app.domain.topic.services import TopicService
+from app.domain.topic.services import TopicRelevance, TopicService
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
 from app.domain.webhook import service as webhook_service
@@ -96,20 +97,38 @@ async def create_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
+def _viewer(actor: Actor) -> str | None:
+    """The handle 与我的相关性 is computed against, or None for "no one".
+
+    An unidentified caller resolves to the ``anonymous`` actor (api/auth.py),
+    which is a placeholder rather than a person: it is in no roster, on no
+    card, and @-able by nobody. Handing it to the relevance query would have it
+    honestly answer "unrelated to everything" — three round trips to learn what
+    the default already says — so it is filtered out here instead.
+    """
+    return actor.handle if actor.handle != "anonymous" else None
+
+
 def _topic_out(
     topic: Topic,
     running_ids: set[uuid.UUID],
     last_activity: dict[uuid.UUID, datetime],
+    relevance: dict[uuid.UUID, TopicRelevance] | None = None,
 ) -> dict:
-    """TopicOut plus the two signals the ORM row cannot carry: the in-memory
+    """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
     topic can be active-and-idle or active-and-mid-turn, and only this tells
-    them apart) and 最后活动时间, which is derived from the topic's blocks."""
+    them apart), 最后活动时间, which is derived from the topic's blocks, and
+    与我的相关性, which depends on WHO is asking and so cannot live on the row
+    at all."""
     out = TopicOut.model_validate(topic)
     # Assign before dumping so the instant is serialized by the same schema as
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
     # where every other timestamp in the payload says "Z".
     out.last_activity_at = last_activity.get(topic.id)
+    mine = (relevance or {}).get(topic.id, TopicRelevance())
+    out.i_participate = mine.i_participate
+    out.awaits_me = mine.awaits_me
     data = out.model_dump(mode="json")
     data["running"] = topic.id in running_ids
     return data
@@ -131,6 +150,9 @@ async def list_topics(
     (its newest block), and `active_since=<ISO instant>` keeps only the topics
     active at or after it — "最近活跃的话题". Neither reads `updated_at`, which
     only moves when the topic's own fields change.
+
+    Every row also carries 与我的相关性 (`i_participate`/`awaits_me`) for the
+    caller — this is the endpoint the sidebar groups from.
     """
     actor = await resolver.resolve(fallback_handle=None, project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -140,7 +162,8 @@ async def list_topics(
     )
     running_ids = runner.running_topic_ids()
     last_activity = await service.last_activity_for_topics([t.id for t in topics])
-    items = [_topic_out(t, running_ids, last_activity) for t in topics]
+    relevance = await service.relevance_for_topics(topics, _viewer(actor))
+    items = [_topic_out(t, running_ids, last_activity, relevance) for t in topics]
     return ok(page(items, total))
 
 
@@ -157,6 +180,12 @@ async def get_topic(
     the sibling routes' having been is what made that a gap rather than a
     policy: a logged-in caller from another project could read any topic's title
     just by holding its id. Measured, not inferred.
+
+    Carries 与我的相关性 too, for the same reason it carries `last_activity_at`
+    and `running`: this route and `list_topics` are the pair that fill the
+    derived fields, and a header opened directly (deep link, refresh) would
+    otherwise report `awaits_me: false` on a topic that IS waiting on you.
+    Every OTHER endpoint returning a TopicOut leaves them at their default.
     """
     service = TopicService(db)
     topic = await service.get_or_404(topic_id)
@@ -167,7 +196,8 @@ async def get_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     last_activity = await service.last_activity_for_topics([topic.id])
-    return ok(_topic_out(topic, runner.running_topic_ids(), last_activity))
+    relevance = await service.relevance_for_topics([topic], _viewer(actor))
+    return ok(_topic_out(topic, runner.running_topic_ids(), last_activity, relevance))
 
 
 @router.get("/{topic_id}/blocks")

@@ -244,6 +244,17 @@ class TopicMemberService:
         )
         return member.member_handle if member is not None else None
 
+    async def topic_ids_for_member(
+        self, topic_ids: list[uuid.UUID], member_handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these topics this handle is in the roster of, in ONE query.
+
+        A read, so it carries no roster-management authorization: the caller
+        (与我的相关性 on the topic list) is asking about ITSELF, and every
+        answer it gets back is about topics it was already allowed to list.
+        """
+        return await self._repo.topic_ids_for_member(topic_ids, member_handle)
+
     async def agent_handles(self, topic_id: uuid.UUID) -> list[str]:
         """Which of this topic's members are agents, in roster order.
 

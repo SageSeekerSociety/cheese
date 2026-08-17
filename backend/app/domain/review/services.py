@@ -691,6 +691,16 @@ class AcceptService:
         """
         return await self._repo.latest_decision_at(topic_ids)
 
+    async def reviewer_topic_ids(
+        self, topic_ids: list[uuid.UUID], reviewer_handle: str
+    ) -> dict[uuid.UUID, bool]:
+        """{话题: 这上面还有没有一张卡在等这个人} —— 只有点过名给他的话题会出现。
+
+        给话题列表的「与我的相关性」用，一次查完：**在不在 key 里**是「这话题
+        点过我的名」（采纳完也还算我的事），**value** 是「现在就等我动手」。
+        """
+        return await self._repo.reviewer_topic_ids(topic_ids, reviewer_handle)
+
     async def describe(self, card: AcceptCard) -> dict:
         """AcceptCardOut payload enriched with the vote state (approvals live in
         their own table; the requirement is a project setting)."""
