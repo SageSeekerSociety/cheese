@@ -68,10 +68,18 @@ def test_backend_lint_is_a_separate_hosted_job():
     assert "run_heavy == 'true'" not in lint["if"]
     assert "needs.scope.outputs.run_heavy != 'false'" in lint["if"]
 
+    # The commands themselves moved into .pre-commit-config.yaml, so what is
+    # pinned here is that CI goes THROUGH that file rather than restating them —
+    # a second copy is how the local gate and CI drifted apart before. Both
+    # halves matter: CI must invoke the hook, and the hook must exist.
     lint_commands = "\n".join(s.get("run", "") for s in lint["steps"])
-    assert "ruff format --check ." in lint_commands
-    assert "ruff check ." in lint_commands
-    assert "pyright" in lint_commands
+    assert "pre-commit run" in lint_commands
+    config = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())
+    declared = {h["id"] for repo in config["repos"] for h in repo["hooks"]}
+    for hook in ("ruff", "ruff-format", "pyright"):
+        assert hook in declared, f"{hook} is not declared in .pre-commit-config.yaml"
+        assert "pre-commit run --all-files" in lint_commands
+        assert hook in lint_commands
 
     test_commands = "\n".join(
         s.get("run", "") for s in workflow["jobs"]["test"]["steps"]

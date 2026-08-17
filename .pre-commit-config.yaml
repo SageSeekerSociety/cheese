@@ -10,10 +10,20 @@
 # hand; `pre-commit install` replaces install-hooks.sh copying a script into
 # .git/hooks.
 #
-# WHAT IS NOT HERE, on purpose: pytest. It needs Postgres, takes ~60s, and this
-# repo's own machines do not all run a database — a commit gate that fails on a
-# missing DB teaches people to pass --no-verify, and a bypassed gate protects
-# nothing. `task check` and CI's test.yml own the suite.
+# THE HEAVY CHECKS ARE HERE TOO, under `stages: [manual]` — they just never run
+# on a commit. pytest needs Postgres and ~60s; the frontend typecheck and build
+# OOM on a small box. A commit gate that fails on a missing database teaches
+# people to pass --no-verify, and a bypassed gate protects nothing. But leaving
+# them out of this file entirely would mean the file is not the list, and then
+# there is no single answer to "what do we check". Run them with
+# `pre-commit run --hook-stage manual <id> --all-files`, or `task check`.
+#
+# CI does NOT invoke them through pre-commit: test.yml gives pytest a database
+# service, a persistent uv venv, and a scope gate, and frontend.yml does the
+# same for the build. Those are workflow-level concerns a hook cannot express.
+# So for the heavy three, this file states WHAT is checked and CI owns HOW —
+# which is an honest split, unlike a hook that claims to be runnable anywhere
+# and is not.
 #
 # Every guard below is a standalone executable that says what it thinks through
 # its exit code, and carries --self-test to prove it still fires. That shape
@@ -88,6 +98,28 @@ repos:
         language: system
         pass_filenames: false
         files: ^frontend/
+
+      # --- heavy: never on commit, see the note at the top ---------------
+      - id: pytest
+        name: backend test suite (needs Postgres)
+        entry: bash -c 'cd backend && uv run pytest tests/ -n 4 -q'
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: frontend-typecheck
+        name: vue-tsc (ratcheted)
+        entry: bash -c 'cd frontend && pnpm run typecheck'
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: frontend-build
+        name: frontend build
+        entry: bash -c 'cd frontend && pnpm run build'
+        language: system
+        pass_filenames: false
+        stages: [manual]
 
       # --- repo-wide guards ---------------------------------------------
       # always_run because it judges relationships across the tree — duplicate

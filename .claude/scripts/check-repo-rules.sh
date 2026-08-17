@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
-# check-repo-rules.sh — the CLAUDE.md rules that a linter does not cover.
+# check-repo-rules.sh — ONLY the rules ruff cannot see.
 #
-# WHY THIS EXISTS: a rule that lives only in prose decays. The proof is in this
+# THE TEST BEFORE ADDING ANYTHING HERE: can ruff do this? If it can, it belongs
+# in backend/pyproject.toml and not in this file. Reimplementing a linter in
+# bash is worse than not checking at all — it is slower, it matches text instead
+# of syntax, it needs its own opt-out convention, and it rots while the real
+# linter gains rules nobody switches on. This was not hypothetical: the
+# builtin-shadowing rule lived here until ruff's A003 was found to do the same
+# job across every builtin rather than four hand-listed names, and switching on
+# ruff's DTZ at the same time caught a case (a now() with no tz at all) this
+# file had never checked, in live code.
+#
+# So what is left below is what ruff structurally cannot reach: markdown files,
+# .vue templates, relationships BETWEEN files, and the shape of a name. Ask the
+# question again whenever a rule is added, and re-ask it for the existing ones
+# when ruff ships a release.
+#
+# WHY THIS EXISTS AT ALL: a rule that lives only in prose decays. The proof is in this
 # repo — .claude/rules/backend-tests.md says "Eight files already carry a
 # copy-pasted _auth() helper — don't add a ninth", and there are now nine. So
 # these rules are enforced rather than asked for: the difference is between "the
