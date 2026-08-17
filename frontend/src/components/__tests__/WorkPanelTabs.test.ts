@@ -333,6 +333,70 @@ describe('工作面板 · Tab 容器', () => {
     expect(container.querySelector('.tabbar__count')?.classList.contains('tabbar__count--new')).toBe(false)
   })
 
+  // 规则 3: 打开话题那一刻不算抢占，所以这是面板唯一一次自己选 tab 的机会。
+  // 阶段是异步到的（验收卡要先拉回来），所以它到之前 phase 是 undefined 而不是
+  // 「没有卡」—— 否则待验收的话题会先停在文档上，再也不动。
+  it('待验收的话题开在改动上', async () => {
+    const { container, rerender } = mountPanel()
+    await flush()
+    expect(visible(container, '.doc')).toBe(true)
+
+    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
+    await flush()
+
+    expect(visible(container, '.panel-changes')).toBe(true)
+  })
+
+  it('芝士正干着的话题开在现场上', async () => {
+    const { container, rerender } = mountPanel()
+    await flush()
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: true, phase: 'working' })
+    await flush()
+
+    expect(visible(container, '.panel-site')).toBe(true)
+  })
+
+  it('其余一律开在文档上', async () => {
+    const { container, rerender } = mountPanel()
+    await flush()
+    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'open' })
+    await flush()
+
+    expect(visible(container, '.doc')).toBe(true)
+  })
+
+  it('地址点名了 tab 就以地址为准，阶段不许改它', async () => {
+    const { container, rerender } = mountPanel('topic-A', { tab: 'doc' })
+    await flush()
+    await rerender({ topic: topic('topic-A'), activityTick: 0, tab: 'doc', phase: 'reviewing' })
+    await flush()
+
+    expect(visible(container, '.doc')).toBe(true)
+  })
+
+  it('人已经自己选过了，晚到的阶段不许把他挪走', async () => {
+    const { container, rerender } = mountPanel()
+    await flush()
+    await openTab(container, '现场')
+
+    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
+    await flush()
+
+    expect(visible(container, '.panel-site')).toBe(true)
+  })
+
+  it('阶段后来变了也不动——只有打开那一刻算数', async () => {
+    const { container, rerender } = mountPanel()
+    await flush()
+    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'open' })
+    await flush()
+
+    await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
+    await flush()
+
+    expect(visible(container, '.doc')).toBe(true)
+  })
+
   it('换话题回到文档 tab（旧行为：切话题会把抽屉关掉）', async () => {
     const { container, rerender } = mountPanel('topic-A')
     await flush()

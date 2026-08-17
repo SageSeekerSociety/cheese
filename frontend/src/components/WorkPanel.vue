@@ -17,6 +17,7 @@
 // The one cross-tab wire is `open-file`: a <&path> chip in the doc (or in the
 // chat, via `openFile`) selects the 改动 tab and opens that file there.
 import type { PreviewInfo, Topic } from '../cx_types'
+import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -44,8 +45,18 @@ const props = withDefaults(
     // keeps the panel mountable without a router, which is how its four suites
     // exercise it. An unknown or absent value leaves the choice here.
     tab?: string
+    // 话题此刻处在哪一段. Only used to pick which tab a topic OPENS on, and only
+    // when the address named none — after that it is the reader's choice.
+    phase?: TopicPhase
   }>(),
-  { worklog: () => [], working: false, workingSince: null, topicList: () => [], tab: undefined }
+  {
+    worklog: () => [],
+    working: false,
+    workingSince: null,
+    topicList: () => [],
+    tab: undefined,
+    phase: undefined,
+  }
 )
 
 const emit = defineEmits<{
@@ -78,9 +89,28 @@ function tabFromUrl(): TabKey | null {
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
 function setTab(key: TabKey) {
+  settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
   emit('update:tab', key)
+}
+
+// ---- 开在哪个 tab 上 (规则 3) ----
+// Opening a topic is the one moment choosing a tab is not snatching the view,
+// so it is the one moment the panel gets to choose: 芝士 干着活的时候你多半是来
+// 看它在干什么的，卡等你验收的时候你是来看它干了什么的。
+//
+// `settled` is what keeps it to that moment. The phase arrives asynchronously —
+// the accept card has to load before anyone knows a card is pending, and until
+// it has the prop is undefined rather than 「没有卡」 — so this cannot run on the
+// topic switch itself. It runs on the first phase this topic reports, and never
+// again unless another topic is opened.
+const settled = ref(false)
+
+function tabForPhase(phase: TopicPhase): TabKey {
+  if (phase === 'working') return 'site'
+  if (phase === 'reviewing' || phase === 'delivering') return 'changes'
+  return 'doc'
 }
 
 // Back / forward, or someone pasting a link into the open topic.
@@ -235,6 +265,9 @@ watch(
   () => props.topic?.id,
   (id) => {
     active.value = tabFromUrl() ?? 'doc'
+    // 「URL 里显式带 ?tab= 时以 URL 为准」: an address that names a tab has already
+    // decided, so the phase does not get to.
+    settled.value = !!tabFromUrl()
     markPreviewSeen(null)
     summary.value = { changedFiles: [], hasRun: false }
     changesSeen.value = ''
@@ -242,6 +275,22 @@ watch(
       void pollPreviewPointer({ seen: true })
       void pollWorkSummary({ seen: true })
     }
+  },
+  { immediate: true }
+)
+
+// Declared after the topic watcher on purpose: both fire immediately on mount,
+// in declaration order, and this one must see the `settled` that watcher sets.
+watch(
+  () => props.phase,
+  (phase) => {
+    if (settled.value || !phase) return
+    const want = tabForPhase(phase)
+    // No capability check: a topic reporting 待验收 has a card, and a card is a
+    // diff. Requiring the summary to have landed first would make the choice a
+    // race between two requests fired at the same moment.
+    if (want === active.value) settled.value = true
+    else setTab(want)
   },
   { immediate: true }
 )

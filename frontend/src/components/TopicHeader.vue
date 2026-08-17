@@ -13,16 +13,21 @@
 // seconds for as long as it was open; usage numbers do not move that fast, and
 // nobody watches them. Now they load once, when the popover is opened.
 import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
+import type { TopicPhase } from '@/lib/topicState'
 
 import { computed, ref, watch } from 'vue'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
 import TopicMembers from '@/components/TopicMembers.vue'
-import { topicShortId, topicStateBadge } from '@/lib/topicState'
+import { topicPhaseBadge, topicShortId, topicStateBadge } from '@/lib/topicState'
 import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
 
 const props = defineProps<{
   topic: Topic
+  /** 话题此刻处在哪一段 — 施工中 / 待验收 / 交付中 / 已采纳, computed above this
+   * component because it folds together the topic's status, its live turn and
+   * its accept card. Absent (私聊 / 项目本体) falls back to the status alone. */
+  phase?: TopicPhase
   members: ProjectMemberRow[]
   me: string
   /** ChatPanel's live socket state — the dot that says 已连接 / 未连接. */
@@ -33,7 +38,11 @@ const props = defineProps<{
 
 const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
 
-const state = computed(() => topicStateBadge(props.topic.status))
+// 头部常驻状态条 (规则 4): where this topic stands, always on screen. It used to
+// read the topic row's `status` alone, which knows only 归档 —— 「待验收」 and
+// 「交付中」 were visible solely by scrolling the conversation to the accept box,
+// so a reviewer could sit in a topic that was waiting on them and see 「进行中」.
+const state = computed(() => (props.phase ? topicPhaseBadge(props.phase) : topicStateBadge(props.topic.status)))
 const shortId = computed(() => topicShortId(props.topic.id))
 // 项目本体 is not a work topic — it has no id badge and no roster.
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
@@ -208,6 +217,18 @@ watch(
   background: var(--ok);
 }
 .pr-state--merged {
+  color: var(--muted);
+  background: var(--fill);
+}
+/* 待验收 = 有人在等你。--warn 的三件套里文字用 -ink、底用 -wash：把 mark 色
+   (--warn) 拿来当文字在浅色主题下只有 2.34:1，读不动。 */
+.pr-state--reviewing {
+  color: var(--warn-ink);
+  background: var(--warn-wash);
+}
+/* 施工中 / 交付中 = 机器在忙，不需要你做什么，所以是中性的陈述而不是招手。 */
+.pr-state--working,
+.pr-state--delivering {
   color: var(--muted);
   background: var(--fill);
 }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ChatAttachment, Topic } from '@/cx_types'
+import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -12,6 +13,7 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { usePendingAttachments } from '@/lib/attachments'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
+import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -130,6 +132,26 @@ function onAttFilePicked(e: Event) {
 const worklog = ref<{ label: string; text: string; platform: boolean }[]>([])
 const working = ref(false)
 const workingSince = ref<number | null>(null)
+
+// ---- 话题此刻处在哪一段 (规则 3/4) ----
+// The accept card owns its own data, but not the one word that summarises it:
+// the header states where the topic stands, and the panel opens on the tab that
+// stage calls for. Both live above the card, so the word travels up rather than
+// the card list travelling out.
+// undefined until the card box has actually answered — the header falls back to
+// the topic's own status meanwhile, and the panel does not get to pick a tab on
+// an answer nobody has yet.
+const cardPhase = ref<CardPhase | undefined>(undefined)
+const phase = computed<TopicPhase | undefined>(() => {
+  if (cardPhase.value === undefined) return undefined
+  return topicPhase({ status: selectedTopic.value?.status, working: working.value, card: cardPhase.value })
+})
+watch(
+  () => props.topicId,
+  () => {
+    cardPhase.value = undefined
+  }
+)
 
 // ---- 评论模式 (飞书 docs 风): the doc tab's selection CTA hands the anchor +
 // quoted span here; the SAME composer then posts a comment instead of a chat
@@ -412,6 +434,7 @@ watch(
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
+        :phase="phase"
         :members="store.members"
         :me="AUTHOR"
         :connected="composerReady"
@@ -440,7 +463,13 @@ watch(
         >
           <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
           <template #timeline-end>
-            <TopicAcceptCard ref="acceptRef" :topic-id="selectedTopic.id" :topic-status="selectedTopic.status" />
+            <TopicAcceptCard
+              ref="acceptRef"
+              :topic-id="selectedTopic.id"
+              :topic-status="selectedTopic.status"
+              @phase="cardPhase = $event"
+              @review="onPanelTab('changes')"
+            />
           </template>
         </ChatPanel>
         <div
@@ -461,6 +490,7 @@ watch(
           :working-since="workingSince"
           :topic-list="store.topics"
           :tab="panelTab"
+          :phase="phase"
           @open-topic="openTopic"
           @mention-click="handleMentionClick"
           @comment-intent="onCommentIntent"
