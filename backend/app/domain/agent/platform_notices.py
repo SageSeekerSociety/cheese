@@ -60,6 +60,8 @@ EVENT_GATE_ABANDONED: Final = "gate_abandoned"
 EVENT_MERGE_REFUSED: Final = "merge_refused"
 #: 采纳时合并冲突。
 EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
+#: 验收卡被人驳回了 —— 芝士要去改，不是等着。
+EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 同步上游时合并冲突。
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
@@ -79,6 +81,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_GATE_ABANDONED,
         EVENT_MERGE_REFUSED,
         EVENT_ACCEPT_CONFLICT,
+        EVENT_CARD_REJECTED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,

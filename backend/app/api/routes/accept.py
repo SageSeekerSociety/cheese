@@ -17,6 +17,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.platform_notices import (
     EVENT_ACCEPT_CONFLICT,
+    EVENT_CARD_REJECTED,
     SEVERITY_WARN,
     WHO_CHEESE,
     notice,
@@ -213,14 +214,58 @@ async def reassign_card(
 
 @router.post("/accept-cards/{card_id}/reject")
 async def reject_card(
-    card_id: uuid.UUID, body: RejectDecision, db: DbSession, resolver: ActorResolverDep
+    card_id: uuid.UUID,
+    body: RejectDecision,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
+    """驳回一张验收卡 —— 并且**叫醒芝士去改**。
+
+    `AcceptService.reject` only writes the row: no message, no summon. So a
+    rejected topic used to sit there until a human happened to come back and
+    poke it, while a CI failure on the same card DOES summon (`_nudge_pr_fix`).
+    Same card, same "去改代码" verdict, opposite behaviour — the difference was
+    invisible from the room.
+
+    The wake-up lives here rather than in the service on purpose: `chat`/`runner`
+    are request-scoped dependencies the domain layer has no handle on, and the
+    conflict branch of `accept_card` right above already does it this way.
+    """
     actor = await resolver.resolve(fallback_handle=body.decided_by)
     if not actor.authenticated:
         raise AuthenticationRequiredError("需要登录才能驳回验收卡")
     svc = AcceptService(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
-    return ok(await svc.describe(card))
+    described = await svc.describe(card)
+    topic_id = card.topic_id
+    decided_by = card.decided_by or actor.handle
+    reason = (card.note or "").strip()
+    # 理由必须过去，否则芝士只知道"被退了"、不知道退在哪，只能猜着重做一遍。
+    reason_line = f"他给的理由：{reason}" if reason else "他没写理由。"
+    await db.commit()  # the card's new state must be readable by the woken turn
+    runner.submit(
+        chat,
+        topic_id,
+        author="system",
+        content=(
+            f"{decided_by} 驳回了你递的验收卡。{reason_line}\n"
+            "话题没归档，工作区还是你的：照着这条理由改，改完重新递卡"
+            "（驳回不阻塞重递）。理由看不懂或者你不同意，别默默按自己的理解改 —— "
+            "在对话里简短回一句问清楚。"
+        ),
+        summon=True,
+        nudge_event=f"↩️ {decided_by} 驳回了验收卡，芝士去改",
+        nudge_meta=notice(
+            EVENT_CARD_REJECTED,
+            severity=SEVERITY_WARN,
+            who=WHO_CHEESE,
+            detail=reason or None,
+            detail_label="驳回理由",
+        ),
+    )
+    return ok(described)
 
 
 @router.post("/accept-cards/{card_id}/void")
