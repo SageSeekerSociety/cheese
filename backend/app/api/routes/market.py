@@ -25,7 +25,7 @@ from app.domain.agent.market import (
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
 
-router = APIRouter(prefix="/api/market", tags=["market"])
+router = APIRouter(prefix="/market", tags=["market"])
 
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]

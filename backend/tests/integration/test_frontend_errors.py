@@ -15,21 +15,19 @@ def _fresh_intake(monkeypatch):
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _topic_events(client, topic_id: str) -> list[dict]:
-    r = client.get(f"/api/topics/{topic_id}/blocks")
+    r = client.get(f"/topics/{topic_id}/blocks")
     assert r.status_code == 200
     return [
         b
@@ -43,7 +41,7 @@ def test_errors_land_in_topic_timeline(client):
     tid = _make_topic(client, pid)
 
     r = client.post(
-        "/api/frontend-errors",
+        "/frontend-errors",
         json={
             "project_id": pid,
             "topic_id": tid,
@@ -74,13 +72,13 @@ def test_duplicates_collapse(client):
     err = {"message": "same", "stack": "Error: same\n  at x.js:1"}
 
     r = client.post(
-        "/api/frontend-errors",
+        "/frontend-errors",
         json={"project_id": pid, "topic_id": tid, "errors": [err, err]},
     )
     assert r.json()["data"] == {"accepted": 1, "dropped": 1}
 
     r = client.post(
-        "/api/frontend-errors",
+        "/frontend-errors",
         json={"project_id": pid, "topic_id": tid, "errors": [err]},
     )
     assert r.json()["data"] == {"accepted": 0, "dropped": 1}
@@ -89,7 +87,7 @@ def test_duplicates_collapse(client):
 
 def test_unknown_project_404(client):
     r = client.post(
-        "/api/frontend-errors",
+        "/frontend-errors",
         json={"project_id": str(uuid.uuid4()), "errors": [{"message": "x"}]},
     )
     assert r.status_code == 404

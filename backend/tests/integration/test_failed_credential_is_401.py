@@ -17,7 +17,7 @@ from tests.integration.conftest import session_auth_headers, session_token
 
 
 def _projects(client, headers: dict | None = None):
-    return client.get("/api/projects", headers=headers or {})
+    return client.get("/projects", headers=headers or {})
 
 
 def test_a_bearer_that_does_not_verify_is_rejected_not_emptied(client):
@@ -49,7 +49,7 @@ def test_presenting_nothing_at_all_still_answers_an_empty_list(client):
 def test_a_good_token_still_gets_its_own_projects(client):
     """正常路径不能被这条规则碰到。"""
     made = client.post(
-        "/api/projects", json={"name": "P"}, headers=session_auth_headers("alice")
+        "/projects", json={"name": "P"}, headers=session_auth_headers("alice")
     )
     assert made.status_code == 200, made.text
 
@@ -62,6 +62,6 @@ def test_a_good_token_still_gets_its_own_projects(client):
 def test_the_team_scoped_listing_is_untouched(client):
     """带 `team_id` 的那条分支根本不解析调用者（它答的是「这个团队的项目」，不是
     「我的项目」）。这条规则只属于 per-caller 的那半，别顺手把另一半也关上。"""
-    r = client.get("/api/projects?team_id=1", headers={"Authorization": "Bearer bad"})
+    r = client.get("/projects?team_id=1", headers={"Authorization": "Bearer bad"})
 
     assert r.status_code == 200, r.text

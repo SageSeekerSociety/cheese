@@ -43,17 +43,17 @@ PAST_GRACE = ARCHIVE_REFILE_GRACE_MINUTES + 1
 
 
 def _project(client) -> dict:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]
 
 
 def _topic(client, project_id: str, title: str = "大话题") -> dict:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": title}
+        "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]
 
 
 def _split(client, parent_id: str, title: str) -> dict:
-    sub = client.post(f"/api/topics/{parent_id}/split", json={"title": title}).json()[
+    sub = client.post(f"/topics/{parent_id}/split", json={"title": title}).json()[
         "data"
     ]
     # The 分身's auto-kickoff turn must finish before the test writes more.
@@ -80,7 +80,7 @@ def _file_conclusion(client, sub_id: str, conclusion: str = "做完了") -> dict
 
 def _file_accept_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
+        f"/topics/{topic_id}/accept-card",
         json={
             "reviewer_handle": reviewer,
             "routing_reason": "最懂这块",
@@ -93,15 +93,15 @@ def _file_accept_card(client, topic_id: str, reviewer: str = "alice") -> str:
 
 
 def _accept_cards(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
 
 
 def _conclusion_cards(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/conclusion-cards").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/conclusion-cards").json()["data"]["data"]
 
 
 def _topic_status(client, topic_id: str) -> str:
-    return client.get(f"/api/topics/{topic_id}").json()["data"]["status"]
+    return client.get(f"/topics/{topic_id}").json()["data"]["status"]
 
 
 def _settle_by_turn_end(client, parent_id: str) -> None:
@@ -225,7 +225,7 @@ def test_manual_accept_route_leaves_the_pending_card_alone(client):
     conclusion_id = _conclusion_cards(client, sub_id)[0]["id"]
 
     r = client.post(
-        f"/api/topics/{parent['id']}/conclusion-cards/{conclusion_id}/accept",
+        f"/topics/{parent['id']}/conclusion-cards/{conclusion_id}/accept",
         json={"decided_by": "user-1"},
     )
     assert r.status_code == 200
@@ -239,7 +239,7 @@ def test_the_subtopic_says_why_it_is_still_alive(client):
 
     _settle_by_turn_end(client, parent["id"])
 
-    blocks = client.get(f"/api/topics/{sub_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{sub_id}/blocks").json()["data"]["data"]
     assert any("暂不归档" in b["content"] for b in blocks)
 
 
@@ -304,7 +304,7 @@ def test_an_already_archived_subtopic_is_untouched(client):
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "早就收工了")
     _file_conclusion(client, sub["id"], "结论")
-    assert client.post(f"/api/topics/{sub['id']}/archive", json={}).status_code == 200
+    assert client.post(f"/topics/{sub['id']}/archive", json={}).status_code == 200
 
     _settle_by_turn_end(client, parent["id"])
 
@@ -323,7 +323,7 @@ def test_a_rejected_card_lets_the_deferred_archive_land(client):
     _settle_by_turn_end(client, parent["id"])
 
     r = client.post(
-        f"/api/accept-cards/{card_id}/reject",
+        f"/accept-cards/{card_id}/reject",
         json={"decided_by": "alice", "note": "再改改"},
         headers=session_auth_headers("alice"),
     )
@@ -343,7 +343,7 @@ def test_a_voided_card_lets_the_deferred_archive_land(client):
     _force_card_status(client, card_id, AcceptStatus.pr_open)
 
     r = client.post(
-        f"/api/accept-cards/{card_id}/void",
+        f"/accept-cards/{card_id}/void",
         json={"note": "PR 关了"},
         headers=session_auth_headers("alice"),
     )
@@ -359,7 +359,7 @@ def test_the_refile_window_is_respected(client):
     _, parent, sub_id, card_id = _concluded_with_a_card_waiting(client)
     _settle_by_turn_end(client, parent["id"])
     client.post(
-        f"/api/accept-cards/{card_id}/reject",
+        f"/accept-cards/{card_id}/reject",
         json={"decided_by": "alice", "note": "再改改"},
         headers=session_auth_headers("alice"),
     )
@@ -373,7 +373,7 @@ def test_refiling_a_card_re_protects_the_subtopic(client):
     _, parent, sub_id, card_id = _concluded_with_a_card_waiting(client)
     _settle_by_turn_end(client, parent["id"])
     client.post(
-        f"/api/accept-cards/{card_id}/reject",
+        f"/accept-cards/{card_id}/reject",
         json={"decided_by": "alice", "note": "再改改"},
         headers=session_auth_headers("alice"),
     )
@@ -391,7 +391,7 @@ def test_accepting_the_card_archives_the_subtopic_and_clears_the_deferral(client
     _settle_by_turn_end(client, parent["id"])
 
     r = client.post(
-        f"/api/accept-cards/{card_id}/accept",
+        f"/accept-cards/{card_id}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -412,7 +412,7 @@ def test_the_platform_sweep_is_actually_wired_to_pay_it_back(client, tmp_path):
     _, parent, sub_id, card_id = _concluded_with_a_card_waiting(client)
     _settle_by_turn_end(client, parent["id"])
     client.post(
-        f"/api/accept-cards/{card_id}/reject",
+        f"/accept-cards/{card_id}/reject",
         json={"decided_by": "alice", "note": "再改改"},
         headers=session_auth_headers("alice"),
     )
@@ -441,12 +441,12 @@ def test_the_deferred_archive_only_ever_fires_once(client):
     _, parent, sub_id, card_id = _concluded_with_a_card_waiting(client)
     _settle_by_turn_end(client, parent["id"])
     client.post(
-        f"/api/accept-cards/{card_id}/reject",
+        f"/accept-cards/{card_id}/reject",
         json={"decided_by": "alice", "note": "再改改"},
         headers=session_auth_headers("alice"),
     )
     assert _sweep_deferred(client, after_minutes=PAST_GRACE) == [sub_id]
 
-    assert client.post(f"/api/topics/{sub_id}/unarchive", json={}).status_code == 200
+    assert client.post(f"/topics/{sub_id}/unarchive", json={}).status_code == 200
     assert _sweep_deferred(client, after_minutes=10 * PAST_GRACE) == []
     assert _topic_status(client, sub_id) == "active"

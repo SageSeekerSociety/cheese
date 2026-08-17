@@ -42,23 +42,16 @@ import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 
 export { TOPIC_TITLE_MAX_LENGTH }
 
-// The cheesex (2.0) API, as a BROWSER must address it — deliberately doubled.
+// The API base a BROWSER sends. One `/api`: the gateway's mount point, which
+// `location /api/ { proxy_pass …:8081/; }` strips on the way through.
 //
-// The two halves of the fused product carry different conventions: 1.0 routers
-// are bare (`/users`, `/spaces`), 2.0 routers carry `/api` (`/api/projects`,
-// `/api/topics`). The gateway's `location /api/ { proxy_pass …:8081/; }` strips
-// exactly one `/api`, which is what 1.0 needs — so a 2.0 route only survives
-// the strip if the browser sends the prefix twice.
-//
-// With a single `/api`, every 2.0 project call landed on the 1.0 TeamProjects
-// router instead: creating a project answered 400 ("HTTP 400 for /projects"),
-// the project list 400'd, members 400'd, topic-unread 404'd. Worse than an
-// error, some of them silently answered from the WRONG domain — `/api/topics`
-// reached 1.0's question TAGS and returned 200.
-//
-// The real fix is one namespace for the fused API; until that lands this is
-// where the seam is spelled, once, instead of in 22 call sites.
-export const BASE = '/api/api'
+// It was `/api/api` until #370 step 2. The 2.0 routers used to carry their own
+// `/api` — the only way to keep `topics`, `projects` and `tasks` from meaning
+// two different things at one URL — so a browser had to send the prefix twice
+// and the gateway ate one. Those words are now owned once each (1.0's tag is
+// `/tags`, its team project `/team-projects`, and 赛题 are merged), so the
+// namespace that separated them has nothing left to separate.
+export const BASE = '/api'
 
 // P1 真鉴权: read the signed session token straight from storage (avoids an
 // import cycle with me.ts). Sent as `Authorization: Bearer` so the backend
@@ -283,10 +276,13 @@ async function connectorRequest<T>(path: string, init?: RequestInit): Promise<T>
   return (await res.json()) as T
 }
 
-// 知是 1.0 routers are bare (`/users`, `/spaces`, …) and reach the backend
-// through exactly one `/api` prefix — see BASE's comment above for why that's
-// different from 2.0's doubled `/api/api`. Mirrors `request`'s envelope unwrap
-// and auth header, minus the 2.0-specific GET retry.
+// Mirrors `request`'s envelope unwrap and auth header, minus the GET retry.
+//
+// It exists because 1.0 was single-prefixed while 2.0 was doubled, and that
+// reason is gone: since #370 step 2 `BASE` is `/api` too, so the two differ
+// ONLY by that retry. Folding them together is worth doing and is not a
+// rename — it decides whether 1.0 calls start being retried, or 2.0 calls stop
+// being — so it wants its own change, not a drive-by.
 async function legacyRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`/api${path}`, {
     ...init,

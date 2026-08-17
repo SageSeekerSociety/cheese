@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 |---|---|
 | [`agent-principles.md`](agent-principles.md) | 已经拍板、不再重新讨论的判断 |
-| [`api-conventions.md`](api-conventions.md) | 调 API 该发什么 URL：`/api` 挂载点、2.0 为何是 `/api/api`、为什么不能拍平 |
+| [`api-conventions.md`](api-conventions.md) | 调 API 该发什么 URL：`/api` 挂载点、路由裸路径与浏览器路径的差别 |
 | [`design-system.md`](design-system.md) | 前端视觉唯一规范：亮/暗双色板、圆角/字号/间距档位、琥珀用在哪 |
 | [`device-self-hosting.md`](device-self-hosting.md) | 自托管设备：**§0 是"别人的机器"约束**，其余是接入流程与排障 |
 | [`workflows.md`](workflows.md) | 这个项目实际怎么开发、测试、迭代 UI |

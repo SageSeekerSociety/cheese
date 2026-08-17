@@ -79,11 +79,11 @@ def stub_agent() -> ChecklistAgent:
 
 
 def _topic(client) -> str:
-    p = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "user-1"}
-    ).json()["data"]
+    p = client.post("/projects", json={"name": "P", "owner_handle": "user-1"}).json()[
+        "data"
+    ]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]
     return t["id"]
@@ -104,7 +104,7 @@ def _chat(client, topic_id: str) -> list[dict]:
 
 
 def test_topic_without_a_turn_has_empty_progress(client):
-    body = client.get(f"/api/topics/{_topic(client)}/progress").json()
+    body = client.get(f"/topics/{_topic(client)}/progress").json()
     assert body["code"] == 200
     assert body["data"] == {"items": [], "updated_at": None}
 
@@ -113,7 +113,7 @@ def test_checklist_outlives_the_turn(client):
     tid = _topic(client)
     _chat(client, tid)
 
-    data = client.get(f"/api/topics/{tid}/progress").json()["data"]
+    data = client.get(f"/topics/{tid}/progress").json()["data"]
     assert [(i["subject"], i["status"]) for i in data["items"]] == [
         ("核实 issue 论断", "completed"),
         ("写实现", "in_progress"),
@@ -164,7 +164,7 @@ def test_progress_survives_a_turn_that_dies(client, stub_agent, monkeypatch):
 
     _chat(client, tid)  # ends in an error frame, not done
 
-    data = client.get(f"/api/topics/{tid}/progress").json()["data"]
+    data = client.get(f"/topics/{tid}/progress").json()["data"]
     assert [(i["subject"], i["status"]) for i in data["items"]] == [
         ("跑到一半就没了", "in_progress")
     ]
@@ -174,9 +174,9 @@ def test_progress_is_per_topic(client):
     a, b = _topic(client), _topic(client)
     _chat(client, a)
 
-    assert client.get(f"/api/topics/{b}/progress").json()["data"]["items"] == []
+    assert client.get(f"/topics/{b}/progress").json()["data"]["items"] == []
 
 
 def test_progress_404s_for_an_unknown_topic(client):
     unknown = "00000000-0000-0000-0000-000000000000"
-    assert client.get(f"/api/topics/{unknown}/progress").status_code == 404
+    assert client.get(f"/topics/{unknown}/progress").status_code == 404

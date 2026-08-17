@@ -20,10 +20,10 @@ PNG_1PX = bytes.fromhex(
 
 
 def _create_project_and_topic(client) -> tuple[str, str]:
-    pr = client.post("/api/projects", json={"name": "Demo"})
+    pr = client.post("/projects", json={"name": "Demo"})
     project_id = pr.json()["data"]["id"]
     tr = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "图片话题", "created_by": "user-1"},
     )
     return project_id, tr.json()["data"]["id"]
@@ -31,7 +31,7 @@ def _create_project_and_topic(client) -> tuple[str, str]:
 
 def _upload(client, topic_id: str) -> dict:
     r = client.post(
-        f"/api/topics/{topic_id}/attachments",
+        f"/topics/{topic_id}/attachments",
         files={"file": ("screenshot.png", PNG_1PX, "image/png")},
     )
     assert r.status_code == 200, r.text
@@ -56,7 +56,7 @@ def test_upload_then_raw_roundtrip(client):
     assert att["path"].endswith(".png")
 
     raw = client.get(
-        f"/api/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
+        f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
     )
     assert raw.status_code == 200
     assert raw.headers["content-type"].startswith("image/png")
@@ -66,7 +66,7 @@ def test_upload_then_raw_roundtrip(client):
 def test_upload_rejects_non_image(client):
     _, topic_id = _create_project_and_topic(client)
     r = client.post(
-        f"/api/topics/{topic_id}/attachments",
+        f"/topics/{topic_id}/attachments",
         files={"file": ("evil.html", b"<script>1</script>", "text/html")},
     )
     assert r.status_code == 422
@@ -76,7 +76,7 @@ def test_raw_rejects_non_image_and_traversal(client):
     _, topic_id = _create_project_and_topic(client)
     _upload(client, topic_id)  # ensure the worktree exists
     for bad in ("uploads/../secret.txt", "docs/readme.md"):
-        r = client.get(f"/api/topics/{topic_id}/attachments/raw", params={"path": bad})
+        r = client.get(f"/topics/{topic_id}/attachments/raw", params={"path": bad})
         assert r.status_code == 422, bad
 
 
@@ -111,7 +111,7 @@ def test_message_with_attachment_creates_block_and_prompts_agent(client, stub_ag
     assert "已附在本条消息里" in prompt
 
     # Persisted in the timeline: message + attachment + AI reply.
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["kind"] for b in blocks] == ["message", "attachment", "message"]
 
 

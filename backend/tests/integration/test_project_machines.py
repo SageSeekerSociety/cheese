@@ -29,7 +29,7 @@ from tests.unit.test_machine_service import FakeMicroCloud
 
 def _project(client: TestClient, headers: dict[str, str] | None = None) -> str:
     return client.post(
-        "/api/projects", json={"name": "机器项目"}, headers=headers or {}
+        "/projects", json={"name": "机器项目"}, headers=headers or {}
     ).json()["data"]["id"]
 
 
@@ -64,7 +64,7 @@ def test_reads_report_an_unconfigured_deployment(api_client, auth_headers):
     # name that plainly to an authorized member instead of surfacing a provider
     # stack trace or leaking deployment state to an anonymous caller.
     pid = _project(api_client, auth_headers)
-    response = api_client.get(f"/api/projects/{pid}/machines", headers=auth_headers)
+    response = api_client.get(f"/projects/{pid}/machines", headers=auth_headers)
     assert response.status_code == 422
     assert "not configured" in response.json()["message"]
 
@@ -73,7 +73,7 @@ def test_provisioning_requires_a_real_credential(api_client):
     # Provisioning spends money and leaves a machine running, so it must be
     # refused before anything else is considered — including configuration.
     pid = _project(api_client)
-    assert api_client.post(f"/api/projects/{pid}/machines", json={}).status_code == 401
+    assert api_client.post(f"/projects/{pid}/machines", json={}).status_code == 401
 
 
 def test_machine_inventory_requires_project_membership(
@@ -112,20 +112,18 @@ def test_machine_inventory_requires_project_membership(
     # An authorized member reaches the deployment capability check. An outsider
     # sees neither that capability nor the project's private machine inventory.
     assert (
-        api_client.get(
-            f"/api/projects/{pid}/machines", headers=member_headers
-        ).status_code
+        api_client.get(f"/projects/{pid}/machines", headers=member_headers).status_code
         == 422
     )
     assert (
         api_client.get(
-            f"/api/projects/{pid}/machines", headers=outsider_headers
+            f"/projects/{pid}/machines", headers=outsider_headers
         ).status_code
         == 404
     )
     assert (
         api_client.post(
-            f"/api/projects/{pid}/machines", json={}, headers=outsider_headers
+            f"/projects/{pid}/machines", json={}, headers=outsider_headers
         ).status_code
         == 404
     )
@@ -166,7 +164,7 @@ def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
 
     _portal.call(_add_roles)
     pid = api_client.post(
-        "/api/projects",
+        "/projects",
         json={"name": "Team cloud", "team_id": team_id},
         headers=owner_headers,
     ).json()["data"]["id"]
@@ -177,28 +175,26 @@ def test_team_compute_is_visible_to_members_but_only_admins_can_spend(
     # Members can inspect the shared pool. With no MicroCloud credentials in
     # tests, reaching the capability check is the observable 422.
     assert (
-        api_client.get(
-            f"/api/projects/{pid}/machines", headers=headers(member)
-        ).status_code
+        api_client.get(f"/projects/{pid}/machines", headers=headers(member)).status_code
         == 422
     )
     # Provisioning/destroying paid infrastructure is team-admin only.
     assert (
         api_client.post(
-            f"/api/projects/{pid}/machines", json={}, headers=headers(member)
+            f"/projects/{pid}/machines", json={}, headers=headers(member)
         ).status_code
         == 403
     )
     assert (
         api_client.post(
-            f"/api/projects/{pid}/machines", json={}, headers=headers(admin)
+            f"/projects/{pid}/machines", json={}, headers=headers(admin)
         ).status_code
         == 422
     )
     # Outsiders learn neither the project nor its private machine inventory.
     assert (
         api_client.get(
-            f"/api/projects/{pid}/machines", headers=headers(outsider)
+            f"/projects/{pid}/machines", headers=headers(outsider)
         ).status_code
         == 404
     )
@@ -285,11 +281,11 @@ def test_machines_are_scoped_to_their_project(
 def test_topic_cloud_provisioning_is_concurrent_safe_and_exclusive(client, monkeypatch):
     project_id = _project(client)
     first_topic_id = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "First", "created_by": "owner"},
     ).json()["data"]["id"]
     second_topic_id = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "Second", "created_by": "owner"},
     ).json()["data"]["id"]
     cloud = FakeMicroCloud()
@@ -348,8 +344,8 @@ def test_direct_and_cascading_archive_release_every_topic_machine(client):
             return direct.id, parent.id, child.id
 
     direct_id, parent_id, child_id = asyncio.run(_seed())
-    assert client.post(f"/api/topics/{direct_id}/archive", json={"by": "u"}).is_success
-    assert client.post(f"/api/topics/{parent_id}/archive", json={"by": "u"}).is_success
+    assert client.post(f"/topics/{direct_id}/archive", json={"by": "u"}).is_success
+    assert client.post(f"/topics/{parent_id}/archive", json={"by": "u"}).is_success
 
     async def _released():
         async with client.test_factory() as session:
@@ -379,8 +375,8 @@ def test_unarchived_topic_provisions_a_new_machine(client, monkeypatch):
             return topic.id, old.id
 
     topic_id, old_id = asyncio.run(_seed())
-    assert client.post(f"/api/topics/{topic_id}/archive", json={"by": "u"}).is_success
-    assert client.post(f"/api/topics/{topic_id}/unarchive", json={"by": "u"}).is_success
+    assert client.post(f"/topics/{topic_id}/archive", json={"by": "u"}).is_success
+    assert client.post(f"/topics/{topic_id}/unarchive", json={"by": "u"}).is_success
     cloud = FakeMicroCloud()
 
     async def _keypair():

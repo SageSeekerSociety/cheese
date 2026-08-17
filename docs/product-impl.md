@@ -114,8 +114,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 讨论升级为话题（A1） | `POST /api/blocks/{id}/upgrade` | ✅ 幂等(双击返回同话题)；原块变可点活引用(前端 ChatPanel)；归档话题禁升级；私聊块升级重挂到根(Batch J) |
 | 从上往下拆子话题（A2） | `POST /api/topics/{id}/split` | ✅ 建子话题；🟡 发起拆解的 todo 块**未**变成活引用(缺 source_block_id) |
 | 子话题结论回流（C4） | `POST /api/topics/{id}/return-conclusion` | 🟡 只往父话题对话追加一条结论块(带 refs)；**未**写回父文档、**未**通知本体 |
+| 母子传话（双向，`cheese tell`） | `POST /api/topics/{id}/tell` | ✅ URL 里的 topic 是**发方**，收方在 body（id/`<#id>`/标题/`parent`），只认「父 → 直接子」和「子 → 父」；对方正在跑一轮就直接插进那一轮，否则叫醒它，同期多条合成一轮 |
 
-实现：`TopicService.upgrade_block_to_topic / split_to_subtopic / return_conclusion`。
+实现：`TopicService.upgrade_block_to_topic / split_to_subtopic / return_conclusion`、
+`app/domain/topic/relay.py`（传话；为什么不能用 `/comments` 见该模块 docstring）。
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 

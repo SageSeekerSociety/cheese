@@ -2,11 +2,11 @@
 
 
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def test_market_lists_ai_and_compute_pools(client):
-    data = client.get("/api/market/pools").json()["data"]
+    data = client.get("/market/pools").json()["data"]
     # Both axes are present.
     assert {p["kind"] for p in data["ai"]} == {"ai"}
     assert {p["kind"] for p in data["compute"]} == {"compute"}
@@ -32,7 +32,7 @@ def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(cl
     deployed yet; whole-machine `host` works today but is 申请制 (non-default) and
     carries the honest #282 line as its description — so a picker reads the warning
     straight from the catalog rather than the platform granting it silently."""
-    data = client.get("/api/market/pools").json()["data"]
+    data = client.get("/market/pools").json()["data"]
     vis = {v["id"]: v for v in data["visibility"]}
     assert {v["kind"] for v in data["visibility"]} == {"visibility"}
 
@@ -48,7 +48,7 @@ def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(cl
 
 def test_compute_profiles_default_and_reject_undeployed(client):
     pid = _project(client)
-    body = client.get(f"/api/projects/{pid}/compute-profiles").json()["data"]
+    body = client.get(f"/projects/{pid}/compute-profiles").json()["data"]
     # Nothing selected anywhere → Cloud, the fallback (#358 retired local-docker,
     # which used to be this answer).
     assert body["current"] == "cloud"
@@ -58,11 +58,9 @@ def test_compute_profiles_default_and_reject_undeployed(client):
 
     # Selecting a pool that isn't deployed is rejected — no silent fallback. That
     # is the property this test exists for; the retired pool is a natural sample.
-    r = client.put(
-        f"/api/projects/{pid}/compute-profile", json={"profile": "local-docker"}
-    )
+    r = client.put(f"/projects/{pid}/compute-profile", json={"profile": "local-docker"})
     assert r.status_code == 422
 
     # An id that never existed is rejected the same way.
-    r = client.put(f"/api/projects/{pid}/compute-profile", json={"profile": "gpu"})
+    r = client.put(f"/projects/{pid}/compute-profile", json={"profile": "gpu"})
     assert r.status_code == 422

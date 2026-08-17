@@ -879,6 +879,29 @@ class TopicService:
                     struct_order=order,
                 )
 
+    async def add_relay_block(
+        self, *, target: Topic, sender: Topic, label: str, text: str
+    ) -> Block:
+        """母子传话's message block (see `app.domain.topic.relay`).
+
+        Lives here, not in `relay.py`, for one reason: writing a Block from
+        another domain's repository is the debt `tests/unit/test_domain_import_
+        guard.py` ratchets down, and this service already carries that exemption.
+        Same authorship rule as `return_conclusion` below — the RECEIVING room's
+        芝士 is the author, because a message from someone who is not on that
+        roster reads as a ghost; `refs` links back to the sender.
+        """
+        author = await self._members.resolve_agent_handle(target.id)
+        return await self._blocks.add(
+            project_id=target.project_id,
+            topic_id=target.id,
+            author=author,
+            author_type=AuthorType.ai,
+            content=f"【{label}｜{sender.title}】\n{text}",
+            kind=BlockKind.message,
+            refs=[str(sender.id)],
+        )
+
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str
     ) -> tuple[Block, ConclusionCard | None]:

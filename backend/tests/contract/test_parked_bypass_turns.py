@@ -15,9 +15,9 @@ import pytest
 from app.main import app
 
 PARKED = [
-    ("POST", "/api/projects/{project_id}/activities"),
-    ("POST", "/api/projects/{project_id}/heartbeat"),
-    ("POST", "/api/projects/{project_id}/summary"),
+    ("POST", "/projects/{project_id}/activities"),
+    ("POST", "/projects/{project_id}/heartbeat"),
+    ("POST", "/projects/{project_id}/summary"),
 ]
 
 

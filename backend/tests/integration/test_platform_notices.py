@@ -44,7 +44,7 @@ from tests.integration.test_accept_pr import (
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 def _wait_for_event(client, topic_id: str, event_type: str, *, timeout: float = 10.0):
@@ -227,9 +227,9 @@ def _seed_pending_gate_card(client, topic_id: str) -> uuid.UUID:
 
 def _run_retired_gate(client, monkeypatch, tmp_path, *, exit_code: int, tail: str):
     """把退役的闸门 runner 就地跑一次，返回它发出的那一次 submit。"""
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     tid = client.post(
-        "/api/topics", json={"project_id": pid, "title": "做一个东西"}
+        "/topics", json={"project_id": pid, "title": "做一个东西"}
     ).json()["data"]["id"]
     card_id = _seed_pending_gate_card(client, tid)
 
@@ -308,7 +308,7 @@ def test_upstream_conflict_lands_as_one_line_event(client, monkeypatch):
     只列前 15 个，展开区不该跟着缩水。"""
     from app.domain.workspace import upstream_conflict
 
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
     files = [f"pkg/mod_{i}.py" for i in range(20)]
     monkeypatch.setattr(
         ws, "prepare_upstream_conflict_resolution", lambda *_a, **_kw: files

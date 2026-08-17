@@ -348,7 +348,7 @@ class Settings(BaseSettings):
     # reachable FROM the node — host.docker.internal works when the node is local).
     compute_provider: str = "local"
     cheesed_url: str = "http://localhost:8100"
-    cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
+    cheesed_cheese_api: str = "http://host.docker.internal:8099"
     sandbox_image: str = "cheesex-agent-sandbox:latest"
     # Machine quality gates use a disposable sibling container and never the
     # backend process. Keep this explicit so operators can ship a test-toolchain
@@ -359,7 +359,15 @@ class Settings(BaseSettings):
     quality_gate_pids_limit: int = 512
     sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
-    sandbox_api_base: str = "http://host.docker.internal:8099/api"
+    # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
+    # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
+    # #370 step 2 the platform routes are bare — `{base}/projects/…`.
+    #
+    # A box whose .env still carries the old `…/api` value keeps working:
+    # `agent_api_base()` strips one trailing `/api` and the boot warning names
+    # the box so it can be cleaned up. Silently 404ing every `cheese` call would
+    # look exactly like an agent that decided not to use its tools.
+    sandbox_api_base: str = "http://host.docker.internal:8099"
     # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
     # cheese write-API isn't open on the bind address. Empty → derived from
     # `jwt_secret` (see `sandbox_signing_secret`); pin it to rotate the two
@@ -415,6 +423,19 @@ class Settings(BaseSettings):
     # topic OOMing the box takes its siblings down — and an operator hitting
     # that needs a way out that is not a redeploy.
     sandbox_share_room_container: bool = True
+
+    def agent_api_base(self) -> str:
+        """`sandbox_api_base` with a stale trailing `/api` removed.
+
+        The CLI talks to the backend port directly, so its base is the app root.
+        It used to be the root plus `/api`, because the platform routes carried
+        that prefix; #370 step 2 flattened them. Normalising here means a box
+        that has not updated its .env keeps working instead of having every
+        platform action 404 — a failure that reads as "the agent chose not to
+        use its tools", which is the worst possible way to learn about it.
+        """
+        base = self.sandbox_api_base.rstrip("/")
+        return base[: -len("/api")] if base.endswith("/api") else base
 
     def agent_env(self) -> dict[str, str]:
         """Env vars passed to the SDK/CLI to select the model provider."""

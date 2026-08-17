@@ -664,6 +664,80 @@ def test_only_a_machine_that_owns_its_tree_gets_the_push_hook():
 
 
 @pytest.mark.anyio
+async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists(
+    monkeypatch,
+):
+    """Each URL handed to a device must be `{public_base}/<a real backend path>`.
+
+    That is the contract `settings.connector_public_base` states — the base maps
+    1:1 onto the backend ROOT — and it is a contract precisely because nothing
+    downstream reports a violation: an extra path segment makes the CLI 404 with
+    「话题不存在」 and makes a hook POST land on the SPA, which answers 200 and
+    drops the event. Both look like the agent doing nothing.
+
+    It broke exactly that way. These URLs used to be built with an extra `/api`
+    because the 2.0 routes carried one; #370 step 2 made every route bare and
+    the extra segment turned `<origin>/api` into `<origin>/api/api`. So the
+    assertion is not "the string looks right" — it asks the live router whether
+    the remainder is a path this app actually serves.
+    """
+    from starlette.routing import Match
+
+    from app.main import app
+
+    def served(path: str) -> bool:
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "root_path": "",
+            "headers": [],
+        }
+        # PARTIAL = right path, wrong method — the path exists, which is the
+        # only thing under test here.
+        return any(r.matches(scope)[0] is not Match.NONE for r in app.routes)
+
+    class RecordingHub(FakeHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.env: dict = {}
+
+        async def open_screen(self, device_id, command, source, **kw):
+            self.env = kw.get("env") or {}
+            return await super().open_screen(device_id, command, source, **kw)
+
+    # The production shape: behind the gateway the base carries the `/api` mount.
+    base = "http://cheese.test/api"
+    hub = RecordingHub()
+    provider = DeviceProvider(hub=hub, public_base=base)
+    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    await provider._ensure_screen(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        token="tok",
+        model=None,
+        env=None,
+    )
+
+    for key in ("CHEESE_API", "CHEESE_HOOK_URL", "CHEESE_GIT_REMOTE"):
+        url = hub.env[key]
+        assert url.startswith(base), f"{key}={url} does not extend {base}"
+        remainder = url[len(base) :]
+        if not remainder:  # CHEESE_API is the base itself
+            continue
+        # The git remote is a PREFIX — git appends the dumb/smart-HTTP paths
+        # itself — so ask about the one it fetches first.
+        if key == "CHEESE_GIT_REMOTE":
+            remainder += "/info/refs"
+        assert served(remainder), (
+            f"{key}={url} leaves {remainder!r}, which this app does not serve"
+        )
+
+
+@pytest.mark.anyio
 async def test_a_remote_machine_is_told_where_to_clone_from(monkeypatch):
     """The launcher's clone/push block is inert without these two env vars, so the
     wiring is the thing that has to be tested — the block itself can be perfect
@@ -700,9 +774,7 @@ async def test_a_remote_machine_is_told_where_to_clone_from(monkeypatch):
         return hub.env
 
     remote = await ensure(False)
-    assert remote["CHEESE_GIT_REMOTE"] == (
-        f"http://cheese.test/api/projects/{project}/git"
-    )
+    assert remote["CHEESE_GIT_REMOTE"] == (f"http://cheese.test/projects/{project}/git")
     assert remote["CHEESE_GIT_BRANCH"] == branch_for_topic(topic)
 
     # A co-located device edits the real worktree; cloning over it would be wrong.

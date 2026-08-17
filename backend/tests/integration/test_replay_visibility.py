@@ -44,9 +44,9 @@ def _use_failing_agent(client) -> FailingAgent:
 
 
 def _project_and_topic(client) -> str:
-    pr = client.post("/api/projects", json={"name": "Replay"})
+    pr = client.post("/projects", json={"name": "Replay"})
     tr = client.post(
-        "/api/topics",
+        "/topics",
         json={
             "project_id": pr.json()["data"]["id"],
             "title": "重放",
@@ -65,7 +65,7 @@ def _say(client, topic_id: str, text: str) -> None:
 
 
 def _system_lines(client, topic_id: str) -> list[str]:
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return [b["content"] for b in blocks if b["author_type"] == "system"]
 
 

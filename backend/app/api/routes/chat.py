@@ -53,7 +53,7 @@ router = APIRouter(tags=["chat"])
 _log = get_logger("cheesex.chat_ws")
 
 
-@router.websocket("/api/topics/{topic_id}/chat")
+@router.websocket("/topics/{topic_id}/chat")
 async def chat(
     websocket: WebSocket,
     topic_id: uuid.UUID,
