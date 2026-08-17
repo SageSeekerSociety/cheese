@@ -74,21 +74,21 @@ def _chat(client, topic_id: str) -> None:
 
 
 def _topic(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     return client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
     ).json()["data"]["id"]
 
 
 def _transcript(client, topic_id: str) -> list[dict]:
     """施工现场 — event blocks only (that endpoint filters kind=event)."""
-    return client.get(f"/api/topics/{topic_id}/transcript").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/transcript").json()["data"]["data"]
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
     """Everything in the room, messages included."""
-    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 def test_a_subagents_conclusion_lands_in_the_room(client):
