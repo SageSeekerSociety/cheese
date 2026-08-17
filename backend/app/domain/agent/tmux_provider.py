@@ -19,14 +19,37 @@ Per turn (run_turn):
 
 The tmux session is per topic and REUSED across turns, so the conversation stays
 continuous inside it (no --resume needed — the session IS the continuity).
+
+One box per ROOM, not per topic. A room's母话题 and every task split out of it
+share a container and hold one tmux session each. This is the necessary half of
+"containers are never reaped": kept forever AND one per topic, the box count only
+ever climbs and 2GB apiece exhausts memory first; kept forever and one per room,
+it tracks the number of rooms, which tracks the number of people. Sharing is also
+nearly free here — `ws.sandbox_project_mounts` already gives every topic of a
+project the identical mount set (one mount over the whole `.worktrees` tree,
+because hardlinks cannot cross bind mounts), so same-project topics were never
+isolated from each other in the first place.
+
+Everything that DIFFERS between the topics in a box therefore travels per tmux
+session, never in the container environment: the topic id, its hook token, its
+config dir, its cwd, its port slot. `tmux new-session -e` writes those before
+`claude` execs. Inheritance is not an option and this is measured, not
+theoretical — a tmux session inherits from the SERVER's global environment,
+frozen when the server first started, so the second topic in a box would run
+`claude` on the FIRST topic's identity and report its events as that topic (the
+device backend hit exactly this on a shared machine, see device_launch.py).
 """
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
+
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
@@ -47,14 +70,14 @@ from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
 
-_SESSION = "cheese"  # tmux session name inside the container
-_TTYD_PORT = 7681  # in-container ttyd port (published for 施工现场; not wired yet)
+_TTYD_PORT = ws.TTYD_PORT  # in-container ttyd base port (施工现场 pane mirror)
 # The platform's system prompt travels as a FILE in the ~/.claude session mount
 # (host: session_dir/cheese-system-prompt.md), not inline on the command line:
 # it is multi-KB free text, and the tmux launch string goes through sh -c.
+# There is deliberately no fixed absolute path for it any more: it lives in the
+# topic's OWN config dir, which differs per session inside a shared box, so
+# `_ensure_session` builds the path from that session's CLAUDE_CONFIG_DIR.
 _SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
-_SYSTEM_PROMPT_PATH = f"/home/node/.claude/{_SYSTEM_PROMPT_FILE}"
-_APP_PORT = ws.APP_PORT  # conventional app port (运行环境预览)
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
@@ -75,12 +98,21 @@ _ENTER_SETTLE_S = 1.5
 _SETTLE_POLL_S = 0.25
 _MAX_REPASTES = 2
 _MAX_ENTERS = 5
+# Bound on the parent walk that finds a topic's room. Two would do for anything
+# created today (a task's parent IS a room); the margin covers legacy `subtopic`
+# rows, and the bound itself makes a cycle in the tree a degraded box placement
+# rather than a hung turn.
+_MAX_ROOM_WALK = 8
 
 logger = logging.getLogger(__name__)
 
 
 def _cheese_cli_mount(session_host: str) -> list[str]:
     """`-v <session>/bin/cheese:/usr/local/bin/cheese:ro`.
+
+    The source is the project's SESSIONS ROOT, not one topic's session dir: a box
+    serves a whole room and can mount only one CLI. It still has to be a staged
+    copy rather than the image's baked one (see ws.sessions_root).
 
     The mount OVERRIDES the copy the sandbox image bakes at build time, and it
     is a REQUIREMENT, not an optimisation: an image is rebuilt on its own
@@ -92,9 +124,9 @@ def _cheese_cli_mount(session_host: str) -> list[str]:
     the source must be a path the HOST daemon can see. The in-image
     `/app/sandbox/cheese` is not one (mounting it aborts the container with
     `not a directory`), and an operator-maintained host checkout — the old
-    `sandbox_shim_host_dir` — is exactly what went stale. The session dir is
+    `sandbox_shim_host_dir` — is exactly what went stale. The sessions root is
     already a host bind-mount source AND is re-seeded from this build on every
-    turn (ws.session_dir), so sourcing from there is fresh by construction."""
+    turn (ws.sessions_root), so sourcing from there is fresh by construction."""
     return [
         "-v",
         f"{ws.cheese_cli_mount_source(Path(session_host))}:/usr/local/bin/cheese:ro",
@@ -226,21 +258,46 @@ def composer_holds_body(capture: str, snippet: str) -> bool:
     return bool(snippet) and snippet in flat
 
 
+@dataclass(frozen=True)
+class TmuxScreen:
+    """Where one topic's interactive `claude` lives: a box (shared with the rest
+    of its room) and a tmux session inside it (that topic's alone).
+
+    The screen ctx used to be just the container name, back when those were the
+    same thing. They are not any more, and every `docker exec` below has to say
+    which of the two it means — `container` for the box, `session` for `-t`."""
+
+    container: str
+    session: str
+
+
 def _tmux_container_name(topic_id: uuid.UUID) -> str:
-    """Distinct from the SDK container so the two backends never collide. Source of
-    truth is ws.tmux_container_name, so the accept/archive reaper frees the same box."""
-    return ws.tmux_container_name(topic_id)
+    """The box hosting this topic — its ROOM's, shared with the room's other
+    topics. Source of truth for the NAME is ws.tmux_container_name (so the
+    accept/archive reaper frees the same box); the topic→room step is
+    ws.room_for_topic, whose marker this provider writes when it starts a box."""
+    return ws.tmux_container_name(ws.room_for_topic(topic_id))
+
+
+def _screen_for(topic_id: uuid.UUID) -> TmuxScreen:
+    return TmuxScreen(_tmux_container_name(topic_id), ws.tmux_session_name(topic_id))
 
 
 def ttyd_endpoint(topic_id: uuid.UUID) -> str | None:
-    """`127.0.0.1:<host-port>` of the topic's tmux container ttyd (the read-only
-    terminal mirror on the in-container `_TTYD_PORT`), or None when the container
-    is down / the port isn't published (old container). Same `docker port` parse
-    as workspace.app_endpoint, just for 7681 instead of the app port — used by
-    the 施工现场 terminal proxy to reach the container's live pane."""
+    """`127.0.0.1:<host-port>` of the topic's ttyd (the read-only terminal mirror
+    of its pane), or None when the box is down / the port isn't published (a box
+    predating the publish). Same `docker port` parse as workspace.app_endpoint —
+    used by the 施工现场 terminal proxy to reach the topic's live pane.
+
+    One ttyd per TOPIC, not per box: a box hosts a whole room, and a mirror that
+    showed a sibling's pane would be worse than none. Which published port is
+    this topic's follows from the slot its session holds."""
     if not ws.sandbox_available():
         return None
-    return ws.published_endpoint(_tmux_container_name(topic_id), _TTYD_PORT)
+    return ws.published_endpoint(
+        _tmux_container_name(topic_id),
+        ws.ttyd_port_for_slot(ws.topic_port_slot(topic_id)),
+    )
 
 
 def _hook_base() -> str:
@@ -307,22 +364,34 @@ async def _docker(*args: str, stdin: bytes | None = None) -> tuple[int, str, str
     )
 
 
-# How big a topic's container actually is. Named rather than inlined because the
+# How big the container actually is. Named rather than inlined because the
 # agent inside has to be TOLD: it cannot see its own cgroup limit, and the
 # failure it produces without knowing — a build the kernel OOM-kills — reads
 # like a broken toolchain rather than a small box. `_turn_meta_lines` in chat.py
 # puts it in the prompt as a run fact, next to the time budget and disk
 # headroom, which is the same category: things an agent has no other way to see.
-SANDBOX_MEMORY_MB = 2048
-SANDBOX_CORES = 2
+#
+# Derived from settings rather than hardcoded because the box is now a ROOM's,
+# not a topic's, and its budget is a deployment knob (settings.sandbox_memory_gb).
+# The `--memory`/`--cpus` args below read THESE constants, not the settings
+# directly: the number the agent is told and the number the kernel enforces have
+# to come from one place, which is exactly what
+# test_the_stated_size_is_the_one_the_container_actually_gets guards.
+#
+# Cores is floored to an int because chat.py only speaks up when it gets one
+# (`isinstance(cores, int)`) — a fractional quota would silence the prompt
+# entirely, which is worse than telling the agent 2 when it has 2.5.
+SANDBOX_MEMORY_MB = int(settings.sandbox_memory_gb * 1024)
+SANDBOX_CORES = int(settings.sandbox_cpus)
 
 
-class TmuxHooksProvider(HooksSessionProvider[str]):
+class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
     """The LOCAL hooks backend: runs interactive `claude` in a per-topic tmux
     session inside a platform container, streaming AgentEvents from Claude Code
     hooks. Transport = docker/tmux; the shared turn flow lives in the base
     (HooksSessionProvider) — this class implements only the transport seam. The
-    screen ctx is the container name (str)."""
+    screen ctx is a (container, session) pair: the box belongs to the topic's
+    room, the session to the topic."""
 
     # (see _subscription_args below for how a subscription turn is captured)
 
@@ -343,17 +412,25 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         router: HookRouter | None = None,
         idle_suspect_s: float = 300.0,
         hard_ceiling_s: float = 10800.0,
+        session_factory: async_sessionmaker | None = None,
     ) -> None:
         super().__init__(
             router=router, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
         )
         self._image = image
-        # One control-mode connection per container, reused across turns.
-        self._controls: dict[str, TmuxControlClient] = {}
-        # Container name → the running turn's ActivityTracker (turn 活跃度检测),
-        # for `cheese status` to read via `activity_status()`. Populated by
+        # Only `_room_id` uses it — the transport itself is DB-free, but which
+        # BOX a topic belongs to is a fact about the topic tree. Injectable for
+        # the same reason as CloudProvider's: the process-wide factory points at
+        # the deployment's database, which a test is not running against.
+        self._session_factory = session_factory
+        # One control-mode connection per SCREEN, reused across turns — the
+        # client attaches to a named session, so a box hosting a room needs one
+        # per topic, not one per box.
+        self._controls: dict[TmuxScreen, TmuxControlClient] = {}
+        # Screen → the running turn's ActivityTracker (turn 活跃度检测), for
+        # `cheese status` to read via `activity_status()`. Populated by
         # `_start_activity_monitor` for exactly as long as its turn runs.
-        self._activity: dict[str, ActivityTracker] = {}
+        self._activity: dict[TmuxScreen, ActivityTracker] = {}
 
     def available(self) -> bool:
         return ws.sandbox_available()
@@ -361,7 +438,12 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
     async def recover_subscriptions(
         self, device_id: str | None = None
     ) -> list[TopicSubscription]:
-        """Subscribe every still-running topic container after a restart."""
+        """Subscribe every still-running topic after a restart.
+
+        Walks BOXES for the project, then SESSIONS inside each for the topics —
+        the topic id is per-session now, so the old shortcut of reading
+        CHEESE_TOPIC off the container environment would recover exactly one of a
+        room's topics and silently orphan the rest."""
         if device_id is not None:
             return []
         rc, out, err = await _docker(
@@ -397,37 +479,87 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                     env[key] = value
             try:
                 project_id = uuid.UUID(env["CHEESE_PROJECT"])
-                topic_id = uuid.UUID(env["CHEESE_TOPIC"])
             except (KeyError, ValueError):
                 logger.warning(
                     "tmux subscription recovery skipped %s with invalid scope", name
                 )
                 continue
-            subscription = await self.ensure_subscription(
-                project_id, topic_id, paused=True
-            )
-            self._live[topic_id] = name
-            recovered.append(subscription)
+            for session, topic_id in await self._live_sessions(name):
+                subscription = await self.ensure_subscription(
+                    project_id, topic_id, paused=True
+                )
+                self._live[topic_id] = TmuxScreen(name, session)
+                recovered.append(subscription)
         return recovered
+
+    async def _live_sessions(self, container: str) -> list[tuple[str, uuid.UUID]]:
+        """(session name, topic id) for every cheese session in a box.
+
+        The topic id comes from the session's OWN environment rather than from
+        parsing its name: the name only carries 8 hex characters (enough to be
+        unique on disk, not enough to rebuild a uuid), and the env is the same
+        value `claude` is actually running on."""
+        rc, out, _ = await _docker(
+            "exec", container, "tmux", "list-sessions", "-F", "#{session_name}"
+        )
+        if rc != 0:
+            return []  # no tmux server yet, or the box is not running
+        found: list[tuple[str, uuid.UUID]] = []
+        for session in (line.strip() for line in out.splitlines()):
+            if not session.startswith(ws.LEGACY_TMUX_SESSION):
+                continue
+            raw = await self._session_env_var(
+                TmuxScreen(container, session), "CHEESE_TOPIC"
+            )
+            if raw is None:
+                continue
+            with contextlib.suppress(ValueError):
+                found.append((session, uuid.UUID(raw)))
+        return found
+
+    @staticmethod
+    async def _session_env_var(screen: TmuxScreen, key: str) -> str | None:
+        """One variable out of a session's own environment (host-side view of
+        what that session's `claude` was launched with), or None."""
+        rc, out, _ = await _docker(
+            "exec",
+            screen.container,
+            "tmux",
+            "show-environment",
+            "-t",
+            screen.session,
+            key,
+        )
+        if rc != 0:
+            return None
+        # "KEY=value" when set; "-KEY" when explicitly unset.
+        name, separator, value = out.strip().partition("=")
+        return value if separator and name == key else None
 
     # --- container / session lifecycle -------------------------------------
 
-    async def _ensure_container(self, topic_id: uuid.UUID, env: dict[str, str]) -> str:
-        """Create (or reuse) the topic's tmux container and return its name.
+    async def _ensure_container(
+        self, topic_id: uuid.UUID, room_id: uuid.UUID, env: dict[str, str]
+    ) -> str:
+        """Create (or reuse) the ROOM's tmux container and return its name.
 
-        Env is fixed at CREATION and the container is long-lived per topic, so a
-        box created against an old model route keeps using it no matter what the
+        Env is fixed at CREATION and the container is long-lived, so a box
+        created against an old model route keeps using it no matter what the
         backend is reconfigured to — a fixed deployment stays stranded behind a
         stale container (dev, 2026-08-08: a corrected gateway URL had no effect
         because the running `claude` still held the old one). The routing part of
-        the env is therefore stamped on the container and rechecked here."""
-        name = _tmux_container_name(topic_id)
+        the env is therefore stamped on the container and rechecked here.
+
+        Only room-wide env is stamped, and that is not a coincidence: everything
+        per-topic left the container environment for the tmux session precisely
+        so that one topic's turn can never invalidate the box its siblings are
+        working in."""
+        name = ws.tmux_container_name(room_id)
         rc, cur_image, _ = await _docker("inspect", "-f", "{{.Config.Image}}", name)
         exists = rc == 0
         image_switched = exists and cur_image.strip() != self._image
         env_drifted = False
         cli_mount_stale = False
-        token_dead = False
         if exists and not image_switched:
             _, cur_stamp, _ = await _docker(
                 "inspect", "-f", f'{{{{index .Config.Labels "{_ENV_LABEL}"}}}}', name
@@ -437,8 +569,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
             # moved to the session dir would keep serving the old source (or the
             # image's baked copy) for the life of the topic — the very staleness
             # this mount exists to prevent. Recheck it like the model route.
-            cli_mount_stale = await self._cli_mount_stale(name, env["SBX_SESSION"])
-            token_dead = await self._hook_token_dead(name)
+            cli_mount_stale = await self._cli_mount_stale(name, env["SBX_SESSIONS"])
         # First match wins, so the room is told the most specific thing that is
         # true. None means "nothing was torn down" — either the box is fine, or
         # this is its first creation.
@@ -449,83 +580,73 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                     ("image", image_switched),
                     ("env", env_drifted),
                     ("cli_mount", cli_mount_stale),
-                    ("token", token_dead),
                 )
                 if hit
             ),
             None,
         )
+        bereaved: list[uuid.UUID] = []
         if cause is not None:
-            await self.drop_control(name)
+            # WHO loses a session, recorded before the box goes: a box serves a
+            # whole room, so destroying it ends every topic's conversation in
+            # it, not just the one whose turn happened to notice. Announcing
+            # only to this topic would leave the siblings' agents restarted with
+            # no memory and nothing in their rooms saying why.
+            bereaved = [topic for _, topic in await self._live_sessions(name)]
+            await self.drop_container_controls(name)
             await _docker("rm", "-f", name)
             exists = False
         if not exists:
-            await self._create_container(name, env)
+            await self._create_container(name, env, topic_id)
             if cause is not None:
                 # The old box (and anything running in it — the interactive
-                # session, background processes) is gone with no other
-                # warning; tell the topic (best-effort, never blocks the turn).
-                # `cause` is None only on a FIRST creation, where nothing was
-                # destroyed and there is nothing to announce.
-                await warn_container_rebuilt(topic_id, cause)
+                # sessions, background processes) is gone with no other
+                # warning; tell every topic that had one (best-effort, never
+                # blocks the turn). `cause` is None only on a FIRST creation,
+                # where nothing was destroyed and there is nothing to announce.
+                for topic in dict.fromkeys([topic_id, *bereaved]):
+                    await warn_container_rebuilt(topic, cause)
             return name
         rc, running, _ = await _docker("inspect", "-f", "{{.State.Running}}", name)
         if running.strip() != "true":
             await _docker("start", name)
         return name
 
-    @staticmethod
-    async def _hook_token_dead(name: str) -> bool:
-        """True when the box's baked ``CHEESE_TOKEN`` no longer verifies.
+    async def _hook_token_dead(self, screen: TmuxScreen) -> bool:
+        """True when the token this SESSION's `claude` is running on no longer
+        verifies.
 
-        This is the box going DEAF, and until it was checked here nothing ever
+        This is a topic going DEAF, and until it was checked nothing ever
         noticed. The hook forwarder sends that token on every event; the
         endpoint 401s a token it cannot verify and returns — no log, no spool,
         no listener. The turn then runs to its ceiling having observed nothing:
-        `first_output_s: null`, `tools: 0`, while `claude` inside the box is
-        working perfectly.
+        `first_output_s: null`, `tools: 0`, while `claude` inside works
+        perfectly.
 
-        A live token is baked in at CREATION and never refreshed (see
-        `_ensure_container`'s docstring — env is fixed then, and the box outlives
-        many turns). Its 30-day TTL is not the problem. The signing secret is:
-        `sandbox_auth.SANDBOX_TOKEN` falls back to a fresh random per PROCESS
-        when `SANDBOX_TOKEN` is not pinned in the deployment, so **every backend
-        restart invalidates every existing box's token at once**. On a
-        deploy-on-merge setup that is many times a day (#316), and nothing
-        rebuilds those boxes: the image tag only changes when a merge changes it,
-        so a restart alone leaves every topic permanently unable to reply.
+        The token is written into the session environment at session CREATION
+        and never refreshed, because the running `claude` read it once at exec.
+        Its 30-day TTL is not what expires it — the SIGNING SECRET was, when it
+        fell back to a fresh random per backend process and so invalidated every
+        live session at once on every restart. That root cause is fixed
+        (`Settings.sandbox_signing_secret`), and this check stays as the backstop
+        for what remains: a deliberately rotated SANDBOX_TOKEN, a token past its
+        TTL, a session restored from an older deployment.
 
-        Rebuilding costs the tmux session (the topic's conversational
-        continuity), which is why it is not done lightly — but a deaf box has
-        already lost more than that, since it can never answer again.
-        """
-        rc, out, _ = await _docker(
-            "inspect",
-            "-f",
-            "{{range .Config.Env}}{{println .}}{{end}}",
-            name,
-        )
-        if rc != 0:
-            return False  # can't tell — never destroy a box on a failed inspect
-        baked = ""
-        project = ""
-        topic = ""
-        for line in out.splitlines():
-            key, _, value = line.partition("=")
-            if key == "CHEESE_TOKEN":
-                baked = value
-            elif key == "CHEESE_PROJECT":
-                project = value
-            elif key == "CHEESE_TOPIC":
-                topic = value
+        Recovering costs only the SESSION now — its conversational continuity,
+        not the box, and none of its siblings' work. That is a far cheaper
+        remedy than the container rebuild this used to force, which is the other
+        reason the per-topic state had to move off the container."""
+        baked = await self._session_env_var(screen, "CHEESE_TOKEN")
+        project = await self._session_env_var(screen, "CHEESE_PROJECT")
+        topic = await self._session_env_var(screen, "CHEESE_TOPIC")
         if not baked or not project or not topic:
-            # A box predating scoped hook tokens. Unknown is not evidence of
+            # A session predating scoped hook tokens. Unknown is not evidence of
             # death — same rule as the env stamp, and for the same reason.
             return False
         return not verify_scoped_token(baked, project_id=project, topic_id=topic)
 
     @staticmethod
-    async def _cli_mount_stale(name: str, session_host: str) -> bool:
+    async def _cli_mount_stale(name: str, sessions_host: str) -> bool:
         """True when the box's /usr/local/bin/cheese does not come from THIS
         build's staged copy (missing mount, or an old source path)."""
         rc, out, _ = await _docker(
@@ -536,22 +657,33 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         )
         if rc != 0:
             return False  # can't tell — don't destroy a box on a failed inspect
-        staged = ws.cheese_cli_mount_source(Path(session_host))
+        staged = ws.cheese_cli_mount_source(Path(sessions_host))
         return f"{staged}->/usr/local/bin/cheese" not in out.splitlines()
 
-    async def _create_container(self, name: str, env: dict[str, str]) -> None:
-        # SBX_WORKTREE / SBX_SESSION are mount sources, not container env vars.
-        mounts = {"SBX_WORKTREE", "SBX_SESSION"}
-        # One mount of the project's whole `.worktrees` tree (this topic's
-        # worktree, its siblings, and the shared pnpm/uv stores) plus the main
-        # repo's .jj/.git remap — see ws.sandbox_project_mounts for why a single
-        # mount is load-bearing (hardlinks cannot cross bind mounts) and what
-        # it means for same-project isolation. The workdir is the topic's REAL
-        # path under that mount, not a /work remap, for the same reason.
-        topic_id = uuid.UUID(env["CHEESE_TOPIC"])
-        project_mounts = ws.sandbox_project_mounts(
-            uuid.UUID(env["CHEESE_PROJECT"]), topic_id
-        )
+    async def _create_container(
+        self, name: str, env: dict[str, str], mount_anchor: uuid.UUID
+    ) -> None:
+        """Create the ROOM's box. Everything in `env` is room-wide by
+        construction — a per-topic value baked in at creation would be frozen
+        for every topic that joins later, which is why the caller passes only
+        room env (see `_room_env`).
+
+        ``mount_anchor`` is the topic whose worktree the jj/git remap is
+        computed against. Any topic of the project gives the same answer (they
+        sit at equal depth under one tree — that is what lets a room share a box
+        at all), so it must be one whose worktree EXISTS: the caller's, not the
+        room's. A room that has never taken a turn has no worktree, and
+        computing against a missing directory is the quiet half of the problem —
+        the loud half is `-w`, below."""
+        # SBX_SESSIONS is a mount source, not a container env var.
+        mounts = {"SBX_SESSIONS"}
+        project_id = uuid.UUID(env["CHEESE_PROJECT"])
+        # One mount of the project's whole `.worktrees` tree (every topic's
+        # worktree and the shared pnpm/uv stores) plus the main repo's .jj/.git
+        # remap — see ws.sandbox_project_mounts for why a single mount is
+        # load-bearing (hardlinks cannot cross bind mounts) and what it means
+        # for same-project isolation.
+        project_mounts = ws.sandbox_project_mounts(project_id, mount_anchor)
         args = [
             "run",
             "-d",
@@ -559,29 +691,43 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
             name,
             "--user",
             "node",
-            "-p",
-            f"127.0.0.1:0:{_APP_PORT}",
-            "-p",
-            f"127.0.0.1:0:{_TTYD_PORT}",
             "--add-host",
             "host.docker.internal:host-gateway",
+            # The project's whole sessions tree, for the same reason as the
+            # worktrees tree: mounts are fixed at creation and a room keeps
+            # gaining topics. Each session points its own claude at its own
+            # subdirectory via CLAUDE_CONFIG_DIR.
             "-v",
-            f"{env['SBX_SESSION']}:/home/node/.claude",
+            f"{env['SBX_SESSIONS']}:{ws.SANDBOX_SESSIONS_ROOT}",
             *_subscription_args(),
             *project_mounts,
+            # The TREE, not a topic's directory inside it. `docker run -w`
+            # CREATES a missing workdir, and this one lands in a bind mount — so
+            # naming a topic here would plant an empty directory on the host
+            # exactly where that topic's jj workspace has to go, and
+            # `jj workspace add` refuses a path that already exists. Each
+            # session sets its own cwd with `new-session -c` anyway.
             "-w",
-            ws.sandbox_topic_workdir(topic_id),
+            ws.SANDBOX_TOPICS_ROOT,
         ]
-        args += _cheese_cli_mount(env["SBX_SESSION"])
+        # One app port + one ttyd port per slot, published up front: a published
+        # port cannot be added to a running container, and the topics that will
+        # need them do not exist yet when the box is created.
+        for slot in range(ws.port_slots()):
+            args += ["-p", f"127.0.0.1:0:{ws.app_port_for_slot(slot)}"]
+            args += ["-p", f"127.0.0.1:0:{ws.ttyd_port_for_slot(slot)}"]
+        args += _cheese_cli_mount(env["SBX_SESSIONS"])
         args += [
             "--network",
             "bridge",
+            # A ROOM budget, not a topic's — the box runs the room's whole
+            # concurrency now. See settings.sandbox_memory_gb for the sizing.
             "--memory",
             f"{SANDBOX_MEMORY_MB}m",
             "--cpus",
             str(SANDBOX_CORES),
             "--pids-limit",
-            "512",
+            str(settings.sandbox_pids_limit),
             # A crashing node/vite process must not dump its address space into
             # the worktree (1-2GB core files were a top disk consumer on dev).
             "--ulimit",
@@ -603,38 +749,134 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         if rc != 0:
             raise RuntimeError(f"tmux container create failed: {err.strip()}")
 
+    async def _allocate_port_slot(self, screen: TmuxScreen) -> int:
+        """The published-port slot this topic holds, allocating one if it has
+        none: the lowest slot no live session in this box already holds.
+
+        The tmux server is the registry — each session carries its slot in its
+        own environment — so the answer cannot drift from the set of sessions
+        that actually exist, and a session dying frees its slot with no
+        bookkeeping. Returns `port_slots() - 1` when the block is exhausted:
+        the session still runs and still talks to the platform, it just shares a
+        preview port with another topic, which is a far better failure than
+        refusing the turn.
+
+        An existing session answers from its own environment in one call, which
+        is the common path — every turn after the first. Scanning the whole
+        room here would cost two `docker exec`s per sibling on every turn, to
+        compute a number the caller then discards because the session is
+        already running on it."""
+        mine = await self._session_env_var(screen, "CHEESE_PORT_SLOT")
+        if mine is not None and mine.isdigit():
+            return int(mine)
+        taken: set[int] = set()
+        for session, _ in await self._live_sessions(screen.container):
+            if session == screen.session:
+                continue
+            raw = await self._session_env_var(
+                TmuxScreen(screen.container, session), "CHEESE_PORT_SLOT"
+            )
+            if raw is not None and raw.isdigit():
+                taken.add(int(raw))
+        slots = ws.port_slots()
+        free = next((s for s in range(slots) if s not in taken), None)
+        if free is None:
+            logger.warning(
+                "room box %s has no free port slot (%d in use); %s shares slot %d",
+                screen.container,
+                len(taken),
+                screen.session,
+                slots - 1,
+            )
+            return slots - 1
+        return free
+
+    async def _retire_legacy_session(self, container: str) -> None:
+        """Kill the box's pre-room session, if it still has one.
+
+        A box built before per-topic sessions holds one session literally named
+        ``cheese``, which no topic will ever look up again — so without this it
+        would keep a `claude` alive, holding the app/ttyd port and writing the
+        worktree, beside the new session for the same topic. In practice such a
+        box is rebuilt on its first turn anyway (its CLI mount source moved), so
+        this only matters when that rebuild does not happen — which is exactly
+        when two agents in one box would be hardest to notice.
+
+        Matched EXACTLY against the session list rather than passed to `tmux
+        has-session`: tmux falls back to PREFIX matching, and ``cheese`` is a
+        prefix of every new session name, so asking tmux directly would report a
+        live legacy session that isn't there — and `kill-session -t cheese`
+        would then destroy a real topic's session."""
+        rc, out, _ = await _docker(
+            "exec", container, "tmux", "list-sessions", "-F", "#{session_name}"
+        )
+        if rc != 0:
+            return
+        if ws.LEGACY_TMUX_SESSION not in [line.strip() for line in out.splitlines()]:
+            return
+        await _docker(
+            "exec", container, "tmux", "kill-session", "-t", ws.LEGACY_TMUX_SESSION
+        )
+
     async def _ensure_session(
         self,
-        name: str,
+        screen: TmuxScreen,
         model: str | None,
         *,
+        session_env: dict[str, str],
         resume_session_id: str | None = None,
         session_dir: str | None = None,
         system_prompt: str = "",
     ) -> None:
-        """Ensure the interactive `claude` tmux session exists (lazy, reused).
+        """Ensure the topic's interactive `claude` tmux session exists (lazy,
+        reused).
 
         Normally the tmux session IS the continuity, so this starts a FRESH
         `claude`. The ONE exception (enabling clone, fusion-design §6): when a
         resumable session id is given AND its transcript is actually present in
-        this topic's ~/.claude mount, start `claude --resume <id>` so a cloned
+        this topic's config dir, start `claude --resume <id>` so a cloned
         (transcript-fork) conversation is picked up on the target topic's first
         turn. The transcript-existence guard keeps every normal path unchanged —
         a fresh topic has no transcript, so it never accidentally resumes."""
-        rc, _, _ = await _docker("exec", name, "tmux", "has-session", "-t", _SESSION)
+        rc, _, _ = await _docker(
+            "exec", screen.container, "tmux", "has-session", "-t", screen.session
+        )
         if rc == 0:
-            # Re-pin every turn: a session created before the geometry pin (or
-            # already shrunk by a Live 现场 viewer under `window-size latest`)
-            # must be brought back to the fixed size, not locked into the
-            # viewer's — see _PANE_COLS.
-            await self._pin_window_size(name)
-            return
+            if await self._hook_token_dead(screen):
+                # Deaf: this session can never report anything again, so keeping
+                # it costs more than the continuity restarting it loses. Only
+                # this session goes — the box and its siblings are untouched.
+                await self.drop_control(screen)
+                await _docker(
+                    "exec",
+                    screen.container,
+                    "tmux",
+                    "kill-session",
+                    "-t",
+                    screen.session,
+                )
+                # The conversation is gone with no other warning; tell the topic
+                # (best-effort, never blocks the turn).
+                await warn_container_rebuilt(
+                    uuid.UUID(session_env["CHEESE_TOPIC"]), "token"
+                )
+            else:
+                # Re-pin every turn: a session created before the geometry pin
+                # (or already shrunk by a Live 现场 viewer under `window-size
+                # latest`) must be brought back to the fixed size, not locked
+                # into the viewer's — see _PANE_COLS.
+                await self._pin_window_size(screen)
+                return
+        await self._retire_legacy_session(screen.container)
         claude_cmd = CLAUDE_BASE_CMD
-        # The platform's system prompt, written into the session mount by
+        # The platform's system prompt, written into the session dir by
         # _ensure_ready. Only a FRESH claude reads it — an already-running
         # session keeps the prompt it launched with (same as settings.json).
         if system_prompt:
-            claude_cmd += f" --append-system-prompt-file {_SYSTEM_PROMPT_PATH}"
+            claude_cmd += (
+                f" --append-system-prompt-file {session_env['CLAUDE_CONFIG_DIR']}"
+                f"/{_SYSTEM_PROMPT_FILE}"
+            )
         if (
             resume_session_id
             and session_dir
@@ -647,9 +889,9 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         # "use the default" — never pin a name the provider does not serve.
         if model:
             claude_cmd += f" --model {model}"
-        rc, _, err = await _docker(
+        args = [
             "exec",
-            name,
+            screen.container,
             "tmux",
             "new-session",
             "-d",
@@ -658,41 +900,69 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
             "-y",
             str(_PANE_ROWS),
             "-s",
-            _SESSION,
-            claude_cmd,
-        )
+            screen.session,
+            "-c",
+            session_env["CHEESE_WORKDIR"],
+        ]
+        # EXPLICITLY per key, never by inheritance. A new tmux session seeds its
+        # environment from the SERVER's global one, frozen when that server
+        # first started — so in a box that already hosts another topic, a fresh
+        # `claude` would boot on the FIRST topic's id, token and config dir and
+        # report every event as that topic. The device backend measured exactly
+        # this on a shared machine (device_launch.py: "/proc of topic B's claude
+        # showed topic A's HOME and PATH"). `-e` writes the session env before
+        # claude execs, so each topic runs on its own.
+        for key, value in session_env.items():
+            if value:
+                args += ["-e", f"{key}={value}"]
+        args.append(claude_cmd)
+        rc, _, err = await _docker(*args)
         if rc != 0:
             raise RuntimeError(f"tmux new-session failed: {err.strip()}")
-        await self._pin_window_size(name)
-        # ttyd (施工现场; not wired to the frontend yet): a read-only terminal
-        # mirror. Best-effort — the turn does not depend on it.
+        await self._pin_window_size(screen)
+        # ttyd (施工现场): a read-only mirror of THIS topic's pane, on this
+        # topic's own published port. Best-effort — the turn does not depend on
+        # it. The pgrep guard matches the port so a second topic in the same box
+        # still gets its own ttyd instead of finding the first one's and
+        # skipping.
+        ttyd_port = ws.ttyd_port_for_slot(int(session_env["CHEESE_PORT_SLOT"]))
         await _docker(
             "exec",
             "-d",
-            name,
+            screen.container,
             "sh",
             "-lc",
-            f"pgrep -x ttyd >/dev/null 2>&1 || "
-            f"ttyd -R -p {_TTYD_PORT} tmux attach -t {_SESSION}",
+            f"pgrep -f 'ttyd -R -p {ttyd_port} ' >/dev/null 2>&1 || "
+            f"ttyd -R -p {ttyd_port} tmux attach -t {screen.session}",
         )
 
-    async def _pin_window_size(self, name: str) -> None:
+    async def _pin_window_size(self, screen: TmuxScreen) -> None:
         """Fix the session's geometry at `_PANE_COLS`×`_PANE_ROWS` and stop any
         attached client (the ttyd mirror) from ever changing it again. Both
         commands are strict: the image ships tmux 3.3a, which supports both, so
-        a failure here is a real fault, not a version gap."""
+        a failure here is a real fault, not a version gap.
+
+        `set-option -g` is the server's global default and therefore room-wide,
+        which is fine: every session in the box wants the same fixed geometry,
+        and the resize below is per session anyway."""
         rc, _, err = await _docker(
-            "exec", name, "tmux", "set-option", "-g", "window-size", "manual"
+            "exec",
+            screen.container,
+            "tmux",
+            "set-option",
+            "-g",
+            "window-size",
+            "manual",
         )
         if rc != 0:
             raise RuntimeError(f"tmux set-option window-size failed: {err.strip()}")
         rc, _, err = await _docker(
             "exec",
-            name,
+            screen.container,
             "tmux",
             "resize-window",
             "-t",
-            _SESSION,
+            screen.session,
             "-x",
             str(_PANE_COLS),
             "-y",
@@ -701,49 +971,60 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         if rc != 0:
             raise RuntimeError(f"tmux resize-window failed: {err.strip()}")
 
-    async def _capture_pane(self, name: str) -> str | None:
+    async def _capture_pane(self, screen: TmuxScreen) -> str | None:
         """The pane's visible text, or None on a transient docker/tmux failure."""
         rc, out, _ = await _docker(
-            "exec", name, "tmux", "capture-pane", "-p", "-t", _SESSION
+            "exec", screen.container, "tmux", "capture-pane", "-p", "-t", screen.session
         )
         return out if rc == 0 else None
 
-    async def _wait_ready(self, name: str) -> bool:
+    async def _wait_ready(self, screen: TmuxScreen) -> bool:
         """Poll capture-pane until the `❯` input box appears (spike 就绪握手)."""
         deadline = asyncio.get_event_loop().time() + _READY_TIMEOUT_S
         while asyncio.get_event_loop().time() < deadline:
-            capture = await self._capture_pane(name)
+            capture = await self._capture_pane(screen)
             if capture is not None and pane_ready(capture):
                 return True
             await asyncio.sleep(_READY_POLL_S)
         return False
 
-    async def _control(self, name: str) -> TmuxControlClient:
-        """The container's control-mode client, created once and reused.
+    async def _control(self, screen: TmuxScreen) -> TmuxControlClient:
+        """The screen's control-mode client, created once and reused.
 
         One long-lived connection instead of a `docker exec` per keystroke
         batch: every command comes back as %end or %error, so a failed
-        injection is distinguishable from a successful one."""
-        client = self._controls.get(name)
+        injection is distinguishable from a successful one. Per SCREEN, not per
+        box — the client attaches to one named session."""
+        client = self._controls.get(screen)
         if client is not None and client.alive:
             return client
         if client is not None:
             await client.close()
         client = TmuxControlClient(
-            None, _SESSION, spawn_prefix=["docker", "exec", "-i", name]
+            None,
+            screen.session,
+            spawn_prefix=["docker", "exec", "-i", screen.container],
         )
         await client.start()
-        self._controls[name] = client
+        self._controls[screen] = client
         return client
 
-    async def drop_control(self, name: str) -> None:
-        """Forget a container's control and subscription before it goes away."""
-        await self.drop_screen_subscription(name)
-        client = self._controls.pop(name, None)
+    async def drop_control(self, screen: TmuxScreen) -> None:
+        """Forget a screen's control and subscription before it goes away."""
+        await self.drop_screen_subscription(screen)
+        client = self._controls.pop(screen, None)
         if client is not None:
             await client.close()
 
-    async def _await_composer(self, name: str, snippet: str, *, holds: bool) -> bool:
+    async def drop_container_controls(self, container: str) -> None:
+        """Forget every screen in a box — used when the BOX itself is about to be
+        destroyed, which takes all of its room's sessions with it."""
+        for screen in [s for s in self._controls if s.container == container]:
+            await self.drop_control(screen)
+
+    async def _await_composer(
+        self, screen: TmuxScreen, snippet: str, *, holds: bool
+    ) -> bool:
         """Poll the pane until the composer visibly holds (``holds=True``, after
         a paste) or lets go of (``holds=False``, after an Enter) the prompt body,
         bounded by the matching settle window. A transient capture failure is
@@ -751,7 +1032,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         settle = _PASTE_SETTLE_S if holds else _ENTER_SETTLE_S
         deadline = asyncio.get_event_loop().time() + settle
         while True:
-            capture = await self._capture_pane(name)
+            capture = await self._capture_pane(screen)
             if capture is not None and composer_holds_body(capture, snippet) == holds:
                 return True
             if asyncio.get_event_loop().time() >= deadline:
@@ -759,7 +1040,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
             await asyncio.sleep(_SETTLE_POLL_S)
 
     async def _send_prompt(
-        self, name: str, prompt: str, images: list[dict] | None = None
+        self, screen: TmuxScreen, prompt: str, images: list[dict] | None = None
     ) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
         bracketed paste + independent Enter, so the prompt isn't split) — and
@@ -784,7 +1065,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         keystroke."""
         del images  # files already live in the shared topic worktree
         try:
-            control = await self._control(name)
+            control = await self._control(screen)
             if await control.pane_dead():
                 raise ScreenSetupError(
                     "tmux 会话的窗格已经死掉（里面的 claude 不在了），本轮未发送"
@@ -802,7 +1083,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                 # pass on an OLD widget, and every retry appended instead of
                 # replacing. Clearing first makes each attempt idempotent and
                 # the verify unambiguous.
-                clear = await control.send("send-keys", "-t", _SESSION, "C-u")
+                clear = await control.send("send-keys", "-t", screen.session, "C-u")
                 if not clear.ok:
                     raise ScreenSetupError(f"tmux 清空输入框失败：{clear.error}")
                 # load-buffer reads the prompt on stdin, so it stays a docker
@@ -811,7 +1092,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                 rc, _, err = await _docker(
                     "exec",
                     "-i",
-                    name,
+                    screen.container,
                     "tmux",
                     "load-buffer",
                     "-",
@@ -819,20 +1100,22 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                 )
                 if rc != 0:
                     raise ScreenSetupError(f"tmux load-buffer 失败：{err.strip()}")
-                paste = await control.send("paste-buffer", "-t", _SESSION, "-d", "-p")
+                paste = await control.send(
+                    "paste-buffer", "-t", screen.session, "-d", "-p"
+                )
                 if not paste.ok:
                     raise ScreenSetupError(f"tmux 粘贴失败：{paste.error}")
-                if await self._await_composer(name, snippet, holds=True):
+                if await self._await_composer(screen, snippet, holds=True):
                     break
             else:
                 raise ScreenSetupError(
                     "提示词粘贴后始终没有出现在输入框里（终端丢弃了粘贴），本轮未发送"
                 )
             for _ in range(_MAX_ENTERS):
-                enter = await control.send("send-keys", "-t", _SESSION, "Enter")
+                enter = await control.send("send-keys", "-t", screen.session, "Enter")
                 if not enter.ok:
                     raise ScreenSetupError(f"tmux 回车失败：{enter.error}")
-                if await self._await_composer(name, snippet, holds=False):
+                if await self._await_composer(screen, snippet, holds=False):
                     return
             raise ScreenSetupError(
                 "回车补发多次后提示词仍留在输入框里（会话没有接受提交），本轮未发送"
@@ -849,7 +1132,9 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
     # changes; that one re-checks liveness once idle-suspect is already tripped.
     _ACTIVITY_POLL_S = 12.0
 
-    async def _monitor_activity(self, name: str, tracker: ActivityTracker) -> None:
+    async def _monitor_activity(
+        self, screen: TmuxScreen, tracker: ActivityTracker
+    ) -> None:
         """Background loop for `_start_activity_monitor`: captures the pane every
         `_ACTIVITY_POLL_S` and touches `tracker` whenever the content changes —
         so a long tool call with no interim hook still counts as "alive" as long
@@ -857,13 +1142,19 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         itself under `self._activity` (keyed by container name) for `cheese
         status` to read via `activity_status()`, for exactly as long as this
         turn's monitor runs."""
-        self._activity[name] = tracker
+        self._activity[screen] = tracker
         last_hash: str | None = None
         try:
             while True:
                 await asyncio.sleep(self._ACTIVITY_POLL_S)
                 rc, out, _ = await _docker(
-                    "exec", name, "tmux", "capture-pane", "-p", "-t", _SESSION
+                    "exec",
+                    screen.container,
+                    "tmux",
+                    "capture-pane",
+                    "-p",
+                    "-t",
+                    screen.session,
                 )
                 if rc != 0:
                     continue  # transient docker hiccup — never treated as "died"
@@ -872,14 +1163,14 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                     last_hash = digest
                     tracker.touch(asyncio.get_event_loop().time())
         finally:
-            self._activity.pop(name, None)
+            self._activity.pop(screen, None)
 
     async def _start_activity_monitor(
-        self, screen: str, tracker: ActivityTracker
+        self, screen: TmuxScreen, tracker: ActivityTracker
     ) -> asyncio.Task | None:
         return asyncio.create_task(self._monitor_activity(screen, tracker))
 
-    async def _confirm_alive(self, screen: str) -> bool:
+    async def _confirm_alive(self, screen: TmuxScreen) -> bool:
         """The idle-suspect probe: a live, on-demand confirmation distinct from
         the passive capture-pane polling above — reuses the same `pane_dead()`
         check `_send_prompt` already trusts before pasting. Best-effort: a
@@ -896,7 +1187,7 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         (`/topics/{id}/status`), or None when no tmux turn is currently being
         monitored for this topic (not running, mid-setup before the monitor
         starts, or already finished)."""
-        tracker = self._activity.get(_tmux_container_name(topic_id))
+        tracker = self._activity.get(_screen_for(topic_id))
         if tracker is None:
             return None
         now = asyncio.get_event_loop().time()
@@ -911,22 +1202,70 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
 
     # --- turn --------------------------------------------------------------
 
-    def _session_env(
+    def _room_env(
+        self,
+        *,
+        project_id: uuid.UUID,
+        room_id: uuid.UUID,
+        sessions_root: str,
+        env: dict[str, str] | None,
+    ) -> dict[str, str]:
+        """Environment baked into the ROOM's container at creation.
+
+        Strictly the part that is the same for every topic the box hosts: the
+        model route, the callback base, the room's own identity. A per-topic
+        value here would be frozen for every task that joins the room later —
+        and worse, silently WRONG for it, since container env is what a process
+        inherits when nothing overrides it. Everything per-topic is in
+        `_topic_env` and reaches `claude` through `tmux new-session -e`.
+
+        SBX_SESSIONS rides along as the sessions-tree mount source (stripped
+        before -e)."""
+        if settings.subscription_enabled:
+            merged = {**(env or {})}
+            for k in (
+                "ANTHROPIC_BASE_URL",
+                "CLAUDE_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+            ):
+                merged.pop(k, None)
+        else:
+            merged = {**settings.agent_env(), **(env or {})}
+        merged.update(
+            {
+                "HOME": "/home/node",
+                "SBX_SESSIONS": sessions_root,
+                "CHEESE_API": settings.agent_api_base(),
+                "CHEESE_PROJECT": str(project_id),
+                "CHEESE_ROOM": str(room_id),
+            }
+        )
+        return merged
+
+    def _topic_env(
         self,
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
-        session_dir: str,
-        worktree: str,
         token: str,
+        port_slot: int,
         env: dict[str, str] | None,
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
     ) -> dict[str, str]:
-        """Container env: model gateway (ANTHROPIC_*) + cheese CLI wiring. Mirrors
-        LocalDockerProvider._sandbox_config; SBX_WORKTREE/SBX_SESSION ride along as
-        the /work and ~/.claude mount sources (stripped before -e)."""
+        """Environment written into the TOPIC's tmux session, per key, before its
+        `claude` execs.
+
+        This is the isolation boundary inside a shared box. Every value here
+        answers "which topic is this" in some form — identity, credential,
+        callback URL, config dir, cwd, published port — and getting any of them
+        by inheritance instead means one topic acting as another. The device
+        backend measured that exact failure on a shared machine, which is why
+        `_ensure_session` passes all of it with `-e` rather than trusting the
+        tmux server's frozen global environment."""
         if settings.subscription_enabled:
             # Subscription: point Claude Code at the metering proxy, trust its CA
             # (mounted by _subscription_args), attribute to this topic. No gateway
@@ -961,39 +1300,50 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                     ttl_s=SESSION_TOKEN_TTL_S,
                 ),
             ).env
-            merged = {**(env or {})}
-            # The caller's env is the gateway provider (BASE_URL + model pins).
-            # Subscription mode must carry NONE of them: a BASE_URL flips the CLI
-            # into API-key mode, and a pinned model asks the subscription for one
-            # it doesn't serve. subscription_provider only ADDS keys, so these
-            # have to be explicitly dropped, not just overridden.
-            for k in (
-                "ANTHROPIC_BASE_URL",
-                "CLAUDE_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            ):
-                merged.pop(k, None)
-            merged.update(sub)
+            # The caller's env is the gateway provider (BASE_URL + model pins),
+            # and it is already stripped of those on the room's container (see
+            # _room_env). What is left to do here is ADD the subscription keys.
+            merged = {**sub}
         else:
-            merged = {**settings.agent_env(), **(env or {})}
+            merged = {}
+        config_dir = ws.sandbox_session_dir(topic_id)
         merged.update(
             {
-                "HOME": "/home/node",
-                "CHEESE_APP_PORT": str(_APP_PORT),
+                # THE isolation boundary inside a shared box: claude reads AND
+                # writes its config — settings.json, .claude.json, the
+                # transcripts --resume reads — under CLAUDE_CONFIG_DIR, and never
+                # falls back to $HOME/.claude when it is set (verified on the
+                # device path, device_launch.py). HOME stays room-wide on
+                # purpose: the shared caches, the toolchain and the git identity
+                # under it are things a room SHOULD share; only claude's own
+                # state must not be.
+                "CLAUDE_CONFIG_DIR": config_dir,
+                # The session's cwd (`new-session -c`), which is also the trust
+                # entry in .claude.json — this topic's own worktree, at its real
+                # path under the project-tree mount.
+                "CHEESE_WORKDIR": ws.sandbox_topic_workdir(topic_id),
+                # Which published port pair is this topic's — 运行环境预览 and
+                # 现场终端 both key off it (ws.app_port_for_slot / ttyd_port_for_slot).
+                "CHEESE_PORT_SLOT": str(port_slot),
+                "CHEESE_APP_PORT": str(ws.app_port_for_slot(port_slot)),
                 # 运行环境预览 reaches the app through the backend's reverse
                 # proxy, which serves it under THIS sub-path. A dev server that
                 # emits root-absolute asset URLs (vite's `/@vite/client`) must be
                 # started under it — `vite --base=$CHEESE_APP_BASE` — or those
                 # assets miss the container and hit the platform SPA instead.
                 "CHEESE_APP_BASE": f"/api/topics/{topic_id}/app/",
-                "SBX_WORKTREE": worktree,
-                "SBX_SESSION": session_dir,
-                "CHEESE_API": settings.agent_api_base(),
+                # No SBX_WORKTREE here, deliberately: on the SDK path that name
+                # means a HOST path used as a bind-mount source (sandbox/claude-sbx),
+                # and this box never had it. The cwd a session actually runs in
+                # is CHEESE_WORKDIR above.
+                #
+                # No CHEESE_API either: it is the same for every session in the
+                # box, so it stays in the room-wide container env (`_room_env`,
+                # which sets it from `settings.agent_api_base()` — the #528
+                # normaliser, not the raw setting).
                 "CHEESE_PROJECT": str(project_id),
                 "CHEESE_TOPIC": str(topic_id),
-                # Which 分身 this sandbox is (分身独立身份) — the same identity
+                # Which 分身 this session is (分身独立身份) — the same identity
                 # its scoped CHEESE_TOKEN carries, never the shared account.
                 "CHEESE_AUTHOR": topic_agent_handle(topic_id),
                 "CHEESE_TOKEN": token,
@@ -1001,16 +1351,16 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
                 "CHEESE_HOOK_URL": f"{_hook_base()}/sandbox/hooks/{topic_id}",
                 # Durable event WAL the forwarder appends to BEFORE its curl, so
                 # 现场 events survive a backend restart mid-turn; the backend
-                # reconciles it via ws.spool_dir. Inside the ~/.claude session mount
+                # reconciles it via ws.spool_dir. Inside this topic's config dir
                 # (→ host session_dir/cheese-spool), so the backend can read it.
-                "CHEESE_HOOK_SPOOL": "/home/node/.claude/cheese-spool",
-                # `cheese await`'s output logs, in the same session mount and for
-                # the same reason: await is FOR commands that run long enough to
-                # be caught by a container rebuild, and a rebuild used to take the
+                "CHEESE_HOOK_SPOOL": f"{config_dir}/cheese-spool",
+                # `cheese await`'s output logs, in the same place and for the
+                # same reason: await is FOR commands that run long enough to be
+                # caught by a container rebuild, and a rebuild used to take the
                 # whole log with it (→ host session_dir/cheese-await, readable by
-                # the backend via ws.await_log_dir). Not the worktree — a build log
-                # has no business in a commit.
-                "CHEESE_AWAIT_LOGS": "/home/node/.claude/cheese-await",
+                # the backend via ws.await_log_dir). Not the worktree — a build
+                # log has no business in a commit.
+                "CHEESE_AWAIT_LOGS": f"{config_dir}/cheese-await",
             }
         )
         if memory_scope:
@@ -1020,6 +1370,53 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         if turn_id:
             merged["CHEESE_TURN"] = str(turn_id)
         return merged
+
+    async def _room_id(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> uuid.UUID:
+        """Which room's box this topic runs in — itself when it IS a room.
+
+        Rooms are `root`/`topic`; a `task` belongs to the room it was split out
+        of. Tasks do not nest (topic/services.py `_child_kind`), so one hop up is
+        the whole walk — but the loop follows `parent_id` until it reaches a room
+        anyway, because the legacy `subtopic` kind predates that rule and rows
+        with it still exist.
+
+        The answer is recorded with `ws.bind_room` so the sync, DB-free side of
+        the workspace layer (`docker port` lookups on the request path) can find
+        the box too. Any failure falls back to the topic's own id, which is the
+        one-box-per-topic behaviour — a degraded answer, never a wrong box.
+        """
+        if not settings.sandbox_share_room_container:
+            return topic_id
+        try:
+            from sqlalchemy import select
+
+            from app.domain.topic.models import Topic, TopicKind
+
+            factory = self._session_factory
+            if factory is None:
+                from app.core.db import async_session_factory
+
+                factory = async_session_factory
+            rooms = (TopicKind.root, TopicKind.topic)
+            async with factory() as session:
+                current = topic_id
+                for _ in range(_MAX_ROOM_WALK):
+                    row = (
+                        await session.execute(
+                            select(Topic.kind, Topic.parent_id, Topic.project_id).where(
+                                Topic.id == current
+                            )
+                        )
+                    ).first()
+                    if row is None or row.project_id != project_id:
+                        return topic_id
+                    if row.kind in rooms or row.parent_id is None:
+                        ws.bind_room(topic_id, current)
+                        return current
+                    current = row.parent_id
+        except Exception:  # noqa: BLE001 — never fail a turn over box placement
+            logger.warning("could not resolve the room of %s", topic_id, exc_info=True)
+        return topic_id
 
     async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
         """Fail fast when Docker is absent — BEFORE the base claims the topic's
@@ -1043,36 +1440,53 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
         resume_session_id: str | None,
         system_prompt: str,
         precheck: object,
-    ) -> str:
+    ) -> TmuxScreen:
         """Bring up (or reuse) the topic's tmux `claude` and wait for the `❯`
-        input box; return the container name (the screen ctx). Raises
-        ScreenSetupError on setup failure / not-ready."""
-        # session_dir() seeds the cheese skill + returns the ~/.claude mount path.
+        input box; return its screen (the room's box + this topic's session).
+        Raises ScreenSetupError on setup failure / not-ready."""
         try:
+            room_id = await self._room_id(project_id, topic_id)
+            # session_dir() seeds the cheese skill into this topic's config dir;
+            # sessions_root() is the mount source covering the whole room.
             session_dir = str(ws.session_dir(project_id, topic_id))
-            worktree = str(ws.topic_worktree(project_id, topic_id))
-            session_env = self._session_env(
+            sessions_root = str(ws.sessions_root(project_id))
+            # Ensure the topic's own worktree exists before anything is pointed
+            # at it — the box's mount is the project tree, not this directory,
+            # so a missing worktree would show up as an empty cwd rather than a
+            # failed mount.
+            ws.topic_worktree(project_id, topic_id)
+            container = await self._ensure_container(
+                topic_id,
+                room_id,
+                self._room_env(
+                    project_id=project_id,
+                    room_id=room_id,
+                    sessions_root=sessions_root,
+                    env=env,
+                ),
+            )
+            screen = TmuxScreen(container, ws.tmux_session_name(topic_id))
+            topic_env = self._topic_env(
                 project_id=project_id,
                 topic_id=topic_id,
-                session_dir=session_dir,
-                worktree=worktree,
                 token=token,
+                port_slot=await self._allocate_port_slot(screen),
                 env=env,
                 memory_scope=memory_scope,
                 owner=owner,
                 turn_id=turn_id,
             )
-            name = await self._ensure_container(topic_id, session_env)
             # Seed hooks + skip-disclaimer settings before the session starts
             # (only read at session creation), then bring the session up.
-            self._write_session_settings(session_dir)
+            self._write_session_settings(session_dir, topic_env["CHEESE_WORKDIR"])
             # Always (re)write the system prompt, even when the session already
             # exists: a running claude keeps the prompt it launched with, and
             # this write is what the NEXT fresh session picks up.
             self._write_system_prompt(session_dir, system_prompt)
             await self._ensure_session(
-                name,
+                screen,
                 model,
+                session_env=topic_env,
                 resume_session_id=resume_session_id,
                 session_dir=session_dir,
                 system_prompt=system_prompt,
@@ -1080,22 +1494,57 @@ class TmuxHooksProvider(HooksSessionProvider[str]):
             # _wait_ready inside the wrap too: its docker exec can itself fail
             # (docker binary vanishing mid-turn) — that must surface as a clean
             # error result, not a raw exception (review finding).
-            ready = await self._wait_ready(name)
+            ready = await self._wait_ready(screen)
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
         if not ready:
             raise ScreenSetupError("tmux 会话未就绪（未等到输入框），已放弃本轮")
-        return name
+        return screen
 
-    def _write_session_settings(self, session_dir: str) -> None:
-        """Write ~/.claude/settings.json (hooks + skip-disclaimer) into the
-        container's session mount. Idempotent — the hook command is static (the
-        per-topic URL + token live in the container env, not the file)."""
+    def _write_session_settings(self, session_dir: str, workdir: str) -> None:
+        """Seed the topic's CLAUDE_CONFIG_DIR: the hooks settings, and the
+        first-launch gates.
+
+        Idempotent — the hook command is static (the per-topic URL + token live
+        in the tmux session env, not the file).
+
+        The GATES have to be written here, and this is not belt-and-braces. The
+        sandbox image bakes them at `/home/node/.claude.json` (tmux.Dockerfile),
+        which worked while claude read its config from $HOME — but with
+        CLAUDE_CONFIG_DIR set, claude reads AND writes `.claude.json` under THAT
+        directory and never falls back to $HOME (verified on the device path,
+        device_launch.py). Without this the onboarding/trust dialog eats the
+        first prompt, the pane never reaches `❯`, and every turn dies at the
+        45-second ready handshake with nothing saying why.
+
+        The trust entry names this topic's OWN cwd. The baked file trusts
+        `/work`, a remap that no longer exists — another thing a per-topic file
+        can get right and a baked one cannot."""
         target = Path(session_dir) / "settings.json"
         target.parent.mkdir(parents=True, exist_ok=True)
         _rewrite(
             target,
             json.dumps(hooks_settings(), ensure_ascii=False),
+            mode=0o666,
+        )
+        _rewrite(
+            Path(session_dir) / ".claude.json",
+            json.dumps(
+                {
+                    "hasCompletedOnboarding": True,
+                    "autoUpdates": False,
+                    # Legacy fallback, still honored; it migrates to
+                    # skipDangerousModePermissionPrompt on first run.
+                    "bypassPermissionsModeAccepted": True,
+                    "projects": {
+                        workdir: {
+                            "hasTrustDialogAccepted": True,
+                            "hasCompletedProjectOnboarding": True,
+                        }
+                    },
+                },
+                ensure_ascii=False,
+            ),
             mode=0o666,
         )
         # Login is via CLAUDE_CODE_OAUTH_TOKEN in the container env (see

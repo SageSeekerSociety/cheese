@@ -1,5 +1,6 @@
 """Application configuration loaded from environment / .env."""
 
+import hashlib
 from functools import lru_cache
 
 from pydantic import Field, model_validator
@@ -360,9 +361,60 @@ class Settings(BaseSettings):
     # look exactly like an agent that decided not to use its tools.
     sandbox_api_base: str = "http://host.docker.internal:8099"
     # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
-    # cheese write-API isn't open on the bind address. Empty → generated per
-    # process (fine for a single worker; pin it for multi-worker deployments).
+    # cheese write-API isn't open on the bind address. Empty → derived from
+    # `jwt_secret` (see `sandbox_signing_secret`); pin it to rotate the two
+    # independently, or to share one secret across multiple backend hosts.
     sandbox_token: str = ""
+
+    @property
+    def sandbox_signing_secret(self) -> str:
+        """The HMAC secret behind every scoped sandbox token.
+
+        `sandbox_token` when pinned; otherwise DERIVED from `jwt_secret` rather
+        than randomised per process. That fallback used to be
+        `secrets.token_hex(24)`, and the cost was not theoretical: a box's hook
+        token is baked into the environment of the long-running `claude` at
+        launch and never refreshed, so a fresh per-process secret invalidated
+        every existing box's token the instant the backend restarted. The whole
+        deployment went deaf at once — hooks 401ing into nothing, turns running
+        to their ceiling reporting `tools: 0` while the agent inside worked
+        perfectly — recovering only by destroying each box (and with it the tmux
+        session that IS that topic's conversational continuity).
+
+        Deriving instead of randomising makes the secret stable across restarts
+        with no deploy change, and `jwt_secret` is the right root because a
+        deployment is already forced to pin a real one
+        (`_require_real_jwt_secret_on_deployment`). Hashed with a domain
+        separator so this value can never be replayed as a session JWT key, and
+        so a future rotation of one does not silently rotate the other.
+        """
+        pinned = self.sandbox_token.strip()
+        if pinned:
+            return pinned
+        return hashlib.sha256(
+            b"cheesex:sandbox-signing-secret:v1:" + self.jwt_secret.encode()
+        ).hexdigest()
+
+    # --- tmux sandbox: one box per ROOM, not per topic ---
+    # A room's box hosts the room's own tmux session plus one per task split out
+    # of it, so the quota is a ROOM budget now, not a topic's. Sized from what
+    # this repo actually needs: `pnpm run build` alone OOMs a 2g box (exit 134,
+    # measured), and a room routinely has a build, a test run and an idle
+    # session in flight at once. Operator-tunable because the right number is a
+    # property of the deployment's projects, not of this code.
+    sandbox_memory_gb: float = 6.0
+    sandbox_cpus: float = 4.0
+    sandbox_pids_limit: int = 2048
+    # How many topics of one room may hold a published app/ttyd port. Ports are
+    # published as a RANGE at container creation and can never be extended
+    # afterwards, so this is a hard ceiling on 运行环境预览 + 现场终端 slots per
+    # room — beyond it a session still runs, it just gets no published port.
+    sandbox_room_port_slots: int = 16
+    # Escape hatch: False puts every topic back in its own box (the pre-room
+    # behaviour). Here because room sharing merges a room's fault domain — one
+    # topic OOMing the box takes its siblings down — and an operator hitting
+    # that needs a way out that is not a redeploy.
+    sandbox_share_room_container: bool = True
 
     def agent_api_base(self) -> str:
         """`sandbox_api_base` with a stale trailing `/api` removed.
@@ -413,6 +465,13 @@ class Settings(BaseSettings):
     # should track work in flight, and a box whose room nobody has touched
     # since yesterday is paying rent for a conversation that will resume from
     # its transcript anyway.
+    #
+    # 8 hours holds even though one box now serves a whole room (2026-08-17
+    # decision). What changed is not the threshold but what "idle" MEASURES:
+    # `reap_idle_containers` takes the room's last activity AND its tasks'.
+    # Judging the room alone would destroy a box with live work in it the
+    # moment the room's own timeline went quiet — and a room whose work has
+    # been split out is quiet by design, so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
