@@ -403,12 +403,12 @@ watch(() => props.projectId, load)
 
       <template v-else>
         <!-- 专家角色 (spec §8.2): which persona 芝士 loads for this project -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-account-school-outline</v-icon>
-            <span class="ln-section-title">专家角色</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-account-school-outline</v-icon>
+            <span class="page-section-title">专家角色</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <div class="d-flex align-center" style="gap: 8px">
               <v-select
                 :model-value="roleCurrent"
@@ -436,12 +436,12 @@ watch(() => props.projectId, load)
         </section>
 
         <!-- AI 模型池 -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-brain</v-icon>
-            <span class="ln-section-title">AI 模型池</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
+            <span class="page-section-title">AI 模型池</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <button
               v-for="p in ai?.profiles ?? []"
               :key="p.name"
@@ -466,12 +466,12 @@ watch(() => props.projectId, load)
         </section>
 
         <!-- 模型 -->
-        <section v-if="(model?.profiles?.length ?? 0) > 0" class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-brain</v-icon>
-            <span class="ln-section-title">模型</span>
+        <section v-if="(model?.profiles?.length ?? 0) > 0" class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
+            <span class="page-section-title">模型</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
               芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省额度）；复杂项目可切换到
               <strong>Opus 5</strong>（更强，但消耗额度更快）。
@@ -500,12 +500,12 @@ watch(() => props.projectId, load)
         </section>
 
         <!-- 环境 (spec §9.1): which sandbox image the agent runs in -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-package-variant-closed</v-icon>
-            <span class="ln-section-title">环境镜像</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-package-variant-closed</v-icon>
+            <span class="page-section-title">环境镜像</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <!-- Default (pool base image) -->
             <button
               type="button"
@@ -554,12 +554,12 @@ watch(() => props.projectId, load)
         </section>
 
         <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-source-branch-sync</v-icon>
-            <span class="ln-section-title">上游仓库</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-source-branch-sync</v-icon>
+            <span class="page-section-title">上游仓库</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <div class="d-flex align-center" style="gap: 8px">
               <v-text-field
                 v-model="upstreamUrl"
@@ -603,12 +603,12 @@ watch(() => props.projectId, load)
 
         <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
              git 操作走这个 installation 的短时 token -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-github</v-icon>
-            <span class="ln-section-title">连接 GitHub 仓库</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-github</v-icon>
+            <span class="page-section-title">连接 GitHub 仓库</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <v-alert
               v-if="githubRepoNotice"
               :type="githubRepoNotice.type"
@@ -652,12 +652,12 @@ watch(() => props.projectId, load)
         <!-- 连接 GitHub 账号 (#192): App 的 user-to-server 授权, 独立于经典
              OAuth 登录 —— 记录"这个人是哪个 GitHub 账号", 供 credit 归属 +
              两阶段采纳代表身份开 PR 用 -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-account-box-outline</v-icon>
-            <span class="ln-section-title">连接 GitHub 账号</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-account-box-outline</v-icon>
+            <span class="page-section-title">连接 GitHub 账号</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <!-- The 账号 flow's own outcome, in the 账号 section. -->
             <v-alert
               v-if="githubAccountNotice"
@@ -802,24 +802,32 @@ watch(() => props.projectId, load)
 </template>
 
 <style scoped>
+/* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图、总览同一层关系。 */
 .settings-page {
-  background: var(--canvas);
+  background: var(--surface);
 }
-/* Section rhythm (the ln-* classes are scoped to OverviewView, so style them
-   here). Flat sections: a title, then the pool rows are the cards. */
-.ln-section {
-  margin-bottom: 26px;
+/* 区块节奏。这里的区块本来就不是卡片（卡片是下面那些 .pool-row —— 一个池子、
+   一个镜像是真正可拿起的对象）；区块标题跟着总览一起降成 eyebrow，划分靠留白
+   加一条顶部发丝线。类名同步改掉：`ln-section` 是这个仓库对「白卡片区块」的叫
+   法，留着它会让下一个人以为这里还有卡片可以照抄。 */
+.page-section {
+  padding-top: 18px;
+  margin-bottom: 22px;
+  border-top: 1px solid var(--line);
 }
-.ln-section-head {
+.page-section-head {
   display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
-.ln-section-title {
-  font-size: 15px;
+.page-section-title {
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--faint);
 }
-.ln-body {
+.page-section-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -833,7 +841,9 @@ watch(() => props.projectId, load)
   padding: 12px 14px;
   border: 1px solid rgba(var(--v-border-color), 0.55);
   border-radius: var(--radius-md);
-  background: var(--surface);
+  /* 根面已经是 surface，再刷一层 surface 就是白底压白底 —— 这一行的边界由描边
+     给，底色留给 hover。 */
+  background: transparent;
   cursor: pointer;
   transition:
     border-color 0.15s,
@@ -842,6 +852,11 @@ watch(() => props.projectId, load)
 }
 .pool-row:hover:not(:disabled) {
   border-color: rgba(var(--v-theme-primary), 0.5);
+  background: var(--fill);
+}
+/* 选中态自己有底色，hover 不该把它冲淡。 */
+.pool-row--active:hover:not(:disabled) {
+  background: rgba(var(--v-theme-primary), 0.05);
 }
 .pool-row--active {
   border-color: rgb(var(--v-theme-primary));
