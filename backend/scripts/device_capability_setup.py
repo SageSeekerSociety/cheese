@@ -66,7 +66,7 @@ async def main() -> int:
         token = create_access_token(user.id, handle=user.username)
 
     req = urllib.request.Request(
-        f"{BASE}/api/topics",
+        f"{BASE}/topics",
         data=json.dumps(
             {"project_id": str(project.id), "title": "设备能力检查(零消耗)"}
         ).encode(),

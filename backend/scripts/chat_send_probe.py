@@ -153,7 +153,7 @@ async def send() -> int:
 
     token = mint_session_token(handle=handle, user_id=user_id)
     base = os.environ.get("WS_BASE", "ws://127.0.0.1:8000")
-    url = f"{base}/api/topics/{topic_id}/chat?token={token}"
+    url = f"{base}/topics/{topic_id}/chat?token={token}"
     content = os.environ.get("CONTENT", "probe: 请回复 pong 并说明你运行在哪台机器上")
     summon = os.environ.get("SUMMON", "1") == "1"
     deadline = time.time() + float(os.environ.get("DEADLINE_S", "300"))
