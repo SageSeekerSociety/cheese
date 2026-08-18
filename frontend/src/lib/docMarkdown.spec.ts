@@ -251,4 +251,16 @@ describe('rule 11: intraword underscores', () => {
     const md = '用 `project_id` 查询。\n'
     expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
   })
+
+  // A table cell is prose. Our documents are mostly tables of identifiers, so
+  // skipping this rule there meant almost every one of them read as unsafe.
+  it('applies inside table cells', () => {
+    const md = '| 结论 | 依据 |\n| --- | --- |\n| 属实 | login_security.py 里 |\n'
+    expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
+  })
+
+  it('applies inside blockquotes', () => {
+    const md = '> 索引建在 project_id 上。\n'
+    expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
+  })
 })

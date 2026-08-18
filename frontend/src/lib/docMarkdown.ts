@@ -310,6 +310,13 @@ function normalizeTableRow(line: string): string {
   return `| ${cells.join(' | ')} |`
 }
 
+// The per-line rules that apply to prose wherever it appears. Table cells and
+// blockquote bodies are prose too — running only part of this on them is how
+// `| login_security.py |` came to report a document as unsafe to edit.
+function prose(line: string): string {
+  return decodeBasicEntities(unescapeIntrawordUnderscores(line))
+}
+
 export function normalizeMarkdown(md: string): string {
   const lines = md.replace(/\r\n?/g, '\n').split('\n')
   // Each entry keeps whether the line is fence content, so the blank-line
@@ -327,7 +334,7 @@ export function normalizeMarkdown(md: string): string {
     }
     raw = raw.replace(/\s+$/, '')
     if (TABLE_ROW_RE.test(raw)) {
-      out.push({ text: decodeBasicEntities(normalizeTableRow(raw)), literal: false })
+      out.push({ text: prose(normalizeTableRow(raw)), literal: false })
       continue
     }
     // A line of only quote markers is the serializer's block separator inside
@@ -340,12 +347,12 @@ export function normalizeMarkdown(md: string): string {
     if (bq) {
       const depth = (bq[1].match(/>/g) ?? []).length
       raw = '> '.repeat(depth) + bq[2].trim()
-      out.push({ text: decodeBasicEntities(raw.trimEnd()), literal: false })
+      out.push({ text: prose(raw.trimEnd()), literal: false })
       continue
     }
     // Bullet markers * / + → - (preserve indentation).
     raw = raw.replace(/^(\s*)[*+](\s)/, '$1-$2')
-    out.push({ text: decodeBasicEntities(unescapeIntrawordUnderscores(raw)), literal: false })
+    out.push({ text: prose(raw), literal: false })
   }
   // Collapse blank-line runs (never inside fences); trim document edges.
   const collapsed: string[] = []
