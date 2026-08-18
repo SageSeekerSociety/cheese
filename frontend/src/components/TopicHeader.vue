@@ -16,6 +16,7 @@ import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { TopicPhase } from '@/lib/topicState'
 
 import { computed, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
 import TopicMembers from '@/components/TopicMembers.vue'
@@ -37,6 +38,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
+
+const { mdAndUp } = useDisplay()
 
 // 头部常驻状态条 (规则 4): where this topic stands, always on screen. It used to
 // read the topic row's `status` alone, which knows only 归档 —— 「待验收」 and
@@ -159,8 +162,10 @@ watch(
       </v-card>
     </v-menu>
 
-    <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1) -->
+    <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
+         永远只有一个窗格，没有第二栏可以让开。 -->
     <v-btn
+      v-if="mdAndUp"
       :icon="focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
       size="small"
       variant="text"

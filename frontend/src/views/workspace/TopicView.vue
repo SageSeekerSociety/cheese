@@ -4,18 +4,17 @@ import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import { usePageTitle } from '@/composables/usePageTitle'
 
-import ChatPanel from '@/components/ChatPanel.vue'
-import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
-import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
 import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
+import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. The input bar is
 // the chat column's own — it used to span both columns from here, which read as
@@ -26,6 +25,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 defineOptions({ name: 'TopicView' })
 
 const props = defineProps<{ projectId: string; topicId: string }>()
+const { mdAndUp } = useDisplay()
 const router = useRouter()
 const route = useRoute()
 const store = useWorkspaceStore()
@@ -79,7 +79,10 @@ const panelRef = ref<{
   highlightTurn: (turnId: string) => void
   openFile?: (path: string) => void
 } | null>(null)
-const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
+const chatColumn = ref<{
+  connected: boolean
+  reloadAccept: (silent?: boolean) => void
+} | null>(null)
 
 // Drag the chat|panel splitter: set chat's width as a % of the panes row.
 function startPaneDrag(e: MouseEvent) {
@@ -107,8 +110,21 @@ const activityTick = ref(0)
 
 // The chat column's own composer is the one this topic uses; TopicView only
 // needs a handle on the panel it lives in for the connection dot in the header.
-const chatRef = ref<{ connected: boolean } | null>(null)
-const composerReady = computed(() => !!chatRef.value?.connected)
+const composerReady = computed(() => !!chatColumn.value?.connected)
+
+// 对话那一栏在两端挂在不同位置（左栏 / tab 栏第一格），但接的是同一组事件。
+const chatEvents = {
+  'turn-done': handleTurnDone,
+  'tool-used': handleToolUsed,
+  'state-changed': handleStateChanged,
+  'mention-click': handleMentionClick,
+  'open-file': (path: string) => panelRef.value?.openFile?.(path),
+  'open-resource': handleOpenResource,
+  'upgrade-message': handleUpgradeMessage,
+  'open-topic': openTopic,
+  phase: (p: CardPhase) => (cardPhase.value = p),
+  review: () => onPanelTab('changes'),
+}
 
 // 施工现场 live feed for the current topic — the 现场 tab shows it with a pulsing
 // dot while the turn runs; cleared when the turn ends (the persisted transcript
@@ -156,7 +172,7 @@ function handleTurnDone() {
 // so we can't key off a tool name) — refresh the affected panel live (§3.1.1).
 function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
-  else if (resource === 'accept') void acceptRef.value?.reload()
+  else if (resource === 'accept') chatColumn.value?.reloadAccept()
   else activityTick.value += 1 // doc / decision / milestone / notify → reload
 }
 
@@ -170,7 +186,7 @@ async function handleOpenResource(resource: string, turnId?: string) {
   } else if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
   } else if (resource === 'accept') {
-    void acceptRef.value?.reload()
+    chatColumn.value?.reloadAccept()
   } else if (resource === 'doc') {
     // B1 Phase 2: highlight the exact paragraphs this turn changed (falls back to
     // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode
@@ -203,7 +219,7 @@ function handleToolUsed(name: string, input?: Record<string, unknown>) {
     void store.refreshTopics()
   } else if (name === 'request_accept') {
     // 芝士 递出验收卡: refresh the banner so it shows up immediately.
-    void acceptRef.value?.reload()
+    chatColumn.value?.reloadAccept()
   }
 }
 
@@ -249,51 +265,20 @@ watch(
       />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
-        <ChatPanel
+        <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
+        <TopicChatColumn
+          v-if="mdAndUp"
           v-show="!focusMode"
-          ref="chatRef"
+          ref="chatColumn"
           class="col col-chat"
           :style="{ flex: `0 0 ${store.chatPct}%` }"
           :topic="selectedTopic"
-          hide-header
-          show-composer
           :members="store.members"
           :topic-list="store.topics"
-          @turn-done="handleTurnDone"
-          @tool-used="handleToolUsed"
-          @state-changed="handleStateChanged"
-          @mention-click="handleMentionClick"
-          @open-file="(p: string) => panelRef?.openFile?.(p)"
-          @open-resource="handleOpenResource"
-          @upgrade-message="handleUpgradeMessage"
-          @open-topic="openTopic"
-        >
-          <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
-          <template #timeline-end>
-            <TopicAcceptCard
-              ref="acceptRef"
-              :topic-id="selectedTopic.id"
-              :topic-status="selectedTopic.status"
-              @phase="cardPhase = $event"
-              @review="onPanelTab('changes')"
-            />
-          </template>
-          <!-- 话题自己的 chips: what this box is addressing, and where this
-               topic's turns will run. 算力 locks on the first message, so it
-               belongs beside the input that sends it. -->
-          <template #composer-chips>
-            <span
-              v-if="selectedTopic.status === 'archived'"
-              class="d-inline-flex align-center ga-1 c-faint"
-              style="font-size: 12px"
-            >
-              <span class="status-dot status-dot--muted" />已归档
-            </span>
-            <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
-          </template>
-        </ChatPanel>
+          v-on="chatEvents"
+        />
         <div
-          v-if="!focusMode"
+          v-if="mdAndUp && !focusMode"
           class="pane-resizer"
           title="拖动调整宽度，双击复位"
           @mousedown.prevent="startPaneDrag"
@@ -311,10 +296,23 @@ watch(
           :topic-list="store.topics"
           :tab="panelTab"
           :phase="phase"
+          :with-chat="!mdAndUp"
           @open-topic="openTopic"
           @mention-click="handleMentionClick"
           @update:tab="onPanelTab"
-        />
+        >
+          <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
+          <template #chat>
+            <TopicChatColumn
+              ref="chatColumn"
+              class="col col-chat flex-grow-1"
+              :topic="selectedTopic"
+              :members="store.members"
+              :topic-list="store.topics"
+              v-on="chatEvents"
+            />
+          </template>
+        </WorkPanel>
       </div>
     </template>
   </div>
@@ -341,11 +339,5 @@ watch(
 }
 .pane-resizer:hover {
   background: var(--accent);
-}
-/* @-autocomplete dropdown (§3.1.1) */
-@media (max-width: 960px) {
-  .panes {
-    flex-direction: column;
-  }
 }
 </style>
