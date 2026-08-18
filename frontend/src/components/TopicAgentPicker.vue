@@ -1,5 +1,7 @@
 <script setup lang="ts">
-// 这个话题现在交给哪个 AI 队友，以及把它交给别人。
+// 这个话题现在交给哪个 AI 队友，以及把它交给别人。它长在成员名册里芝士那一行上
+// （TopicMembers）——芝士是这个房间的成员，换掉它属于「这个房间里有谁」，不属于
+// 「这条消息」，所以它不在输入区。
 //
 // 换人**要丢掉这个话题的会话**（一段由别人说过话的对话，被另一个身份接着往下
 // 说，就是它在自信地记得自己没说过的事）。所以这不是一个开关，是一个有代价的
@@ -59,23 +61,16 @@ async function confirmSwitch() {
   <div v-if="!unavailable && current" class="d-inline-flex align-center">
     <v-menu location="bottom end">
       <template #activator="{ props: menu }">
-        <!-- 它住在输入区的动作行里，那一行的规矩是：一行一个高度 (28px)、静止时
-             谁也不画框不画底、整行只有发送是有颜色的 (ChatPanel 的 .composer-actions)。
-             不写 color 的话它会跟着全局 VBtn 默认色变成琥珀，和发送撞成一样。 -->
-        <v-btn
-          v-bind="menu"
-          class="ap-chip"
-          variant="text"
-          size="small"
-          color="medium-emphasis"
-          prepend-icon="mdi-robot-outline"
-          :loading="switching"
-        >
-          {{ label }}
-        </v-btn>
+        <!-- 它长在成员名册里芝士那一行上，和人那一行的角色按钮同一个样子：
+             芝士就是这个房间的成员，换掉它和换一个人的角色是同一类动作。
+             名字由名册那一行写，这里只说动作。 -->
+        <button v-bind="menu" type="button" class="ap-swap" :disabled="switching">
+          换
+          <v-icon size="12">mdi-chevron-down</v-icon>
+        </button>
       </template>
       <v-list density="compact" min-width="220">
-        <v-list-subheader>换一个 AI 队友</v-list-subheader>
+        <v-list-subheader class="t-meta">当前：{{ label }}</v-list-subheader>
         <v-list-item v-for="a in others" :key="a.id ?? a.handle" @click="confirming = a">
           <v-list-item-title>{{ a.display_name }}</v-list-item-title>
           <template v-if="a.is_default" #append>
@@ -107,10 +102,24 @@ async function confirmSwitch() {
 </template>
 
 <style scoped>
-.ap-chip {
-  height: 28px;
-  padding: 0 8px;
+/* 和名册里人那一行的角色按钮同一个样子（TopicMembers 的 .roster__role--btn）。 */
+.ap-swap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
   font-size: 12px;
-  letter-spacing: normal;
+  cursor: pointer;
+}
+.ap-swap:hover {
+  background: var(--fill);
+}
+.ap-swap:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 </style>

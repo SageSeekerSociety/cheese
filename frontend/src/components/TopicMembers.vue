@@ -10,8 +10,12 @@ import { computed, ref, watch } from 'vue'
 
 import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
 
+import TopicAgentPicker from './TopicAgentPicker.vue'
+
 const props = defineProps<{
   topicId: string
+  /** 换 AI 队友要从这个项目的队友里挑，见 TopicAgentPicker。 */
+  projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
@@ -164,6 +168,9 @@ async function onSetRole(handle: string, role: string) {
           </span>
           <span v-if="m.agent" class="roster__badge">Agent</span>
 
+          <!-- 芝士那一行：换一个 AI 队友。和换人的角色同一个位置、同一个样子。 -->
+          <TopicAgentPicker v-if="m.agent && canManage" :topic-id="topicId" :project-id="projectId" />
+
           <!-- Owner/admin: change role via a small menu; else a static chip. -->
           <template v-if="canManage && !m.agent">
             <v-menu location="bottom end">
@@ -197,7 +204,9 @@ async function onSetRole(handle: string, role: string) {
               <v-icon size="15">mdi-close</v-icon>
             </button>
           </template>
-          <span v-else class="roster__role">{{ roleLabel(m.role) }}</span>
+          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义，
+               和左边的「换」并排更像是两个能点的东西。 -->
+          <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
         </li>
       </ul>
 
