@@ -2538,7 +2538,31 @@ class ChatService:
             # prior turns): event-ids stamped on this topic's blocks (any kind).
             async with self._sessions() as session:
                 blocks = await BlockRepository(session).list_for_topic(topic_id)
+                topic = await TopicRepository(session).get(topic_id)
+                # The roster/topic table that STORED content was canonicalized
+                # with. Loaded here because the text dedup below has to compare
+                # like for like — see `_canon`.
+                roster = (
+                    []
+                    if topic is None or topic.is_private
+                    else await ProjectRepository(session).list_members(project_id)
+                )
+                topic_refs, _ = _topic_ref_lists(
+                    await TopicRepository(session).list_for_project(project_id),
+                    exclude_id=topic_id,
+                )
             seen = _persisted_eids(blocks)
+
+            def _canon(text: str) -> str:
+                """Stored form of a raw hook text.
+
+                Every persist path runs `_expand_mention_names` on the way in, so
+                a stored block holds `<@handle>` where the hook payload still
+                holds `@名字`. Comparing the two forms directly is why a message
+                that mentions ANYONE defeated the dedup below and landed twice.
+                """
+                return _expand_mention_names(text, roster, topic_refs).strip()
+
             # Text-level dedup for the Stop's final message (it has its OWN eid,
             # so eid dedup can never match it against the MessageDisplay twin).
             known_texts = {
@@ -2561,8 +2585,8 @@ class ChatService:
                     text=message.text,
                     turn_id=turn_id,
                     reply_to=None,
-                    roster=None,
-                    topic_refs=[],
+                    roster=roster,
+                    topic_refs=topic_refs,
                     eid=message.eid or fallback_eid,
                     eids=message.eids,
                     backfilled=True,
@@ -2570,8 +2594,9 @@ class ChatService:
                 seen.add(fallback_eid)
                 seen.update(message.eids)
                 # Feed the Stop's text dedup even when this copy itself was
-                # suppressed — the text exists either way.
-                known_texts.add(message.text.strip())
+                # suppressed — the text exists either way. Stored form, so it
+                # is comparable with `known_texts` seeded from the DB.
+                known_texts.add(_canon(message.text))
                 return block_payload
 
             for _path, eid, payload in entries:
@@ -2603,7 +2628,9 @@ class ChatService:
                         # resume — without this the topic keeps pointing at
                         # whatever SessionStart last managed to save live.
                         await self._save_session_pointer(topic_id, result.session_id)
-                    if not stop_text or stop_text in known_texts:
+                    # `stop_text` stays RAW above (the prefix test matches it
+                    # against raw flush text); the dedup compares stored forms.
+                    if not stop_text or _canon(result.text or "") in known_texts:
                         seen.add(eid)
                         seen.update(carried)
                         continue
@@ -2613,8 +2640,8 @@ class ChatService:
                         text=result.text,
                         turn_id=turn_id,
                         reply_to=None,
-                        roster=None,
-                        topic_refs=[],
+                        roster=roster,
+                        topic_refs=topic_refs,
                         eid=eid,
                         eids=tuple(dict.fromkeys((*carried, eid))),
                         backfilled=True,
