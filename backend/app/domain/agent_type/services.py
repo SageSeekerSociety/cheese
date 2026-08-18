@@ -44,6 +44,16 @@ class AgentTypeService:
         resolved = await self.resolve(name)
         return resolved.body if resolved else None
 
+    async def model(self, name: str | None) -> str | None:
+        """The model *name* runs on, or None to follow the project's pick.
+
+        A type that names no model is not choosing "the default" — it is
+        declining to choose, which is why the project's setting still applies
+        under it rather than being overridden by a blank.
+        """
+        resolved = await self.resolve(name)
+        return (resolved.model or None) if resolved else None
+
     async def list_merged(self) -> list[AgentTypeOut]:
         """Presets first, then custom types; a custom shadows its namesake."""
         customs = await self._repo.list_all()
