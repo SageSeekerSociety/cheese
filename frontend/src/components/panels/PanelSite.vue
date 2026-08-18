@@ -8,7 +8,7 @@ import type { Block, Topic } from '../../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { getTerminal, getTranscript, withSessionToken } from '../../api'
+import { getTerminal, getTranscript, SITE_PAGE_SIZE, withSessionToken } from '../../api'
 import { countLines, isLongSiteEntry, shouldFollowTail, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
@@ -36,6 +36,38 @@ const errorMsg = ref<string | null>(null)
 
 // 现场: read-only transcript timeline.
 const transcript = ref<Block[]>([])
+// 更早的现场还在库里没拉。和对话栏一样，只在读的人自己往上翻时才拉。
+const hasOlder = ref(false)
+const loadingOlder = ref(false)
+
+async function loadOlder() {
+  const tid = props.topic?.id
+  const oldest = transcript.value[0]
+  if (!tid || !oldest || loadingOlder.value || !hasOlder.value) return
+  loadingOlder.value = true
+  const el = scrollRef.value
+  const before = el ? { top: el.scrollTop, height: el.scrollHeight } : null
+  try {
+    const page = await getTranscript(tid, { limit: SITE_PAGE_SIZE, before: oldest.id })
+    if (props.topic?.id !== tid) return
+    transcript.value = [...page.data, ...transcript.value]
+    hasOlder.value = page.has_more === true
+    // Prepending grows the content ABOVE the viewport; without this the reader
+    // is thrown backwards by exactly that much (same fix as the chat's pager).
+    await nextTick()
+    const sc = scrollRef.value
+    if (sc && before) sc.scrollTop = sc.scrollHeight - before.height + before.top
+  } catch (e) {
+    errorMsg.value = e instanceof Error ? e.message : '加载更早的现场失败'
+  } finally {
+    loadingOlder.value = false
+  }
+}
+
+function onSiteScroll() {
+  const el = scrollRef.value
+  if (el && el.scrollTop < 120) void loadOlder()
+}
 // The scroll container, so the timeline can open on its newest entry the way a
 // chat log does. Measured before this existed: opening 现场 left scrollTop at 0
 // with a scrollHeight of 1818 and a viewport of 500 — the reader landed 1300px
@@ -124,9 +156,13 @@ async function load() {
     // Prefer the real terminal (tmux backend); fall back to the worklog
     // timeline. The terminal probe must never break 现场 — on any error it
     // just stays null and the worklog view renders.
-    const [tx, term] = await Promise.all([getTranscript(tid), getTerminal(tid).catch(() => null)])
+    const [tx, term] = await Promise.all([
+      getTranscript(tid, { limit: SITE_PAGE_SIZE }),
+      getTerminal(tid).catch(() => null),
+    ])
     if (props.topic?.id !== tid) return
     transcript.value = tx.data
+    hasOlder.value = tx.has_more === true
     // Follow the tail on every open of a topic's 现场 — that is what "open on
     // the newest" means.
     scrollSiteToTail()
@@ -215,7 +251,7 @@ function eventPlatform(b: Block): boolean {
 </script>
 
 <template>
-  <div ref="scrollRef" class="panel-site">
+  <div ref="scrollRef" class="panel-site" @scroll="onSiteScroll">
     <div v-if="loading" class="d-flex justify-center py-8">
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
@@ -251,6 +287,9 @@ function eventPlatform(b: Block): boolean {
         暂无现场记录
       </div>
       <div v-else class="site-log pa-3">
+        <div v-if="hasOlder" class="site-older">
+          {{ loadingOlder ? '加载更早的现场…' : '更早的现场' }}
+        </div>
         <template v-for="b in transcript" :key="b.id">
           <!-- Tool action — Claude Code style: 圆点 + 动作 + 参数预览 -->
           <div v-if="b.kind === 'event'" class="site-act">
@@ -333,6 +372,12 @@ function eventPlatform(b: Block): boolean {
 </template>
 
 <style scoped>
+.site-older {
+  padding: 2px 0 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--faint);
+}
 /* 这个 tab 的唯一滚动层。原来它是 .tool-content（抽屉的滚动容器），
    现在滚动条属于 tab 自己。 */
 .panel-site {

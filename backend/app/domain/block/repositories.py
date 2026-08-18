@@ -1,6 +1,7 @@
 """Block data access."""
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from sqlalchemy import Text, cast, func, or_, select, tuple_
@@ -248,6 +249,7 @@ class BlockRepository:
         *,
         limit: int,
         before: Block | None = None,
+        kinds: Collection[BlockKind] | None = None,
     ) -> BlockPage:
         """A bottom-anchored slice of the timeline: the newest `limit` blocks,
         or — with `before` — the `limit` blocks immediately OLDER than it.
@@ -265,6 +267,12 @@ class BlockRepository:
             Block.topic_id == topic_id,
             Block.kind.not_in(self._NON_TIMELINE),
         )
+        # 现场 wants events and nothing else; narrowing HERE rather than in the
+        # caller is the difference between paging and pretending to — filtering
+        # a page after the fact returns fewer rows than asked for and reports
+        # has_more against the wrong set.
+        if kinds is not None:
+            stmt = stmt.where(Block.kind.in_(list(kinds)))
         if before is not None:
             # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
             # so the cursor test matches the ORDER BY key exactly. There is no
