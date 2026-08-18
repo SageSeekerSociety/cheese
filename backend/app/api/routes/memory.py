@@ -30,6 +30,7 @@ from app.domain.memory.models import (
     agent_project_scope_id,
     agent_project_scope_prefix,
 )
+from app.domain.memory.store import live_entries
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
@@ -43,6 +44,11 @@ def _entry_out(e: MemoryEntry) -> dict:
         "scope_id": e.scope_id,
         "content": e.content,
         "created_at": e.created_at.isoformat(),
+        # 记忆整理 computes its snapshot from the newest of these, so that the
+        # concurrency check compares two timestamps from the SAME clock — the
+        # sandbox's own "now" is a different one, and a container running fast
+        # would quietly stop protecting concurrent writes.
+        "updated_at": e.updated_at.isoformat(),
     }
 
 
@@ -170,9 +176,14 @@ async def list_memory(
     cond = conds[0]
     for c in conds[1:]:
         cond = cond | c
+    # Same filter the recall path uses: a fact 记忆整理 retired is no longer part
+    # of the memory, and showing it here would tell a human the opposite of what
+    # 芝士 will actually read next turn.
     rows = (
         await db.scalars(
-            select(MemoryEntry).where(cond).order_by(MemoryEntry.created_at.desc())
+            select(MemoryEntry)
+            .where(cond, live_entries())
+            .order_by(MemoryEntry.created_at.desc())
         )
     ).all()
     return ok(page([_entry_out(e) for e in rows], len(rows)))

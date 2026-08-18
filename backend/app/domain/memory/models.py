@@ -8,8 +8,9 @@ as plain entries scoped to a project or a user. The MemoryStore abstraction
 
 import enum
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Enum, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -48,6 +49,41 @@ def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> st
     return f"{agent_project_scope_prefix(project_id)}{agent_handle}"
 
 
+class MemoryDream(UuidPk, Timestamps, Base):
+    """One pass of 记忆整理 — 芝士 rereading a topic's pools before its sandbox
+    is destroyed, merging duplicates and retiring what the work disproved.
+
+    The row is created when the pass is STARTED, not when it lands, and it stays
+    behind whether or not the pass produced anything (`applied`). Both halves
+    matter: without a row for the attempt, a pass that crashed or ran out of
+    budget looks exactly like a topic that has never been organized, and the
+    reaper starts another one every hour forever. Without `turn_id`, the blocks
+    the pass itself writes are indistinguishable from someone returning to the
+    topic — and since blocks are what idleness is judged on, the box would keep
+    renewing its own lease off its own housekeeping.
+    """
+
+    __tablename__ = "memory_dreams"
+
+    topic_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    # The kickoff turn that ran (or is running) the pass. Null when a pass was
+    # applied without the reaper having opened a row for it first.
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # What the proposal was computed against: any entry touched since then has
+    # moved under 芝士's feet and is left alone. Null until the pass lands.
+    snapshot_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    applied: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 人话 summary of what changed, in 芝士's own words.
+    summary: Mapped[str] = mapped_column(Text, default="")
+
+
 class MemoryEntry(UuidPk, Timestamps, Base):
     __tablename__ = "memory_entries"
 
@@ -57,3 +93,20 @@ class MemoryEntry(UuidPk, Timestamps, Base):
     # Project id or user handle, depending on scope.
     scope_id: Mapped[str] = mapped_column(String(128), index=True)
     content: Mapped[str] = mapped_column(Text)
+
+    # 记忆整理 never deletes. A retired entry is invisible to recall/count/search
+    # but still on disk, so a pass that merged two facts wrongly is one UPDATE
+    # away from being undone — which is the whole reason 芝士 is allowed to
+    # reorganize memory unattended at all.
+    retired_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    # Which pass retired it / created it. The pair is what makes an undo
+    # possible: put back everything that pass retired, retire everything it
+    # added. One column could not express the second half.
+    retired_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("memory_dreams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("memory_dreams.id", ondelete="SET NULL"), nullable=True, index=True
+    )
