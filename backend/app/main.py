@@ -43,6 +43,7 @@ from app.core.sandbox_auth import (
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_PLATFORM
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -235,8 +236,13 @@ async def lifespan(_: FastAPI):
             )
             block = await chat.post_system_event(
                 topic_id,
-                "✅ Cloud 机器已接入，正在继续刚才的消息。",
-                meta={"event_type": "cloud_provisioning", "state": "ready"},
+                "Cloud 机器已接入，正在继续刚才的消息",
+                meta={
+                    "event_type": "cloud_provisioning",
+                    "state": "ready",
+                    "severity": SEVERITY_INFO,
+                    "who": WHO_PLATFORM,
+                },
             )
             if block is not None:
                 await get_broker().publish(

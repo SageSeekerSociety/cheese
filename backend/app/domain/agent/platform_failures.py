@@ -2,6 +2,19 @@
 
 Provider details and exception traces belong in logs. Conversation events carry
 only a small code + copy contract that the frontend can render safely.
+
+Two kinds of failure arrive here and they are recognised differently:
+
+- **Somebody else's failure** — a full disk, a missing docker image, jj refusing
+  a store file. The platform did not write those sentences and cannot make them
+  structured, so it matches their text. That is reading a foreign format, which
+  is what a parser is for.
+- **The platform's own failure** — the prompt never reached the session, the
+  turn hit its ceiling, the pinned machine is not answering. These used to be
+  recognised the same way, by looking for a fragment of a sentence the platform
+  itself had just written. Editing the copy silently reclassified the failure,
+  and the copy could never be shortened past the fragment. They now carry
+  ``failure_code`` on the exception or the result they travel in.
 """
 
 from __future__ import annotations
@@ -36,29 +49,21 @@ TURN_TIMEOUT_CODE = "turn_timeout"
 # 「AI 服务返回错误」, blaming the model provider for a turn the provider never
 # saw — which sends whoever is debugging in exactly the wrong direction.
 PROMPT_UNDELIVERED_MESSAGE = (
-    "⚠️ 这条消息没能送到芝士那边，它的会话没有任何反应。改动都还在，"
+    "这条消息没能送到芝士那边，它的会话没有任何反应。改动都还在，"
     "再 @ 它一次就会重开会话重试。"
 )
-_PROMPT_UNDELIVERED_MARKER = "这条消息没能送到芝士那边"
-# Each hooks backend prefixes its own transport ("tmux 轮次超时" / "device
-# 轮次超时"), so the marker is the shared tail rather than the whole sentence.
-# Subclasses build theirs from TURN_TIMEOUT_MARKER so a renamed marker can never
-# leave one behind.
-TURN_TIMEOUT_MARKER = "轮次超时"
-TURN_TIMEOUT_MESSAGE = TURN_TIMEOUT_MARKER
+TURN_TIMEOUT_MESSAGE = "轮次超时"
 
 # The platform's OWN wording for "the machine this topic is pinned to is not
-# answering". It lives here, not in the device provider that raises it, because
-# host-unreachable is recognised by matching this exact sentence: a
-# platform-generated marker, not a guess at some provider's copy. Matching
-# free-form connectivity text ("connection refused", "no route to host") would
-# also fire on an unreachable *model gateway*, which is not a property of the
-# machine and must never quarantine it.
+# answering". It sits next to the classification it belongs to, and the device
+# provider raises it with HOST_UNREACHABLE_CODE attached. What must never happen
+# is recognising it from free-form connectivity text ("connection refused", "no
+# route to host") — that also fires on an unreachable *model gateway*, which is
+# not a property of the machine and must never quarantine it.
 DEVICE_OFFLINE_MESSAGE = (
     "话题绑定的算力设备已离线，请重新连接该设备再继续本轮"
     "（不会漂到别的设备，以免工作树/会话错乱）"
 )
-_HOST_UNREACHABLE_MARKER = "话题绑定的算力设备已离线"
 _STORAGE_PATTERNS = (
     re.compile(r"\bno space left on device\b", re.IGNORECASE),
     re.compile(r"\benospc\b", re.IGNORECASE),
@@ -305,66 +310,45 @@ def is_runtime_image_missing(value: BaseException | str) -> bool:
     return False
 
 
-def is_host_unreachable(value: BaseException | str) -> bool:
-    """Identify "the machine this topic is pinned to is not answering".
+_BY_CODE = {failure.code: failure for failure in ALL_FAILURES}
 
-    Deliberately matches only the platform's own marker sentence
-    (``DEVICE_OFFLINE_MESSAGE``) rather than generic connectivity text — see the
-    comment on that constant for why the loose version is unsafe."""
+
+def failure_code_of(value: BaseException | str) -> str | None:
+    """The code an exception is carrying, if it raised itself deliberately.
+
+    Walks the cause/context chain, because the raise site and the handler that
+    turns it into a result are usually several frames and one wrapper apart."""
     if isinstance(value, str):
-        return _HOST_UNREACHABLE_MARKER in value
+        return None
 
     seen: set[int] = set()
     current: BaseException | None = value
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        if _HOST_UNREACHABLE_MARKER in str(current):
-            return True
+        code = getattr(current, "failure_code", None)
+        if isinstance(code, str) and code:
+            return code
         current = current.__cause__ or current.__context__
-    return False
-
-
-def _marker_in(value: BaseException | str, marker: str) -> bool:
-    """True when ``marker`` appears in the text, or anywhere down an exception's
-    cause/context chain. The chain walk is what the two predicates above already
-    do by hand; these two markers get the shared version rather than a third and
-    fourth copy of the loop."""
-    if isinstance(value, str):
-        return marker in value
-
-    seen: set[int] = set()
-    current: BaseException | None = value
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if marker in str(current):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
-
-
-def is_prompt_undelivered(value: BaseException | str) -> bool:
-    """Identify "the prompt never reached the claude session"."""
-    return _marker_in(value, _PROMPT_UNDELIVERED_MARKER)
-
-
-def is_turn_timeout(value: BaseException | str) -> bool:
-    """Identify "this turn hit the platform's ceiling"."""
-    return _marker_in(value, TURN_TIMEOUT_MARKER)
+    return None
 
 
 def classify_platform_failure(
     value: BaseException | str,
+    *,
+    code: str | None = None,
 ) -> PlatformFailure | None:
+    """What went wrong, or None when the platform cannot say.
+
+    ``code`` is what the failure declared about itself — from an ``AgentResult``
+    that carried one across the turn boundary. It wins over everything below,
+    which only ever inspects text the platform did not write."""
+    carried = code or failure_code_of(value)
+    if carried is not None:
+        return _BY_CODE.get(carried)
     if is_storage_exhausted(value):
         return STORAGE_EXHAUSTED
     if is_runtime_image_missing(value):
         return RUNTIME_IMAGE_MISSING
     if is_workspace_vcs_perms(value):
         return WORKSPACE_VCS_PERMS
-    if is_host_unreachable(value):
-        return HOST_UNREACHABLE
-    if is_prompt_undelivered(value):
-        return PROMPT_UNDELIVERED
-    if is_turn_timeout(value):
-        return TURN_TIMEOUT
     return None

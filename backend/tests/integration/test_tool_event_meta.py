@@ -68,8 +68,14 @@ def test_event_blocks_persist_structured_meta(client):
     by_tool = {b["meta"]["tool"]: b for b in tr if (b.get("meta") or {}).get("tool")}
 
     # Plain work → neutral dot; verb/arg live in meta for display-time labels.
+    # in_room=False keeps 芝士's working detail out of the conversation (§14.1).
     grep = by_tool["Grep"]
-    assert grep["meta"] == {"tool": "Grep", "arg": "TODO", "platform": False}
+    assert grep["meta"] == {
+        "tool": "Grep",
+        "arg": "TODO",
+        "platform": False,
+        "in_room": False,
+    }
     assert grep["content"] == "搜内容\nTODO"  # human-readable fallback text
 
     # cheese MCP tool → platform (amber dot); name stored mcp-prefix-stripped.
@@ -87,7 +93,11 @@ def test_event_blocks_persist_structured_meta(client):
     # fallback), but meta still lets a NEWER frontend table translate it.
     fut = by_tool["FutureTool"]
     assert fut["content"] == "FutureTool"
-    assert fut["meta"] == {"tool": "FutureTool", "platform": False}
+    assert fut["meta"] == {
+        "tool": "FutureTool",
+        "platform": False,
+        "in_room": False,
+    }
 
 
 def test_transcript_pages_back_instead_of_serving_everything(client):

@@ -150,6 +150,11 @@ class AgentResult:
     api_error_status: int | None = None
     errors: list[str] | None = None
     rate_limit: dict | None = None
+    # Which `platform_failures` classification this is, when the platform raised
+    # the failure itself and therefore already knows. Carried rather than
+    # re-derived: the alternative is reading back the sentence this same code
+    # just wrote, which makes the copy unchangeable.
+    failure_code: str | None = None
 
 
 AgentEvent = (

@@ -307,7 +307,11 @@ def test_need_evidence_sends_the_card_back_and_wakes_the_subtopic(client):
     assert _topic_status(client, sub["id"]) != "archived", "打回不归档"
     blocks = client.get(f"/topics/{sub['id']}/blocks").json()["data"]["data"]
     assert len(blocks) > before, "子话题没被叫醒"
-    assert any("基准测试" in b["content"] for b in blocks), "要补什么没传到子话题"
+    # 一行给房间，要补的那句话在展开区里——两处都算送到了。
+    said = [
+        b["content"] + str((b.get("meta") or {}).get("detail") or "") for b in blocks
+    ]
+    assert any("基准测试" in t for t in said), "要补什么没传到子话题"
 
 
 def test_need_evidence_requires_a_reason(client):

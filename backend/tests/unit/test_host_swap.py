@@ -95,10 +95,9 @@ async def test_a_dead_cloud_machine_provisions_a_replacement_without_borrowing()
     assert swapped is not None and swapped.new_device is None
     assert await service.topic_device(topic) == sick
     assert swapped.resume_after_s is None
-    assert swapped.event_meta == {
-        "event_type": "cloud_provisioning",
-        "state": "waiting",
-    }
+    # 一行给房间，剩下的进展开区——所以只认这两个码，别把文案钉死在这里。
+    assert swapped.event_meta["event_type"] == "cloud_provisioning"
+    assert swapped.event_meta["state"] == "waiting"
 
 
 async def test_no_healthy_machine_means_stay_put_and_say_why_never_drift():
@@ -148,7 +147,9 @@ async def test_a_dead_self_hosted_machine_keeps_its_pin_and_waits_for_it():
     bind.assert_not_awaited()
     assert stuck.message is not None
     assert "自己的机器" in stuck.message
-    assert "等待" in stuck.message
+    # 「留在原地等这台机器」是这条通知的全部意义，它现在在展开区里说。
+    assert "等" in stuck.event_meta["detail"]
+    assert "不会迁移" in stuck.event_meta["detail"]
 
 
 async def test_a_swap_never_moves_an_isolated_topic_binding():

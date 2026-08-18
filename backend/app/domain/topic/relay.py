@@ -422,7 +422,7 @@ def _submit_wake(
             messages=batch,
         ),
         summon=True,
-        nudge_event=f"📨 {line}（来自「{sender_title}」）",
+        nudge_event=f"{line}（来自「{sender_title}」）",
         on_done=_drain,
     )
 

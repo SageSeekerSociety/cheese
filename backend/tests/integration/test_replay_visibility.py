@@ -69,6 +69,16 @@ def _system_lines(client, topic_id: str) -> list[str]:
     return [b["content"] for b in blocks if b["author_type"] == "system"]
 
 
+def _replay_notices(client, topic_id: str) -> list[str]:
+    """房间里「又重投了一次」那几行——按类别码找，不按开头那个字符找。"""
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
+    return [
+        b["content"]
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "prompt_replayed"
+    ]
+
+
 def test_a_repeatedly_replayed_batch_is_announced_in_the_room(client):
     _use_failing_agent(client)
     topic_id = _project_and_topic(client)
@@ -76,14 +86,12 @@ def test_a_repeatedly_replayed_batch_is_announced_in_the_room(client):
     # Three failing turns. The first message rides all three prompts, so by the
     # third one the batch is on its third attempt.
     _say(client, topic_id, "第一句")
-    assert not [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    assert not _replay_notices(client, topic_id)
     _say(client, topic_id, "第二句")
-    assert not [x for x in _system_lines(client, topic_id) if "🔁" in x], (
-        "两次还不算模式，不该已经喊出来"
-    )
+    assert not _replay_notices(client, topic_id), "两次还不算模式，不该已经喊出来"
 
     _say(client, topic_id, "第三句")
-    notices = [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    notices = _replay_notices(client, topic_id)
     assert len(notices) == 1, notices
     notice = notices[0]
     # It has to name the count...
@@ -105,7 +113,7 @@ def test_a_turn_that_finishes_never_announces_a_replay(client):
     for text in ("一", "二", "三", "四"):
         _say(client, topic_id, text)
 
-    assert not [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    assert not _replay_notices(client, topic_id)
 
 
 def test_the_notice_throttles_instead_of_burying_the_conversation(client):
@@ -117,7 +125,7 @@ def test_the_notice_throttles_instead_of_burying_the_conversation(client):
     for i in range(8):
         _say(client, topic_id, f"消息{i}")
 
-    notices = [x for x in _system_lines(client, topic_id) if "🔁" in x]
+    notices = _replay_notices(client, topic_id)
     # 8 failing turns, but only the third one speaks (the next is the 10th).
     assert len(notices) == 1, notices
     assert "第 3 次" in notices[0]

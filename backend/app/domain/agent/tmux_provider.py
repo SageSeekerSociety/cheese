@@ -63,7 +63,6 @@ from app.domain.agent.hooks_substrate import (
     TopicSubscription,
     hooks_settings,
 )
-from app.domain.agent.platform_failures import TURN_TIMEOUT_MARKER
 from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
@@ -403,7 +402,7 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
     sandbox_memory_mb = SANDBOX_MEMORY_MB
     sandbox_cores = SANDBOX_CORES
     _needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
-    _timeout_message = f"tmux {TURN_TIMEOUT_MARKER}"
+    _timeout_message = "tmux 轮次超时"
 
     def __init__(
         self,

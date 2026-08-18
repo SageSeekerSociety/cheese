@@ -637,7 +637,7 @@ async def add_comment(
                 "请处理这条评论：需要改文档就直接改；有分歧就在对话里简短回应。"
             ),
             summon=True,
-            nudge_event=f"💬 {author} 在文档上留了评论，芝士来处理",
+            nudge_event=f"{author} 在文档上留了评论，芝士来处理",
             provision_actor=actor,
         )
     return ok(payload)

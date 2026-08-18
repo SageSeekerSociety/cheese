@@ -160,8 +160,8 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
     _sweep(client)
 
     card = _latest_card(client, tid)
-    assert "闸门没跑完" in card["note"]
-    assert "闸门没跑完" in card["gate_output"]
+    assert "检查没跑完" in card["note"]
+    assert "检查没跑完" in card["gate_output"]
     assert "检查未通过" not in card["note"] + card["gate_output"]
 
     # 芝士被叫醒去**重递**，而且被明说不是它的代码有问题。
@@ -170,10 +170,10 @@ def test_condemned_card_says_the_gate_never_finished_not_that_it_failed(
     while time.time() < deadline:
         wait_work_idle()
         text = _blocks_text(client, tid)
-        if "闸门没跑完" in text:
+        if "检查没跑完" in text:
             break
         time.sleep(0.05)
-    assert "闸门没跑完" in text
+    assert "检查没跑完" in text
     assert "重新递" in text
 
 
@@ -182,10 +182,11 @@ def test_sweep_is_idempotent(client, monkeypatch):
     _deadline_passed(monkeypatch)
 
     assert _sweep(client)["condemned"] == [card_id]
+    condemned = _latest_card(client, tid)["note"]
     # 第二轮什么也不做：判死后的卡是终态，查询不再选中它。
     assert _sweep(client)["condemned"] == []
-    note = _latest_card(client, tid)["note"]
-    assert note.count("闸门没跑完") == 1
+    # 判死的话只说一遍：第二轮不该再往同一张卡上叠一句。
+    assert _latest_card(client, tid)["note"] == condemned
 
 
 def test_sweep_leaves_a_fresh_card_alone(client):

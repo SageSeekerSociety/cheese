@@ -38,6 +38,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.text import markdown_preview
+from app.domain.agent.platform_notices import (
+    EVENT_ARCHIVE_DEFERRED,
+    EVENT_CONCLUSION_SETTLED,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
@@ -236,18 +246,18 @@ class ConclusionCardService:
             return result
         if result.get("merged"):
             await self._say_in_room(
-                room, room_branch.merged_text(title=sub.title, result=result)
+                room, *room_branch.merged_notice(title=sub.title, result=result)
             )
         elif state == room_branch.DEFERRED:
             await self._say_in_room(
                 room,
-                room_branch.deferred_text(
+                *room_branch.deferred_notice(
                     title=sub.title, reason=result.get("reason", "")
                 ),
             )
         elif state == room_branch.CONFLICT:
             await self._say_in_room(
-                room, room_branch.conflict_text(title=sub.title, result=result)
+                room, *room_branch.conflict_notice(title=sub.title, result=result)
             )
             await AlertService(self._session).create(
                 project_id=card.project_id,
@@ -259,7 +269,7 @@ class ConclusionCardService:
             )
         return result
 
-    async def _say_in_room(self, room: Topic, text: str) -> None:
+    async def _say_in_room(self, room: Topic, text: str, meta: dict) -> None:
         await self._blocks.add(
             project_id=room.project_id,
             topic_id=room.id,
@@ -267,7 +277,7 @@ class ConclusionCardService:
             author_type=AuthorType.system,
             content=text,
             kind=BlockKind.event,
-            meta={"platform": True, "room_merge": True},
+            meta={"platform": True, "room_merge": True, **meta},
         )
 
     async def sweep_room_merges(self) -> list[uuid.UUID]:
@@ -489,13 +499,22 @@ class ConclusionCardService:
             topic_id=sub.id,
             author=SYSTEM_ACTOR,
             author_type=AuthorType.system,
-            content=(
-                "⏸ 结论已被父话题采信，但这个话题**暂不归档**——它还挂着一张"
-                "等人拍板的验收卡。归档会等验收卡有结果之后再落，"
-                "在那之前卡照常有效，验收人照常能采纳。"
-            ),
+            content="结论已被父话题采信，这个话题暂不归档",
             kind=BlockKind.event,
-            meta={"platform": True, "conclusion_card": str(card.id)},
+            meta={
+                "platform": True,
+                "conclusion_card": str(card.id),
+                **notice(
+                    EVENT_ARCHIVE_DEFERRED,
+                    severity=SEVERITY_INFO,
+                    who=WHO_PLATFORM,
+                    detail=(
+                        "它还挂着一张等人拍板的验收卡。归档会等验收卡有结果之后"
+                        "再落，在那之前卡照常有效，验收人照常能采纳。"
+                    ),
+                    detail_label="为什么还没归档",
+                ),
+            },
         )
 
     async def sweep_deferred_archives(
@@ -605,13 +624,29 @@ class ConclusionCardService:
         the work happened (采信 must still be *legible*, just not *expensive*)."""
         who = "平台" if card.settled_by == SYSTEM_ACTOR else f"<@{card.settled_by}>"
         why = card.settle_reason
-        text = {
-            ConclusionStatus.accepted: f"✅ 结论已被父话题采信（{who}）",
-            ConclusionStatus.returned: f"↩️ 父话题要补一条证据（{who}）：{why}",
-            ConclusionStatus.escalated: f"⬆️ 结论已升级，等人拍板（{who}）：{why}",
+        said = {
+            ConclusionStatus.accepted: (
+                f"结论已被父话题采信（{who}）",
+                SEVERITY_INFO,
+                WHO_PLATFORM,
+                "",
+            ),
+            ConclusionStatus.returned: (
+                f"父话题要补一条证据（{who}）",
+                SEVERITY_WARN,
+                WHO_CHEESE,
+                why,
+            ),
+            ConclusionStatus.escalated: (
+                f"结论已升级，等人拍板（{who}）",
+                SEVERITY_WARN,
+                WHO_HUMAN,
+                why,
+            ),
         }.get(card.status)
-        if text is None:
+        if said is None:
             return
+        text, severity, whose, detail = said
         await self._blocks.add(
             project_id=card.project_id,
             topic_id=card.topic_id,
@@ -619,7 +654,17 @@ class ConclusionCardService:
             author_type=AuthorType.system,
             content=text,
             kind=BlockKind.event,
-            meta={"platform": True, "conclusion_card": str(card.id)},
+            meta={
+                "platform": True,
+                "conclusion_card": str(card.id),
+                **notice(
+                    EVENT_CONCLUSION_SETTLED,
+                    severity=severity,
+                    who=whose,
+                    detail=detail or None,
+                    detail_label="理由" if detail else None,
+                ),
+            },
         )
 
 

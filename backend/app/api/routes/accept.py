@@ -195,7 +195,7 @@ async def accept_card(
             summon=True,
             # 平台提示统一契约: 一行给房间，冲突文件清单进 meta.detail。detail 给的
             # 是**完整**清单（content 里那份为了可读只列前 15 个），收起来不等于删掉。
-            nudge_event=f"⚠️ 采纳时合并冲突，芝士在解（{len(files)} 个文件）",
+            nudge_event=f"采纳时合并冲突，{len(files)} 个文件，芝士在解",
             nudge_meta=notice(
                 EVENT_ACCEPT_CONFLICT,
                 severity=SEVERITY_WARN,
@@ -271,7 +271,7 @@ async def reject_card(
             "在对话里简短回一句问清楚。"
         ),
         summon=True,
-        nudge_event=f"↩️ {decided_by} 驳回了验收卡，芝士去改",
+        nudge_event=f"{decided_by} 驳回了验收卡，芝士去改",
         nudge_meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,
