@@ -196,6 +196,53 @@ def test_a_helper_with_a_bad_token_closes_instead_of_hanging(live_stack, monkeyp
     assert not meter.received
 
 
+def test_the_standalone_tunnel_app_terminates_the_pipe_identically(monkeypatch):
+    """#551 terminal state: the tunnel's server half must be runnable OUTSIDE
+    the backend process (its own standing container), so a deploy that swaps
+    the backend cannot sever model traffic. This drives the whole chain with
+    `app.llm_tunnel_app:app` — the standalone ASGI app — in place of the full
+    backend, and expects byte-identical behavior."""
+    from app.llm_tunnel_app import app as tunnel_app
+
+    meter = _FakeMeter()
+    monkeypatch.setattr(settings, "subscription_proxy_host", "127.0.0.1")
+    monkeypatch.setattr(settings, "subscription_proxy_connect_port", meter.port)
+
+    api_port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(tunnel_app, host="127.0.0.1", port=api_port, log_level="error")
+    )
+    threading.Thread(target=server.run, daemon=True).start()
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline and not server.started:
+        time.sleep(0.05)
+    assert server.started, "the standalone tunnel app never came up"
+
+    helper_port = _free_port()
+    token = mint_scoped_token(project_id=_PROJECT)
+    threading.Thread(
+        target=machine_tunnel.serve,
+        args=(helper_port, f"ws://127.0.0.1:{api_port}/llm/tunnel", token),
+        daemon=True,
+    ).start()
+    for _ in range(100):
+        try:
+            with socket.create_connection(("127.0.0.1", helper_port), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.05)
+
+    try:
+        with socket.create_connection(("127.0.0.1", helper_port), timeout=10) as client:
+            client.sendall(_CONNECT_HEAD)
+            assert b"CONNECT API.ANTHROPIC.COM:443" in client.recv(4096)
+            client.sendall(b"standalone terminal state")
+            assert client.recv(4096) == b"STANDALONE TERMINAL STATE"
+    finally:
+        server.should_exit = True
+        meter.close()
+
+
 def test_a_restarting_backend_is_ridden_out_not_surfaced(live_stack, monkeypatch):
     """A deploy swaps the backend container for tens of seconds (#551). A
     CONNECT arriving in that window must be HELD and completed when the
