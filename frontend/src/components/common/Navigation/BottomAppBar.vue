@@ -2,7 +2,13 @@
   <v-bottom-navigation class="bottom-tabs" :elevation="0" bg-color="background" grow>
     <!-- 收到的就是手机那份清单（destinations.ts 的 tabItems），这里不再过滤：
          底栏装什么是清单的事，不是渲染的事。 -->
-    <v-btn v-for="item in items" :key="item.key" :to="item.to" @click="!item.to && item.action?.()">
+    <v-btn
+      v-for="item in items"
+      :key="item.key"
+      :to="item.to"
+      :active="item.match ? item.match(route.path) : undefined"
+      @click="!item.to && item.action?.()"
+    >
       <v-icon v-if="item.icon">{{ item.icon }}</v-icon>
       <v-avatar v-else-if="item.img" size="24">
         <v-img :src="item.img"></v-img>
@@ -14,6 +20,7 @@
 
 <script setup lang="ts">
 import { toRefs } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { NavItem } from './types'
 
@@ -22,6 +29,7 @@ const navBarProps = withDefaults(defineProps<{ items: NavItem[] }>(), {
 })
 
 const { items } = toRefs(navBarProps)
+const route = useRoute()
 </script>
 
 <style scoped>

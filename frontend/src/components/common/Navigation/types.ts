@@ -15,6 +15,10 @@ export type NavItem = {
   permanent?: boolean
   // Discord-style ⌘N quick-switch number shown in the hover tooltip.
   shortcut?: number
+  // 这一格在哪些地址上算「正待着」。默认由 `to` 自己说了算（router-link 的
+  // 规则：目标那条记录得在当前路由的 matched 里）—— 一格底下住着好几条并列的
+  // 顶层路由时那条规则不够用，底栏于是整排都不亮。
+  match?: (path: string) => boolean
 }
 
 export type NavDivider = {

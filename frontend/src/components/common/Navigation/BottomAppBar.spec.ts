@@ -66,4 +66,17 @@ describe('BottomAppBar', () => {
     await fireEvent.click(await findByText('工作区'))
     expect(createProject).toHaveBeenCalledOnce()
   })
+
+  it('一格底下不止一条顶层路由时，它照样亮着', async () => {
+    // 「空间」那一格装的是首页整层（空间 + 小队），而 /teams 不在 /spaces 底下。
+    // 只按 router-link 的规则算，人在小队里翻的时候底栏整排都是灰的——看起来
+    // 像已经走出了这个 app 的导航。
+    await router.push('/teams/explore')
+    const { container } = mount([
+      tab('空间', { to: '/spaces', match: (path) => path.startsWith('/teams') }),
+      tab('待办', { to: '/inbox' }),
+    ])
+    const lit = [...container.querySelectorAll('.v-btn--active')].map((el) => el.textContent?.trim())
+    expect(lit).toEqual(['空间'])
+  })
 })
