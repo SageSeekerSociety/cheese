@@ -37,8 +37,8 @@ def test_rate_cap_is_per_project() -> None:
 
 def test_event_rendering() -> None:
     err = FrontendErrorIn(message="boom", stack="s", source="a.js:1", page="/project/x")
-    assert "🐞" in event_content(err)
     assert "/project/x" in event_content(err)
+    # 这是不是一条前端报错，读码，不读开头那个字符。
     meta = event_meta(err)
     assert meta["event_type"] == "frontend_error"
     assert meta["stack"] == "s"

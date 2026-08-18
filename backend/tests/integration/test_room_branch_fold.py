@@ -133,8 +133,19 @@ def _force_card_status(client, card_id: str, status: AcceptStatus) -> None:
 
 
 def _room_text(client, room_id: str) -> str:
+    """房间里说了什么——一行正文加它的展开区。
+
+    平台的通知是「一行 + 展开区」，长的那半收进 `meta.detail` 而不是被删掉，所以
+    只读 `content` 会把「冲突在哪个文件」这种收起来的话当成没说过。
+    """
     blocks = client.get(f"/topics/{room_id}/blocks").json()["data"]["data"]
-    return "\n".join(b["content"] or "" for b in blocks)
+    said = []
+    for b in blocks:
+        said.append(b["content"] or "")
+        detail = (b.get("meta") or {}).get("detail")
+        if detail:
+            said.append(str(detail))
+    return "\n".join(said)
 
 
 def _card_status(client, sub_id: str) -> str:

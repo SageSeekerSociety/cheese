@@ -39,6 +39,7 @@ from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.platform_notices import (
+    EVENT_PROMPT_REPLAYED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
@@ -3483,7 +3484,19 @@ class ChatService:
         # whole point is that this turn may produce nothing either — a notice
         # written afterwards is exactly the one that never gets written.
         if replay_notice is not None:
-            payload = await self.post_system_event(topic_id, replay_notice, turn_id)
+            payload = await self.post_system_event(
+                topic_id,
+                replay_notice,
+                turn_id,
+                # 「又重投了一次」是一条码说了算的事。它以前只有开头那个 🔁 —— 一个
+                # 字符同时当类别、当轻重、当给人看的记号，读它的人和读它的代码都得
+                # 猜。码在这里，前端照码渲染。
+                meta=notice(
+                    EVENT_PROMPT_REPLAYED,
+                    severity=SEVERITY_WARN,
+                    who=WHO_PLATFORM,
+                ),
+            )
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
 
