@@ -16,7 +16,6 @@ import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { TopicPhase } from '@/lib/topicState'
 
 import { computed, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
@@ -41,16 +40,6 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
 
 const { mdAndUp } = useDisplay()
-const router = useRouter()
-const route = useRoute()
-
-// 手机上这条头就是页面栈这一层的顶栏（系统那条不渲染），所以「回上一层」长在这儿。
-// 去哪由路由说，不用 history.back()——从别处直接打开一个话题链接时，后退会离开
-// 这个 app。
-function goBack() {
-  const backTo = route.meta.backTo
-  if (typeof backTo === 'string') void router.push({ name: backTo, params: route.params })
-}
 
 // 头部常驻状态条 (规则 4): where this topic stands, always on screen. It used to
 // read the topic row's `status` alone, which knows only 归档 —— 「待验收」 and
@@ -101,110 +90,107 @@ watch(
 </script>
 
 <template>
-  <div class="topic-header">
-    <!-- 手机上这条头就是这一层的顶栏，← 在它左边（系统顶栏不渲染）。 -->
-    <v-btn
-      v-if="!mdAndUp"
-      icon="mdi-arrow-left"
-      variant="text"
-      size="small"
-      aria-label="返回话题列表"
-      @click="goBack"
-    />
-    <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
+  <!-- 手机上这一行不长在页面上，它**就是**顶栏那一格的内容（Teleport 进去）。
+       手机上只有一条顶栏，从不卸载：话题页自己再画一条，两条横条交替出现的时候
+       v-main 的 padding 会滑一下，整页跟着抖。← 由顶栏按路由的 backTo 出，
+       所以这里不再自己画一个。 -->
+  <Teleport to="#app-bar-slot" :disabled="mdAndUp">
+    <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
+      <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
          390px 上只剩七个字，而它才是你要看的那个。桌面上宽度够，一行摆开更快读。 -->
-    <div class="topic-header__text">
-      <span class="topic-header__title t-title">{{ topic.title }}</span>
-      <span v-if="!mdAndUp" class="topic-header__meta t-meta">
-        <template v-if="isWorkTopic">#{{ shortId }}</template>
+      <div class="topic-header__text">
+        <span class="topic-header__title t-title">{{ topic.title }}</span>
+        <span v-if="!mdAndUp" class="topic-header__meta t-meta">
+          <template v-if="isWorkTopic">#{{ shortId }}</template>
+          <span class="pr-state" :class="state.cls">{{ state.label }}</span>
+          <template v-if="!connected">未连接</template>
+        </span>
+      </div>
+      <template v-if="mdAndUp">
+        <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
         <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-        <template v-if="!connected">未连接</template>
-      </span>
-    </div>
-    <template v-if="mdAndUp">
-      <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
-      <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-      <span
-        class="status-dot"
-        :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-        :title="connected ? '已连接' : '未连接'"
-      />
-    </template>
-
-    <v-spacer />
-
-    <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row. -->
-    <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
-
-    <!-- 用量: was the 资源 drawer. -->
-    <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
-      <template #activator="{ props: menuProps }">
-        <v-btn
-          v-bind="menuProps"
-          icon="mdi-chart-box-outline"
-          size="small"
-          variant="text"
-          class="c-muted"
-          title="用量"
+        <span
+          class="status-dot"
+          :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
+          :title="connected ? '已连接' : '未连接'"
         />
       </template>
-      <v-card min-width="280" class="usage-card">
-        <div v-if="usageLoading" class="d-flex justify-center py-6">
-          <v-progress-circular indeterminate color="primary" size="24" />
-        </div>
-        <div v-else class="pa-3">
-          <div
-            v-for="row in [
-              { label: '本话题', u: topicUsage },
-              { label: '全项目', u: projectUsage },
-            ]"
-            :key="row.label"
-            class="mb-4"
-          >
-            <div class="t-eyebrow mb-2">{{ row.label }}</div>
-            <div v-if="row.u" class="usage-grid">
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.turns) }}</div>
-                <div class="t-meta">轮次</div>
+
+      <v-spacer />
+
+      <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row. -->
+      <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
+
+      <!-- 用量: was the 资源 drawer. -->
+      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <v-btn
+            v-bind="menuProps"
+            icon="mdi-chart-box-outline"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="用量"
+          />
+        </template>
+        <v-card min-width="280" class="usage-card">
+          <div v-if="usageLoading" class="d-flex justify-center py-6">
+            <v-progress-circular indeterminate color="primary" size="24" />
+          </div>
+          <div v-else class="pa-3">
+            <div
+              v-for="row in [
+                { label: '本话题', u: topicUsage },
+                { label: '全项目', u: projectUsage },
+              ]"
+              :key="row.label"
+              class="mb-4"
+            >
+              <div class="t-eyebrow mb-2">{{ row.label }}</div>
+              <div v-if="row.u" class="usage-grid">
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.turns) }}</div>
+                  <div class="t-meta">轮次</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.total_tokens) }}</div>
+                  <div class="t-meta">总 token</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.input_tokens) }}</div>
+                  <div class="t-meta">输入</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.output_tokens) }}</div>
+                  <div class="t-meta">输出</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num" :title="costNote(row.u)">{{ costLabel(row.u) }}</div>
+                  <div class="t-meta">费用</div>
+                </div>
               </div>
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.total_tokens) }}</div>
-                <div class="t-meta">总 token</div>
+              <div v-else class="t-meta">暂无数据</div>
+              <div v-if="row.u && costNote(row.u)" class="t-meta mt-1">
+                {{ costNote(row.u) }}
               </div>
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.input_tokens) }}</div>
-                <div class="t-meta">输入</div>
-              </div>
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.output_tokens) }}</div>
-                <div class="t-meta">输出</div>
-              </div>
-              <div class="usage-cell">
-                <div class="usage-num" :title="costNote(row.u)">{{ costLabel(row.u) }}</div>
-                <div class="t-meta">费用</div>
-              </div>
-            </div>
-            <div v-else class="t-meta">暂无数据</div>
-            <div v-if="row.u && costNote(row.u)" class="t-meta mt-1">
-              {{ costNote(row.u) }}
             </div>
           </div>
-        </div>
-      </v-card>
-    </v-menu>
+        </v-card>
+      </v-menu>
 
-    <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
+      <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
          永远只有一个窗格，没有第二栏可以让开。 -->
-    <v-btn
-      v-if="mdAndUp"
-      :icon="focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
-      size="small"
-      variant="text"
-      :class="focus ? 'topic-header__on' : 'c-muted'"
-      :title="focus ? '退出专注' : '专注模式（面板全幅）'"
-      @click="emit('toggle-focus')"
-    />
-  </div>
+      <v-btn
+        v-if="mdAndUp"
+        :icon="focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
+        size="small"
+        variant="text"
+        :class="focus ? 'topic-header__on' : 'c-muted'"
+        :title="focus ? '退出专注' : '专注模式（面板全幅）'"
+        @click="emit('toggle-focus')"
+      />
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -220,6 +206,13 @@ watch(
   padding: 0 12px;
   background: var(--surface);
   border-bottom: var(--app-page-header-rule);
+}
+/* 填进顶栏的那一份不画自己的高度、底色和底线——那三样归顶栏。 */
+.topic-header--bar {
+  height: 100%;
+  padding: 0;
+  background: none;
+  border-bottom: 0;
 }
 .topic-header__text {
   display: flex;

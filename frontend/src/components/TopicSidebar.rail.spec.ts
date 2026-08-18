@@ -65,6 +65,14 @@ const Host = defineComponent({
 })
 
 function mount(inner: Record<string, unknown> = {}) {
+  // 整页形态下项目头那一行填进顶栏那一格（Teleport 到 #app-bar-slot，真实环境里
+  // 由 MobileAppBar 画）。落点不存在时 Teleport 会在卸载时炸，所以这里把它摆出来
+  // ——和 v-navigation-drawer 必须有 v-layout 是同一类前置条件。
+  if (!document.getElementById('app-bar-slot')) {
+    const slot = document.createElement('div')
+    slot.id = 'app-bar-slot'
+    document.body.appendChild(slot)
+  }
   const vuetify = createVuetify({ components, directives })
   return render(Host, {
     props: {

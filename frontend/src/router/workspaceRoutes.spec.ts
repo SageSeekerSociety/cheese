@@ -121,10 +121,11 @@ describe('页面栈的末端', () => {
     expect(leafOf(`/projects/${PROJECT}`).meta.hideTabs).toBeUndefined()
   })
 
-  // 自带页头的那两层不要系统顶栏：两条横条写同一个标题，在手机上占掉一屏的 13%。
-  it('自带页头的层不再叠一条系统顶栏', () => {
-    expect(leafOf(`/projects/${PROJECT}`).meta.ownHeader).toBe(true)
-    expect(leafOf(`/projects/${PROJECT}/topics/t1`).meta.ownHeader).toBe(true)
-    expect(leafOf(`/projects/${PROJECT}/dm/cheese`).meta.ownHeader).toBeUndefined()
+  // 顶栏只有一条，从不卸载；自带头的那两层是把自己的东西填进那一格，而不是
+  // 另画一条横条。声明错了不会编译失败，只会在手机上多出一条写着路由标题的横条。
+  it('自带头的层填的是顶栏那一格', () => {
+    expect(leafOf(`/projects/${PROJECT}`).meta.barSlot).toBe(true)
+    expect(leafOf(`/projects/${PROJECT}/topics/t1`).meta.barSlot).toBe(true)
+    expect(leafOf(`/projects/${PROJECT}/dm/cheese`).meta.barSlot).toBeUndefined()
   })
 })
