@@ -1375,7 +1375,6 @@ onBeforeUnmount(() => {
 
       <!-- Built-in composer (private chat / standalone use). -->
       <template v-if="showComposer">
-        <v-divider />
         <div class="composer pa-2 px-3">
           <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
           <div v-if="mentionMatches.length" class="mention-menu">
@@ -1404,83 +1403,87 @@ onBeforeUnmount(() => {
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
           </div>
-          <!-- 图片输入: images waiting to go with the next send. -->
-          <div v-if="pendingAtts.length || attsUploading" class="att-strip">
-            <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-              <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
-              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
-                <v-icon size="12">mdi-close</v-icon>
-              </button>
+          <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
+               「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
+               分隔，所以上面那条 divider 没了。 -->
+          <div class="composer-box">
+            <!-- 图片输入: images waiting to go with the next send. -->
+            <div v-if="pendingAtts.length || attsUploading" class="att-strip">
+              <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
+                <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+                <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
+                  <v-icon size="12">mdi-close</v-icon>
+                </button>
+              </div>
+              <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
             </div>
-            <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
-          </div>
-          <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
+            <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
                半屏——而按钮的数量只会往上加。 -->
-          <v-textarea
-            ref="composerInput"
-            v-model="draft"
-            variant="plain"
-            rows="1"
-            auto-grow
-            max-rows="6"
-            hide-details
-            density="comfortable"
-            class="composer-input"
-            :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
-            :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
-            :disabled="!connected"
-            @keydown="onComposerKey"
-            @paste="onComposerPaste"
-            @compositionstart="onCompositionStart"
-            @compositionend="onCompositionEnd"
-          />
-          <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
-               唯一的实心按钮，其余一律是安静的图标。 -->
-          <div class="composer-actions d-flex align-center ga-1">
-            <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
-            <button
-              type="button"
-              class="summon-chip"
-              :class="{ 'summon-chip--on': summon }"
-              :title="summon ? '已开启：这条消息会 @ 芝士' : '开启后，这条消息会 @ 芝士'"
-              @click="toggleSummon"
-            >
-              <v-icon v-if="summon" size="13">mdi-creation</v-icon>
-              @芝士
-            </button>
-            <input
-              ref="fileInput"
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              multiple
-              class="d-none"
-              @change="onFilePicked"
-            />
-            <v-btn
-              icon="mdi-image-plus-outline"
-              variant="text"
-              size="small"
+            <v-textarea
+              ref="composerInput"
+              v-model="draft"
+              variant="plain"
+              rows="1"
+              auto-grow
+              max-rows="6"
+              hide-details
               density="comfortable"
-              title="发送图片"
+              class="composer-input"
+              :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
+              :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               :disabled="!connected"
-              @click="pickFiles"
+              @keydown="onComposerKey"
+              @paste="onComposerPaste"
+              @compositionstart="onCompositionStart"
+              @compositionend="onCompositionEnd"
             />
-            <!-- 话题自己的 chips (工作台: 已归档 / 算力选择). They belong to the
-                 topic, not to the act of typing, so the host supplies them
-                 rather than this component learning about compute pools. -->
-            <slot name="composer-chips" />
-            <v-spacer />
-            <v-btn
-              class="composer-send"
-              color="primary"
-              variant="flat"
-              icon="mdi-send"
-              size="small"
-              density="comfortable"
-              title="发送"
-              :disabled="!connected || (!draft.trim() && !pendingAtts.length)"
-              @click="sendDraft"
-            />
+            <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
+               唯一的实心按钮，其余一律是安静的图标。 -->
+            <div class="composer-actions d-flex align-center ga-1">
+              <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
+              <button
+                type="button"
+                class="summon-chip"
+                :class="{ 'summon-chip--on': summon }"
+                :title="summon ? '已开启：这条消息会 @ 芝士' : '开启后，这条消息会 @ 芝士'"
+                @click="toggleSummon"
+              >
+                <v-icon v-if="summon" size="13">mdi-creation</v-icon>
+                @芝士
+              </button>
+              <input
+                ref="fileInput"
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                class="d-none"
+                @change="onFilePicked"
+              />
+              <v-btn
+                class="composer-icon"
+                icon="mdi-image-plus-outline"
+                variant="text"
+                size="small"
+                color="medium-emphasis"
+                title="发送图片"
+                :disabled="!connected"
+                @click="pickFiles"
+              />
+              <v-spacer />
+              <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
+                 「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
+              <slot name="composer-chips" />
+              <v-btn
+                class="composer-send"
+                color="primary"
+                variant="flat"
+                icon="mdi-send"
+                size="small"
+                title="发送"
+                :disabled="!connected || (!draft.trim() && !pendingAtts.length)"
+                @click="sendDraft"
+              />
+            </div>
           </div>
         </div>
       </template>
@@ -1602,20 +1605,35 @@ onBeforeUnmount(() => {
   /* 手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
   padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
+/* 输入区是一个控件。原来输入框和几颗按钮各自浮在页面上，读起来是几个零件而不是
+   一件东西——一个圆角描边就把它们收成一块，顺带替掉了上面那条 divider。 */
+.composer-box {
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition: border-color 0.12s ease;
+}
+/* 聚焦时那条边只提一档：--muted 是正文级的灰，一压就把整个盒子变成了主角。 */
+.composer-box:focus-within {
+  border-color: var(--faint);
+}
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: 1.5;
 }
-/* 动作行：和输入框之间只留一点，读起来还是同一块。 */
+/* 动作行的规矩，三条：
+   1. 一行一个高度。原来是 24 / 32 / 24 / 30 四种，这是它看起来像一堆零件的主因。
+   2. 静止时谁也不画边框、不画底色——状态用墨色说，不用盒子说。
+   3. 整行只有一个实心块，就是发送。
+   位置负责表达语义：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。 */
 .composer-actions {
-  min-height: 32px;
+  min-height: 28px;
   margin-top: 2px;
 }
-/* 发送键是这一行唯一的实心块，所以它不该长得像一块砖——尤其在手机上，右边
-   多占的每一格都是输入框少掉的宽度。 */
+.composer-icon,
 .composer-send {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
 }
 
 /* @-autocomplete popup — mirrors TopicView's composer picker. */
@@ -1697,21 +1715,26 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 6px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   font-weight: 500;
-  background: var(--fill);
+  /* 静止时不画块：它和旁边的图标按钮是同一类东西，一个画底一个不画就成了两种。 */
+  background: transparent;
   color: var(--muted);
   cursor: pointer;
   transition: all 0.12s ease;
 }
+.summon-chip:hover {
+  background: var(--fill);
+}
+/* 开着的时候用琥珀的淡色调 + 琥珀墨，不用实心琥珀：发送键本来就是实心琥珀，
+   同一行里两块一模一样的橙色，一块是「叫芝士」一块是「发出去」，谁也分不出
+   哪块是主操作。淡调仍然是这一行唯一的颜色，认得出。 */
 .summon-chip--on {
-  background: var(--accent);
-  /* on-primary, not #fff: light resolves to #fff (unchanged), dark resolves to
-     near-black — white on the lightened amber (#FFA733) measures 1.9:1. */
-  color: rgb(var(--v-theme-on-primary));
+  background: var(--accent-wash);
+  color: var(--accent);
 }
 
 /* ---- GitHub PR header ---- */
