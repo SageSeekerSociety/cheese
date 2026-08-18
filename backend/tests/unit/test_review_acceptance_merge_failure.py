@@ -36,6 +36,10 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         accepted_by=None,
         accepted_at=None,
         archived_at=None,
+        # A top-level room: attribution asks whether there is a parent whose
+        # owner should be credited, and a fake missing the field would send it
+        # down its error path instead of its ordinary "nobody to credit" one.
+        parent_id=None,
     )
     project = SimpleNamespace(
         ai_mode=AiMode.collaborative,
@@ -177,7 +181,9 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
 
     assert returned is card
     assert card.status == AcceptStatus.accepted
-    assert topic.status == TopicStatus.archived
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert topic.status == TopicStatus.active
+    assert topic.accepted_at is not None
     service._repo.add_approval.assert_awaited_once_with(card.id, "alice")
     await _drain_notify()
     notify.assert_awaited_once()
@@ -207,7 +213,9 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
 
     assert returned is card
     assert card.status == AcceptStatus.accepted
-    assert topic.status == TopicStatus.archived
+    assert topic.status == TopicStatus.active
+    assert topic.accepted_by == "alice"
+    # 计费云 VM 仍然在交付时回收（它没有 reaper），容器/设备屏不再动。
     service._machines.release_topic_machine.assert_awaited_once_with(topic.id)
     await _drain_notify()
     notify.assert_awaited_once()

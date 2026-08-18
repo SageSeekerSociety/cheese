@@ -26,7 +26,7 @@ from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.backend_log import BackendErrorBatchIn
 
-router = APIRouter(prefix="/api/backend-errors", tags=["backend-errors"])
+router = APIRouter(prefix="/backend-errors", tags=["backend-errors"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 

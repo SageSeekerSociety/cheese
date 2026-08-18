@@ -9,18 +9,22 @@ docker-free core of the tmux backend:
 - ``translate_hook`` maps ONE hook payload to an AgentEvent (spec §9.1: the
   platform observes 芝士 through structured events, never by parsing prose).
 - ``HookRouter`` fans hook POSTs (from the /sandbox/hooks endpoint) to the
-  asyncio.Queue of the turn currently running for that topic. Turns are
-  serialized per topic (topic lock), so at most one queue is active per topic.
+  long-lived sink owned by that topic's interactive screen.
 
-Event mapping (verified in the spike, docs/tmux-backend-spike.md):
+Event mapping:
   SessionStart{session_id}                → AgentSessionInfo
   PreToolUse{tool_name, tool_input}       → AgentToolUse
-  MessageDisplay{delta} (non-empty)       → AgentMessage (discrete message)
-  PostToolUse{...}                        → (ignored — no matching AgentEvent)
+  MessageDisplay{message_id,index,final,delta}
+      —— MessageAssembler ——              → AgentMessage (one WHOLE message,
+                                            assembled from its line-batch
+                                            flushes; see the class docstring)
+  PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
   Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
 """
 
 import asyncio
+from dataclasses import dataclass, field
+from typing import Any
 
 from app.domain.agent.service import (
     AgentDeliveryFailure,
@@ -28,10 +32,17 @@ from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
+    AgentToolResult,
     AgentToolUse,
     AgentUsage,
 )
 from app.domain.usage.tokens import input_output_tokens
+
+# The tools whose RETURN value the room needs (see AgentToolResult): a subagent
+# reports only to whoever spawned it, so without this the timeline shows the
+# question and never the answer. Both names are live — `Task` is the older CLI's
+# name for `Agent` and either can arrive depending on the box's image age.
+_SUBAGENT_TOOLS = {"Task", "Agent"}
 
 
 def _hook_event_name(hook: dict) -> str:
@@ -57,6 +68,27 @@ def _usage_from_hook(hook: dict) -> AgentUsage:
     )
 
 
+def _tool_response_text(response: Any) -> str:
+    """The text a tool returned, out of whichever shape Claude Code used.
+
+    Deliberately shape-tolerant rather than shape-asserting: the payload for the
+    subagent tools has been a plain string, a list of content blocks, and a dict
+    wrapping that list at different CLI versions, and a hook we cannot read is
+    indistinguishable in the room from a subagent that returned nothing.
+    """
+    if isinstance(response, str):
+        return response.strip()
+    if isinstance(response, dict):
+        for key in ("content", "text", "output", "result"):
+            if key in response:
+                return _tool_response_text(response[key])
+        return ""
+    if isinstance(response, list):
+        parts = [_tool_response_text(item) for item in response]
+        return "\n".join(part for part in parts if part).strip()
+    return ""
+
+
 def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
     """One hook payload → one AgentEvent, or None when the hook has no
     platform-visible counterpart (e.g. PostToolUse). A returned AgentResult
@@ -76,9 +108,34 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
             eid=eid if isinstance(eid, str) else None,
         )
 
+    if event == "PostToolUse":
+        # Only the subagent tools. Surfacing every tool's return would double the
+        # 现场 timeline to say what its effect already says, and a Read's return
+        # is the whole file — the room is for people to read.
+        name = str(hook.get("tool_name") or "")
+        if name not in _SUBAGENT_TOOLS:
+            return None
+        text = _tool_response_text(hook.get("tool_response"))
+        if not text:
+            return None
+        tool_input = hook.get("tool_input")
+        eid = hook.get("_eid")
+        return AgentToolResult(
+            name=name,
+            text=text,
+            description=(
+                str(tool_input.get("description") or "")
+                if isinstance(tool_input, dict)
+                else ""
+            ),
+            eid=eid if isinstance(eid, str) else None,
+        )
+
     if event == "MessageDisplay":
-        # A discrete 芝士 message (Slack-style), not a token delta: one
-        # MessageDisplay = one chat message block (spike mapping).
+        # One FLUSH of a streaming message, not a whole message — a hook
+        # STREAM must route MessageDisplay through MessageAssembler. This
+        # branch survives as the one-hook-one-message fallback for payloads
+        # without the flush fields (older Claude Code, hand-built tests).
         text = hook.get("delta")
         if isinstance(text, str) and text.strip():
             eid = hook.get("_eid")
@@ -136,67 +193,184 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
             usage=_usage_from_hook(hook),
         )
 
-    # PostToolUse and any unmapped event: nothing to surface.
+    # Any unmapped event: nothing to surface.
     return None
 
 
-class HookRouter:
-    """Process-global router from topic id → the active turn's event queue.
+@dataclass
+class _PendingMessage:
+    """Flushes of one streaming assistant message, keyed by flush index."""
 
-    The /sandbox/hooks endpoint calls ``push``; TmuxHooksProvider.run_turn holds
-    the matching queue via ``register`` for the duration of the turn. Both run on
-    the same asyncio loop (uvicorn worker), so put_nowait is safe and lock-free.
-    Turns are serialized per topic, so one queue per topic is sufficient."""
+    deltas: dict[int, str] = field(default_factory=dict)
+    eids: dict[int, str | None] = field(default_factory=dict)
+    final_index: int | None = None
+
+
+class MessageAssembler:
+    """Reassemble MessageDisplay flushes into whole assistant messages.
+
+    Claude Code fires MessageDisplay once per batch of newly completed lines
+    while a message streams — NOT once per message (the spike read one flush
+    per message because its replies fit one batch; a 60-line reply arrives as
+    ~9 flushes). The payload carries the reassembly key: ``message_id`` (stable
+    across the message's flushes), ``index`` (increments per flush), ``final``
+    (exactly one flush per message), and ``delta`` (the new lines, newlines
+    included — concatenating deltas in index order reconstructs the message
+    verbatim). Verified against 2.1.224, the pinned device version, and 2.1.233.
+
+    Persisting each flush as its own chat message is what split one reply into
+    several bubbles — and what then defeated every whole-text dedup downstream,
+    because the Stop hook's ``last_assistant_message`` never matches a fragment,
+    so the full text landed AGAIN next to its own pieces. The SDK backend fixed
+    the same shape in #170 by buffering fragments to a semantic boundary; this
+    is the hooks-path equivalent, with ``final`` as the boundary.
+
+    Also absorbs at-least-once redelivery: a flush re-POSTed after a lost ack
+    arrives with the same (message_id, index) and is dropped, whether its
+    message is still pending or already assembled. Flushes may arrive out of
+    order (the drainer retries a failed file while later ones already landed);
+    a message completes only when every index up to ``final`` is present.
+
+    Payloads without the flush fields (an older Claude Code) keep the
+    historical one-hook-one-message behavior. One instance per hook stream
+    (screen subscription / spool reconcile pass); event-loop only.
+    """
+
+    # Assembled message ids kept for late-redelivery dedup. A session streams
+    # messages one at a time, so even a small window is generous.
+    _DONE_CAP = 256
 
     def __init__(self) -> None:
-        self._queues: dict[str, asyncio.Queue[dict]] = {}
+        self._pending: dict[str, _PendingMessage] = {}
+        self._done: dict[str, None] = {}
 
-    def register(self, topic_id: str) -> asyncio.Queue[dict]:
-        """Claim the topic's slot for this turn and return its fresh queue. A new
-        queue REPLACES any stale one (a previous turn that failed to clean up)."""
-        queue: asyncio.Queue[dict] = asyncio.Queue()
-        self._queues[topic_id] = queue
-        return queue
+    def add(self, hook: dict) -> AgentMessage | None:
+        """Fold one MessageDisplay payload in. Returns the completed message,
+        or None while it is still streaming (or the payload was blank or a
+        duplicate)."""
+        delta = hook.get("delta")
+        text = delta if isinstance(delta, str) else ""
+        eid_value = hook.get("_eid")
+        eid = eid_value if isinstance(eid_value, str) else None
+        message_id = hook.get("message_id")
+        final = hook.get("final")
+        index = hook.get("index")
+        if (
+            not isinstance(message_id, str)
+            or not isinstance(final, bool)
+            or not isinstance(index, int)
+        ):
+            if not text.strip():
+                return None
+            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else ())
+        if message_id in self._done:
+            return None
+        pending = self._pending.setdefault(message_id, _PendingMessage())
+        if index in pending.deltas:
+            return None
+        pending.deltas[index] = text
+        pending.eids[index] = eid
+        if final:
+            pending.final_index = index
+        last = pending.final_index
+        if last is None or any(i not in pending.deltas for i in range(last)):
+            return None
+        del self._pending[message_id]
+        self._mark_done(message_id)
+        return self._assemble(pending)
 
-    def unregister(self, topic_id: str, queue: asyncio.Queue[dict]) -> None:
-        """Release the topic's slot — but only if it still holds OUR queue, so a
-        late cleanup never evicts the next turn's already-registered queue."""
-        if self._queues.get(topic_id) is queue:
-            self._queues.pop(topic_id, None)
+    def translate(self, hook: dict) -> list[AgentEvent | AgentDeliveryFailure]:
+        """Stream-level translation of one hook payload: MessageDisplay folds
+        into the assembler (a completed message emerges as ONE event), a Stop
+        first drains whatever is still buffered so nothing dies with the
+        buffer, and every other hook passes through ``translate_hook``."""
+        if _hook_event_name(hook) == "MessageDisplay":
+            message = self.add(hook)
+            return [message] if message is not None else []
+        event = translate_hook(hook)
+        if event is None:
+            return []
+        if isinstance(event, AgentResult):
+            return [*self.drain(), event]
+        return [event]
+
+    def drain(self) -> list[AgentMessage]:
+        """Assemble every still-pending message from the flushes that did
+        arrive (gaps collapsed), oldest first. For Stop / turn end: buffered
+        content must land rather than die with the buffer."""
+        drained: list[AgentMessage] = []
+        for message_id, pending in self._pending.items():
+            self._mark_done(message_id)
+            message = self._assemble(pending)
+            if message is not None:
+                drained.append(message)
+        self._pending.clear()
+        return drained
+
+    def pending_eids(self) -> set[str]:
+        """Event ids buffered toward messages that have not completed yet —
+        what a spool reconcile must NOT delete, so the flushes survive to the
+        pass where their message completes."""
+        return {
+            eid
+            for pending in self._pending.values()
+            for eid in pending.eids.values()
+            if eid is not None
+        }
+
+    def _mark_done(self, message_id: str) -> None:
+        self._done[message_id] = None
+        while len(self._done) > self._DONE_CAP:
+            del self._done[next(iter(self._done))]
+
+    @staticmethod
+    def _assemble(pending: _PendingMessage) -> AgentMessage | None:
+        indices = sorted(pending.deltas)
+        text = "".join(pending.deltas[i] for i in indices)
+        if not text.strip():
+            return None
+        eids = tuple(eid for i in indices if (eid := pending.eids[i]) is not None)
+        return AgentMessage(text=text, eid=eids[0] if eids else None, eids=eids)
+
+
+@dataclass(eq=False)
+class HookSink:
+    """One screen-lifetime hook inbox."""
+
+    queue: asyncio.Queue[dict] = field(default_factory=asyncio.Queue)
+
+
+class HookRouter:
+    """Process-global router from topic id to a screen-lifetime hook sink.
+
+    The endpoint and provider run on the same asyncio loop, so ``put_nowait`` is
+    safe. Re-subscribing is idempotent: a second caller gets the existing sink
+    instead of replacing it and starving its consumer.
+    """
+
+    def __init__(self) -> None:
+        self._sinks: dict[str, HookSink] = {}
+
+    def subscribe(self, topic_id: str) -> HookSink:
+        """Return the topic's stable sink, creating it on first live screen."""
+        sink = self._sinks.get(topic_id)
+        if sink is None:
+            sink = HookSink()
+            self._sinks[topic_id] = sink
+        return sink
+
+    def unsubscribe(self, topic_id: str, sink: HookSink) -> None:
+        """Release a screen's sink without evicting a newer replacement."""
+        if self._sinks.get(topic_id) is sink:
+            self._sinks.pop(topic_id, None)
 
     def push(self, topic_id: str, hook: dict) -> bool:
-        """Enqueue a hook payload for the topic's active turn. Returns False when
-        no turn is listening (hook arrived outside a run_turn window) so the
-        endpoint can report it instead of silently dropping."""
-        queue = self._queues.get(topic_id)
-        if queue is None:
+        """Enqueue a hook payload for the topic's subscribed screen."""
+        sink = self._sinks.get(topic_id)
+        if sink is None:
             return False
-        queue.put_nowait(hook)
+        sink.queue.put_nowait(hook)
         return True
-
-    def drain(self, topic_id: str) -> list[dict]:
-        """Empty the topic's active queue and return whatever was pending.
-
-        register() claims the topic's slot BEFORE the screen is ready / the
-        prompt is sent (so no hook is missed) — but that means a straggler
-        from a PREVIOUS, abandoned turn (e.g. its own late Stop, arriving
-        after we gave up on it but before its underlying `claude` process
-        actually finished) can land in the fresh queue during that gap, ahead
-        of any event the new turn will ever produce. Since nothing has been
-        sent to `claude` yet at drain time, anything already queued here
-        CANNOT belong to the turn about to start — the caller must treat it
-        like a hook that arrived outside any window (park it), never as this
-        turn's own events (a stale Stop must never end the wrong turn)."""
-        queue = self._queues.get(topic_id)
-        if queue is None:
-            return []
-        drained: list[dict] = []
-        while True:
-            try:
-                drained.append(queue.get_nowait())
-            except asyncio.QueueEmpty:
-                break
-        return drained
 
 
 # Shared singleton: the endpoint and the provider import this same instance.

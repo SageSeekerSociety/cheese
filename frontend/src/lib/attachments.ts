@@ -1,4 +1,4 @@
-// 图片输入: pending-attachment state shared by the two composers (WorkspaceView
+// 图片输入: pending-attachment state shared by the two composers (TopicView
 // 的跨栏输入框和 ChatPanel 的私聊输入框). Paste or pick an image → it uploads to
 // the topic's worktree immediately → the send only references {path, mime}.
 import type { ChatAttachment } from '../cx_types'

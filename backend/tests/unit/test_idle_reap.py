@@ -167,3 +167,87 @@ async def test_reaper_runs_without_heartbeat_scheduler():
     await asyncio.wait_for(called.wait(), timeout=1)
     await asyncio.wait_for(screens_called.wait(), timeout=1)
     await runner.stop()
+
+
+@pytest.mark.anyio
+async def test_a_room_with_a_busy_task_keeps_its_box(client, tmp_path, monkeypatch):
+    """A tmux box is named after a ROOM and hosts every task split out of it, so
+    its idleness is the room's AND its tasks'. Judging the room alone destroys a
+    box with live work in it the moment the room's own timeline goes quiet — and
+    a room whose work has been split out is quiet BY DESIGN, so this is the
+    normal case, not an edge one."""
+    factory = client.test_factory
+    chat = ChatService(
+        session_factory=factory,
+        agent=AgentService(model="stub"),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    svc = SchedulerService(chat_service=chat)
+
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topics = TopicService(session)
+        room = await topics.create(project_id=project.id, title="R", created_by="u")
+        task = await topics.split_to_subtopic(
+            parent_topic_id=room.id, title="T", created_by="u"
+        )
+        blocks = BlockRepository(session)
+        for t in (room, task):
+            await blocks.add(
+                project_id=project.id,
+                topic_id=t.id,
+                author="u",
+                author_type=AuthorType.human,
+                content="hi",
+            )
+        # The ROOM has been silent for a month; its task spoke just now.
+        await session.execute(
+            update(Block)
+            .where(Block.topic_id == room.id)
+            .values(created_at=datetime.now(UTC) - timedelta(days=30))
+        )
+        await session.commit()
+        room_id = room.id
+
+    box = f"cheesex-tmux-{room_id.hex[:12]}"
+    removed: list[str] = []
+    monkeypatch.setattr(ws, "list_sandbox_containers", lambda: [box])
+    monkeypatch.setattr(ws, "remove_container", removed.append)
+
+    assert await svc.reap_idle_containers(idle_hours=3) == 0
+    assert removed == [], "the task's box was reaped out from under it"
+
+
+@pytest.mark.anyio
+async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
+    """The DB half of box placement: a task runs in the box of the room it was
+    split out of, a room runs in its own, and the answer is recorded where the
+    sync workspace layer can read it (`docker port` lookups have no session)."""
+    from app.core.config import settings
+    from app.domain.agent.tmux_provider import TmuxHooksProvider
+
+    factory = client.test_factory
+    async with factory() as session:
+        project = await ProjectService(session).create(name="P", owner_handle="u")
+        topics = TopicService(session)
+        room = await topics.create(project_id=project.id, title="R", created_by="u")
+        task = await topics.split_to_subtopic(
+            parent_topic_id=room.id, title="T", created_by="u"
+        )
+        await session.commit()
+        project_id, room_id, task_id = project.id, room.id, task.id
+
+    provider = TmuxHooksProvider(image="img:test", session_factory=factory)
+    old_root = settings.workspace_root
+    settings.workspace_root = str(tmp_path / "rooms")
+    try:
+        assert await provider._room_id(project_id, task_id) == room_id
+        assert await provider._room_id(project_id, room_id) == room_id
+        # ...and it is now readable without a DB session.
+        assert ws.room_for_topic(task_id) == room_id
+        # A topic of ANOTHER project can never be pulled into this room's box,
+        # even if the ids were somehow crossed: the walk verifies the project.
+        assert await provider._room_id(uuid.uuid4(), task_id) == task_id
+    finally:
+        settings.workspace_root = old_root

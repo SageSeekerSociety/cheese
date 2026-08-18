@@ -59,6 +59,18 @@ def test_rpc_and_exec_constructors():
     assert ex["t"] == "exec" and ex["cwd"] == "/w" and ex["timeout"] == 5
 
 
+def test_file_put_carries_one_binary_file_as_base64():
+    raw = b"\x89PNG\r\n\x1a\n\x00\xff"
+    msg = device_link.file_put("s1", "f1", "uploads/img-a.png", raw)
+    assert msg == {
+        "t": "file.put",
+        "sid": "s1",
+        "id": "f1",
+        "path": "uploads/img-a.png",
+        "data": base64.b64encode(raw).decode(),
+    }
+
+
 def test_parse_inbound_and_decoded_data():
     m = LinkMsg.parse(
         {

@@ -270,3 +270,34 @@ async def test_open_pr_still_works_with_no_user_token_at_all():
 
     assert pr["number"] == 42
     assert seen == [("POST", "ghs_write")]
+
+
+# ---- unreachable GitHub ------------------------------------------------------
+
+
+def _unreachable(request: httpx.Request) -> httpx.Response:
+    """api.github.com resolved but the TLS handshake never completed — the
+    real 2026-08-17 failure, verbatim from the traceback."""
+    raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.pr_view(7),
+        lambda c: c.check_runs("abc123"),
+        lambda c: c.merge_pr(7, title="t", message="m"),
+        lambda c: c.open_pr(head="topic/1", base="main", title="t", body=""),
+    ],
+)
+async def test_network_failure_surfaces_as_a_github_pr_error(call):
+    """Not reaching GitHub is the same thing to every caller as GitHub saying
+    no — both mean "I could not learn the PR's state". Leaking httpx's own
+    exception instead skipped every `except GitHubPRError` in the codebase and
+    became a 500 out of /pr-checks, which polls on a timer."""
+    with pytest.raises(GitHubPRError) as excinfo:
+        await call(_client(_unreachable))
+
+    assert "unreachable" in str(excinfo.value)
+    assert "ConnectError" in str(excinfo.value)

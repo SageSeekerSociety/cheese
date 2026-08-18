@@ -76,6 +76,28 @@ jobs:
         run: |
           docker ps --format '{{.Names}}  {{.Image}}' | grep -v cheesex-tmux || true
           df -h / | tail -1
+      - name: Backend log tail
+        # The backend process's own stdout is not reachable any other way: the
+        # box has no public inbound, `backend_log.py` is a POST-only intake, and
+        # no route reads logs back. So a maintenance loop that is failing every
+        # tick — `pr poll failed`, the orphan sweep, the reaper — is invisible
+        # from outside while the symptom (a card that never advances) is not.
+        #
+        # Fixed window and fixed filter, no parameters: same rule as every other
+        # probe in this file (see the header) — a grep pattern or a line count
+        # taken from workflow input is a remote shell with extra steps. Grep
+        # locally in the run log.
+        #
+        # `--since 2h`, not `--tail N`: a line budget is the wrong unit here.
+        # The first version tailed 400 lines and got 10 SECONDS of wall clock,
+        # 399 of them routine HTTP access logs — too narrow to contain even one
+        # tick of a 60s maintenance loop, which is exactly what the probe is for.
+        # The access lines are dropped for the same reason; what is left is
+        # startup, the maintenance loops and anything that raised.
+        run: |
+          docker logs --since 2h --timestamps cheese-backend-1 2>&1 \
+            | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
+            | tail -600 || true
 
   prod-box:
     runs-on: [self-hosted, cheese-prod]

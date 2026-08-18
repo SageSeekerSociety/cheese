@@ -15,8 +15,8 @@ from app.domain.block.repositories import BlockRepository
 
 
 def _topic(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    t = client.post("/api/topics", json={"project_id": p["id"], "title": "T"}).json()[
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
     return t["id"]
@@ -24,13 +24,13 @@ def _topic(client) -> str:
 
 def _say(client, tid: str, text: str) -> str:
     """Append one timeline block and return its id."""
-    r = client.post(f"/api/topics/{tid}/decision", json={"decision": text})
+    r = client.post(f"/topics/{tid}/decision", json={"decision": text})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
 
 def _blocks(client, tid: str, **params):
-    r = client.get(f"/api/topics/{tid}/blocks", params=params)
+    r = client.get(f"/topics/{tid}/blocks", params=params)
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -147,7 +147,7 @@ def test_blocks_sharing_a_timestamp_are_neither_skipped_nor_repeated(client):
     created_at alone would let tied rows fall through the crack between pages.
     """
     tid = _topic(client)
-    pid = client.get(f"/api/topics/{tid}").json()["data"]["project_id"]
+    pid = client.get(f"/topics/{tid}").json()["data"]["project_id"]
     stamp = datetime.now(UTC)
 
     async def seed() -> None:
@@ -212,11 +212,11 @@ def test_reactions_on_the_page_still_ride_the_payload(client):
     tid = _topic(client)
     ids = [_say(client, tid, f"m{i}") for i in range(6)]
     r = client.post(
-        f"/api/blocks/{ids[-1]}/reactions", json={"emoji": "👍", "author": "u1"}
+        f"/blocks/{ids[-1]}/reactions", json={"emoji": "👍", "author": "u1"}
     )
     assert r.status_code == 200, r.text
     # …and one on a block that the page will NOT contain.
-    client.post(f"/api/blocks/{ids[0]}/reactions", json={"emoji": "🎉", "author": "u1"})
+    client.post(f"/blocks/{ids[0]}/reactions", json={"emoji": "🎉", "author": "u1"})
 
     payload = _blocks(client, tid, limit=2)
 
@@ -235,7 +235,7 @@ def test_unknown_cursor_is_rejected_not_silently_ignored(client):
     _say(client, tid, "m0")
 
     r = client.get(
-        f"/api/topics/{tid}/blocks",
+        f"/topics/{tid}/blocks",
         params={"limit": 5, "before": str(uuid.uuid4())},
     )
 
@@ -250,7 +250,7 @@ def test_cursor_from_another_topic_is_rejected(client):
     _say(client, a, "a0")
     foreign = _say(client, b, "b0")
 
-    r = client.get(f"/api/topics/{a}/blocks", params={"limit": 5, "before": foreign})
+    r = client.get(f"/topics/{a}/blocks", params={"limit": 5, "before": foreign})
 
     assert r.status_code == 404
 
@@ -258,6 +258,6 @@ def test_cursor_from_another_topic_is_rejected(client):
 def test_limit_must_be_positive(client):
     tid = _topic(client)
 
-    r = client.get(f"/api/topics/{tid}/blocks", params={"limit": 0})
+    r = client.get(f"/topics/{tid}/blocks", params={"limit": 0})
 
     assert r.status_code == 400

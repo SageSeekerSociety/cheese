@@ -7,6 +7,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 
 import difflib
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import overload
 
@@ -23,10 +24,11 @@ from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conclusion.models import ConclusionCard
 from app.domain.conclusion.services import ConclusionCardService
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.services import AcceptService
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import (
     SortOrder,
@@ -143,6 +145,20 @@ def _stall_block_summary(block: Block | None) -> dict | None:
     }
 
 
+@dataclass(frozen=True)
+class TopicRelevance:
+    """What a topic is to one particular person (与我的相关性, C2).
+
+    See ``TopicOut.i_participate``/``awaits_me`` for the field-level contract.
+    Two booleans instead of one enum so that "am I involved" and "is it on my
+    desk" stay separable: the sidebar folds on the first and overrides that
+    fold on the second.
+    """
+
+    i_participate: bool = False
+    awaits_me: bool = False
+
+
 class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -150,6 +166,15 @@ class TopicService:
         self._projects = ProjectRepository(session)
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
+        # 与我的相关性 asks three other domains the same question at once, and
+        # asks each through its own service — the roster, the accept cards and
+        # the @-notifications each decide for themselves what "mine" means.
+        self._cards = AcceptService(session)
+        self._alerts = AlertService(session)
+
+    async def get(self, topic_id: uuid.UUID) -> Topic | None:
+        """Return one topic for cross-domain service callers."""
+        return await self._repo.get(topic_id)
 
     async def create(
         self,
@@ -185,8 +210,10 @@ class TopicService:
         # Phase-0), would leave the room OWNERLESS — seed() deliberately skips
         # "cheese"/None as owner — and then nobody can manage its roster, and
         # every sub-topic split beneath it inherits the same emptiness
-        # (split_to_subtopic falls back to the PARENT's owner). Same fallback
-        # ladder as split_to_subtopic, one level wider.
+        # (split_to_subtopic falls back to the PARENT's owner). Nearly the same
+        # ladder as split_to_subtopic, which has one rung this does not: a split
+        # happens DURING somebody's turn, so it can ask who is driving. Creating a
+        # topic is a standalone act with nobody to ask.
         await self._members.seed(
             topic.id,
             owner_handle=await self._resolve_owner(
@@ -309,6 +336,50 @@ class TopicService:
         self, topic_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         return await self._repo.last_activity_for_topics(topic_ids)
+
+    async def relevance_for_topics(
+        self, topics: list[Topic], viewer_handle: str | None
+    ) -> dict[uuid.UUID, TopicRelevance]:
+        """{topic_id: 与我的相关性} for a batch of topics (C2).
+
+        THREE queries, whatever the batch size — one per way of being involved
+        that lives in another table (roster, accept cards, @-notifications).
+        Creation is the fourth way and costs nothing: ``created_by`` is already
+        on the rows the caller handed in. The list endpoint returns a whole
+        project at once, so a per-topic probe here would be a hundred round
+        trips to render a sidebar.
+
+        ``viewer_handle`` is passed IN rather than read from an auth context:
+        the caller resolved the actor at the trust boundary, and a service that
+        went looking for the request's identity would be unusable from anywhere
+        that has no request (the digest builders, tests, 分身 turns).
+        Anonymous/unknown callers relate to nothing — every topic comes back
+        with both booleans false, which is also the pre-C2 behaviour.
+        """
+        if viewer_handle is None or not topics:
+            return {}
+        topic_ids = [t.id for t in topics]
+        roster = await self._members.topic_ids_for_member(topic_ids, viewer_handle)
+        cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
+        mentions = await self._alerts.mention_topic_ids(topic_ids, viewer_handle)
+        relevance: dict[uuid.UUID, TopicRelevance] = {}
+        for topic in topics:
+            awaits = cards.get(topic.id, False) or mentions.get(topic.id, False)
+            participates = (
+                topic.id in roster
+                or topic.created_by == viewer_handle
+                or topic.id in cards
+                or topic.id in mentions
+            )
+            relevance[topic.id] = TopicRelevance(
+                # Being awaited is a way of being involved, so it implies
+                # participation: a card can be routed to someone who never
+                # opened the topic, and the whole point of `awaits_me` is that
+                # it must not end up folded away under 「其他话题」.
+                i_participate=participates or awaits,
+                awaits_me=awaits,
+            )
+        return relevance
 
     async def list_children(self, topic_id: uuid.UUID) -> list[Topic]:
         await self.get_or_404(topic_id)
@@ -592,6 +663,7 @@ class TopicService:
         title: str,
         created_by: str | None = None,
         brief: str | None = None,
+        triggered_by: str | None = None,
     ) -> Topic:
         """从上往下拆解 (eval A2): split a todo into a sub-topic under a topic.
 
@@ -599,7 +671,11 @@ class TopicService:
         一致, spec §8.4): the splitter's `brief` plus a verbatim snapshot of the
         parent's living doc. No canned opening message anymore — the 分身's
         auto-kickoff first turn (routes/topics.py) writes its own opening
-        (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md)."""
+        (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md).
+
+        `triggered_by` is the human whose turn asked for this split, which the
+        caller reads off the runner (`AgentWorkRunner.turn_author_for`) — see the
+        ownership ladder below for why it outranks the parent room's owner."""
         parent = await self.get_or_404(parent_topic_id)
         # 归档后工作面冻结 (spec §6.3): no new sub-topics under a frozen topic —
         # follow-up work starts a new topic from the conclusion (升级), not here.
@@ -621,23 +697,31 @@ class TopicService:
             (m.member_handle for m in parent_members if m.role == TopicRole.owner),
             None,
         )
-        # A split requested BY a real human keeps them as the child's owner. But
-        # when the splitter is 芝士 itself (e.g. an autonomous 分身发起的拆分) or no
-        # human is identified at all, `created_by` alone would leave the child
-        # ownerless (seed() intentionally skips 芝士 as owner) — nobody could then
-        # manage its roster. Two independent gaps, both closed here:
+        # 归属跟推进者走: WHO the child belongs to, most specific answer first.
         #
-        # 1. WHO counts as 芝士: the check spans the whole 芝士 handle namespace,
-        #    because 分身 split under their OWN handle (``cheese-<topic hex>``) and
-        #    matching the bare ``cheese`` string would hand them the very
-        #    ownership this branch exists to withhold.
-        # 2. WHERE the fallback lands: the parent's real human owner, and when the
-        #    parent is itself ownerless (a room born before this fallback existed),
-        #    the project's owner — so the emptiness stops cascading down the tree.
+        # 1. `created_by`, when a real human called split — they said what they
+        #    wanted. Both this rung and the next screen for an actual person
+        #    (`names_a_person`) rather than merely "not 芝士": a 分身 splits under
+        #    its OWN handle (``cheese-<topic hex>``), and `anonymous`/`system` name
+        #    nobody either. Letting any of them through is not a cosmetic mistake —
+        #    `seed()` refuses to make 芝士 an owner, so the room lands ownerless and
+        #    nobody can manage its roster, which is the bug this ladder exists for.
+        # 2. `triggered_by` — the human driving the turn 芝士 split from. A room
+        #    stalls, someone else picks it up, and the work that comes out of THEIR
+        #    turn is theirs: the child ends in an accept card, and handing that card
+        #    to whoever opened the parent room months ago strands it a second time.
+        #    GitHub credit for the original requester is not lost — they come back
+        #    as `Co-authored-by:` (`workspace.identity.coauthor_handles`).
+        # 3. The parent room's owner, then the project's — an autonomous 分身 split
+        #    and a platform-initiated turn identify no person at all, and a room
+        #    born before any of this has no owner to inherit, so the emptiness
+        #    stops cascading down the tree here.
         project = await self._projects.get(parent.project_id)
         owner_handle = (
             created_by
-            if created_by and not looks_like_agent_handle(created_by)
+            if names_a_person(created_by)
+            else triggered_by
+            if names_a_person(triggered_by)
             else parent_owner or (project.owner_handle if project else None)
         )
         await self._members.seed_split(
@@ -694,7 +778,7 @@ class TopicService:
                 new_session_id=new_sid,
                 # Claude resolves --resume under the slug of the cwd it runs
                 # with, so the fork must land under the TARGET topic's workdir.
-                target_cwd=ws.sandbox_topic_workdir(ws.branch_for_topic(target.id)),
+                target_cwd=ws.sandbox_topic_workdir(target.id),
             )
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
@@ -809,6 +893,29 @@ class TopicService:
                     node_type=node.node_type,
                     struct_order=order,
                 )
+
+    async def add_relay_block(
+        self, *, target: Topic, sender: Topic, label: str, text: str
+    ) -> Block:
+        """母子传话's message block (see `app.domain.topic.relay`).
+
+        Lives here, not in `relay.py`, for one reason: writing a Block from
+        another domain's repository is the debt `tests/unit/test_domain_import_
+        guard.py` ratchets down, and this service already carries that exemption.
+        Same authorship rule as `return_conclusion` below — the RECEIVING room's
+        芝士 is the author, because a message from someone who is not on that
+        roster reads as a ghost; `refs` links back to the sender.
+        """
+        author = await self._members.resolve_agent_handle(target.id)
+        return await self._blocks.add(
+            project_id=target.project_id,
+            topic_id=target.id,
+            author=author,
+            author_type=AuthorType.ai,
+            content=f"【{label}｜{sender.title}】\n{text}",
+            kind=BlockKind.message,
+            refs=[str(sender.id)],
+        )
 
     async def return_conclusion(
         self, *, subtopic_id: uuid.UUID, conclusion: str

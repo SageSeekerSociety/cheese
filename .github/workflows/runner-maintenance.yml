@@ -1,0 +1,61 @@
+# Self-maintenance for the self-hosted runner fleet (#562).
+#
+# The runners' boxes have no reachable SSH from outside their private net, but
+# they run our jobs — so a job IS the shell we have on them. This workflow lets
+# a maintainer apply the action-archive-cache retrofit (and future .env tweaks)
+# without holding a key to any box.
+#
+# Deliberately uses NO actions (not even checkout): every action would be a
+# download from codeload.github.com, which is exactly the rate-limited path
+# this maintenance exists to eliminate — and a maintenance job that dies of
+# the disease it treats cannot cure anyone.
+#
+# The matrix runs one job per fleet slot with a hold step, so three distinct
+# runners each pick one up. If a runner was busy, rerun until the summary has
+# shown every runner's name once — the change is idempotent.
+name: Runner maintenance
+
+on:
+  workflow_dispatch:
+
+jobs:
+  action-archive-cache:
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [1, 2, 3]
+    runs-on: [self-hosted, cheese-ci]
+    timeout-minutes: 5
+    steps:
+      - name: Apply ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE
+        run: |
+          set -euo pipefail
+          echo "runner: $RUNNER_NAME (slot ${{ matrix.slot }})"
+          cd "$HOME/actions-runner"
+          mkdir -p action-archive-cache
+          if grep -q ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env 2>/dev/null; then
+            echo "already configured:"
+          else
+            echo "ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE=$HOME/actions-runner/action-archive-cache" >> .env
+            echo "configured:"
+          fi
+          grep ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE .env
+          echo "runner=$RUNNER_NAME configured" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hold so the other slots land on other runners
+        run: sleep 45
+
+      - name: Restart the runner service (delayed, so this job finishes first)
+        run: |
+          set -euo pipefail
+          UNIT="$(systemctl list-units --all 'actions.runner.*.service' --no-legend | awk '{print $1}' | head -1)"
+          if [ -z "$UNIT" ]; then
+            echo "no runner unit found — restart manually" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if sudo -n true 2>/dev/null; then
+            sudo systemd-run --on-active=15s systemctl restart "$UNIT"
+            echo "runner=$RUNNER_NAME restart scheduled in 15s ($UNIT)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "runner=$RUNNER_NAME: no passwordless sudo — .env staged, takes effect on next service restart/reboot" >> "$GITHUB_STEP_SUMMARY"
+          fi

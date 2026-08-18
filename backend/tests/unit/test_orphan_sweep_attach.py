@@ -8,8 +8,19 @@ which stacked five zombie turns on one topic in a single day. The contract now:
 - any evidence claude received the task (an AI block on the turn, or anything
   in the topic's spool) → NO new prompt; the spool settle collects what the
   survivor sends back (its Stop included);
-- zero evidence anywhere → re-send the ORIGINAL prompt text, once;
+- zero evidence anywhere → re-send the ORIGINAL prompt text, once, whoever
+  started the turn — a person's message and 平台's own work (分身开工, 验收卡被
+  驳回, CI 红了) evaporate identically when the prompt never lands;
 - one topic gets at most one remedial prompt, however many orphans it holds.
+
+None of this is announced any more. It used to be, because a restart left the
+room looking dead — the backend half died and the session's output only
+resurfaced later out of the spool. Retiring the turn (#508) removed that: the
+subscription lives with the screen and reattaches, so the room keeps showing
+芝士 working. The bar for speaking is not "was there an interruption" but "will
+this still be broken after the platform finishes" — so what remains announced is
+only the case where the prompt is gone and nothing will re-send it (see
+`test_runtime`).
 """
 
 import asyncio
@@ -19,7 +30,7 @@ import uuid
 import pytest
 
 from app.domain.agent import runtime as rt
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 
 
 class _Chat:
@@ -64,6 +75,7 @@ def _entry(
     content: str = "修一下登录页",
     age_s: float = 90,
     is_resume: bool = False,
+    resendable: bool = True,
 ) -> dict:
     return {
         "topic_id": str(topic),
@@ -71,6 +83,9 @@ def _entry(
         "is_resume": is_resume,
         "author": author,
         "content": content,
+        # Decided where the turn starts (`_execute`): true for anything whose
+        # content IS the task, false for an auto-resume nudge.
+        "resendable": resendable,
     }
 
 
@@ -100,15 +115,44 @@ async def test_delivered_orphan_attaches_instead_of_reprompting(tmp_path, monkey
     topic, turn = uuid.uuid4(), uuid.uuid4()
     rt._save_inflight({str(turn): _entry(topic)})
     chat = _Chat(delivered=[turn])
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []  # no new prompt of any kind
     assert chat.settled == [topic]  # the settle collects what claude sends
-    assert len(chat.events) == 1
-    assert "部署中断" in chat.events[0][1]
+    # Nothing is said: the subscription reattaches on restart (#508), so the
+    # survivor's output keeps landing in the room on its own and there is no
+    # break for the room to explain.
+    assert chat.events == []
     assert rt._load_inflight() == {}  # claimed — no re-announce next sweep
+
+
+@pytest.mark.anyio
+async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
+    tmp_path, monkeypatch
+):
+    """The prompt landed two seconds before the process died.
+
+    The transport accepted the write, so that fact was recorded when it
+    happened. The second-hand evidence cannot see it — claude had no time to
+    write a block and its first hooks had not arrived — so judging by that
+    alone re-sends a prompt 芝士 is already working on, and the person gets
+    answered twice."""
+    _instant_sleep(monkeypatch)
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic, turn = uuid.uuid4(), uuid.uuid4()
+    entry = _entry(topic, age_s=90)
+    entry["delivered_at"] = _time.time() - 88
+    rt._save_inflight({str(turn): entry})
+    chat = _Chat()  # no AI block, empty spool: the old evidence sees nothing
+    runner = AgentWorkRunner(InProcessBroker())
+
+    assert await runner.resume_orphans(chat) == 0
+    await _drain(chat, rounds=50)
+    assert chat.converse_calls == []  # NOT re-sent
+    assert chat.settled == [topic]  # attached instead
+    assert chat.events == []
 
 
 @pytest.mark.anyio
@@ -126,13 +170,13 @@ async def test_spool_trace_attaches_and_vetoes_every_resend(tmp_path, monkeypatc
         }
     )
     chat = _Chat(spool=True)
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []
     assert chat.settled == [topic]
-    assert len(chat.events) == 1
+    assert chat.events == []  # the platform handled it; nothing to explain
 
 
 @pytest.mark.anyio
@@ -144,7 +188,7 @@ async def test_zero_evidence_resends_the_original_prompt_once(tmp_path, monkeypa
     topic = uuid.uuid4()
     rt._save_inflight({str(uuid.uuid4()): _entry(topic, content="修一下登录页")})
     chat = _Chat()
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
     await _drain(chat)
@@ -154,7 +198,10 @@ async def test_zero_evidence_resends_the_original_prompt_once(tmp_path, monkeypa
     assert call["author"] == "system"
     assert call["is_resume"] is True
     assert chat.settled == []  # nothing to attach to
-    assert any("重发" in text for _tid, text in chat.notices)
+    # The re-send happens, and says nothing: it lands in the same session the
+    # person was already talking to, so it is indistinguishable from them
+    # asking again — there is no anomaly to narrate.
+    assert chat.notices == []
 
 
 @pytest.mark.anyio
@@ -170,15 +217,14 @@ async def test_five_orphans_one_topic_get_at_most_one_action(tmp_path, monkeypat
     }
     rt._save_inflight(reg)
     chat = _Chat()
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
     await _drain(chat)
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["content"] == "任务4"  # the newest one
-    assert len(chat.events) == 1  # one verdict, not five
-    # 另外四轮没被吞掉：数目在展开区里说清楚了（房间那一行只放"出了什么事"）。
-    assert "4" in chat.notices[0][1]
+    # 一条都不说：五轮的消息都随这一次重发带上了，用户不需要做任何事。
+    assert chat.events == []
 
 
 @pytest.mark.anyio
@@ -190,13 +236,13 @@ async def test_probe_failure_is_treated_as_evidence(tmp_path, monkeypatch):
     topic = uuid.uuid4()
     rt._save_inflight({str(uuid.uuid4()): _entry(topic)})
     chat = _Chat(probe_error=True)
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []
     assert chat.settled == [topic]
-    assert len(chat.events) == 1
+    assert chat.events == []  # the platform handled it; nothing to explain
 
 
 @pytest.mark.anyio
@@ -217,11 +263,11 @@ async def test_delivered_and_undelivered_split_gets_both_remedies(
         }
     )
     chat = _Chat(delivered=[running])
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
     await _drain(chat)
     assert chat.settled == [topic]
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["content"] == "新消息"
-    assert len(chat.events) == 1
+    assert chat.events == []

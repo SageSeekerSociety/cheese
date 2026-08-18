@@ -1,12 +1,35 @@
 package host
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestWriteScreenFileIsAtomicAndConfinedToUploads(t *testing.T) {
+	work := t.TempDir()
+	raw := []byte("\x89PNG\r\n\x1a\nimage")
+	encoded := base64.StdEncoding.EncodeToString(raw)
+
+	if err := writeScreenFile(work, "uploads/img-a.png", encoded); err != nil {
+		t.Fatalf("writeScreenFile: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(work, "uploads", "img-a.png"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(raw) {
+		t.Fatalf("got %q, want %q", got, raw)
+	}
+	for _, bad := range []string{"../escape.png", "/absolute.png", "src/main.go"} {
+		if err := writeScreenFile(work, bad, encoded); err == nil {
+			t.Fatalf("unsafe path %q was accepted", bad)
+		}
+	}
+}
 
 func TestOnlyPromptTakesTheSocket(t *testing.T) {
 	armed := &sess{rvPath: "/tmp/x.sock"}

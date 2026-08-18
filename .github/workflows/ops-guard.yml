@@ -38,7 +38,7 @@ concurrency:
 
 jobs:
   guard:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: [self-hosted, cheese-ci-any]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

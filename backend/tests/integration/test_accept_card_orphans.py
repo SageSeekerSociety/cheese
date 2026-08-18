@@ -14,7 +14,7 @@
 import asyncio
 import uuid
 
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
 # Reuse the 两阶段采纳 harness instead of rebuilding it — see
@@ -26,45 +26,49 @@ from tests.integration.test_accept_pr import (
 
 
 def _make_project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str, title: str = "做一个东西") -> str:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": title}
+        "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]["id"]
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice"):
     return client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
 
 
 def _cards(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
 
 
 def _topic(client, topic_id: str) -> dict:
-    return client.get(f"/api/topics/{topic_id}").json()["data"]
+    return client.get(f"/topics/{topic_id}").json()["data"]
 
 
 def _poll(client) -> dict:
-    r = client.post("/api/admin/scheduler/poll-open-prs")
+    r = client.post("/admin/scheduler/poll-open-prs")
     assert r.status_code == 200
     return r.json()["data"]
 
 
 def _archive(client, topic_id: str, by: str = "bob") -> dict:
-    r = client.post(f"/api/topics/{topic_id}/archive", json={"by": by})
+    r = client.post(f"/topics/{topic_id}/archive", json={"by": by})
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
 def _accept(client, card_id: str, handle: str = "alice") -> dict:
     r = client.post(
-        f"/api/accept-cards/{card_id}/accept",
+        f"/accept-cards/{card_id}/accept",
         json={"decided_by": handle},
         headers=session_auth_headers(handle),
     )
@@ -137,14 +141,14 @@ def test_archiving_a_stage_one_card_revokes_it_and_leaves_the_pr_open(
         assert fake.prs[number]["head_sha"]  # PR 还在，状态未被平台改写
 
         # 留痕：话题里有一条系统消息说清 PR 被放手了。
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert f"停止推进 PR #{number}" in contents
 
         # 通知：强提醒发给当初授权的人（alice），而不是归档的人（bob）。
         def _titles(handle: str) -> list[str]:
             notifs = client.get(
-                f"/api/projects/{pid}/alerts",
+                f"/projects/{pid}/alerts",
                 headers=session_auth_headers(handle),
             ).json()["data"]["data"]
             return [n["title"] for n in notifs]
@@ -210,7 +214,7 @@ def test_cascade_archive_also_closes_a_subtopic_card(client):
     pid = _make_project(client)
     parent = _make_topic(client, pid, "父")
     child = client.post(
-        "/api/topics", json={"project_id": pid, "title": "子", "parent_id": parent}
+        "/topics", json={"project_id": pid, "title": "子", "parent_id": parent}
     ).json()["data"]["id"]
     _make_card(client, child)
     assert _cards(client, child)[0]["status"] == "pending"
@@ -227,7 +231,7 @@ def test_archiving_does_not_touch_already_settled_cards(client):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid).json()["data"]["id"]
     r = client.post(
-        f"/api/accept-cards/{cid}/reject",
+        f"/accept-cards/{cid}/reject",
         json={"decided_by": "alice", "note": "先不收"},
         headers=session_auth_headers("alice"),
     )
@@ -315,10 +319,10 @@ def test_poll_pause_note_does_not_swallow_a_later_ci_failure(client, monkeypatch
             "pytest: 7 failed",
         )
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
 
         # 芝士必须被叫到，note 必须换成 CI 失败
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "pytest: 7 failed" in contents
         note = _cards(client, tid)[0]["note"]
@@ -405,7 +409,7 @@ def test_repush_failure_still_outranks_a_ci_failure(client, monkeypatch):
             "pytest: 2 failed",
         )
         _poll(client)
-        wait_turns_idle()
+        wait_work_idle()
 
         note = _cards(client, tid)[0]["note"]
         assert note.startswith("⚠️ 平台自动重推失败")
@@ -448,7 +452,7 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkey
         lambda *_a, **_k: {"merged": False, "conflicts": ["a.py"], "reason": "冲突"},
     )
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )

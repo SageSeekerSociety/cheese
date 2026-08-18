@@ -163,18 +163,27 @@ async def open_pr_for_card(
 
 
 async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
-    """The topic opener's own GitHub credential, so the PR is opened in their
-    name. None whenever they have not connected GitHub, their token cannot be
-    refreshed, or anything at all goes wrong — this is an attribution nicety
-    and must never be the reason a PR fails to open."""
+    """The GitHub credential of the human this topic belongs to, so the PR is
+    opened in their name. None whenever they have not connected GitHub, their
+    token cannot be refreshed, or anything at all goes wrong — this is an
+    attribution nicety and must never be the reason a PR fails to open.
+
+    Who that human is comes from `identity.requester_handle`, not from
+    `Topic.created_by`: on a 分身-split room the creator is the 分身's own
+    `cheese-<hex12>` handle, which matches no account, so this returned None and
+    every such PR opened as `cheesex-app[bot]`."""
     from app.domain.oauth.services import get_github_user_token_for_handle
     from app.domain.topic.repositories import TopicRepository
+    from app.domain.workspace import identity
 
     try:
         topic = await TopicRepository(session).get(topic_id)
-        if topic is None or not topic.created_by:
+        if topic is None:
             return None
-        return await get_github_user_token_for_handle(session, topic.created_by)
+        handle = await identity.requester_handle(session, topic)
+        if not handle:
+            return None
+        return await get_github_user_token_for_handle(session, handle)
     except Exception:  # noqa: BLE001
         logger.info("no requester token for topic %s", topic_id, exc_info=True)
         return None
@@ -208,13 +217,11 @@ async def _pr_text(
     card = await AcceptCardRepository(session).get(card_id)
     if topic is None:
         return branch, f"Cheese-Topic: {topic_id}"
-    author = None
-    if topic.created_by:
-        author = await identity.resolve_for_handle(session, topic.created_by)
+    who = await identity.attribution(session, topic)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.
-    return pr_text.change_subject(card, topic), pr_text.pr_body(topic, "", card, author)
+    return pr_text.change_subject(card, topic), pr_text.pr_body(topic, "", card, who)
 
 
 async def record_pr(

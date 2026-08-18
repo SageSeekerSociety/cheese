@@ -171,15 +171,19 @@ class TopicMemberService:
         owner_handle: str | None,
         member_handles: list[str],
     ) -> None:
-        """Seed a split-off sub-topic's roster: the resolved splitter becomes
-        owner, and the parent topic's members (typically its human roster) join
-        as plain members — otherwise a 分身-initiated split (owner_handle
-        "cheese", skipped by seed()) leaves every human silently off the new
-        topic's roster, the bug this exists to close. Role nuance (owner/admin
-        on the parent) is deliberately NOT preserved: importing everyone as a
-        plain member is simple and correct enough — the splitter can promote
-        people afterward if the child needs its own owner/admin split. Idempotent,
-        same as seed()."""
+        """Seed a split-off sub-topic's roster: whoever the caller resolved as the
+        person driving this work becomes owner (`TopicService.split_to_subtopic`
+        walks that ladder — the splitter, else the human whose turn the split came
+        out of, else inherited), and the parent topic's members (typically its
+        human roster) join as plain members — otherwise a 分身-initiated split
+        (owner_handle "cheese", skipped by seed()) leaves every human silently off
+        the new topic's roster, the bug this exists to close. The parent's own
+        owner arrives through that member list, so a room that changed hands keeps
+        the original requester on the roster instead of dropping them. Role nuance
+        (owner/admin on the parent) is deliberately NOT preserved: importing
+        everyone as a plain member is simple and correct enough — the owner can
+        promote people afterward if the child needs its own owner/admin split.
+        Idempotent, same as seed()."""
         await self._seed_with_members(
             topic_id, owner_handle=owner_handle, member_handles=member_handles
         )
@@ -219,6 +223,42 @@ class TopicMemberService:
             await self._repo.list_for_topic(topic_id),
             await self._repo.count_for_topic(topic_id),
         )
+
+    async def owner_of(self, topic_id: uuid.UUID) -> str | None:
+        """The human this room belongs to — its ``owner`` member, or None.
+
+        The roster is the ONLY place that answer is reliably recorded.
+        ``Topic.created_by`` is not: a 分身 splitting a sub-topic creates it
+        under its own ``cheese-<hex12>`` handle, so on every split topic
+        ``created_by`` names a robot. Seeding already walked the ladder that
+        finds the real human — :meth:`seed`/:meth:`seed_split` skip 芝士 as owner,
+        and ``TopicService.split_to_subtopic`` falls back to the person driving
+        the turn the split came out of, then the parent room's owner, then the
+        project's — so this just reads what that ladder wrote.
+
+        Cheap and unauthorized on purpose: attribution paths (who a PR and its
+        commits belong to) call it on every merge, and they are read-only.
+        """
+        member = next(
+            (
+                m
+                for m in await self._repo.list_for_topic(topic_id)
+                if m.role == TopicRole.owner
+            ),
+            None,
+        )
+        return member.member_handle if member is not None else None
+
+    async def topic_ids_for_member(
+        self, topic_ids: list[uuid.UUID], member_handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these topics this handle is in the roster of, in ONE query.
+
+        A read, so it carries no roster-management authorization: the caller
+        (与我的相关性 on the topic list) is asking about ITSELF, and every
+        answer it gets back is about topics it was already allowed to list.
+        """
+        return await self._repo.topic_ids_for_member(topic_ids, member_handle)
 
     async def agent_handles(self, topic_id: uuid.UUID) -> list[str]:
         """Which of this topic's members are agents, in roster order.

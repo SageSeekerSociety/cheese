@@ -396,7 +396,7 @@ onMounted(load)
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
-  /* on-primary，和 ChatPanel / WorkspaceView 的 .summon-chip--on 一致 —— 琥珀填充上的
+  /* on-primary，和 ChatPanel / TopicView 的 .summon-chip--on 一致 —— 琥珀填充上的
      字全站只有这一种做法。浅色下 Vuetify 对 #F57F17 推出来的就是 #fff，所以这里仍然是
      白字，2.65:1，低于 AA 的 4.5:1。这是已知豁免，不是漏掉的 bug：2026-08-16 项目负责
      人拍板「保持白字」—— 改成深墨确实能到 5.84:1，但序号上的字会从白变深、观感肉眼可

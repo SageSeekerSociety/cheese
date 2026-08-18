@@ -20,6 +20,10 @@ body,
 :root {
   --app-page-header-height: 48px;
   --app-page-header-bg-opacity: 0;
+  /* 页头底线。屏幕上侧栏顶栏和内容区页头是并排的，两条底线接成一条横贯全宽的
+     线，所以颜色必须由一处给：三处页头各写各的时候它们已经分叉了——话题头用的
+     是 --line，和另外两处的 Vuetify 边框 token 不是一个灰度，接缝处看得出断层。 */
+  --app-page-header-rule: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
 /* 侧栏顶栏 —— 侧边栏最上面那条（空间名 / 用户名 / “首页”）。
@@ -39,9 +43,7 @@ body,
      推到两端 —— 不是可有可无的默认值。 */
   justify-content: space-between;
   gap: 8px;
-  border-block-end-width: 1px;
-  border-block-end-style: solid;
-  border-block-end-color: rgba(var(--v-border-color), var(--v-border-opacity));
+  border-block-end: var(--app-page-header-rule);
   position: sticky;
   top: 0;
   z-index: 10;

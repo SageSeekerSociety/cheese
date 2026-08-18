@@ -14,9 +14,7 @@ BINARY = bytes(range(256)) * 8
 
 
 def _mkproject(client) -> uuid.UUID:
-    resp = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
-    ).json()
+    resp = client.post("/projects", json={"name": "P", "owner_handle": "alice"}).json()
     return uuid.UUID(resp["data"]["id"])
 
 
@@ -38,7 +36,7 @@ def test_reading_a_binary_file_returns_no_text_to_edit(client):
     _put(pid, tid, "app.bin", BINARY)
 
     body = client.get(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"path": "app.bin", "topic": str(tid)},
         headers=_owner(client),
     ).json()["data"]
@@ -54,7 +52,7 @@ def test_saving_over_a_binary_file_is_rejected_and_the_bytes_survive(client):
     before = hashlib.md5(BINARY).hexdigest()
 
     resp = client.put(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"topic": str(tid)},
         json={"path": "app.bin", "content": "文本"},
         headers=_owner(client),
@@ -71,7 +69,7 @@ def test_a_save_that_lost_the_race_answers_409_and_changes_nothing(client):
     headers = _owner(client)
 
     read = client.get(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"path": "note.txt", "topic": str(tid)},
         headers=headers,
     ).json()["data"]
@@ -80,7 +78,7 @@ def test_a_save_that_lost_the_race_answers_409_and_changes_nothing(client):
     _put(pid, tid, "note.txt", "芝士这一轮写的\n".encode())
 
     resp = client.put(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"topic": str(tid)},
         json={
             "path": "note.txt",
@@ -101,13 +99,13 @@ def test_a_save_carrying_the_current_version_goes_through(client):
     headers = _owner(client)
 
     read = client.get(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"path": "note.txt", "topic": str(tid)},
         headers=headers,
     ).json()["data"]
 
     resp = client.put(
-        f"/api/projects/{pid}/file",
+        f"/projects/{pid}/file",
         params={"topic": str(tid)},
         json={"path": "note.txt", "content": "人写的\n", "version": read["version"]},
         headers=headers,
@@ -126,7 +124,7 @@ def test_a_dangling_symlink_does_not_500_the_file_listing(client):
     (ws.topic_worktree(pid, tid) / "dangling").symlink_to("/nonexistent/target")
 
     resp = client.get(
-        f"/api/projects/{pid}/files",
+        f"/projects/{pid}/files",
         params={"topic": str(tid)},
         headers=_owner(client),
     )

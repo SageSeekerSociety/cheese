@@ -12,6 +12,14 @@ happens → 采信":
 Stage one is PURELY ADDITIVE: `TopicService.return_conclusion` keeps all
 three of its original side effects (message into the parent, a section appended
 to the parent's living doc, a change-alert) and merely opens a card beside them.
+
+采信即归档有**一个**例外，and it is not a softening of 默认采信: a sub-topic
+holding an undecided ACCEPT card (验收卡) is not archived yet — archiving would
+revoke that card (`review/archive.py`), and the platform tells 分身 to both
+`conclude` early AND file an accept card when done, so 默认采信 would routinely
+destroy a card its reviewer never got to see. The conclusion still settles and
+still flows to the parent; only the archive is owed, and
+`sweep_deferred_archives` pays it back the moment nobody is waiting on a card.
 """
 
 import uuid
@@ -26,6 +34,9 @@ from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conclusion.models import (
+    ARCHIVE_DEFERRED,
+    ARCHIVE_DEFERRED_DONE,
+    ARCHIVE_REFILE_GRACE_MINUTES,
     DIGEST_TIMEOUT_MINUTES,
     HARD_MAX_RETURNS,
     MAX_RETURNS,
@@ -125,7 +136,11 @@ class ConclusionCardService:
         return card
 
     async def accept(self, card: ConclusionCard, *, by: str) -> ConclusionCard:
-        """采信 —— the default. Settles the card and archives the sub-topic."""
+        """采信 —— the default. Settles the card and archives the sub-topic.
+
+        归档是这里唯一可能欠下的动作：子话题还挂着一张等人的验收卡时，采信照做、
+        回流照做，只把归档推迟到卡有结果之后（`_archive_subtopic`）。
+        """
         self._require_open(card)
         await self._settle(
             card, status=ConclusionStatus.accepted, by=by, reason="", announce=True
@@ -271,17 +286,127 @@ class ConclusionCardService:
         return out
 
     async def _archive_subtopic(self, card: ConclusionCard, *, by: str) -> None:
-        """采信即归档。Import is local: TopicService opens cards, so a module-level
-        import here would be circular."""
-        from app.domain.topic.services import TopicService
+        """采信即归档 —— 除非子话题还挂着一张等人的验收卡，那就先欠着。
 
+        为什么要欠着：归档会把非终态的验收卡一并收敛掉
+        (`review/archive.py`)，而默认采信是**平台自己**发起的（父话题那一轮
+        结束 / 30 分钟超时），于是"分身做完 → conclude → 递卡"这个平台两头都在
+        鼓励的组合，会在验收人还没看见卡的时候把卡作废掉，工作也就断在那里
+        （归档话题递不出新卡）。真正错的不是归档收卡那条策略，而是这里：
+        采信不该在还有人要拍板的时候动手归档。
+        """
         sub = await self._topics.get(card.topic_id)
         if sub is None or sub.status == TopicStatus.archived:
             return
-        service = TopicService(self._session)
+        if await self._somebody_is_still_deciding(sub.id):
+            await self._defer_archive(card, sub)
+            return
+        await self._archive_now(sub, by=by)
+
+    async def _archive_now(self, sub: Topic, *, by: str) -> None:
+        """Import is local: TopicService opens cards, so a module-level import
+        here would be circular."""
+        from app.domain.topic.services import TopicService
+
         # 顺序: 先结算下级卡, 再归档 —— 反过来孙子的卡会随级联一起冻死。
         await self.settle_descendants_before_archive(sub.id, by=by)
-        await service.archive(sub.id, by=by)
+        await TopicService(self._session).archive(sub.id, by=by)
+
+    async def _somebody_is_still_deciding(self, topic_id: uuid.UUID) -> bool:
+        """这个子话题、连同归档会一起带走的后代，还有没有一张卡等着人决议。
+
+        后代一起算：`TopicService.archive` 是级联的，孙子话题的卡会在同一次归档
+        里被收敛掉，所以孙子那张等人的卡同样构成"先别归档"的理由。判据本身问的是
+        验收卡那个领域（`AcceptService.anybody_still_waiting`）——哪些状态算"还
+        等着"是它的知识，这边自己去数状态迟早会跟归档收敛的那张表走散。
+        """
+        from app.domain.review.services import AcceptService  # 局部 import：避免成环
+
+        scope = await self._archive_scope(topic_id)
+        return await AcceptService(self._session).anybody_still_waiting(scope)
+
+    async def _archive_scope(self, topic_id: uuid.UUID) -> list[uuid.UUID]:
+        """归档这个话题会连带走的全部话题。"""
+        return [topic_id, *await self._descendant_ids(topic_id)]
+
+    async def _defer_archive(self, card: ConclusionCard, sub: Topic) -> None:
+        """记下"归档欠着"，并在子话题里说明为什么它还活着。
+
+        结论本身照常结算、照常回流——父话题读到的东西一个字都没少，欠下的只有
+        归档这一个动作。
+        """
+        if card.settle_reason == ARCHIVE_DEFERRED:  # 幂等：别重复播报
+            return
+        card.settle_reason = ARCHIVE_DEFERRED
+        await self._session.flush()
+        await self._blocks.add(
+            project_id=card.project_id,
+            topic_id=sub.id,
+            author=SYSTEM_ACTOR,
+            author_type=AuthorType.system,
+            content=(
+                "⏸ 结论已被父话题采信，但这个话题**暂不归档**——它还挂着一张"
+                "等人拍板的验收卡。归档会等验收卡有结果之后再落，"
+                "在那之前卡照常有效，验收人照常能采纳。"
+            ),
+            kind=BlockKind.event,
+            meta={"platform": True, "conclusion_card": str(card.id)},
+        )
+
+    async def sweep_deferred_archives(
+        self, *, now: datetime | None = None
+    ) -> list[uuid.UUID]:
+        """把欠下的归档补上 —— "不留僵尸子话题"那一条就落在这里。
+
+        推迟不是取消。一张被推迟的卡带着 `ARCHIVE_DEFERRED` 这个哨兵，扫描每轮
+        都来看一眼它欠的归档能不能落：
+
+        - 验收卡被**采纳** → 采纳即归档，话题自己就归档了，这里只把哨兵消掉；
+        - 验收卡被**驳回/作废**（或闸门判红）→ 话题还活着，给一个
+          `ARCHIVE_REFILE_GRACE_MINUTES` 的窗口让它改完重新递卡；窗口内递出新卡
+          就重新受保护，窗口过完还没有新卡，归档在这里落下；
+        - 卡还在**等人** → 什么都不做，这正是本次修复要保住的状态。
+
+        所以一个被推迟的子话题只可能停在两处：手上有一张活卡（有人正欠它一个
+        决定），或者还在重新递卡的宽限里。两者都是有界的，没有第三种停法。
+        """
+        moment = now or datetime.now(UTC)
+        archived: list[uuid.UUID] = []
+        for card in await self._repo.list_archive_deferred():
+            if await self._discharge_deferred_archive(card, now=moment):
+                archived.append(card.topic_id)
+        return archived
+
+    async def _discharge_deferred_archive(
+        self, card: ConclusionCard, *, now: datetime
+    ) -> bool:
+        """一张卡的归档待办能不能结清。True = 这一轮把话题归档了。"""
+        sub = await self._topics.get(card.topic_id)
+        if sub is None or sub.status != TopicStatus.active:
+            # 多半是验收卡被采纳了（采纳即归档），待办自己消解了。消掉哨兵，
+            # 这张卡从此退出扫描——包括人后来手动取消归档的情况：那是人的决定，
+            # 平台不该拿一条早就结算完的结论把它再关一次。
+            await self._settle_deferral(card)
+            return False
+        from app.domain.review.services import AcceptService  # 局部 import：避免成环
+
+        accepts = AcceptService(self._session)
+        scope = await self._archive_scope(sub.id)
+        if await accepts.anybody_still_waiting(scope):
+            return False
+        decided_at = await accepts.latest_decision_at(scope)
+        if decided_at is not None and decided_at > now - timedelta(
+            minutes=ARCHIVE_REFILE_GRACE_MINUTES
+        ):
+            return False
+        await self._settle_deferral(card)
+        by = card.settled_by or SYSTEM_ACTOR
+        await self._archive_now(sub, by=by)
+        return True
+
+    async def _settle_deferral(self, card: ConclusionCard) -> None:
+        card.settle_reason = ARCHIVE_DEFERRED_DONE
+        await self._session.flush()
 
     # ---- 内部 ---------------------------------------------------------
 

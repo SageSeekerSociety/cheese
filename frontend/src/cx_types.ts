@@ -49,9 +49,16 @@ export interface Topic {
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
-  // 本轮是否在跑（TurnRunner, 内存态）——和 status/归档完全分开：一个话题可以
-  // 是 active 且空闲，也可以是 active 且正在跑一轮。只有 list/get 话题时才带。
+  // In-memory session activity, independent of topic status and archival state.
+  // Present only on topic list/get responses.
   running?: boolean
+  // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
+  // 四者取一。只有 list/get 话题时才带。
+  i_participate?: boolean
+  // 这个话题在等我做事：有点名给我的待办验收卡，或有 @我 的未读。为真时
+  // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
+  // 只有 list/get 话题时才带。
+  awaits_me?: boolean
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -382,6 +389,26 @@ export interface PreviewInfo {
   // 应用没在跑" — without it both looked like an empty white frame.
   url?: string | null
   container_up?: boolean
+  // kind=app: whether this topic's runtime can host a live app AT ALL. A topic
+  // running on someone's own machine has no container here to publish the port,
+  // so `container_up` is false for a machine that is perfectly alive — telling
+  // those users to summon 芝士 again waits on a box that is never coming.
+  supported?: boolean
+  // Which artifact this is. Distinguishes "芝士 pointed at something new" from
+  // "the same preview, re-fetched" — re-pointing at the same path is new too.
+  artifact_id?: string
+}
+
+// GET /projects/{id}/topics/{id}/work-summary: what work a topic is holding,
+// answered without opening any of it. The 工作面板 offers a tab only where the
+// thing it shows exists, and 改动 carries the count — both are questions about
+// tabs that are closed.
+export interface TopicWorkSummary {
+  // Paths this topic's branch changes vs the base — the diff's table of contents.
+  changed_files: string[]
+  // The topic has run at least one turn, so there is a 现场 to open. A room
+  // where only people talked has none.
+  has_run: boolean
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).
@@ -575,33 +602,6 @@ export interface ProjectCredits {
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
 
-// GET /api/market/tasks — a published Task Template as a market listing.
-export interface MarketTask {
-  id: string
-  space_id: string
-  space_name: string
-  name: string
-  description: string
-  resource_pack: Record<string, unknown>
-  conditions: Array<Record<string, unknown>>
-  default_role: string | null
-  created_at: string
-}
-
-// An 应征 (team applies with a Project). status: pending → accepted | declined.
-export interface TaskApplication {
-  id: string
-  template_id: string
-  project_id: string
-  project_name: string
-  pitch: string
-  status: 'pending' | 'accepted' | 'declined'
-  decided_by: string | null
-  decided_at: string | null
-  task_id: string | null
-  created_at: string
-}
-
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
 export interface ExecProfileOption {
   name: string
@@ -679,13 +679,23 @@ export interface TopicComputeVisibility {
   notice: string
 }
 
+export interface TopicComputeDevice {
+  device_id: string
+  name: string
+  online: boolean
+}
+
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
 // `current` is effective (topic → project sticky → team default → platform);
 // `locked` freezes the picker once the topic has run (session started);
 // `inherited` = still following project/team/platform defaults (no own choice yet);
-// `sticky` = project sticky if present, otherwise the team/platform default.
+// `sticky` = project sticky if present, otherwise the team/platform default;
+// `device_id` is the self-hosted machine pinned to this topic, or null while
+// 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
   current: string
+  device_id: string | null
+  devices: TopicComputeDevice[]
   locked: boolean
   inherited: boolean
   sticky: string

@@ -36,7 +36,7 @@ def test_the_filter_is_actually_installed_by_the_real_setup():
         pathname=__file__,
         lineno=1,
         msg='%s - "WebSocket %s"',
-        args=("1.2.3.4:5", "/api/topics/x/chat?token=LIVE-SESSION-TOKEN"),
+        args=("1.2.3.4:5", "/topics/x/chat?token=LIVE-SESSION-TOKEN"),
         exc_info=None,
     )
     for h in handlers:
@@ -166,14 +166,14 @@ def test_the_request_line_names_the_user_and_forwarded_client(client, caplog):
 def test_an_anonymous_request_line_has_no_user_field(client, caplog):
     """No auth → no attribution: the field is absent, not user=0/None."""
     with caplog.at_level(logging.INFO, logger="http"):
-        client.get("/api/version")
+        client.get("/version")
 
     req_lines = [
         rec.msg
         for rec in caplog.records
         if isinstance(rec.msg, dict) and rec.msg.get("event") == "req"
     ]
-    line = next(ln for ln in req_lines if ln.get("path") == "/api/version")
+    line = next(ln for ln in req_lines if ln.get("path") == "/version")
     assert "user" not in line
 
 

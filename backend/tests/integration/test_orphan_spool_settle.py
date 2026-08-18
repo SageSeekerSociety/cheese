@@ -17,7 +17,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import runtime as rt
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent.service import AgentResult, AgentService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -160,7 +160,8 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
 ):
     """The full chain of the incident fix: orphan turn + a Stop in the spool →
     the sweep attaches (no prompt reaches the agent), and the settle it
-    schedules finishes the turn on its own."""
+    schedules finishes the turn on its own — saying nothing, because from the
+    room's side nothing broke."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     factory = client.test_factory
@@ -187,6 +188,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
                 "is_resume": False,
                 "author": "u",
                 "content": "把测试跑绿",
+                "resendable": True,
             }
         }
     )
@@ -200,7 +202,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
         },
     )
 
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     assert await runner.resume_orphans(svc) == 0  # attach — nothing re-prompted
 
     async def _final_landed() -> bool:
@@ -216,12 +218,18 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
+    # Nothing is announced. #316 added a verdict here because a restart left the
+    # room looking dead — the backend half died and the session's output only
+    # resurfaced later out of the spool. Retiring the turn (#508) removed that
+    # break: the subscription lives with the screen and reattaches, so 芝士's
+    # output keeps landing. The platform attached, the settle landed the Stop,
+    # and there is no anomaly left for a person to act on.
     verdicts = [
         b
         for b in rows
         if b.author_type == AuthorType.system and "部署中断" in (b.content or "")
     ]
-    assert len(verdicts) == 1  # the room was told, honestly and once
+    assert verdicts == []
     assert rt._load_inflight() == {}
 
 
@@ -262,20 +270,21 @@ async def test_zero_evidence_orphan_resends_the_original_text(
                 "is_resume": False,
                 "author": "u",
                 "content": "修一下登录页",
+                "resendable": True,
             }
         }
     )
     # Collapse the 3s re-send delay, keep the real path.
-    real_resend = TurnRunner._schedule_resend
+    real_resend = AgentWorkRunner._schedule_resend
     monkeypatch.setattr(
-        TurnRunner,
+        AgentWorkRunner,
         "_schedule_resend",
         lambda self, chat, topic_id, after_s, content, **kw: real_resend(
             self, chat, topic_id, 0.0, content, **kw
         ),
     )
 
-    runner = TurnRunner(InProcessBroker())
+    runner = AgentWorkRunner(InProcessBroker())
     assert await runner.resume_orphans(svc) == 1
     for _ in range(300):
         if agent.prompts:

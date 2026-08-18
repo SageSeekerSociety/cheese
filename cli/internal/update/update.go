@@ -83,7 +83,25 @@ func Fetch(ctx context.Context, base string) (string, error) {
 
 	tmp, err := os.CreateTemp(destDir, ".cheese-update-*")
 	if err != nil {
-		return "", fmt.Errorf("update: temp file: %w", err)
+		// This is where a connector installed into a directory it cannot write
+		// dies — every time, forever, and until now with an error that named
+		// neither the directory nor the reason. The download lands in destDir
+		// deliberately (so Replace's rename is atomic), so an unwritable destDir
+		// means self-update is structurally impossible, not merely failing today.
+		//
+		// Seen in production: the binary in /usr/local/bin (root-owned dir), the
+		// service running as an ordinary user. The platform saw a healthy machine
+		// on a two-day-old build while a deploy "succeeded".
+		if os.IsPermission(err) {
+			return "", fmt.Errorf(
+				"update: cannot write to %s, so this install can never update itself "+
+					"(the new binary must land in the same directory to be swapped in "+
+					"atomically). Reinstall under a directory this user owns — "+
+					"`curl -fsSL <origin>/connector/install.sh | sh` puts it in "+
+					"~/.local/bin — then reinstall the service so its unit points there: %w",
+				destDir, err)
+		}
+		return "", fmt.Errorf("update: temp file in %s: %w", destDir, err)
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() { tmp.Close(); os.Remove(tmpPath) }

@@ -83,3 +83,20 @@ def is_reserved_username(username: str) -> bool:
         # the two cannot drift apart into "reserved but renderable as a person".
         or looks_like_agent_handle(folded)
     )
+
+
+def names_a_person(handle: str | None) -> bool:
+    """Whether ``handle`` names a HUMAN, as opposed to nobody or the platform.
+
+    Attribution needs this: a handle that reaches it may be a real person, the
+    ``anonymous`` sentinel, ``system`` (every platform-initiated turn — gate
+    verdicts, scheduled wake-ups, ``cheese await`` reports), or 芝士 / one of her
+    per-topic 分身. Only the first may become a topic's owner or be credited on
+    a commit; the rest must fall through to whatever the caller's fallback is.
+
+    Defined as the complement of :func:`is_reserved_username` on purpose — those
+    reserved strings are reserved *precisely because* they do not name a person,
+    so deriving one from the other keeps a new sentinel from being handled in one
+    place and forgotten in the other.
+    """
+    return bool(handle and handle.strip() and not is_reserved_username(handle))

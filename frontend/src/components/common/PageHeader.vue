@@ -160,7 +160,7 @@ const onScroll = (e: Event) => {
   // 高度既然钉死，纵向 padding 就不起作用（内容在 48px 内居中），只留横向的。
   padding: 0 16px;
   gap: 8px;
-  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+  border-bottom: var(--app-page-header-rule);
   background: rgba(var(--v-theme-surface), var(--app-page-header-bg-opacity, 0));
   backdrop-filter: blur(8px);
   position: sticky;

@@ -12,9 +12,11 @@ class AcceptCardCreate(BaseModel):
     reviewer_handle: str = Field(min_length=1, max_length=64)
     routing_reason: str = ""
     # What the change IS, in Conventional Commits form — becomes the PR title
-    # and the squash commit subject. Optional so a discussion-only card (and
-    # every pre-existing client) still files; review/services.py falls back to
-    # the topic title when it is absent.
+    # and the squash commit subject. REQUIRED since 2026-08-17, but enforced in
+    # review/services.py rather than here: a Pydantic-required field answers
+    # 422 with pydantic's own wording, and the thing that has to reach the
+    # filer is a sentence teaching them how to write one. Typed optional only
+    # so that message — not `Field required` — is what comes back.
     change_subject: str | None = Field(default=None, max_length=255)
     change_body: str | None = None
 

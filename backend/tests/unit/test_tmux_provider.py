@@ -21,7 +21,7 @@ from app.domain.agent.service import (
     AgentSessionInfo,
     AgentToolUse,
 )
-from app.domain.agent.tmux_provider import TmuxHooksProvider, pane_ready
+from app.domain.agent.tmux_provider import TmuxHooksProvider, TmuxScreen, pane_ready
 
 
 def test_pane_ready_detects_prompt_box():
@@ -127,8 +127,34 @@ def _fast_settle(monkeypatch):
     monkeypatch.setattr(tp, "_SETTLE_POLL_S", 0.01)
 
 
+# A box hosts a whole room, so a screen is (container, session) — every helper
+# below needs one, and the session name is what tells two topics apart inside
+# the same box.
+_BOX = TmuxScreen("topic-box", "cheese-ab12cd34")
+
+
+def _aio(value):
+    """Wrap a value as an awaitable, for monkeypatching an async method."""
+
+    async def _coro(*_args, **_kwargs):
+        return value
+
+    return _coro()
+
+
+def _topic_env(**overrides) -> dict[str, str]:
+    """The minimum per-session env `_ensure_session` reads off its argument."""
+    return {
+        "CLAUDE_CONFIG_DIR": "/sessions/ab12cd34",
+        "CHEESE_WORKDIR": "/topics/topic_ab12cd34",
+        "CHEESE_PORT_SLOT": "0",
+        "CHEESE_TOPIC": str(uuid.uuid4()),
+        **overrides,
+    }
+
+
 def _wire(monkeypatch, provider, screen: _FakeScreenControl) -> None:
-    async def fake_control(_name: str):
+    async def fake_control(_screen):
         return screen
 
     async def fake_docker(*args: str, stdin: bytes | None = None):
@@ -152,7 +178,7 @@ async def test_send_prompt_resends_a_swallowed_enter(_fast_settle, monkeypatch):
     screen = _FakeScreenControl(swallow_enters=1)
     _wire(monkeypatch, provider, screen)
 
-    await provider._send_prompt("box", "帮我看下这个问题")
+    await provider._send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.pastes == 1, "re-pasting duplicates the prompt"
     assert screen.enters == 2, "the swallowed Enter was never re-sent"
@@ -173,7 +199,7 @@ async def test_send_prompt_fails_loud_when_the_paste_never_lands(
     _wire(monkeypatch, provider, screen)
 
     with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
-        await provider._send_prompt("box", "帮我看下这个问题")
+        await provider._send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.pastes == 1 + tp._MAX_REPASTES
     assert screen.enters == 0, "an Enter was fired at a body-less composer"
@@ -197,7 +223,7 @@ async def test_send_prompt_clears_a_poisoned_composer_before_pasting(
     _wire(monkeypatch, provider, screen)
 
     with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
-        await provider._send_prompt("box", "帮我看下这个问题")
+        await provider._send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.kills == 1 + tp._MAX_REPASTES, "no Ctrl+U before each paste"
     assert screen.enters == 0, "the old garbage widget was verified as this paste"
@@ -265,7 +291,11 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
 
     # No transcript → fresh session (no --resume).
     await provider._ensure_session(
-        "box", None, resume_session_id=sid, session_dir=str(tmp_path)
+        _BOX,
+        None,
+        session_env=_topic_env(),
+        resume_session_id=sid,
+        session_dir=str(tmp_path),
     )
     new_session = next(c for c in calls if "new-session" in c)
     assert "--resume" not in " ".join(new_session)
@@ -277,7 +307,11 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
     f.write_text("{}", encoding="utf-8")
     calls.clear()
     await provider._ensure_session(
-        "box", None, resume_session_id=sid, session_dir=str(tmp_path)
+        _BOX,
+        None,
+        session_env=_topic_env(),
+        resume_session_id=sid,
+        session_dir=str(tmp_path),
     )
     new_session = next(c for c in calls if "new-session" in c)
     assert f"--resume {sid}" in " ".join(new_session)
@@ -296,7 +330,9 @@ async def test_ensure_session_denies_the_unanswerable_ask_tool(monkeypatch, tmp_
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
-    await provider._ensure_session("box", None, session_dir=str(tmp_path))
+    await provider._ensure_session(
+        _BOX, None, session_env=_topic_env(), session_dir=str(tmp_path)
+    )
 
     new_session = " ".join(next(c for c in calls if "new-session" in c))
     assert "--disallowedTools AskUserQuestion" in new_session
@@ -326,7 +362,11 @@ def _stub_env(monkeypatch, tmp_path):
     monkeypatch.setattr(tp, "_docker", fake_docker)
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
     monkeypatch.setattr(tp.ws, "session_dir", lambda p, t: tmp_path / "session")
+    monkeypatch.setattr(tp.ws, "sessions_root", lambda p: tmp_path)
     monkeypatch.setattr(tp.ws, "topic_worktree", lambda p, t: tmp_path / "work")
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, project_id, topic_id: _aio(topic_id)
+    )
     (tmp_path / "session").mkdir()
     (tmp_path / "work").mkdir()
     return sent
@@ -343,7 +383,7 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
 
     # The moment the prompt is injected, deliver the hooks the container would
     # POST back (in the real system they arrive over /sandbox/hooks).
-    async def fake_send(name: str, prompt: str) -> None:
+    async def fake_send(screen, prompt: str) -> None:
         _stub_env["prompt"] = prompt
         for hook in [
             {"hook_event_name": "SessionStart", "session_id": "sess-1"},
@@ -381,8 +421,10 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
     assert isinstance(events[3], AgentResult) and events[3].text == "搞定"
     assert events[3].is_error is False
     assert _stub_env["prompt"] == "帮我看下"
-    # The queue is released after the turn (next push finds no listener).
-    assert router.push(topic_key, {"x": 1}) is False
+    # Stop closes only the run marker; the screen subscription stays live.
+    assert router.push(topic_key, {"x": 1}) is True
+    await provider.drop_subscription(topic_id)
+    assert router.push(topic_key, {"x": 2}) is False
 
 
 @pytest.mark.anyio
@@ -491,7 +533,7 @@ async def test_activity_monitor_touches_tracker_on_pane_change(monkeypatch):
     monkeypatch.setattr(tp, "_docker", fake_docker)
     tracker = ActivityTracker(last_at=0.0)
 
-    task = await provider._start_activity_monitor("box", tracker)
+    task = await provider._start_activity_monitor(_BOX, tracker)
     assert task is not None
     try:
         await asyncio.sleep(0.08)
@@ -517,10 +559,9 @@ async def test_activity_status_reports_idle_and_suspect_state(monkeypatch):
     trips, how long it's been suspected."""
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
     topic_id = uuid.uuid4()
-    name = tp._tmux_container_name(topic_id)
     loop = asyncio.get_event_loop()
     tracker = ActivityTracker(last_at=loop.time())
-    provider._activity[name] = tracker
+    provider._activity[tp._screen_for(topic_id)] = tracker
 
     status = provider.activity_status(topic_id)
     assert status is not None
@@ -596,12 +637,11 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
 
     monkeypatch.setattr(settings, "subscription_enabled", True)
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
-    env = provider._session_env(
+    env = provider._topic_env(
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
-        session_dir="/s",
-        worktree="/w",
         token="hook-token",
+        port_slot=0,
         env=None,
         memory_scope=None,
         owner=None,
@@ -613,3 +653,406 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
     remaining = claims["exp"] - int(time.time())
     assert remaining > 7 * 24 * 3600  # rules out the 3600s per-turn default
     assert SESSION_TOKEN_TTL_S - 300 < remaining <= SESSION_TOKEN_TTL_S + 5
+
+
+@pytest.mark.anyio
+async def test_drop_control_also_drops_the_container_subscription():
+    router = HookRouter()
+    provider = TmuxHooksProvider(image="img:test", router=router)
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    provider._live[topic_id] = _BOX
+
+    await provider.drop_control(_BOX)
+
+    assert subscription.consumer_task is not None
+    assert subscription.consumer_task.done()
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+
+
+@pytest.mark.anyio
+async def test_restart_recovery_subscribes_running_topic_containers(monkeypatch):
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_docker(*args: str, stdin=None):
+        calls.append(args)
+        if args and args[0] == "ps":
+            return 0, "topic-box\n", ""
+        if args and args[0] == "inspect":
+            return 0, f"CHEESE_PROJECT={project_id}\n", ""
+        if "list-sessions" in args:
+            return 0, f"cheese-{topic_id.hex[:8]}\n", ""
+        if "show-environment" in args:
+            return 0, f"CHEESE_TOPIC={topic_id}\n", ""
+        return 1, "", "unexpected"
+
+    monkeypatch.setattr(tp, "_docker", fake_docker)
+    router = HookRouter()
+    provider = TmuxHooksProvider(image="img:test", router=router)
+
+    recovered = await provider.recover_subscriptions()
+
+    assert len(recovered) == 1
+    assert recovered[0].project_id == project_id
+    assert recovered[0].topic_id == topic_id
+    assert not recovered[0].ready.is_set()
+    assert provider._live[topic_id] == tp.TmuxScreen(
+        "topic-box", f"cheese-{topic_id.hex[:8]}"
+    )
+    assert calls[0][0] == "ps"
+
+    recovered[0].ready.set()
+    router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
+    await recovered[0].sink.queue.join()
+    await provider.drop_subscription(topic_id)
+
+
+# --- one box per room (容器按房间分配) ---------------------------------------
+#
+# The invariant these guard: two topics of one room share a CONTAINER and share
+# NOTHING that says which topic they are. The second half is the dangerous one —
+# a tmux session seeds its environment from the server's frozen global, so
+# anything not written with `-e` silently makes the second topic act as the
+# first (measured on the device backend, see device_launch.py).
+
+
+class _FakeBox:
+    """A docker+tmux stand-in that remembers what each session was created with,
+    so a test can ask "what is topic B's claude actually running on?"."""
+
+    def __init__(self) -> None:
+        self.created: list[list[str]] = []  # `docker run` argv per container
+        self.sessions: dict[tuple[str, str], dict[str, str]] = {}
+        self.containers: set[str] = set()
+        self.mounts: dict[str, list[str]] = {}
+
+    async def docker(self, *args: str, stdin: bytes | None = None):
+        args = tuple(args)
+        if args[0] == "run":
+            name = args[args.index("--name") + 1]
+            self.containers.add(name)
+            self.created.append(list(args))
+            self.mounts[name] = [
+                args[i + 1].replace(":", "->", 1).removesuffix(":ro")
+                for i, token in enumerate(args)
+                if token == "-v"
+            ]
+            return 0, "", ""
+        if args[0] == "rm":
+            # Destroying the box destroys every session in it. A fake that kept
+            # them would answer `has-session` yes on a box that was just
+            # recreated, sending the caller down the deaf-session path and
+            # announcing a spurious "token" rebuild on top of the real one.
+            name = args[-1]
+            self.containers.discard(name)
+            self.mounts.pop(name, None)
+            for key in [k for k in self.sessions if k[0] == name]:
+                del self.sessions[key]
+            return 0, "", ""
+        if args[0] == "inspect" and "{{.Config.Image}}" in args:
+            return (0, "img:test", "") if args[-1] in self.containers else (1, "", "")
+        if args[0] == "inspect" and "{{.State.Running}}" in args:
+            return 0, "true", ""
+        if args[0] == "inspect" and ".Mounts" in " ".join(args):
+            # Answer the CLI-mount freshness probe from what this box was
+            # ACTUALLY created with — a fake that always looks stale would
+            # rebuild the box on every turn and quietly defeat the point of
+            # every assertion below.
+            return 0, "\n".join(self.mounts.get(args[-1], [])), ""
+        if args[0] == "inspect":
+            return 0, "", ""
+        if args[0] != "exec":
+            return 0, "", ""
+        container = args[2] if args[1] == "-d" else args[1]
+        rest = list(args[3:] if args[1] == "-d" else args[2:])
+        if "has-session" in rest:
+            session = rest[rest.index("-t") + 1]
+            return (0, "", "") if (container, session) in self.sessions else (1, "", "")
+        if "new-session" in rest:
+            session = rest[rest.index("-s") + 1]
+            env = {}
+            for i, token in enumerate(rest):
+                if token == "-e":
+                    key, _, value = rest[i + 1].partition("=")
+                    env[key] = value
+            self.sessions[(container, session)] = env
+            return 0, "", ""
+        if "list-sessions" in rest:
+            live = [s for c, s in self.sessions if c == container]
+            return 0, "\n".join(live) + "\n", ""
+        if "show-environment" in rest:
+            session = rest[rest.index("-t") + 1]
+            key = rest[-1]
+            value = self.sessions.get((container, session), {}).get(key)
+            return (
+                (0, f"{key}={value}\n", "") if value is not None else (0, "-" + key, "")
+            )
+        if "capture-pane" in rest:
+            return 0, "❯ ", ""
+        return 0, "", ""
+
+
+_announced: list = []
+
+
+@pytest.fixture
+def _room_box(monkeypatch, tmp_path):
+    box = _FakeBox()
+    _announced.clear()
+    monkeypatch.setattr(tp, "_docker", box.docker)
+    monkeypatch.setattr(tp.ws, "sandbox_available", lambda: True)
+    monkeypatch.setattr(tp.ws, "sessions_root", lambda p: tmp_path / "sessions")
+    monkeypatch.setattr(
+        tp.ws, "session_dir", lambda p, t: tmp_path / "sessions" / t.hex[:8]
+    )
+    monkeypatch.setattr(tp.ws, "topic_worktree", lambda p, t: tmp_path / t.hex[:8])
+
+    async def _announce(topic_id, cause="image"):
+        _announced.append((topic_id, cause))
+
+    monkeypatch.setattr(tp, "warn_container_rebuilt", _announce)
+    (tmp_path / "sessions").mkdir()
+    return box
+
+
+async def _bring_up(provider, box, project_id, topic_id, room_id, token="tok"):
+    """Run only the setup half of a turn and hand back the screen it produced."""
+    monkey = getattr(provider, "_room_id")  # noqa: B009 — documents the seam
+    assert monkey is not None
+    return await provider._ensure_ready(
+        project_id=project_id,
+        topic_id=topic_id,
+        token=token,
+        model=None,
+        env=None,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        resume_session_id=None,
+        system_prompt="",
+        precheck=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_a_rooms_topics_share_one_container(_room_box, monkeypatch):
+    """验收 #1: the母话题 and a task split out of it run in the SAME box —
+    otherwise "containers are never reaped" grows the box count without bound."""
+    box = _room_box
+    project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rooms = {room_id: room_id, task_id: room_id}
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
+    )
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+
+    room_screen = await _bring_up(provider, box, project_id, room_id, room_id)
+    task_screen = await _bring_up(provider, box, project_id, task_id, room_id)
+
+    assert room_screen.container == task_screen.container
+    assert len(box.containers) == 1, "the task built a second box"
+    assert len(box.created) == 1, "the task rebuilt the room's box out from under it"
+    # ...and they are NOT the same screen: one session each, or the second topic
+    # would be typing into the first one's claude.
+    assert room_screen.session != task_screen.session
+    assert len(box.sessions) == 2
+
+
+@pytest.mark.anyio
+async def test_two_topics_in_one_box_never_share_identity(_room_box, monkeypatch):
+    """验收 #2/#3: each session carries its OWN topic id, hook token, hook URL,
+    config dir and cwd. Nothing here may be inherited — a tmux session seeds
+    from the server's frozen global env, so an unset key means "act as whoever
+    started this box's tmux server first"."""
+    box = _room_box
+    project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rooms = {room_id: room_id, task_id: room_id}
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
+    )
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+
+    await _bring_up(provider, box, project_id, room_id, room_id, token="room-token")
+    await _bring_up(provider, box, project_id, task_id, room_id, token="task-token")
+
+    room_env = box.sessions[
+        (tp.ws.tmux_container_name(room_id), tp.ws.tmux_session_name(room_id))
+    ]
+    task_env = box.sessions[
+        (tp.ws.tmux_container_name(room_id), tp.ws.tmux_session_name(task_id))
+    ]
+
+    assert room_env["CHEESE_TOPIC"] == str(room_id)
+    assert task_env["CHEESE_TOPIC"] == str(task_id)
+    assert room_env["CHEESE_TOKEN"] == "room-token"
+    assert task_env["CHEESE_TOKEN"] == "task-token"
+    assert str(task_id) in task_env["CHEESE_HOOK_URL"]
+    assert str(room_id) not in task_env["CHEESE_HOOK_URL"]
+    # 验收 #3: each session's cwd and claude state are its own.
+    assert room_env["CHEESE_WORKDIR"] != task_env["CHEESE_WORKDIR"]
+    assert task_env["CHEESE_WORKDIR"] == tp.ws.sandbox_topic_workdir(task_id)
+    assert task_env["CLAUDE_CONFIG_DIR"] == tp.ws.sandbox_session_dir(task_id)
+    assert room_env["CLAUDE_CONFIG_DIR"] != task_env["CLAUDE_CONFIG_DIR"]
+    # The spool and await logs follow the config dir, or the backend reads one
+    # topic's events out of another's directory.
+    assert task_env["CHEESE_HOOK_SPOOL"].startswith(task_env["CLAUDE_CONFIG_DIR"])
+    assert task_env["CHEESE_AWAIT_LOGS"].startswith(task_env["CLAUDE_CONFIG_DIR"])
+    # 分身身份 travels per session too.
+    assert room_env["CHEESE_AUTHOR"] != task_env["CHEESE_AUTHOR"]
+
+
+@pytest.mark.anyio
+async def test_the_container_environment_holds_nothing_per_topic(
+    _room_box, monkeypatch
+):
+    """The box's own env is fixed at creation and a room keeps gaining tasks, so
+    a per-topic key baked in there would be frozen — and WRONG — for every topic
+    that joins later. It must carry the room-wide wiring only."""
+    box = _room_box
+    project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rooms = {room_id: room_id, task_id: room_id}
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
+    )
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+
+    await _bring_up(provider, box, project_id, task_id, room_id, token="task-token")
+
+    argv = box.created[0]
+    container_env = {}
+    for i, token in enumerate(argv):
+        if token == "-e":
+            key, _, value = argv[i + 1].partition("=")
+            container_env[key] = value
+    for leaked in (
+        "CHEESE_TOPIC",
+        "CHEESE_TOKEN",
+        "CHEESE_HOOK_URL",
+        "CHEESE_AUTHOR",
+        "CLAUDE_CONFIG_DIR",
+        "CHEESE_HOOK_SPOOL",
+        "CHEESE_AWAIT_LOGS",
+    ):
+        assert leaked not in container_env, f"{leaked} is per-topic, not per-room"
+    assert container_env["CHEESE_ROOM"] == str(room_id)
+    assert container_env["CHEESE_PROJECT"] == str(project_id)
+    # The sessions TREE is mounted, not one topic's dir — a box cannot gain a
+    # mount later, and the tasks that will need one do not exist yet.
+    assert f"{tmp_mount(argv)}:{tp.ws.SANDBOX_SESSIONS_ROOT}" in argv
+    # The box's own workdir is the TREE, never a topic's directory in it.
+    # `docker run -w` creates a missing workdir, and this one is inside a bind
+    # mount — naming a topic would plant an empty dir on the host exactly where
+    # that topic's jj workspace has to go, and `jj workspace add` refuses a path
+    # that already exists. A room that has never taken a turn is the live case.
+    assert argv[argv.index("-w") + 1] == tp.ws.SANDBOX_TOPICS_ROOT
+    for session_env in box.sessions.values():
+        assert session_env["CHEESE_WORKDIR"].startswith(
+            f"{tp.ws.SANDBOX_TOPICS_ROOT}/"
+        ), "a session still has to land in its own worktree"
+
+
+def tmp_mount(argv: list[str]) -> str:
+    """The host side of the sessions mount in a `docker run` argv."""
+    for i, token in enumerate(argv):
+        if token == "-v" and argv[i + 1].endswith(tp.ws.SANDBOX_SESSIONS_ROOT):
+            return argv[i + 1].split(":")[0]
+    raise AssertionError("no sessions mount in the container argv")
+
+
+@pytest.mark.anyio
+async def test_each_topic_gets_its_own_published_port_slot(_room_box, monkeypatch):
+    """运行环境预览 and 现场终端 are per topic, but published ports are fixed at
+    container creation — so the box publishes a block up front and each session
+    is handed a distinct slot out of it."""
+    box = _room_box
+    project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rooms = {room_id: room_id, task_id: room_id}
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
+    )
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+
+    await _bring_up(provider, box, project_id, room_id, room_id)
+    await _bring_up(provider, box, project_id, task_id, room_id)
+
+    slots = {
+        env["CHEESE_PORT_SLOT"]: env["CHEESE_APP_PORT"] for env in box.sessions.values()
+    }
+    assert len(slots) == 2, "two topics were handed the same preview port"
+    argv = box.created[0]
+    published = {argv[i + 1] for i, t in enumerate(argv) if t == "-p"}
+    for slot in range(tp.ws.port_slots()):
+        assert f"127.0.0.1:0:{tp.ws.app_port_for_slot(slot)}" in published
+        assert f"127.0.0.1:0:{tp.ws.ttyd_port_for_slot(slot)}" in published
+
+
+@pytest.mark.anyio
+async def test_a_deaf_session_is_restarted_without_touching_the_box(
+    _room_box, monkeypatch
+):
+    """验收 #4's remaining half: a session whose token no longer verifies can
+    never report anything again, so it is rebuilt — but ONLY it. Rebuilding the
+    box would take the room's other topics down with it, which is exactly what
+    the old container-level check did."""
+    box = _room_box
+    project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rooms = {room_id: room_id, task_id: room_id}
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
+    )
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    await _bring_up(provider, box, project_id, room_id, room_id)
+    await _bring_up(provider, box, project_id, task_id, room_id, token="stale")
+    container = tp.ws.tmux_container_name(room_id)
+    room_session = tp.ws.tmux_session_name(room_id)
+    box.sessions[(container, room_session)]["marker"] = "original"
+
+    # Only the task's token is dead.
+    async def dead_only_for_the_task(screen):
+        return screen.session == tp.ws.tmux_session_name(task_id)
+
+    monkeypatch.setattr(provider, "_hook_token_dead", dead_only_for_the_task)
+    boxes_before = len(box.created)
+    await _bring_up(provider, box, project_id, task_id, room_id, token="fresh")
+
+    assert len(box.created) == boxes_before, "the whole box was rebuilt"
+    assert box.sessions[(container, room_session)]["marker"] == "original", (
+        "the sibling's session was destroyed"
+    )
+    assert (
+        box.sessions[(container, tp.ws.tmux_session_name(task_id))]["CHEESE_TOKEN"]
+        == "fresh"
+    )
+    # Losing the conversation must be said out loud, and attributed to the topic
+    # that actually lost it — not to the room.
+    assert _announced == [(task_id, "token")]
+
+
+@pytest.mark.anyio
+async def test_rebuilding_a_box_is_announced_to_every_topic_in_it(
+    _room_box, monkeypatch
+):
+    """A box serves a whole room, so destroying it ends EVERY topic's
+    conversation in it. Telling only the topic whose turn noticed leaves the
+    siblings' agents restarted with no memory and nothing in their rooms saying
+    why — the same silence the token-rebuild notice was added to fix, just
+    moved from one topic to the rest of the room."""
+    box = _room_box
+    project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rooms = {room_id: room_id, task_id: room_id}
+    monkeypatch.setattr(
+        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
+    )
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    await _bring_up(provider, box, project_id, room_id, room_id)
+    await _bring_up(provider, box, project_id, task_id, room_id)
+    _announced.clear()
+
+    # The image moved under the running box — a whole-box rebuild.
+    provider._image = "img:newer"
+    await _bring_up(provider, box, project_id, room_id, room_id)
+
+    told = {topic for topic, _ in _announced}
+    assert told == {room_id, task_id}, "a sibling lost its session in silence"
+    assert {cause for _, cause in _announced} == {"image"}

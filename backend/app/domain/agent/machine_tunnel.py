@@ -38,6 +38,7 @@ import ssl
 import struct
 import sys
 import threading
+import time
 from urllib.parse import urlparse
 
 logger = logging.getLogger("cheese.tunnel")
@@ -56,7 +57,34 @@ _HANDSHAKE_TIMEOUT_S = 15.0
 
 class TunnelError(RuntimeError):
     """The WebSocket could not be established. Carries a reason the caller can
-    log — a machine failing here has no other way to say why."""
+    log — a machine failing here has no other way to say why. ``retryable``
+    marks ABSENCE (the gateway/backend was not there to answer: 502/503/504,
+    a connection cut mid-upgrade) as opposed to REFUSAL (it answered and said
+    no: bad token, missing route) — only absence is worth waiting out."""
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Whether waiting and trying again can possibly change the outcome.
+    Network-level failures always can (the other end may come back); a
+    TunnelError only when its raise site marked it so."""
+    if isinstance(exc, TunnelError):
+        return exc.retryable
+    return isinstance(exc, OSError)
+
+
+# How long a CONNECT client is held while the gateway/backend is unreachable —
+# a deploy swaps the backend container in well under this, so the swap reads
+# as one slow request instead of ECONNREFUSED ("Unable to connect to API" on
+# the claude side, measured 2026-08-17 across 7 deploys). Bounded on purpose:
+# past the window we still close, because a claude waiting forever on a
+# CONNECT looks like a stalled model — the most expensive failure to diagnose.
+_OPEN_RETRY_WINDOW_S = 60.0
+_OPEN_RETRY_START_S = 1.0
+_OPEN_RETRY_CAP_S = 8.0
 
 
 def _read_exact(sock: socket.socket, count: int) -> bytes:
@@ -169,14 +197,22 @@ def open_tunnel(
         chunk = raw.recv(1)
         if not chunk:
             raw.close()
-            raise TunnelError("the gateway closed the connection during the upgrade")
+            # A cut mid-upgrade is the deploy window's shape, not a verdict.
+            raise TunnelError(
+                "the gateway closed the connection during the upgrade",
+                retryable=True,
+            )
         header.extend(chunk)
     status = header.split(b"\r\n", 1)[0].decode(errors="replace")
     if " 101" not in status:
         raw.close()
         # The status line is the whole diagnosis: 403 = bad scoped token, 404 =
         # backend without this route, 502 = gateway cannot reach the backend.
-        raise TunnelError(f"upgrade refused: {status}")
+        # Only the gateway-cannot-reach-it family is absence worth waiting out.
+        raise TunnelError(
+            f"upgrade refused: {status}",
+            retryable=any(f" {code} " in status for code in (502, 503, 504)),
+        )
     raw.settimeout(None)
     return raw
 
@@ -267,6 +303,51 @@ class TokenSource:
         return self._value
 
 
+def _open_with_patience(
+    url: str,
+    token: "str | TokenSource",
+    *,
+    ca_path: str | None = None,
+    insecure: bool = False,
+    window_s: float = _OPEN_RETRY_WINDOW_S,
+    start_delay_s: float = _OPEN_RETRY_START_S,
+) -> "tuple[socket.socket, str]":
+    """Open the WebSocket, riding out a restarting backend (#551 止血).
+
+    A deploy swaps the backend container for tens of seconds; a CONNECT
+    arriving in that window used to be answered with a closed socket, which
+    claude renders as "Unable to connect to API". Absence (connection refused,
+    502 from the gateway, a cut mid-upgrade) is retried with backoff inside a
+    bounded window while the client is held; refusal (bad token, missing
+    route) still fails on the first attempt. The token is re-resolved per
+    attempt so a launcher-refreshed token takes effect mid-window."""
+    deadline = time.monotonic() + window_s
+    delay = start_delay_s
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            secret = token.get() if isinstance(token, TokenSource) else token
+            if not secret:
+                raise TunnelError("no scoped token available")
+            return (
+                open_tunnel(url, secret, ca_path=ca_path, insecure=insecure),
+                secret,
+            )
+        except (OSError, TunnelError) as exc:
+            if not _is_retryable(exc) or time.monotonic() + delay > deadline:
+                raise
+            logger.warning(
+                "tunnel open failed (attempt %d: %s) — holding the client, "
+                "retrying in %.1fs",
+                attempt,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
+            delay = min(delay * 2, _OPEN_RETRY_CAP_S)
+
+
 def handle_connection(
     local: socket.socket,
     url: str,
@@ -283,15 +364,13 @@ def handle_connection(
     """
     ws = None
     try:
-        secret = token.get() if isinstance(token, TokenSource) else token
-        if not secret:
-            raise TunnelError("no scoped token available")
-        ws = open_tunnel(url, secret, ca_path=ca_path, insecure=insecure)
+        ws, secret = _open_with_patience(url, token, ca_path=ca_path, insecure=insecure)
     except (OSError, TunnelError) as exc:
         logger.warning("tunnel could not be opened: %s", exc)
         # Close rather than hang: `claude` waiting on a CONNECT that will never
         # be answered looks like a stalled model, which is the one failure mode
-        # that costs an operator the most time to diagnose.
+        # that costs an operator the most time to diagnose. (Absence — a
+        # restarting backend — was already waited out above, bounded.)
         local.close()
         return
 

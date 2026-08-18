@@ -19,23 +19,25 @@ def _authenticated_project_owner(client):
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]
@@ -43,14 +45,14 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> dict:
 
 def _require(client, project_id: str, n: int) -> None:
     r = client.put(
-        f"/api/projects/{project_id}/quality-gate", json={"approvals_required": n}
+        f"/projects/{project_id}/quality-gate", json={"approvals_required": n}
     )
     assert r.status_code == 200
 
 
 def _approve(client, card_id: str, handle: str):
     return client.post(
-        f"/api/accept-cards/{card_id}/approve",
+        f"/accept-cards/{card_id}/approve",
         json={"approver_handle": handle},
         headers=session_auth_headers(handle),
     )
@@ -64,9 +66,7 @@ def test_default_single_approval_backward_compat(client):
     assert card["approvals_required"] == 1
     assert card["approvals"] == []
 
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
-    )
+    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
     assert r.status_code == 200
     out = r.json()["data"]
     assert out["status"] == "accepted"
@@ -81,18 +81,16 @@ def test_accept_short_of_votes_structured_error(client):
     card = _make_card(client, tid)
     assert card["approvals_required"] == 3
 
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
-    )
+    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
     assert r.status_code == 422
     # Structured shortfall the frontend can display: 还差 N 票 (alice's own
     # accept would count as 1 of 3).
     assert "还差 2 票" in r.json()["message"]
 
     # Card untouched, topic still active.
-    cards = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_approvals_then_accept_merges(client):
@@ -106,14 +104,12 @@ def test_approvals_then_accept_merges(client):
     assert r.json()["data"]["approvals"] == ["bob"]
 
     # bob's vote + alice's accept = 2/2 → the accept executes.
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
-    )
+    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
     assert r.status_code == 200
     out = r.json()["data"]
     assert out["status"] == "accepted"
     assert sorted(out["approvals"]) == ["alice", "bob"]
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 def test_ai_cannot_approve_collaborative(client):
@@ -126,7 +122,7 @@ def test_ai_cannot_approve_collaborative(client):
     assert r.status_code == 422
     assert "AI 不能" in r.json()["message"]
 
-    cards = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"]
+    cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["approvals"] == []
 
 
@@ -145,7 +141,7 @@ def test_approve_decided_card_422(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     card = _make_card(client, tid)
-    client.post(f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
 
     r = _approve(client, card["id"], "bob")
     assert r.status_code == 422
@@ -157,11 +153,9 @@ def test_revoke_keeps_approvals_history(client):
     _require(client, pid, 2)
     card = _make_card(client, tid)
     _approve(client, card["id"], "bob")
-    client.post(f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
+    client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
 
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/revoke", json={"decided_by": "alice"}
-    )
+    r = client.post(f"/accept-cards/{card['id']}/revoke", json={"decided_by": "alice"})
     assert r.status_code == 200
     # 撤销不清票 — the vote trail is history.
     assert sorted(r.json()["data"]["approvals"]) == ["alice", "bob"]

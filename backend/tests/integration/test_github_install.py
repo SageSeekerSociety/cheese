@@ -12,7 +12,7 @@ from app.core.github_install_state import mint_install_state
 
 def _project(client, name: str = "P") -> str:
     return client.post(
-        "/api/projects", json={"name": name, "owner_handle": "alice"}
+        "/projects", json={"name": name, "owner_handle": "alice"}
     ).json()["data"]["id"]
 
 
@@ -28,14 +28,14 @@ _ONE_REPO = [{"full_name": "acme/widgets", "owner": {"login": "acme"}}]
 
 def test_connection_unset_by_default(client):
     pid = _project(client)
-    r = client.get(f"/api/projects/{pid}/github/connection")
+    r = client.get(f"/projects/{pid}/github/connection")
     assert r.status_code == 200
     assert r.json()["data"] == {"connected": False}
 
 
 def test_install_url_carries_a_state_for_this_project(client):
     pid = _project(client)
-    r = client.get(f"/api/projects/{pid}/github/install-url")
+    r = client.get(f"/projects/{pid}/github/install-url")
     assert r.status_code == 200
     url = r.json()["data"]["url"]
     assert url.startswith("https://github.com/apps/")
@@ -43,7 +43,7 @@ def test_install_url_carries_a_state_for_this_project(client):
 
 
 def test_install_url_404s_for_unknown_project(client):
-    r = client.get(f"/api/projects/{uuid.uuid4()}/github/install-url")
+    r = client.get(f"/projects/{uuid.uuid4()}/github/install-url")
     assert r.status_code == 404
 
 
@@ -80,7 +80,7 @@ def test_callback_setup_action_request_is_pending_not_an_error(client):
     assert f"/projects/{pid}/settings" in r.headers["location"]
     assert "github_install=pending" in r.headers["location"]
     # Nothing got connected — this is just "an admin still has to approve".
-    assert not client.get(f"/api/projects/{pid}/github/connection").json()["data"][
+    assert not client.get(f"/projects/{pid}/github/connection").json()["data"][
         "connected"
     ]
 
@@ -111,7 +111,7 @@ def test_callback_success_connects_the_repo(client, monkeypatch):
     assert f"/projects/{pid}/settings" in location
     assert "github_install=success" in location
 
-    conn = client.get(f"/api/projects/{pid}/github/connection").json()["data"]
+    conn = client.get(f"/projects/{pid}/github/connection").json()["data"]
     assert conn == {"connected": True, "repo": "acme/widgets", "account": "acme"}
 
 
@@ -125,7 +125,7 @@ def test_callback_no_accessible_repos_rejected(client, monkeypatch):
         follow_redirects=False,
     )
     assert "reason=no_accessible_repos" in r.headers["location"]
-    assert not client.get(f"/api/projects/{pid}/github/connection").json()["data"][
+    assert not client.get(f"/projects/{pid}/github/connection").json()["data"][
         "connected"
     ]
 
@@ -150,7 +150,7 @@ def test_callback_reconnect_same_project_updates_in_place(client, monkeypatch):
         follow_redirects=False,
     )
     assert "github_install=success" in r.headers["location"]
-    conn = client.get(f"/api/projects/{pid}/github/connection").json()["data"]
+    conn = client.get(f"/projects/{pid}/github/connection").json()["data"]
     assert conn["repo"] == "acme/other"
 
 
@@ -186,9 +186,9 @@ def test_callback_installation_conflict_with_another_project(client, monkeypatch
     assert "reason=installation_conflict" in r_b.headers["location"]
 
     # Project A's connection is untouched by B's rejected attempt.
-    conn_a = client.get(f"/api/projects/{pid_a}/github/connection").json()["data"]
+    conn_a = client.get(f"/projects/{pid_a}/github/connection").json()["data"]
     assert conn_a == {"connected": True, "repo": "acme/widgets", "account": "acme"}
-    conn_b = client.get(f"/api/projects/{pid_b}/github/connection").json()["data"]
+    conn_b = client.get(f"/projects/{pid_b}/github/connection").json()["data"]
     assert conn_b == {"connected": False}
 
 
@@ -207,6 +207,6 @@ def test_callback_github_error_does_not_connect(client, monkeypatch):
         follow_redirects=False,
     )
     assert "reason=github_error" in r.headers["location"]
-    assert not client.get(f"/api/projects/{pid}/github/connection").json()["data"][
+    assert not client.get(f"/projects/{pid}/github/connection").json()["data"][
         "connected"
     ]

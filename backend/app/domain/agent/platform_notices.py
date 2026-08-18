@@ -60,8 +60,12 @@ EVENT_GATE_ABANDONED: Final = "gate_abandoned"
 EVENT_MERGE_REFUSED: Final = "merge_refused"
 #: 采纳时合并冲突。
 EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
+#: 验收卡被人驳回了 —— 芝士要去改，不是等着。
+EVENT_CARD_REJECTED: Final = "card_rejected"
 #: 同步上游时合并冲突。
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
+#: A message expected to enter the live session had to return to the queue.
+EVENT_DELIVERY_FALLBACK: Final = "delivery_fallback"
 #: 轮次失败（`classify_platform_failure()` 没命中的那些）。
 EVENT_TURN_FAILED: Final = "turn_failed"
 #: 轮次超时 / 一个字都没输出。
@@ -79,7 +83,9 @@ EVENT_TYPES: Final = frozenset(
         EVENT_GATE_ABANDONED,
         EVENT_MERGE_REFUSED,
         EVENT_ACCEPT_CONFLICT,
+        EVENT_CARD_REJECTED,
         EVENT_UPSTREAM_CONFLICT,
+        EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
         EVENT_DEPLOY_INTERRUPTED,
@@ -112,3 +118,17 @@ def notice(
         "detail": detail,
         "detail_label": detail_label,
     }
+
+
+def delivery_fallback_notice() -> tuple[str, dict]:
+    """The single room-visible error for live-delivery fallback."""
+    return (
+        "⚠️ 实时送入当前会话失败，已自动转入正常队列。",
+        notice(
+            EVENT_DELIVERY_FALLBACK,
+            severity=SEVERITY_ERROR,
+            who=WHO_PLATFORM,
+            detail="消息已保存并保持待处理状态；平台会从正常队列继续处理，无需重发。",
+            detail_label="处理说明",
+        ),
+    )

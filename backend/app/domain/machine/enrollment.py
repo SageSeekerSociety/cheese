@@ -19,6 +19,8 @@ import logging
 import os
 import tempfile
 
+from app.domain.agent import device_launch
+
 logger = logging.getLogger("cheese.machine.enrollment")
 
 # One attempt should be slow enough to survive a cold apt/curl on a fresh
@@ -87,6 +89,12 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
             "device_id": device_id,
         }
     )
+    # The floor and the pin are the launcher's, read from there rather than
+    # restated: a machine enrolled against a different number than the launcher
+    # enforces is a machine that enrolls cleanly and then runs nothing.
+    origin_clean = origin.rstrip("/")
+    min_version = device_launch.CLAUDE_MIN_VERSION
+    pinned_version = device_launch.CLAUDE_PINNED_VERSION
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -113,6 +121,71 @@ for tool in tmux git; do
           && sudo -n apt-get install -y -q "$tool" >/dev/null 2>&1; }} \
     || {{ echo "$tool is missing and could not be installed" >&2; exit 1; }}
 done
+mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
+export PATH="$HOME/.local/bin:$PATH"
+# claude — the agent itself, and the same argument as tmux/git above with one
+# more turn of the screw. A machine with no claude, or one too old, does not
+# fail here: it enrolls cleanly, reports healthy, and then every topic assigned
+# to it never starts, because the launcher refuses a build below the floor.
+# A loud failure now beats a silent one per topic later (#489, #501 are the
+# same shape).
+#
+# The binary comes from US, not from the vendor. A cloud node sits on a private
+# subnet, a self-hosted machine belongs to a user whose network we do not
+# control, and the vendor's own installer names "not available in your region"
+# as a failure mode. Serving it ourselves is what turns the pin from a hope
+# about what the machine downloaded into a fact about what we handed it — the
+# same reason cheesehost is fetched from us two lines below.
+#
+# Platform strings are the VENDOR's, and the musl check matters: Alpine-style
+# machines need a different build, and only the machine can tell.
+case "$arch" in
+  x86_64|amd64) carch=x64 ;;
+  aarch64|arm64) carch=arm64 ;;
+esac
+if [ "$(uname -s)" = "Linux" ]; then
+  if ldd /bin/ls 2>&1 | grep -q musl; then
+    cplat="linux-$carch-musl"
+  else
+    cplat="linux-$carch"
+  fi
+else
+  cplat="darwin-$carch"
+fi
+# The pinned build goes into claude's own versions directory, which is built
+# for exactly this — several versions coexisting, with the user's `claude`
+# entry point deciding which one THEY get. We add a version and touch nothing
+# else.
+#
+# Specifically: no symlink into ~/.local/bin. That path is the machine owner's
+# claude, and on a self-hosted machine it belongs to a person who did not ask
+# us to change which version they type `claude` and get. The launcher looks in
+# versions/<pin> first and never consults ~/.local/bin for the pin, so the
+# symlink would buy nothing and cost someone their default.
+#
+# And we install our pin even when a good-enough claude is already present:
+# otherwise the platform silently rides whatever the owner happens to have, and
+# their next upgrade or downgrade becomes our behaviour change. Pinning has to
+# mean the version we put there, not the version we found.
+claude_pin="$HOME/.local/share/claude/versions/{pinned_version}"
+if [ ! -x "$claude_pin" ]; then
+  mkdir -p "$HOME/.local/share/claude/versions"
+  curl -fsSL --retry 3 --retry-delay 2 -m 300 \
+    "{origin_clean}/connector/claude/{pinned_version}/$cplat/claude" \
+    -o "$claude_pin.new" \
+    || {{ echo "could not download claude {pinned_version} for $cplat" >&2; exit 1; }}
+  test -s "$claude_pin.new"
+  chmod +x "$claude_pin.new"
+  mv "$claude_pin.new" "$claude_pin"
+fi
+# Verify what we placed, not what `claude` resolves to — the owner's entry point
+# is none of our business and could be any version at all.
+have=$("$claude_pin" --version 2>/dev/null | head -n 1 | awk '{{print $1}}')
+if [ -z "$have" ] || [ "$(printf '%s\n%s\n' "{min_version}" "$have" \
+    | sort -V | head -n 1)" != "{min_version}" ]; then
+  echo "claude at $claude_pin is ${{have:-unusable}}, need >= {min_version}" >&2
+  exit 1
+fi
 mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
 curl -fsSL --retry 3 --retry-delay 2 -m 120 \\
   "{origin.rstrip("/")}/connector/latest/$target/cheesehost" \\

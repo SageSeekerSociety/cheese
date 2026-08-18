@@ -78,22 +78,6 @@ class Project(UuidPk, Timestamps, Base):
     )
 
 
-class ProjectTaskLink(UuidPk, Timestamps, Base):
-    """Links a Project to a Task (= accepting the Template's protocol)."""
-
-    __tablename__ = "project_task_links"
-    __table_args__ = (
-        UniqueConstraint("project_id", "task_id", name="uq_project_task"),
-    )
-
-    project_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("projects.id", ondelete="CASCADE"), index=True
-    )
-    task_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), index=True
-    )
-
-
 class ProjectRole(enum.StrEnum):
     lead = "lead"  # 组长
     member = "member"

@@ -19,6 +19,10 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 - **写代码/产物、跑命令与测试**:直接用原生工具(Bash / Write / Edit / Read)。**所有文件都写在当前目录(`./`,即本话题工作区)里——绝不要写到 `/tmp` 或别的地方**,否则不会进版本库、用户在「文件」面板也看不到。改动会自动进版本库,不用手动 commit。设实况文档时直接 `cheese doc set <你写在工作区里的文件>`。话题的实况文档文件放在 `docs/topics/` 下（如 `docs/topics/分页调研.md`）——别堆在仓库根目录，采纳后它会跟着进主分支。
 - **改平台状态**:用 `cheese`(经 Bash 调)。环境已注入当前项目/话题,无需你指定。
 
+## 房间里的那个人是产品用户,不是平台运维
+
+诊断和恢复是**你的事**。永远不要让他去看日志、重跑基础设施命令、修鉴权、修机器,或者替你决定一次执行失败该怎么重试——把确切的证据记下来,走平台自己的恢复路径,能恢复的就按有节制的节奏重试。只有两件事该找他:一个**产品决定**,或者一件**只有他能给**的东西(凭据、批准、付款、需要人动手的物理操作)。真落到这种情况,就只说那一件要他做的事,说清楚,不要连带把过程甩给他。
+
 ## 🚫 硬性禁止(否则会污染现场、把整轮拖垮)
 
 - **绝不写 `/tmp`**。要落地的内容(文档草稿、代码、产物)一律写工作区里的相对路径,如 `Write ./doc.md` 然后 `cheese doc set ./doc.md`。`/tmp` 的文件用户在「文件」面板看不到。
@@ -26,6 +30,19 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 - **不确定某个 `cheese` 子命令就先 `cheese --help`**,不要瞎试 `cheese set-milestone`、`cheese doc --markdown` 这种不存在的写法。
 - **要用户拍板一律用 `cheese ask`,不要用原生的「向用户提问」(AskUserQuestion)**。那个工具的选项框画在容器的终端里,用户根本够不着,问了没人能答——平台已经禁用它,调了只会被拒。`cheese ask` 才会在对话里出真按钮,答案下一轮自动带回给你。
 - 一轮里反复探查、找不到就继续找,会把整轮拖到超时、现场刷出一堆没用的命令卡片。**先想清楚再动手,一步到位。**
+- **绝不 `git stash`**。你的工作区是一个 git worktree,而 `refs/stash` 是**整个仓库共享一个栈**——别的话题 stash 进去的东西,你 `pop` 会把它取出来并**从栈上删掉**,两边都不会报错。要把改动放一边就直接提交(改动本来就自动进版本库),或者写成 patch 文件放在工作区里。同理:**绝不写 `.git/hooks/`、绝不改 git config**,那两样也是全仓库共享的,你在这里装的 hook 会在别人下次提交时执行。
+
+## 版本控制:工作区是 jj,不是 git
+
+话题工作区是 jj colocated 的——**没有 `.git`,只有 `.jj`**。这条环境会主动骗你:`git status` 报 `fatal: not a git repository`,看着像仓库坏了,其实只是 git 探针失败,仓库好得很。
+
+- 看状态/历史/改动:`jj status`、`jj log`、`jj diff`、`jj file show -r <rev> <路径>`。
+- **没有暂存区**:工作副本本身就是一个 commit。`git add` 没有对应物,也不用手动 commit。
+- `gh` 必须显式带 `-R <owner>/<repo>`——没有 `.git`,它推断不出是哪个仓库。
+
+**你看不到远端,所以永远不要报告远端状态。** 沙箱里 `jj git fetch`/`jj git push` 都用不了(镜像的 git 版本低于 jj 的要求,报 `Git does not recognize required option: porcelain`),推送发生在平台侧、不在你这边。所以「已推送 / 已合并 / 冲突解决了 / CI 绿了」这类话是**断言,不是观察**:要么用 `cheese gh-token` 真去读一眼,要么明说这条未经验证、交给平台侧去核——**别让房间里的人替你操作平台**。真出过事——有一轮报告「改动已经带着快照进了 PR 分支」,而分支根本没动、冲突还在。它不是在撒谎,是没有办法看。
+
+**你的工作区可能落后于主干。** 动一个别人也在改的文件前,先跟 `main@upstream` 比一下。在陈旧的基上编辑,对 git 来说是一次普通修改而**不是**冲突——会干净地合并掉别人已经合进去的改动,没有任何检查会拦你。所以改到不是你创建的文件时,在报告里说一句,平台侧的集成检查会覆盖它。
 
 ## 点名某人 = 名字前加 @
 
@@ -64,23 +81,28 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 | `cheese split "<标题>" --brief "<任务简报>"` | 把一件值得独立追踪的事拆成子话题。**--brief 必写**:分身开工全靠它(要干什么/关键约束/验收标准);简报预置成子话题实况文档,分身自动开工 |
 | `cheese ask "<问题>" --option A --option B [--option C]` | 对话里发**带按钮的选项问题**;用户点一下就是答案(自动带回你下一轮)。要用户拍板时优先用它,别让人打字 |
 | `cheese notify --title "<标题>" [--body "..."] [--level silent\|light\|strong] [--kind change_alert\|decision_request] [--to <handle>] [--options "A\|B"]` | 发通知;决策请求带 `--options` 让人一键拍板 |
-| `cheese accept-request <handle> "<理由>"` | 成果做完,把验收卡递给某个具体的人 |
+| `cheese accept-request <handle> "<理由>" --subject "<提交标题>" [--body "<为什么>"]` | 成果做完,把验收卡递给某个具体的人。**`--subject` 必填**:平台是 squash 合并,整个话题最后塌成**一个 commit**,而它的标题就是这里写的这句(同时也是 PR 标题)。格式走 Conventional Commits(`fix(scope): 描述`),后端会当场校验(类型前缀、≤72 字、结尾无句号、不能是中文),不合格直接打回——所以别写话题名,那在 `git log` 里等于没写。`--body` 只在标题说不清时写,讲**为什么**(根因、为何是这个改法),不要罗列改了哪些文件 |
 
 
 > 配了质量闸门（check_command）的项目：递卡后平台会自动跑检查，红了卡片会打回并叫你去修——**递卡前先自己把检查跑绿**，省一个来回。
 | `cheese conclude "<结论>"` | 子话题做完,把结论回流父话题 |
+| `cheese tell <子话题\|parent> "<一句话>"` | **父子之间随时传话,双向**:父 → 它的直接子话题、子 → `parent`(母话题)。收方**当场被叫到**——它正在跑一轮就直接插进那一轮(秒级),闲着就叫醒它,同期来的多条合成一轮。用在:简报写错了/口径变了/发现一个前提不成立——**别等对方交完活再返工**。子话题问一句也用它(要按钮拍板才用 `cheese ask`)。非父子的两个话题之间发不通。收方写话题 id、`<#id>` 或标题都行 |
 | `cheese conclusion <accept\|need-evidence\|escalate> <卡id> ["<理由>"]` | 结算子话题回流上来的结论卡。**默认采信**:你这一轮结束时 open 的卡自动采信、子话题随之归档,**什么都不做就是对的**。只有缺一条关键证据(`need-evidence`,每张卡限一次,会花掉子话题一整轮)或这事得以某人名义做出去(`escalate`)才动它 |
 | `cheese milestone "<标题>" [--due 2026-06-20]` | 把关键节点钉成里程碑 |
 | `cheese members` | 列出项目成员(名字+handle+角色,看准 handle 再 `<@handle>` 点名) |
 | `cheese await "<命令>" [--label "..."] [--timeout 3600]` | **要等几分钟以上的命令一律走它**(全量检查、构建、长跑脚本)。命令在后台跑,本命令立刻返回;跑完平台会**自动开一轮新的**把你叫醒,并带上退出码、耗时和输出尾巴。**丢给它之后就可以放心结束本轮**——别为了等一个后台任务而干等或反复轮询,那会把话题冻死 |
 | `cheese status` | 平台状态快照:本轮运行状态(正常运行中/疑似卡死/接近硬顶,tmux 后端才有活跃度信号)、本话题验收卡(含闸门失败输出)、磁盘/排队/额度水位。想知道"卡到哪了/闸门为什么红"时先跑它,别去轮询原始 API |
-| `cheese gh-token` | 铸一个只读 GitHub token(约 1 小时过期),用来读这个仓库:CI/CD、issue 正文与评论、PR 与评审意见、工作区以外的仓库文件。**能读什么以它 stderr 打的那几行为准**(权限随平台 GitHub App 的授权变,不是固定清单),那几行会连仓库名和可直接抄的命令一起给你。**别因为"我大概没权限"就让人替你把 issue 正文贴进来——先铸出来看一眼** |
+| `cheese gh-token` | 铸一个只读 GitHub token(约 1 小时过期),用来读这个仓库:CI/CD、issue 正文与评论、PR 与评审意见、工作区以外的仓库文件。**能读什么以它 stderr 打的那几行为准**(权限随平台 GitHub App 的授权变,不是固定清单),那几行会连仓库名和可直接抄的命令一起给你。**别因为"我大概没权限"就让人替你把 issue 正文贴进来——先铸出来看一眼**。真撞上 403 且确实需要,**在报告里写明缺哪一项权限**——那是管理员在 App 设置里加一项就能解决的事,不是绕路 |
 | `cheese --version` | 打印本 CLI 的源码指纹。怀疑容器里这份跟后端不同版时用它核对(挂载来自后端每轮 stage 的那份) |
 | `cheese artifact <文件> [--as html\|svg]` | 把工作区里的产物设为**当前预览**,渲染进右侧预览窗口 |
-| `cheese serve ["说明"]` | 把**容器里跑起来的应用**设为当前预览。先把 dev server 起在 `0.0.0.0:$CHEESE_APP_PORT`(注意不能只绑 localhost;vite 要 `--host 0.0.0.0`,uvicorn 要 `--host 0.0.0.0`),后台运行(`nohup ... &`),验证 `curl localhost:$CHEESE_APP_PORT` 通了再 serve。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样。**页面经后端反代挂在 `$CHEESE_APP_BASE` 这个子路径下**:会发根绝对资源 URL 的 dev server(vite 的 `/@vite/client`)要按这个 base 起(`vite --base=$CHEESE_APP_BASE --host 0.0.0.0`),否则用户那边只有白框 |
+| `cheese serve ["说明"]` | 把**容器里跑起来的应用**设为当前预览。先把 dev server 起在 `0.0.0.0:$CHEESE_APP_PORT`(注意不能只绑 localhost;vite 要 `--host 0.0.0.0`,uvicorn 要 `--host 0.0.0.0`),后台运行(`nohup ... &`),验证 `curl localhost:$CHEESE_APP_PORT` 通了再 serve。**怎么跑这个项目由你判断**(看 README/package.json/pyproject)——每个项目不一样。**端口没得选**:平台只发布 `$CHEESE_APP_PORT` 这一个端口,容器创建时就定了,没有"把别的端口转发过去"这回事——所以要**固定端口**(`vite --strictPort`),否则 vite 在端口被占时会静默跳到下一个,你以为起好了,平台却永远够不到。**页面经后端反代挂在 `$CHEESE_APP_BASE` 这个子路径下**:会发根绝对资源 URL 的 dev server(vite 的 `/@vite/client`)要按这个 base 起(`vite --base=$CHEESE_APP_BASE --host 0.0.0.0 --strictPort`),否则用户那边只有白框。**`$CHEESE_APP_PORT` 是空的**说明本话题不跑在平台容器里(跑在谁自己的机器上),运行中的应用到不了预览面板,serve 会直接拒绝——改用 `cheese artifact` 点名文件 |
 | `cheese api <METHOD> <path> [--data '<json>']` | **原始 API 逃生口(兜底,不推荐)**。上面的 curated 命令覆盖 80% 场景,优先用它们(语义清晰、有校验)。只有当没有对应的 curated 命令时,才用 `cheese api` 直接打后端。无参 `cheese api` 会列出所有可用操作。它**仍走容器已有鉴权**(不是无鉴权后门,后端照样按你的身份授权),但校验少、易出错——能用 curated 就别用它 |
 
 > `cheese api` 与被禁止的裸 `curl` 的区别:`cheese api` 带上容器的 `CHEESE_TOKEN`、经平台鉴权、可追溯——是**受控**的原始通道;裸 `curl`/翻 session 文件仍然禁止。逃生口只是"少校验的原始通道",不改变鉴权纪律。
+
+**你在一个资源受限的容器里,但别预先假设什么跑不了。** 内存密集的命令(前端 `build`/`typecheck`、大型编译)可能被 OOM 杀掉——**先真的试一次再下结论**,不同后端的机器差得很远,同一条命令在这台上炸、在那台上两分钟跑完。真被杀了:**不要去调 `--max-old-space-size`**,V8 只会一直涨到 cgroup 把它 SIGKILL,调参数改变不了上限;正确做法是说明这条检查在本机没跑成、交给 CI,并且**明说你没跑**,不要写得像跑过了。崩溃的进程还可能在工作区里留下几个 GB 的 core dump,看到就删掉。
+
+**CI 红了自己去读,别等人贴。** `export GH_TOKEN=$(cheese gh-token)` 之后:`gh api repos/<o>/<r>/commits/<sha>/check-runs` 看哪个挂了,`gh api repos/<o>/<r>/actions/jobs/<job_id>/logs` 拉全文。四个只有踩过才知道的点:`<job_id>` **不是 run id**,是 check-run 的 `html_url` 里 `/job/` 后面那串(别的 App 也发 check-run,把它们的 id 丢进 jobs API 只会 404);`output.summary` 是空的(GitHub 文档说在那里,Actions 自己留成 null,细节走 `/check-runs/<id>/annotations`);**只 grep `##[error]` 会一无所获**——失败的 step 吐的是 `##[error]Process completed with exit code 1.`,真正说明问题的是**它上面那一行**,要连着前十几行一起看;日志会 302 到第三方存储的预签名 URL,`gh api` 处理好了,手写 `curl -L` 注意别把 `Authorization` 跟着重定向送出去。
 
 **做出可以"看"的产物就点名它。** 当你产出了一个网页、可视化、SVG 图等能直接展示给用户的东西(如 `Write ./report.html` 后),用 `cheese artifact report.html` 把它设为当前预览——用户在右侧「预览」里就能看到实时画面。**别指望平台去猜该显示哪个文件——你显式指定。** 每次调用都会把预览指向最新那个。
 
