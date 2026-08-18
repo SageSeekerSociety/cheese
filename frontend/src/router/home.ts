@@ -9,10 +9,9 @@ export default {
     default: () => import('@/layouts/home/Home.vue'),
     sidebar: () => import('@/components/home/HomeSidebar.vue'),
   },
-  // 手机顶栏在这一层写「首页」，不写子页的名字：空间和小队已经在页内那行分段上
-  // 各自写了一遍，顶栏再写一遍就是同一个词上下叠两次（/teams 更是「发现小队」
-  // 「小队」「发现」三层同义）。子路由的 title 照常给面包屑和标签页标题用。
-  meta: { mobileTitle: '首页' },
+  // 手机上「空间 / 小队」那对分段**就在顶栏里**（layouts/home/Home.vue 把它
+  // Teleport 进去），所以这一层不写标题——写了就是同一个词上下叠两次。
+  meta: { barSlot: true },
   children: [
     {
       path: '',

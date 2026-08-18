@@ -8,10 +8,14 @@
       <v-app-bar-nav-icon v-else-if="hasDrawer" @click="toggleDrawer" />
     </template>
 
-    <!-- 中间标题 -->
+    <!-- 中间这一格：要么是路由的标题，要么由当前页自己填（它 Teleport 到这里）。
+         手机上只有这一条顶栏，从不卸载——页面各画各的头的时候，两条头交替
+         出现，Vuetify 会把 v-main 的 padding 从 57 滑到 0（.v-main 是
+         transition: .2s），整页跟着抖一下。所以顶栏不动，动的是里面的内容。 -->
+    <div v-if="barSlot" id="app-bar-slot" class="bar-slot" />
     <!-- 标题读页头那一号字 (.t-title 15/600)：屏幕上这条横条和页内页头是同一条，
          Vuetify 默认的 20px 会让它们看起来是两种东西。 -->
-    <v-app-bar-title class="t-title">
+    <v-app-bar-title v-else class="t-title">
       {{ currentTitle }}
     </v-app-bar-title>
 
@@ -23,9 +27,10 @@
       <!-- 通知的铃铛不在这儿了：手机上它的去处是底栏「待办」那一格
            (docs/plans/2026-08-18-mobile-shell-design.md §3.3)。 -->
 
-      <!-- 用户头像菜单 -->
+      <!-- 用户头像菜单：只在一级目的地上。页面栈里的那几层（有 ← 的）右边留给
+           这一页自己的操作——个人项在那儿既不相关，也挤掉了标题的宽度 (§3.4)。 -->
       <v-menu
-        v-if="userMenu.loggedIn.value"
+        v-if="!backTo && userMenu.loggedIn.value"
         v-model="userMenu.menuOpen.value"
         open-on-click
         location="bottom start"
@@ -122,7 +127,7 @@
       </v-menu>
 
       <!-- 未登录时的登录按钮 -->
-      <v-btn v-else to="/account/signin" variant="text" prepend-icon="mdi-account">登录</v-btn>
+      <v-btn v-else-if="!backTo" to="/account/signin" variant="text" prepend-icon="mdi-account">登录</v-btn>
     </template>
   </v-app-bar>
 </template>
@@ -157,6 +162,11 @@ function goBack() {
 // 汉堡由路由说了算：一个点了没反应的入口比没有入口更糟，而这条顶栏看不见自己
 // 下面挂没挂侧栏——手机上没有侧栏的页面（/inbox、首页那两页）以前照样画一个汉堡。
 const hasDrawer = computed(() => route.meta.drawer === true)
+
+// 这一页自己往顶栏里填内容（话题页的标题+阶段、话题列表的项目名、首页那对分段），
+// 于是这里不写标题。谁填由路由声明，不靠去数 slot 里有没有东西——那样第一帧
+// 永远是空的。
+const barSlot = computed(() => route.meta.barSlot === true)
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
@@ -174,17 +184,25 @@ const toggleDrawer = () => {
 // `{ title: '项目工作台', isFullPage: true }`——所以在手机上打开任何一个话题，
 // 顶栏都写着「项目工作台」，既不是话题名也不是项目名。
 // getRouteHierarchy 是**叶到根**排的（它自己末尾 reverse 过），所以当前页是第一个。
-// 自己带了页内分段的那一层用 mobileTitle 写整层的名字（见 router/home.ts）。
 const updateTitle = () => {
-  const own = typeof route.meta.mobileTitle === 'string' ? route.meta.mobileTitle : null
   const current = getRouteHierarchy.value.find((item) => item.title)
-  currentTitle.value = own ?? current?.title ?? '知是社区'
+  currentTitle.value = current?.title ?? '知是社区'
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
 </script>
 
 <style lang="scss" scoped>
+/* 页面填进来的那一格吃掉中间所有剩余宽度；不写 min-width 的话，里面的长标题
+   会把右边的头像顶出去。 */
+.bar-slot {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+
 /* Vuetify 的工具栏标题自带 20px/400，比页内页头的标题 (.t-title 15/600) 大一号——
    而在手机上这两条横条是同一条东西在换内容，一页大一号就看得出是两套。加类名
    压过它，而不是去改 .t-title：那一号字是设计 token，页头都读它。 */

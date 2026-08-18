@@ -39,9 +39,9 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: '',
       component: () => import('@/views/workspace/WorkspaceEntry.vue'),
       props: true,
-      // 手机上这一层就是话题列表，它自带头（项目名 + 切换器），所以系统顶栏不渲染。
+      // 手机上这一层就是话题列表，项目名 + 切换器由它自己填进顶栏（barSlot）。
       // 它同时是底栏「工作区」那一格的落点，所以底栏留着，也没有"回上一层"。
-      meta: { ownHeader: true },
+      meta: { barSlot: true },
     },
     {
       name: 'workspace-topic',
@@ -49,10 +49,9 @@ export const workspaceRoutes: RouteRecordRaw = {
       component: () => import('@/views/workspace/TopicView.vue'),
       props: true,
       // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），← 回到话题列表。
-      // `ownHeader`: 这一页自带 TopicHeader（标题 + #id + 阶段 + ⋯），系统顶栏再
-      // 写一遍标题就是两条几乎一样的横条，占掉一屏的 13%——所以那条不渲染，←
-      // 长在 TopicHeader 上。桌面上三者都不生效。
-      meta: { hideTabs: true, backTo: 'workspace-project', ownHeader: true },
+      // `barSlot`: TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己
+      // 画一条横条；← 由顶栏按 backTo 出。桌面上三者都不生效。
+      meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
       name: 'workspace-dm',

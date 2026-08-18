@@ -472,29 +472,33 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
            整块可点就得整块可聚焦、能用回车/空格打开，否则键盘用户够不着项目
            设置。右边的 chevron 只是"这里能展开"的指示，不再是唯一的靶子——所以
            它是 v-icon 不是 v-btn，按钮套按钮既非法也抢焦点。 -->
-      <v-menu location="bottom end">
-        <template #activator="{ isActive, props: menuProps }">
-          <button
-            v-bind="menuProps"
-            type="button"
-            class="sidebar-header sidebar-header-menu rail-header"
-            :class="{ 'sidebar-header-menu-active': isActive }"
-            title="项目菜单"
-          >
-            <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
-            <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
-            <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
-          </button>
-        </template>
-        <v-list density="compact" nav>
-          <v-list-item
-            prepend-icon="mdi-cog-outline"
-            title="项目设置"
-            :disabled="!selectedProjectId"
-            @click="openProjectPage('project-settings')"
-          />
-        </v-list>
-      </v-menu>
+      <!-- 整页形态（手机上的话题列表）下这一行不长在页面上，而是填进顶栏那一格：
+           手机上只有一条顶栏，页面自己再画一条就是两条横条一上一下写同类的东西。 -->
+      <Teleport to="#app-bar-slot" :disabled="!page">
+        <v-menu location="bottom end">
+          <template #activator="{ isActive, props: menuProps }">
+            <button
+              v-bind="menuProps"
+              type="button"
+              class="sidebar-header sidebar-header-menu rail-header"
+              :class="{ 'sidebar-header-menu-active': isActive, 'rail-header--bar': page }"
+              title="项目菜单"
+            >
+              <!-- 名字自己留一个 title：它是省略号截断的，鼠标停在名字上要能看到全名。 -->
+              <span class="rail-header__name" :title="currentProjectName">{{ currentProjectName }}</span>
+              <v-icon class="rail-header__caret" size="18" icon="mdi-chevron-down" />
+            </button>
+          </template>
+          <v-list density="compact" nav>
+            <v-list-item
+              prepend-icon="mdi-cog-outline"
+              title="项目设置"
+              :disabled="!selectedProjectId"
+              @click="openProjectPage('project-settings')"
+            />
+          </v-list>
+        </v-menu>
+      </Teleport>
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div class="rail-scroll flex-grow-1 overflow-y-auto">
@@ -989,6 +993,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   color: inherit;
   text-align: start;
   cursor: pointer;
+}
+/* 填进顶栏的那一份不画自己的高度和底线——那两样归顶栏。 */
+.rail-header--bar {
+  height: 100%;
+  border-block-end: 0;
+  padding-inline: 0;
 }
 .rail-header:focus-visible {
   outline: 2px solid var(--accent);
