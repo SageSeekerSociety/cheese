@@ -1233,7 +1233,38 @@ onBeforeUnmount(() => {
                 <pre class="sys-detail">{{ notice.rest }}</pre>
               </details>
             </div>
-            <!-- 芝士这轮改了平台上的什么东西 -->
+            <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
+               「查看改动」是这一行唯一的动作 —— 采纳是话题级的一次性动作，不是
+               每轮都问一遍的东西（§14.6）。 -->
+            <div v-else-if="notice?.mode === 'turn-summary'" class="sys-row turn-summary">
+              <div class="sys-line">
+                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                <span class="sys-text">
+                  <template v-if="notice.changes">
+                    本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{
+                      notice.changes.removed
+                    }})
+                  </template>
+                  <template v-for="(act, ai) in notice.actions" :key="ai">
+                    <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
+                    <span v-html="renderPlain(act.text)" />
+                  </template>
+                </span>
+                <button
+                  v-if="notice.changes"
+                  type="button"
+                  class="sys-action"
+                  @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
+                >
+                  查看改动
+                </button>
+              </div>
+              <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
+                {{ notice.changes.files.join(' · ')
+                }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
+              </div>
+            </div>
+            <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
             <div v-else-if="notice?.mode === 'action'" class="sys-row action-card">
               <div class="sys-line">
                 <span class="sys-mark sys-mark--dot" aria-hidden="true" />
@@ -1713,6 +1744,18 @@ details.sys-row > summary::-webkit-details-marker {
 .sys-occurrence + .sys-occurrence {
   border-top: 1px solid var(--line);
   padding-top: 4px;
+}
+/* 本轮摘要：文件清单是次要信息，压到元信息档，一行放不下就截断。 */
+.sys-files {
+  font-size: 12px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sys-sep {
+  color: var(--faint);
 }
 /* 两档色，底色一律取自色板的 -wash，不再手搓 color-mix。 */
 .sys-row--warn {

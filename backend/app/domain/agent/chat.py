@@ -2379,13 +2379,20 @@ class ChatService:
         eid: str | None = None,
         backfilled: bool = False,
         platform_unsolicited: bool = False,
+        in_room: bool = False,
     ) -> dict | None:
-        """One 现场 event block, committed NOW and deduped by event-id.
+        """One event block, committed NOW and deduped by event-id.
 
         Shared by everything the room learns mid-turn — a tool call, a subagent's
         conclusion, the turn's change summary — so all three get the same
         durability and idempotency contract instead of three copies of it that
-        drift. Returns None when this event-id already landed."""
+        drift. Returns None when this event-id already landed.
+
+        ``in_room`` decides whether the conversation shows it at all. The
+        frontend reads that off ``author_type`` (system = the room, ai = 现场
+        only), which is an implicit switch with no error path: pick wrong and the
+        event simply never appears, silently, forever. Naming it here at least
+        makes the choice visible at every call site."""
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
@@ -2400,7 +2407,7 @@ class ChatService:
                 project_id=project_id,
                 topic_id=topic_id,
                 author=await self._agent_handle(session, topic_id),
-                author_type=AuthorType.ai,
+                author_type=AuthorType.system if in_room else AuthorType.ai,
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
@@ -2508,13 +2515,20 @@ class ChatService:
         turn_id: uuid.UUID | None,
         changeset: _Changeset,
     ) -> dict | None:
-        """Land 「这一轮改了 N 个文件」 in the room timeline."""
+        """Land 「这一轮改了 N 个文件」 in the room timeline.
+
+        This one goes in the ROOM, not just 现场 (spec §8.5 变更提醒). What 芝士
+        changed is the one thing about a turn that is nowhere else in the
+        conversation: the doc panel lights up on its own and the accept card
+        speaks for itself, but "this turn touched these files" was only ever a
+        grey line in a drawer nobody has open."""
         return await self._persist_room_event(
             project_id=project_id,
             topic_id=topic_id,
             content=_format_change_summary(changeset.files),
             meta=_change_summary_meta(changeset),
             turn_id=turn_id,
+            in_room=True,
         )
 
     async def _reconcile_spool(

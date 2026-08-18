@@ -154,6 +154,10 @@ async function handleOpenResource(resource: string, turnId?: string) {
     void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: 'decisions' } })
   } else if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
+  } else if (resource === 'changes') {
+    // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
+    focusMode.value = false
+    onPanelTab('changes')
   } else if (resource === 'accept') {
     void acceptRef.value?.reload()
   } else if (resource === 'doc') {
