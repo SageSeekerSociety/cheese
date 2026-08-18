@@ -28,19 +28,28 @@ def test_market_lists_ai_and_compute_pools(client):
 
 def test_market_surfaces_the_whole_machine_visibility_choice_with_its_warning(client):
     """#282 §四 / #358: visibility is a catalog choice the platform SPEAKS, not a
-    silent behaviour. The boxed `isolated` 档 is the conservative default but not
-    deployed yet; whole-machine `host` works today but is 申请制 (non-default) and
-    carries the honest #282 line as its description — so a picker reads the warning
-    straight from the catalog rather than the platform granting it silently."""
+    silent behaviour — a picker reads the warning straight from the catalog rather
+    than the platform granting whole-machine access quietly.
+
+    The default is whichever 档 can actually run. This test used to assert that
+    `isolated` was the default AND undeployed, which is the contradiction #358's
+    step-1 comment describes: the picker said a topic was boxed while
+    `resolve_pinned_device` bound it to the whole machine. `host` is honestly the
+    default until step 2 ships `isolated`'s transport, at which point both this
+    catalogue and the resolver move together — they read one function."""
     data = client.get("/market/pools").json()["data"]
     vis = {v["id"]: v for v in data["visibility"]}
     assert {v["kind"] for v in data["visibility"]} == {"visibility"}
 
-    assert vis["isolated"]["default"] is True
     assert vis["isolated"]["available"] is False  # transport is #358 step 2
+    assert vis["isolated"]["default"] is False  # ...so it cannot be the default
 
-    assert vis["host"]["default"] is False  # whole-machine is never a default
     assert vis["host"]["available"] is True
+    assert vis["host"]["default"] is True  # the only 档 with a transport today
+
+    # The invariant that outlives today's answer: exactly one default, and it runs.
+    defaults = [v for v in data["visibility"] if v["default"]]
+    assert len(defaults) == 1 and defaults[0]["available"] is True
     # The exact honest UI line #282 drafted, so the badge/tooltip copy is one source.
     assert "整台机器" in vis["host"]["description"]
     assert "其他房间" in vis["host"]["description"]
