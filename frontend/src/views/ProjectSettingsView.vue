@@ -776,7 +776,7 @@ watch(() => props.projectId, load)
           />
           <v-textarea
             v-model="newRoleBody"
-            label="角色设定"
+            label="角色设定（可留空）"
             placeholder="你是一位数据科学导师，擅长……"
             rows="6"
             density="compact"
@@ -794,7 +794,7 @@ watch(() => props.projectId, load)
             color="primary"
             variant="flat"
             :loading="creatingRole"
-            :disabled="!newRoleName.trim() || !newRoleBody.trim()"
+            :disabled="!newRoleName.trim()"
             @click="submitNewRole"
           >
             创建并使用

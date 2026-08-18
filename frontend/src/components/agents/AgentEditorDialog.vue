@@ -327,7 +327,9 @@ async function save() {
 
           <v-textarea
             v-model="typeBody"
-            label="角色设定"
+            label="角色设定（可留空）"
+            hint="留空也能用 —— 它攒下的记忆每轮都会带上，之后它也可以自己改这段"
+            persistent-hint
             rows="6"
             density="comfortable"
             variant="outlined"
