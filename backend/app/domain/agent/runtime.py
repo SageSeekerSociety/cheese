@@ -585,6 +585,10 @@ class AgentWorkRunner:
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
         provision_actor: Actor | None = None,
+        # How many automatic continuations already chained into this one (#574).
+        # Carried so a turn can tell "the platform is retrying" from "the
+        # platform has been retrying for a while and getting nowhere".
+        resume_chain: int = 0,
         on_done: Callable[[], None] | None = None,
     ) -> uuid.UUID:
         """Start a turn in the background; return its turn_id immediately. Turns
@@ -626,6 +630,7 @@ class AgentWorkRunner:
                 nudge_meta=nudge_meta,
                 continuation_id=continuation_id or turn_id,
                 provision_actor=provision_actor,
+                resume_chain=resume_chain,
             )
         )
         self._tasks.add(task)
@@ -772,6 +777,23 @@ class AgentWorkRunner:
     # is the false positive (cancelling work that was fine), not the slow catch
     # — the incident this guards against ran for EIGHT HOURS.
     SILENT_TURN_S = 1800.0
+
+    # How many times a failure the platform CANNOT NAME may chain an automatic
+    # continuation before the topic goes to a person (#574).
+    #
+    # This is a fuse, not the criterion. The criterion is classification: a
+    # recognised failure already decides for itself whether continuing makes
+    # sense (host-scoped ones move machine, the rest stop and say so). What is
+    # left here is the unrecognised case — `classify_platform_failure` returning
+    # None means "I do not know what happened", which is not grounds to repeat
+    # a turn, and repeating it cost dev 87 minutes and 228 events on one topic.
+    #
+    # Not zero: most such failures ARE transient (a container swap, a provider
+    # hiccup), and #316 exists because turns that died to one used to need a
+    # human to notice. Three attempts with the backoff below spans ~3.5 minutes,
+    # comfortably past a deploy's 10-40s window, and the platform stays the one
+    # doing the retrying for as long as retrying can plausibly work.
+    MAX_RESUME_CHAIN = 3
 
     async def _wedged_turns(
         self,
@@ -1236,6 +1258,16 @@ class AgentWorkRunner:
         except Exception:  # noqa: BLE001 — a notice must never break the sweep
             logger.exception("orphan event failed for %s", topic_id)
 
+    def _resume_delay_s(self, chain: int, first_s: float) -> float:
+        """How long before the next automatic continuation.
+
+        The first retry is quick: most failures the platform cannot name are a
+        blip (a container swapping, a provider hiccup), and a fast retry makes
+        them invisible. Later ones back off — a failure that survived the first
+        retry is not likely to clear in the same minute, and a fixed cadence
+        just spends tokens at a constant rate while nothing changes."""
+        return first_s if chain <= 0 else 60.0 * (2 ** (chain - 1))
+
     def _schedule_resume(
         self,
         chat_service,
@@ -1244,12 +1276,16 @@ class AgentWorkRunner:
         reason: str = "从上一轮的断点继续",
         *,
         continuation_id: uuid.UUID | None = None,
+        chain: int = 0,
     ):
         """Wait, then run a system-nudged continuation of the saved session.
 
-        Generic platform failures keep scheduling this at a bounded cadence
-        until recovery succeeds. An ordinary room member is not the platform
-        operator and must never become the fallback retry mechanism.
+        An ordinary room member is not the platform operator and must never
+        become the fallback retry mechanism — so the platform retries a failure
+        it cannot name itself, ``chain`` counting how many times it already has.
+        That count is what stops the retrying from being unbounded: it rides
+        into the resumed turn, and at ``MAX_RESUME_CHAIN`` the turn hands the
+        topic to a person instead of scheduling another one (#574).
 
         The resume runs under the interrupted turn's ``continuation_id``, so any
         side effect the first attempt already committed is recognised as done
@@ -1266,12 +1302,19 @@ class AgentWorkRunner:
                 is_resume=True,
                 resume_reason=reason,
                 continuation_id=continuation_id,
+                resume_chain=chain,
             )
 
         task = asyncio.create_task(_later())
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
-        logger.info("scheduled auto-resume for topic %s in %.0fs", topic_id, after_s)
+        logger.info(
+            "scheduled auto-resume for topic %s in %.0fs (chain %d/%d)",
+            topic_id,
+            after_s,
+            chain,
+            self.MAX_RESUME_CHAIN,
+        )
 
     # The re-send opener's wording (#316): name the platform as the cause —
     # "被部署中断" — never "AI 服务返回错误" for a failure the deploy made.
@@ -1474,6 +1517,7 @@ class AgentWorkRunner:
         live_delivery_expected: bool = False,
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
+        resume_chain: int = 0,
     ) -> None:
         channel = str(topic_id)
         if landed_user_block_id is not None and (content or attachments):
@@ -1560,6 +1604,7 @@ class AgentWorkRunner:
                 provision_actor=provision_actor,
                 frames=frames,
                 lifecycle=lifecycle,
+                resume_chain=resume_chain,
             )
         finally:
             if lifecycle["started"] and not lifecycle["session_owned"]:
@@ -1612,6 +1657,7 @@ class AgentWorkRunner:
         # Pre-built frame stream (kickoff turns). None → run a converse turn.
         frames: AsyncIterator[Frame] | None = None,
         lifecycle: dict[str, bool] | None = None,
+        resume_chain: int = 0,
     ) -> None:
         channel = str(topic_id)
         lifecycle = (
@@ -1625,6 +1671,10 @@ class AgentWorkRunner:
         continuation_id = continuation_id or turn_id
         resume_after: float | None = None
         resume_why = "上一轮异常中断，接着跑"
+        # Set when this turn WOULD have scheduled another automatic continuation
+        # but has already used the chain's budget — the room gets a handover
+        # instead of a fourth identical failure (#574).
+        resume_exhausted = False
         # #388 缺陷一: set when the backend already knows this turn's credential is
         # dead. Read in the fuse-arming block (to cut the fuse short) and again in
         # the TimeoutError handler (to say the true reason and skip the auto-retry).
@@ -2033,8 +2083,11 @@ class AgentWorkRunner:
             # the host re-auths — the reused screen is then retired (缺陷二) and
             # reopened with a live credential. Every other timeout retries as before.
             if not credential_expired:
-                resume_after = 60.0 if is_resume else 10.0
-                resume_why = "上一轮超时中断，接着跑"
+                if resume_chain < self.MAX_RESUME_CHAIN:
+                    resume_after = self._resume_delay_s(resume_chain, 10.0)
+                    resume_why = "上一轮超时中断，接着跑"
+                else:
+                    resume_exhausted = True
         except AppError as exc:
             rec["status"] = "error"
             rec["detail"] = exc.message
@@ -2087,7 +2140,14 @@ class AgentWorkRunner:
                 error_frame["code"] = platform_failure.code
             await self._broker.publish(channel, error_frame)
             if platform_failure is None:
-                resume_after = 60.0 if is_resume else 5.0
+                # An unnamed failure is not grounds to repeat a turn forever
+                # (#574). Retry it a bounded number of times — most are
+                # transient — then hand the topic over rather than go round
+                # again against whatever is not getting better.
+                if resume_chain < self.MAX_RESUME_CHAIN:
+                    resume_after = self._resume_delay_s(resume_chain, 5.0)
+                else:
+                    resume_exhausted = True
             if platform_failure is not None and platform_failure.host_scoped:
                 # The machine, not the turn, is the suspect (#186). Account for it
                 # and — if it has now failed once too often — move the topic to a
@@ -2120,6 +2180,39 @@ class AgentWorkRunner:
                 resume_after,
                 resume_why,
                 continuation_id=continuation_id,
+                chain=resume_chain + 1,
+            )
+        elif resume_exhausted:
+            # The platform retried as far as retrying can honestly be expected
+            # to help, and the failure has not changed. Say that, and say who it
+            # is on now — silence here is the failure mode the whole auto-resume
+            # exists to avoid, and another round is not an answer either.
+            rec["detail"] = (
+                f"{rec.get('detail') or ''} → 自动续跑已用尽({resume_chain} 次)"
+            )
+            logger.warning(
+                "topic %s exhausted its auto-resume chain (%d attempts); "
+                "handing over to a human",
+                topic_id,
+                resume_chain,
+            )
+            await self._post_event(
+                chat_service,
+                topic_id,
+                turn_id,
+                f"⚠️ 芝士连着 {resume_chain + 1} 轮都没跑起来，平台自动接着跑了"
+                f"{resume_chain} 次仍然失败，不再自动重试了。",
+                meta=notice(
+                    EVENT_TURN_FAILED,
+                    severity=SEVERITY_ERROR,
+                    who=WHO_HUMAN,
+                    detail=(
+                        "已完成的改动都还在工作区里。平台重试解决不了这个故障，"
+                        "需要有人看一眼运行环境（容器、磁盘、模型通路）；"
+                        "修好后 @ 芝士，它会从断点接着做。"
+                    ),
+                    detail_label="详细说明",
+                ),
             )
         elif not lifecycle["session_owned"]:
             # 结论卡·阶段一 (机制①): this topic's turn ended and any conclusion
