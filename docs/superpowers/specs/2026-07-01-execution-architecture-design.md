@@ -252,7 +252,7 @@ v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。�
 
 ## §affinity：实例化冻结（数据正确性红线，独立可落地）
 
-- **分界线 = `Topic.session_id`**（首轮捕获，已有字段）。`session_id IS NULL` = 未实例化，算力可切；**非空 = 已落地，锁定**。
+- **分界线 = 这个话题有没有 `agent_sessions` 行**（首轮捕获）。没有 = 未实例化，算力可切；有 = 已落地，锁定。
 - 首轮把选择**物化**成具体 compute target 写回 `Topic.compute`，此后只读。
 - **自托管设备离线 → 该会话排队 / 报"算力离线"，绝不漂到别处**：工作树 + `~/.claude` session 都在那台机器，漂移 = 静默丢历史 + resume 损坏。这条是原始 bug（"话题实例化后会漂到别的在线设备"）的定稿修复，**不依赖归属/IA 重构，可先落地**。
 - 平台/虚拟节点无漂移问题（provider 内部保证逻辑节点稳定，虚拟化 reuse 对上层透明）。
@@ -265,6 +265,6 @@ v3 把 compute 选择挂在**项目层**（`ComputePool.select(project)`）。�
 
 ## §对 v2/v3 落点的修正
 
-- v3 `ComputePool.select(project)` → 细化为 `select(team-context)` 得池、`resolve(topic)` 得该会话冻结的 target。`Topic` 增 `compute` 字段；`Project` 增 `sticky_compute`；冻结分界线复用已有 `Topic.session_id`。
+- v3 `ComputePool.select(project)` → 细化为 `select(team-context)` 得池、`resolve(topic)` 得该会话冻结的 target。`Topic` 增 `compute` 字段；`Project` 增 `sticky_compute`；冻结分界线是「这个话题有没有 `agent_sessions` 行」。
 - v2 R1 `topic_turn` lease / R2 `run_turn` 契约不变；**affinity 冻结与 lease 正交**（lease 管"同话题串行"，affinity 管"钉在哪台"）。
 - UI 落点（实现细节，非本 spec）：会话算力选择器落在**新建话题流程 / 草稿话题 composer 那条**（`# 本话题 · @芝士` 旁），锁定态显示 🔒。
