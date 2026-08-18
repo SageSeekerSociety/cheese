@@ -2082,12 +2082,14 @@ details.sys-row > summary::-webkit-details-marker {
   font-weight: 500;
 }
 .mention-agent-badge {
-  font-size: 0.65rem;
+  font-size: 12px;
   font-weight: 600;
   padding: 0 5px;
   border-radius: var(--radius-sm);
-  color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.12);
+  /* 记号色做文字对比度不够 (design-system §1.6): --accent 在白底上是 2.65:1,
+     远低于正文门槛 4.5;--accent-ink 是 5.76:1。 */
+  color: var(--accent-ink);
+  background: var(--accent-wash);
 }
 .mention-menu-sub {
   font-size: 0.75rem;
