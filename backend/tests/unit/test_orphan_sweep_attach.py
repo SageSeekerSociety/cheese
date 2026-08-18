@@ -24,6 +24,7 @@ only the case where the prompt is gone and nothing will re-send it (see
 """
 
 import asyncio
+import time
 import time as _time
 import uuid
 
@@ -271,3 +272,59 @@ async def test_delivered_and_undelivered_split_gets_both_remedies(
     assert len(chat.converse_calls) == 1
     assert chat.converse_calls[0]["content"] == "新消息"
     assert chat.events == []
+
+
+@pytest.mark.anyio
+async def test_a_wedged_resume_spends_from_the_same_budget(tmp_path, monkeypatch):
+    """卡死清扫排的那次续跑，算进同一份预算里 (#574).
+
+    The sweep's remedy for a wedged turn IS an automatic continuation, so it has
+    to count as one. Counting it as zero hands the chain a fresh budget: the
+    platform can announce 「不再自动重试」 and then, because the next failure
+    entered through the sweep instead of the crash handler, quietly start
+    retrying again — taking its own handover back.
+
+    Driven end to end rather than by inspecting the counter: what a person in
+    the room sees is how many times 芝士 restarted, and that is what is asserted.
+    """
+    _instant_sleep(monkeypatch)
+    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    topic, turn = uuid.uuid4(), uuid.uuid4()
+    rt._save_inflight({str(turn): _entry(topic)})
+
+    class _BrokenChat(_Chat):
+        """Every turn after the sweep's fails the way dev's 257 did: an
+        exception no classifier recognises."""
+
+        async def converse(self, **kw):
+            self.converse_calls.append(kw)
+            raise RuntimeError("boom")
+            yield  # pragma: no cover — makes this an async generator
+
+    chat = _BrokenChat()
+    runner = AgentWorkRunner(InProcessBroker())
+
+    # A turn whose task is alive but silent on both signals — what the sweep
+    # calls wedged, and the only path that reaches the resume under test.
+    async def _never():
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(_never())
+    await asyncio.sleep(0)
+    runner._live[str(turn)] = task
+    runner._last_frame_at[str(turn)] = time.monotonic() - 4000
+
+    class _Old:
+        timestamp = staticmethod(lambda: _time.time() - 4000)
+
+    async def _last_activity(_topics):
+        return {topic: _Old()}
+
+    assert await runner.sweep_orphans(chat, last_activity=_last_activity) == 1
+    for _ in range(400):
+        await asyncio.sleep(0)
+
+    assert len(chat.converse_calls) <= AgentWorkRunner.MAX_RESUME_CHAIN, (
+        f"卡死续跑后又跑了 {len(chat.converse_calls)} 轮 —— "
+        f"清扫排的那次没算进预算，等于多给了一轮重试"
+    )
