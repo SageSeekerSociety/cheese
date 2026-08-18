@@ -87,3 +87,25 @@ describe('links that used to work', () => {
     expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/docs/${kind}`)
   })
 })
+
+// 手机上工作台是一条页面栈：工作区 → 话题列表 → 话题页。栈末端那一层要收起
+// 底栏（它不是一级目的地）并给出回哪儿去——两样都是路由上的数据，缺了不会编译
+// 失败，只会在手机上表现为"底栏压着对话框"或"进去就出不来"。
+describe('页面栈的末端', () => {
+  const leafOf = (path: string) => {
+    const matched = router().resolve(path).matched
+    return matched[matched.length - 1]
+  }
+
+  it('话题页和私聊页收起底栏，并说明回哪一层', () => {
+    for (const path of [`/projects/${PROJECT}/topics/t1`, `/projects/${PROJECT}/dm/cheese`]) {
+      const leaf = leafOf(path)
+      expect(leaf.meta.hideTabs, path).toBe(true)
+      expect(leaf.meta.backTo, path).toBe('workspace-project')
+    }
+  })
+
+  it('话题列表那一层自己是一级目的地，底栏留着', () => {
+    expect(leafOf(`/projects/${PROJECT}`).meta.hideTabs).toBeUndefined()
+  })
+})

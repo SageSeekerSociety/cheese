@@ -1,9 +1,11 @@
 <template>
   <!-- `background`, not a fixed grey — see AppBar.vue for why. -->
   <v-app-bar color="background" :elevation="0" density="default" height="56" border="b-sm" app flat>
-    <!-- 左侧抽屉按钮 -->
+    <!-- 页面栈里的一层：← 回上一层。其余页面还是抽屉按钮（1.0 的三个侧栏还没
+         改成页内分段，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
     <template #prepend>
-      <v-app-bar-nav-icon @click="toggleDrawer" />
+      <v-btn v-if="backTo" icon="mdi-arrow-left" variant="text" aria-label="返回" @click="goBack" />
+      <v-app-bar-nav-icon v-else @click="toggleDrawer" />
     </template>
 
     <!-- 中间标题 -->
@@ -150,7 +152,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
 import { useNotifications } from '@/composables/useNotifications'
@@ -167,7 +170,16 @@ import { usePageTitleStore } from '@/stores/title'
 const userMenu = useUserMenu()
 const notifications = useNotifications()
 
+const route = useRoute()
+const router = useRouter()
 const navigationStore = useNavigationStore()
+
+// 栈末端的路由自己说它回哪儿去（meta.backTo），而不是靠 history.back()——
+// 从别处直接打开一个话题链接时，后退会离开这个 app。
+const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.meta.backTo : null))
+function goBack() {
+  if (backTo.value) void router.push({ name: backTo.value, params: route.params })
+}
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
@@ -179,16 +191,14 @@ const toggleDrawer = () => {
   navigationStore.toggleSecondaryDrawer()
 }
 
-// 更新标题
+// 顶栏写的是**当前页**的标题，也就是路由层级里最深的那一个。
+//
+// 它以前取的是第一个 isFullPage 的**祖先**，而工作台那条路由上写着
+// `{ title: '项目工作台', isFullPage: true }`——所以在手机上打开任何一个话题，
+// 顶栏都写着「项目工作台」，既不是话题名也不是项目名。
 const updateTitle = () => {
-  const hierarchy = getRouteHierarchy.value
-  for (const item of hierarchy) {
-    if (item.meta.isFullPage) {
-      currentTitle.value = item.title
-      return
-    }
-  }
-  currentTitle.value = '知是社区'
+  const named = getRouteHierarchy.value.filter((item) => item.title)
+  currentTitle.value = named.length ? named[named.length - 1].title : '知是社区'
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })

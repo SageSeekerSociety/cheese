@@ -2,8 +2,10 @@
 import type { Topic } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+
+import { usePageTitle } from '@/composables/usePageTitle'
 
 import ChatPanel from '@/components/ChatPanel.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
@@ -45,6 +47,19 @@ function onPanelTab(key: string) {
 const AUTHOR = myHandle()
 
 const selectedTopic = computed<Topic | null>(() => store.topics.find((t) => t.id === props.topicId) ?? null)
+
+// 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
+// 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
+const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
+watch(
+  selectedTopic,
+  (topic) => {
+    if (topic) setDynamicTitle(topic.title, 'workspace-topic')
+    else clearDynamicTitle('workspace-topic')
+  },
+  { immediate: true }
+)
+onUnmounted(() => clearDynamicTitle('workspace-topic'))
 // The list is still on its way, so "not found" is not yet a fact.
 const resolving = computed(() => !selectedTopic.value && (store.loadingTopics || store.topics.length === 0))
 

@@ -42,13 +42,16 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: 'topics/:topicId',
       component: () => import('@/views/workspace/TopicView.vue'),
       props: true,
+      // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），顶栏的 ← 回到
+      // 话题列表。桌面上两者都不生效——那儿话题列表是常驻侧栏，没有"回去"。
+      meta: { hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'workspace-dm',
       path: 'dm/:peer',
       component: () => import('@/views/workspace/DmView.vue'),
       props: true,
-      meta: { title: '私聊' },
+      meta: { title: '私聊', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'project-docs',
