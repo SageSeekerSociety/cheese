@@ -207,6 +207,16 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
 //   8. "Empty" ATX heading trailing #s are NOT normalized (rare, keep strict).
 //  11. Intraword `\_` unescapes to `_` outside inline code (CommonMark:
 //      intraword underscores never toggle emphasis — escape is pure noise).
+//  12. Block boundaries always carry a blank line. The serializer writes one
+//      between every pair of blocks; a document written without it (`正文\n##
+//      小节`) parses identically. Both sides get the blank INSERTED, never
+//      removed, so a serializer that merged two blocks into one still fails —
+//      merging changes the text of the lines, not just the space between them.
+//  13. A paragraph's continuation lines carry no indentation of their own.
+//      `1. 第一条` + a 4-space continuation is the same list item as the same
+//      text continued at 2 spaces; only the item markers state the nesting, and
+//      those are left strict. A line that follows a BLANK line keeps its indent,
+//      which is what leaves 4-space indented code blocks strict.
 //
 // Everything else — dropped constructs, reordered content, lost alignment,
 // lost language tags, escaped-away tokens — fails the comparison.
@@ -310,6 +320,12 @@ function normalizeTableRow(line: string): string {
   return `| ${cells.join(' | ')} |`
 }
 
+// A line that opens a block of its own: heading, quote, list item, fence,
+// table row, thematic break. Everything else continues the block above it.
+const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$)/
+// A heading is a block all by itself, so whatever follows it starts a new one.
+const HEADING_RE = /^ {0,3}#{1,6}(\s|$)/
+
 // The per-line rules that apply to prose wherever it appears. Table cells and
 // blockquote bodies are prose too — running only part of this on them is how
 // `| login_security.py |` came to report a document as unsafe to edit.
@@ -354,10 +370,24 @@ export function normalizeMarkdown(md: string): string {
     raw = raw.replace(/^(\s*)[*+](\s)/, '$1-$2')
     out.push({ text: prose(raw), literal: false })
   }
+  // Rules 12 & 13: put a blank line on every block boundary, and drop the
+  // indent a paragraph's continuation lines were wrapped at. Both read the
+  // fence flag, so code keeps its own spacing byte-exact.
+  const spaced: { text: string; literal: boolean }[] = []
+  for (const l of out) {
+    const prev = spaced[spaced.length - 1]
+    if (!l.literal && prev && !prev.literal && prev.text !== '') {
+      const boundary = HEADING_RE.test(prev.text) || (!BLOCK_START_RE.test(prev.text) && BLOCK_START_RE.test(l.text))
+      if (boundary && l.text !== '') spaced.push({ text: '', literal: false })
+    }
+    const continuation = !l.literal && prev && !prev.literal && prev.text !== '' && !BLOCK_START_RE.test(l.text)
+    spaced.push(continuation ? { text: l.text.replace(/^ +(?=\S)/, ''), literal: false } : l)
+  }
+
   // Collapse blank-line runs (never inside fences); trim document edges.
   const collapsed: string[] = []
   let prevBlank = false
-  for (const l of out) {
+  for (const l of spaced) {
     if (!l.literal && l.text === '') {
       if (prevBlank) continue
       prevBlank = true

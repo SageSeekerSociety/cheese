@@ -50,6 +50,15 @@ describe('normalizeMarkdown tolerances', () => {
   it('normalizes bullet markers to -', () => {
     expect(normalizeMarkdown('* one\n+ two')).toBe('- one\n- two')
   })
+  it('puts a blank line on a block boundary written without one', () => {
+    expect(normalizeMarkdown('正文\n## 小节\n下一段')).toBe(normalizeMarkdown('正文\n\n## 小节\n\n下一段'))
+    expect(normalizeMarkdown('放哪个：\n- 一\n- 二')).toBe(normalizeMarkdown('放哪个：\n\n- 一\n- 二'))
+  })
+
+  it('ignores the indent a wrapped paragraph line was written at', () => {
+    expect(normalizeMarkdown('1. 第一条\n    续行\n2. 第二条')).toBe(normalizeMarkdown('1. 第一条\n  续行\n2. 第二条'))
+  })
+
   it('normalizes blockquote markers', () => {
     expect(normalizeMarkdown('>a\n> > b')).toBe('> a\n> > b')
   })
@@ -239,6 +248,26 @@ describe('known-lossy constructs are detected', () => {
 
   it('reference-style link definitions are inlined (def line dropped)', () => {
     expectDetected('看[这里][1]。\n\n[1]: https://example.com')
+  })
+
+  // Rules 12/13 loosen whitespace, which is the one place a tolerance can go
+  // too far: if it ever equated "two blocks" with "one block", the check would
+  // stop seeing the loss it exists for. These pin the floor.
+  it('two paragraphs merged into one is still lossy', () => {
+    const merged = normalizeMarkdown('第一段。\n\n第二段。')
+    expect(merged).not.toBe(normalizeMarkdown('第一段。 第二段。'))
+  })
+
+  it('a dropped blank line between paragraphs is still lossy', () => {
+    expect(normalizeMarkdown('第一段。\n\n第二段。')).not.toBe(normalizeMarkdown('第一段。\n第二段。'))
+  })
+
+  it('a flattened nested list is still lossy', () => {
+    expect(normalizeMarkdown('- 一级\n  - 二级')).not.toBe(normalizeMarkdown('- 一级\n- 二级'))
+  })
+
+  it('an indented code block keeps its indentation', () => {
+    expect(normalizeMarkdown('正文\n\n    code()\n')).toContain('    code()')
   })
 })
 
