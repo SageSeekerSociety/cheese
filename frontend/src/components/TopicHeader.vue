@@ -150,7 +150,7 @@ watch(
               <div v-if="row.u" class="usage-grid">
                 <div class="usage-cell">
                   <div class="usage-num">{{ fmtNum(row.u.turns) }}</div>
-                  <div class="t-meta">轮次</div>
+                  <div class="t-meta">运行次数</div>
                 </div>
                 <div class="usage-cell">
                   <div class="usage-num">{{ fmtNum(row.u.total_tokens) }}</div>
@@ -186,7 +186,7 @@ watch(
         size="small"
         variant="text"
         :class="focus ? 'topic-header__on' : 'c-muted'"
-        :title="focus ? '退出专注' : '专注模式（面板全幅）'"
+        :title="focus ? '退出专注模式' : '专注模式'"
         @click="emit('toggle-focus')"
       />
     </div>

@@ -20,6 +20,9 @@ defineProps<{
   topic: Topic
   members: ProjectMemberRow[]
   topicList: Topic[]
+  // 开这个话题的那一刻还有多少条没读——对话栏用它画「以下是新消息」那条线。
+  // 必须一路透传：漏掉它不会报错，只是那条线再也不出现。
+  unreadOnOpen?: number
 }>()
 
 const emit = defineEmits<{
@@ -28,7 +31,9 @@ const emit = defineEmits<{
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  (e: 'open-resource', resource: string): void
+  // 两个参数都要转：`turnId` 决定文档面板高亮哪一轮改的段落，
+  // 只转第一个的话那个功能会静默降级成「整篇闪一下」。
+  (e: 'open-resource', resource: string, turnId?: string): void
   (e: 'upgrade-message', payload: unknown): void
   (e: 'open-topic', topicId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -56,12 +61,13 @@ defineExpose({
     show-composer
     :members="members"
     :topic-list="topicList"
+    :unread-on-open="unreadOnOpen"
     @turn-done="emit('turn-done')"
     @tool-used="emit('tool-used', $event)"
     @state-changed="emit('state-changed', $event)"
     @mention-click="emit('mention-click', $event)"
     @open-file="emit('open-file', $event)"
-    @open-resource="emit('open-resource', $event)"
+    @open-resource="(resource: string, turnId?: string) => emit('open-resource', resource, turnId)"
     @upgrade-message="emit('upgrade-message', $event)"
     @open-topic="emit('open-topic', $event)"
   >

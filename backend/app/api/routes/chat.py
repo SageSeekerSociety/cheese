@@ -148,6 +148,12 @@ async def chat(
                     and isinstance(a.get("path"), str)
                     and a["path"]
                 ]
+                # 乐观渲染的对账号：客户端自己发的这一条叫什么。原样回传，
+                # 平台不解释它的内容。
+                raw_client_id = payload.get("client_id")
+                client_id = (
+                    str(raw_client_id)[:64] if isinstance(raw_client_id, str) else None
+                )
                 if not content and not attachments:
                     await send({"type": "error", "message": "empty content"})
                     continue
@@ -163,6 +169,7 @@ async def chat(
                         reply_to=reply_to,
                         attachments=attachments,
                         provision_actor=conn_actor,
+                        client_id=client_id,
                     )
                 except AppError as exc:
                     await send({"type": "error", "message": exc.message})

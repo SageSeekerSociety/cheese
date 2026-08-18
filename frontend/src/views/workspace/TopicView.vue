@@ -185,6 +185,10 @@ async function handleOpenResource(resource: string, turnId?: string) {
     void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: 'decisions' } })
   } else if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
+  } else if (resource === 'changes') {
+    // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
+    focusMode.value = false
+    onPanelTab('changes')
   } else if (resource === 'accept') {
     chatColumn.value?.reloadAccept()
   } else if (resource === 'doc') {
@@ -230,13 +234,19 @@ async function handleUpgradeMessage(messageId: string) {
 }
 
 // Everything topic-scoped resets when the URL names a different topic.
+// 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
+// 所以在归零之前抓一次，交给对话栏去画那条线。
+const unreadOnOpen = ref(0)
 watch(
   () => props.topicId,
   (id) => {
     worklog.value = []
     working.value = false
     workingSince.value = null
-    if (id) store.markRead(id)
+    if (id) {
+      unreadOnOpen.value = store.unreadMap[id] ?? 0
+      store.markRead(id)
+    }
   },
   { immediate: true }
 )
@@ -275,6 +285,7 @@ watch(
           :topic="selectedTopic"
           :members="store.members"
           :topic-list="store.topics"
+          :unread-on-open="unreadOnOpen"
           v-on="chatEvents"
         />
         <div
@@ -309,6 +320,7 @@ watch(
               :topic="selectedTopic"
               :members="store.members"
               :topic-list="store.topics"
+              :unread-on-open="unreadOnOpen"
               v-on="chatEvents"
             />
           </template>

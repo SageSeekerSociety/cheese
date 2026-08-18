@@ -20,6 +20,7 @@ from app.domain.agent.service import (
 )
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -616,3 +617,77 @@ async def test_abandoned_partial_lands_joined_after_grace(
         rows = await BlockRepository(session).list_for_topic(tid)
     assert [b.content for b in _ai_messages(rows)] == ["只说到一半\n然后就断了"]
     assert not list(spool.iterdir())
+
+
+# --- Stop-vs-live dedup across mention canonicalization -----------------------
+
+
+class _LiveMessageAgent(AgentService):
+    """One complete 芝士 message delivered live, with its own event id."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(model="stub")
+        self.text = text
+
+    async def stream_reply(
+        self,
+        *,
+        prompt,
+        system_prompt,
+        cwd,
+        resume_session_id,
+        sandbox=None,
+        allowed_tools=None,
+        **_,
+    ):
+        yield AgentMessage(text=self.text, eid="live-1")
+        yield AgentResult(text="", session_id="s1", usage=None)
+
+
+def _spool_stop(spool: Path, eid: str, last_message: str) -> None:
+    """The turn-ending Stop, parked because nothing was listening for it."""
+    spool.mkdir(parents=True, exist_ok=True)
+    (spool / f"1700000000000000001.{eid}").write_text(
+        json.dumps({"hook_event_name": "Stop", "last_assistant_message": last_message}),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("text", ["我改完了", "@u 交给你了"])
+@pytest.mark.anyio
+async def test_stop_does_not_duplicate_a_message_that_landed_live(
+    client, tmp_path, monkeypatch, text
+):
+    """A Stop's `last_assistant_message` is a copy of a message already in the
+    room, so it must not land again — whether or not that message mentions
+    anyone. It has its own event id, so the ONLY guard is the text comparison,
+    and a message carrying "@handle" is stored canonicalized (`<@handle>`)
+    while the hook payload still holds the friendly form: comparing the two
+    raw put an identical-looking second copy in the room."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    pid, tid = await _project_topic(factory)
+    async with factory() as session:
+        session.add(ProjectMember(project_id=pid, user_handle="u"))
+        await session.commit()
+
+    live = ChatService(
+        session_factory=factory,
+        agent=_LiveMessageAgent(text),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    async for _ in live.converse(
+        topic_id=tid, author="u", content="做点事", summon=True
+    ):
+        pass
+
+    _spool_stop(ws.spool_dir(pid, tid), "stop-1", text)
+    async for _ in _quiet_service(factory, tmp_path).converse(
+        topic_id=tid, author="u", content="再来", summon=True
+    ):
+        pass
+
+    async with factory() as session:
+        rows = await BlockRepository(session).list_for_topic(tid)
+    assert len(_ai_messages(rows)) == 1

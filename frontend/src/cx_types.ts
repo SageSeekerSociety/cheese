@@ -175,6 +175,9 @@ export interface WsClientMessage {
   summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
+  // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
+  // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
+  client_id?: string
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----
@@ -451,6 +454,9 @@ export interface AcceptCard {
   decided_by: string | null
   decided_at: string | null
   note: string
+  // 这条 note 是「停住了」(error) 还是「还在走」(info)；空 note 是 null。
+  // 后端算好下发（domain/review/notes.py），别在这边按文案开头去猜。
+  note_level: 'error' | 'info' | null
   created_at: string
   // 机器闸门: when the check passed + the tail of its output.
   gate_passed_at: string | null

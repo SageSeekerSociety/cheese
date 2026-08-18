@@ -35,7 +35,14 @@ from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.models import AiMode, Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review import archive, commit_message, delivery, pr_publish, pr_text
+from app.domain.review import (
+    archive,
+    commit_message,
+    delivery,
+    notes,
+    pr_publish,
+    pr_text,
+)
 from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
@@ -54,29 +61,29 @@ logger = logging.getLogger("cheesex.review")
 # 靠前缀互相识别 —— 所以每个前缀都必须是**具名常量**, 不能靠 "⚠️" 这个共同的
 # 表情去粗判 (2026-08-10 修的就是这个: 用 "⚠️" 粗判会让"轮询暂停"冒充"重推
 # 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
-_REPUSH_FAILED_PREFIX = "⚠️ 平台自动重推失败"
+_REPUSH_FAILED_PREFIX = notes.REPUSH_FAILED_PREFIX
 #: 本地话题分支与 PR 分支分叉 (采纳即合并 #296, 2026-08-12). `push_topic_branch_
 #: for_github_pr` 是**非强制**推送，一旦本地分支被 jj rewind / rebase 挪到了 PR
 #: 分支的祖先或旁支上（bookmark set --allow-backwards 允许回退），plain push 就会
 #: 被 GitHub 以 non-fast-forward 拒绝——而轮询每 60 秒无脑重试这条注定失败的推送，
 #: 就是 card 946bf5de 每 ~70 秒失败一次的死循环。检测到不能快进就**不推**，留一条
 #: 具名 note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
-_REPUSH_DIVERGED_PREFIX = "🌿 本地分支与 PR 分支已分叉"
-_POLL_PAUSED_PREFIX = "⚠️ 轮询暂停"
+_REPUSH_DIVERGED_PREFIX = notes.REPUSH_DIVERGED_PREFIX
+_POLL_PAUSED_PREFIX = notes.POLL_PAUSED_PREFIX
 # One occurrence per automatic base-update (#468) — counted to cap rebase loops.
-_REBASE_NOTE_MARK = "⟲"
+_REBASE_NOTE_MARK = notes.REBASE_NOTE_MARK
 #: 采纳现场补开 App PR 失败（存量无 PR 卡，#296 stage 1 的回归修复）。开不出 PR
 #: 时采纳停下、原因亮在卡上——绑定 GitHub 的项目绝不静默本地合并直推 main
 #: （all commits go through PR）。卡保持 pending，人处理后可直接重试采纳。
-_ACCEPT_PR_OPEN_FAILED_PREFIX = "⚠️ 采纳未完成：无法为这张卡开 PR"
+_ACCEPT_PR_OPEN_FAILED_PREFIX = notes.ACCEPT_PR_OPEN_FAILED_PREFIX
 #: 卡上有 PR 但此刻推进不了（GitHub 不可达 / PR 被关闭未合并 / …）。绑定 GitHub
 #: 的项目采纳只通过合并 PR 完成 (#363)——这类失败停下亮出来，永不落 local merge。
-_ACCEPT_PR_STALLED_PREFIX = "⚠️ 采纳未完成：PR 未能合并"
+_ACCEPT_PR_STALLED_PREFIX = notes.ACCEPT_PR_STALLED_PREFIX
 #: 未接 GitHub 的项目 (#363)：平台自己就是 forge，local merge 是它唯一、正当的
 #: 采纳语义——不是降级。这句写在卡上，让它和「该走 PR 却没走」的卡一眼可分。
 #: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
 #: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
-_DEPLOY_STALLED_PREFIX = "⏳ 部署迟迟没有完成"
+_DEPLOY_STALLED_PREFIX = notes.DEPLOY_STALLED_PREFIX
 
 #: 一次轮询里最多问 GitHub 多少次「这次成功部署包含我的提交吗」
 #: (`_later_successful_deploy`)。顶替我们的那次部署必然是合并之后最近的几次之一，
@@ -87,19 +94,19 @@ _MAX_SUPERSEDE_COMPARES = 5
 #: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
 #: 代码。状态列分不开，所以**这条前缀就是那个区分**：它在 note 和 gate_output 里
 #: 都出现，任何读卡的人/代码靠它判断，不要靠猜 gate_output 是不是空的。
-GATE_ABANDONED_PREFIX = "⏱ 闸门没跑完"
+GATE_ABANDONED_PREFIX = notes.GATE_ABANDONED_PREFIX
 #: 人工作废 (2026-08-11)。作废复用 `revoked` 终态（archive.py 收敛非终态卡时也
 #: 用它），所以「谁作废的、为什么」只能靠这条前缀留在 note 里。
-VOIDED_PREFIX = "🗑 卡片已作废"
+VOIDED_PREFIX = notes.VOIDED_PREFIX
 #: 等 CI (App 采纳等 CI 再合)。`pr_open` 期间「什么都没发生」和「还在等」在卡面上
 #: 长得一模一样——一张不动的卡读起来像死了。这条前缀让等待自己说话：在等哪几项、
 #: 已经等了多久。它是 note 家族里**优先级最低**的一条：只在 note 为空、或上一条
 #: 也是它自己的时候才写，绝不盖掉 ⚠️/🚫/✋/❌/🌿/🚪 这些描述真实故障的 note。
-WAITING_CHECKS_PREFIX = "⏳ 等 CI"
+WAITING_CHECKS_PREFIX = notes.WAITING_CHECKS_PREFIX
 #: 人工放行 (App 采纳等 CI 再合)。红着合有时是对的（CI 基础设施抽风、与本次改动
 #: 无关的既有失败），不能接受的是**没有人做过这个决定**。这条前缀就是那个署名：
 #: 谁、什么时候、当时检查是什么状态、理由。默认拒绝、显式放行。
-FORCE_MERGED_PREFIX = "🔨 人工放行"
+FORCE_MERGED_PREFIX = notes.FORCE_MERGED_PREFIX
 
 #: 等待提示里「已等多久」的粒度。轮询每 60 秒一次，按分钟写会让这条 note 每一轮
 #: 都变一次（等于每分钟一次无意义的写 + UI 抖动）；按 5 分钟分档，一次等待里它
@@ -839,6 +846,11 @@ class AcceptService:
         """AcceptCardOut payload enriched with the vote state (approvals live in
         their own table; the requirement is a project setting)."""
         data = AcceptCardOut.model_validate(card).model_dump(mode="json")
+        # 「这条 note 有多严重」由拥有这些前缀的那一侧算（domain/review/notes.py），
+        # 随卡下发一个码。浏览器过去自己按 emoji 开头猜，而那份硬编码列表漏掉了
+        # 后来加的 `🌿`。
+        level = notes.note_level(card.note)
+        data["note_level"] = level.value if level else None
         data["approvals"] = await self._repo.list_approver_handles(card.id)
         topic = await self._topics.get(card.topic_id)
         project = (
