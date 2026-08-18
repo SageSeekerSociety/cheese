@@ -34,7 +34,8 @@ export default {
       path: 'teams',
       name: 'HomeTeams',
       component: () => import('@/views/teams/Index.vue'),
-      redirect: { name: 'HomeTeamsExplore' },
+      // 落在「我的」：发现是有意图才去的一段，而从底栏点进来的人是回自己队里。
+      redirect: { name: 'HomeTeamsMine' },
       meta: {
         title: '小队',
         isFullPage: true,
