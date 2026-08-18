@@ -1,17 +1,27 @@
+# syntax=docker/dockerfile:1
 FROM node:21-slim as base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
 RUN corepack enable
+# `postinstall` runs `husky install`, which only has something to do in a git
+# checkout. The image has no .git (see .dockerignore), so say so outright rather
+# than relying on husky's own early return.
+ENV HUSKY=0
 
-FROM base as dev
+# The manifests alone, so editing a component does not reinstall the world: this
+# layer is reused until the lockfile itself changes. The pnpm store lives on a
+# cache mount, so even a lockfile edit fetches only what it added.
+FROM base as deps
+COPY package.json pnpm-lock.yaml ./
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
+
+FROM deps as dev
 COPY . ./
-RUN pnpm install --frozen-lockfile
 CMD ["pnpm", "dev"]
 
-FROM base as build
+FROM deps as build
 COPY . ./
-RUN pnpm install --frozen-lockfile
 ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__
