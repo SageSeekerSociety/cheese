@@ -518,8 +518,6 @@ export interface TopicAgent {
   display_name: string
   /** true = 这个话题没自己选过，跟着项目默认走（换了默认它会跟着换） */
   inherited: boolean
-  /** 换人会丢掉这个话题的会话 —— 换之前要让人知道 */
-  session_reset: boolean
 }
 
 export function getTopicAgent(topicId: string): Promise<TopicAgent> {

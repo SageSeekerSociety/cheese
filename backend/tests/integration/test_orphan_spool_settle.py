@@ -19,10 +19,11 @@ from app.domain.agent import runtime as rt
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent.service import AgentResult, AgentService
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
@@ -106,7 +107,7 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        topic = await TopicRepository(session).get(tid)
+        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
     finals = [
         b
         for b in rows
@@ -114,7 +115,7 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
     ]
     assert len(finals) == 1
     assert finals[0].meta.get("backfilled") is True
-    assert topic.session_id == "s-done"  # the next summon resumes the FINISHED session
+    assert resumes_by == "s-done"  # the next summon resumes the FINISHED session
     assert not list(ws.spool_dir(pid, tid).iterdir())
 
 
@@ -144,12 +145,12 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
     assert await svc.settle_spool(tid) == 1
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
-        topic = await TopicRepository(session).get(tid)
+        resumes_by = await AgentSessionService(session).resume_token(tid, CHEESE_HANDLE)
     finals = [b for b in rows if b.content == "只有Stop带回来的结论"]
     assert len(finals) == 1
     assert finals[0].kind == BlockKind.message
     assert finals[0].meta.get("eid") == "s-only"
-    assert topic.session_id == "s-final"
+    assert resumes_by == "s-final"
     # Idempotent: a second settle finds nothing to do.
     assert await svc.settle_spool(tid) == 0
 

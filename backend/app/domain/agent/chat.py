@@ -65,9 +65,11 @@ from app.domain.agent.stages import resolve_stage, stage_scenario
 from app.domain.agent_instance.services import (
     IMPLICIT_DEFAULT,
     AgentInstanceService,
+    ResolvedAgent,
     legacy_topic_pool,
     memory_pool,
 )
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import (
@@ -1816,10 +1818,17 @@ class ChatService:
         next summon resumes it. Never raises — used on failure paths."""
         try:
             async with self._sessions() as session:
-                topics = TopicRepository(session)
-                topic = await topics.get(topic_id)
+                topic = await TopicRepository(session).get(topic_id)
                 if topic is not None:
-                    await topics.set_session_id(topic, session_id)
+                    # Resolved here rather than threaded in: the hook-consume
+                    # path reaches this with no ResolvedAgent in scope, and this
+                    # already opens a session to do its own write.
+                    agent = await self._resolved_agent(session, topic)
+                    await AgentSessionService(session).remember(
+                        topic_id=topic_id,
+                        agent_handle=agent.handle,
+                        resume_token=session_id,
+                    )
                     await session.commit()
         except Exception:  # noqa: BLE001 — never mask the original failure
             logger.exception("failed to save session pointer for %s", topic_id)
@@ -2225,6 +2234,19 @@ class ChatService:
             logger.exception("failed to ✅-ack block %s", user_block_id)
             return None
 
+    async def _resolved_agent(
+        self, session: AsyncSession, topic: Topic
+    ) -> ResolvedAgent:
+        """Which agent is working in *topic* — its own, else the project's.
+
+        Its ``handle`` keys both of the things an agent owns and a room does not:
+        the memory pool it writes to, and the conversation it resumes.
+        """
+        project = await ProjectRepository(session).get(topic.project_id)
+        if project is None:
+            return IMPLICIT_DEFAULT
+        return await AgentInstanceService(session).for_topic(topic, project)
+
     async def _agent_memory_pool(
         self, session: AsyncSession, topic: Topic
     ) -> tuple[MemoryScope, str]:
@@ -2234,12 +2256,7 @@ class ChatService:
         of one project has one memory, which is what "the same 芝士" was
         supposed to mean all along.
         """
-        project = await ProjectRepository(session).get(topic.project_id)
-        agent = (
-            await AgentInstanceService(session).for_topic(topic, project)
-            if project is not None
-            else IMPLICIT_DEFAULT
-        )
+        agent = await self._resolved_agent(session, topic)
         return memory_pool(topic.project_id, agent)
 
     async def _recall_agent_memories(
@@ -3273,7 +3290,11 @@ class ChatService:
             # Best-effort by construction — see workspace/identity.py.
             if not is_private:
                 await ws_identity.sync_for_topic(session, topic)
-            resume_session_id = topic.session_id
+            # This agent's thread here, not the room's: a room may host several
+            # and each resumes its own (agent_session/models.py).
+            resume_session_id = await AgentSessionService(session).resume_token(
+                topic_id, agent.handle
+            )
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
@@ -3583,8 +3604,8 @@ class ChatService:
                     # Those handlers only run if the process lives long enough
                     # to run them. `asyncio.shield` survives cancellation; it
                     # does not survive SIGKILL or the machine losing power. A
-                    # turn killed that way left `topic.session_id` NULL, so the
-                    # auto-resume found nothing to `--resume`, started a FRESH
+                    # turn killed that way left this agent with no session row,
+                    # so the auto-resume found nothing to `--resume`, started a FRESH
                     # claude, and 芝士 came back with no memory of what it had
                     # already done — measured on this very topic: a 7-minute,
                     # 132-message turn whose entire transcript was orphaned on
@@ -4039,7 +4060,11 @@ class ChatService:
                 action_payloads.append(_block_payload(BlockOut.model_validate(blk)))
 
             if topic is not None and new_session_id:
-                await topics.set_session_id(topic, new_session_id)
+                await AgentSessionService(session).remember(
+                    topic_id=topic_id,
+                    agent_handle=agent.handle,
+                    resume_token=new_session_id,
+                )
 
             # 这一轮真的把这些消息交给 agent 跑完了 —— 现在才盖 consumed 戳，下一轮
             # 的窗口从这里往后开。**故意放在这里而不是建 prompt 的 tx1**：轮次崩了 /
@@ -4296,7 +4321,12 @@ class ChatService:
             )
             topic = await topics.get(topic_id)
             if topic is not None and new_session_id:
-                await topics.set_session_id(topic, new_session_id)
+                agent = await self._resolved_agent(session, topic)
+                await AgentSessionService(session).remember(
+                    topic_id=topic_id,
+                    agent_handle=agent.handle,
+                    resume_token=new_session_id,
+                )
             await session.commit()
 
         return {

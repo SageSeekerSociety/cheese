@@ -10,7 +10,8 @@ import uuid
 
 from app.core.config import settings
 from app.domain.agent import clone
-from app.domain.topic.repositories import TopicRepository
+from app.domain.agent_session.repositories import AgentSessionRepository
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.workspace import service as ws
 
 
@@ -28,10 +29,11 @@ def _project_and_topics(client) -> tuple[str, str, str]:
 def _seed_session(client, topic_id: str, session_id: str) -> None:
     async def _run() -> None:
         async with client.test_factory() as s:
-            repo = TopicRepository(s)
-            topic = await repo.get(uuid.UUID(topic_id))
-            assert topic is not None
-            await repo.set_session_id(topic, session_id)
+            await AgentSessionRepository(s).save(
+                topic_id=uuid.UUID(topic_id),
+                agent_handle=CHEESE_HANDLE,
+                resume_token=session_id,
+            )
             await s.commit()
 
     asyncio.run(_run())
@@ -40,8 +42,9 @@ def _seed_session(client, topic_id: str, session_id: str) -> None:
 def _read_session(client, topic_id: str) -> str | None:
     async def _run() -> str | None:
         async with client.test_factory() as s:
-            topic = await TopicRepository(s).get(uuid.UUID(topic_id))
-            return topic.session_id if topic else None
+            return await AgentSessionRepository(s).resume_token(
+                uuid.UUID(topic_id), CHEESE_HANDLE
+            )
 
     return asyncio.run(_run())
 

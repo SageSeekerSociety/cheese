@@ -20,10 +20,11 @@ from app.domain.agent.service import (
     AgentService,
     AgentUsage,
 )
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind, consumed_turn
 from app.domain.block.repositories import BlockRepository
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
@@ -384,14 +385,16 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
 
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
-        topic = await TopicRepository(session).get(topic_id)
+        resumes_by = await AgentSessionService(session).resume_token(
+            topic_id, CHEESE_HANDLE
+        )
     ai_messages = [
         row
         for row in rows
         if row.kind == BlockKind.message and row.author_type == AuthorType.ai
     ]
     assert [row.content for row in ai_messages] == ["Background work finished"]
-    assert topic is not None and topic.session_id == "session-autonomous"
+    assert resumes_by == "session-autonomous"
 
     await provider.drop_subscription(topic_id)
     assert subscription.consumer_task is not None

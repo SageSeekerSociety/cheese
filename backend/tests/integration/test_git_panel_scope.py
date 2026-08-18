@@ -11,7 +11,8 @@ These tests drive the HTTP endpoints the panel calls.
 import asyncio
 import uuid
 
-from app.domain.topic.repositories import TopicRepository
+from app.domain.agent_session.repositories import AgentSessionRepository
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.workspace import service as ws
 
 
@@ -60,10 +61,11 @@ def _seed_session(client, topic_id: uuid.UUID, session_id: str) -> None:
 
     async def _run() -> None:
         async with client.test_factory() as s:
-            repo = TopicRepository(s)
-            topic = await repo.get(topic_id)
-            assert topic is not None
-            await repo.set_session_id(topic, session_id)
+            await AgentSessionRepository(s).save(
+                topic_id=topic_id,
+                agent_handle=CHEESE_HANDLE,
+                resume_token=session_id,
+            )
             await s.commit()
 
     asyncio.run(_run())

@@ -22,6 +22,7 @@ from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
 )
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.doc_tree import markdown_to_nodes
@@ -205,15 +206,15 @@ class TopicService:
 
     async def set_agent(
         self, topic_id: uuid.UUID, instance_id: uuid.UUID | None
-    ) -> tuple[Topic, ResolvedAgent, bool]:
-        """Hand this topic to a different agent, dropping the session it had.
+    ) -> tuple[Topic, ResolvedAgent]:
+        """Hand this topic to a different agent.
 
-        The session is ONE agent's memory of this conversation. Resuming it as
-        somebody else produces an agent that remembers saying things it never
-        said — a plausible, confident, wrong participant — so the thread does not
-        survive the switch. Returned as ``session_reset`` rather than done
-        quietly: it is the real cost of the change, and the caller has to be able
-        to say so before anyone loses a conversation they wanted.
+        Nothing is destroyed. A conversation is keyed by (topic, agent) in
+        ``agent_sessions``, so the incoming agent looks up a key that has no row
+        and starts fresh, the outgoing agent's row stays exactly where it is, and
+        handing the topic back finds it again. It used to be otherwise — one
+        session column per topic meant a switch had to erase the thread, and the
+        caller had to warn about it first.
 
         Passing ``None`` hands the topic back to the project's default.
         """
@@ -227,13 +228,10 @@ class TopicService:
             else None
         )
         wanted = instance.id if instance is not None else None
-        session_reset = False
         if topic.agent_instance_id != wanted:
             topic.agent_instance_id = wanted
-            session_reset = topic.session_id is not None
-            topic.session_id = None
             await self._session.flush()
-        return topic, await self.resolve_agent(topic), session_reset
+        return topic, await self.resolve_agent(topic)
 
     async def create(
         self,
@@ -852,7 +850,15 @@ class TopicService:
             # Session dirs + workdir slugs are keyed per project; a cross-project
             # clone would point the transcript at a different repo. Keep in-project.
             raise ValidationError("只能在同一项目内克隆会话")
-        source_sid = source.session_id
+        # The agent working in the source is the one whose conversation this
+        # forks, and the agent working in the target is the one that inherits it.
+        # Both are resolved rather than assumed: a room may host several, and
+        # copying one agent's transcript onto another's key would hand it a
+        # thread it never had.
+        sessions = AgentSessionService(self._session)
+        source_agent = await self.resolve_agent(source)
+        target_agent = await self.resolve_agent(target)
+        source_sid = await sessions.resume_token(source.id, source_agent.handle)
         if not source_sid:
             raise ValidationError("源话题还没跑过（没有可克隆的会话）")
         new_sid = clone.mint_session_id()
@@ -869,7 +875,11 @@ class TopicService:
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
         # Point the target at the forked session so its next turn --resume's it.
-        await self._repo.set_session_id(target, new_sid)
+        await sessions.remember(
+            topic_id=target.id,
+            agent_handle=target_agent.handle,
+            resume_token=new_sid,
+        )
         return target
 
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:

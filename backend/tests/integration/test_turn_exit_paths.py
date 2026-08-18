@@ -3,8 +3,8 @@
 The property under test is stated as an invariant rather than a happy path,
 because the bug it replaces was precisely a path nobody enumerated:
 
-    Once 芝士 has announced its session id, ``topic.session_id`` is committed —
-    no matter how the turn ends.
+    Once 芝士 has announced its session id, its ``agent_sessions`` row is
+    committed — no matter how the turn ends.
 
 Before the fix the pointer was written at turn end (``_converse_impl``'s tx2) or
 by the failure handlers, so it held for a clean finish and for exceptions that
@@ -37,7 +37,6 @@ import time
 import uuid
 
 import pytest
-from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.service import (
@@ -45,7 +44,8 @@ from app.domain.agent.service import (
     AgentService,
     AgentSessionInfo,
 )
-from app.domain.topic.models import Topic
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.identity.handles import CHEESE_HANDLE
 
 SESSION_ID = "sess-exit-path"
 
@@ -80,12 +80,14 @@ def _seed_topic(client) -> str:
 
 async def _stored_session_id(factory, topic_id: str) -> str | None:
     """Read the pointer back through a FRESH session — a value that is only
-    visible inside the writer's own transaction is not persisted."""
+    visible inside the writer's own transaction is not persisted.
+
+    A room's conversation belongs to the agent having it; these topics are all
+    served by the project's implicit 芝士, so that is the key to read under."""
     async with factory() as s:
-        topic = (
-            await s.execute(select(Topic).where(Topic.id == uuid.UUID(topic_id)))
-        ).scalar_one()
-        return topic.session_id
+        return await AgentSessionService(s).resume_token(
+            uuid.UUID(topic_id), CHEESE_HANDLE
+        )
 
 
 def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:

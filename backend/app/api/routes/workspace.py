@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -207,7 +208,7 @@ async def topic_work_summary(
     shows what 芝士 did, and a room where only people talked has no 现场 to open.
     """
     await ProjectService(db).get_or_404(project_id)
-    topic = await TopicService(db).get_or_404(topic_id)
+    await TopicService(db).get_or_404(topic_id)
     if _remote():
         base = settings.cheesed_url.rstrip("/")
         url = f"{base}/git/changed-files/{project_id}/{topic_id}"
@@ -215,4 +216,6 @@ async def topic_work_summary(
             paths = (await client.get(url)).json().get("data", [])
     else:
         paths = ws.topic_changed_files(project_id, topic_id)
-    return ok({"changed_files": paths, "has_run": topic.session_id is not None})
+    # 跑过没有 = 这里有没有哪个 agent 留下过会话。
+    has_run = await AgentSessionService(db).has_run(topic_id)
+    return ok({"changed_files": paths, "has_run": has_run})

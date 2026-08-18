@@ -6,6 +6,7 @@ metadata. Keep this list complete when adding a new model.
 """
 
 from app.domain.agent_instance import models as agent_instance  # noqa: F401
+from app.domain.agent_session import models as agent_session  # noqa: F401
 from app.domain.agent_type import models as agent_type  # noqa: F401
 from app.domain.alert import models as alert  # noqa: F401
 from app.domain.answers import models as answers  # noqa: F401

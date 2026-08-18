@@ -40,6 +40,7 @@ from app.domain.agent.market import (
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.schemas import TopicAgentIn
 from app.domain.agent_instance.services import ResolvedAgent
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -121,7 +122,7 @@ async def get_topic_agent(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     agent = await service.resolve_agent(topic)
-    return ok(_topic_agent_payload(topic, agent, session_reset=False))
+    return ok(_topic_agent_payload(topic, agent))
 
 
 @router.put("/{topic_id}/agent")
@@ -131,10 +132,9 @@ async def set_topic_agent(
     """Hand this topic to a different agent (``instance_id: null`` = back to the
     project's default).
 
-    The reply's ``session_reset`` is not decoration: switching drops the topic's
-    session, because a conversation resumed as somebody else is an agent
-    confidently remembering things it never said. The caller has to be able to
-    warn about that before it happens.
+    Costs nothing and warns about nothing: each agent's conversation here is its
+    own row, so the incoming one starts fresh and the outgoing one's thread is
+    still there if the topic is handed back.
     """
     service = TopicService(db)
     topic = await service.get_or_404(topic_id)
@@ -144,14 +144,12 @@ async def set_topic_agent(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    topic, agent, session_reset = await service.set_agent(topic_id, body.instance_id)
+    topic, agent = await service.set_agent(topic_id, body.instance_id)
     await db.commit()
-    return ok(_topic_agent_payload(topic, agent, session_reset=session_reset))
+    return ok(_topic_agent_payload(topic, agent))
 
 
-def _topic_agent_payload(
-    topic: Topic, agent: ResolvedAgent, *, session_reset: bool
-) -> dict:
+def _topic_agent_payload(topic: Topic, agent: ResolvedAgent) -> dict:
     return {
         "topic_id": str(topic.id),
         "instance_id": str(agent.instance_id) if agent.instance_id else None,
@@ -159,7 +157,6 @@ def _topic_agent_payload(
         "type_name": agent.type_name,
         "display_name": agent.display_name,
         "inherited": topic.agent_instance_id is None,
-        "session_reset": session_reset,
     }
 
 
@@ -728,8 +725,9 @@ async def get_topic_compute_profile(
 
     `current` is the effective pool
     (topic choice → project sticky → team default → platform default).
-    `locked` is true once the topic has run (session_id set) — the picker freezes
-    then, matching the device-affinity boundary. `sticky` is the effective starting
+    `locked` is true once the topic has run (some agent has a session here) — the
+    picker freezes then, matching the device-affinity boundary. `sticky` is the
+    effective starting
     choice for a new topic (project memory, then team default); `profiles` include
     unavailable targets so a locked offline device still has a readable label."""
     topic = await TopicService(db).get_or_404(topic_id)
@@ -779,7 +777,7 @@ async def get_topic_compute_profile(
                 }
                 for device in devices
             ],
-            "locked": topic.session_id is not None,
+            "locked": await AgentSessionService(db).has_run(topic_id),
             "inherited": topic.compute_profile is None,
             "sticky": sticky or team_default or compute_default_name(),
             "profiles": [
@@ -804,9 +802,9 @@ async def get_topic_compute_profile(
 async def set_topic_compute_profile(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Pick the topic's compute pool. Allowed only before the first turn
-    (session_id NULL); once the topic has run the pin is frozen so its work tree /
-    session never move. The choice also updates the project's sticky default, so
+    """Pick the topic's compute pool. Allowed only before the first turn (no agent
+    has a session here yet); once the topic has run the pin is frozen so its work
+    tree / session never move. The choice also updates the project's sticky default, so
     the next new topic inherits it (spec v4: 选了之后持久化，除非新 session 又改)."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
@@ -815,7 +813,7 @@ async def set_topic_compute_profile(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    if topic.session_id is not None:
+    if await AgentSessionService(db).has_run(topic_id):
         raise ValidationError("话题已开始，算力已锁定；新建话题可另选算力")
     name = (body.get("profile") or "").strip() or compute_default_name()
     raw_device_id = body.get("device_id")

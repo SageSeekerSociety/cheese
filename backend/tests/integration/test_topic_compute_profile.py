@@ -1,7 +1,7 @@
 """Topic compute-profile API (execution-architecture v4 会话级选择).
 
 A topic picks its compute pool before its first turn; the choice sticks as the
-project default and freezes once the topic has run (session_id set).
+project default and freezes once the topic has run (a session exists).
 """
 
 import asyncio
@@ -17,12 +17,13 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
 from app.domain.agent.hooks_substrate import ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
+from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.machine.services import MachineService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import Team
-from app.domain.topic.repositories import TopicRepository
 
 
 def _project(client, owner: str = "andyl") -> str:
@@ -38,13 +39,15 @@ def _topic(client, pid: str) -> str:
 
 
 def _mark_started(client, tid: str) -> None:
-    """Simulate the topic having run one turn (session_id captured)."""
+    """Simulate the topic having run one turn (a session captured)."""
 
     async def _run() -> None:
         async with client.test_factory() as s:
-            repo = TopicRepository(s)
-            topic = await repo.get(uuid.UUID(tid))
-            await repo.set_session_id(topic, "sess-1")
+            await AgentSessionRepository(s).save(
+                topic_id=uuid.UUID(tid),
+                agent_handle=CHEESE_HANDLE,
+                resume_token="sess-1",
+            )
             await s.commit()
 
     asyncio.run(_run())
