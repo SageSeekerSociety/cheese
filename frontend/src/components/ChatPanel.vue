@@ -47,6 +47,7 @@ import type {
   ReactionAgg,
   TodoItem,
   Topic,
+  TopicMemberRow,
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
@@ -60,6 +61,7 @@ import {
   chatWsUrl,
   getProgress,
   listBlocks,
+  listTopicMembers,
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
@@ -162,13 +164,59 @@ const emit = defineEmits<{
 
 const AUTHOR = myHandle()
 
-// Keep the module-level handle→name map in sync with the roster prop, so
+// 这一条出错就写给用户看，所以它得在下面那段（房间名册）之前。
+const errorMsg = ref<string | null>(null)
+
+// 这个房间里有谁。
+//
+// @ 的候选不能只看项目名册：**芝士的座位在话题名册上**，一个话题一个分身
+// （handle 是 cheese-<话题 hex>），项目名册上没有它——种子数据里有一行共用的
+// `cheese` 掩盖过这件事，真实部署里没有。名单里少了它，就没人 @ 得到它，而 @ 它
+// 正是叫它干活的唯一方式。
+const roomMembers = ref<TopicMemberRow[]>([])
+
+async function loadRoster() {
+  const id = props.topic?.id
+  if (!id) {
+    roomMembers.value = []
+    return
+  }
+  try {
+    const payload = await listTopicMembers(id)
+    if (props.topic?.id === id) roomMembers.value = payload.data
+  } catch {
+    // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
+    // 芝士」，而屏幕上没有任何东西说明为什么。
+    errorMsg.value = '成员名单加载失败，@ 补全可能不全'
+  }
+}
+
+watch(() => props.topic?.id, loadRoster, { immediate: true })
+
+/** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
+const mentionPool = computed(() => {
+  const room = roomMembers.value.map((m) => ({
+    handle: m.member_handle,
+    label: m.name || m.member_handle,
+    agent: !!m.agent,
+  }))
+  const inRoom = new Set(room.map((r) => r.handle))
+  // 这个房间已经有自己的芝士时，项目名册上那种共用的 agent 行就不进名单了：
+  // 两行都叫「芝士」的话，@芝士 展开成哪一个纯看顺序。房间里那位才是会动的那个。
+  const roomHasAgent = room.some((r) => r.agent)
+  const rest = props.members
+    .filter((m) => !inRoom.has(m.user_handle) && !(roomHasAgent && m.agent))
+    .map((m) => ({ handle: m.user_handle, label: m.name || m.user_handle, agent: !!m.agent }))
+  return [...room, ...rest]
+})
+
+// Keep the module-level handle→name map in sync with the roster, so
 // <@handle> tokens render with the member's display name.
 watch(
-  () => props.members,
-  (m) => {
+  mentionPool,
+  (pool) => {
     for (const k of Object.keys(mentionNames)) delete mentionNames[k]
-    for (const row of m) mentionNames[row.user_handle] = row.name || row.user_handle
+    for (const row of pool) mentionNames[row.handle] = row.label
     // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
     // not the raw literal — they are reserved handles, not roster members.
     mentionNames.all = '所有人'
@@ -188,7 +236,6 @@ watch(
 const messages = ref<Block[]>([])
 const loadingHistory = ref(false)
 const connected = ref(false)
-const errorMsg = ref<string | null>(null)
 
 // Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
 // message lands as an `assistant_block` frame. `awaitingReply` drives the
@@ -1053,12 +1100,12 @@ const mentionMatches = computed<MentionItem[]>(() => {
   const ql = q.toLowerCase()
   const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
   const rest: MentionItem[] = [
-    ...props.members.map((m) => ({
-      label: m.name || m.user_handle,
+    ...mentionPool.value.map((m) => ({
+      label: m.label,
       kind: 'member' as const,
-      insert: m.name || m.user_handle,
-      sub: `@${m.user_handle}`,
-      agent: !!m.agent,
+      insert: m.label,
+      sub: `@${m.handle}`,
+      agent: m.agent,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')
@@ -1084,9 +1131,9 @@ function expandMentions(text: string): string {
   const subs: { pat: string; token: string }[] = [
     { pat: '@all', token: '<@all>' },
     { pat: '@here', token: '<@here>' },
-    ...props.members.flatMap((m) => [
-      { pat: `@${m.name || m.user_handle}`, token: `<@${m.user_handle}>` },
-      { pat: `@${m.user_handle}`, token: `<@${m.user_handle}>` },
+    ...mentionPool.value.flatMap((m) => [
+      { pat: `@${m.label}`, token: `<@${m.handle}>` },
+      { pat: `@${m.handle}`, token: `<@${m.handle}>` },
     ]),
     ...props.topicList.filter((t) => t.kind !== 'root').map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
   ].sort((a, b) => b.pat.length - a.pat.length)
@@ -1128,8 +1175,7 @@ function onFilePicked(e: Event) {
 //
 // 群播 (@all/@here) 不算：那是通知房间里的人，不是把活派给它。
 function mentionsAgent(expanded: string): boolean {
-  const agent = props.members.find((m) => m.agent)?.user_handle
-  return !!agent && expanded.includes(`<@${agent}>`)
+  return mentionPool.value.some((m) => m.agent && expanded.includes(`<@${m.handle}>`))
 }
 
 function sendDraft() {

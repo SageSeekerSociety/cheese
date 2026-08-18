@@ -22,6 +22,16 @@ vi.mock('../../api', async () => {
     ...actual,
     listBlocks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
+    // 芝士的座位在**话题**名册上，一个话题一个分身。项目名册上没有它——这正是
+    // 「线上 @ 不出芝士」那次的成因，所以这里照真实形状摆：分身 handle 带话题
+    // 后缀，而项目名册里只有人。
+    listTopicMembers: vi.fn().mockResolvedValue({
+      data: [
+        { id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
+        { id: 'm2', member_handle: 'cheese-topica', name: '芝士', role: 'member', agent: true },
+      ],
+      total: 2,
+    }),
     chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
   }
@@ -47,10 +57,13 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-// 芝士在名单里带 `agent` 标记，和 @ 补全菜单看到的是同一份名单。
+// 项目名册：只有人。房间里那位芝士来自话题名册（见上面的 mock）。
 const members = [
-  { user_handle: 'cheese', name: '芝士', role: 'member', agent: true },
+  { user_handle: 'alice', name: 'Alice', role: 'lead' },
   { user_handle: 'bobby', name: '波比', role: 'member' },
+  // 老项目名册上可能还坐着一行共用的芝士。房间自己有分身的时候它不进 @ 名单
+  // （两行都叫「芝士」，@芝士 展开成哪一个纯看顺序）。
+  { user_handle: 'cheese', name: '共用芝士', role: 'member', agent: true },
 ]
 
 // 每话题草稿是模块级的（跨挂载留着，这正是它的用途），所以每条用例用自己的
@@ -136,7 +149,43 @@ describe('对话栏自己的输入栏', () => {
 
     expect(sent.map((s) => JSON.parse(s.payload).summon)).toEqual([false, true])
     // 发出去的是规范形式，和 @ 一个人完全一样。
-    expect(JSON.parse(sent[1].payload).content).toBe('<@cheese> 再看看')
+    expect(JSON.parse(sent[1].payload).content).toBe('<@cheese-topica> 再看看')
+  })
+
+  // 线上真实形状：项目名册里只有人，芝士只在话题名册上。名单少了它，@ 补全里
+  // 就没有它，而 @ 它是叫它干活的唯一方式——整条路就断了。
+  it('项目名册里没有芝士，@ 补全里照样有', async () => {
+    const { container } = mountPanel({}, 'topic-C')
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.update(box, '@')
+    await flush()
+
+    const menu = container.querySelector('.mention-menu')
+    expect(menu, '@ 补全没弹出来').toBeTruthy()
+    expect(menu!.textContent).toContain('芝士')
+    expect(menu!.textContent).toContain('Agent')
+  })
+
+  // 老话题的名册里可能没有芝士的座位（座位是后来才有的）。那种房间里，项目名册上
+  // 那行共用的芝士得顶上，否则这个话题永远叫不动它。
+  it('房间名册里没有芝士时，退回项目名册上那一行', async () => {
+    const api = await import('../../api')
+    vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
+      data: [{ id: 'm1', member_handle: 'alice', name: 'Alice', role: 'owner', agent: false }],
+      total: 1,
+    } as Awaited<ReturnType<typeof api.listTopicMembers>>)
+
+    const { container } = mountPanel({}, 'topic-D')
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.update(box, '@')
+    await flush()
+    expect(container.querySelector('.mention-menu')!.textContent).toContain('共用芝士')
   })
 
   it('@ 一个人不会把芝士叫起来', async () => {
