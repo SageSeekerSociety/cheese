@@ -1,14 +1,18 @@
 import type { RouteRecordRaw } from 'vue-router'
 
-import RouterPassThrough from '@/layouts/RouterPassThrough.vue'
-
 export default {
   path: '/',
   name: 'Home',
   components: {
-    default: RouterPassThrough,
+    // 空间/小队这两格在手机上是页内分段，在桌面上是左边那条侧栏 —— 两种形态
+    // 住在同一个外框里，见 layouts/home/Home.vue。
+    default: () => import('@/layouts/home/Home.vue'),
     sidebar: () => import('@/components/home/HomeSidebar.vue'),
   },
+  // 手机顶栏在这一层写「首页」，不写子页的名字：空间和小队已经在页内那行分段上
+  // 各自写了一遍，顶栏再写一遍就是同一个词上下叠两次（/teams 更是「发现小队」
+  // 「小队」「发现」三层同义）。子路由的 title 照常给面包屑和标签页标题用。
+  meta: { mobileTitle: '首页' },
   children: [
     {
       path: '',

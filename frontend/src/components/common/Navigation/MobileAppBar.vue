@@ -174,9 +174,11 @@ const toggleDrawer = () => {
 // `{ title: '项目工作台', isFullPage: true }`——所以在手机上打开任何一个话题，
 // 顶栏都写着「项目工作台」，既不是话题名也不是项目名。
 // getRouteHierarchy 是**叶到根**排的（它自己末尾 reverse 过），所以当前页是第一个。
+// 自己带了页内分段的那一层用 mobileTitle 写整层的名字（见 router/home.ts）。
 const updateTitle = () => {
+  const own = typeof route.meta.mobileTitle === 'string' ? route.meta.mobileTitle : null
   const current = getRouteHierarchy.value.find((item) => item.title)
-  currentTitle.value = current?.title ?? '知是社区'
+  currentTitle.value = own ?? current?.title ?? '知是社区'
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
