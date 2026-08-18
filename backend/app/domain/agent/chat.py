@@ -3552,7 +3552,7 @@ class ChatService:
                 marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
                 payload = await self.post_system_event(
                     topic_id,
-                    "⏳ 机器上的会话正在启动，提示词已就位，输入框一出现就会自动发送。",
+                    "机器上的会话正在启动，消息已就位，会自动发送",
                     marked_work_id,
                 )
                 if payload is not None:

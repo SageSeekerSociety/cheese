@@ -31,7 +31,7 @@ logger = logging.getLogger("cheesex.pr_publish")
 #: 明显不同——这条前缀就是那个不同：失败原因直接写在 note 上，而不是只进 logger。
 #: 采纳现场的补开（AcceptService._publish_pr_for_accept）就是它的重试路径；重试
 #: 开出 PR 后 `record_pr` 会把这条 note 清掉。
-PR_OPEN_FAILED_PREFIX = "⚠️ 开 PR 失败"
+PR_OPEN_FAILED_PREFIX = "开 PR 失败"
 
 _TASKS: set[asyncio.Task] = set()
 

@@ -38,6 +38,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
 from app.core.text import markdown_preview
+from app.domain.agent.platform_notices import (
+    EVENT_ARCHIVE_DEFERRED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
@@ -489,13 +495,22 @@ class ConclusionCardService:
             topic_id=sub.id,
             author=SYSTEM_ACTOR,
             author_type=AuthorType.system,
-            content=(
-                "⏸ 结论已被父话题采信，但这个话题**暂不归档**——它还挂着一张"
-                "等人拍板的验收卡。归档会等验收卡有结果之后再落，"
-                "在那之前卡照常有效，验收人照常能采纳。"
-            ),
+            content="结论已被父话题采信，这个话题暂不归档",
             kind=BlockKind.event,
-            meta={"platform": True, "conclusion_card": str(card.id)},
+            meta={
+                "platform": True,
+                "conclusion_card": str(card.id),
+                **notice(
+                    EVENT_ARCHIVE_DEFERRED,
+                    severity=SEVERITY_INFO,
+                    who=WHO_PLATFORM,
+                    detail=(
+                        "它还挂着一张等人拍板的验收卡。归档会等验收卡有结果之后"
+                        "再落，在那之前卡照常有效，验收人照常能采纳。"
+                    ),
+                    detail_label="为什么还没归档",
+                ),
+            },
         )
 
     async def sweep_deferred_archives(

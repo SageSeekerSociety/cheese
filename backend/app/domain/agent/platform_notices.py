@@ -62,6 +62,8 @@ EVENT_MERGE_REFUSED: Final = "merge_refused"
 EVENT_ACCEPT_CONFLICT: Final = "accept_conflict"
 #: 验收卡被人驳回了 —— 芝士要去改，不是等着。
 EVENT_CARD_REJECTED: Final = "card_rejected"
+#: 验收卡被作废 —— 不是驳回：没人对代码下过判断，卡只是被收尾了。
+EVENT_CARD_VOIDED: Final = "card_voided"
 #: 同步上游时合并冲突。
 EVENT_UPSTREAM_CONFLICT: Final = "upstream_conflict"
 #: A message expected to enter the live session had to return to the queue.
@@ -72,6 +74,24 @@ EVENT_TURN_FAILED: Final = "turn_failed"
 EVENT_TURN_TIMEOUT: Final = "turn_timeout"
 #: 部署中断了轮次（孤儿轮次扫底）。
 EVENT_DEPLOY_INTERRUPTED: Final = "deploy_interrupted"
+#: 项目并发已满，这轮在排队。
+EVENT_TURN_QUEUED: Final = "turn_queued"
+#: 结论结算了，但这个话题的归档欠着 —— 它还挂着一张没决议的验收卡。
+EVENT_ARCHIVE_DEFERRED: Final = "archive_deferred"
+#: 人点了采纳，改动交给了 CI（或 PR 已开），等检查。
+EVENT_ACCEPT_AUTHORIZED: Final = "accept_authorized"
+#: 这次交付完成了。
+EVENT_ACCEPT_DONE: Final = "accept_done"
+#: 采纳没走完，停在半路 —— 开不出 PR、PR 合不上、工作区合并出错。
+EVENT_ACCEPT_STOPPED: Final = "accept_stopped"
+#: 检查全绿，但改动超出了人当初授权的范围，平台扣住不合。
+EVENT_MERGE_WITHHELD: Final = "merge_withheld"
+#: PR 在 GitHub 上被关掉且没合并。
+EVENT_PR_CLOSED: Final = "pr_closed"
+#: 有人明知检查没绿仍然放行合并，署了名。
+EVENT_FORCE_MERGED: Final = "force_merged"
+#: 另一张未决的验收卡也新建了迁移，合到一起会把迁移链分叉。
+EVENT_MIGRATION_COLLISION: Final = "migration_collision"
 
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_swap` / `action` 是别处已有的，不在这里重复登记。
@@ -84,11 +104,21 @@ EVENT_TYPES: Final = frozenset(
         EVENT_MERGE_REFUSED,
         EVENT_ACCEPT_CONFLICT,
         EVENT_CARD_REJECTED,
+        EVENT_CARD_VOIDED,
         EVENT_UPSTREAM_CONFLICT,
         EVENT_DELIVERY_FALLBACK,
         EVENT_TURN_FAILED,
         EVENT_TURN_TIMEOUT,
         EVENT_DEPLOY_INTERRUPTED,
+        EVENT_ARCHIVE_DEFERRED,
+        EVENT_TURN_QUEUED,
+        EVENT_ACCEPT_AUTHORIZED,
+        EVENT_ACCEPT_DONE,
+        EVENT_ACCEPT_STOPPED,
+        EVENT_MERGE_WITHHELD,
+        EVENT_PR_CLOSED,
+        EVENT_FORCE_MERGED,
+        EVENT_MIGRATION_COLLISION,
     }
 )
 
@@ -123,7 +153,7 @@ def notice(
 def delivery_fallback_notice() -> tuple[str, dict]:
     """The single room-visible error for live-delivery fallback."""
     return (
-        "⚠️ 消息没能直接送进正在进行的会话，已转入队列",
+        "消息没能送进正在进行的会话，已转入队列",
         notice(
             EVENT_DELIVERY_FALLBACK,
             severity=SEVERITY_ERROR,

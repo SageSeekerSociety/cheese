@@ -55,6 +55,7 @@ async def post_with_retries(
     topic_id: uuid.UUID,
     content: str,
     source: str,
+    meta: dict | None = None,
 ) -> bool:
     """Internal shared entrypoint for landing a system-authored post into a
     topic's timeline, retrying transient DB failures. Returns whether it
@@ -82,7 +83,7 @@ async def post_with_retries(
                     author_type=AuthorType.system,
                     content=content,
                     kind=BlockKind.event,
-                    meta={"source": source},
+                    meta={"source": source, **(meta or {})},
                 )
                 await session.commit()
             return True

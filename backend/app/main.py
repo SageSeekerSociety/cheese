@@ -235,7 +235,7 @@ async def lifespan(_: FastAPI):
             )
             block = await chat.post_system_event(
                 topic_id,
-                "✅ Cloud 机器已接入，正在继续刚才的消息。",
+                "Cloud 机器已接入，正在继续刚才的消息",
                 meta={"event_type": "cloud_provisioning", "state": "ready"},
             )
             if block is not None:

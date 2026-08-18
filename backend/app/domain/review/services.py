@@ -20,10 +20,23 @@ from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.domain.agent.platform_notices import (
+    EVENT_ACCEPT_AUTHORIZED,
+    EVENT_ACCEPT_CONFLICT,
+    EVENT_ACCEPT_DONE,
+    EVENT_ACCEPT_STOPPED,
+    EVENT_CARD_VOIDED,
     EVENT_CI_FAILED,
+    EVENT_FORCE_MERGED,
     EVENT_MERGE_REFUSED,
+    EVENT_MERGE_WITHHELD,
+    EVENT_MIGRATION_COLLISION,
+    EVENT_PR_CLOSED,
     SEVERITY_ERROR,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
     WHO_CHEESE,
+    WHO_HUMAN,
+    WHO_PLATFORM,
     notice,
 )
 from app.domain.alert.models import AlertKind, AlertLevel
@@ -59,36 +72,39 @@ logger = logging.getLogger("cheesex.review")
 
 # 卡上那句话的措辞。状态码在 review/notes.py，这里只有文案——两者分开之后，改一
 # 句话不再改掉任何一处判断，所以这些常量存在的理由只剩「同一句话写在两处」。
+#
+# 不带 emoji：卡自己按 `note_level` 画轻重（前端 TopicAcceptCard），开头再放一个
+# 表情就是同一件事说两遍——一遍是结构，一遍是屏幕阅读器会念出来的一个字符。
 #: 本地话题分支与 PR 分支分叉 (采纳即合并 #296, 2026-08-12). `push_topic_branch_
 #: for_github_pr` 是**非强制**推送，一旦本地分支被 jj rewind / rebase 挪到了 PR
 #: 分支的祖先或旁支上（bookmark set --allow-backwards 允许回退），plain push 就会
 #: 被 GitHub 以 non-fast-forward 拒绝——而轮询每 60 秒无脑重试这条注定失败的推送，
 #: 就是 card 946bf5de 每 ~70 秒失败一次的死循环。检测到不能快进就**不推**，留一条
 #: note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
-_REPUSH_DIVERGED_PREFIX = "🌿 本地分支与 PR 分支已分叉"
+_REPUSH_DIVERGED_PREFIX = "本地分支与 PR 分支已分叉"
 #: 采纳现场补开 App PR 失败（存量无 PR 卡，#296 stage 1 的回归修复）。开不出 PR
 #: 时采纳停下、原因亮在卡上——绑定 GitHub 的项目绝不静默本地合并直推 main
 #: （all commits go through PR）。卡保持 pending，人处理后可直接重试采纳。
-_ACCEPT_PR_OPEN_FAILED_PREFIX = "⚠️ 采纳未完成：无法为这张卡开 PR"
+_ACCEPT_PR_OPEN_FAILED_PREFIX = "采纳未完成：开不出 PR"
 #: 卡上有 PR 但此刻推进不了（GitHub 不可达 / PR 被关闭未合并 / …）。绑定 GitHub
 #: 的项目采纳只通过合并 PR 完成 (#363)——这类失败停下亮出来，永不落 local merge。
-_ACCEPT_PR_STALLED_PREFIX = "⚠️ 采纳未完成：PR 未能合并"
+_ACCEPT_PR_STALLED_PREFIX = "采纳未完成：PR 未能合并"
 
 #: pending_gate 孤儿卡 (2026-08-11). 判死的卡和检查真红了的卡都落在 `gate_failed`
 #: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
 #: 代码。gate_sweep.py 把这句话同时写进 note 和 gate_output，也发给芝士。
-GATE_ABANDONED_PREFIX = "⏱ 闸门没跑完"
+GATE_ABANDONED_PREFIX = "检查没跑完"
 #: 人工作废 (2026-08-11)。作废复用 `revoked` 终态（archive.py 收敛非终态卡时也
 #: 用它），所以「谁作废的、为什么」只能写在 note 里。
-VOIDED_PREFIX = "🗑 卡片已作废"
+VOIDED_PREFIX = "卡片已作废"
 #: 等 CI (App 采纳等 CI 再合)。`pr_open` 期间「什么都没发生」和「还在等」在卡面上
 #: 长得一模一样——一张不动的卡读起来像死了。这句话让等待自己说话：在等哪几项、
 #: 已经等了多久。它是 note 家族里**优先级最低**的一条，见 _note_waiting_on_checks。
-WAITING_CHECKS_PREFIX = "⏳ 等 CI"
+WAITING_CHECKS_PREFIX = "等检查"
 #: 人工放行 (App 采纳等 CI 再合)。红着合有时是对的（CI 基础设施抽风、与本次改动
 #: 无关的既有失败），不能接受的是**没有人做过这个决定**。这条 note 就是那个署名：
 #: 谁、什么时候、当时检查是什么状态、理由。默认拒绝、显式放行。
-FORCE_MERGED_PREFIX = "🔨 人工放行"
+FORCE_MERGED_PREFIX = "人工放行"
 
 #: 等待提示里「已等多久」的粒度。轮询每 60 秒一次，按分钟写会让这条 note 每一轮
 #: 都变一次（等于每分钟一次无意义的写 + UI 抖动）；按 5 分钟分档，一次等待里它
@@ -116,7 +132,7 @@ class _GitHubCredentials:
 
 
 def _nudge_note_prefix(stage: str) -> str:
-    return f"⚠️ {stage} 检查未通过："
+    return f"{stage} 检查未通过："
 
 
 _MERGE_FAILED_MESSAGE = (
@@ -255,7 +271,7 @@ def _annotate_pr_degrade(card: AcceptCard, pr_degrade_reason: str) -> None:
     """
     if not pr_degrade_reason:
         return
-    notes.annotate(card, f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）")
+    notes.annotate(card, f"未走 PR 采纳（{pr_degrade_reason}）")
     if card.note_code is None:
         card.note_code = notes.NoteCode.pr_skipped
 
@@ -713,13 +729,20 @@ class AcceptService:
             rooms.append(f"「{sibling.title}」" if sibling else str(other.topic_id))
         self._notify_merge_result(
             topic,
-            "⚠️ **另一张未决的验收卡也新建了迁移**："
-            + "、".join(rooms)
-            + "。两张卡各带一个 alembic revision，合到一起会把迁移链分叉"
-            + "（#312），而且往往说明同一件事被做了两遍（#314 那次是 "
-            + "`topics.progress` 列和 `topic_progress` 表）。"
-            + "\n\n这里不拦，只是提醒验收的人**先比一下两张卡的改动**："
-            + "如果确实是两件事，照常采纳，先合的那张合完后另一张要 rebase。",
+            "另一张未决的验收卡也新建了迁移",
+            meta=notice(
+                EVENT_MIGRATION_COLLISION,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail=(
+                    "另一张卡在：" + "、".join(rooms) + "。\n"
+                    "两张卡各带一个 alembic revision，合到一起会让迁移链分叉，"
+                    "而且往往说明同一件事被做了两遍。\n"
+                    "平台不拦这次采纳。请先比对两张卡的改动：如果确实是两件事，"
+                    "照常采纳，先合的那张合完后另一张需要 rebase。"
+                ),
+                detail_label="为什么提醒",
+            ),
         )
 
     async def project_id_for_topic(self, topic_id: uuid.UUID) -> uuid.UUID:
@@ -935,13 +958,19 @@ class AcceptService:
         await self._repo.add_approval(card_id, approver_handle)
         return card
 
-    def _notify_merge_result(self, topic: Topic, content: str) -> None:
+    def _notify_merge_result(
+        self, topic: Topic, content: str, *, meta: dict | None = None
+    ) -> None:
         """merge 后结果回房间: post the accept's merge outcome into the topic
         timeline via the webhook primitive's internal function (卡1) — no HTTP
         hop, no token check, this call is trusted by construction. Uses its
         own session (async_session_factory), independent of self._session, so
         the notice lands even when the accept itself is about to be rolled
         back by a raised ValidationError.
+
+        `content` is the one line the room shows; everything else — why, what
+        to do about it, the service's own words — goes in `meta`'s detail and
+        is opened only by whoever wants it (platform_notices.notice).
 
         Fire-and-forget, but through `spawn`, which holds a strong reference:
         asyncio keeps only a weak one, and this coroutine sleeps up to 35s across
@@ -956,6 +985,7 @@ class AcceptService:
                 topic_id=topic.id,
                 content=content,
                 source="accept",
+                meta=meta,
             ),
             name=f"accept notice topic={topic.id}",
         )
@@ -1152,7 +1182,15 @@ class AcceptService:
                 topic.id,
             )
             self._notify_merge_result(
-                topic, f"❌ 采纳未完成：合并出错，请检查工作区状态。（{exc}）"
+                topic,
+                "采纳未完成：合并出错",
+                meta=notice(
+                    EVENT_ACCEPT_STOPPED,
+                    severity=SEVERITY_ERROR,
+                    who=WHO_HUMAN,
+                    detail=f"请检查工作区状态后重试采纳。\n{exc}",
+                    detail_label="合并报错",
+                ),
             )
             raise ValidationError(_MERGE_FAILED_MESSAGE) from exc
 
@@ -1170,10 +1208,21 @@ class AcceptService:
                 _annotate_pr_degrade(card, pr_degrade_reason)
                 await self._session.flush()
                 await self._session.refresh(card)
-                conflict_msg = "❌ 采纳未完成：合并冲突，需要芝士处理后重试。"
-                if card.note:
-                    conflict_msg += f"\n{card.note}"
-                self._notify_merge_result(topic, conflict_msg)
+                self._notify_merge_result(
+                    topic,
+                    "采纳未完成：合并冲突",
+                    meta=notice(
+                        EVENT_ACCEPT_CONFLICT,
+                        severity=SEVERITY_ERROR,
+                        who=WHO_CHEESE,
+                        detail=(
+                            f"芝士解决冲突后重试采纳。\n{card.note}"
+                            if card.note
+                            else "芝士解决冲突后重试采纳。"
+                        ),
+                        detail_label="冲突详情",
+                    ),
+                )
                 return card
 
             # Discussion-only topics and a topic already on the base branch
@@ -1186,7 +1235,15 @@ class AcceptService:
                     merged,
                 )
                 self._notify_merge_result(
-                    topic, "❌ 采纳未完成：合并失败，请检查工作区状态。"
+                    topic,
+                    "采纳未完成：合并失败",
+                    meta=notice(
+                        EVENT_ACCEPT_STOPPED,
+                        severity=SEVERITY_ERROR,
+                        who=WHO_HUMAN,
+                        detail="请检查工作区状态后重试采纳。",
+                        detail_label="怎么办",
+                    ),
                 )
                 raise ValidationError(_MERGE_FAILED_MESSAGE)
 
@@ -1246,13 +1303,20 @@ class AcceptService:
 
         await self._session.flush()
         await self._session.refresh(card)
-        success_msg = (
-            f"✅ 话题已被 {decided_by} 采纳并合并"
-            "（这一次交付完成了，话题继续活跃——归档由人决定）。"
-        )
+        done_detail = "话题保持活跃，归档由人决定。"
         if card.note:
-            success_msg += f"\n{card.note}"
-        self._notify_merge_result(topic, success_msg)
+            done_detail += f"\n{card.note}"
+        self._notify_merge_result(
+            topic,
+            f"{decided_by} 采纳了这次改动，已合并",
+            meta=notice(
+                EVENT_ACCEPT_DONE,
+                severity=SEVERITY_INFO,
+                who=WHO_PLATFORM,
+                detail=done_detail,
+                detail_label="交付说明",
+            ),
+        )
         return card
 
     # ---- 两阶段采纳 (PR迭代式, 2026-08-09) ----------------------------------
@@ -1437,7 +1501,7 @@ class AcceptService:
                 notes.record(
                     card,
                     notes.NoteCode.repush_failed,
-                    f"⚠️ 平台自动重推失败（下一轮还会重试）：{exc}",
+                    f"平台自动重推失败，下一轮还会重试：{exc}",
                 )
                 await self._session.flush()
             return False
@@ -1551,11 +1615,20 @@ class AcceptService:
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"🔁 {decided_by} 授权了这次改动，{pr_phrase} —— 真 CI 现在才开始跑："
-            f"{pr.url}\n"
-            "话题保持 active（容器不停）。检查全绿、且改动没超出授权范围时平台自动"
-            "合并，之后的迭代不用再问人；三种例外（新 diff 越界 / 根本没有 CI 会跑"
-            " / 目标是 prod）会回来找人。PR 合并且部署也成功后才会归档。",
+            f"{decided_by} 授权了这次改动，{pr_phrase}",
+            meta=notice(
+                EVENT_ACCEPT_AUTHORIZED,
+                severity=SEVERITY_INFO,
+                who=WHO_PLATFORM,
+                detail=(
+                    f"{pr.url}\n"
+                    "检查现在才开始跑，话题保持活跃。检查全绿、且改动没超出授权"
+                    "范围时平台自动合并，之后的迭代不用再问人。\n"
+                    "三种情况会回来找人：新改动超出授权范围、没有检查会跑、"
+                    "目标是生产环境。"
+                ),
+                detail_label="接下来会发生什么",
+            ),
         )
         return card
 
@@ -1650,7 +1723,7 @@ class AcceptService:
                 notes.record(
                     card,
                     notes.NoteCode.poll_paused,
-                    f"⚠️ 轮询暂停（下一轮还会重试）：{reason}",
+                    f"轮询暂停，下一轮还会重试：{reason}",
                 )
                 await self._session.flush()
             return
@@ -2149,9 +2222,8 @@ class AcceptService:
         the reason can legitimately change (范围漂移 → 目标是 prod → …) while
         the card itself hasn't moved."""
         note = (
-            f"✋ PR #{card.pr_number} 平台不会自动合并：{reason}。"
-            "需要人来定：在卡片上「人工放行」（会记下是谁、什么时候、当时检查什么"
-            "状态），自己在 GitHub 上合并这个 PR，或者作废这张卡。"
+            f"PR #{card.pr_number} 平台不会自动合并：{reason}。"
+            "需要人来定：在卡片上人工放行，自己在 GitHub 上合并，或者作废这张卡。"
         )
         if card.note == note:
             return  # already said once — the 60s poll must not repeat it
@@ -2163,11 +2235,19 @@ class AcceptService:
         )
         self._notify_merge_result(
             topic,
-            f"✋ PR #{card.pr_number} 的检查没有拦住它，"
-            f"但平台不会自动合并：{reason}。\n"
-            f"{why}需要人来定：在卡片上「人工放行」（明知如此仍合并，平台会记名"
-            "留痕），自己在 GitHub 上合并，或者作废这张卡。"
-            f"\n{card.pr_url}",
+            f"PR #{card.pr_number} 平台不会自动合并",
+            meta=notice(
+                EVENT_MERGE_WITHHELD,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail=(
+                    f"{reason}。\n{why}\n"
+                    "需要人来定：在卡片上人工放行（平台会记下是谁、什么时候、"
+                    "当时检查是什么状态），自己在 GitHub 上合并，或者作废这张卡。"
+                    f"\n{card.pr_url}"
+                ),
+                detail_label="为什么扣住",
+            ),
         )
 
     async def _settle_external_merge(
@@ -2200,7 +2280,7 @@ class AcceptService:
         true but thoroughly misleading about what actually happened.
         """
         note = (
-            f"🚪 PR #{card.pr_number} 已在 GitHub 被关闭且没有合并，平台不会自动合并。"
+            f"PR #{card.pr_number} 已关闭且没有合并，平台不会自动合并。"
             "需要人决定：重开 PR，或撤销这次采纳。"
         )
         if card.note == note:
@@ -2213,8 +2293,17 @@ class AcceptService:
         )
         self._notify_merge_result(
             topic,
-            f"🚪 PR #{card.pr_number} 在 GitHub 上被关闭且没有合并，平台不会自动合并。"
-            "话题保持 active，需要人决定：重开 PR，或撤销这次采纳。",
+            f"PR #{card.pr_number} 已关闭且没有合并",
+            meta=notice(
+                EVENT_PR_CLOSED,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail=(
+                    "平台不会自动合并一个被人关掉的 PR。话题保持活跃，"
+                    "需要人决定：重开 PR，或撤销这次采纳。"
+                ),
+                detail_label="怎么办",
+            ),
         )
 
     def _note_merge_blocked(
@@ -2249,7 +2338,7 @@ class AcceptService:
           really changed" test, so a 405 that turns into a 409 gets a fresh
           nudge while an unchanging one stays quiet.
         """
-        note = f"🚫 PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并（{reason}）"
+        note = f"PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并：{reason}"
         if card.note == note:
             return
         notes.record(card, notes.NoteCode.merge_refused, note)
@@ -2273,7 +2362,7 @@ class AcceptService:
             # `meta.detail` (nothing is dropped — `reason` is quoted whole, under
             # the same 1500-char bound the message body always used). `content`
             # above is unchanged and still goes to 芝士 as the prompt.
-            nudge_event=f"🚫 PR #{card.pr_number} 全绿但 GitHub 拒绝合并 · 芝士在解",
+            nudge_event=f"PR #{card.pr_number} 全绿，但 GitHub 拒绝合并",
             nudge_meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
@@ -2337,7 +2426,7 @@ class AcceptService:
             # log excerpts in a full chat bubble. Now the room sees one line and
             # the excerpt rides in `meta.detail`, byte-for-byte the same text
             # under the same `_NUDGE_TAIL_LIMIT` bound.
-            nudge_event=f"⚠️ PR #{card.pr_number} 的 {stage} 检查没过 · 芝士在修",
+            nudge_event=f"PR #{card.pr_number} 的 {stage} 检查没通过",
             nudge_meta=notice(
                 EVENT_CI_FAILED,
                 severity=SEVERITY_ERROR,
@@ -2391,9 +2480,18 @@ class AcceptService:
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"✅ 话题已被 {by} 采纳：PR #{card.pr_number} {how}。\n{card.pr_url}\n"
-            "（这一次交付完成了，话题继续活跃——归档由人决定。要再交付一份改动，"
-            "在房间里开一件新的事。）",
+            f"{by} 采纳了这次改动，PR #{card.pr_number} {how}",
+            meta=notice(
+                EVENT_ACCEPT_DONE,
+                severity=SEVERITY_INFO,
+                who=WHO_PLATFORM,
+                detail=(
+                    f"{card.pr_url}\n"
+                    "话题保持活跃，归档由人决定。要再交付一份改动，"
+                    "在房间里开一件新的事。"
+                ),
+                detail_label="交付说明",
+            ),
         )
 
     async def _resolve_forge(self, project_id: uuid.UUID) -> "forge_mod.Forge":
@@ -2454,8 +2552,18 @@ class AcceptService:
         )
         self._notify_merge_result(
             topic,
-            f"⛔ 采纳未完成：PR 未能合并（{why}）。平台不会绕过 PR 直推上游；"
-            "处理后可重试采纳。",
+            "采纳未完成：PR 未能合并",
+            meta=notice(
+                EVENT_ACCEPT_STOPPED,
+                severity=SEVERITY_ERROR,
+                who=WHO_HUMAN,
+                detail=(
+                    f"{why}。\n"
+                    "绑定 GitHub 的项目只通过合并 PR 完成采纳，平台不会绕过 PR "
+                    "直推上游。处理后可重试采纳。"
+                ),
+                detail_label="为什么停下",
+            ),
         )
         await self._session.rollback()
         await self._note_outside_accept_txn(
@@ -2518,8 +2626,18 @@ class AcceptService:
             )
             self._notify_merge_result(
                 topic,
-                f"❌ 采纳未完成：无法为这张卡开 PR（{reason}）。"
-                "平台不会在没有 PR 的情况下把改动直推上游；处理后可重试采纳。",
+                "采纳未完成：开不出 PR",
+                meta=notice(
+                    EVENT_ACCEPT_STOPPED,
+                    severity=SEVERITY_ERROR,
+                    who=WHO_HUMAN,
+                    detail=(
+                        f"{reason}。\n"
+                        "平台不会在没有 PR 的情况下把改动直推上游。"
+                        "处理后可重试采纳。"
+                    ),
+                    detail_label="为什么停下",
+                ),
             )
             # Roll back first, for the same reason as `_stop_accept_pr_
             # unavailable`: the out-of-transaction note writes the card row on
@@ -2655,13 +2773,22 @@ class AcceptService:
         await self._session.refresh(card)
         self._notify_merge_result(
             topic,
-            f"🔁 {decided_by} 授权了这次改动，PR #{number} 交给 CI —— "
-            f"**采纳不再是秒回**，本仓库的检查要跑十几分钟。{card.pr_url or ''}\n"
-            "话题保持 active（容器不停）。检查全绿、且改动没超出授权范围时平台自动"
-            "合并并归档；三种例外（新 diff 越界 / 根本没有 CI 会跑 / 目标是 prod）"
-            "会回来找人。\n"
-            "⚠️ 等 CI 期间平台每 60 秒会把工作区的新提交同步到这个 PR —— 这时候改"
-            "工作区会让 CI 从头重跑。",
+            f"{decided_by} 授权了这次改动，PR #{number} 等检查",
+            meta=notice(
+                EVENT_ACCEPT_AUTHORIZED,
+                severity=SEVERITY_INFO,
+                who=WHO_PLATFORM,
+                detail=(
+                    f"{card.pr_url or ''}\n"
+                    "采纳不再是秒回：本仓库的检查要跑十几分钟。话题保持活跃，"
+                    "检查全绿、且改动没超出授权范围时平台自动合并。\n"
+                    "三种情况会回来找人：新改动超出授权范围、没有检查会跑、"
+                    "目标是生产环境。\n"
+                    "等检查期间平台每 60 秒会把工作区的新提交同步到这个 PR，"
+                    "所以这时候改工作区会让检查从头重跑。"
+                ),
+                detail_label="接下来会发生什么",
+            ),
         )
         return card
 
@@ -2803,7 +2930,15 @@ class AcceptService:
             if not is_conflict:
                 refusal = f"GitHub 拒绝合并 PR #{number}：{github_msg}"
                 self._notify_merge_result(
-                    topic, f"⛔ 采纳未合并：{refusal}（{card.pr_url or ''}）"
+                    topic,
+                    f"采纳未完成：GitHub 拒绝合并 PR #{number}",
+                    meta=notice(
+                        EVENT_MERGE_REFUSED,
+                        severity=SEVERITY_ERROR,
+                        who=WHO_HUMAN,
+                        detail=f"{github_msg}\n{card.pr_url or ''}",
+                        detail_label="GitHub 的回复",
+                    ),
                 )
                 raise ValidationError(refusal) from blocked
             # Same contract as a local merge conflict: card → conflict, 芝士 is
@@ -3063,9 +3198,17 @@ class AcceptService:
         )
         self._notify_merge_result(
             topic,
-            f"🔨 <@{decided_by}> 人工放行了 PR #{number}：{verdict}"
-            f"（合并时检查状态：{checks_at_merge}）{tail_reason}。\n"
-            f"{card.pr_url or ''}",
+            f"<@{decided_by}> 人工放行了 PR #{number}",
+            meta=notice(
+                EVENT_FORCE_MERGED,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail=(
+                    f"{verdict}。合并时检查状态：{checks_at_merge}{tail_reason}。\n"
+                    f"{card.pr_url or ''}"
+                ),
+                detail_label="放行记录",
+            ),
         )
         return card
 
@@ -3108,7 +3251,7 @@ class AcceptService:
         was = card.status
         reason = f" 理由：{note.strip()}" if note.strip() else ""
         headline = (
-            f"{VOIDED_PREFIX}：<@{decided_by}> 作废了这张卡（原状态：{was}）。"
+            f"{VOIDED_PREFIX}：<@{decided_by}> 作废于状态「{was}」。"
             f"话题可以重新递卡。{reason}"
         )
         if was == AcceptStatus.pr_open and card.pr_merged_at is None:
@@ -3138,13 +3281,21 @@ class AcceptService:
             topic_id=topic.id,
             author="cheese",
             author_type=AuthorType.system,
-            content=(
-                f"🗑 <@{decided_by}> 作废了这张验收卡（原状态：{was}）。"
-                f"这不是驳回，也不代表检查不通过——它只是把卡收尾，"
-                f"好让这个话题能重新递卡。{reason}"
-            ),
+            content=f"<@{decided_by}> 作废了这张验收卡",
             kind=BlockKind.event,
-            meta={"platform": True},
+            meta={
+                "platform": True,
+                **notice(
+                    EVENT_CARD_VOIDED,
+                    severity=SEVERITY_INFO,
+                    who=WHO_CHEESE,
+                    detail=(
+                        f"作废于状态「{was}」。这不是驳回，也不代表检查不通过——"
+                        f"它只是把卡收尾，好让这个话题能重新递卡。{reason}"
+                    ),
+                    detail_label="作废说明",
+                ),
+            },
         )
         if was == AcceptStatus.pr_open and card.decided_by not in (None, decided_by):
             await AlertService(self._session).create(
