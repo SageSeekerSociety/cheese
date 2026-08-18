@@ -150,15 +150,27 @@ class _HookWorkState:
 # arrived. Long enough for the device drainer's retry loop to fill a gap;
 # short enough that a mid-message death still surfaces its words.
 _SPOOL_PARTIAL_GRACE_S = 120
+# How long a read event stays on disk before retention drops it. A spool is not
+# only the backfill queue — it is the raw record of what a session emitted, and
+# the first thing anyone reaches for when a block looks wrong. A day is long
+# enough to answer that and short enough that a busy topic's directory stays
+# something a person can list.
+_SPOOL_RETENTION_S = 24 * 3600
 
 
-def _spool_ns(path: Path) -> int:
-    """The forwarder's ns timestamp from a spool filename (`<ns>.<eid>`)."""
-    head = path.name.split(".", 1)[0]
+def _spool_age_s(path: Path) -> float:
+    """How long ago this spool file was written, in seconds.
+
+    Its mtime, not its name: the name is a sequence number now (event_spool's
+    docstring says why it stopped being a clock), and the grace below is a real
+    wait for a flush that may still be coming — which only a real clock measures.
+    A file that vanished between listing and here reads as brand new, so a
+    partial waits one more pass instead of being flushed on a stat error.
+    """
     try:
-        return int(head)
-    except ValueError:
-        return 0
+        return max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return 0.0
 
 
 def _persisted_eids(blocks: list[Block]) -> set[str]:
@@ -1673,8 +1685,14 @@ class ChatService:
             if b.turn_id in wanted and b.author_type == AuthorType.ai
         }
         spool = False
+        spool_dir = ws.spool_dir(topic.project_id, topic_id)
+        # Only the UNREAD tail counts. A read event has already become a block,
+        # so the `delivered` arm above speaks for it — and events now live out
+        # their retention on disk instead of being deleted as they are read, so
+        # counting the whole directory would let one ancient hook veto every
+        # re-send this topic ever needs.
         for _path, _eid, payload in event_spool.spool_entries(
-            ws.spool_dir(topic.project_id, topic_id)
+            spool_dir, after=event_spool.read_cursor(spool_dir)
         ):
             if not isinstance(payload, dict):
                 continue
@@ -1728,10 +1746,19 @@ class ChatService:
         return len(unique)
 
     async def _replay_hook_subscription(self, subscription: TopicSubscription) -> None:
-        """Replay one topic spool from its latest persisted event id."""
-        entries = event_spool.spool_entries(
-            ws.spool_dir(subscription.project_id, subscription.topic_id)
-        )
+        """Replay one topic spool's unread tail into the recovered subscription.
+
+        Where the tail starts is the spool's own cursor. It used to be inferred
+        — walk the topic's blocks backwards for the newest event id that also
+        appears in the spool — which was a guess dressed as a fact: an event the
+        live path had persisted WITHOUT an id, or a tail whose every event was
+        of a kind that persists nothing, left the search empty and replayed the
+        whole spool from the beginning. The cursor is the same claim, written by
+        whoever actually persisted the events instead of reconstructed from
+        their leftovers.
+        """
+        spool = ws.spool_dir(subscription.project_id, subscription.topic_id)
+        entries = event_spool.spool_entries(spool, after=event_spool.read_cursor(spool))
         if not entries:
             subscription.ready.set()
             return
@@ -1740,42 +1767,28 @@ class ChatService:
             blocks = await BlockRepository(session).list_for_topic(
                 subscription.topic_id
             )
-        spool_eids = {eid for _path, eid, _payload in entries}
-        persisted_order = [
-            block.meta["eid"]
-            for block in blocks
-            if isinstance(block.meta, dict) and isinstance(block.meta.get("eid"), str)
-        ]
-        cursor = next(
-            (eid for eid in reversed(persisted_order) if eid in spool_eids), None
-        )
-        start = (
-            next(i for i, (_path, eid, _payload) in enumerate(entries) if eid == cursor)
-            if cursor is not None
-            else 0
-        )
-        event_spool.remove(path for path, _eid, _payload in entries[:start])
 
-        paths_by_eid: dict[str, list[Path]] = {}
-        payloads: dict[str, dict] = {}
-        for path, eid, payload in entries[start:]:
-            paths_by_eid.setdefault(eid, []).append(path)
-            if payload is not None and eid not in payloads:
-                payloads[eid] = payload
+        subscription.replay_spool = spool
+        replayed: dict[str, dict] = {}
+        for path, eid, payload in entries:
+            subscription.replay_queue.append((path.name, eid))
+            if payload is None:
+                # Unparseable, so nothing can ever be made of it — mark it done
+                # so the cursor steps over it rather than stopping here forever.
+                subscription.replay_done.add(eid)
+                continue
+            if eid in replayed:
+                continue
+            replayed[eid] = payload
 
-        if payloads:
+        if replayed:
             subscription.replay_seen_messages.update(
                 (block.content or "").strip()
                 for block in blocks
                 if block.kind == BlockKind.message
                 and block.author_type == AuthorType.ai
             )
-        for eid, paths in paths_by_eid.items():
-            payload = payloads.get(eid)
-            if payload is None:
-                event_spool.remove(paths)
-                continue
-            subscription.replay_files.setdefault(eid, []).extend(paths)
+        for eid, payload in replayed.items():
             replay = dict(payload)
             replay["_eid"] = eid
             subscription.sink.queue.put_nowait(replay)
@@ -2645,7 +2658,10 @@ class ChatService:
         unless they are stale (no Stop, nothing new for a while), in which
         case what arrived lands joined rather than being lost."""
         try:
-            entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
+            spool = ws.spool_dir(project_id, topic_id)
+            entries = event_spool.spool_entries(
+                spool, after=event_spool.read_cursor(spool)
+            )
             if not entries:
                 return
             # Dedup against everything the live path already persisted (this +
@@ -2818,15 +2834,15 @@ class ChatService:
                     yield {"type": "event_block", "block": block_payload}
             pending = assembler.pending_eids()
             if pending:
-                newest = max(
+                newest = min(
                     (
-                        _spool_ns(path)
+                        _spool_age_s(path)
                         for path, entry_eid, _payload in entries
                         if entry_eid in pending
                     ),
-                    default=0,
+                    default=0.0,
                 )
-                if time.time_ns() - newest > _SPOOL_PARTIAL_GRACE_S * 1_000_000_000:
+                if newest > _SPOOL_PARTIAL_GRACE_S:
                     # No Stop and nothing new for a while: the message will
                     # never complete (the screen died mid-message). Land what
                     # arrived, joined, rather than lose it.
@@ -2836,11 +2852,16 @@ class ChatService:
                             recovered += 1
                             yield {"type": "assistant_block", "block": block_payload}
                     pending = set()
-            event_spool.remove(
-                path
-                for path, entry_eid, _payload in entries
-                if entry_eid not in pending
-            )
+            # Reading is not consuming: the cursor moves over the events that
+            # reached the timeline, and retention — not this pass — is what
+            # eventually deletes them. It stops at the first still-buffered
+            # flush rather than stepping over it, so the pass that completes
+            # that message still sees the flushes it is made of.
+            for path, entry_eid, _payload in entries:
+                if entry_eid in pending:
+                    break
+                event_spool.write_cursor(spool, path.name)
+            event_spool.prune(spool, older_than_s=_SPOOL_RETENTION_S)
             if recovered:
                 logger.info(
                     "reconciled %d spooled 现场 event(s) for topic %s",

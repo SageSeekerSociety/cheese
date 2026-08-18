@@ -4,6 +4,7 @@ WAL at the next turn start — idempotently (no duplicate if it was also persist
 live). This is the W1 half of the event-durability fix."""
 
 import json
+import os
 import time
 import uuid
 from pathlib import Path
@@ -11,7 +12,8 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.domain.agent.chat import ChatService
+from app.domain.agent import event_spool
+from app.domain.agent.chat import ChatService, _SPOOL_PARTIAL_GRACE_S
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -56,10 +58,23 @@ _PRE_TOOL_USE = {
 
 def _spool_event(spool: Path, eid: str, payload: dict | None = None) -> None:
     """Simulate the cheese-hook forwarder's atomic write of one hook."""
-    spool.mkdir(parents=True, exist_ok=True)
-    (spool / f"1700000000000000000.{eid}").write_text(
-        json.dumps(payload or _PRE_TOOL_USE), encoding="utf-8"
-    )
+    event_spool.append(spool, eid, payload or _PRE_TOOL_USE)
+
+
+def _unread(spool: Path) -> list[str]:
+    """Event ids the spool has NOT handed to the timeline yet.
+
+    Reading no longer deletes: the file stays for its retention window and a
+    cursor records how far a reader got. So "drained" is an empty tail, not an
+    empty directory — asserting on the directory would be asserting on the
+    disposal schedule.
+    """
+    return [
+        eid
+        for _path, eid, _payload in event_spool.spool_entries(
+            spool, after=event_spool.read_cursor(spool)
+        )
+    ]
 
 
 def _event_blocks_for(rows, eid: str):
@@ -110,8 +125,7 @@ async def test_spooled_event_is_backfilled_then_deduped(client, tmp_path, monkey
     assert len(backfilled) == 1
     assert backfilled[0].meta.get("backfilled") is True
     assert "echo hi" in backfilled[0].content
-    # The spool was drained (files removed after reconcile).
-    assert not list(ws.spool_dir(project_id, topic_id).iterdir())
+    assert _unread(ws.spool_dir(project_id, topic_id)) == []
 
     # Even if the same event reappears in the spool, a later turn must NOT
     # duplicate it — dedup is by event-id against already-persisted blocks.
@@ -420,24 +434,29 @@ def _spool_flush(
     delta: str,
     *,
     final: bool = False,
-    ns: int | None = None,
+    age_s: float = 0.0,
 ) -> None:
-    """One MessageDisplay flush file, exactly as the forwarder writes it."""
-    spool.mkdir(parents=True, exist_ok=True)
-    stamp = ns if ns is not None else 1700000000000000000 + idx
-    (spool / f"{stamp}.{eid}").write_text(
-        json.dumps(
-            {
-                "hook_event_name": "MessageDisplay",
-                "message_id": mid,
-                "index": idx,
-                "final": final,
-                "delta": delta,
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
+    """One MessageDisplay flush file, exactly as the forwarder writes it.
+
+    ``age_s`` backdates the file. How long ago a flush arrived is what decides
+    whether an unfinished message is still coming or was abandoned, and that is
+    the file's mtime — the name is a sequence number and says nothing about time.
+    """
+    event_spool.append(
+        spool,
+        eid,
+        {
+            "hook_event_name": "MessageDisplay",
+            "message_id": mid,
+            "index": idx,
+            "final": final,
+            "delta": delta,
+        },
     )
+    if age_s:
+        written = next(p for p in spool.iterdir() if p.name.endswith(f".{eid}"))
+        then = time.time() - age_s
+        os.utime(written, (then, then))
 
 
 async def _project_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
@@ -506,7 +525,7 @@ async def test_spooled_message_flushes_land_as_one_block(client, tmp_path, monke
     assert [b.content for b in messages] == ["第一行\n第二行"]
     assert messages[0].meta.get("backfilled") is True
     assert messages[0].meta.get("eids") == ["f0", "f1"]
-    assert not list(spool.iterdir())
+    assert _unread(spool) == []
 
 
 @pytest.mark.anyio
@@ -521,7 +540,7 @@ async def test_incomplete_flushes_wait_for_the_missing_one(
     pid, tid = await _project_topic(factory)
     spool = ws.spool_dir(pid, tid)
 
-    _spool_flush(spool, "f0", "m1", 0, "第一行\n", ns=time.time_ns())
+    _spool_flush(spool, "f0", "m1", 0, "第一行\n")
     async for _ in svc.converse(
         topic_id=tid, author="u", content="催一下", summon=True
     ):
@@ -529,15 +548,15 @@ async def test_incomplete_flushes_wait_for_the_missing_one(
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert _ai_messages(rows) == []
-    assert [p.name.split(".", 1)[1] for p in spool.iterdir()] == ["f0"]
+    assert _unread(spool) == ["f0"]
 
-    _spool_flush(spool, "f1", "m1", 1, "第二行", final=True, ns=time.time_ns())
+    _spool_flush(spool, "f1", "m1", 1, "第二行", final=True)
     async for _ in svc.converse(topic_id=tid, author="u", content="再催", summon=True):
         pass
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert [b.content for b in _ai_messages(rows)] == ["第一行\n第二行"]
-    assert not list(spool.iterdir())
+    assert _unread(spool) == []
 
 
 class _FlushedMessageAgent(AgentService):
@@ -609,14 +628,15 @@ async def test_abandoned_partial_lands_joined_after_grace(
     pid, tid = await _project_topic(factory)
     spool = ws.spool_dir(pid, tid)
 
-    _spool_flush(spool, "f0", "m1", 0, "只说到一半\n")  # ancient ns → stale
-    _spool_flush(spool, "f1", "m1", 1, "然后就断了")
+    stale = _SPOOL_PARTIAL_GRACE_S + 60
+    _spool_flush(spool, "f0", "m1", 0, "只说到一半\n", age_s=stale)
+    _spool_flush(spool, "f1", "m1", 1, "然后就断了", age_s=stale)
     async for _ in svc.converse(topic_id=tid, author="u", content="人呢", summon=True):
         pass
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(tid)
     assert [b.content for b in _ai_messages(rows)] == ["只说到一半\n然后就断了"]
-    assert not list(spool.iterdir())
+    assert _unread(spool) == []
 
 
 # --- Stop-vs-live dedup across mention canonicalization -----------------------

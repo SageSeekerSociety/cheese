@@ -6,15 +6,14 @@ and an undelivered prompt (the ONE re-send case) goes out as the original text.
 """
 
 import asyncio
-import json
 import time as _time
 import uuid
-from pathlib import Path
 
 import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from app.domain.agent import event_spool
 from app.domain.agent import runtime as rt
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
@@ -28,12 +27,9 @@ from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
 
-def _spool_event(spool: Path, eid: str, payload: dict) -> None:
+def _spool_event(spool, eid: str, payload: dict) -> None:
     """Simulate the cheese-hook forwarder's atomic write of one hook."""
-    spool.mkdir(parents=True, exist_ok=True)
-    (spool / f"{_time.time_ns()}.{eid}").write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-    )
+    event_spool.append(spool, eid, payload)
 
 
 class _MustNotRun(AgentService):
@@ -116,7 +112,10 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
     assert len(finals) == 1
     assert finals[0].meta.get("backfilled") is True
     assert resumes_by == "s-done"  # the next summon resumes the FINISHED session
-    assert not list(ws.spool_dir(pid, tid).iterdir())
+    # The settle read to the end. Reading no longer deletes — the files live out
+    # their retention — so what "drained" means is an empty tail past the cursor.
+    spool = ws.spool_dir(pid, tid)
+    assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
 
 
 @pytest.mark.anyio
@@ -318,4 +317,4 @@ def test_parked_hook_schedules_a_settle(client, tmp_path, monkeypatch):
     assert r.json()["data"]["delivered"] is False
     assert scheduled == [tid]
     # The event really is parked for that settle to find.
-    assert len(list(ws.spool_dir(pid, tid).iterdir())) == 1
+    assert len(event_spool.spool_entries(ws.spool_dir(pid, tid))) == 1

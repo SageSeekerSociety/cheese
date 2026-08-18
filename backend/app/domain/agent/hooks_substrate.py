@@ -115,6 +115,13 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
 # delivery). Exit 0 + empty stdout = "no decision" → the tool proceeds. The device
 # backend writes this via its launcher; the local (tmux) image bakes the same script
 # (kept identical so sensing can't drift); the spool block no-ops without the env.
+#
+# The spooled name is `<seq>.<eid>`, and `seq` is claimed the way event_spool.py
+# claims it — an O_EXCL create under `set -C`, seeded from a `.seq` hint. That
+# module's docstring says why the clock was not good enough; the short of it is
+# that a `date` without `%N` (any BSD userland, i.e. a device on macOS) sorts a
+# whole second's events at random, and a `date` that fails at all produces a
+# name starting with `.`, which every reader skips forever.
 # NOTE: the device launcher embeds this in a <<'SH' heredoc — never add a line
 # consisting of just `SH` here or the heredoc would silently truncate.
 CHEESE_HOOK_SCRIPT = """#!/bin/sh
@@ -123,13 +130,38 @@ eid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$$-$(date +%s%N)")"
 if [ -n "$CHEESE_HOOK_SPOOL" ]; then
   mkdir -p "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
   # Shared bind mount: node (sandbox uid 1000) writes while cheese (backend uid
-  # 1001) reconciles, parks, and removes events. Keep the directory shared even
-  # if it had to be recreated after session setup.
+  # 1001) reads, parks, and prunes events. Keep the directory shared even if it
+  # had to be recreated after session setup.
   chmod 0777 "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
+  _n="$(cat "$CHEESE_HOOK_SPOOL/.seq" 2>/dev/null)"
+  case "$_n" in
+    ''|*[!0-9]*)
+      # No usable hint. The glob expands in ascending order and every name is
+      # the same width, so the last one that parses is the highest.
+      _n=0
+      for _f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
+        [ -e "$_f" ] || continue
+        _b="${_f##*/}"
+        _b="${_b%%.*}"
+        case "$_b" in ''|*[!0-9]*) continue;; esac
+        _n="$_b"
+      done
+      # $(( )) reads a zero-padded number as octal; strip the pad first.
+      while :; do case "$_n" in 0?*) _n="${_n#0}";; *) break;; esac; done
+      ;;
+  esac
+  while :; do
+    _n=$((_n + 1))
+    _key="$(printf '%019d' "$_n")"
+    # noclobber makes this O_EXCL: one writer owns the number, the rest retry.
+    if (set -C; : > "$CHEESE_HOOK_SPOOL/.n$_key") 2>/dev/null; then break; fi
+  done
+  printf '%s' "$_n" > "$CHEESE_HOOK_SPOOL/.seqt.$$" 2>/dev/null &&
+    mv "$CHEESE_HOOK_SPOOL/.seqt.$$" "$CHEESE_HOOK_SPOOL/.seq" 2>/dev/null
+  rm -f "$CHEESE_HOOK_SPOOL/.seqt.$$" 2>/dev/null
   _tmp="$CHEESE_HOOK_SPOOL/.tmp.$eid"
-  _dst="$CHEESE_HOOK_SPOOL/$(date +%s%N 2>/dev/null).$eid"
   if printf '%s' "$body" > "$_tmp" 2>/dev/null; then
-    mv "$_tmp" "$_dst" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
+    mv "$_tmp" "$CHEESE_HOOK_SPOOL/$_key.$eid" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
   fi
 fi
 # On the device a background drainer is the sole sender (CHEESE_HOOK_SPOOL_ONLY set);
@@ -216,13 +248,38 @@ class TopicSubscription:
     activity: SessionActivity | None = None
     consumer_task: asyncio.Task[None] | None = None
     ready: asyncio.Event = field(default_factory=asyncio.Event)
-    replay_files: dict[str, list[Path]] = field(default_factory=dict)
+    # Crash-recovery replay bookkeeping, set up by ChatService before the
+    # consumer starts. `replay_queue` is the spool's unread tail in order, and
+    # the cursor only advances over the longest prefix that has actually been
+    # persisted — so one event whose persist raised is retried on the next read
+    # instead of being stepped over by the ones behind it.
+    replay_spool: Path | None = None
+    replay_queue: list[tuple[str, str]] = field(default_factory=list)
+    replay_done: set[str] = field(default_factory=set)
     replay_seen_messages: set[str] = field(default_factory=set)
     # Reassembles the screen's MessageDisplay flushes into whole messages.
     # Subscription-scoped on purpose: its dedup memory (message ids already
     # assembled) has to survive across works, or a flush redelivered after
     # its turn ended would land again as a fragment.
     assembler: MessageAssembler = field(default_factory=MessageAssembler)
+
+
+def _advance_replay_cursor(subscription: TopicSubscription) -> None:
+    """Move the spool cursor over every replayed event that has landed.
+
+    Stops at the first one that has not, which is the whole point: the cursor
+    means "everything up to here reached the timeline", and a gap under it is
+    an event nothing will ever read again.
+    """
+    reached: str | None = None
+    while subscription.replay_queue:
+        name, eid = subscription.replay_queue[0]
+        if eid not in subscription.replay_done:
+            break
+        reached = name
+        subscription.replay_queue.pop(0)
+    if reached is not None and subscription.replay_spool is not None:
+        event_spool.write_cursor(subscription.replay_spool, reached)
 
 
 HookEventConsumer = Callable[
@@ -716,7 +773,8 @@ class HooksSessionProvider[ScreenT]:
                     consumer_owned and consumer is not None and not consume_failed
                 )
                 if replay_processed and hook_eid is not None:
-                    event_spool.remove(subscription.replay_files.pop(hook_eid, []))
+                    subscription.replay_done.add(hook_eid)
+                    _advance_replay_cursor(subscription)
                 if any(isinstance(event, AgentResult) for event in events) and (
                     subscription.current_work is attribution
                 ):

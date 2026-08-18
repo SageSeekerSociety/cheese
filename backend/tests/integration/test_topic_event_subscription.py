@@ -525,7 +525,10 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
         "eid": "restart-message-1",
         "platform_unsolicited": True,
     }
-    assert event_spool.spool_entries(ws.spool_dir(project_id, topic_id)) == []
+    # Replayed to the end. The files stay for their retention window; what says
+    # they were consumed is the cursor, so the tail past it must be empty.
+    spool = ws.spool_dir(project_id, topic_id)
+    assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
     await provider.drop_subscription(topic_id)
 
 
