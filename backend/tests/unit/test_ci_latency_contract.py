@@ -125,8 +125,59 @@ def test_connector_payload_is_verified_inside_the_backend_image_build():
     )
 
     dockerfile = (ROOT / "backend" / "Dockerfile").read_text()
-    assert "COPY --from=connector /out ./connector-dist" in dockerfile
+    assert "--from=connector" in dockerfile
+    assert "./connector-dist" in dockerfile
     assert 'test -s "$f"' in dockerfile
+
+
+def _production_stage_lineage() -> str:
+    """Every instruction the production image is actually built from, following
+    the FROM chain back to its root."""
+    stages: dict[str, tuple[str, list[str]]] = {}
+    current: list[str] = []
+    for line in (ROOT / "backend" / "Dockerfile").read_text().splitlines():
+        # A comment often explains what a stage deliberately does NOT do, so
+        # reading comments as instructions makes each such note trip the check.
+        if line.strip().startswith("#"):
+            continue
+        words = line.split()
+        if words[:1] == ["FROM"]:
+            current = []
+            stages[words[-1]] = (words[1], current)
+        else:
+            current.append(line)
+
+    lineage: list[str] = []
+    cursor = "production"
+    while cursor in stages:
+        parent, body = stages[cursor]
+        lineage += body
+        cursor = parent
+    return "\n".join(lineage)
+
+
+def test_a_backend_commit_does_not_rewrite_the_whole_image():
+    """The production image pays for its layers twice per commit unless two
+    things hold, and neither is visible from the outside.
+
+    `chown -R` over a populated /app copies up every file it touches — on
+    2026-08-17 that single instruction ran for 101s and left a near-duplicate of
+    .venv + connector-dist to export (51s) and push (70s), on every commit,
+    because it sits below `COPY app`. Setting ownership as each COPY writes
+    costs nothing. And the compilers that build srp_rs have no runtime caller,
+    so a production stage that inherits them ships ~1.5GB nothing runs.
+    """
+    lineage = _production_stage_lineage()
+
+    assert "chown -R" not in lineage, (
+        "production is recursively chowning a tree again — use COPY --chown, "
+        "which sets the owner as the layer is written"
+    )
+    for toolchain in ("rustup", "build-essential"):
+        assert toolchain not in lineage, (
+            f"{toolchain} is back in the production image's lineage; nothing at "
+            "runtime calls it"
+        )
 
 
 def test_deploy_bounds_cache_without_making_every_build_cold():
