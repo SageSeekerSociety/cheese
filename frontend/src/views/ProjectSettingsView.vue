@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type {
+  AgentType,
   ComputeProfiles,
   ExecProfiles,
-  AgentType,
   GithubConnection,
   OAuthConnectionInfo,
   SandboxImageInfo,
