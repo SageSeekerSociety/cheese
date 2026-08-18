@@ -2061,6 +2061,23 @@ class ChatService:
             created_blocks: list[Block] = []
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
+            # B3: a reply threads under a block IN THIS TOPIC. A client that
+            # kept a stale reply target across a topic switch would otherwise
+            # write a cross-topic edge into the conversation tree — invisible on
+            # screen (the reader's timeline can't resolve the parent, so no
+            # reply cue renders) and wrong in the data that 记忆/摘要 rebuild
+            # from. Drop the edge, keep the message: losing the thread link is
+            # recoverable, refusing the send is not.
+            reply_uuid = _parse_uuid(reply_to)
+            if reply_uuid is not None:
+                parent = await blocks.get(reply_uuid)
+                if parent is None or parent.topic_id != topic.id:
+                    logger.warning(
+                        "dropped cross-topic reply_to (topic=%s, reply_to=%s)",
+                        topic_id,
+                        reply_to,
+                    )
+                    reply_uuid = None
             if content:
                 # Same backstop the doc/chat-reply paths already had, but the
                 # human chat-send path used to skip it: a friendly "@Alice /
@@ -2089,7 +2106,7 @@ class ChatService:
                     content=content,
                     kind=BlockKind.message,
                     turn_id=turn_id,
-                    reply_to=_parse_uuid(reply_to),  # B3: thread under another
+                    reply_to=reply_uuid,  # B3: thread under another
                 )
                 if attribution_id is None:
                     attribution_id = user_block.id
@@ -2117,7 +2134,7 @@ class ChatService:
                     mime_type=str(att.get("mime") or "") or None,
                     turn_id=attribution_id,
                     # An image-only send still honors the reply thread (B3).
-                    reply_to=None if content else _parse_uuid(reply_to),
+                    reply_to=None if content else reply_uuid,
                 )
                 if attribution_id is None:
                     attribution_id = att_block.id

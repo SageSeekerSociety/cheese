@@ -10,6 +10,22 @@
 const scrollMemory = new Map<string, { top: number; atBottom: boolean }>()
 // How close to the bottom still counts as "at the bottom" (px).
 const BOTTOM_THRESHOLD = 80
+
+// 每话题草稿 (飞书语义): what you had typed, whether you had 芝士 summoned, who
+// you were replying to, and the images waiting to go — all belong to the topic
+// they were composed in. Module scope so they survive this component
+// unmounting, same as scrollMemory.
+//
+// 之前只有待发图片被清掉，文字、@芝士 开关和回复目标原地不动地跟着你换话题：
+// 打了一半的话可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，
+// 屏幕上看不出异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
+interface ComposerDraft {
+  draft: string
+  summon: boolean
+  reply: Block | null
+  atts: ChatAttachment[]
+}
+const composerMemory = new Map<string, ComposerDraft>()
 </script>
 
 <script setup lang="ts">
@@ -947,6 +963,32 @@ function sendDraft() {
   }
 }
 
+// 每话题草稿: stash / restore everything the composer holds. Nothing here is
+// "just a preference" — each field names something in the topic being left
+// (a block to reply to, files already uploaded to that topic's worktree).
+function rememberComposer(topicId: string) {
+  // A bare @芝士 toggle over an empty box is not a draft — remembering it would
+  // relight the chip days later with nothing typed, which is the shape of
+  // #349 (you believe you summoned it) pointed the other way.
+  const hasContent = !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value
+  if (!hasContent) composerMemory.delete(topicId)
+  else
+    composerMemory.set(topicId, {
+      draft: draft.value,
+      summon: summon.value,
+      reply: replyTarget.value,
+      atts: pendingAtts.value.slice(),
+    })
+}
+
+function restoreComposer(topicId: string | undefined) {
+  const saved = topicId ? composerMemory.get(topicId) : undefined
+  draft.value = saved?.draft ?? ''
+  summon.value = saved?.summon ?? props.defaultSummon
+  replyTarget.value = saved?.reply ?? null
+  pendingAtts.value = saved?.atts ?? []
+}
+
 // IME (输入法) guard — see TopicView.vue for the full story: Safari fires
 // compositionend BEFORE the commit-Enter keydown, which then looks like a
 // plain Enter. Track composition ourselves and swallow the trailing Enter.
@@ -993,8 +1035,13 @@ watch(
       const el = scrollRef.value
       scrollMemory.set(oldId, { top: el.scrollTop, atBottom: isAtBottom(el) })
     }
-    if (props.topic) loadTopic(props.topic)
-    else {
+    if (oldId) rememberComposer(oldId)
+    if (props.topic) {
+      // loadTopic clears the pending attachments synchronously before its first
+      // await, so this topic's own draft has to be restored AFTER the call.
+      loadTopic(props.topic)
+      restoreComposer(id)
+    } else {
       messages.value = []
       closeSocket()
     }
@@ -1004,6 +1051,7 @@ watch(
 
 onBeforeUnmount(() => {
   rememberScroll() // persist position across an unmount (e.g. leaving the view)
+  if (props.topic) rememberComposer(props.topic.id)
   contentObserver?.disconnect()
   contentObserver = null
   closeSocket()
