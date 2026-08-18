@@ -59,6 +59,9 @@ export interface Topic {
   // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
   // 只有 list/get 话题时才带。
   awaits_me?: boolean
+  // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
+  // 所以换了项目默认，这个话题也跟着换。
+  agent_instance_id?: string | null
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -800,4 +803,50 @@ export interface DeviceApproval {
   device_id: string
   device_name: string
   project_id: string | null
+}
+
+// ---- AI 队友 (agent 类型与实例) ----
+//
+// Three layers, three lifetimes (docs/topics/room-task-agent-session-设计方案.md
+// §12): a TYPE is 出厂设置 and belongs to no project; an INSTANCE is that type
+// working inside one project, and it owns the memory it accumulated there; a
+// session is where one conversation got to and may be thrown away.
+//
+// So "how this agent behaves" (system prompt, skills, MCP, model, effort,
+// harness) is on the TYPE, and "who it is here" (name, handle, memory) is on the
+// INSTANCE. The management page shows both, which is why it reads two endpoints.
+
+// GET /agent-types — presets merged with the project's custom types.
+export interface AgentType {
+  name: string
+  title: string
+  description: string
+  // The system prompt this type runs under (角色设定).
+  body: string
+  skills: string[]
+  mcp_servers: string[]
+  model: string | null
+  effort: string | null
+  harness: string | null
+  // Ships with the platform → read-only.
+  builtin: boolean
+  space_id?: number | null
+  created_by?: string | null
+  created_at?: string | null
+}
+
+// GET /projects/{id}/agents — one agent working in this project.
+export interface ProjectAgent {
+  // Null for the implicit 芝士 a project has before anyone configured one.
+  id: string | null
+  project_id: string
+  // The memory pool key inside the project (`{project}:{handle}`).
+  handle: string
+  type_name: string | null
+  display_name: string
+  // What a new topic in this project gets.
+  is_default: boolean
+  // False = it resolves and owns a memory pool, but there is no row to edit.
+  configured: boolean
+  created_at?: string | null
 }
