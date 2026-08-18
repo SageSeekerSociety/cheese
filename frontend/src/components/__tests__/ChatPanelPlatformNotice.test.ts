@@ -204,7 +204,7 @@ describe('平台提示：一行 + 可展开', () => {
 
     const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
     expect(shown).toContain('CI 没过')
-    expect(shown).toContain('芝士在处理')
+    expect(shown).toContain('芝士处理中')
   })
 
   it('who 的三个码各渲染成一句人话', async () => {
@@ -219,8 +219,8 @@ describe('平台提示：一行 + 可展开', () => {
     await flush()
 
     const rows = container.querySelectorAll('[data-testid="platform-notice"]')
-    expect(visibleText(rows[0])).toContain('平台自愈')
-    expect(visibleText(rows[1])).toContain('等人处理')
+    expect(visibleText(rows[0])).toContain('平台已处理')
+    expect(visibleText(rows[1])).toContain('待人工处理')
   })
 })
 

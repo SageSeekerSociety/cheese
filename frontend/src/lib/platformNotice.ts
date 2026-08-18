@@ -39,9 +39,9 @@ import { platformErrorPresentation } from './platformEvents'
 export type WhoTag = 'platform' | 'cheese' | 'human'
 
 const WHO_LABEL: Record<WhoTag, string> = {
-  platform: '平台自愈',
-  cheese: '芝士在处理',
-  human: '等人处理',
+  platform: '平台已处理',
+  cheese: '芝士处理中',
+  human: '待人工处理',
 }
 
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
@@ -75,6 +75,8 @@ export type PlatformNotice =
   | {
       mode: 'fold'
       line: string
+      /** 谁在管这件事的**码**——形态统一之后，只有它决定这一行的记号颜色。 */
+      who: WhoTag | ''
       whoLabel: string
       /** >1 时显示 ×N；1 表示没有折叠。 */
       count: number
@@ -91,9 +93,14 @@ function meta(block: Block): Record<string, unknown> | null {
   return (block.meta as Record<string, unknown> | null) ?? null
 }
 
-function whoLabel(block: Block): string {
+function whoTag(block: Block): WhoTag | '' {
   const who = str(meta(block)?.who)
-  return who in WHO_LABEL ? WHO_LABEL[who as WhoTag] : ''
+  return who in WHO_LABEL ? (who as WhoTag) : ''
+}
+
+function whoLabel(block: Block): string {
+  const who = whoTag(block)
+  return who ? WHO_LABEL[who] : ''
 }
 
 /**
@@ -189,6 +196,7 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
     return {
       mode: 'fold',
       line: block.content,
+      who: whoTag(block),
       whoLabel: whoLabel(block),
       count: run.length,
       occurrences: run.map(occurrenceOf).filter((o) => o.detail),
