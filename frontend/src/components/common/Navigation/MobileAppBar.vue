@@ -1,11 +1,11 @@
 <template>
   <!-- `background`, not a fixed grey — see AppBar.vue for why. -->
   <v-app-bar color="background" :elevation="0" density="default" height="56" border="b-sm" app flat>
-    <!-- 页面栈里的一层：← 回上一层。其余页面还是抽屉按钮（1.0 的三个侧栏还没
-         改成页内分段，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
+    <!-- 页面栈里的一层：← 回上一层。汉堡只留给**还真挂着抽屉**的那几页
+         （1.0 的空间/小队详情，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
     <template #prepend>
       <v-btn v-if="backTo" icon="mdi-arrow-left" variant="text" aria-label="返回" @click="goBack" />
-      <v-app-bar-nav-icon v-else @click="toggleDrawer" />
+      <v-app-bar-nav-icon v-else-if="hasDrawer" @click="toggleDrawer" />
     </template>
 
     <!-- 中间标题 -->
@@ -153,6 +153,10 @@ const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.met
 function goBack() {
   if (backTo.value) void router.push({ name: backTo.value, params: route.params })
 }
+
+// 汉堡由路由说了算：一个点了没反应的入口比没有入口更糟，而这条顶栏看不见自己
+// 下面挂没挂侧栏——手机上没有侧栏的页面（/inbox、首页那两页）以前照样画一个汉堡。
+const hasDrawer = computed(() => route.meta.drawer === true)
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
