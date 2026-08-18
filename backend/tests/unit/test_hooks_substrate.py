@@ -123,6 +123,58 @@ async def test_monitor_session_activity_times_out_with_message_on_silence():
     assert events[0].text == "轮次超时"
 
 
+async def test_a_timed_out_turn_carries_its_own_classification():
+    """超时这条失败是平台自己造的，所以它自己说自己是什么。
+
+    过去它是靠在自己刚写下的那句话里找一个片段认出来的。改一个字——或者某个
+    transport 换了自己的措辞——分类就丢了，房间里显示的是「AI 服务返回错误」，
+    把排查的人指向一个根本没收到这轮请求的服务。这里故意用一句和原文毫无共同
+    字词的文案，它照样得被认出来。
+    """
+    from app.domain.agent.platform_failures import (
+        TURN_TIMEOUT,
+        classify_platform_failure,
+    )
+
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=0.05,
+        timeout_message="完全不一样的一句话",
+    )
+    result = events[-1]
+    assert isinstance(result, AgentResult) and result.is_error
+    assert (
+        classify_platform_failure(result.text, code=result.failure_code)
+        is TURN_TIMEOUT
+    )
+
+
+async def test_an_undelivered_prompt_carries_its_own_classification():
+    """同上：送不到芝士那边这条失败，分类也不再取决于那句话怎么写。"""
+    from app.domain.agent.platform_failures import (
+        PROMPT_UNDELIVERED,
+        classify_platform_failure,
+    )
+
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    events = await _drain(
+        queue,
+        idle_suspect_s=5,
+        hard_ceiling_s=5,
+        delivery_timeout_s=0.05,
+        timeout_message="轮次超时",
+        delivery_message="又是完全不一样的一句话",
+    )
+    result = events[-1]
+    assert isinstance(result, AgentResult) and result.is_error
+    assert (
+        classify_platform_failure(result.text, code=result.failure_code)
+        is PROMPT_UNDELIVERED
+    )
+
+
 async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
     """A straggler before screen setup completes has no subscription yet and
     therefore cannot be mistaken for the new run's result."""

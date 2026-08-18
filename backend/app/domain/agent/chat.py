@@ -513,7 +513,7 @@ async def _team_compute_profile(session: AsyncSession, project) -> str | None:
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
-    if classify_platform_failure(result.text) is not None:
+    if classify_platform_failure(result.text, code=result.failure_code) is not None:
         # Retrying cannot create disk space and can make pressure worse.
         return False
     rl = result.rate_limit or {}
@@ -3442,6 +3442,7 @@ class ChatService:
         last_assistant_block_id: str | None = None
         api_error_status: int | None = None
         rate_limit: dict | None = None
+        failure_code: str | None = None
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
@@ -3700,6 +3701,7 @@ class ChatService:
                     result_error = event.is_error
                     api_error_status = event.api_error_status
                     rate_limit = event.rate_limit
+                    failure_code = event.failure_code
         except BaseException:
             # The turn died mid-stream (error, timeout-cancel, crash). Persist
             # the session pointer FIRST — the partial work lives in that session
@@ -3749,7 +3751,7 @@ class ChatService:
                 api_error_status,
             )
             detail = final_text.strip()
-            platform_failure = classify_platform_failure(detail)
+            platform_failure = classify_platform_failure(detail, code=failure_code)
             # The CLI sometimes emits the SAME error string as a final
             # AssistantMessage before the error result — the discrete-message
             # path already persisted it as 芝士's reply. Exact-equality match

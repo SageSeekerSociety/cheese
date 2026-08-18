@@ -37,7 +37,9 @@ from app.domain.agent.hook_events import (
     translate_hook,
 )
 from app.domain.agent.platform_failures import (
+    PROMPT_UNDELIVERED_CODE,
     PROMPT_UNDELIVERED_MESSAGE,
+    TURN_TIMEOUT_CODE,
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.service import (
@@ -309,7 +311,10 @@ async def monitor_session_activity(
                 context,
             )
             yield AgentResult(
-                text=timeout_message, session_id=resume_session_id, is_error=True
+                text=timeout_message,
+                session_id=resume_session_id,
+                is_error=True,
+                failure_code=TURN_TIMEOUT_CODE,
             )
             return
         if delivered:
@@ -335,6 +340,7 @@ async def monitor_session_activity(
                         text=delivery_message,
                         session_id=resume_session_id,
                         is_error=True,
+                        failure_code=PROMPT_UNDELIVERED_CODE,
                     )
                     return
                 continue
@@ -354,6 +360,7 @@ async def monitor_session_activity(
                         text=timeout_message,
                         session_id=resume_session_id,
                         is_error=True,
+                        failure_code=TURN_TIMEOUT_CODE,
                     )
                     return
             continue
@@ -377,7 +384,17 @@ async def monitor_session_activity(
 class ScreenSetupError(Exception):
     """A backend couldn't bring the screen to a prompt-ready state (no Docker /
     no online device / not ready in time). Its message becomes the work error
-    result — the ONE place setup failures turn into an ``AgentResult``."""
+    result — the ONE place setup failures turn into an ``AgentResult``.
+
+    ``failure_code`` is set when the platform already knows WHICH failure this
+    is (`platform_failures`). Left None for the setup failures it has no
+    classification for, which then land as an unnamed turn error — the same
+    place they landed before, but by omission rather than by a sentence not
+    matching."""
+
+    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
 
 
 def _prompt_with_native_images(prompt: str, images: list[dict] | None) -> str:
@@ -416,9 +433,8 @@ class HooksSessionProvider[ScreenT]:
     # before this text is sent; local screens already share the worktree.
     embeds_images = True
     _needs_topic_message = "本轮需要话题上下文"
-    # A subclass may prefix its transport ("tmux …" / "device …") but MUST keep
-    # TURN_TIMEOUT_MARKER in the string — that attribution is how the failure gets
-    # classified as a timeout rather than an AI-service error.
+    # Copy only. A timeout is classified by the code the result carries, so a
+    # subclass may word this however it likes.
     _timeout_message = TURN_TIMEOUT_MESSAGE
 
     def __init__(
@@ -1030,7 +1046,10 @@ class HooksSessionProvider[ScreenT]:
             precheck = await self._precheck(project_id, topic_id)
         except ScreenSetupError as exc:
             yield AgentResult(
-                text=str(exc), session_id=resume_session_id, is_error=True
+                text=str(exc),
+                session_id=resume_session_id,
+                is_error=True,
+                failure_code=exc.failure_code,
             )
             return
 
@@ -1069,7 +1088,10 @@ class HooksSessionProvider[ScreenT]:
                     ready = await self._send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
-                    text=str(exc), session_id=resume_session_id, is_error=True
+                    text=str(exc),
+                    session_id=resume_session_id,
+                    is_error=True,
+                    failure_code=exc.failure_code,
                 )
                 return
             if ready is False:
@@ -1138,6 +1160,7 @@ class HooksSessionProvider[ScreenT]:
                                     text=str(exc),
                                     session_id=resume_session_id,
                                     is_error=True,
+                                    failure_code=exc.failure_code,
                                 )
                                 return
                         else:
