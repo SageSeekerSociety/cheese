@@ -169,6 +169,28 @@ describe('round-trip corpus', () => {
     expectClean('第一行接着\n第二行（软换行，同一段落）')
   })
 
+  // The serializer escapes these on sight; neither can open anything alone, and
+  // the backslash would otherwise be written into the file on the next save.
+  it('a lone tilde in prose', () => {
+    expectClean('未碰 P1~P4 的条目。\n')
+  })
+
+  // Two of them on one line ARE a GFM strikethrough pair, and the round trip
+  // must keep saying so — the escape is what stops them pairing, and dropping
+  // it where it matters would rewrite the document.
+  it('a tilde pair still reads as strikethrough', () => {
+    editor.commands.setContent('未碰 P1~P4 和 P5~P8 的条目。\n', { contentType: 'markdown' })
+    expect(JSON.stringify(editor.getJSON())).toContain('strike')
+  })
+
+  it('square brackets that are not a link', () => {
+    expectClean('cheesex-app[bot] 合并了 arr[0] 和 arr[1]。\n')
+  })
+
+  it('brackets that ARE a link stay a link', () => {
+    expectClean('看 [这里](https://example.com) 和 a[b]c。\n')
+  })
+
   it('bare < and & characters in prose', () => {
     expectClean('数学上 a < b 且 AT&T 是公司名。')
   })

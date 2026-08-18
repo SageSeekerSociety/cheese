@@ -233,6 +233,15 @@ const ESCAPED_TOKEN_RE = /&lt;(@[\w-]+|#[0-9a-fA-F-]{8,}|&amp;[\w./一-鿿-]+)&g
 // around a placeholder, so text===href is only visible after serialization.
 const AUTOLINK_RT_RE = /\[(https?:\/\/[^\s\]]+|mailto:[^\s\]]+)\]\(\1\)/g
 
+// The serializer escapes every character that could start a construct, whether
+// or not one is possible here — so `P1~P4` comes back `P1\~P4` and `app[bot]`
+// comes back `app\[bot\]`, and a save writes that backslash into the file. Drop
+// the two that never carry meaning on their own: a lone `~` needs a partner to
+// open strikethrough, and a `[` needs a `](` or `][` to open a link. Underscore
+// is deliberately NOT here — it pairs across a line often enough that
+// unescaping it changes how real documents parse.
+const INERT_ESCAPE_RE = /\\([~[\]])/g
+
 // Apply `fn` to prose only: skip fenced code lines entirely and inline code
 // spans within a line, so literal `[x](x)` / `&lt;` inside code is never touched.
 function mapProse(md: string, fn: (seg: string) => string): string {
@@ -260,6 +269,7 @@ export function serializeDoc(editor: { getMarkdown: () => string }): string {
     seg
       .replace(ESCAPED_TOKEN_RE, (_m, inner: string) => `<${inner.replace(/^&amp;/, '&')}>`)
       .replace(AUTOLINK_RT_RE, '$1')
+      .replace(INERT_ESCAPE_RE, '$1')
   )
 }
 
