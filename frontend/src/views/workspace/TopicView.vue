@@ -7,6 +7,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import ChatPanel from '@/components/ChatPanel.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import TopicAgentPicker from '@/components/TopicAgentPicker.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
@@ -274,6 +275,11 @@ watch(
             >
               <span class="status-dot status-dot--muted" />已归档
             </span>
+            <TopicAgentPicker
+              :key="`agent-${selectedTopic.id}`"
+              :topic-id="selectedTopic.id"
+              :project-id="selectedTopic.project_id"
+            />
             <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
           </template>
         </ChatPanel>

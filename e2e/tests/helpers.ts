@@ -31,5 +31,11 @@ export async function openFirstProject(page: Page) {
   // sits first in the rail — clicking it lands on /spaces, not a project.
   await page.locator('.app-rail-item--tile').first().click();
   await page.locator('[title="新建话题"]').waitFor();
-  return page.locator('.topic-row');
+  const rows = page.locator('.topic-row');
+  // The + button renders before the topics do, so returning here would let a
+  // caller count zero rows and then watch the seeded ones arrive — a
+  // `toHaveCount(before + 1)` that passes without anything being created.
+  // alice's project always has at least one topic (see the seed note above).
+  await rows.first().waitFor();
+  return rows;
 }

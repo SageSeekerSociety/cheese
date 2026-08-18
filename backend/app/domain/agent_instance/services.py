@@ -105,6 +105,10 @@ class AgentInstanceService:
         """The system prompt *agent*'s type contributes, if it has one."""
         return await self._types.system_prompt(agent.type_name)
 
+    async def model(self, agent: ResolvedAgent) -> str | None:
+        """The model *agent* runs on, or None to follow the project's pick."""
+        return await self._types.model(agent.type_name)
+
     # --- management ---------------------------------------------------------
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[AgentInstance]:
