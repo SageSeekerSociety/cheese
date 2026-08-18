@@ -290,15 +290,24 @@ _BLOCKED_BY_CARD_MESSAGES = {
     AcceptStatus.conflict: (
         "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张"
     ),
-    AcceptStatus.accepted: (
-        "这个话题已经交付过一次：上一张验收卡合并了，这条分支已经在 main 上。"
-        "再递一张开出来的 PR 没有新提交，GitHub 会拒绝，平台会降级成本地合并——"
-        "卡看起来采纳了，实际什么都没交付。\n"
-        "话题没有归档，接着讨论、接着写文档都可以（归档是人的决定，不是合并的"
-        "副作用）；要再交付一份改动，请在房间里开一件新的事——新话题＝从 main "
-        "新切的分支。"
-    ),
 }
+
+#: Refusal when the branch genuinely holds nothing the base does not. This is
+#: the empty-PR failure stated as what it is — a fact about the branch RIGHT
+#: NOW, checked at 递卡 time, not inferred from "a card was accepted once".
+#:
+#: The inference was the bug (2026-08-18): a room outlives the work done in it,
+#: so it delivers, then keeps working, and the next task's commits sit on the
+#: same branch waiting for the next card. Blocking on history froze every room
+#: after its first delivery — 一个 task 完成了可以再新开 task became 一个房间只
+#: 能交付一次, which is the opposite of what 采纳后不再归档话题 (#536) was for.
+_NOTHING_TO_DELIVER = (
+    "这条分支相对 main 没有新提交，没有东西可以交付。"
+    "这样开出来的 PR 是空的，GitHub 会拒绝，平台会降级成本地合并——"
+    "卡看起来采纳了，实际什么都没交付。\n"
+    "先把改动提交到工作区再递卡。"
+)
+
 _CARD_BLOCKS_NEW_CARD = tuple(_BLOCKED_BY_CARD_MESSAGES)
 
 #: Refusal for a card filed with no commit subject at all. It is long on
@@ -630,6 +639,21 @@ class AcceptService:
         )
         if blocking is not None:
             raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
+        # Nothing to deliver is a fact about the branch, so ask the branch. It
+        # used to be inferred from "this topic already had a card accepted",
+        # which is true only until somebody commits again — and rooms do, that
+        # is what a room is for. Only for a topic that HAS delivered before:
+        # a first card on a branch with no commits is a different failure
+        # (nothing was ever written) and the PR path already reports it with
+        # the detail this check cannot see.
+        if any(c.status == AcceptStatus.accepted for c in existing):
+            from app.domain.workspace import service as ws
+
+            has_new = await asyncio.to_thread(
+                ws.has_undelivered_commits, topic.project_id, topic_id
+            )
+            if not has_new:
+                raise ValidationError(_NOTHING_TO_DELIVER)
         # 采纳即合并 (docs/accept-is-merge.md #296, stage 1): the card is always
         # born `pending`. The old machine gate (`check_command` → born
         # `pending_gate`, platform runs the check, only green promotes to
