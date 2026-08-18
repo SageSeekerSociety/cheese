@@ -76,7 +76,7 @@ describe('BottomAppBar', () => {
       tab('空间', { to: '/spaces', match: (path) => path.startsWith('/teams') }),
       tab('待办', { to: '/inbox' }),
     ])
-    const lit = [...container.querySelectorAll('.v-btn--active')].map((el) => el.textContent?.trim())
+    const lit = Array.from(container.querySelectorAll('.v-btn--active'), (el) => el.textContent?.trim())
     expect(lit).toEqual(['空间'])
   })
 })
