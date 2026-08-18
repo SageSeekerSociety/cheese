@@ -297,8 +297,11 @@ async def add_memory(
     """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
     the acting 芝士's own memory for this project; with scope="user"+owner it
     writes that member's personal memory (private chat, spec §8.4 个人记忆跟着
-    人走). Without either it falls back to the shared project pool."""
-    from app.domain.memory.models import MemoryScope
+    人走). Without either it falls back to the shared project pool.
+
+    ``layer="core"`` buys a seat in every future prompt instead of a place in
+    the pool that gets retrieved on demand — see MemoryLayer."""
+    from app.domain.memory.models import MemoryLayer, MemoryScope
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
@@ -308,19 +311,25 @@ async def add_memory(
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("content 不能为空")
+    raw_layer = (body.get("layer") or MemoryLayer.fact.value).strip()
+    if raw_layer not in tuple(MemoryLayer):
+        raise ValidationError("layer 只能是 core 或 fact")
+    layer = MemoryLayer(raw_layer)
     if (body.get("scope") or "project") == "user":
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
         _authorize_personal_memory_owner(topic, owner)
-        await memory_store(db).remember(MemoryScope.user, owner, content)
-        return ok({"remembered": True})
+        await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
+        return ok({"remembered": True, "layer": layer.value})
     agent_scope = await _agent_memory_scope(db, project_id, topic)
     if agent_scope is not None:
-        await memory_store(db).remember(*agent_scope, content)
+        await memory_store(db).remember(*agent_scope, content, layer=layer)
     else:
-        await memory_store(db).remember(MemoryScope.project, str(project_id), content)
-    return ok({"remembered": True})
+        await memory_store(db).remember(
+            MemoryScope.project, str(project_id), content, layer=layer
+        )
+    return ok({"remembered": True, "layer": layer.value})
 
 
 @router.post("/{project_id}/memory/search")

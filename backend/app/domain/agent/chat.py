@@ -725,6 +725,8 @@ def _build_system_prompt(
     turn_meta: list[str] | None = None,
     stage_guide: str | None = None,
     memories_omitted: int = 0,
+    memories_core: int = 0,
+    memories_core_omitted: int = 0,
 ) -> str:
     parts = [base]
     if untitled:
@@ -780,18 +782,37 @@ def _build_system_prompt(
             "请按它继续工作，并在状态变化时用 update_doc 工具更新它）\n" + doc
         )
     if memories or memories_omitted:
-        facts = "\n".join(f"- {_chipify_paths(m)}" for m in memories)
-        block = f"## 项目记忆（你已知道的事实，回答时可引用）\n{facts}"
-        if memories_omitted:
-            # 溢出必须可见: what does not fit is stated, never dropped in
-            # silence. A reader who cannot tell "nothing was stored" from
-            # "the oldest fell off the end" stops trusting memory entirely —
-            # and stops asking for the part it can still get.
+        core = [f"- {_chipify_paths(m)}" for m in memories[:memories_core]]
+        retrieved = [f"- {_chipify_paths(m)}" for m in memories[memories_core:]]
+        block = "## 项目记忆（你已知道的事实，回答时可引用）"
+        if core:
+            block += "\n\n### 核心记忆（每轮都在场，与本轮说什么无关）\n" + "\n".join(
+                core
+            )
+        if retrieved:
             block += (
-                f"\n\n> ⚠️ 上面只是最近的 {len(memories)} 条，另有 **{memories_omitted} "
-                "条更早的记忆没放进来**（放不下，不是不存在）。**没列出来 ≠ 不存在**——"
-                '要用到早期约定/踩过的坑时，用 `cheese recall "<关键词>"` 现查；'
-                "一次没查到也不等于没有，换个说法、用更短的词再试一次。"
+                "\n\n### 本轮检索到的记忆（按本话题/本轮消息挑出来的，**不是全部**）\n"
+                + "\n".join(retrieved)
+            )
+        if memories_omitted:
+            # 没注入必须可见: what did not come in is stated, never dropped in
+            # silence. A reader who cannot tell "nothing was stored" from "this
+            # turn did not ask for it" stops trusting memory entirely — and
+            # stops asking for the part it can still get.
+            block += (
+                f"\n\n> ⚠️ 记忆池里还有 **{memories_omitted} 条这一轮没注入**"
+                "（按与本轮上下文的相关性排的，排在后面的没进来；不是不存在）。"
+                "**没列出来 ≠ 不存在**——换个话题、要用到某条旧约定或踩过的坑时，"
+                '用 `cheese recall "<关键词>"` 现查；一次没查到也不等于没有，'
+                "换个说法、用更短的词再试一次。"
+            )
+        if memories_core_omitted:
+            # Core is the layer that is supposed to be unconditional. If even
+            # it had to be cut, saying so is the only way it gets pruned.
+            block += (
+                f"\n\n> ⚠️ **核心记忆超预算了**：有 {memories_core_omitted} 条核心记忆"
+                "没放下。核心记忆本该每轮全在场，出现这种情况说明它被当成普通记忆写"
+                "了——挑几条降级成普通记忆（`cheese remember` 不加 `--core`）。"
             )
         parts.append(block)
     if turn_meta:
@@ -1018,6 +1039,23 @@ def _prompt_line(b, *, embeds_images: bool) -> str:
     if b.kind == BlockKind.attachment:
         return _attachment_prompt_line(b.author, b.content, embeds_images=embeds_images)
     return f"[{b.author}]: {_strip_platform_notice(b.content)}"
+
+
+# How much of a turn is used to retrieve memory against. A turn is not a
+# question — it is a title, a few messages and a live doc — and all of it is
+# signal, but past a couple of thousand characters the keyword set stops
+# discriminating between facts and starts matching everything equally.
+_MEMORY_QUERY_CHARS = 2000
+
+
+def _memory_query(*parts: str | None) -> str:
+    """What this turn is about, as one string, to retrieve memory against.
+
+    Pass the parts in descending order of how much they say about *this* turn —
+    what was just said, then the topic's title, then its doc. The cap cuts from
+    the tail, so a long doc can never crowd out what somebody just asked.
+    """
+    return "\n".join(p.strip() for p in parts if p and p.strip())[:_MEMORY_QUERY_CHARS]
 
 
 def _pending_human_blocks(history: list[Block]) -> list[Block]:
@@ -2160,16 +2198,20 @@ class ChatService:
         *,
         project_id: uuid.UUID,
         agent_handle: str,
+        query: str = "",
     ) -> RecallResult:
-        """What this 芝士 remembers inside this project.
+        """What this 芝士 remembers inside this project, given what this turn is
+        about.
 
         Reads its own per-agent scope first, then the legacy shared ``project``
         pool. Writes only ever go to the per-agent scope, so the pool is a
         read-only tail of what was learned before memory was split per agent —
         rooms that accumulated it keep it, and nothing new lands there.
 
-        Returns what did *not* fit alongside what did: both pools are capped,
-        and a cap nobody is told about is how memory quietly stops existing.
+        ``query`` is the turn's own context: core memory ignores it (it is in
+        every turn by definition), everything else is ranked against it. Returns
+        what did *not* come in alongside what did — a pool nobody is told is
+        bigger than the prompt is how memory quietly stops existing.
         """
         return await recall_pools(
             memory,
@@ -2180,6 +2222,7 @@ class ChatService:
                 ),
                 (MemoryScope.project, str(project_id)),
             ],
+            query=query,
         )
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
@@ -3073,21 +3116,35 @@ class ChatService:
             is_private = topic.is_private
             private_owner = topic.private_owner
             acting_agent = await self._agent_handle(session, topic.id)
+            doc_root = None if is_private else await blocks.doc_root(topic.id)
+            doc_text = doc_root.content if doc_root else None
+            # Memory is retrieved against what this turn is actually about —
+            # newest message first, since a turn is usually about the thing
+            # somebody just said, and the doc last because it is the slowest-
+            # moving of the three. Fetched before the recall below, which is
+            # the only reason the doc lookup moved above it.
+            turn_query = _memory_query(
+                *(
+                    b.content
+                    for b in reversed(pending)
+                    if b.kind == BlockKind.message and b.content
+                ),
+                topic.title,
+                doc_text,
+            )
             if is_private and private_owner:
                 # Private chat: the owner's cross-project personal memory.
                 memories = await recall_pools(
-                    memory, [(MemoryScope.user, private_owner)]
+                    memory, [(MemoryScope.user, private_owner)], query=turn_query
                 )
-                doc_text = None
             else:
                 memories = await self._recall_agent_memories(
                     memory,
                     session,
                     project_id=topic.project_id,
                     agent_handle=acting_agent,
+                    query=turn_query,
                 )
-                doc_root = await blocks.doc_root(topic.id)
-                doc_text = doc_root.content if doc_root else None
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
             role = await resolve_role_description(
@@ -3260,6 +3317,8 @@ class ChatService:
             topic_refs_for_prompt,
             untitled,
             memories_omitted=memories.omitted,
+            memories_core=memories.core_count,
+            memories_core_omitted=memories.core_omitted,
             turn_meta=_turn_meta_lines(
                 budget_s=settings.agent_turn_timeout_s,
                 activity_aware=is_activity_aware_backend,
@@ -4068,6 +4127,9 @@ class ChatService:
                 session,
                 project_id=project_id,
                 agent_handle=await self._agent_handle(session, topic.id),
+                # The activity note IS the whole context here — there is no
+                # history yet, the topic was created two statements ago.
+                query=_memory_query(text),
             )
             topic_id = topic.id
             compute_id = _resolve_compute_id(
@@ -4083,6 +4145,8 @@ class ChatService:
             None,
             memories.facts,
             memories_omitted=memories.omitted,
+            memories_core=memories.core_count,
+            memories_core_omitted=memories.core_omitted,
         )
         prompt = (
             "下面是一条线下活动输入，请按『活动消化』技能把它整理成结构化记录："
@@ -4251,7 +4315,14 @@ class ChatService:
             # summary describes the project, and what a 芝士 learned for itself is
             # not project knowledge.
             memories = await recall_pools(
-                memory, [(MemoryScope.project, str(project_id))]
+                memory,
+                [(MemoryScope.project, str(project_id))],
+                # The one-pager is about the project as a whole, so its name and
+                # its topic titles are the context to pull memory against — the
+                # nearest thing this call has to "what is being asked".
+                query=_memory_query(
+                    project.name, *(t.title for t in all_topics if t.title)
+                ),
             )
             role = await resolve_role_description(session, project.expert_role)
             compute_id = _resolve_compute_id(
@@ -4270,7 +4341,7 @@ class ChatService:
         )
         mem_lines = "\n".join(f"- {_chipify_paths(m)}" for m in memories.facts)
         if memories.omitted:
-            mem_lines += f"\n- （另有 {memories.omitted} 条更早的记忆未列出）"
+            mem_lines += f"\n- （另有 {memories.omitted} 条相关性较低的记忆未列出）"
         context = (
             f"项目名：{project.name}\n\n## 话题\n{topic_lines or '（暂无）'}\n\n"
             f"## 临近里程碑\n{ms_lines or '（暂无）'}\n\n"
