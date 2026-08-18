@@ -115,6 +115,11 @@ COPY --from=deps /app/.venv /app/.venv
 COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
+# One-shot data migration an operator has to be able to run ON the box (memory
+# rows → openviking, #187). Named file by file rather than `COPY scripts`: the
+# rest of that directory is dev probes and demo seeders that have no business
+# in a production image.
+COPY scripts/migrate_memory_to_openviking.py ./scripts/
 # The agent-side assets the BACKEND serves at runtime: the `cheese` platform CLI
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.

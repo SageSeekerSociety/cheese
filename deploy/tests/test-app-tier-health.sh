@@ -353,6 +353,7 @@ ownership_run() {
     WORKSPACES_HOST_PATH="$run_dir/workspaces" \
     UPLOADS_HOST_PATH="$run_dir/uploads" \
     APPHOME_HOST_PATH="$run_dir/apphome" \
+    VIKING_HOST_PATH="$run_dir/viking" \
     HOME="$run_dir" \
     "$@"
 }
@@ -367,6 +368,8 @@ new_ownership_run_dir() {
   mkdir -p "$ROOT/tmp"
   local dir
   dir="$(mktemp -d "$ROOT/tmp/ownership-order.XXXXXX")"
+  # viking is deliberately NOT created: the deploy script makes it, and these
+  # tests are the only place that would notice if it stopped.
   mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
   : > "$dir/docker.log"
   printf '%s' "$dir"
@@ -420,6 +423,9 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   # nothing and the previous image shares that uid. Handing anything back here
   # would be the change that breaks the rollback.
   for dir in workspaces uploads apphome; do : > "$run_dir/$dir/.cheese-uid-1000"; done
+  # Made by the deploy script, so it has to be marked after the fact — an
+  # unmarked path would make this "nothing moved" scenario move something.
+  mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
 
   if ownership_run "$run_dir" rollback \
     "$ROOT/deploy/deploy-docker.sh" testsha \

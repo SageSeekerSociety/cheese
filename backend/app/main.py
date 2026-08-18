@@ -261,6 +261,18 @@ async def lifespan(_: FastAPI):
         await pr_poller.stop()
         await reaper.stop()
         await runner.stop()
+        # The openviking backend keeps the whole memory tree in one embedded
+        # instance (AGFS + vector index) under openviking_data_dir. Nothing
+        # else owns its lifecycle, so a redeploy would tear the process down
+        # mid-write; closing it here is what makes the data on that volume a
+        # consistent thing to come back to. No-op on the db backend.
+        if settings.memory_backend == "openviking":
+            try:
+                from app.domain.memory.openviking_store import get_runtime
+
+                await get_runtime().close()
+            except Exception:  # noqa: BLE001 — shutdown must still finish
+                get_logger("cheesex.runtime").exception("openviking shutdown failed")
 
 
 # Route modules that failed to import this boot. Read by /healthz so a partially

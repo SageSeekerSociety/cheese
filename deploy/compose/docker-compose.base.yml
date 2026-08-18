@@ -41,6 +41,13 @@ services:
       # git need a writable, PERSISTENT home. Backed by a host path so jj's
       # per-repo secure-config survives redeploys.
       - HOME=/data/apphome
+      # Memory (#187). On MEMORY_BACKEND=openviking the whole memory tree —
+      # AGFS files AND the vector index — lives under this directory and
+      # nowhere else: no Postgres row, no image layer. Unmounted it is
+      # container-local, so every deploy would start the platform amnesiac.
+      # Set here rather than in backend/.env because the value is a CONTAINER
+      # path that only makes sense together with the bind mount below.
+      - OPENVIKING_DATA_DIR=/data/viking
       # Agent containers are siblings spawned through docker.sock, not compose
       # services. Pin them to this deployment's sha so a floating/local alias
       # cannot disappear or drift independently of the backend.
@@ -59,6 +66,11 @@ services:
       # Default /dev/null = feature off (git prompts fail cleanly).
       - ${GIT_CREDENTIALS_FILE:-/dev/null}:/data/git-credentials:ro
       - ${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}:/data/apphome
+      # Everything the openviking memory backend remembers. Mounted
+      # unconditionally: on MEMORY_BACKEND=db the directory just stays empty,
+      # and having it already in place is what makes flipping the backend a
+      # one-line env change instead of a deploy edit.
+      - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
     # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
     # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
     # and the frontend on :8080 — a localhost-only bind would be unreachable from
