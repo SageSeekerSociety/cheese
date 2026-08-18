@@ -1,0 +1,57 @@
+# Standing data-plane services (#551): the tunnel terminator and the box's
+# :8081 front door. DELIBERATELY not part of deploy-docker.sh's stack — that
+# script must keep swapping backend/frontend freely without ever touching
+# these two, which is the entire point: a deploy no longer severs machine
+# model traffic. They change only when an operator runs `up.sh` here.
+#
+# Values come from a box-local .env next to this file (never committed):
+#   LLM_TUNNEL_IMAGE   a backend image ref to run the tunnel from. Pin an
+#                      explicit sha you trust; it does NOT need to match the
+#                      deployed backend (the route is self-contained: HMAC over
+#                      the scoped token's claims, no DB).
+#   BACKEND_ENV_FILE   the box's backend/.env (for the signing secret and the
+#                      metering-proxy address).
+#   API_FRONT_CONF     path to nginx.conf (default: the one beside this file).
+services:
+  llm-tunnel:
+    image: ${LLM_TUNNEL_IMAGE:?pin a backend image sha (see header)}
+    container_name: cheese-llm-tunnel
+    command:
+      ["uvicorn", "app.llm_tunnel_app:app", "--host", "0.0.0.0", "--port", "8091"]
+    env_file:
+      - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
+    # Loopback only: api-front is the sole intended caller, and this container
+    # carries the backend env file.
+    ports:
+      - "127.0.0.1:8091:8091"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8091/healthz"]
+      interval: 30s
+      timeout: 8s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  api-front:
+    image: mirror.gcr.io/library/nginx:1.27-alpine
+    container_name: cheese-api-front
+    # Host networking on purpose: it must own the box's :8081 (where the ghg
+    # edge already points) and reach both the tunnel (127.0.0.1:8091) and the
+    # relocated backend (127.0.0.1:18081) without cross-project docker-network
+    # plumbing that a deploy could disturb.
+    network_mode: host
+    volumes:
+      - ${API_FRONT_CONF:-./nginx.conf}:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8081/healthz >/dev/null"]
+      interval: 30s
+      timeout: 8s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
