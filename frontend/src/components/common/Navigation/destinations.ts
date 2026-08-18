@@ -16,7 +16,17 @@ import type { NavGenericItem, NavItem } from './types'
 
 const HOME: NavItem = { key: 'Home', type: 'item', title: '首页', to: '/', icon: 'cheese', shortcut: 1 }
 
-const SPACES: NavItem = { key: 'Spaces', type: 'item', title: '空间', to: '/spaces', icon: 'mdi-view-dashboard' }
+// 这一格装的是首页那一层，落点是空间；小队是它并排的另一半（手机上就是那一行
+// 页内分段），所以在 /teams 底下这一格照样亮着——不然人在这一格里翻小队，底栏
+// 却整排都是灰的，看起来像已经走出了这个 app 的导航。
+const SPACES: NavItem = {
+  key: 'Spaces',
+  type: 'item',
+  title: '空间',
+  to: '/spaces',
+  icon: 'mdi-view-dashboard',
+  match: (path) => path === '/' || path.startsWith('/spaces') || path.startsWith('/teams'),
+}
 
 // 「待办」这个词还没定（设计文档 §7 拍板 1），路径和标签都可能再改。
 const INBOX: NavItem = { key: 'Inbox', type: 'item', title: '待办', to: '/inbox', icon: 'mdi-inbox-outline' }

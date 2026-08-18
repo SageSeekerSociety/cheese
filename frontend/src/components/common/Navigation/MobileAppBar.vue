@@ -1,11 +1,11 @@
 <template>
   <!-- `background`, not a fixed grey — see AppBar.vue for why. -->
   <v-app-bar color="background" :elevation="0" density="default" height="56" border="b-sm" app flat>
-    <!-- 页面栈里的一层：← 回上一层。其余页面还是抽屉按钮（1.0 的三个侧栏还没
-         改成页内分段，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
+    <!-- 页面栈里的一层：← 回上一层。汉堡只留给**还真挂着抽屉**的那几页
+         （1.0 的空间/小队详情，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
     <template #prepend>
       <v-btn v-if="backTo" icon="mdi-arrow-left" variant="text" aria-label="返回" @click="goBack" />
-      <v-app-bar-nav-icon v-else @click="toggleDrawer" />
+      <v-app-bar-nav-icon v-else-if="hasDrawer" @click="toggleDrawer" />
     </template>
 
     <!-- 中间标题 -->
@@ -153,6 +153,10 @@ const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.met
 function goBack() {
   if (backTo.value) void router.push({ name: backTo.value, params: route.params })
 }
+
+// 汉堡由路由说了算：一个点了没反应的入口比没有入口更糟，而这条顶栏看不见自己
+// 下面挂没挂侧栏——手机上没有侧栏的页面（/inbox、首页那两页）以前照样画一个汉堡。
+const hasDrawer = computed(() => route.meta.drawer === true)
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
@@ -170,9 +174,11 @@ const toggleDrawer = () => {
 // `{ title: '项目工作台', isFullPage: true }`——所以在手机上打开任何一个话题，
 // 顶栏都写着「项目工作台」，既不是话题名也不是项目名。
 // getRouteHierarchy 是**叶到根**排的（它自己末尾 reverse 过），所以当前页是第一个。
+// 自己带了页内分段的那一层用 mobileTitle 写整层的名字（见 router/home.ts）。
 const updateTitle = () => {
+  const own = typeof route.meta.mobileTitle === 'string' ? route.meta.mobileTitle : null
   const current = getRouteHierarchy.value.find((item) => item.title)
-  currentTitle.value = current?.title ?? '知是社区'
+  currentTitle.value = own ?? current?.title ?? '知是社区'
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
