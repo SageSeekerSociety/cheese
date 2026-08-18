@@ -529,6 +529,32 @@ def test_checks_are_read_with_the_read_mint_not_the_write_one(client, app_world)
     assert [m["token"] for m in fake.merge_calls] == ["ghs_app_write"]
 
 
+def test_update_branch_is_written_with_the_write_mint_not_the_read_one(
+    client, app_world
+):
+    """The mirror image of the test above, and the bug that broke auto-merge
+    outright from #470 (2026-08-16) until 2026-08-17: Update branch WRITES a
+    merge commit onto the head branch, and the App's read mint carries `read`
+    on all six permissions, so GitHub answers 403. The poller's
+    `except GitHubPrError` turns that into one log line — and it happens
+    *before* anything is written to the card, so the card keeps saying "等 CI"
+    with nobody able to tell it never even tried. PRs #498 and #499 each sat
+    ~5.5 hours that way until a human clicked the button on github.com.
+
+    Nothing could catch that class of mistake before: this fake accepted any
+    token and never looked at it."""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "绿，但绿在旧基上")
+    fake.compare_status_by_pair[("main", head_sha)] = "diverged"
+
+    _poll(client)
+
+    assert fake.update_branch_calls == [number]
+    assert fake.update_branch_tokens == ["ghs_app_write"]
+    assert "ghs_app_read" not in fake.update_branch_tokens
+
+
 # ---- 验收标准 8：重推推到这个 PR 真正的 head 分支 ----------------------------
 
 

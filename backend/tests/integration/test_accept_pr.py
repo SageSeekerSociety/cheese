@@ -122,6 +122,16 @@ class FakeGitHubPrClient:
         self.check_names_by_sha: dict[str, set[str]] = {}
         self.update_branch_calls: list[int] = []
         self.update_branch_result: bool = True
+        # Which credential each write-shaped call was made with. `update_branch`
+        # WRITES a commit to the head branch, so a read mint is a 403 that the
+        # poller swallows into a log line — the card keeps saying "等 CI" while
+        # nothing moves (#498/#499, ~5.5h each). Nothing used to look at the
+        # token here, which is why that漏改 shipped in the first place.
+        self.update_branch_tokens: list[str] = []
+        # sha → the RAW `check_runs` payload GitHub would return. Registering
+        # one makes `check_state` run the production classifier over it (see
+        # `check_state` below) instead of answering from `check_state_by_sha`.
+        self.check_runs_by_sha: dict[str, list[dict]] = {}
         # run id → 那次运行的 job 列表。默认（未登记的 run）给一个真的部署过的
         # job，因为绝大多数测试关心的不是这一层；「跳过了部署」和「挂在哪个
         # job 上」的用例自己登记。
@@ -150,6 +160,10 @@ class FakeGitHubPrClient:
             "merged": False,
             "merge_commit_sha": None,
             "merged_at": None,
+            # GitHub computes these in the background; None = "not worked out
+            # yet", which is what a brand-new PR reports.
+            "mergeable": None,
+            "mergeable_state": "",
         }
         self.opened.append(
             {
@@ -187,6 +201,8 @@ class FakeGitHubPrClient:
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
             merged_at=pr["merged_at"],
+            mergeable=pr.get("mergeable"),
+            mergeable_state=pr.get("mergeable_state", ""),
         )
 
     def seed_pr(self, number: int, *, head: str, base: str = "main") -> str:
@@ -202,6 +218,8 @@ class FakeGitHubPrClient:
             "merged": False,
             "merge_commit_sha": None,
             "merged_at": None,
+            "mergeable": None,
+            "mergeable_state": "",
         }
         return head_sha
 
@@ -226,6 +244,12 @@ class FakeGitHubPrClient:
         """Test helper: someone closed the PR on GitHub without merging it."""
         self.prs[number].update(state="closed", merged=False)
 
+    def conflict(self, number: int) -> None:
+        """Test helper: GitHub finished computing and says this PR conflicts
+        with its base — `mergeable: false` + `mergeable_state: "dirty"`, the
+        shape #474/#200 actually report."""
+        self.prs[number].update(mergeable=False, mergeable_state="dirty")
+
     def push_new_commit(self, number: int) -> str:
         """Test helper: simulate 芝士 pushing a fix — moves the PR's head."""
         new_sha = self.prs[number]["head_sha"] + "x"
@@ -234,7 +258,33 @@ class FakeGitHubPrClient:
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         self.check_state_tokens.append(token)
+        if ref in self.check_runs_by_sha:
+            # A test handed us a RAW check-runs payload because what it is
+            # about is how the tri-state gets DERIVED (e.g. a third-party app's
+            # red check-run must not count as our CI failing). Deriving it here
+            # would prove nothing — this fake would just agree with itself — so
+            # the real client does it, over a mock transport.
+            return await self._real_check_state(owner, repo, ref, token)
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
+
+    async def _real_check_state(self, owner, repo, ref, token) -> tuple[str, str]:
+        runs = self.check_runs_by_sha[ref]
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("/check-runs"):
+                return httpx.Response(
+                    200, json={"check_runs": runs, "total_count": len(runs)}
+                )
+            if request.url.path.endswith("/check-suites"):
+                # No suite of ours either — so "zero OUR check-runs" resolves
+                # the same way it does for a ref nothing will ever check.
+                return httpx.Response(200, json={"check_suites": [], "total_count": 0})
+            # Log fetches for a failure detail — unreachable is fine, the
+            # client degrades to the headline it already has.
+            return httpx.Response(404)
+
+        real = github_pr.HttpxGitHubPrClient(transport=httpx.MockTransport(handler))
+        return await real.check_state(owner=owner, repo=repo, ref=ref, token=token)
 
     async def compare_files(
         self, *, owner, repo, base, head, token
@@ -283,6 +333,7 @@ class FakeGitHubPrClient:
 
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
+        self.update_branch_tokens.append(token)
         return self.update_branch_result
 
     async def workflow_run_jobs(
@@ -1241,6 +1292,198 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
 
         assert _cards_for_topic(client, tid)[0]["status"] == "pr_open"
         assert _topic(client, tid)["status"] == "active"
+    finally:
+        _reset_client()
+
+
+def _accepted_pr(client, monkeypatch) -> tuple[object, str, int, str]:
+    """A card sitting at `pr_open` with a PR on it. Returns
+    `(fake, topic_id, pr_number, head_sha)`."""
+    fake = _pr_ready(client, monkeypatch)
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    accepted = client.post(
+        f"/api/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]
+    number = accepted["pr_number"]
+    return fake, tid, number, fake.prs[number]["head_sha"]
+
+
+# ---- 冲突：问 GitHub，而不是等合并被拒 ---------------------------------------
+
+
+def test_a_conflicting_pr_summons_cheese_without_touching_merge_or_rebase(
+    client, monkeypatch, stub_agent
+):
+    """GitHub already knows a PR conflicts (`mergeable: false` /
+    `mergeable_state: "dirty"`) and says so on the GET the poller makes every
+    tick anyway. The platform used to never ask: it inferred conflicts from
+    "the merge call got refused", and the merge call sits behind a red-CI
+    return, a required-check return and a stale-base return — so on a
+    conflicting PR whose CI is red (which is the normal shape: a conflicted
+    branch usually can't be green) that inference never ran at all and the card
+    sat at pr_open in silence.
+
+    Asserting the two calls are NOT made is the point, not decoration: merging
+    a conflicted PR is a guaranteed 405, and Update branch on one is a
+    guaranteed 422 — both burn a poll and neither can succeed until a human or
+    芝士 resolves the conflict."""
+    fake, tid, number, head_sha = _accepted_pr(client, monkeypatch)
+    try:
+        fake.conflict(number)
+        # CI is still running — the conflict verdict must not wait for it.
+        fake.check_state_by_sha[head_sha] = ("pending", "等待中：Backend Test")
+
+        _poll(client)
+        wait_turns_idle()
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert card["pr_merged_at"] is None
+        assert card["note"].startswith("🚫")
+        assert "冲突" in card["note"]
+        assert fake.merge_calls == []
+        assert fake.update_branch_calls == []
+        # 芝士 gets woken up and told to resolve it in its own workspace.
+        assert "平台会自动把新提交同步到这个 PR" in (stub_agent.last_prompt or "")
+        assert _topic(client, tid)["status"] == "active"
+    finally:
+        _reset_client()
+
+
+def test_a_conflict_does_not_overwrite_the_diverged_branch_note(client, monkeypatch):
+    """🌿 分支分叉 and ⚠️ 重推失败 describe the LOCAL side, and they outrank the
+    conflict verdict for the same reason `_nudge_pr_fix` lets them outrank a red
+    check: 芝士 resolves a conflict by committing in its workspace, and these
+    two notes say precisely that its commits cannot reach the PR right now.
+    Replacing them with "go resolve the conflict" swaps the only sentence that
+    explains the blockage for an instruction that cannot be carried out."""
+    from app.domain.review.services import AcceptService
+
+    fake, tid, number, head_sha = _accepted_pr(client, monkeypatch)
+    try:
+        fake.conflict(number)
+        fake.check_state_by_sha[head_sha] = ("pending", "等待中：Backend Test")
+        # 芝士's local head moved but cannot fast-forward the PR branch.
+        monkeypatch.setattr(
+            AcceptService, "_local_topic_branch_head", lambda _s, _p, _t: "rewound"
+        )
+        monkeypatch.setattr(
+            AcceptService, "_remote_head_ff_from_local", lambda _s, _p, _r, _l: False
+        )
+
+        _poll(client)
+
+        note = _cards_for_topic(client, tid)[0]["note"]
+        assert note.startswith("🌿")
+        assert fake.merge_calls == []
+    finally:
+        _reset_client()
+
+
+def test_the_conflict_note_does_not_claim_anything_about_ci(client, monkeypatch):
+    """The 🚫 wording used to be hardcoded to 「检查全绿，但 GitHub 拒绝合并」.
+    The conflict gate fires before the checks are even read, so on this path
+    that sentence would be a confident falsehood — here CI is outright RED."""
+    fake, tid, number, head_sha = _accepted_pr(client, monkeypatch)
+    try:
+        fake.conflict(number)
+        fake.check_state_by_sha[head_sha] = ("failure", "pytest: 3 failed")
+
+        _poll(client)
+
+        note = _cards_for_topic(client, tid)[0]["note"]
+        assert "全绿" not in note
+        assert "冲突" in note
+    finally:
+        _reset_client()
+
+
+def test_mergeable_null_means_not_known_yet_not_conflict_free(client, monkeypatch):
+    """GitHub computes `mergeable` in the background and answers `null` until
+    it lands (the GET itself is what schedules the work). Reading `null` as a
+    conflict would block every freshly-pushed PR; reading it as "no conflict"
+    would be a coin flip. It means neither — carry on and look again."""
+    fake, tid, number, head_sha = _accepted_pr(client, monkeypatch)
+    try:
+        assert fake.prs[number]["mergeable"] is None  # what a new PR reports
+        fake.check_state_by_sha[head_sha] = ("success", "全部通过")
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert not card["note"].startswith("🚫")
+        assert [m["number"] for m in fake.merge_calls] == [number]
+        assert card["status"] == "accepted"
+    finally:
+        _reset_client()
+
+
+# ---- 第三方 check-run 不是我们的 CI ------------------------------------------
+
+
+def _actions_run(name: str, conclusion: str) -> dict:
+    return {
+        "name": name,
+        "status": "completed",
+        "conclusion": conclusion,
+        "app": {"slug": "github-actions"},
+    }
+
+
+def test_a_third_party_red_check_does_not_stop_the_merge(client, monkeypatch):
+    """PR #506, 2026-08-17: `test/lint/e2e/scope/guard/guards/check/
+    migration-heads` all green, `copilot-pull-request-reviewer` failed. GitHub
+    itself called the PR `clean`; the platform called it a CI failure, summoned
+    芝士 to fix a review bot's opinion (which no commit of its can turn green),
+    and the card could never merge. Only GitHub Actions runs OUR CI."""
+    fake, tid, number, head_sha = _accepted_pr(client, monkeypatch)
+    try:
+        fake.check_runs_by_sha[head_sha] = [
+            _actions_run("test", "success"),
+            _actions_run("lint", "success"),
+            {
+                "name": "copilot-pull-request-reviewer",
+                "status": "completed",
+                "conclusion": "failure",
+                "app": {"slug": "copilot-pull-request-reviewer"},
+            },
+        ]
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert not card["note"].startswith("⚠️")  # no CI-failure nudge
+        assert [m["number"] for m in fake.merge_calls] == [number]
+        assert card["status"] == "accepted"
+    finally:
+        _reset_client()
+
+
+def test_only_third_party_runs_is_the_same_as_no_checks_at_all(client, monkeypatch):
+    """The other edge of the same filter: once the third-party runs are
+    discounted there may be NOTHING left, and that must land on the existing
+    zero-check resolution (pending → grace → no_checks → ask a human), never on
+    "success". A ref no workflow of ours ever touched has not been tested."""
+    fake, tid, number, head_sha = _accepted_pr(client, monkeypatch)
+    try:
+        fake.check_runs_by_sha[head_sha] = [
+            {
+                "name": "codecov/patch",
+                "status": "completed",
+                "conclusion": "success",
+                "app": {"slug": "codecov"},
+            }
+        ]
+
+        _poll(client)
+
+        card = _cards_for_topic(client, tid)[0]
+        assert card["status"] == "pr_open"
+        assert fake.merge_calls == []
     finally:
         _reset_client()
 

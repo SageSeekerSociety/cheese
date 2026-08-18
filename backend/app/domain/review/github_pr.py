@@ -89,6 +89,23 @@ class PullRequestStatus:
     #: Empty only for a fake/older payload; callers fall back to the derived
     #: name, which is what the personal-token lane always used.
     head_ref: str = ""
+    #: GitHub's own answer to "can this be merged at all" — a pure git conflict
+    #: verdict, computed in the background and **unrelated to CI, to branch
+    #: protection, or to the repo's plan** (verified 2026-08-17 on this repo,
+    #: which has no branch protection at all: #474/#200 report
+    #: `false`/`dirty`, #509 `true`/`unstable`, #506 `true`/`clean`).
+    #:
+    #: `None` means GET /pulls/{n} did not know yet — GitHub computes it
+    #: asynchronously and the request itself is what kicks that off. It is
+    #: **"don't know", never "no conflict"**: treating it as either verdict
+    #: would make the poller act on a coin flip right after every push.
+    mergeable: bool | None = None
+    #: `dirty` = conflicting. The rest (`clean` / `unstable` / `behind` /
+    #: `blocked` / `unknown`) are kept raw and only ever compared against
+    #: `dirty`: `blocked`/`behind` need branch protection, which this repo's
+    #: plan cannot buy, so they never appear here and nothing may depend on
+    #: them. Empty for a fake/older payload.
+    mergeable_state: str = ""
 
 
 @dataclass
@@ -332,7 +349,11 @@ class GitHubPrClient(Protocol):
         """Merge the base branch into the PR's head (GitHub's Update branch
         button; #468 strict up-to-date). True = accepted (202); False = GitHub
         declined non-fatally (already up to date, or the head moved — 422),
-        which the poller just retries next tick."""
+        which the poller just retries next tick.
+
+        `token` must be a WRITE mint — this endpoint commits to the head
+        branch. Passing the read mint fails 403 and the failure is invisible
+        on the card; see the implementation's docstring."""
         ...
 
 
@@ -387,6 +408,25 @@ def _is_pr_already_exists(resp: httpx.Response) -> bool:
 _ZERO_CHECKS_GRACE_SECONDS = 120.0
 
 _GITHUB_ACTIONS_APP_SLUG = "github-actions"
+
+
+def _is_actions_check(entry: dict) -> bool:
+    """Is this check-run / check-suite one of OURS — posted by GitHub Actions?
+
+    Every check-run carries the app that created it, and a commit's check-runs
+    are a shared bulletin board: copilot's reviewer, codecov and anything else
+    installed on the repo post theirs alongside the workflows'. Only Actions
+    runs are the CI this platform gates on, so only they get to colour a ref.
+
+    Strict on purpose — a run with no recognisable `app` is treated as NOT
+    ours. Guessing the other way would let one unidentifiable third-party run
+    keep a card waiting (or, worse, sink it) forever, whereas being wrong in
+    this direction lands on the `_resolve_zero_checks` path, which is already
+    built to be careful about "nothing of ours is here".
+    """
+    app = entry.get("app")
+    return isinstance(app, dict) and app.get("slug") == _GITHUB_ACTIONS_APP_SLUG
+
 
 # --- 失败详情 (CI失败要把日志送到芝士眼前) ------------------------------------
 #
@@ -563,10 +603,25 @@ class HttpxGitHubPrClient:
             raise GitHubPrError(
                 f"GitHub 拒绝查检查状态（HTTP {resp.status_code}）：{resp.text[:300]}"
             )
-        runs = resp.json().get("check_runs", [])
+        # Only OUR CI gets a vote on this ref's colour. Other apps post
+        # check-runs on the same commit and a red one of theirs is not a CI
+        # failure: on 2026-08-17 PR #506 had test/lint/e2e/guards/... all green
+        # and only `copilot-pull-request-reviewer` failed — the poller read the
+        # ref as red, summoned 芝士 to fix something no commit of its can fix,
+        # and the card could never merge, while GitHub itself called that PR
+        # `clean`. `_resolve_zero_checks` has always narrowed the *suite*
+        # question to the github-actions app for the same reason; this puts the
+        # *run* question on the same footing.
+        runs = [
+            run
+            for run in resp.json().get("check_runs", [])
+            if isinstance(run, dict) and _is_actions_check(run)
+        ]
         if runs:
             # Real check-runs showed up — whatever ambiguity there was about
-            # this ref is resolved, forget any grace-period bookkeeping.
+            # this ref is resolved, forget any grace-period bookkeeping. (Only
+            # OURS count: popping this on a stray third-party run would restart
+            # the grace clock every tick, so `no_checks` could never settle.)
             self._zero_checks_first_seen.pop((owner, repo, ref), None)
             state, tail = _summarize_runs(runs)
             if state == "failure":
@@ -691,9 +746,7 @@ class HttpxGitHubPrClient:
         """
         suites = await self._check_suites(owner=owner, repo=repo, ref=ref, token=token)
         key = (owner, repo, ref)
-        if any(
-            s.get("app", {}).get("slug") == _GITHUB_ACTIONS_APP_SLUG for s in suites
-        ):
+        if any(isinstance(s, dict) and _is_actions_check(s) for s in suites):
             self._zero_checks_first_seen.pop(key, None)
             return "pending", "workflow 已被触发，检查还在准备中"
 
@@ -780,6 +833,7 @@ class HttpxGitHubPrClient:
             )
         data = resp.json()
         merged = bool(data.get("merged"))
+        raw_mergeable = data.get("mergeable")
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
             head_ref=str(data["head"].get("ref") or ""),
@@ -789,6 +843,11 @@ class HttpxGitHubPrClient:
             # for what this field holds on an unmerged PR.
             merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,
             merged_at=_parse_github_time(data.get("merged_at")) if merged else None,
+            # Free of charge: the poller already makes this exact GET every
+            # tick. Anything that isn't a real bool stays None ("don't know") —
+            # see the field's docstring; this must not collapse to False.
+            mergeable=raw_mergeable if isinstance(raw_mergeable, bool) else None,
+            mergeable_state=str(data.get("mergeable_state") or ""),
         )
 
     async def merge_pull_request(
@@ -971,6 +1030,17 @@ class HttpxGitHubPrClient:
     async def update_branch(
         self, *, owner: str, repo: str, number: int, token: str
     ) -> bool:
+        """Merge the base branch into the PR's head branch (GitHub's "Update
+        branch" button).
+
+        `token` MUST be a WRITE mint. This endpoint writes a commit to the head
+        branch, so a read-only token gets a flat 403 — which lands in the
+        `raise` below, and the poller's `except GitHubPrError` swallows it into
+        one log line *before* anything is written to the card. The card then
+        looks byte-for-byte like a healthy one still waiting on CI, forever
+        (2026-08-16/17: #498 and #499 each sat ~5.5 hours that way until a
+        human clicked the button on github.com).
+        """
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
             resp = await client.put(
                 f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/update-branch",

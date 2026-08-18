@@ -51,7 +51,7 @@ describe('deliveryNoteTone', () => {
   it('后端的三个告警前缀都算 error', () => {
     expect(deliveryNoteTone('⚠️ CI 检查未通过：boom')).toBe('error')
     expect(deliveryNoteTone('❌ 部署失败：boom')).toBe('error')
-    expect(deliveryNoteTone('🚫 PR #12 检查全绿，但 GitHub 拒绝合并（405）')).toBe('error')
+    expect(deliveryNoteTone('🚫 PR #12 合不进去：GitHub 拒绝合并（405）')).toBe('error')
   })
 
   it('普通进度 note 是 info', () => {
