@@ -923,7 +923,8 @@ def test_repush_skips_a_doomed_non_fast_forward_and_says_so(client, monkeypatch)
         card = _cards_for_topic(client, tid)[0]
         assert pushes == []  # the doomed push was never attempted
         assert card["status"] == "pr_open"
-        assert card["note"].startswith("🌿 本地分支与 PR 分支已分叉")
+        assert card["note_level"] == "error"
+        assert card["note"].startswith("本地分支与 PR 分支已分叉")
         assert _topic(client, tid)["status"] == "active"
 
         # 60s polling: no spam, still no push on the next tick.
@@ -1312,15 +1313,17 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
         head_sha = fake.prs[number]["head_sha"]
         fake.check_state_by_sha[head_sha] = ("failure", "lint 挂了")
         _poll(client)
-        assert _cards_for_topic(client, tid)[0]["note"].startswith("⚠️")
+        assert _cards_for_topic(client, tid)[0]["note_level"] == "error"
 
         fake.check_state_by_sha[head_sha] = ("success", "全部通过")
         fake.merge_blocked_by_number[number] = "HTTP 405：merge method disabled"
         _poll(client)
 
-        note = _cards_for_topic(client, tid)[0]["note"]
-        assert "405" in note
-        assert not note.startswith("⚠️")
+        # 合并被拒是新的停因，它要顶掉旧的检查失败，而不是排在它后面。
+        refused = _cards_for_topic(client, tid)[0]
+        assert "405" in refused["note"]
+        assert "拒绝合并" in refused["note"]
+        assert "lint 挂了" not in refused["note"]
     finally:
         _reset_client()
 

@@ -361,7 +361,7 @@ def test_poll_pause_note_is_cleared_once_the_token_works_again(client, monkeypat
         note = _cards(client, tid)[0]["note"]
         assert "轮询暂停" not in note  # 骗人的那句没了
         # 取而代之的是如实描述当下的那句：还在等 CI（App 采纳等 CI 再合）。
-        assert note.startswith("⏳ 等 CI")
+        assert note.startswith("等检查")
         assert _cards(client, tid)[0]["status"] == "pr_open"
     finally:
         _reset_client()
@@ -412,7 +412,7 @@ def test_repush_failure_still_outranks_a_ci_failure(client, monkeypatch):
         wait_work_idle()
 
         note = _cards(client, tid)[0]["note"]
-        assert note.startswith("⚠️ 平台自动重推失败")
+        assert note.startswith("平台自动重推失败")
     finally:
         _reset_client()
 

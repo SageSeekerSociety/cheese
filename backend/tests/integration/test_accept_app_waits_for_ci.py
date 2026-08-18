@@ -371,9 +371,9 @@ def test_waiting_card_says_what_it_waits_for(client, app_world):
     _poll(client)
 
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("⏳ 等 CI")
+    assert note.startswith("等检查")
     assert "Backend Test" in note  # 在等什么
-    assert "等" in note  # 等了多久（刚采纳 → 「刚开始等」）
+    assert "刚开始等" in note  # 等了多久
 
 
 def test_waiting_note_does_not_churn_on_every_tick(client, app_world):
@@ -399,7 +399,7 @@ def test_waiting_note_never_overwrites_a_real_failure(client, app_world):
     _poll(client)
     wait_work_idle()
     failed_note = _cards(client, tid)[0]["note"]
-    assert failed_note.startswith("⚠️")
+    assert _cards(client, tid)[0]["note_level"] == "error"
 
     fake.check_state_by_sha[head_sha] = ("pending", "等待中：Backend Test")
     _poll(client)
@@ -638,7 +638,8 @@ def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(
     assert r.status_code == 422
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 采纳未完成：PR 未能合并")
+    assert card["note_level"] == "error"
+    assert card["note"].startswith("采纳未完成：PR 未能合并")
     assert card["pr_number"] == 21  # 事务外持久化，重试不会重开
     assert app_world["local_merges"] == []
     assert _topic(client, tid)["status"] == "active"
@@ -744,7 +745,8 @@ def test_pr_open_failure_stops_the_accept_and_lands_on_the_card(client, app_worl
     assert "无法为这张卡开 PR" in r.json()["message"]
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 采纳未完成：无法为这张卡开 PR")
+    assert card["note_level"] == "error"
+    assert card["note"].startswith("采纳未完成：开不出 PR")
     assert "remote rejected" in card["note"]
     assert app_world["local_merges"] == []
     assert app_world["fake"].merge_calls == []
@@ -875,7 +877,8 @@ def test_a_required_check_missing_too_long_goes_to_a_human(client, app_world):
     assert fake.merge_calls == []
     card = _cards(client, tid)[0]
     assert card["status"] == "pr_open"
-    assert card["note"].startswith("✋")
+    assert card["note_level"] == "error"
+    assert "平台不会自动合并" in card["note"]
     assert "test" in card["note"]
 
 
@@ -911,7 +914,7 @@ def test_scope_unknown_says_on_the_card_that_it_is_a_fallback(client, app_world)
     _poll(client)
 
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("⏳ 等 CI")
+    assert note.startswith("等检查")
     assert "没能判断这次改动碰了哪些文件" in note  # 自陈是回退
     assert "文件清单" in note  # 具体原因，不是笼统一句「出错了」
     assert "test" in note  # 仍然要求哪几项
@@ -938,7 +941,7 @@ def test_unresolvable_base_says_on_the_card_that_it_is_a_fallback(
 
     assert fake.merge_calls == []
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("⏳ 等 CI")
+    assert note.startswith("等检查")
     assert "没能判断这次改动碰了哪些文件" in note
     assert "upstream remote 读不到" in note  # 异常摘要，不是一句「内部错误」
     assert "required 检查还没出现" not in note
@@ -1014,7 +1017,7 @@ def test_a_fallback_that_times_out_does_not_blame_the_workflow(client, app_world
 
     assert fake.merge_calls == []
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("✋")
+    assert "平台不会自动合并" in note
     assert "没能判断这次改动碰了哪些文件" in note
     assert "被改名" not in note
 
@@ -1057,7 +1060,7 @@ def test_rebasing_stops_after_three_tries(client, app_world):
     assert fake.merge_calls == []
     assert len(fake.update_branch_calls) == 3
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("✋")
+    assert "平台不会自动合并" in note
     assert "已自动换基 3 次" in note
 
 
