@@ -59,11 +59,15 @@ async function confirmSwitch() {
   <div v-if="!unavailable && current" class="d-inline-flex align-center">
     <v-menu location="bottom end">
       <template #activator="{ props: menu }">
+        <!-- 它住在输入区的动作行里，那一行的规矩是：一行一个高度 (28px)、静止时
+             谁也不画框不画底、整行只有发送是有颜色的 (ChatPanel 的 .composer-actions)。
+             不写 color 的话它会跟着全局 VBtn 默认色变成琥珀，和发送撞成一样。 -->
         <v-btn
           v-bind="menu"
+          class="ap-chip"
           variant="text"
           size="small"
-          density="comfortable"
+          color="medium-emphasis"
           prepend-icon="mdi-robot-outline"
           :loading="switching"
         >
@@ -101,3 +105,12 @@ async function confirmSwitch() {
     </v-dialog>
   </div>
 </template>
+
+<style scoped>
+.ap-chip {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  letter-spacing: normal;
+}
+</style>

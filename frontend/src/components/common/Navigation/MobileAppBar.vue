@@ -1,13 +1,17 @@
 <template>
   <!-- `background`, not a fixed grey — see AppBar.vue for why. -->
   <v-app-bar color="background" :elevation="0" density="default" height="56" border="b-sm" app flat>
-    <!-- 左侧抽屉按钮 -->
+    <!-- 页面栈里的一层：← 回上一层。其余页面还是抽屉按钮（1.0 的三个侧栏还没
+         改成页内分段，见 docs/plans/2026-08-18-mobile-shell-design.md §8）。 -->
     <template #prepend>
-      <v-app-bar-nav-icon @click="toggleDrawer" />
+      <v-btn v-if="backTo" icon="mdi-arrow-left" variant="text" aria-label="返回" @click="goBack" />
+      <v-app-bar-nav-icon v-else @click="toggleDrawer" />
     </template>
 
     <!-- 中间标题 -->
-    <v-app-bar-title>
+    <!-- 标题读页头那一号字 (.t-title 15/600)：屏幕上这条横条和页内页头是同一条，
+         Vuetify 默认的 20px 会让它们看起来是两种东西。 -->
+    <v-app-bar-title class="t-title">
       {{ currentTitle }}
     </v-app-bar-title>
 
@@ -16,34 +20,8 @@
       <!-- 渲染动态 actions 组件 -->
       <component :is="actionsComponent" v-if="actionsComponent" />
 
-      <!-- 通知按钮 -->
-      <v-menu
-        v-if="userMenu.loggedIn.value"
-        v-model="notifications.notificationMenuOpen.value"
-        :close-on-content-click="false"
-        location="bottom"
-        :offset="8"
-        transition="scale-transition"
-      >
-        <template #activator="{ props }">
-          <v-btn icon v-bind="props" variant="text">
-            <v-icon>mdi-bell</v-icon>
-            <v-badge
-              v-if="notifications.unreadNotificationsCount.value > 0"
-              color="error"
-              :content="
-                notifications.unreadNotificationsCount.value > 99
-                  ? '99+'
-                  : notifications.unreadNotificationsCount.value.toString()
-              "
-              floating
-              dot
-              :model-value="notifications.unreadNotificationsCount.value > 0"
-            />
-          </v-btn>
-        </template>
-        <notification-panel @update-count="notifications.updateUnreadCount" />
-      </v-menu>
+      <!-- 通知的铃铛不在这儿了：手机上它的去处是底栏「待办」那一格
+           (docs/plans/2026-08-18-mobile-shell-design.md §3.3)。 -->
 
       <!-- 用户头像菜单 -->
       <v-menu
@@ -150,14 +128,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
-import { useNotifications } from '@/composables/useNotifications'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
-
-import NotificationPanel from '../Notification/NotificationPanel.vue'
 
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useNavigationStore } from '@/stores/navigation'
@@ -165,9 +141,18 @@ import { usePageTitleStore } from '@/stores/title'
 
 // 使用 composables
 const userMenu = useUserMenu()
-const notifications = useNotifications()
 
+const route = useRoute()
+const router = useRouter()
 const navigationStore = useNavigationStore()
+
+// 栈末端的路由自己说它回哪儿去（meta.backTo），而不是靠 history.back()——
+// 从别处直接打开一个话题链接时，后退会离开这个 app。
+const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.meta.backTo : null))
+
+function goBack() {
+  if (backTo.value) void router.push({ name: backTo.value, params: route.params })
+}
 const { updateTrigger } = usePageTitleStore()
 const { getRouteHierarchy } = usePageTitle()
 const { actionsComponent } = storeToRefs(navigationStore)
@@ -179,22 +164,31 @@ const toggleDrawer = () => {
   navigationStore.toggleSecondaryDrawer()
 }
 
-// 更新标题
+// 顶栏写的是**当前页**的标题，也就是路由层级里最深的那一个。
+//
+// 它以前取的是第一个 isFullPage 的**祖先**，而工作台那条路由上写着
+// `{ title: '项目工作台', isFullPage: true }`——所以在手机上打开任何一个话题，
+// 顶栏都写着「项目工作台」，既不是话题名也不是项目名。
+// getRouteHierarchy 是**叶到根**排的（它自己末尾 reverse 过），所以当前页是第一个。
 const updateTitle = () => {
-  const hierarchy = getRouteHierarchy.value
-  for (const item of hierarchy) {
-    if (item.meta.isFullPage) {
-      currentTitle.value = item.title
-      return
-    }
-  }
-  currentTitle.value = '知是社区'
+  const current = getRouteHierarchy.value.find((item) => item.title)
+  currentTitle.value = current?.title ?? '知是社区'
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })
 </script>
 
 <style lang="scss" scoped>
+/* Vuetify 的工具栏标题自带 20px/400，比页内页头的标题 (.t-title 15/600) 大一号——
+   而在手机上这两条横条是同一条东西在换内容，一页大一号就看得出是两套。加类名
+   压过它，而不是去改 .t-title：那一号字是设计 token，页头都读它。 */
+.v-toolbar-title.t-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
 .user-menu-card {
   overflow: hidden;
   border: 1px solid rgba(var(--v-theme-on-surface), 0.08);

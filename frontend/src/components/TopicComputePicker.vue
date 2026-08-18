@@ -256,34 +256,33 @@ watch(
   color: var(--text);
   cursor: help;
 }
+/* 它住在输入区的动作行里，那一行的规矩是：静止时谁也不画边框、不画底色，整行
+   只有发送是实心的。描边 + 淡底的 chip 在那儿是第三种视觉语言，而算力只是一条
+   设置，比动作还轻。高度跟着那一行走（28px），不自己定一个。 */
 .cp-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
+  height: 28px;
   padding: 0 8px;
-  border: 1px solid rgba(var(--v-border-color), 0.16);
-  border-radius: 6px;
-  background: rgba(var(--v-theme-on-surface), 0.03);
-  color: rgb(var(--v-theme-on-surface));
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+  transition: background 0.12s ease;
 }
 .cp-chip:hover {
-  background: rgba(var(--v-theme-on-surface), 0.06);
-  border-color: rgba(var(--v-border-color), 0.28);
+  background: var(--fill);
 }
 .cp-chip--locked {
   cursor: default;
   opacity: 0.72;
 }
 .cp-chip--locked:hover {
-  background: rgba(var(--v-theme-on-surface), 0.03);
-  border-color: rgba(var(--v-border-color), 0.16);
+  background: transparent;
 }
 .cp-inherit {
   color: rgba(var(--v-theme-on-surface), 0.5);

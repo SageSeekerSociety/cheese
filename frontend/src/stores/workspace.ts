@@ -32,6 +32,7 @@ const LAYOUT_KEY = 'cheesex.layout'
 interface StoredLayout {
   railWidth?: number
   chatPct?: number
+  lastProjectId?: string
 }
 
 function loadLayout(): StoredLayout {
@@ -44,6 +45,12 @@ function loadLayout(): StoredLayout {
 }
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+// 手机底栏「工作区」那一格要在冷启动时就知道该落到哪个项目，那时 store 里还没有
+// 打开过任何项目——所以这个值从存储里直接读，不经过 store 实例。
+export function lastOpenedProjectId(): string | null {
+  return loadLayout().lastProjectId ?? null
+}
 
 export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectId = ref<string | null>(null)
@@ -75,7 +82,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const railWidth = ref(typeof stored.railWidth === 'number' ? stored.railWidth : 280)
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
   function persistLayout() {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ railWidth: railWidth.value, chatPct: chatPct.value }))
+    localStorage.setItem(
+      LAYOUT_KEY,
+      JSON.stringify({
+        railWidth: railWidth.value,
+        chatPct: chatPct.value,
+        lastProjectId: projectId.value ?? undefined,
+      })
+    )
   }
   function setRailWidth(w: number) {
     railWidth.value = clampNum(w, 190, 480)
@@ -139,6 +153,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       return
     }
     projectId.value = id
+    persistLayout()
     topics.value = []
     members.value = []
     unreadMap.value = {}

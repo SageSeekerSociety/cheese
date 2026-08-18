@@ -73,7 +73,7 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 .layout-container {
-  height: calc(100vh - var(--v-layout-top) - 1px);
+  height: calc(100dvh - var(--v-layout-top) - 1px);
   overflow: hidden;
 }
 
@@ -95,7 +95,7 @@ onMounted(async () => {
 
 @media (max-width: 600px) {
   .layout-container {
-    height: calc(100vh - 56px);
+    height: calc(100dvh - 56px);
   }
 }
 </style>

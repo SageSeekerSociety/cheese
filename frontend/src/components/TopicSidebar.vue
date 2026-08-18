@@ -46,6 +46,8 @@ const props = defineProps<{
   // 私聊未读: {peerHandle: count}, `cheese` = the 芝士 DM. Separate from
   // unreadMap because DM rows are built from the roster and have no topic id.
   privateUnreadMap?: Record<string, number>
+  // 整页形态: 手机上话题列表是页面栈的一层，占满内容区，不是侧边抽屉。
+  page?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -452,9 +454,15 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 </script>
 
 <template>
-  <SecondaryNavigation :width="width ?? 280" custom-class="topic-rail">
-    <!-- Drag handle on the right edge to resize the rail. -->
-    <div class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
+  <component
+    :is="page ? 'div' : SecondaryNavigation"
+    :width="page ? undefined : width ?? 280"
+    :custom-class="page ? undefined : 'topic-rail'"
+    :class="page ? 'topic-rail topic-rail--page' : undefined"
+  >
+    <!-- Drag handle on the right edge to resize the rail. 整页形态下没有可拖的
+         宽度——它占满内容区。 -->
+    <div v-if="!page" class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
     <!-- 三段式 (C3): 头固定 / 中段唯一滚动 / 尾固定。私聊和它的未读徽标在
          话题列表滚到底时必须还在屏幕上。 -->
     <div class="d-flex flex-column fill-height">
@@ -907,11 +915,17 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
       <!-- 新建项目 moved to the project rail's + (App.vue) — one affordance,
            Discord-style. The create-project emit stays for API compatibility. -->
     </div>
-  </SecondaryNavigation>
+  </component>
 </template>
 
 <style scoped>
 /* Right-edge resize handle (sits on top of the drawer's border). */
+/* 整页形态：占满内容区，不画抽屉那条右边线。 */
+.topic-rail--page {
+  width: 100%;
+  height: 100%;
+  background: var(--canvas);
+}
 .rail-resizer {
   position: absolute;
   top: 0;
@@ -987,7 +1001,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 }
 .rail-header__name {
   min-width: 0;
-  font-size: 14px;
+  /* 15/600 = .t-title，和话题头、手机顶栏同一号：这三条横条在屏幕上是接着的。 */
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
@@ -1353,6 +1368,18 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 .split-btn:hover {
   background: var(--fill);
   color: var(--accent);
+}
+/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在手机上
+   根本摸不到。所以在没有 hover 能力的设备上它常驻。按输入方式判断，不按视口宽度：
+   带触摸屏的笔记本两样都对。 */
+@media (hover: none) {
+  .row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .topic-row .unread-badge {
+    opacity: 1;
+  }
 }
 /* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
    鼠标一离开行、菜单就没了根。 */

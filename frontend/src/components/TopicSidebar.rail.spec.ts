@@ -290,3 +290,20 @@ describe('C5 行操作', () => {
     expect(buttons.some((b) => (b.getAttribute('title') ?? '').startsWith('排序'))).toBe(false)
   })
 })
+
+// 整页形态：手机上话题列表是页面栈的一层，占满内容区。抽屉和"拖宽度"这两样
+// 在手机上都不成立——但列表本身一条不能少。
+describe('整页形态', () => {
+  it('不再是抽屉，也没有可拖的宽度', () => {
+    const { container } = mount({ page: true })
+    expect(container.querySelector('.v-navigation-drawer')).toBeNull()
+    expect(container.querySelector('.rail-resizer')).toBeNull()
+  })
+
+  it('装的东西和抽屉形态一样', () => {
+    const asDrawer = mount().container.querySelectorAll('.topic-row').length
+    const asPage = mount({ page: true }).container.querySelectorAll('.topic-row').length
+    expect(asPage).toBeGreaterThan(0)
+    expect(asPage).toBe(asDrawer)
+  })
+})

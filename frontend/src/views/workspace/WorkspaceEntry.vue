@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import { useWorkspaceStore } from '@/stores/workspace'
+import ProjectSidebar from '@/views/workspace/ProjectSidebar.vue'
 
 // `/projects/:projectId` with nothing after it. It resolves to a real address
 // rather than rendering anything of its own, so every workspace URL in the wild
@@ -13,6 +15,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 defineOptions({ name: 'WorkspaceEntry' })
 
 const props = defineProps<{ projectId: string }>()
+const { mdAndUp } = useDisplay()
 const route = useRoute()
 const router = useRouter()
 const store = useWorkspaceStore()
@@ -33,6 +36,10 @@ watch(
       openTopic(wanted)
       return
     }
+    // 手机上这一层**就是**话题列表（页面栈：工作区 → 话题列表 → 话题页），所以
+    // 不再直接跳进大本营——跳了就永远看不到列表，也就没有"回上一层"可回。
+    // 桌面上列表是常驻侧栏，这个地址本身不显示任何东西，落到大本营才对。
+    if (!mdAndUp.value) return
     // 大本营 (the root topic) is the project's coordination hub, and the
     // default view of a project. Until the list arrives there is nothing to
     // pick — the template holds a spinner, and an empty state if it stays empty.
@@ -43,7 +50,10 @@ watch(
 </script>
 
 <template>
-  <div class="d-flex align-center justify-center fill-height">
+  <!-- 手机: 这一层就是话题列表 -->
+  <ProjectSidebar v-if="!mdAndUp" :project-id="projectId" page />
+  <!-- 桌面: 列表在常驻侧栏里，这个地址只是去大本营路上的一瞬 -->
+  <div v-else class="d-flex align-center justify-center fill-height">
     <v-progress-circular v-if="store.loadingTopics || store.rootTopic" indeterminate color="primary" />
     <div v-else class="text-center">
       <div class="t-body c-muted">这个项目还没有话题</div>
