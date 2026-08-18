@@ -763,6 +763,20 @@ class AcceptService:
         cards = await self._repo.list_pr_open_on_active_topics()
         return [c.id for c in cards]
 
+    async def pr_is_in_flight(self, topic_id: uuid.UUID) -> bool:
+        """这个话题手上有没有一张已经开出 PR、还在等 CI 的卡。
+
+        问这一句的是「把子话题的提交并进母话题分支」：`pr_open` 期间轮询每 60 秒
+        把工作区改动折成提交推上去，分支一动 CI 就从头重排（本项目这条队列以小时
+        计），所以这个窗口里合并必须排队而不是硬合。判据留在本领域——「哪个状态
+        算 PR 在途」是这张状态机的知识。
+        """
+        return bool(
+            await self._repo.list_live_for_topics(
+                [topic_id], statuses=(AcceptStatus.pr_open,)
+            )
+        )
+
     async def anybody_still_waiting(self, topic_ids: list[uuid.UUID]) -> bool:
         """这些话题里，还有没有一张卡等着人决议 —— 归档前必须问的那一句。
 
