@@ -17,6 +17,11 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.text import markdown_preview
 from app.domain.agent import clone
+from app.domain.agent_instance.services import (
+    IMPLICIT_DEFAULT,
+    AgentInstanceService,
+    ResolvedAgent,
+)
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.doc_tree import markdown_to_nodes
@@ -191,6 +196,45 @@ class TopicService:
         """Return one topic for cross-domain service callers."""
         return await self._repo.get(topic_id)
 
+    async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
+        """Which agent works in this topic — its own, else the project's."""
+        project = await self._projects.get(topic.project_id)
+        if project is None:
+            return IMPLICIT_DEFAULT
+        return await AgentInstanceService(self._session).for_topic(topic, project)
+
+    async def set_agent(
+        self, topic_id: uuid.UUID, instance_id: uuid.UUID | None
+    ) -> tuple[Topic, ResolvedAgent, bool]:
+        """Hand this topic to a different agent, dropping the session it had.
+
+        The session is ONE agent's memory of this conversation. Resuming it as
+        somebody else produces an agent that remembers saying things it never
+        said — a plausible, confident, wrong participant — so the thread does not
+        survive the switch. Returned as ``session_reset`` rather than done
+        quietly: it is the real cost of the change, and the caller has to be able
+        to say so before anyone loses a conversation they wanted.
+
+        Passing ``None`` hands the topic back to the project's default.
+        """
+        topic = await self.get_or_404(topic_id)
+        agents = AgentInstanceService(self._session)
+        instance = (
+            await agents.get_in_project(
+                project_id=topic.project_id, instance_id=instance_id
+            )
+            if instance_id is not None
+            else None
+        )
+        wanted = instance.id if instance is not None else None
+        session_reset = False
+        if topic.agent_instance_id != wanted:
+            topic.agent_instance_id = wanted
+            session_reset = topic.session_id is not None
+            topic.session_id = None
+            await self._session.flush()
+        return topic, await self.resolve_agent(topic), session_reset
+
     async def create(
         self,
         *,
@@ -198,6 +242,7 @@ class TopicService:
         title: str,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
+        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
         project = await self._projects.get(project_id)
         if project is None:
@@ -212,12 +257,20 @@ class TopicService:
             if parent is None:
                 raise NotFoundError("Parent topic not found")
             kind = _child_kind(parent)
+        # An explicit agent is checked to be this project's; NULL means "the
+        # project's default", which follows the project if that default changes
+        # later — a copy taken now would silently stop following it.
+        if agent_instance_id is not None:
+            await AgentInstanceService(self._session).get_in_project(
+                project_id=project_id, instance_id=agent_instance_id
+            )
         topic = await self._repo.add(
             project_id=project_id,
             title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
+            agent_instance_id=agent_instance_id,
         )
         _bind_room_branch(child_id=topic.id, parent_id=parent_id, kind=kind)
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
@@ -623,6 +676,10 @@ class TopicService:
             kind=kind,
             created_by=created_by,
             upgraded_from_block_id=block.id,
+            # Same agent as the room the block came out of — 升级 continues a
+            # conversation that already had one, and handing it to a different
+            # agent would file what it learns in a pool the original never reads.
+            agent_instance_id=parent.agent_instance_id,
         )
         _bind_room_branch(child_id=new_topic.id, parent_id=parent_id, kind=kind)
         # Same fallback ladder as create()/split_to_subtopic — 升级 is usually the
@@ -705,6 +762,13 @@ class TopicService:
             parent_id=parent.id,
             kind=kind,
             created_by=created_by,
+            # The work goes out under the SAME agent the room runs — which is
+            # what closes the loop the split exists for: whatever the 分身 learns
+            # doing it lands in that agent's pool, so the room has it afterwards.
+            # Copied rather than left NULL because the parent's own choice may be
+            # a pin; NULL here would mean "the project's default", which is a
+            # different agent and a different memory.
+            agent_instance_id=parent.agent_instance_id,
         )
         # 一个房间一条分支一个 PR: this task's branch forks the room's and folds
         # back into it when its conclusion is 采信'd, instead of opening a PR of

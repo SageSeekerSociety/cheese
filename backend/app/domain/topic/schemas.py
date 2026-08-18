@@ -13,6 +13,9 @@ class TopicCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     parent_id: uuid.UUID | None = None
     created_by: str | None = None
+    # Which agent works here. Omitted = the project's default, and it keeps
+    # following that default rather than freezing a copy of it now.
+    agent_instance_id: uuid.UUID | None = None
 
 
 class TopicOut(BaseModel):
@@ -39,6 +42,8 @@ class TopicOut(BaseModel):
     accepted_at: datetime | None = None
     archived_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
+    # NULL = this topic uses the project's default agent.
+    agent_instance_id: uuid.UUID | None = None
     # 本轮是否在跑 (AgentWorkRunner, in-memory — separate from `status`/归档: a topic
     # can be "active" and idle, or "active" and mid-turn). False unless the
     # caller explicitly fills it in (see list_topics/get_topic) — the ORM model

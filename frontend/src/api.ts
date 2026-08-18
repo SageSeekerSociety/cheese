@@ -9,7 +9,6 @@ import type {
   ComputeProfiles,
   Contributions,
   ExecProfiles,
-  ExpertRole,
   FileContent,
   GitCommit,
   GithubConnection,
@@ -665,28 +664,34 @@ export function setTopicComputeProfile(
   })
 }
 
-// 专家角色 (spec §8.2): merged catalog — built-in file-library roles + custom
-// (DB) roles; a custom role shadows a built-in with the same name.
-export function listRoles(): Promise<ListPayload<ExpertRole>> {
-  return request<ListPayload<ExpertRole>>('/roles')
+// Agent types: the merged catalog — preset file-library types + custom (DB)
+// ones; a custom type shadows a preset with the same name.
+export function listAgentTypes(): Promise<ListPayload<AgentType>> {
+  return request<ListPayload<AgentType>>('/agent-types')
 }
-export function createRole(payload: {
+export function createAgentType(payload: {
   name: string
   title: string
   description: string
   body: string
   created_by?: string
-}): Promise<ExpertRole> {
-  return request<ExpertRole>('/roles', {
+}): Promise<AgentType> {
+  return request<AgentType>('/agent-types', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
-// Which persona 芝士 loads for this project; empty role clears it.
-export function setProjectExpertRole(projectId: string, role: string): Promise<{ current: string | null }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/expert-role`, {
+
+// The agents this project has, and which one a new topic gets.
+export function listProjectAgents(projectId: string): Promise<ListPayload<ProjectAgent>> {
+  return request<ListPayload<ProjectAgent>>(`/projects/${encodeURIComponent(projectId)}/agents`)
+}
+// Which type the project's default agent wears; an empty name clears it. The
+// agent itself stays — and so does the memory it has been accumulating.
+export function setProjectAgentType(projectId: string, typeName: string): Promise<ProjectAgent> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
     method: 'PUT',
-    body: JSON.stringify({ role }),
+    body: JSON.stringify({ type_name: typeName }),
   })
 }
 
