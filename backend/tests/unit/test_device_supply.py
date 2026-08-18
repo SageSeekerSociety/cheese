@@ -114,3 +114,49 @@ async def test_an_unclassified_device_reads_as_the_safe_value_on_each_axis():
 
     assert device.supply is Supply.self_hosted
     assert device.visibility is Visibility.isolated
+
+
+def test_the_default_visibility_is_one_that_can_actually_run():
+    """The default must never name a 档 with no transport.
+
+    This is the shape of the bug it replaces: the market catalogue declared
+    `isolated` the default while `resolve_pinned_device` bound `host`, so the
+    picker told a person their topic was boxed and every topic in fact had
+    whole-machine access. Deriving the default from `has_runnable_transport`
+    makes that combination unrepresentable."""
+    from app.domain.device.supply import default_visibility, has_runnable_transport
+
+    assert has_runnable_transport(default_visibility())
+
+
+def test_the_default_is_the_most_conservative_runnable_visibility():
+    """Given a choice, the default is the SMALLEST blast radius that works —
+    so when #358 step 2 gives `isolated` a transport, the default moves to it
+    without anyone editing a second place."""
+    from app.domain.device import supply as supply_mod
+    from app.domain.device.supply import Visibility, default_visibility
+
+    assert default_visibility() is Visibility.host  # today: isolated has no transport
+
+    original = supply_mod.has_runnable_transport
+    try:
+        supply_mod.has_runnable_transport = lambda _v: True
+        assert default_visibility() is Visibility.isolated
+    finally:
+        supply_mod.has_runnable_transport = original
+
+
+def test_the_catalogue_default_is_the_one_the_resolver_would_bind():
+    """The picker and the resolver must agree, and exactly one 档 is the default.
+
+    Nothing else in the suite covers the pair — each side was individually
+    correct and they still contradicted each other in production."""
+    from app.domain.agent.market import visibility_listings
+    from app.domain.device.supply import default_visibility
+
+    listings = visibility_listings()
+    defaults = [entry for entry in listings if entry.default]
+    assert len(defaults) == 1
+    assert defaults[0].id == default_visibility().value
+    # And a default nobody can run is the contradiction itself.
+    assert defaults[0].available is True
