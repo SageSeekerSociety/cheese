@@ -187,10 +187,10 @@ const LEGACY_VERB: Record<string, string> = {
   update_doc: '更新文档',
   remember: '记入记忆',
   notify: '发送通知',
-  request_accept: '递出验收卡',
-  return_conclusion: '回流结论',
-  pin_milestone: '钉里程碑',
-  write_file: '写文件',
+  request_accept: '提交验收卡',
+  return_conclusion: '回传结论',
+  pin_milestone: '添加里程碑',
+  write_file: '写入文件',
   record_decision: '记录决策',
 }
 // Meta-first rendering: an event block with structured meta ({tool, arg}) is

@@ -466,11 +466,11 @@ _CHEESE_RESOURCE = {
 # event every human edit gets (via the save path). One fact, one line,
 # whoever the author is (用户拍板: 芝士不需要专属提示行).
 _ACTION_LABEL = {
-    "decision": "记录了一条决策",
+    "decision": "记录了决策",
     "topics": "更新了子话题",
-    "milestone": "钉了一个里程碑",
-    "accept": "递出了验收卡",
-    "notify": "发了一条通知",
+    "milestone": "添加了里程碑",
+    "accept": "提交了验收卡",
+    "notify": "发送了通知",
 }
 
 

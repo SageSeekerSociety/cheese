@@ -28,13 +28,13 @@ export function deliveryStageOf(card: Pick<AcceptCard, 'stages'>): DeliveryStage
   const active = steps.find((s) => s.state === 'active')
   if (active?.key === 'checks') {
     return {
-      title: '等检查通过',
-      hint: '检查全部通过后平台会自动合并，合并即完成；未通过时平台会叫芝士回本话题修复，改完自动重跑',
+      title: '等待检查通过',
+      hint: '检查全部通过后自动合并并完成；未通过时芝士会回到本话题修复，修复后自动重新检查',
       steps,
     }
   }
   return {
-    title: '等合并',
+    title: '等待合并',
     hint: '本项目没有外部检查，合并即完成',
     steps,
   }

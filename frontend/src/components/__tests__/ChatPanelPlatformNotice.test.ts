@@ -352,7 +352,7 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
 
     const card = container.querySelector('.action-card')!
     expect(card.textContent).toContain('更新了实况文档')
-    expect(card.querySelector('button')!.textContent).toContain('看实况文档')
+    expect(card.querySelector('button')!.textContent).toContain('查看文档')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
   })
 

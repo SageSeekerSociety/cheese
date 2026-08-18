@@ -196,13 +196,16 @@ const todoItems = ref<TodoItem[]>([])
 const todoRestored = ref(false)
 // Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
 // event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
-const ACTION_META: Record<string, { verb: string; btn: string }> = {
-  doc: { verb: '更新了实况文档', btn: '看实况文档' },
-  decision: { verb: '记录了一条决策', btn: '查看决策记录' },
-  topics: { verb: '更新了子话题', btn: '' },
-  milestone: { verb: '钉了一个里程碑', btn: '看日历' },
-  accept: { verb: '递出了验收卡', btn: '去验收' },
-  notify: { verb: '发了通知', btn: '' },
+// 只有按钮文案在这里。动作行那句话由后端写进块内容（`_ACTION_LABEL` /
+// `编辑了文档`），这里曾经并排放着一份 `verb` 副本，谁都没读过它，改了也不会
+// 生效——两份会漂移的文案里，看不见的那份最危险。
+const ACTION_META: Record<string, { btn: string }> = {
+  doc: { btn: '查看文档' },
+  decision: { btn: '查看决策记录' },
+  topics: { btn: '' },
+  milestone: { btn: '查看日历' },
+  accept: { btn: '前往验收' },
+  notify: { btn: '' },
 }
 
 // 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
@@ -262,7 +265,7 @@ async function onReact(m: Block, emoji: string) {
     const out = await apiToggleReaction(m.id, emoji, AUTHOR)
     applyReactions(m.id, out.reactions)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '表情操作失败'
+    errorMsg.value = e instanceof Error ? e.message : '表情未能更新'
   }
 }
 
@@ -1129,7 +1132,7 @@ onBeforeUnmount(() => {
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
-        <div>选择或新建一个话题，开始对话</div>
+        <div>选择一个话题开始对话</div>
       </div>
     </div>
 
@@ -1175,7 +1178,7 @@ onBeforeUnmount(() => {
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef">
-          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载历史…</div>
+          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载聊天记录…</div>
 
           <!-- Paging back through history. The row is always rendered while
                older blocks exist so the timeline's top edge does not change
@@ -1399,7 +1402,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="im-act rx-toggle"
                   :class="{ 'im-act--on': reactionPickerFor === m.id }"
-                  title="加表情"
+                  title="添加表情"
                   @click="reactionPickerFor = reactionPickerFor === m.id ? null : m.id"
                 >
                   <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
@@ -1445,7 +1448,7 @@ onBeforeUnmount(() => {
                  turn; between turns this is the topic's stored 进度层 (#187),
                  labelled so a leftover 进行中 row is not read as "running right
                  now". -->
-              <div v-if="todoItems.length && todoRestored" class="todo-label">进度（上次做到这里）</div>
+              <div v-if="todoItems.length && todoRestored" class="todo-label">上次的进度</div>
               <ul v-if="todoItems.length" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
                   <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
@@ -1455,7 +1458,7 @@ onBeforeUnmount(() => {
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">芝士 正在看…</span>
+                <span class="text-medium-emphasis">芝士正在处理…</span>
                 <span class="caret" />
               </div>
             </div>
@@ -1556,7 +1559,7 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input flex-grow-1"
-              :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
+              placeholder="输入消息…"
               title="Enter 发送，Shift+Enter 换行，可直接粘贴图片"
               :disabled="!connected"
               @keydown="onComposerKey"
