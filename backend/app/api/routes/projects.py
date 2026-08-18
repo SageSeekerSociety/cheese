@@ -31,8 +31,19 @@ from app.domain.agent.market import (
     subscription_model_listings,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.schemas import (
+    AgentInstanceCreate,
+    AgentInstanceOut,
+    ProjectDefaultAgentIn,
+)
+from app.domain.agent_instance.services import (
+    IMPLICIT_DEFAULT,
+    AgentInstanceService,
+    ResolvedAgent,
+    legacy_topic_pool,
+    memory_pool,
+)
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -118,7 +129,7 @@ async def create_project(
         name=body.name,
         owner_handle=owner_handle,
         ai_mode=body.ai_mode,
-        expert_role=body.expert_role,
+        agent_type=body.agent_type,
         team_id=body.team_id,
         external_task_id=body.external_task_id,
     )
@@ -211,19 +222,91 @@ async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
-@router.put("/{project_id}/expert-role")
-async def set_expert_role(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """Set which expert persona 芝士 loads for this project (spec §8.2). Any
-    known role name is accepted (custom shadows built-in); empty clears."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    name = str(body.get("role") or "").strip()
-    if name and await resolve_role_description(db, name) is None:
-        raise ValidationError(f"角色 {name!r} 不存在")
-    project.expert_role = name or None
+def _agent_out(
+    project_id: uuid.UUID, agent: ResolvedAgent, *, is_default: bool
+) -> dict:
+    return AgentInstanceOut(
+        id=agent.instance_id,
+        project_id=project_id,
+        handle=agent.handle,
+        type_name=agent.type_name,
+        display_name=agent.display_name,
+        is_default=is_default,
+        configured=agent.instance_id is not None,
+    ).model_dump(mode="json")
+
+
+@router.get("/{project_id}/agents")
+async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The agents this project has, and which one a new topic gets.
+
+    A project that never configured one is not empty: it still has an implicit
+    芝士 (``configured: false``), and that agent owns a real memory pool. Hiding
+    it would make the settings page claim there is no agent while one is
+    plainly working in every room.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    default = await service.for_project(project)
+    rows = await service.list_for_project(project_id)
+    items = [
+        _agent_out(
+            project_id,
+            AgentInstanceService.resolved(row),
+            is_default=row.id == project.default_agent_instance_id,
+        )
+        for row in rows
+    ]
+    if default.instance_id is None:
+        items.insert(0, _agent_out(project_id, default, is_default=True))
+    return ok(page(items, len(items)))
+
+
+@router.post("/{project_id}/agents")
+async def create_project_agent(
+    project_id: uuid.UUID, body: AgentInstanceCreate, db: DbSession
+) -> dict:
+    """Add an agent to this project. It starts with an empty memory pool."""
+    await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    instance = await service.create(
+        project_id=project_id,
+        handle=body.handle or body.type_name or IMPLICIT_DEFAULT.handle,
+        type_name=body.type_name,
+        display_name=body.display_name,
+    )
     await db.flush()
-    return ok({"current": project.expert_role})
+    return ok(
+        _agent_out(
+            project_id, AgentInstanceService.resolved(instance), is_default=False
+        )
+    )
+
+
+@router.put("/{project_id}/default-agent")
+async def set_project_default_agent(
+    project_id: uuid.UUID, body: ProjectDefaultAgentIn, db: DbSession
+) -> dict:
+    """Which agent a new topic in this project gets.
+
+    Two ways in, because they are two different intents. ``instance_id`` picks a
+    different agent — a different memory pool. ``type_name`` re-skins the one
+    the project already has, which is what "which persona does 芝士 wear here"
+    means: the pool it has been filling stays its own.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    if body.instance_id is not None:
+        instance = await service.get_in_project(
+            project_id=project_id, instance_id=body.instance_id
+        )
+        agent = await service.set_project_default(project, instance)
+    else:
+        instance = await service.materialize_default(project)
+        await service.set_type(instance, body.type_name)
+        await db.flush()
+        agent = await service.for_project(project)
+    return ok(_agent_out(project_id, agent, is_default=True))
 
 
 @router.get("/{project_id}/decisions")
@@ -264,19 +347,38 @@ async def _authorized_memory_topic(
 async def _agent_memory_scope(
     db: DbSession, project_id: uuid.UUID, topic: Topic | None
 ) -> tuple[MemoryScope, str] | None:
-    """Resolve ``topic`` into the acting 芝士's own memory scope in this project.
+    """Where the agent working in ``topic`` writes what it learns.
 
-    What an agent learns is its own, the way a teammate's is — a project hosting
-    several 芝士 must not pool one's operational trivia with another's product
-    decisions. Returns ``None`` when no usable topic was supplied, so the caller
-    falls back to the shared project pool.
+    Keyed by the AGENT, not by the room: the same 芝士 moving between rooms of
+    one project keeps one pool, which is the whole point of an instance owning
+    its memory. Returns ``None`` when no usable topic was supplied, so the
+    caller falls back to the shared project pool.
     """
-    from app.domain.memory.models import agent_project_scope_id
-
     if topic is None:
         return None
-    handle = await TopicMemberService(db).resolve_agent_handle(topic.id)
-    return MemoryScope.agent_project, agent_project_scope_id(project_id, handle)
+    project = await ProjectService(db).get_or_404(project_id)
+    agent = await AgentInstanceService(db).for_topic(topic, project)
+    return memory_pool(project_id, agent)
+
+
+async def _agent_memory_read_scopes(
+    db: DbSession, project_id: uuid.UUID, topic: Topic | None
+) -> list[tuple[MemoryScope, str]]:
+    """Every pool a read on behalf of ``topic`` should cover.
+
+    The agent's own pool, plus the pool this room filled back when memory was
+    keyed by the room. Writes go to the first alone; the second is a read-only
+    tail so that repointing memory at the agent does not read as amnesia in
+    every room that had already learned something.
+    """
+    agent_scope = await _agent_memory_scope(db, project_id, topic)
+    if agent_scope is None:
+        return []
+    scopes = [agent_scope]
+    legacy = legacy_topic_pool(project_id, topic.id)
+    if legacy != agent_scope:
+        scopes.append(legacy)
+    return scopes
 
 
 def _authorize_personal_memory_owner(topic: Topic | None, owner: str) -> None:
@@ -353,14 +455,14 @@ async def search_memory(
         _authorize_personal_memory_owner(topic, owner)
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
-    # The agent's own memory plus the shared pool — the latter a read-only tail
-    # of what was written before memory was split per agent. Merged on score, not
-    # concatenated by pool: which pool a fact happens to sit in says nothing
-    # about how well it answers the question, and the caller reads top-down.
+    # The agent's own memory, the pool this room filled before memory followed
+    # the agent, and the shared pool — the last two read-only tails of earlier
+    # keyings. Merged on score, not concatenated by pool: which pool a fact
+    # happens to sit in says nothing about how well it answers the question, and
+    # the caller reads top-down.
     hits = []
-    agent_scope = await _agent_memory_scope(db, project_id, topic)
-    if agent_scope is not None:
-        hits.extend(await store.search(*agent_scope, query))
+    for scope in await _agent_memory_read_scopes(db, project_id, topic):
+        hits.extend(await store.search(*scope, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
     return ok({"hits": [h.as_dict() for h in hits]})

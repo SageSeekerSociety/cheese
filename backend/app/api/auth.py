@@ -32,7 +32,8 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
-from app.domain.identity.services import CHEESE_HANDLE, IdentityService
+from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE
+from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicRole
@@ -88,6 +89,41 @@ class ActorResolver:
         self._screen_token = screen_token
         self._identity = IdentityService(session)
         self._credentials = ProjectAgentCredentialService(session)
+
+    async def _unnamed_agent_handle(
+        self, *, project_id: uuid.UUID | None, topic_id: uuid.UUID | None
+    ) -> str | None:
+        """Who a cheese credential that names no 分身 is acting as.
+
+        ``cheese`` used to be this answer, and it is now a real agent with a real
+        memory pool — so answering with it means every unattributable call writes
+        into the DEFAULT agent's memory. Instead the request's own context
+        answers: the room's agent, else the project's default. Only a credential
+        that names neither falls through to the sentinel, which owns nothing.
+
+        Costs a read, so it runs ONLY for a cheese call whose token carries no
+        identity claim — per-turn tokens all do, and pay nothing here.
+        """
+        from app.domain.agent_instance.services import AgentInstanceService
+
+        topic = (
+            await TopicRepository(self._session).get(topic_id) if topic_id else None
+        )
+        owning_project = project_id or (topic.project_id if topic else None)
+        project = (
+            await ProjectRepository(self._session).get(owning_project)
+            if owning_project
+            else None
+        )
+        if project is None:
+            return None
+        agents = AgentInstanceService(self._session)
+        agent = (
+            await agents.for_topic(topic, project)
+            if topic is not None
+            else await agents.for_project(project)
+        )
+        return agent.handle
 
     async def resolve(
         self,
@@ -148,17 +184,21 @@ class ActorResolver:
 
         # WHO the scoped token acts as: the topic's own 分身 (claim ``a``), not the
         # one collapsed platform account. A token minted before this claim existed —
-        # or a project-wide one with no topic — carries none and falls back to
-        # ``cheese``, which is exactly the previous behaviour.
+        # or a project-wide one with no topic — carries none, and then the room or
+        # the project answers instead of the string ``cheese`` doing double duty.
         agent_handle = (
             token_agent_handle(self._cheese_token) if self._cheese_token else None
         )
+        if self._cheese_token and not agent_handle:
+            agent_handle = await self._unnamed_agent_handle(
+                project_id=project_id, topic_id=topic_id
+            )
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
             cheese_valid=cheese_valid,
             is_agent=self._identity.is_agent,
-            cheese_handle=agent_handle or CHEESE_HANDLE,
+            cheese_handle=agent_handle or UNRESOLVED_AGENT_HANDLE,
             fallback_handle=fallback_handle,
         )
         if actor is None:

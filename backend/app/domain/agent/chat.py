@@ -49,7 +49,12 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.roles import resolve_role_description
+from app.domain.agent_instance.services import (
+    IMPLICIT_DEFAULT,
+    AgentInstanceService,
+    legacy_topic_pool,
+    memory_pool,
+)
 from app.domain.agent.service import (
     AgentDeliveryFailure,
     AgentEvent,
@@ -78,7 +83,7 @@ from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import looks_like_agent_handle
-from app.domain.memory.models import MemoryScope, agent_project_scope_id
+from app.domain.memory.models import MemoryScope
 from app.domain.memory.store import RecallResult, memory_store, recall_pools
 from app.domain.mentions import expand_mention_names
 from app.domain.milestone.repositories import MilestoneRepository
@@ -2153,34 +2158,42 @@ class ChatService:
             logger.exception("failed to ✅-ack block %s", user_block_id)
             return None
 
+    async def _agent_memory_pool(
+        self, session: AsyncSession, topic: Topic
+    ) -> tuple[MemoryScope, str]:
+        """Where the agent working in *topic* writes what it learns.
+
+        The AGENT owns the pool, not the room — a 芝士 that works in five rooms
+        of one project has one memory, which is what "the same 芝士" was
+        supposed to mean all along.
+        """
+        project = await ProjectRepository(session).get(topic.project_id)
+        agent = (
+            await AgentInstanceService(session).for_topic(topic, project)
+            if project is not None
+            else IMPLICIT_DEFAULT
+        )
+        return memory_pool(topic.project_id, agent)
+
     async def _recall_agent_memories(
-        self,
-        memory,
-        session: AsyncSession,
-        *,
-        project_id: uuid.UUID,
-        agent_handle: str,
+        self, memory, session: AsyncSession, *, topic: Topic
     ) -> RecallResult:
         """What this 芝士 remembers inside this project.
 
-        Reads its own per-agent scope first, then the legacy shared ``project``
-        pool. Writes only ever go to the per-agent scope, so the pool is a
-        read-only tail of what was learned before memory was split per agent —
-        rooms that accumulated it keep it, and nothing new lands there.
+        Its own pool first, then two read-only tails: what this ROOM learned
+        while memory was keyed by topic, and the shared ``project`` pool from
+        before memory was split per agent at all. Writes only ever go to the
+        first, so neither tail grows — but dropping them would make the day this
+        shipped look, from inside a room, exactly like amnesia.
 
-        Returns what did *not* fit alongside what did: both pools are capped,
-        and a cap nobody is told about is how memory quietly stops existing.
+        Returns what did *not* fit alongside what did: the pools are capped, and
+        a cap nobody is told about is how memory quietly stops existing.
         """
-        return await recall_pools(
-            memory,
-            [
-                (
-                    MemoryScope.agent_project,
-                    agent_project_scope_id(project_id, agent_handle),
-                ),
-                (MemoryScope.project, str(project_id)),
-            ],
-        )
+        own = await self._agent_memory_pool(session, topic)
+        legacy = legacy_topic_pool(topic.project_id, topic.id)
+        pools = [own] + ([legacy] if legacy != own else [])
+        pools.append((MemoryScope.project, str(topic.project_id)))
+        return await recall_pools(memory, pools)
 
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         """The handle 芝士 authors under in this topic.
@@ -3081,18 +3094,21 @@ class ChatService:
                 doc_text = None
             else:
                 memories = await self._recall_agent_memories(
-                    memory,
-                    session,
-                    project_id=topic.project_id,
-                    agent_handle=acting_agent,
+                    memory, session, topic=topic
                 )
                 doc_root = await blocks.doc_root(topic.id)
                 doc_text = doc_root.content if doc_root else None
             projects_repo = ProjectRepository(session)
             project = await projects_repo.get(topic.project_id)
-            role = await resolve_role_description(
-                session, project.expert_role if project else None
+            # The persona comes from the AGENT working here, via its type — the
+            # room's own agent if it has one, else the project's default.
+            agents = AgentInstanceService(session)
+            agent = (
+                await agents.for_topic(topic, project)
+                if project is not None
+                else IMPLICIT_DEFAULT
             )
+            role = await agents.system_prompt(agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             roster = (
                 [] if is_private else await projects_repo.list_members(topic.project_id)
@@ -3851,6 +3867,14 @@ class ChatService:
             # (system events show in the conversation; refs tag the resource).
             action_payloads = []
             acting_agent = await self._agent_handle(session, topic_id)
+            # Attribution and memory part ways here, deliberately: the block
+            # author is this room's 分身 (who did it), while the pool belongs to
+            # the agent working the room (whose memory it is).
+            agent_pool = (
+                await self._agent_memory_pool(session, topic)
+                if topic is not None
+                else None
+            )
             for resource in actions:
                 blk = await blocks.add(
                     project_id=project_id,
@@ -3954,7 +3978,7 @@ class ChatService:
                 project_id=project_id,
                 is_private=is_private,
                 private_owner=private_owner,
-                agent_handle=acting_agent,
+                agent_pool=agent_pool,
                 user_text=prompt_text,
                 assistant_text=final_text,
             )
@@ -3974,7 +3998,7 @@ class ChatService:
         project_id: uuid.UUID,
         is_private: bool,
         private_owner: str | None,
-        agent_handle: str,
+        agent_pool: tuple[MemoryScope, str] | None,
         user_text: str,
         assistant_text: str,
     ) -> None:
@@ -3991,14 +4015,13 @@ class ChatService:
             return
         if is_private and private_owner:
             scope, scope_id = MemoryScope.user, private_owner
-        else:
+        elif agent_pool is not None:
             # What 芝士 learns in a project is its own, the way a teammate's is.
             # Never the shared pool: two agents in one project would dilute each
             # other's memory, which is the case this split exists for.
-            scope, scope_id = (
-                MemoryScope.agent_project,
-                agent_project_scope_id(project_id, agent_handle),
-            )
+            scope, scope_id = agent_pool
+        else:
+            return
 
         async def _run() -> None:
             from app.domain.memory.openviking_store import OpenVikingMemoryStore
@@ -4063,12 +4086,7 @@ class ChatService:
                 content=text,
                 kind=BlockKind.event,
             )
-            memories = await self._recall_agent_memories(
-                memory,
-                session,
-                project_id=project_id,
-                agent_handle=await self._agent_handle(session, topic.id),
-            )
+            memories = await self._recall_agent_memories(memory, session, topic=topic)
             topic_id = topic.id
             compute_id = _resolve_compute_id(
                 project.settings,
@@ -4253,7 +4271,8 @@ class ChatService:
             memories = await recall_pools(
                 memory, [(MemoryScope.project, str(project_id))]
             )
-            role = await resolve_role_description(session, project.expert_role)
+            agents = AgentInstanceService(session)
+            role = await agents.system_prompt(await agents.for_project(project))
             compute_id = _resolve_compute_id(
                 project.settings,
                 team_compute_profile=await _team_compute_profile(session, project),

@@ -17,6 +17,11 @@ from app.core.config import settings
 from app.core.errors import NotFoundError, ValidationError
 from app.core.text import markdown_preview
 from app.domain.agent import clone
+from app.domain.agent_instance.services import (
+    IMPLICIT_DEFAULT,
+    AgentInstanceService,
+    ResolvedAgent,
+)
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.doc_tree import markdown_to_nodes
@@ -176,6 +181,45 @@ class TopicService:
         """Return one topic for cross-domain service callers."""
         return await self._repo.get(topic_id)
 
+    async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
+        """Which agent works in this topic — its own, else the project's."""
+        project = await self._projects.get(topic.project_id)
+        if project is None:
+            return IMPLICIT_DEFAULT
+        return await AgentInstanceService(self._session).for_topic(topic, project)
+
+    async def set_agent(
+        self, topic_id: uuid.UUID, instance_id: uuid.UUID | None
+    ) -> tuple[Topic, ResolvedAgent, bool]:
+        """Hand this topic to a different agent, dropping the session it had.
+
+        The session is ONE agent's memory of this conversation. Resuming it as
+        somebody else produces an agent that remembers saying things it never
+        said — a plausible, confident, wrong participant — so the thread does not
+        survive the switch. Returned as ``session_reset`` rather than done
+        quietly: it is the real cost of the change, and the caller has to be able
+        to say so before anyone loses a conversation they wanted.
+
+        Passing ``None`` hands the topic back to the project's default.
+        """
+        topic = await self.get_or_404(topic_id)
+        agents = AgentInstanceService(self._session)
+        instance = (
+            await agents.get_in_project(
+                project_id=topic.project_id, instance_id=instance_id
+            )
+            if instance_id is not None
+            else None
+        )
+        wanted = instance.id if instance is not None else None
+        session_reset = False
+        if topic.agent_instance_id != wanted:
+            topic.agent_instance_id = wanted
+            session_reset = topic.session_id is not None
+            topic.session_id = None
+            await self._session.flush()
+        return topic, await self.resolve_agent(topic), session_reset
+
     async def create(
         self,
         *,
@@ -183,6 +227,7 @@ class TopicService:
         title: str,
         parent_id: uuid.UUID | None = None,
         created_by: str | None = None,
+        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
         project = await self._projects.get(project_id)
         if project is None:
@@ -197,12 +242,20 @@ class TopicService:
             if parent is None:
                 raise NotFoundError("Parent topic not found")
             kind = _child_kind(parent)
+        # An explicit agent is checked to be this project's; NULL means "the
+        # project's default", which follows the project if that default changes
+        # later — a copy taken now would silently stop following it.
+        if agent_instance_id is not None:
+            await AgentInstanceService(self._session).get_in_project(
+                project_id=project_id, instance_id=agent_instance_id
+            )
         topic = await self._repo.add(
             project_id=project_id,
             title=title,
             parent_id=parent_id,
             kind=kind,
             created_by=created_by,
+            agent_instance_id=agent_instance_id,
         )
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
         # 芝士 joins as a member. `created_by` alone is not enough: 芝士 itself
