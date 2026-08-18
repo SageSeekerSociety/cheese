@@ -13,37 +13,6 @@ export interface Project {
   external_task_id?: number | null
 }
 
-// One entry of the merged agent-type catalog. Presets come from the file
-// library (read-only); custom types come from the DB and shadow a preset of the
-// same name. `body` is the system prompt; the rest is how the agent runs.
-export interface AgentType {
-  name: string
-  title: string
-  description: string
-  body: string
-  builtin: boolean
-  skills?: string[]
-  mcp_servers?: string[]
-  model?: string | null
-  effort?: string | null
-  harness?: string | null
-  space_id?: number | null
-  created_by?: string | null
-}
-
-// One agent working inside one project — it owns what it has learned here.
-// `configured: false` is the 芝士 a project has before anyone picked one: it
-// resolves and it owns a memory pool, but there is no row to edit yet.
-export interface ProjectAgent {
-  id: string | null
-  project_id: string
-  handle: string
-  type_name: string | null
-  display_name: string
-  is_default: boolean
-  configured: boolean
-}
-
 export interface Topic {
   id: string
   project_id: string

@@ -664,28 +664,6 @@ export function setTopicComputeProfile(
   })
 }
 
-// Agent types: the merged catalog — preset file-library types + custom (DB)
-// ones; a custom type shadows a preset with the same name.
-export function listAgentTypes(): Promise<ListPayload<AgentType>> {
-  return request<ListPayload<AgentType>>('/agent-types')
-}
-export function createAgentType(payload: {
-  name: string
-  title: string
-  description: string
-  body: string
-  created_by?: string
-}): Promise<AgentType> {
-  return request<AgentType>('/agent-types', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
-
-// The agents this project has, and which one a new topic gets.
-export function listProjectAgents(projectId: string): Promise<ListPayload<ProjectAgent>> {
-  return request<ListPayload<ProjectAgent>>(`/projects/${encodeURIComponent(projectId)}/agents`)
-}
 // Which type the project's default agent wears; an empty name clears it. The
 // agent itself stays — and so does the memory it has been accumulating.
 export function setProjectAgentType(projectId: string, typeName: string): Promise<ProjectAgent> {
@@ -716,6 +694,8 @@ export interface AgentTypeInput {
   model?: string | null
   effort?: string | null
   harness?: string | null
+  // Who authored the type — the backend records it and shows it in the catalog.
+  created_by?: string
 }
 
 export function createAgentType(payload: AgentTypeInput & { name: string; body: string }): Promise<AgentType> {
