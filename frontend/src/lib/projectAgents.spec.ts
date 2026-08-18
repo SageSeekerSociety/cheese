@@ -9,14 +9,12 @@ import { describe, expect, it } from 'vitest'
 import {
   agentKey,
   displayNameError,
-  effortLabel,
   fieldChoices,
   fieldIsChoosable,
   handleError,
   memoryCountsByHandle,
   topicCountsByAgent,
   typeLabel,
-  unavailableFields,
 } from './projectAgents'
 
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
@@ -133,12 +131,6 @@ describe('显示', () => {
   it('类型已经不在目录里时，退回显示它的名字而不是「通用」', () => {
     expect(typeLabel(types, 'deleted-one')).toBe('deleted-one')
   })
-
-  it('认不出来的思考深度原样显示，不吞掉', () => {
-    expect(effortLabel('high')).toBe('深')
-    expect(effortLabel('unheard-of')).toBe('unheard-of')
-    expect(effortLabel(null)).toBe('')
-  })
 })
 
 describe('表单校验', () => {
@@ -184,6 +176,12 @@ describe('编辑器能提供什么设置', () => {
     expect(fieldIsChoosable(OPTS, 'model')).toBe(true)
   })
 
+  it('目录取不到时一个选项都不交', () => {
+    // 目录没取到 ≠ 平台限制：界面上就不渲染这一格，而不是渲染一个空下拉。
+    expect(fieldChoices({}, 'model')).toEqual([])
+    expect(fieldIsChoosable({}, 'model')).toBe(false)
+  })
+
   it('不可选字段一个选项都不交，即使它带着残留的 choices', () => {
     // state 是唯一判据。哪天目录里一个 unavailable 字段带回了 choices，它也不能
     // 被渲染成能选 —— 那正是「填了不生效」重新长回来的路径。
@@ -197,17 +195,5 @@ describe('编辑器能提供什么设置', () => {
     }
     expect(fieldChoices(stale, 'x')).toEqual([])
     expect(fieldIsChoosable(stale, 'x')).toBe(false)
-  })
-
-  it('不可选字段带着人看得懂的理由列出来', () => {
-    expect(unavailableFields(OPTS, { effort: '思考深度' })).toEqual([
-      { name: 'effort', label: '思考深度', note: '模型自己决定' },
-    ])
-  })
-
-  it('目录为空时什么都不宣布', () => {
-    // 目录没取到 ≠ 平台限制。这里返回空，界面上就既没有选择器也没有「暂不可设置」。
-    expect(unavailableFields({}, {})).toEqual([])
-    expect(fieldChoices({}, 'model')).toEqual([])
   })
 })

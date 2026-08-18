@@ -29,9 +29,10 @@ def test_fields_with_no_consumer_are_not_offered_as_choices():
         assert options[name]["choices"] == [], name
 
 
-def test_every_unavailable_field_names_why_and_says_it_in_words():
-    """A boolean 'hidden' teaches nobody why. Both halves are load-bearing: the
-    reason is what a future fix greps for, the note is what a person reads."""
+def test_every_unavailable_field_names_why():
+    """A boolean 'hidden' teaches nobody why. The reason is what whoever wires
+    the field up later greps for — it is not shown to anyone, and the editor
+    renders nothing at all for these fields."""
     for name, opts in agent_type_options().items():
         if opts["state"] == "unavailable":
             assert opts["reason"], name

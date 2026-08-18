@@ -7,13 +7,16 @@ over them would be a promise the platform cannot keep — the user picks, the
 agent runs exactly as before, and nothing in the product says why.
 
 So a field is described here as either *choosable* (with its choices) or
-*unavailable* **with a named reason**. The frontend renders the reason instead
-of inventing an input; it never keeps a rival copy of this table. Wiring a field
-to the run path means moving it from one state to the other HERE, and the UI
-follows without being touched.
+*unavailable* **with a named reason**. Unavailable means the editor renders
+NOTHING for it — not an input, and not a note explaining the absence either;
+both leave a place on screen for a feature that does not exist, and a person
+reading the note starts waiting for it. The reason is for whoever wires the
+field up later, not for the user. Wiring it means moving the field from one
+state to the other HERE, and the editor follows without being touched.
 
-(The named-reason shape is Buzz's — `desktop/src/features/agents/AGENTS.md`:
-"Field absence has a named reason, not a boolean.")
+(Shape and rule are Buzz's — `desktop/src/features/agents/AGENTS.md`: "Field
+absence has a named reason, not a boolean", where the reasons live on the
+render model and never reach the screen.)
 """
 
 from dataclasses import asdict, dataclass, field

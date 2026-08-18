@@ -4,8 +4,8 @@
 // 人填完保存、界面一切正常、agent 照旧那样跑。所以这里盯的三件事都是「不该出现
 // 的东西没有出现」——
 //   1. 后端说某个字段不可选时，它不能变成输入框
-//   2. 不可选的字段要把理由说出来，而不是静静消失（消失了人只会以为功能没做）
-//   3. 目录取不到时，两者都不做 —— 一次请求失败不能被说成产品限制
+//   2. 也不给它留一句「暂不可设置」的说明 —— 那还是在为不存在的功能留位置
+//   3. 目录取不到时同样什么都不渲染 —— 一次请求失败不能被说成产品限制
 import type { AgentType, ProjectAgent } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -128,12 +128,13 @@ describe('只提供真的会生效的设置', () => {
     expect(screen.queryByLabelText('外部工具')).toBeNull()
   })
 
-  it('不可选的字段要说出理由，而不是悄悄消失', async () => {
+  it('也不给它留一句说明 —— 界面上不为不存在的功能留位置', async () => {
     mountDialog()
-    // 静静消失和「还没做」在界面上长得一模一样；人会去别处找这个功能。
-    await waitFor(() => expect(screen.getByText(/暂不可设置/)).toBeTruthy())
-    expect(screen.getByText(/模型自己决定思考深度/)).toBeTruthy()
-    expect(screen.getByText(/还没有可选的 MCP 服务目录/)).toBeTruthy()
+    await waitFor(() => expect(getAgentTypeOptions).toHaveBeenCalled())
+    // 「暂不可设置：思考深度 —— …」这种说明曾经在这里。它比空输入框好不了多少：
+    // 人照样会去理解一个还不存在的功能，然后等它。理由留在后端目录里给代码读。
+    expect(screen.queryByText(/暂不可设置/)).toBeNull()
+    expect(screen.queryByText(/模型自己决定思考深度/)).toBeNull()
   })
 
   it('后端说模型可选，就给出模型这一格', async () => {
@@ -148,8 +149,7 @@ describe('只提供真的会生效的设置', () => {
     getAgentTypeOptions.mockRejectedValue(new Error('boom'))
     mountDialog()
     await waitFor(() => expect(getAgentTypeOptions).toHaveBeenCalled())
-    // 一次网络失败不该被人读成「这个功能被砍了」。
-    expect(screen.queryByText(/暂不可设置/)).toBeNull()
+    // 一次网络失败不该被人读成「这个功能被砍了」，所以也不解释，就是不渲染。
     expect(screen.queryByLabelText('模型')).toBeNull()
   })
 })
