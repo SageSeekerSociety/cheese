@@ -137,7 +137,7 @@ describe('父话题时间线上的「已派出」标记', () => {
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1', 'b2'])
     const marker = container.querySelector('[data-testid="dispatched-marker"]')!
     expect(marker.textContent).toContain('进度层与记忆落地')
-    expect(marker.textContent).toContain('这部分改在那个话题进行')
+    expect(marker.textContent).toContain('这部分在该话题进行')
   })
 
   it('点标记上的标题 = 打开那个子话题', async () => {
@@ -188,9 +188,7 @@ describe('父话题时间线上的「已派出」标记', () => {
     ])
     await flush()
 
-    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain(
-      '这部分已在那个话题完成'
-    )
+    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('这部分已在该话题完成')
   })
 
   it('房间里没派出去任何活时，时间线一如既往', async () => {

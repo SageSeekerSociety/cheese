@@ -476,11 +476,11 @@ _CHEESE_RESOURCE = {
 # event every human edit gets (via the save path). One fact, one line,
 # whoever the author is (用户拍板: 芝士不需要专属提示行).
 _ACTION_LABEL = {
-    "decision": "记录了一条决策",
+    "decision": "记录了决策",
     "topics": "更新了子话题",
-    "milestone": "钉了一个里程碑",
-    "accept": "递出了验收卡",
-    "notify": "发了一条通知",
+    "milestone": "添加了里程碑",
+    "accept": "提交了验收卡",
+    "notify": "发送了通知",
 }
 
 
@@ -2094,6 +2094,7 @@ class ChatService:
         turn_id: uuid.UUID | None,
         reply_to: str | None,
         attachments: list[dict] | None = None,
+        client_id: str | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID]]:
         """Persist the human message (+ its image attachment blocks) and the
         @mention notifications in one short transaction, outside any turn lock.
@@ -2109,6 +2110,23 @@ class ChatService:
             created_blocks: list[Block] = []
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
+            # B3: a reply threads under a block IN THIS TOPIC. A client that
+            # kept a stale reply target across a topic switch would otherwise
+            # write a cross-topic edge into the conversation tree — invisible on
+            # screen (the reader's timeline can't resolve the parent, so no
+            # reply cue renders) and wrong in the data that 记忆/摘要 rebuild
+            # from. Drop the edge, keep the message: losing the thread link is
+            # recoverable, refusing the send is not.
+            reply_uuid = _parse_uuid(reply_to)
+            if reply_uuid is not None:
+                parent = await blocks.get(reply_uuid)
+                if parent is None or parent.topic_id != topic.id:
+                    logger.warning(
+                        "dropped cross-topic reply_to (topic=%s, reply_to=%s)",
+                        topic_id,
+                        reply_to,
+                    )
+                    reply_uuid = None
             if content:
                 # Same backstop the doc/chat-reply paths already had, but the
                 # human chat-send path used to skip it: a friendly "@Alice /
@@ -2137,7 +2155,13 @@ class ChatService:
                     content=content,
                     kind=BlockKind.message,
                     turn_id=turn_id,
-                    reply_to=_parse_uuid(reply_to),  # B3: thread under another
+                    reply_to=reply_uuid,  # B3: thread under another
+                    # The sender's own id for this send, echoed straight back on
+                    # the broadcast. A client that showed the message the instant
+                    # it was typed (§14.1 实时) needs to recognise its own copy
+                    # coming home; matching on text cannot do that, because this
+                    # method rewrites the text on the way in.
+                    meta={"client_id": client_id} if client_id else None,
                 )
                 if attribution_id is None:
                     attribution_id = user_block.id
@@ -2165,7 +2189,7 @@ class ChatService:
                     mime_type=str(att.get("mime") or "") or None,
                     turn_id=attribution_id,
                     # An image-only send still honors the reply thread (B3).
-                    reply_to=None if content else _parse_uuid(reply_to),
+                    reply_to=None if content else reply_uuid,
                 )
                 if attribution_id is None:
                     attribution_id = att_block.id
@@ -2421,13 +2445,20 @@ class ChatService:
         eid: str | None = None,
         backfilled: bool = False,
         platform_unsolicited: bool = False,
+        in_room: bool = False,
     ) -> dict | None:
-        """One 现场 event block, committed NOW and deduped by event-id.
+        """One event block, committed NOW and deduped by event-id.
 
         Shared by everything the room learns mid-turn — a tool call, a subagent's
         conclusion, the turn's change summary — so all three get the same
         durability and idempotency contract instead of three copies of it that
-        drift. Returns None when this event-id already landed."""
+        drift. Returns None when this event-id already landed.
+
+        ``in_room`` decides whether the conversation shows it at all. The
+        frontend reads that off ``author_type`` (system = the room, ai = 现场
+        only), which is an implicit switch with no error path: pick wrong and the
+        event simply never appears, silently, forever. Naming it here at least
+        makes the choice visible at every call site."""
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
@@ -2442,7 +2473,7 @@ class ChatService:
                 project_id=project_id,
                 topic_id=topic_id,
                 author=await self._agent_handle(session, topic_id),
-                author_type=AuthorType.ai,
+                author_type=AuthorType.system if in_room else AuthorType.ai,
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
@@ -2550,13 +2581,20 @@ class ChatService:
         turn_id: uuid.UUID | None,
         changeset: _Changeset,
     ) -> dict | None:
-        """Land 「这一轮改了 N 个文件」 in the room timeline."""
+        """Land 「这一轮改了 N 个文件」 in the room timeline.
+
+        This one goes in the ROOM, not just 现场 (spec §8.5 变更提醒). What 芝士
+        changed is the one thing about a turn that is nowhere else in the
+        conversation: the doc panel lights up on its own and the accept card
+        speaks for itself, but "this turn touched these files" was only ever a
+        grey line in a drawer nobody has open."""
         return await self._persist_room_event(
             project_id=project_id,
             topic_id=topic_id,
             content=_format_change_summary(changeset.files),
             meta=_change_summary_meta(changeset),
             turn_id=turn_id,
+            in_room=True,
         )
 
     async def _reconcile_spool(
@@ -2597,7 +2635,31 @@ class ChatService:
             # prior turns): event-ids stamped on this topic's blocks (any kind).
             async with self._sessions() as session:
                 blocks = await BlockRepository(session).list_for_topic(topic_id)
+                topic = await TopicRepository(session).get(topic_id)
+                # The roster/topic table that STORED content was canonicalized
+                # with. Loaded here because the text dedup below has to compare
+                # like for like — see `_canon`.
+                roster = (
+                    []
+                    if topic is None or topic.is_private
+                    else await ProjectRepository(session).list_members(project_id)
+                )
+                topic_refs, _ = _topic_ref_lists(
+                    await TopicRepository(session).list_for_project(project_id),
+                    exclude_id=topic_id,
+                )
             seen = _persisted_eids(blocks)
+
+            def _canon(text: str) -> str:
+                """Stored form of a raw hook text.
+
+                Every persist path runs `_expand_mention_names` on the way in, so
+                a stored block holds `<@handle>` where the hook payload still
+                holds `@名字`. Comparing the two forms directly is why a message
+                that mentions ANYONE defeated the dedup below and landed twice.
+                """
+                return _expand_mention_names(text, roster, topic_refs).strip()
+
             # Text-level dedup for the Stop's final message (it has its OWN eid,
             # so eid dedup can never match it against the MessageDisplay twin).
             known_texts = {
@@ -2620,8 +2682,8 @@ class ChatService:
                     text=message.text,
                     turn_id=turn_id,
                     reply_to=None,
-                    roster=None,
-                    topic_refs=[],
+                    roster=roster,
+                    topic_refs=topic_refs,
                     eid=message.eid or fallback_eid,
                     eids=message.eids,
                     backfilled=True,
@@ -2629,8 +2691,9 @@ class ChatService:
                 seen.add(fallback_eid)
                 seen.update(message.eids)
                 # Feed the Stop's text dedup even when this copy itself was
-                # suppressed — the text exists either way.
-                known_texts.add(message.text.strip())
+                # suppressed — the text exists either way. Stored form, so it
+                # is comparable with `known_texts` seeded from the DB.
+                known_texts.add(_canon(message.text))
                 return block_payload
 
             for _path, eid, payload in entries:
@@ -2662,7 +2725,9 @@ class ChatService:
                         # resume — without this the topic keeps pointing at
                         # whatever SessionStart last managed to save live.
                         await self._save_session_pointer(topic_id, result.session_id)
-                    if not stop_text or stop_text in known_texts:
+                    # `stop_text` stays RAW above (the prefix test matches it
+                    # against raw flush text); the dedup compares stored forms.
+                    if not stop_text or _canon(result.text or "") in known_texts:
                         seen.add(eid)
                         seen.update(carried)
                         continue
@@ -2672,8 +2737,8 @@ class ChatService:
                         text=result.text,
                         turn_id=turn_id,
                         reply_to=None,
-                        roster=None,
-                        topic_refs=[],
+                        roster=roster,
+                        topic_refs=topic_refs,
                         eid=eid,
                         eids=tuple(dict.fromkeys((*carried, eid))),
                         backfilled=True,

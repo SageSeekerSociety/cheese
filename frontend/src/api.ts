@@ -1044,9 +1044,21 @@ export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
 
-// 现场 (施工现场): 芝士's messages + 🔧 event lines for a topic (read-only).
-export function getTranscript(topicId: string): Promise<ListPayload<Block>> {
-  return request<ListPayload<Block>>(`/topics/${encodeURIComponent(topicId)}/transcript`)
+// 现场 (施工现场): a topic's tool/event record (read-only), newest window first.
+// Paged: events are the most numerous kind of block (one per tool call), so an
+// unpaged 现场 is the largest request the app can make and it only grows.
+export const SITE_PAGE_SIZE = 120
+export function getTranscript(
+  topicId: string,
+  opts: { limit?: number; before?: string } = {}
+): Promise<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }> {
+  const q = new URLSearchParams()
+  if (opts.limit != null) q.set('limit', String(opts.limit))
+  if (opts.before) q.set('before', opts.before)
+  const qs = q.toString()
+  return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
+    `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`
+  )
 }
 
 // 现场实时终端 (施工现场): whether this topic has an embeddable read-only

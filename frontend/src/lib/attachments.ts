@@ -9,6 +9,9 @@ import { uploadAttachment } from '../api'
 
 const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 const MAX_PENDING = 9
+// 后端今天只收图片（`attachment_raw` 是刻意按扩展名白名单的，别的类型要配一条
+// 单独的下载通道才安全）。这个上限本身不是 bug——**不出声地把文件扔掉**才是。
+const UNSUPPORTED = '暂时只能发图片（PNG / JPEG / GIF / WebP）'
 
 export function usePendingAttachments(
   getTopicId: () => string | null | undefined,
@@ -20,7 +23,10 @@ export function usePendingAttachments(
   async function addFiles(files: Iterable<File>) {
     const topicId = getTopicId()
     if (!topicId) return
-    const images = [...files].filter((f) => IMAGE_MIME.has(f.type))
+    const all = [...files]
+    const images = all.filter((f) => IMAGE_MIME.has(f.type))
+    // 拖一个 PDF 进来，过去是：没上传、没报错、没有任何提示。文件就是消失了。
+    if (images.length < all.length) onError?.(UNSUPPORTED)
     if (!images.length) return
     uploading.value = true
     try {
@@ -44,13 +50,21 @@ export function usePendingAttachments(
     for (const item of Array.from(items)) {
       if (item.kind === 'file') {
         const f = item.getAsFile()
-        if (f && IMAGE_MIME.has(f.type)) files.push(f)
+        if (f) files.push(f)
       }
     }
     if (files.length) {
       e.preventDefault()
       void addFiles(files)
     }
+  }
+
+  /** 拖进来的文件 (spec §7.1「拖到输入栏」)。 */
+  function onDrop(e: DragEvent) {
+    const files = e.dataTransfer?.files
+    if (!files?.length) return
+    e.preventDefault()
+    void addFiles(Array.from(files))
   }
 
   function removeAt(i: number) {
@@ -61,5 +75,5 @@ export function usePendingAttachments(
     pending.value = []
   }
 
-  return { pending, uploading, addFiles, onPaste, removeAt, clear }
+  return { pending, uploading, addFiles, onPaste, onDrop, removeAt, clear }
 }

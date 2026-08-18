@@ -123,12 +123,12 @@ def notice(
 def delivery_fallback_notice() -> tuple[str, dict]:
     """The single room-visible error for live-delivery fallback."""
     return (
-        "⚠️ 实时送入当前会话失败，已自动转入正常队列。",
+        "⚠️ 消息没能直接送进正在进行的会话，已转入队列",
         notice(
             EVENT_DELIVERY_FALLBACK,
             severity=SEVERITY_ERROR,
             who=WHO_PLATFORM,
-            detail="消息已保存并保持待处理状态；平台会从正常队列继续处理，无需重发。",
+            detail="消息已保存，平台会按队列继续处理，不需要重发。",
             detail_label="处理说明",
         ),
     )

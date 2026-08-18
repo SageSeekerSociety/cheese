@@ -88,3 +88,54 @@ def test_event_blocks_persist_structured_meta(client):
     fut = by_tool["FutureTool"]
     assert fut["content"] == "FutureTool"
     assert fut["meta"] == {"tool": "FutureTool", "platform": False}
+
+
+def test_transcript_pages_back_instead_of_serving_everything(client):
+    """现场 is the biggest thing a topic can hand back — one event per tool call,
+    forever. So it comes in windows, newest first, and the caller walks back."""
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    t = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+    ).json()["data"]
+    for _ in range(3):
+        _chat(client, t["id"])
+
+    everything = client.get(f"/topics/{t['id']}/transcript").json()["data"]["data"]
+    assert len(everything) > 2, "需要几条事件才谈得上分页"
+
+    first = client.get(f"/topics/{t['id']}/transcript?limit=2").json()["data"]
+    assert len(first["data"]) == 2
+    assert first["has_more"] is True
+    # 最新的一窗：末尾必须和全量的末尾是同一条。
+    assert first["data"][-1]["id"] == everything[-1]["id"]
+
+    older = client.get(
+        f"/topics/{t['id']}/transcript?limit=200&before={first['oldest_id']}"
+    ).json()["data"]
+    assert older["has_more"] is False
+    # 两窗接起来就是全量，一条不多一条不少 —— 「过滤发生在分页之后」的实现会在
+    # 这里露馅：它每一窗都少给几条，has_more 也算错。
+    assert [b["id"] for b in older["data"] + first["data"]] == [
+        b["id"] for b in everything
+    ]
+
+
+def test_transcript_rejects_a_cursor_from_another_topic(client):
+    """未知游标不能悄悄退化成「最新 N 条」—— 调用方分不出那和真的一页有什么区别。"""
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    a = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "A", "created_by": "user-1"},
+    ).json()["data"]
+    b = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "B", "created_by": "user-1"},
+    ).json()["data"]
+    _chat(client, a["id"])
+    other = client.get(f"/topics/{a['id']}/transcript").json()["data"]["data"][0]["id"]
+
+    assert (
+        client.get(f"/topics/{b['id']}/transcript?limit=5&before={other}").status_code
+        == 404
+    )

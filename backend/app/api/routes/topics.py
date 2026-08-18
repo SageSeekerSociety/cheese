@@ -344,9 +344,17 @@ async def topic_transcript(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    limit: int | None = Query(None, ge=1, le=200),
+    before: uuid.UUID | None = None,
 ) -> dict:
-    """施工现场 (spec §7.1): the topic's AI session record — 芝士's messages and
-    tool/event actions, read-only."""
+    """施工现场 (spec §7.1): the topic's AI session record — tool/event actions,
+    read-only, newest window first.
+
+    Paged for the same reason the conversation is: events are the MOST numerous
+    kind of block (one per tool call), so a topic that has run for a while makes
+    this the largest response the app can ask for, and it only ever grows.
+    `limit=None` keeps the whole-history behaviour for callers that still want
+    it."""
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
         fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
@@ -354,13 +362,33 @@ async def topic_transcript(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    await TopicService(db).get_or_404(topic_id)
-    blocks = await BlockRepository(db).list_for_topic(topic_id)
+    repo = BlockRepository(db)
     # 现场 = what 芝士 DID (tool/system events), full stop. Its messages belong
     # to the conversation pane — mirroring them here just duplicates the chat.
-    site = [b for b in blocks if b.kind == BlockKind.event]
+    kinds = {BlockKind.event}
+    cursor: Block | None = None
+    if before is not None:
+        cursor = await repo.get(before)
+        # Same rule as the conversation's pager: an unknown cursor must not
+        # degrade into "newest N", which the caller cannot tell from a real page.
+        if cursor is None or cursor.topic_id != topic_id:
+            raise NotFoundError("游标事件不存在")
+    if limit is None:
+        site = [b for b in await repo.list_for_topic(topic_id) if b.kind in kinds]
+        has_more = False
+    else:
+        result = await repo.page_for_topic(
+            topic_id, limit=limit, before=cursor, kinds=kinds
+        )
+        site, has_more = result.items, result.has_more
     items = [BlockOut.model_validate(b).model_dump(mode="json") for b in site]
-    return ok(page(items, len(items)))
+    return ok(
+        {
+            **page(items, len(items)),
+            "has_more": has_more,
+            "oldest_id": str(site[0].id) if site else None,
+        }
+    )
 
 
 @router.get("/{topic_id}/usage")

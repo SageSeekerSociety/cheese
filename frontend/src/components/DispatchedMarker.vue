@@ -13,12 +13,14 @@ import type { SplitMarker } from '../lib/splitMarkers'
 
 import { computed } from 'vue'
 
+import TimelineMark from './TimelineMark.vue'
+
 const props = defineProps<{ marker: SplitMarker }>()
 const emit = defineEmits<{ (e: 'open', topicId: string): void }>()
 
 // 归档 = 那件事在子话题里完事了。同一行改口而不是换一种标记：读的人关心的是「这段
 // 归谁」，而不是子话题的生命周期。
-const note = computed(() => (props.marker.status === 'archived' ? '这部分已在那个话题完成' : '这部分改在那个话题进行'))
+const note = computed(() => (props.marker.status === 'archived' ? '这部分已在该话题完成' : '这部分在该话题进行'))
 
 function open() {
   emit('open', props.marker.topicId)
@@ -26,53 +28,33 @@ function open() {
 </script>
 
 <template>
-  <div class="dispatched" data-testid="dispatched-marker" :data-topic-id="marker.topicId">
-    <span class="dispatched__rule" aria-hidden="true" />
-    <span class="dispatched__body">
+  <TimelineMark>
+    <span class="dispatched" data-testid="dispatched-marker" :data-topic-id="marker.topicId">
       <v-icon size="13" class="dispatched__icon">mdi-call-split</v-icon>
-      <span class="dispatched__text"
-        >已派出<button type="button" class="dispatched__link" @click="open">《{{ marker.title }}》</button>——
-        {{ note }}</span
-      >
+      已拆出子话题<button type="button" class="dispatched__link" @click="open">《{{ marker.title }}》</button> ·
+      {{ note }}
     </span>
-    <span class="dispatched__rule" aria-hidden="true" />
-  </div>
+  </TimelineMark>
 </template>
 
 <style scoped>
+/* 形状归 TimelineMark（时间刻度那一种原型）；这里只剩这条标记自己的东西。 */
 .dispatched {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 10px 16px;
-  font-size: 12px;
-  color: var(--muted);
-}
-.dispatched__rule {
-  flex: 1;
-  height: 1px;
-  background: var(--line);
-}
-.dispatched__body {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  max-width: 78%;
+  gap: 4px;
+  min-width: 0;
 }
 .dispatched__icon {
-  color: var(--faint);
   flex: none;
-}
-.dispatched__text {
-  overflow-wrap: anywhere;
+  color: var(--faint);
 }
 .dispatched__link {
-  border: none;
-  background: none;
-  padding: 0;
-  font: inherit;
-  color: rgb(var(--v-theme-primary));
+  color: var(--accent-ink);
   cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dispatched__link:hover {
   text-decoration: underline;

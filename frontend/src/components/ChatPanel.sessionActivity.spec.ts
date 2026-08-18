@@ -90,14 +90,14 @@ describe('session activity', () => {
     socket.emit({ type: 'assistant_block', block: assistantBlock })
     socket.emit({ type: 'done' })
     await flush()
-    expect(view.getByText('芝士 正在看…')).toBeTruthy()
+    expect(view.getByText('芝士正在处理…')).toBeTruthy()
 
     socket.emit({ type: 'turn_finished', turn_id: 'one' })
     await flush()
-    expect(view.getByText('芝士 正在看…')).toBeTruthy()
+    expect(view.getByText('芝士正在处理…')).toBeTruthy()
 
     socket.emit({ type: 'turn_finished', turn_id: 'two' })
     await flush()
-    expect(view.queryByText('芝士 正在看…')).toBeNull()
+    expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
 })
