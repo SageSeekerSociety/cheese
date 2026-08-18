@@ -11,17 +11,15 @@ const scrollMemory = new Map<string, { top: number; atBottom: boolean }>()
 // How close to the bottom still counts as "at the bottom" (px).
 const BOTTOM_THRESHOLD = 80
 
-// 每话题草稿 (飞书语义): what you had typed, whether you had 芝士 summoned, who
-// you were replying to, and the images waiting to go — all belong to the topic
-// they were composed in. Module scope so they survive this component
-// unmounting, same as scrollMemory.
+// 每话题草稿 (飞书语义): what you had typed, who you were replying to, and the
+// images waiting to go — all belong to the topic they were composed in. Module
+// scope so they survive this component unmounting, same as scrollMemory.
 //
-// 之前只有待发图片被清掉，文字、@芝士 开关和回复目标原地不动地跟着你换话题：
-// 打了一半的话可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，
-// 屏幕上看不出异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
+// 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
+// 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
+// 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
 interface ComposerDraft {
   draft: string
-  summon: boolean
   reply: Block | null
   atts: ChatAttachment[]
   /** 还没落库的消息。它们是发给**这个**话题的，跟着它走，不跟着屏幕走。 */
@@ -101,9 +99,9 @@ function renderPlain(text: string): string {
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
-    // @芝士 default for new messages. Off for human-to-human (工作台), on for
-    // the 1:1 private chat where 芝士 is the only counterpart.
-    defaultSummon?: boolean
+    // 这一栏里每条消息都是说给芝士听的：1:1 私聊那种只有它一个对话方的地方。
+    // 别处叫它靠 @ 它（和 @ 人同一套），见 sendDraft。
+    alwaysSummon?: boolean
     // Render the composer at the bottom of THIS column. Every caller wants it —
     // 工作台 used to span its own copy across the chat and the work panel, which
     // read as addressing the whole topic while 99% of what it sent was a chat
@@ -129,7 +127,7 @@ const props = withDefaults(
     unreadOnOpen?: number
   }>(),
   {
-    defaultSummon: false,
+    alwaysSummon: false,
     showComposer: false,
     prHeader: false,
     hideHeader: false,
@@ -742,8 +740,8 @@ async function loadTopic(topic: Topic) {
   }
 }
 
-// Send a message. `summon` (= @芝士) asks 芝士 to reply; when false the message
-// is just posted (spec §7.1 默认不 @). The composer lives in TopicView and
+// Send a message. `summon` (= 这条消息 @ 了芝士) asks 芝士 to reply; when false
+// the message is just posted (spec §7.1 默认不 @). The composer lives in TopicView and
 // drives this via the exposed ref, so the input bar can span chat + doc.
 // B3: reply target — the message this next send threads under (reply_to).
 const replyTarget = ref<Block | null>(null)
@@ -1018,7 +1016,6 @@ const prState = computed(() => topicStateBadge(props.topic?.status))
 
 // ---- Self-contained composer (only when showComposer) ----
 const draft = ref('')
-const summon = ref(props.defaultSummon)
 // 拖文件到输入栏 (spec §7.1)。只是把落区标出来，判断留给 usePendingAttachments。
 const dragOver = ref(false)
 function onDropFiles(e: DragEvent) {
@@ -1026,13 +1023,6 @@ function onDropFiles(e: DragEvent) {
   onComposerDrop(e)
 }
 const composerInput = ref<{ focus?: () => void } | null>(null)
-
-// 同 TopicView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
-// 按的那次 Enter 打在 chip 上，把刚点亮的 @芝士 又静默关掉且不发送。
-function toggleSummon() {
-  summon.value = !summon.value
-  void nextTick(() => composerInput.value?.focus?.())
-}
 
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
@@ -1131,8 +1121,20 @@ function onFilePicked(e: Event) {
   input.value = '' // allow re-picking the same file
 }
 
+// 叫不叫芝士，由**这条消息 @ 没 @ 它**决定 —— 和 @ 一个人走的是同一条路，
+// 区别只在于 @ 人是通知、@ 它是真的开一轮。这以前是输入区上一个单独的开关：
+// 芝士本来就在 @ 补全的名单里（`agent` 标记），于是同一个意图有两条并列的说法，
+// 而只有开关那条是通的 —— 在正文里 @ 了它，它读得到，却不会动。
+//
+// 群播 (@all/@here) 不算：那是通知房间里的人，不是把活派给它。
+function mentionsAgent(expanded: string): boolean {
+  const agent = props.members.find((m) => m.agent)?.user_handle
+  return !!agent && expanded.includes(`<@${agent}>`)
+}
+
 function sendDraft() {
-  if (send(expandMentions(draft.value), summon.value, pendingAtts.value.slice())) {
+  const content = expandMentions(draft.value)
+  if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
     draft.value = ''
     clearPendingAtts()
   }
@@ -1142,16 +1144,12 @@ function sendDraft() {
 // "just a preference" — each field names something in the topic being left
 // (a block to reply to, files already uploaded to that topic's worktree).
 function rememberComposer(topicId: string) {
-  // A bare @芝士 toggle over an empty box is not a draft — remembering it would
-  // relight the chip days later with nothing typed, which is the shape of
-  // #349 (you believe you summoned it) pointed the other way.
   const hasContent =
     !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value || outbox.value.length > 0
   if (!hasContent) composerMemory.delete(topicId)
   else
     composerMemory.set(topicId, {
       draft: draft.value,
-      summon: summon.value,
       reply: replyTarget.value,
       atts: pendingAtts.value.slice(),
       outbox: outbox.value.slice(),
@@ -1161,7 +1159,6 @@ function rememberComposer(topicId: string) {
 function restoreComposer(topicId: string | undefined) {
   const saved = topicId ? composerMemory.get(topicId) : undefined
   draft.value = saved?.draft ?? ''
-  summon.value = saved?.summon ?? props.defaultSummon
   replyTarget.value = saved?.reply ?? null
   pendingAtts.value = saved?.atts ?? []
   // 换话题时在飞的那些没法再等回声了（socket 换了），回到队列，等这个话题
@@ -1740,7 +1737,7 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input"
-              placeholder="输入消息…"
+              :placeholder="alwaysSummon ? '告诉芝士要做什么…' : '输入消息，@芝士 交给它做'"
               :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
@@ -1750,17 +1747,6 @@ onBeforeUnmount(() => {
             <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
                唯一的实心按钮，其余一律是安静的图标。 -->
             <div class="composer-actions d-flex align-center ga-1">
-              <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
-              <button
-                type="button"
-                class="summon-chip"
-                :class="{ 'summon-chip--on': summon }"
-                :title="summon ? '已开启：这条消息会 @ 芝士' : '开启后，这条消息会 @ 芝士'"
-                @click="toggleSummon"
-              >
-                <v-icon v-if="summon" size="13">mdi-creation</v-icon>
-                @芝士
-              </button>
               <input
                 ref="fileInput"
                 type="file"
@@ -2121,7 +2107,8 @@ details.sys-row > summary::-webkit-details-marker {
   flex: none;
 }
 .mention-avatar--agent {
-  color: rgb(var(--v-theme-on-primary)); /* see .summon-chip--on */
+  /* 琥珀底上的墨：主题色自己那一套，深浅主题各有一个值。 */
+  color: rgb(var(--v-theme-on-primary));
   background: var(--accent);
 }
 .mention-avatar--broadcast {
@@ -2155,33 +2142,6 @@ details.sys-row > summary::-webkit-details-marker {
   margin-left: auto;
   font-size: 0.7rem;
   color: var(--faint);
-}
-
-/* The ONE amber chip allowed: @芝士 toggle when ON. OFF = neutral. */
-.summon-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--radius-md);
-  font-size: 12px;
-  font-weight: 500;
-  /* 静止时不画块：它和旁边的图标按钮是同一类东西，一个画底一个不画就成了两种。 */
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-.summon-chip:hover {
-  background: var(--fill);
-}
-/* 开着的时候用琥珀的淡色调 + 琥珀墨，不用实心琥珀：发送键本来就是实心琥珀，
-   同一行里两块一模一样的橙色，一块是「叫芝士」一块是「发出去」，谁也分不出
-   哪块是主操作。淡调仍然是这一行唯一的颜色，认得出。 */
-.summon-chip--on {
-  background: var(--accent-wash);
-  color: var(--accent);
 }
 
 /* ---- GitHub PR header ---- */

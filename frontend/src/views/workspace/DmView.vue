@@ -109,7 +109,7 @@ async function handleUpgradeMessage(messageId: string) {
       style="min-height: 0"
       :topic="topic"
       :pr-header="false"
-      :default-summon="peerHandle === null"
+      :always-summon="peerHandle === null"
       :title-override="title"
       :members="store.members"
       :topic-list="store.topics"

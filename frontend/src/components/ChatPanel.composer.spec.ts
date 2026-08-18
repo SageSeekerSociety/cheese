@@ -69,12 +69,15 @@ describe('输入区的两行', () => {
     const actions = c.querySelector('.composer-actions')!
     const buttons = Array.from(actions.querySelectorAll('button'))
     expect(buttons.length).toBeGreaterThan(1)
-    // @芝士 开关是第一个动作，发送是最后一个——这一行的方向就是"左动作、右发送"。
-    expect(buttons[0].className).toContain('summon-chip')
+    // 这一行的方向是"左动作、右发送"。
+    expect(buttons[0].className).toContain('composer-icon')
     expect(buttons[buttons.length - 1].className).toContain('composer-send')
   })
 
-  it('@芝士 开关还在，只是搬到了下面那行', () => {
-    expect(composer().querySelector('.summon-chip')).toBeTruthy()
+  // 这一行只放**这条消息**的动作。话题级的设置（谁在跑、在哪跑）不在这儿——
+  // 它们发第一条消息之后就不再变，摆在这里只是占着 390px 里最贵的一行。
+  it('这一行不摆话题级的设置', () => {
+    const actions = composer().querySelector('.composer-actions')!
+    expect(actions.textContent?.replace(/\s/g, '')).toBe('')
   })
 })

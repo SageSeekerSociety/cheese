@@ -5,7 +5,7 @@
  * 栏显示的聊天消息；重复则意味着两份实现要靠人记着同步。
  *
  * 这里钉的是并完之后仍然成立的三件事：输入栏在对话栏里、话题自己的 chips 能从外面
- * 交进来、以及 @芝士 那个开关仍然管着发出去的那条消息。
+ * 交进来、以及**这条消息 @ 没 @ 芝士**决定它会不会被叫起来。
  */
 import type { Topic } from '../../cx_types'
 
@@ -31,9 +31,9 @@ import ChatPanel from '../ChatPanel.vue'
 
 const sent: { payload: string }[] = []
 
-function topic(): Topic {
+function topic(id = 'topic-A'): Topic {
   return {
-    id: 'topic-A',
+    id,
     project_id: 'p1',
     parent_id: null,
     title: '做一件事',
@@ -47,10 +47,18 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-function mountPanel(slots: Record<string, () => unknown> = {}) {
+// 芝士在名单里带 `agent` 标记，和 @ 补全菜单看到的是同一份名单。
+const members = [
+  { user_handle: 'cheese', name: '芝士', role: 'member', agent: true },
+  { user_handle: 'bobby', name: '波比', role: 'member' },
+]
+
+// 每话题草稿是模块级的（跨挂载留着，这正是它的用途），所以每条用例用自己的
+// 话题——共用一个的话，上一条留在发件箱里的消息会在下一次挂载时重发。
+function mountPanel(slots: Record<string, () => unknown> = {}, topicId?: string) {
   const vuetify = createVuetify({ components, directives })
   return render(ChatPanel, {
-    props: { topic: topic(), showComposer: true, hideHeader: true },
+    props: { topic: topic(topicId), showComposer: true, hideHeader: true, members },
     slots,
     global: { plugins: [vuetify] },
   })
@@ -110,7 +118,7 @@ describe('对话栏自己的输入栏', () => {
     expect(chip!.closest('.composer'), 'chips 没落在输入栏那一行里').toBeTruthy()
   })
 
-  it('@芝士 开着的时候，发出去的那条消息才召唤芝士', async () => {
+  it('@ 了芝士的那条消息才召唤它', async () => {
     const { container } = mountPanel()
     await flush()
 
@@ -121,14 +129,26 @@ describe('对话栏自己的输入栏', () => {
     await flush()
     expect(sent.map((s) => JSON.parse(s.payload).summon)).toEqual([false])
 
-    const summonChip = Array.from(container.querySelectorAll('button')).find((b) => b.classList.contains('summon-chip'))
-    expect(summonChip, '找不到 @芝士 开关').toBeTruthy()
-    await fireEvent.click(summonChip!)
     box.focus()
-    await fireEvent.update(box, '再看看')
+    await fireEvent.update(box, '@芝士 再看看')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
 
     expect(sent.map((s) => JSON.parse(s.payload).summon)).toEqual([false, true])
+    // 发出去的是规范形式，和 @ 一个人完全一样。
+    expect(JSON.parse(sent[1].payload).content).toBe('<@cheese> 再看看')
+  })
+
+  it('@ 一个人不会把芝士叫起来', async () => {
+    const { container } = mountPanel({}, 'topic-B')
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.update(box, '@波比 你看下')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+
+    expect(sent.map((s) => JSON.parse(s.payload).summon)).toEqual([false])
   })
 })
