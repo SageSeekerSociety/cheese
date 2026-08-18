@@ -146,8 +146,7 @@ async def test_a_timed_out_turn_carries_its_own_classification():
     result = events[-1]
     assert isinstance(result, AgentResult) and result.is_error
     assert (
-        classify_platform_failure(result.text, code=result.failure_code)
-        is TURN_TIMEOUT
+        classify_platform_failure(result.text, code=result.failure_code) is TURN_TIMEOUT
     )
 
 
