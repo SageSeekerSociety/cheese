@@ -1,5 +1,7 @@
 <template>
-  <div class="header-corner-glow-flow">
+  <!-- 广告词只给第一次来的人看，而底栏点进来的是每天回来的人：手机上它连
+         内边距要吃掉 128px，一屏去掉一大半，下面才是你来这儿要用的东西。 -->
+  <div v-if="mdAndUp" class="header-corner-glow-flow">
     <PageHeader icon="mdi-view-dashboard" title="空间"></PageHeader>
     <div class="w-100 pa-8 py-16">
       <div class="text-h4 text-high-emphasis">在知是，灵感启航。</div>
@@ -81,6 +83,7 @@
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 import { usePaging } from '@/utils/paging'
@@ -90,6 +93,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
+const { mdAndUp } = useDisplay()
 
 const selectedSort = ref('newest')
 const sortOptions = [
