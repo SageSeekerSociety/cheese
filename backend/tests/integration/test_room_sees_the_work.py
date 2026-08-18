@@ -161,6 +161,45 @@ def test_the_turn_ends_with_a_change_summary(client, monkeypatch):
     ]
 
 
+def test_what_shows_in_the_room_is_its_own_field(client, monkeypatch):
+    """露不露面写在 `meta.in_room` 里，不再靠 `author_type` 兼职。
+
+    同一轮里两种事件都产生了：工具调用和分身结论是芝士干活的过程（只进现场），
+    改动摘要是平台数出来的结果（进房间）。两件事以前挤在 `author_type` 一格里，
+    于是「芝士写的、又该让人看见」根本表达不出来，而选错了没有任何报错——事件安
+    静地永远不出现。
+    """
+
+    log_calls: list[int] = []
+
+    def fake_git_log(project_id, limit=50, topic_id=None):
+        log_calls.append(limit)
+        if len(log_calls) == 1:
+            return []  # turn-start baseline: nothing on the branch yet
+        return [{"hash": "abc1234", "author": "芝士", "message": "chore: snapshot"}]
+
+    monkeypatch.setattr(ws, "git_log", fake_git_log)
+    monkeypatch.setattr(ws, "git_diff", lambda project_id, ref=None: DIFF)
+
+    topic_id = _topic(client)
+    _chat(client, topic_id)
+    events = _transcript(client, topic_id)
+
+    def in_room(block: dict) -> bool:
+        return (block.get("meta") or {}).get("in_room") is not False
+
+    summary = next(b for b in events if (b.get("meta") or {}).get("changeset"))
+    assert in_room(summary)
+
+    work = [b for b in events if (b.get("meta") or {}).get("tool")]
+    conclusions = [b for b in events if (b.get("meta") or {}).get("subagent")]
+    assert work and conclusions
+    assert not [b for b in work + conclusions if in_room(b)]
+
+    # …并且是那一格说了算：现场里藏起来的事件，作者写的是真作者。
+    assert {b["author_type"] for b in conclusions} == {"ai"}
+
+
 def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
     """No new commit → no summary. 不刷屏 also means not posting an empty one."""
     monkeypatch.setattr(

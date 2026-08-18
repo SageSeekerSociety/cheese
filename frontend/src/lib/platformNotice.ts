@@ -11,9 +11,10 @@
  *
  * 契约（后端按这个发，见父话题「让房间干净下来」）：
  *
- *   kind=event, author_type=system
+ *   kind=event
  *   content = 一行人话，≤40 字
  *   meta = {
+ *     in_room: bool | None,                     # 露不露面；缺省 = 露面，见 showsInRoom
  *     event_type: str,                          # 类别码
  *     severity: 'info' | 'warn' | 'error',
  *     who: 'platform' | 'cheese' | 'human',     # 谁在管这件事（码，不是文案）
@@ -34,6 +35,18 @@ import type { PlatformErrorPresentation } from './platformEvents'
 
 import { backendErrorPresentation } from './backendErrorEvent'
 import { platformErrorPresentation } from './platformEvents'
+
+/**
+ * 这条事件在对话里露不露面。
+ *
+ * 「露不露面」和「谁写的」是两件事，过去挤在 `author_type` 一个字段里：
+ * system 出现、ai 不出现。于是一条确实由芝士产生、又该让人看见的事件无法表达，
+ * 而任何想知道作者的人读到的是一个在回答别的问题的字段。现在它自己有一格；没有
+ * 这一格的事件都露面 —— 平台其它所有写入方都是往房间里说话。
+ */
+function showsInRoom(block: Block): boolean {
+  return meta(block)?.in_room !== false
+}
 
 /** 谁在管这件事。扫一眼不点开就能决定跟不跟自己有关。 */
 export type WhoTag = 'platform' | 'cheese' | 'human'
@@ -286,12 +299,12 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
       }
       continue
     }
-    if (block.author_type !== 'system') continue
+    if (!showsInRoom(block)) continue
     if (str(meta(block)?.event_type) === 'frontend_error') continue
 
     const prev = rows[rows.length - 1]
     const prevBlock = prev?.block
-    if (prevBlock && prevBlock.kind === 'event' && prevBlock.author_type === 'system') {
+    if (prevBlock && prevBlock.kind === 'event' && showsInRoom(prevBlock)) {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
       const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)

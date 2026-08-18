@@ -1574,9 +1574,11 @@ class ChatService:
         *,
         meta: dict | None = None,
     ) -> dict | None:
-        """Persist a system event into the 现场 timeline (e.g. a turn failure):
-        visible in the flow, scrolls with it, and survives a reload — unlike a
-        transient banner. Returns the block payload, or None if the topic died."""
+        """Persist a system event into the room (e.g. a turn failure): visible in
+        the conversation, scrolls with it, and survives a reload — unlike a
+        transient banner. It carries no ``meta.in_room``, and absent means shown,
+        which is the whole point of this call: the platform says it out loud.
+        Returns the block payload, or None if the topic died."""
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
@@ -2378,6 +2380,7 @@ class ChatService:
                         content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
+                        meta={"in_room": False},
                     )
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
@@ -2447,6 +2450,7 @@ class ChatService:
         backfilled: bool = False,
         platform_unsolicited: bool = False,
         in_room: bool = False,
+        author_type: AuthorType = AuthorType.ai,
     ) -> dict | None:
         """One event block, committed NOW and deduped by event-id.
 
@@ -2455,11 +2459,19 @@ class ChatService:
         durability and idempotency contract instead of three copies of it that
         drift. Returns None when this event-id already landed.
 
-        ``in_room`` decides whether the conversation shows it at all. The
-        frontend reads that off ``author_type`` (system = the room, ai = 现场
-        only), which is an implicit switch with no error path: pick wrong and the
-        event simply never appears, silently, forever. Naming it here at least
-        makes the choice visible at every call site."""
+        ``in_room`` decides whether the conversation shows it at all, and it
+        travels as ``meta.in_room`` — its own field, because visibility is not
+        authorship. It used to ride on ``author_type`` (system = the room, ai =
+        现场 only), which meant an event genuinely written by 芝士 could not be
+        shown in the room without lying about who wrote it, and anything that
+        later wanted to know the author was reading a field answering a
+        different question. Absent means shown: every other writer in the
+        codebase posts to the room.
+
+        ``author_type`` is then free to answer its own question, and does: 芝士
+        wrote the tool calls and the subagent conclusions, the platform wrote
+        the change summary."""
+        meta = {**meta, "in_room": in_room}
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
@@ -2474,7 +2486,7 @@ class ChatService:
                 project_id=project_id,
                 topic_id=topic_id,
                 author=await self._agent_handle(session, topic_id),
-                author_type=AuthorType.system if in_room else AuthorType.ai,
+                author_type=author_type,
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
@@ -2596,6 +2608,7 @@ class ChatService:
             meta=_change_summary_meta(changeset),
             turn_id=turn_id,
             in_room=True,
+            author_type=AuthorType.system,  # 平台自己数出来的，不是芝士说的
         )
 
     async def _reconcile_spool(
@@ -4241,6 +4254,8 @@ class ChatService:
                 author_type=AuthorType.human,
                 content=text,
                 kind=BlockKind.event,
+                # 原始素材，不是房间里的一句话：房间读的是芝士消化出来的结构化文档。
+                meta={"in_room": False},
             )
             memories = await self._recall_agent_memories(
                 memory,
@@ -4410,6 +4425,7 @@ class ChatService:
                 author_type=AuthorType.ai,
                 content=f"【巡检决策日志】\n{final_text}",
                 kind=BlockKind.event,
+                meta={"in_room": False},
             )
             await session.commit()
 
