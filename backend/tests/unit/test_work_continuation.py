@@ -53,8 +53,8 @@ class _Quiet:
 def _capture_resumes(runner, monkeypatch) -> list[dict]:
     seen: list[dict] = []
 
-    def _fake(_chat, tid, after, why="", *, continuation_id=None):
-        seen.append({"topic": tid, "continuation_id": continuation_id})
+    def _fake(_chat, tid, after, why="", *, continuation_id=None, chain=0):
+        seen.append({"topic": tid, "continuation_id": continuation_id, "chain": chain})
 
     monkeypatch.setattr(runner, "_schedule_resume", _fake)
     return seen
