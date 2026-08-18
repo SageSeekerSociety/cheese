@@ -193,3 +193,19 @@ def test_ci_e2e_pin_matches_the_launcher_pin():
     assert (
         f"@anthropic-ai/claude-code@{device_launch.CLAUDE_PINNED_VERSION}" in workflow
     )
+
+
+def test_sandbox_image_pin_matches_the_launcher_pin():
+    """The sandbox image bakes the same Claude Code the launcher installs.
+
+    A topic can run on either side — an agent container the backend spawns, or
+    an enrolled device — and "the same turn" has to mean the same runtime. The
+    image used to install whatever was newest at build time, so any rebuild
+    could move it, silently and for an unrelated reason.
+    """
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "sandbox" / "Dockerfile"
+    ).read_text()
+    assert (
+        f"ARG CLAUDE_CODE_VERSION={device_launch.CLAUDE_PINNED_VERSION}" in dockerfile
+    )

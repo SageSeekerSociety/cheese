@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Agent sandbox: 芝士 (claude code) runs INSIDE here, per topic, with native
 # tools jailed to this container. jj (colocated git) auto-snapshots edits.
 FROM node:22-bookworm-slim
@@ -5,17 +6,23 @@ FROM node:22-bookworm-slim
 # Universal toolchain (the shared base, like Codex's `universal` image): package
 # managers + build tools every project tends to need. Project-specific deps get
 # layered on top (uv sync / npm ci) — see cheesex-dev.Dockerfile.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Only the package INDEX is cached, not the .deb archives: caching those means
+# deleting the base image's docker-clean, and every image layered on this one —
+# tmux.Dockerfile, and whatever a hosted repo builds — would silently start
+# carrying its own downloaded .debs. This image is other people's base.
+RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates curl xz-utils python3 python3-pip \
       build-essential pkg-config ripgrep jq less unzip \
-      postgresql-client libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+      postgresql-client libpq-dev
 
 # uv — Python package/env manager (symmetric to npm). Installed from PyPI (the
 # uv wheel bundles the binary) — reliable through the proxy, unlike ghcr. uv
 # fetches its own Python (base OS python3 is 3.11, cheesex needs >=3.13 — uv
 # resolves that regardless of the base).
-RUN pip3 install --no-cache-dir --break-system-packages uv && uv --version
+ARG UV_VERSION=0.12.1
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages "uv==${UV_VERSION}" && uv --version
 
 # jujutsu (jj) — auto-snapshotting VCS, git-compatible
 ARG JJ_VERSION=0.42.0
@@ -35,8 +42,14 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && rm -rf "/tmp/gh_${GH_VERSION}_linux_${ARCH}" \
     && gh --version
 
-# Claude Code CLI (the agent runtime that runs in-container)
-RUN npm install -g @anthropic-ai/claude-code && claude --version
+# Claude Code CLI (the agent runtime that runs in-container). Pinned, and pinned
+# to the SAME version app.domain.agent.device_launch.CLAUDE_PINNED_VERSION hands
+# to enrolled devices — an unpinned install means a rebuild for any unrelated
+# reason can change the agent runtime under a topic, and that a container and a
+# device running "the same" turn are not running the same thing.
+ARG CLAUDE_CODE_VERSION=2.1.224
+RUN --mount=type=cache,target=/root/.npm \
+    npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" && claude --version
 
 WORKDIR /work
 
