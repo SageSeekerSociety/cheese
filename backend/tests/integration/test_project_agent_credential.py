@@ -16,7 +16,7 @@ member has, and refused where a member is refused.
 import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import looks_like_agent_handle, topic_agent_handle
 from tests.conftest import seed_user
 
 # --- helpers ------------------------------------------------------------------
@@ -80,7 +80,8 @@ def _acts_as_cheese(client, project_id: str, token: str) -> bool:
     working long after it stopped.
     """
     tid = _topic(client, project_id, title="probe", by="alice")
-    return _write_doc(client, tid, token).json()["data"]["author"] == CHEESE_HANDLE
+    author = _write_doc(client, tid, token).json()["data"]["author"]
+    return author == topic_agent_handle(uuid.UUID(tid))
 
 
 # --- 签发 ----------------------------------------------------------------------
@@ -156,7 +157,9 @@ def test_one_credential_works_in_every_topic_of_its_project(client):
     for tid in (first, second):
         r = _write_doc(client, tid, token, content=f"# doc {tid}")
         assert r.status_code == 200, r.text
-        assert r.json()["data"]["author"] == CHEESE_HANDLE
+        # One credential, but each write is attributed to the room it landed in
+        # — the credential names no 分身, so the room says who acted.
+        assert r.json()["data"]["author"] == topic_agent_handle(uuid.UUID(tid))
 
 
 def test_a_credential_is_refused_in_another_project(client):
@@ -182,7 +185,9 @@ def test_a_forged_credential_is_not_a_credential(client):
 
     # Not authenticated at all: the write falls back to the pre-token path and
     # never lands as 芝士.
-    assert _write_doc(client, tid, forged).json()["data"]["author"] != CHEESE_HANDLE
+    author = _write_doc(client, tid, forged).json()["data"]["author"]
+    assert author != topic_agent_handle(uuid.UUID(tid))
+    assert not looks_like_agent_handle(author)
     gated = client.post(
         f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(forged)
     )
@@ -327,9 +332,15 @@ def test_it_is_a_member_not_a_lead(client):
 # --- 留痕 ----------------------------------------------------------------------
 
 
-def test_what_it_writes_is_filed_under_cheese(client):
-    """Not under the person who issued it, and not under ``anonymous``. The
-    conversation event the platform emits alongside says 芝士 rather than a
+def test_what_it_writes_is_filed_under_the_rooms_own_agent(client):
+    """Not under the person who issued it, not under ``anonymous``, and not
+    under the platform-wide ``cheese`` — that handle now names ONE agent, the
+    project's default, which owns a memory pool. Filing every credential write
+    there would put work the default agent never did under its name. A
+    project-wide credential names no 分身 of its own, so the ROOM answers: the
+    same 分身 a per-turn token in that room would have named.
+
+    The conversation event the platform emits alongside says 芝士 rather than a
     mention chip, because the writer is recognised as the agent it is.
 
     ``author_type`` stays the route's structural value (a doc edit is ``human``,
@@ -339,16 +350,17 @@ def test_what_it_writes_is_filed_under_cheese(client):
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
     tid = _topic(client, pid, title="T", by="alice")
+    room_agent = topic_agent_handle(uuid.UUID(tid))
 
     doc = _write_doc(client, tid, token)
     assert doc.status_code == 200, doc.text
-    assert doc.json()["data"]["author"] == CHEESE_HANDLE
+    assert doc.json()["data"]["author"] == room_agent
     assert doc.json()["data"]["author_type"] == "human"
 
     events = [b for b in _blocks(client, tid) if b["kind"] == "event"]
     edit_events = [b for b in events if "编辑了文档" in b["content"]]
     assert edit_events, _blocks(client, tid)
-    assert edit_events[-1]["author"] == CHEESE_HANDLE
+    assert edit_events[-1]["author"] == room_agent
     assert edit_events[-1]["content"] == "芝士 编辑了文档"
 
     decision = client.post(
