@@ -423,6 +423,10 @@ defineExpose({ pulse, highlightTurn, openFile })
 }
 .tabpane-chat {
   display: flex;
+  /* tabbody 是一条 flex 行，这一格必须占满它——按内容收缩的话，输入框只有半屏宽。 */
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
   height: 100%;
 }

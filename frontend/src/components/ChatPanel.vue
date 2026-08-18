@@ -1377,24 +1377,6 @@ onBeforeUnmount(() => {
       <template v-if="showComposer">
         <v-divider />
         <div class="composer pa-2 px-3">
-          <div class="d-flex align-center ga-2 mb-1">
-            <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
-            <button
-              type="button"
-              class="summon-chip"
-              :class="{ 'summon-chip--on': summon }"
-              :title="summon ? '已开启：这条消息会 @ 芝士' : '开启后，这条消息会 @ 芝士'"
-              @click="toggleSummon"
-            >
-              <v-icon v-if="summon" size="13">mdi-creation</v-icon>
-              @芝士
-            </button>
-            <v-spacer />
-            <!-- 话题自己的 chips (工作台: 本话题 / 已归档 / 算力选择). They belong
-                 to the topic, not to the act of typing, so the host supplies
-                 them rather than this component learning about compute pools. -->
-            <slot name="composer-chips" />
-          </div>
           <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
           <div v-if="mentionMatches.length" class="mention-menu">
             <button
@@ -1432,25 +1414,40 @@ onBeforeUnmount(() => {
             </div>
             <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
           </div>
-          <div class="d-flex align-end ga-2">
-            <v-textarea
-              ref="composerInput"
-              v-model="draft"
-              variant="plain"
-              rows="1"
-              auto-grow
-              max-rows="6"
-              hide-details
-              density="comfortable"
-              class="composer-input flex-grow-1"
-              :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
-              :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
-              :disabled="!connected"
-              @keydown="onComposerKey"
-              @paste="onComposerPaste"
-              @compositionstart="onCompositionStart"
-              @compositionend="onCompositionEnd"
-            />
+          <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
+               半屏——而按钮的数量只会往上加。 -->
+          <v-textarea
+            ref="composerInput"
+            v-model="draft"
+            variant="plain"
+            rows="1"
+            auto-grow
+            max-rows="6"
+            hide-details
+            density="comfortable"
+            class="composer-input"
+            :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
+            :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
+            :disabled="!connected"
+            @keydown="onComposerKey"
+            @paste="onComposerPaste"
+            @compositionstart="onCompositionStart"
+            @compositionend="onCompositionEnd"
+          />
+          <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
+               唯一的实心按钮，其余一律是安静的图标。 -->
+          <div class="composer-actions d-flex align-center ga-1">
+            <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
+            <button
+              type="button"
+              class="summon-chip"
+              :class="{ 'summon-chip--on': summon }"
+              :title="summon ? '已开启：这条消息会 @ 芝士' : '开启后，这条消息会 @ 芝士'"
+              @click="toggleSummon"
+            >
+              <v-icon v-if="summon" size="13">mdi-creation</v-icon>
+              @芝士
+            </button>
             <input
               ref="fileInput"
               type="file"
@@ -1463,15 +1460,24 @@ onBeforeUnmount(() => {
               icon="mdi-image-plus-outline"
               variant="text"
               size="small"
+              density="comfortable"
               title="发送图片"
               :disabled="!connected"
               @click="pickFiles"
             />
+            <!-- 话题自己的 chips (工作台: 已归档 / 算力选择). They belong to the
+                 topic, not to the act of typing, so the host supplies them
+                 rather than this component learning about compute pools. -->
+            <slot name="composer-chips" />
+            <v-spacer />
             <v-btn
+              class="composer-send"
               color="primary"
               variant="flat"
               icon="mdi-send"
               size="small"
+              density="comfortable"
+              title="发送"
               :disabled="!connected || (!draft.trim() && !pendingAtts.length)"
               @click="sendDraft"
             />
@@ -1599,6 +1605,17 @@ onBeforeUnmount(() => {
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: 1.5;
+}
+/* 动作行：和输入框之间只留一点，读起来还是同一块。 */
+.composer-actions {
+  min-height: 32px;
+  margin-top: 2px;
+}
+/* 发送键是这一行唯一的实心块，所以它不该长得像一块砖——尤其在手机上，右边
+   多占的每一格都是输入框少掉的宽度。 */
+.composer-send {
+  width: 30px;
+  height: 30px;
 }
 
 /* @-autocomplete popup — mirrors TopicView's composer picker. */
