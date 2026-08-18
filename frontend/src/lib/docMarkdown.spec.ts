@@ -50,6 +50,15 @@ describe('normalizeMarkdown tolerances', () => {
   it('normalizes bullet markers to -', () => {
     expect(normalizeMarkdown('* one\n+ two')).toBe('- one\n- two')
   })
+  it('puts a blank line on a block boundary written without one', () => {
+    expect(normalizeMarkdown('正文\n## 小节\n下一段')).toBe(normalizeMarkdown('正文\n\n## 小节\n\n下一段'))
+    expect(normalizeMarkdown('放哪个：\n- 一\n- 二')).toBe(normalizeMarkdown('放哪个：\n\n- 一\n- 二'))
+  })
+
+  it('ignores the indent a wrapped paragraph line was written at', () => {
+    expect(normalizeMarkdown('1. 第一条\n    续行\n2. 第二条')).toBe(normalizeMarkdown('1. 第一条\n  续行\n2. 第二条'))
+  })
+
   it('normalizes blockquote markers', () => {
     expect(normalizeMarkdown('>a\n> > b')).toBe('> a\n> > b')
   })
@@ -138,6 +147,27 @@ describe('round-trip corpus', () => {
     expectClean('第一段\n\n\n\n第二段\n\n\n第三段')
   })
 
+  // CommonMark says a closing `**` preceded by punctuation and followed by a
+  // letter cannot close. Chinese puts no space after the delimiter, so this is
+  // how bold is normally written here — it has to parse, not survive as
+  // literal asterisks. (See docMarkdown.ts's CJK-friendly note.)
+  it('bold closing before a CJK letter', () => {
+    expectClean('按**执行档案（ExecutionProfile）**解析出模型。\n')
+  })
+
+  it('bold closing on a full stop, sentence continues', () => {
+    expectClean('**这句话是粗体。**下一句不是。\n')
+  })
+
+  it('strikethrough closing before a CJK letter', () => {
+    expectClean('前面~~删除（括号）~~后面\n')
+  })
+
+  // The same relaxation must not reach English, where the rule is doing its job.
+  it('ASCII emphasis is unaffected', () => {
+    expectClean('a **bold (paren)** b, an *italic* and a ~~strike~~.\n')
+  })
+
   it('CJK/English mixed prose', () => {
     expectClean(
       '这是一段中英混排 mixed-language paragraph，包含 100% 的数字、英文 words 和标点：句号。逗号，分号；括号（成对）。'
@@ -146,6 +176,28 @@ describe('round-trip corpus', () => {
 
   it('soft-wrapped paragraph lines', () => {
     expectClean('第一行接着\n第二行（软换行，同一段落）')
+  })
+
+  // The serializer escapes these on sight; neither can open anything alone, and
+  // the backslash would otherwise be written into the file on the next save.
+  it('a lone tilde in prose', () => {
+    expectClean('未碰 P1~P4 的条目。\n')
+  })
+
+  // Two of them on one line ARE a GFM strikethrough pair, and the round trip
+  // must keep saying so — the escape is what stops them pairing, and dropping
+  // it where it matters would rewrite the document.
+  it('a tilde pair still reads as strikethrough', () => {
+    editor.commands.setContent('未碰 P1~P4 和 P5~P8 的条目。\n', { contentType: 'markdown' })
+    expect(JSON.stringify(editor.getJSON())).toContain('strike')
+  })
+
+  it('square brackets that are not a link', () => {
+    expectClean('cheesex-app[bot] 合并了 arr[0] 和 arr[1]。\n')
+  })
+
+  it('brackets that ARE a link stay a link', () => {
+    expectClean('看 [这里](https://example.com) 和 a[b]c。\n')
   })
 
   it('bare < and & characters in prose', () => {
@@ -197,6 +249,26 @@ describe('known-lossy constructs are detected', () => {
   it('reference-style link definitions are inlined (def line dropped)', () => {
     expectDetected('看[这里][1]。\n\n[1]: https://example.com')
   })
+
+  // Rules 12/13 loosen whitespace, which is the one place a tolerance can go
+  // too far: if it ever equated "two blocks" with "one block", the check would
+  // stop seeing the loss it exists for. These pin the floor.
+  it('two paragraphs merged into one is still lossy', () => {
+    const merged = normalizeMarkdown('第一段。\n\n第二段。')
+    expect(merged).not.toBe(normalizeMarkdown('第一段。 第二段。'))
+  })
+
+  it('a dropped blank line between paragraphs is still lossy', () => {
+    expect(normalizeMarkdown('第一段。\n\n第二段。')).not.toBe(normalizeMarkdown('第一段。\n第二段。'))
+  })
+
+  it('a flattened nested list is still lossy', () => {
+    expect(normalizeMarkdown('- 一级\n  - 二级')).not.toBe(normalizeMarkdown('- 一级\n- 二级'))
+  })
+
+  it('an indented code block keeps its indentation', () => {
+    expect(normalizeMarkdown('正文\n\n    code()\n')).toContain('    code()')
+  })
 })
 
 describe('rule 11: intraword underscores', () => {
@@ -206,6 +278,18 @@ describe('rule 11: intraword underscores', () => {
   })
   it('inline-code identifiers stay strict', () => {
     const md = '用 `project_id` 查询。\n'
+    expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
+  })
+
+  // A table cell is prose. Our documents are mostly tables of identifiers, so
+  // skipping this rule there meant almost every one of them read as unsafe.
+  it('applies inside table cells', () => {
+    const md = '| 结论 | 依据 |\n| --- | --- |\n| 属实 | login_security.py 里 |\n'
+    expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
+  })
+
+  it('applies inside blockquotes', () => {
+    const md = '> 索引建在 project_id 上。\n'
     expect(compareRoundTrip(md, roundTrip(md)).clean).toBe(true)
   })
 })

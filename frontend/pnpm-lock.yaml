@@ -225,11 +225,14 @@ importers:
         specifier: 3.3.0
         version: 3.3.0
       marked:
-        specifier: ^15.0.12
-        version: 15.0.12
+        specifier: ^17.0.6
+        version: 17.0.6
+      marked-cjk-friendly:
+        specifier: ^0.1.1
+        version: 0.1.1(marked@17.0.6)
       marked-highlight:
-        specifier: ^2.2.2
-        version: 2.2.2(marked@15.0.12)
+        specifier: ^2.2.4
+        version: 2.2.4(marked@17.0.6)
       monaco-editor:
         specifier: ^0.55.1
         version: 0.55.1
@@ -4697,18 +4700,19 @@ packages:
     resolution: {integrity: sha512-a54IwgWPaeBCAAsv13YgmALOF1elABB08FxO9i+r4VFk5Vl4pKokRPeX8u5TCgSsPi6ec1otfLjdOpVcgbpshg==}
     hasBin: true
 
-  marked-highlight@2.2.2:
-    resolution: {integrity: sha512-KlHOP31DatbtPPXPaI8nx1KTrG3EW0Z5zewCwpUj65swbtKOTStteK3sNAjBqV75Pgo3fNEVNHeptg18mDuWgw==}
+  marked-cjk-friendly@0.1.1:
+    resolution: {integrity: sha512-fuGeoX9R5qACZcSFP+w6xHw+tzlYNqbI0H4v5Tkch8HMnxHgq+soRF7/w7Pn+9MlRX4yqtFGeuUE4mmWUEwvyQ==}
+    engines: {node: '>=18'}
     peerDependencies:
-      marked: '>=4 <17'
+      marked: '>=15.0.0'
+
+  marked-highlight@2.2.4:
+    resolution: {integrity: sha512-PZxisNMJDduSjc0q6uvjsnqqHCXc9s0eyzxDO9sB1eNGJnd/H1/Fu+z6g/liC1dfJdFW4SftMwMlLvsBhUPrqQ==}
+    peerDependencies:
+      marked: '>=4 <19'
 
   marked@14.0.0:
     resolution: {integrity: sha512-uIj4+faQ+MgHgwUW1l2PsPglZLOLOT1uErt06dAPtx2kjteLAkbsd/0FiYg/MGS+i7ZKLb7w2WClxHkzOOuryQ==}
-    engines: {node: '>= 18'}
-    hasBin: true
-
-  marked@15.0.12:
-    resolution: {integrity: sha512-8dD6FusOQSrpv9Z1rdNMdlSgQOIP880DHqnohobOmYLElGEqAL/JvxvuxZO16r4HtjTlfPRDC1hbvxC9dPN2nA==}
     engines: {node: '>= 18'}
     hasBin: true
 
@@ -11015,13 +11019,15 @@ snapshots:
       punycode.js: 2.3.1
       uc.micro: 2.1.0
 
-  marked-highlight@2.2.2(marked@15.0.12):
+  marked-cjk-friendly@0.1.1(marked@17.0.6):
     dependencies:
-      marked: 15.0.12
+      marked: 17.0.6
+
+  marked-highlight@2.2.4(marked@17.0.6):
+    dependencies:
+      marked: 17.0.6
 
   marked@14.0.0: {}
-
-  marked@15.0.12: {}
 
   marked@17.0.6: {}
 

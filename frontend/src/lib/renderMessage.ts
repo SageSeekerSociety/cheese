@@ -7,7 +7,8 @@
 import type { Block } from '../cx_types'
 
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
+
+import { markdown } from './markdown'
 
 export interface RefMaps {
   mentionNames: Record<string, string>
@@ -50,7 +51,7 @@ export function highlightTokens(html: string, maps: RefMaps): string {
 // break; strict-markdown paragraph rules would silently swallow it.
 export function renderMarkdown(text: string, maps: RefMaps): string {
   return DOMPurify.sanitize(
-    highlightTokens(marked.parse(text, { async: false, gfm: true, breaks: true }) as string, maps)
+    highlightTokens(markdown.parse(text, { async: false, gfm: true, breaks: true }) as string, maps)
   )
 }
 

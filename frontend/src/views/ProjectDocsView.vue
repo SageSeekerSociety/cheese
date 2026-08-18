@@ -5,12 +5,13 @@ import type { Block, Topic } from '../cx_types'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 
 import { deleteMemory, getProject, getProjectDecisions, listMemory, listTopics } from '../api'
 import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
+
+import { markdown } from '@/lib/markdown'
 
 // 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
@@ -56,7 +57,7 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+  return DOMPurify.sanitize(markdown.parse(text, { async: false }) as string)
 }
 
 // ---- 章程: the root topic's living doc (改了就等于给芝士下指令). The rich
