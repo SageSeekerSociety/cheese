@@ -2081,6 +2081,30 @@ def pr_base_branch(project_id: uuid.UUID) -> str:
     return _base_branch(ensure_repo(project_id))
 
 
+def has_undelivered_commits(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
+    """Does this topic's branch hold anything the base branch does not?
+
+    This is the fact behind "can this room deliver again". A room outlives the
+    work done in it (#536), so it files a card, that card merges, and then work
+    continues — the next task's commits land on the same branch and are, right
+    then, undelivered. Answering from history instead ("has a card ever been
+    accepted?") freezes the room after its first delivery, which is the whole
+    of 一个 task 完成了可以再新开 task.
+
+    False also covers the branch that never existed: nothing to deliver is
+    nothing to deliver, and the caller's refusal reads the same either way.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_topic(topic_id)
+    base = _base_branch(repo)
+    if not _branch_exists(repo, branch) or not _branch_exists(repo, base):
+        return False
+    # Ahead-ness, not equality: the base moves under a long-lived room branch
+    # all the time, and a room that is merely behind main still has its own
+    # commits to deliver.
+    return not _is_ancestor(repo, branch, base)
+
+
 def topic_branch_exists(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     """Does this topic have a branch a PR could carry? Discussion-only topics
     never grow one — for them the PR path is NOT APPLICABLE (accept merges
