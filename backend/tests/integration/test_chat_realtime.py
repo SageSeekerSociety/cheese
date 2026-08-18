@@ -15,6 +15,8 @@ from app.domain.agent.service import (
     AgentService,
     AgentSessionInfo,
 )
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
@@ -92,7 +94,10 @@ async def test_first_turn_materializes_inherited_compute_before_running(
         topic = await TopicRepository(session).get(topic_id)
         assert topic is not None
         assert topic.compute_profile == "local-docker"
-        assert topic.session_id == "s-affinity"
+        resumes_by = await AgentSessionService(session).resume_token(
+            topic_id, CHEESE_HANDLE
+        )
+    assert resumes_by == "s-affinity"
 
 
 @pytest.mark.anyio
@@ -501,11 +506,11 @@ async def test_mid_stream_crash_saves_session_pointer(client, tmp_path, monkeypa
         ):
             pass
 
-    from app.domain.topic.repositories import TopicRepository
-
     async with factory() as session:
-        fresh = await TopicRepository(session).get(topic_id)
-    assert fresh is not None and fresh.session_id == "s-partial"
+        resumes_by = await AgentSessionService(session).resume_token(
+            topic_id, CHEESE_HANDLE
+        )
+    assert resumes_by == "s-partial"
 
 
 class _SlowLiveScreenProvider:
