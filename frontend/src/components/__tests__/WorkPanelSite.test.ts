@@ -45,6 +45,9 @@ vi.mock('../../api', async () => {
     getPreview: vi.fn().mockResolvedValue(null),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    // 规则 1: the tabs a topic offers follow what it actually holds. These suites
+    // are about the tabs' CONTENT, so they mount a topic that holds everything.
+    getTopicWorkSummary: vi.fn().mockResolvedValue({ changed_files: ['a.py'], has_run: true }),
   }
 })
 
@@ -87,7 +90,7 @@ function buttons(container: Element): HTMLButtonElement[] {
 }
 
 async function openTab(container: Element, label: string) {
-  const btn = buttons(container).find((b) => b.getAttribute('title') === label)
+  const btn = buttons(container).find((b) => b.getAttribute('title')?.startsWith(label))
   expect(btn, `找不到 ${label} tab`).toBeTruthy()
   await fireEvent.click(btn!)
   await flush()

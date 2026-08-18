@@ -10,6 +10,7 @@
 // (`reload`), which it does when 芝士 files a card or a `cheese` command changes
 // one mid-turn.
 import type { AcceptCard, PrChecks } from '@/cx_types'
+import type { CardPhase } from '@/lib/topicState'
 
 import { computed, onUnmounted, ref, watch } from 'vue'
 
@@ -28,10 +29,18 @@ import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ topicId: string; topicStatus: string }>()
+const emit = defineEmits<{
+  (e: 'phase', phase: CardPhase): void
+  /** 去验收: show me what I am being asked to accept. */
+  (e: 'review'): void
+}>()
 const store = useWorkspaceStore()
 const AUTHOR = myHandle()
 
 const acceptCards = ref<AcceptCard[]>([])
+// This topic's cards are in. Distinguishes 「没有卡」 from 「还没问过」 for anyone
+// reading the phase from outside.
+const loaded = ref(false)
 const acceptBusy = ref(false)
 const rejectNote = ref('')
 const showRejectInput = ref(false)
@@ -92,6 +101,7 @@ async function loadAcceptCard(silent = false) {
   // current cards on screen instead of blanking the box for a beat.
   if (!silent) {
     acceptCards.value = []
+    loaded.value = false
     showRejectInput.value = false
     rejectNote.value = ''
     showGateOutput.value = false
@@ -100,7 +110,10 @@ async function loadAcceptCard(silent = false) {
   if (!tid) return
   try {
     const payload = await getAcceptCards(tid)
-    if (props.topicId === tid) acceptCards.value = payload.data
+    if (props.topicId === tid) {
+      acceptCards.value = payload.data
+      loaded.value = true
+    }
   } catch {
     // Best-effort; the banner just stays hidden.
   }
@@ -260,6 +273,24 @@ watch(
   () => void loadAcceptCard(),
   { immediate: true }
 )
+
+// 决策在聊天，审查在面板: the card stays here — accepting is a social decision
+// and needs the conversation around it — but where the topic stands is not this
+// box's private business. The header states it and the panel opens on the tab it
+// calls for, so the one word travels up rather than the card list travelling out.
+//
+// It is reported only once the cards are actually in: before that, 「没有卡」 and
+// 「卡还没拉回来」 look identical from outside, and the panel would open on 文档
+// for a topic that was waiting to be reviewed.
+const phase = computed<CardPhase>(() => {
+  if (deliveringCard.value) return 'delivering'
+  if (gateCard.value) return 'gate'
+  if (pendingCard.value) return 'pending'
+  return null
+})
+watch([loaded, phase], () => {
+  if (loaded.value) emit('phase', phase.value)
+})
 
 defineExpose({ reload: loadAcceptCard })
 </script>
@@ -472,6 +503,17 @@ defineExpose({ reload: loadAcceptCard })
           </span>
         </div>
         <div class="d-flex align-center ga-2">
+          <!-- 决策在聊天，审查在面板: the box asks for a decision, and the thing
+               the decision is about is a diff in the panel next to it. Without
+               this the reviewer had to guess which tab held it. -->
+          <v-btn
+            variant="outlined"
+            class="btn-secondary"
+            prepend-icon="mdi-file-search-outline"
+            @click="emit('review')"
+          >
+            去验收
+          </v-btn>
           <v-btn
             color="success"
             variant="flat"

@@ -37,6 +37,7 @@ vi.mock('../CodeEditor.vue', () => ({
 const listFiles = vi.fn()
 const readFile = vi.fn()
 const writeFile = vi.fn()
+const getGitDiff = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -53,10 +54,13 @@ vi.mock('../../api', async () => {
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTerminal: vi.fn().mockResolvedValue({ available: false, backend: 'none' }),
     getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
+    getGitDiff: (...a: unknown[]) => getGitDiff(...a),
     getPreview: vi.fn().mockResolvedValue(null),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
+    // 规则 1: the tabs a topic offers follow what it actually holds. These suites
+    // are about the tabs' CONTENT, so they mount a topic that holds everything.
+    getTopicWorkSummary: vi.fn().mockResolvedValue({ changed_files: ['a.py'], has_run: true }),
   }
 })
 
@@ -93,14 +97,15 @@ function editor(container: Element): HTMLTextAreaElement | null {
   return container.querySelector('.stub-editor')
 }
 
-/** Select the 改动 tab, then its 文件 half. */
+/** Select the 改动 tab, then widen its tree to the whole worktree — these cases
+ * are about editing a file, including ones this topic never changed. */
 async function openFilesTool(container: Element) {
-  const tab = buttons(container).find((b) => b.getAttribute('title') === '改动')
+  const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
   expect(tab, '找不到 改动 tab').toBeTruthy()
   await fireEvent.click(tab!)
   await flush()
-  const seg = buttonByText(container, '文件')
-  expect(seg, '找不到 文件 分段').toBeTruthy()
+  const seg = buttonByText(container, '全部文件')
+  expect(seg, '找不到 全部文件 范围').toBeTruthy()
   await fireEvent.click(seg!)
   await flush()
 }
@@ -119,6 +124,7 @@ beforeAll(() => {
 describe('文件面板', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    getGitDiff.mockResolvedValue({ diff: '' })
     listFiles.mockResolvedValue({ data: [{ path: 'a.py', bytes: 10 }], total: 1 })
     readFile.mockResolvedValue(textFile('a.py', 'A 话题的内容\n'))
     writeFile.mockResolvedValue({ path: 'a.py', version: 'v2' })
@@ -244,5 +250,115 @@ describe('文件面板', () => {
     await fireEvent.click(overwrite!)
     await flush()
     expect(writeFile).toHaveBeenLastCalledWith('p1', 'a.py', '人改过的\n', 'topic-A', null)
+  })
+})
+
+// 两个半成品合成一个审查面：树上标着改了多少，点开看的是这个文件自己的 diff。
+// 以前想验收得先在整块裸 diff 里认出改了哪些文件，再去另一半的树里一个个翻出来。
+describe('改动 tab · 审查面', () => {
+  const DIFF = `diff --git a/a.py b/a.py
+index 111..222 100644
+--- a/a.py
++++ b/a.py
+@@ -1,2 +1,2 @@
+ keep
+-旧的
++新的
+diff --git a/docs/new.md b/docs/new.md
+new file mode 100644
+--- /dev/null
++++ b/docs/new.md
+@@ -0,0 +1 @@
++新文件
+`
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    getGitDiff.mockResolvedValue({ diff: DIFF })
+    listFiles.mockResolvedValue({
+      data: [
+        { path: 'a.py', bytes: 10 },
+        { path: 'docs/new.md', bytes: 5 },
+        { path: 'untouched.txt', bytes: 3 },
+      ],
+      total: 3,
+    })
+    readFile.mockResolvedValue(textFile('a.py', 'keep\n新的\n'))
+  })
+
+  async function openChanges(container: Element) {
+    // The tab bar only knows what the topic holds after the summary lands.
+    await flush()
+    const tab = buttons(container).find((b) => b.getAttribute('title')?.startsWith('改动'))
+    expect(tab, '找不到 改动 tab').toBeTruthy()
+    await fireEvent.click(tab!)
+    await flush()
+  }
+
+  it('默认只列这个话题改过的文件，没动过的不在清单里', async () => {
+    const { container } = mountPanel('topic-A')
+    await openChanges(container)
+
+    const names = Array.from(container.querySelectorAll('.file-item__name')).map((e) => e.textContent?.trim())
+    expect(names).toContain('a.py')
+    expect(names).toContain('new.md')
+    expect(names).not.toContain('untouched.txt')
+  })
+
+  it('树上标着每个文件改了多少，新增的文件说「新增」', async () => {
+    const { container } = mountPanel('topic-A')
+    await openChanges(container)
+
+    const marks = Array.from(container.querySelectorAll('.file-mark')).map((e) => e.textContent?.trim())
+    expect(marks).toContain('+1')
+    expect(marks).toContain('−1')
+    expect(marks).toContain('新增')
+  })
+
+  it('点开一个文件看到的是它自己的 diff，不是整块', async () => {
+    const { container } = mountPanel('topic-A')
+    await openChanges(container)
+
+    const view = container.querySelector('.diff-view')
+    expect(view, '没有渲染逐文件 diff').toBeTruthy()
+    expect(view!.textContent).toContain('新的')
+    expect(view!.textContent).not.toContain('新文件')
+    // 增删各自着色——整块裸 <pre> 读不动，正是这个 tab 以前的样子。
+    expect(container.querySelectorAll('.diff-line--add').length).toBe(1)
+    expect(container.querySelectorAll('.diff-line--del').length).toBe(1)
+  })
+
+  it('要微调就切到编辑，保存那条路一个字没变', async () => {
+    writeFile.mockResolvedValue({ path: 'a.py', version: 'v2' })
+    const { container } = mountPanel('topic-A')
+    await openChanges(container)
+
+    await fireEvent.click(buttonByText(container, '编辑')!)
+    await flush()
+    const box = editor(container)
+    expect(box, '切到编辑没给出编辑器').toBeTruthy()
+
+    await fireEvent.update(box!, '改一行\n')
+    await fireEvent.click(buttonByText(container, '保存')!)
+    await flush()
+
+    expect(writeFile).toHaveBeenCalledWith('p1', 'a.py', '改一行\n', 'topic-A', 'v1')
+  })
+
+  it('没动过的文件没有两面可切，直接就是可编辑的全文', async () => {
+    const { container } = mountPanel('topic-A')
+    await openChanges(container)
+    await fireEvent.click(buttonByText(container, '全部文件')!)
+    await flush()
+
+    readFile.mockResolvedValue(textFile('untouched.txt', 'x\n'))
+    const row = Array.from(container.querySelectorAll('.file-item')).find((b) =>
+      b.textContent?.includes('untouched.txt')
+    )
+    await fireEvent.click(row!)
+    await flush()
+
+    expect(buttonByText(container, '差异'), '没改过的文件不该给「差异」这一面').toBeUndefined()
+    expect(editor(container)).toBeTruthy()
   })
 })

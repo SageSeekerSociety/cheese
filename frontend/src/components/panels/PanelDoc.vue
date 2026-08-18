@@ -3,10 +3,11 @@
 //
 // 难的部分不在这里：编辑/冲突状态机在 lib/docEditState.ts，markdown 保真在
 // lib/docMarkdown.ts，两者各有自己的单测。这个组件只把它们接到 refs 和 DOM 上。
-import type { ChainedCommands, Editor as CoreEditor } from '@tiptap/core'
+import type { Editor as CoreEditor } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { SuggestionProps } from '@tiptap/suggestion'
 import type { Block, Topic } from '../../cx_types'
+import type { SlashItem } from '../../lib/docSlashMenu'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { Extension } from '@tiptap/core'
@@ -14,7 +15,6 @@ import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { CellSelection } from '@tiptap/pm/tables'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-import { Suggestion } from '@tiptap/suggestion'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
 import { getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../../api'
@@ -33,9 +33,12 @@ import {
   pushStash,
 } from '../../lib/docEditState'
 import { compareRoundTrip, docExtensions, serializeDoc } from '../../lib/docMarkdown'
-import { relTime } from '../../lib/relTime'
+import { createSlashCommands } from '../../lib/docSlashMenu'
 import { myHandle } from '../../me'
 import CodeEditor from '../CodeEditor.vue'
+
+import DocComments from './doc/DocComments.vue'
+import DocSlashMenu from './doc/DocSlashMenu.vue'
 
 // The living doc is the core interface (spec §2.2): an AI-maintained markdown
 // document the user can also edit ("改文档即指令"). Stored as markdown, so the
@@ -61,9 +64,6 @@ const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'mention-click', handle: string): void
   (e: 'open-file', path: string): void
-  // 段落评论复用底部主输入框: a selection's 评论 CTA was clicked — the parent
-  // flips its composer into comment mode, carrying the anchor + quoted span.
-  (e: 'comment-intent', payload: { anchorId: string | null; quote: string }): void
 }>()
 
 // B1 Phase 2 (cross-view link, panel-level): when a chat action that changed the
@@ -334,13 +334,13 @@ async function pulse() {
     pulsing.value = false
   }, 1200)
 }
-// refreshComments: the parent composer posts comments in comment mode and asks
-// the panel to refresh its lists (drawer + in-doc 常驻评论区).
+// The comment input lives here now, so the reload after posting is a local
+// call — nobody outside asks for it any more.
 async function refreshComments() {
   const tid = props.topic?.id
   if (tid) await loadComments(tid).catch(() => {})
 }
-defineExpose({ pulse, highlightTurn, refreshComments })
+defineExpose({ pulse, highlightTurn })
 
 const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 
@@ -349,18 +349,6 @@ const projectId = computed<string | null>(() => props.topic?.project_id ?? null)
 // flashed; comments without an anchor are page-level.
 const comments = ref<Block[]>([])
 const anchorNodes = ref<Block[]>([])
-
-// A short label for a doc node, used as the anchor-chip fallback when a comment
-// has no quoted span. The node's own content is either AI- or human-authored
-// text; we only ever truncate it for display (never to derive semantics).
-function nodeLabel(content: string): string {
-  const t = content.replace(/^#+\s*/, '').trim()
-  return t.length > 22 ? t.slice(0, 22) + '…' : t || '(空段落)'
-}
-// The paragraph a comment points at (or null for a whole-doc comment).
-function commentAnchor(c: Block): Block | null {
-  return c.reply_to ? anchorNodes.value.find((n) => n.id === c.reply_to) ?? null : null
-}
 
 async function loadComments(tid: string) {
   const [cs, ns] = await Promise.all([getComments(tid), getDocNodes(tid)])
@@ -387,11 +375,13 @@ async function loadComments(tid: string) {
   if (cmView) cmView.dispatch(cmView.state.tr.setMeta(commentMarkKey, true))
 }
 
-// 飞书 docs 风常驻评论区: ALL comments live at the bottom of the document —
-// anchored ones carry a quote chip that scrolls/flashes their paragraph;
-// page-level ones render plain. (评论归一: the old drawer tool is gone.)
-// 页级评论折叠态 (Feishu-style, collapsed head keeps the doc quiet).
-const commentsFolded = ref(false)
+// 评论区自己是一个组件 (doc/DocComments.vue)：列表、折叠、写评论的输入框都在里面。
+// 留在这里的只有**拉取**，因为同一次请求还要喂编辑器里的评论下划线装饰 —— 拆开会
+// 变成两次请求、两份可能不一致的真相。
+const commentsRef = ref<{
+  open: (t: { anchorId: string | null; quote: string }) => void
+  locate: (commentId: string) => void
+} | null>(null)
 
 const AUTHOR = myHandle()
 
@@ -570,7 +560,7 @@ function onDocClick(e: MouseEvent) {
   // Comment underline → scroll to its card at the doc bottom.
   const ca = target?.closest('.comment-anchor') as HTMLElement | null
   if (ca?.dataset.comment) {
-    scrollToCommentCard(ca.dataset.comment)
+    commentsRef.value?.locate(ca.dataset.comment)
     return
   }
   // Links: in READ mode the rendered <a target=_blank> navigates natively; in
@@ -706,18 +696,6 @@ async function copyCodeBlock() {
   }
 }
 
-// An underlined quote scrolls to its comment card at the doc bottom and
-// pulses it (the reverse jump — card→paragraph — already exists via the chip).
-function scrollToCommentCard(commentId: string) {
-  commentsFolded.value = false
-  void nextTick(() => {
-    const card = document.querySelector(`[data-comment-card="${commentId}"]`)
-    card?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    card?.classList.add('comment-card--pulse')
-    window.setTimeout(() => card?.classList.remove('comment-card--pulse'), 1600)
-  })
-}
-
 // A <&path> chip opens that file in the 改动 tab's editor. The doc tab does not
 // own the file browser, so it asks: WorkPanel switches tabs and calls in.
 
@@ -748,127 +726,9 @@ if (import.meta.env.DEV) {
   }
 }
 
-// ---- Notion-style slash menu. Typing "/" at the start of a block (an empty
-// paragraph or the head of a non-empty one) opens a floating block-type menu;
-// picking an item converts the block IN PLACE (turn-into), keeping its text.
-// Built on @tiptap/suggestion: the "/" is OUR structured trigger token — the
-// plugin matches it positionally, never parses natural language (军规 4).
-// Lives here (not docMarkdown.ts) because it is pure editor UI — Vue menu
-// state, v-icon items, wrap-relative positioning — and it adds NO nodes or
-// marks, so the shared round-trip schema is untouched.
-interface SlashItem {
-  key: string
-  label: string
-  icon: string
-  hint: string
-  /** Filter keywords: english names + pinyin (full + initials). */
-  keywords: string[]
-  /** Applied AFTER the "/query" token is deleted; must keep block text. */
-  run: (chain: ChainedCommands) => ChainedCommands
-}
-
-// clearNodes() first: it lifts list items / quotes and normalizes the current
-// block back to a paragraph, so every conversion starts from the same shape —
-// that's what makes 标题↔正文↔列表↔引用 all interconvertible. Text survives;
-// 代码块 takes the whole block's text as its code content.
-const SLASH_ITEMS: SlashItem[] = [
-  {
-    key: 'text',
-    label: '正文',
-    icon: 'mdi-format-paragraph',
-    hint: 'text',
-    keywords: ['text', 'paragraph', 'p', 'zw', 'zhengwen'],
-    run: (c) => c.clearNodes(),
-  },
-  {
-    key: 'h1',
-    label: '标题 1',
-    icon: 'mdi-format-header-1',
-    hint: 'h1',
-    keywords: ['h1', 'heading1', 'title', 'bt1', 'biaoti'],
-    run: (c) => c.clearNodes().setNode('heading', { level: 1 }),
-  },
-  {
-    key: 'h2',
-    label: '标题 2',
-    icon: 'mdi-format-header-2',
-    hint: 'h2',
-    keywords: ['h2', 'heading2', 'bt2', 'biaoti'],
-    run: (c) => c.clearNodes().setNode('heading', { level: 2 }),
-  },
-  {
-    key: 'h3',
-    label: '标题 3',
-    icon: 'mdi-format-header-3',
-    hint: 'h3',
-    keywords: ['h3', 'heading3', 'bt3', 'biaoti'],
-    run: (c) => c.clearNodes().setNode('heading', { level: 3 }),
-  },
-  {
-    key: 'bullet',
-    label: '无序列表',
-    icon: 'mdi-format-list-bulleted',
-    hint: 'list',
-    keywords: ['ul', 'list', 'bullet', 'wxlb', 'liebiao'],
-    run: (c) => c.clearNodes().toggleBulletList(),
-  },
-  {
-    key: 'ordered',
-    label: '有序列表',
-    icon: 'mdi-format-list-numbered',
-    hint: '1.',
-    keywords: ['ol', 'list', 'ordered', 'number', 'yxlb', 'liebiao'],
-    run: (c) => c.clearNodes().toggleOrderedList(),
-  },
-  {
-    key: 'task',
-    label: '任务列表',
-    icon: 'mdi-format-list-checks',
-    hint: 'todo',
-    keywords: ['todo', 'task', 'checkbox', 'rwlb', 'renwu'],
-    run: (c) => c.clearNodes().toggleTaskList(),
-  },
-  {
-    key: 'code',
-    label: '代码块',
-    icon: 'mdi-code-tags',
-    hint: 'code',
-    keywords: ['code', 'codeblock', 'pre', 'dmk', 'daima'],
-    run: (c) => c.clearNodes().setNode('codeBlock'),
-  },
-  {
-    key: 'quote',
-    label: '引用',
-    icon: 'mdi-format-quote-close',
-    hint: 'quote',
-    keywords: ['quote', 'blockquote', 'yy', 'yinyong'],
-    run: (c) => c.clearNodes().toggleBlockquote(),
-  },
-  {
-    key: 'table',
-    label: '表格',
-    icon: 'mdi-table',
-    hint: 'table',
-    keywords: ['table', 'bg', 'biaoge'],
-    run: (c) => c.insertTable({ rows: 2, cols: 3, withHeaderRow: true }),
-  },
-  {
-    key: 'hr',
-    label: '分割线',
-    icon: 'mdi-minus',
-    hint: '---',
-    keywords: ['hr', 'divider', 'line', 'fgx', 'fengexian'],
-    run: (c) => c.setHorizontalRule(),
-  },
-]
-
-function filterSlashItems(query: string): SlashItem[] {
-  const q = query.toLowerCase().trim()
-  if (!q) return SLASH_ITEMS
-  return SLASH_ITEMS.filter((it) => it.label.includes(q) || it.keywords.some((k) => k.includes(q)))
-}
-
-const slashPluginKey = new PluginKey('cheeseSlashMenu')
+// ---- Slash 菜单的接线。菜单本身（块类型表 + 筛选 + tiptap 扩展）住在
+// lib/docSlashMenu.ts，浮层住在 doc/DocSlashMenu.vue；这里只剩「它现在开在哪、
+// 停在第几行」，以及 ＋ 手柄那条会自己收尾的路径。
 interface SlashMenuState {
   items: SlashItem[]
   index: number
@@ -876,7 +736,6 @@ interface SlashMenuState {
   left: number
 }
 const slashMenu = ref<SlashMenuState | null>(null)
-const slashMenuEl = ref<HTMLElement | null>(null)
 // Latest suggestion props — command() routes through the plugin so the
 // "/query" range is deleted consistently for keyboard and mouse picks.
 let slashProps: SuggestionProps<SlashItem, SlashItem> | null = null
@@ -915,12 +774,6 @@ function showSlashMenu(p: SuggestionProps<SlashItem, SlashItem>) {
   slashMenu.value = { items: p.items, index: 0, top: pos.top, left: pos.left }
 }
 
-function scrollActiveSlashItem() {
-  void nextTick(() => {
-    slashMenuEl.value?.querySelector('.doc-slash__item--active')?.scrollIntoView({ block: 'nearest' })
-  })
-}
-
 function runSlashItem(item: SlashItem) {
   slashProps?.command(item)
 }
@@ -931,7 +784,6 @@ function onSlashKeyDown({ event }: { event: KeyboardEvent }): boolean {
   if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
     const delta = event.key === 'ArrowDown' ? 1 : -1
     m.index = (m.index + delta + m.items.length) % m.items.length
-    scrollActiveSlashItem()
     return true
   }
   if (event.key === 'Enter') {
@@ -959,50 +811,20 @@ function onSlashExit(p: SuggestionProps<SlashItem, SlashItem>) {
   }
 }
 
-const SlashCommands = Extension.create({
-  name: 'cheeseSlashCommands',
-  addProseMirrorPlugins() {
-    return [
-      Suggestion<SlashItem, SlashItem>({
-        editor: this.editor,
-        pluginKey: slashPluginKey,
-        char: '/',
-        // 空段落或行首: the trigger only arms at the head of a text block —
-        // mid-sentence "/" (dates, paths) never opens the menu.
-        startOfLine: true,
-        allowedPrefixes: null,
-        items: ({ query }) => filterSlashItems(query),
-        allow: ({ state, range }) => {
-          // Never inside code blocks ("/" is code) or table cells (block-type
-          // conversions there would produce markdown a GFM table can't hold —
-          // the round-trip guard would flag the doc as lossy).
-          const $from = state.doc.resolve(range.from)
-          for (let d = $from.depth; d > 0; d--) {
-            const name = $from.node(d).type.name
-            if (name === 'codeBlock' || name === 'tableCell' || name === 'tableHeader') {
-              return false
-            }
-          }
-          return true
-        },
-        command: ({ editor: ed, range, props: item }) => {
-          // One chain = one undo step: drop the "/query" token, then convert.
-          item.run(ed.chain().focus().deleteRange(range)).run()
-        },
-        render: () => ({
-          onStart: showSlashMenu,
-          onUpdate: showSlashMenu,
-          onExit: onSlashExit,
-          onKeyDown: onSlashKeyDown,
-        }),
-      }),
-    ]
-  },
-})
-
 const editor = useEditor({
   content: '',
-  extensions: [...docExtensions({ resolveImageSrc }), TokenChips, LiveRefBadges, CommentMarks, SlashCommands],
+  extensions: [
+    ...docExtensions({ resolveImageSrc }),
+    TokenChips,
+    LiveRefBadges,
+    CommentMarks,
+    createSlashCommands({
+      onStart: showSlashMenu,
+      onUpdate: showSlashMenu,
+      onExit: onSlashExit,
+      onKeyDown: onSlashKeyDown,
+    }),
+  ],
   editable: editable.value,
   editorProps: {
     attributes: { class: 'doc-prose' },
@@ -1102,9 +924,7 @@ async function commentOnSelection() {
   const anchor =
     cta.nodeIndex >= nodes.length || nodes.length !== contentBlocks().length ? null : nodes[cta.nodeIndex].id
   commentCta.value = null
-  // 复用底部主输入框: hand the anchor + quote to the parent composer, which
-  // flips into comment mode (quote chip + Esc/✕ to exit).
-  emit('comment-intent', { anchorId: anchor, quote: cta.quote })
+  commentsRef.value?.open({ anchorId: anchor, quote: cta.quote })
 }
 
 // Guard: when we programmatically setContent from a server reload we don't want
@@ -1585,27 +1405,15 @@ onBeforeUnmount(() => {
                  clientRect), wrap-relative like the other overlays. Keyboard
                  (↑↓/Enter/Esc) is handled in the suggestion plugin; the mouse
                  path routes through the same command(). -->
-              <div
+              <DocSlashMenu
                 v-if="slashMenu"
-                ref="slashMenuEl"
-                class="doc-slash__menu"
-                :style="{ top: `${slashMenu.top}px`, left: `${slashMenu.left}px` }"
-              >
-                <button
-                  v-for="(it, i) in slashMenu.items"
-                  :key="it.key"
-                  type="button"
-                  class="doc-slash__item"
-                  :class="{ 'doc-slash__item--active': i === slashMenu.index }"
-                  @mousedown.prevent
-                  @mouseenter="slashMenu.index = i"
-                  @click="runSlashItem(it)"
-                >
-                  <v-icon size="15" class="doc-slash__icon">{{ it.icon }}</v-icon>
-                  <span class="doc-slash__label">{{ it.label }}</span>
-                  <span class="doc-slash__hint">{{ it.hint }}</span>
-                </button>
-              </div>
+                :items="slashMenu.items"
+                :index="slashMenu.index"
+                :top="slashMenu.top"
+                :left="slashMenu.left"
+                @pick="runSlashItem"
+                @hover="slashMenu.index = $event"
+              />
               <!-- Code-block hover toolbar: ONE right-anchored flex bar
                  ([language ∨][copy]) growing leftward — the two controls can
                  no longer overlap however long the language name gets. -->
@@ -1675,68 +1483,17 @@ onBeforeUnmount(() => {
               </DragHandle>
             </div>
 
-            <!-- 飞书 docs 风常驻评论区: ALL comments live at the bottom of the
-               document (评论归一 — the drawer tool is gone). Anchored comments
-               carry a quote chip that scrolls + flashes their paragraph;
-               page-level comments render plain. -->
-            <div class="doc-comments">
-              <!-- Collapsible head; ONE 写评论 action that reuses the main
-                 composer in comment mode — the doc never grows its own input. -->
-              <div class="doc-comments__head">
-                <button
-                  type="button"
-                  class="doc-comments__fold"
-                  :title="commentsFolded ? '展开评论' : '收起评论'"
-                  @click="commentsFolded = !commentsFolded"
-                >
-                  <v-icon size="15" class="c-faint">
-                    {{ commentsFolded ? 'mdi-chevron-right' : 'mdi-chevron-down' }}
-                  </v-icon>
-                  <v-icon size="15" class="c-faint">mdi-comment-text-outline</v-icon>
-                  评论
-                  <span v-if="comments.length" class="doc-comments__count">
-                    {{ comments.length }}
-                  </span>
-                </button>
-                <v-spacer />
-                <v-btn
-                  icon="mdi-plus"
-                  size="x-small"
-                  variant="tonal"
-                  color="primary"
-                  title="写评论"
-                  @click="emit('comment-intent', { anchorId: null, quote: '' })"
-                />
-              </div>
-              <template v-if="!commentsFolded">
-                <div v-for="c in comments" :key="c.id" class="doc-comments__item" :data-comment-card="c.id">
-                  <span class="doc-comments__avatar">
-                    {{ (c.author || '?').slice(0, 1).toUpperCase() }}
-                  </span>
-                  <div class="doc-comments__main">
-                    <div class="doc-comments__meta">
-                      <span class="doc-comments__author">{{ c.author }}</span>
-                      <span class="t-meta">{{ relTime(c.created_at) }}</span>
-                    </div>
-                    <!-- Anchored comment: quoted-span chip → scroll & flash its
-                       paragraph. A dead anchor — the node id no longer resolves,
-                       or the node row was deleted and the FK nulled reply_to
-                       (leaving only the quote) — says so instead of a dead chip. -->
-                    <button
-                      v-if="c.reply_to && commentAnchor(c)"
-                      type="button"
-                      class="doc-comments__chip"
-                      title="定位到该段"
-                      @click="highlightNode(c.reply_to!)"
-                    >
-                      {{ c.anchor_quote || nodeLabel(commentAnchor(c)!.content) }}
-                    </button>
-                    <div v-else-if="c.reply_to || c.anchor_quote" class="doc-comments__stale">原段落已改动</div>
-                    <div class="doc-comments__text">{{ c.content }}</div>
-                  </div>
-                </div>
-              </template>
-            </div>
+            <!-- 飞书 docs 风常驻评论区：所有评论都在文档底部，锚在某一段的带引用 chip。
+                 写评论的输入框也在里面（规则 5：批注归批注，聊天归聊天）；拉取仍在本组件，
+                 因为同一次请求还要喂编辑器里的评论下划线。 -->
+            <DocComments
+              ref="commentsRef"
+              :topic-id="topic?.id ?? null"
+              :comments="comments"
+              :anchor-nodes="anchorNodes"
+              @locate-node="highlightNode"
+              @posted="refreshComments"
+            />
           </div>
         </div>
       </div>
@@ -2059,218 +1816,6 @@ onBeforeUnmount(() => {
 }
 .doc-editor :deep(.comment-anchor:hover) {
   background: rgba(var(--v-theme-primary), 0.08);
-}
-.comment-card--pulse {
-  animation: comment-pulse 1.5s ease;
-}
-@keyframes comment-pulse {
-  0% {
-    background: rgba(var(--v-theme-primary), 0.16);
-  }
-  100% {
-    background: transparent;
-  }
-}
-
-.doc-error-toast {
-  position: absolute;
-  left: 50%;
-  bottom: 18px;
-  transform: translateX(-50%);
-  z-index: 30;
-  max-width: min(560px, calc(100% - 32px));
-  overflow-wrap: anywhere;
-  box-shadow: var(--shadow-2);
-}
-
-/* A2: in-place live-ref badge — a subtopic spawned from this paragraph. It's a
-   ProseMirror widget decoration rendered IN the document flow, right after the
-   paragraph's last character — no overlay, so it can never block the caret.
-   :deep because the widget span is created imperatively by the extension. */
-.doc-editor :deep(.doc-liveref) {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  vertical-align: baseline;
-  margin-left: 8px;
-  max-width: 240px;
-  padding: 1px 9px;
-  border-radius: var(--radius-lg);
-  font-size: 0.72rem;
-  line-height: 1.6;
-  white-space: nowrap;
-  color: rgb(var(--v-theme-primary));
-  background: color-mix(in srgb, rgb(var(--v-theme-primary)) 5%, var(--surface));
-  border: 1px solid rgba(var(--v-theme-primary), 0.3);
-  box-shadow: var(--shadow-1);
-  cursor: pointer;
-  user-select: none;
-  transition:
-    background 0.15s,
-    box-shadow 0.15s;
-}
-.doc-editor :deep(.doc-liveref:hover) {
-  background: rgba(var(--v-theme-primary), 0.1);
-  box-shadow: var(--shadow-2);
-}
-.doc-editor :deep(.doc-liveref__icon) {
-  flex: 0 0 auto;
-  font-size: 13px;
-  line-height: 1;
-}
-.doc-editor :deep(.doc-liveref__label) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.doc-editor :deep(.doc-liveref__dot) {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: var(--warn); /* 进行中 */
-}
-.doc-editor :deep(.doc-liveref__dot.is-archived),
-.doc-editor :deep(.doc-liveref__dot.is-completed) {
-  background: var(--ok); /* 已完成 */
-}
-.doc-editor :deep(.doc-liveref__status) {
-  color: var(--muted);
-  font-size: 0.66rem;
-}
-
-/* 飞书 docs 风常驻评论区 at the bottom of the document column. */
-.doc-comments {
-  max-width: 720px;
-  margin: 40px auto 0;
-  padding-top: 14px;
-  border-top: 1px solid var(--line-2);
-}
-.doc-comments__head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--muted);
-  margin-bottom: 12px;
-}
-.doc-comments__count {
-  font-size: 11px;
-  font-weight: 600;
-  padding: 0 6px;
-  border-radius: 8px;
-  color: var(--muted);
-  background: var(--fill);
-}
-.doc-comments__item {
-  display: flex;
-  gap: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  margin-bottom: 8px;
-}
-.doc-comments__avatar {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  font-size: 0.7rem;
-  font-weight: 700;
-  /* 搬迁保留原样。这一对字面色其实站不住脚 —— 它引用的是 avatarColor() 那条
-     豁免（算出来的定色底 + 定色墨），但这个 #8a94a3 不是算出来的，就是一个字面
-     灰。同一处缺陷在 TopicView 的 .mention-avatar 上已经按 var(--surface) /
-     var(--muted) 修过（顺带把对比度从 2.9:1 提到 5.0:1）。这一轮是纯搬迁，不夹带
-     修改；这两行留给「现场 + 预览打磨」那张卡。 */
-  /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
-  color: #fff;
-  /* stylelint-disable-next-line color-no-hex -- 见上，搬迁保留，已记入报告 */
-  background: #8a94a3;
-}
-.doc-comments__main {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.doc-comments__meta {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 1px;
-}
-.doc-comments__author {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--ink);
-}
-.doc-comments__text {
-  font-size: 14px;
-  line-height: 1.6;
-  color: var(--text);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-/* Anchored comment's quote chip: the message-quote visual language (amber left
-   bar over a faint amber ground). Click → scroll + flash the paragraph. */
-.doc-comments__chip {
-  display: block;
-  max-width: 100%;
-  text-align: left;
-  border: none;
-  border-left: 2px solid var(--accent);
-  background: rgba(var(--v-theme-primary), 0.06);
-  border-top-right-radius: var(--radius-sm);
-  border-bottom-right-radius: var(--radius-sm);
-  padding: 3px 8px;
-  margin: 2px 0 4px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--muted);
-  cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: background 0.15s;
-}
-.doc-comments__chip:hover {
-  background: rgba(var(--v-theme-primary), 0.13);
-}
-/* The anchor node no longer exists — the paragraph was edited away. */
-.doc-comments__stale {
-  font-size: 12px;
-  color: var(--faint);
-  margin: 2px 0 4px;
-}
-.doc-comments__composer {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-.doc-comments__input {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  background: var(--fill);
-  font-size: 13.5px;
-  color: var(--text);
-  outline: none;
-  transition:
-    border-color 0.15s,
-    background 0.15s;
-}
-.doc-comments__input:focus {
-  border-color: rgba(var(--v-theme-primary), 0.5);
-  background: var(--surface);
-}
-.doc-comments__input::placeholder {
-  color: var(--faint);
 }
 .doc-handle__grip {
   cursor: grab;
@@ -2681,49 +2226,6 @@ onBeforeUnmount(() => {
 /* Notion-style slash menu — same visual language as .doc-codelang__menu:
    surface ground, hairline border, radius 8, soft shadow; the active item
    (keyboard or hover) sits on --fill. */
-.doc-slash__menu {
-  position: absolute;
-  z-index: 7;
-  display: flex;
-  flex-direction: column;
-  min-width: 196px;
-  max-height: 300px;
-  overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: 8px;
-  box-shadow: var(--shadow-2);
-  padding: 4px;
-}
-.doc-slash__item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  background: none;
-  text-align: left;
-  font-size: 13px;
-  color: var(--ink);
-  padding: 6px 9px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.doc-slash__item--active {
-  background: var(--fill);
-}
-.doc-slash__icon {
-  color: var(--muted);
-  flex: 0 0 auto;
-}
-.doc-slash__label {
-  flex: 1 1 auto;
-}
-.doc-slash__hint {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--faint);
-}
 
 /* Code-block copy button: the chat hover-action language — surface ground,
    hairline border, muted icon, only present while hovering the block. */

@@ -1075,6 +1075,28 @@ def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     return _git(repo, "diff", f"{base}...{branch}")
 
 
+def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
+    """Paths a topic's branch changes relative to the base — the same range
+    :func:`topic_diff` renders, named only.
+
+    It exists so the panel can answer "is there anything to review, and how
+    much" WITHOUT fetching the diff. The 改动 tab has to be right while it is
+    closed (whether it is offered at all, and the count on it), and pulling a
+    whole diff on every turn boundary to arrive at one integer is the shape that
+    got the 资源 drawer's 20-second poll deleted.
+
+    Empty when the branch doesn't exist yet, matching :func:`topic_diff`: a
+    topic that has never written anything changes nothing.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_topic(topic_id)
+    if not _branch_exists(repo, branch):
+        return []
+    base = _base_branch(repo)
+    out = _git(repo, "diff", "--name-only", f"{base}...{branch}")
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
 def topic_added_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     """Paths a topic's branch ADDS relative to the base — not modifies.
 

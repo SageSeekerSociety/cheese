@@ -74,9 +74,11 @@ const props = withDefaults(
     // @芝士 default for new messages. Off for human-to-human (工作台), on for
     // the 1:1 private chat where 芝士 is the only counterpart.
     defaultSummon?: boolean
-    // Render a self-contained composer at the bottom (used when ChatPanel is
-    // dropped in standalone, e.g. the 私聊 1:1 chat in the main area). For work
-    // topics TopicView keeps its own spanning composer and leaves this off.
+    // Render the composer at the bottom of THIS column. Every caller wants it —
+    // 工作台 used to span its own copy across the chat and the work panel, which
+    // read as addressing the whole topic while 99% of what it sent was a chat
+    // message only this column shows. Still a prop, because the composer is
+    // the last thing the root-topic embed would want if it ever loses its input.
     showComposer?: boolean
     // Show the GitHub-PR-style header (话题 = PR). Only real work topics are
     // PRs — the root topic (本体) and the 1:1 private chat are NOT, so they use
@@ -1379,6 +1381,10 @@ onBeforeUnmount(() => {
               @芝士
             </button>
             <v-spacer />
+            <!-- 话题自己的 chips (工作台: 本话题 / 已归档 / 算力选择). They belong
+                 to the topic, not to the act of typing, so the host supplies
+                 them rather than this component learning about compute pools. -->
+            <slot name="composer-chips" />
           </div>
           <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
           <div v-if="mentionMatches.length" class="mention-menu">
@@ -1428,7 +1434,7 @@ onBeforeUnmount(() => {
               hide-details
               density="comfortable"
               class="composer-input flex-grow-1"
-              placeholder="输入消息…"
+              :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
               title="Enter 发送，Shift+Enter 换行，可直接粘贴图片"
               :disabled="!connected"
               @keydown="onComposerKey"

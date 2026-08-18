@@ -31,6 +31,7 @@ import type {
   TopicComputeProfile,
   TopicMemberRow,
   TopicProgress,
+  TopicWorkSummary,
   UpstreamInfo,
   UpstreamSyncResult,
   UsageStats,
@@ -957,6 +958,14 @@ export function getGitLog(projectId: string, topicId?: string | null): Promise<L
 export function getGitDiff(projectId: string, topicId?: string | null): Promise<{ diff: string }> {
   const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
+}
+
+// 工作面板 asks this while its tabs are CLOSED: which of them have anything to
+// show, and what count belongs on 改动. Both are facts about tabs nobody is
+// looking at, so neither may cost what opening the tab costs.
+export function getTopicWorkSummary(projectId: string, topicId: string): Promise<TopicWorkSummary> {
+  const p = encodeURIComponent(projectId)
+  return request<TopicWorkSummary>(`/projects/${p}/topics/${encodeURIComponent(topicId)}/work-summary`)
 }
 
 // 文件: list workspace files; read one file's content.
