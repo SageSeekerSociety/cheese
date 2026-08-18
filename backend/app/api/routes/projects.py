@@ -61,7 +61,6 @@ from app.domain.project.services import ProjectService
 from app.domain.topic.models import Topic
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 from app.domain.workspace import upstream_conflict
 
@@ -371,6 +370,8 @@ async def _agent_memory_read_scopes(
     tail so that repointing memory at the agent does not read as amnesia in
     every room that had already learned something.
     """
+    if topic is None:
+        return []
     agent_scope = await _agent_memory_scope(db, project_id, topic)
     if agent_scope is None:
         return []

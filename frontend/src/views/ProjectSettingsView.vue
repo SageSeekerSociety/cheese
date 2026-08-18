@@ -2,7 +2,7 @@
 import type {
   ComputeProfiles,
   ExecProfiles,
-  ExpertRole,
+  AgentType,
   GithubConnection,
   OAuthConnectionInfo,
   SandboxImageInfo,
@@ -14,7 +14,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import {
   connectGithubRepo as apiConnectGithubRepo,
-  createRole,
+  createAgentType,
   deleteOAuthConnection,
   getExecutionProfiles,
   getGithubAccountAuthorizeUrl,
@@ -24,10 +24,11 @@ import {
   getSandboxImage,
   getUpstream,
   listOAuthConnections,
-  listRoles,
+  listAgentTypes,
+  listProjectAgents,
   setExecutionProfile,
   setModelProfile,
-  setProjectExpertRole,
+  setProjectAgentType,
   setSandboxImage,
   setUpstream,
   syncUpstream,
@@ -122,10 +123,12 @@ async function disconnectGithubAccount() {
   }
 }
 
-// 专家角色 (spec §8.2): which persona 芝士 loads for this project. The catalog
-// merges built-in library roles with custom ones; '' = generic 芝士.
-const roles = ref<ExpertRole[]>([])
-const roleCurrent = ref('')
+// Which type this project's 芝士 wears. The catalog merges preset types with
+// custom ones; '' = 芝士 with no specialty. The type sits on the AGENT, not on
+// the project — switching it re-skins the 芝士 that is already here and leaves
+// the memory it has accumulated exactly where it is.
+const agentTypes = ref<AgentType[]>([])
+const agentTypeCurrent = ref('')
 const savingRole = ref(false)
 // 新建角色 dialog: the Claude Code agents-file fields (frontmatter + body).
 const roleDialog = ref(false)
@@ -138,7 +141,7 @@ const roleFormError = ref<string | null>(null)
 
 const roleItems = computed(() => [
   { name: '', title: '不设置（通用芝士）', description: '' },
-  ...roles.value.map((r) => ({
+  ...agentTypes.value.map((r) => ({
     name: r.name,
     title: r.builtin ? r.title : `${r.title || r.name}（自定义）`,
     description: r.description,
@@ -149,8 +152,8 @@ async function pickRole(name: string | null) {
   const next = name ?? ''
   savingRole.value = true
   try {
-    const r = await setProjectExpertRole(props.projectId, next)
-    roleCurrent.value = r.current ?? ''
+    const agent = await setProjectAgentType(props.projectId, next)
+    agentTypeCurrent.value = agent.type_name ?? ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : '切换专家角色失败'
   } finally {
@@ -162,7 +165,7 @@ async function submitNewRole() {
   roleFormError.value = null
   creatingRole.value = true
   try {
-    const created = await createRole({
+    const created = await createAgentType({
       name: newRoleName.value.trim(),
       title: newRoleTitle.value.trim(),
       description: newRoleDescription.value.trim(),
@@ -170,7 +173,7 @@ async function submitNewRole() {
       created_by: myHandle(),
     })
     // A custom role shadows its built-in namesake — keep one entry per name.
-    roles.value = [...roles.value.filter((r) => r.name !== created.name), created]
+    agentTypes.value = [...agentTypes.value.filter((r) => r.name !== created.name), created]
     roleDialog.value = false
     newRoleName.value = ''
     newRoleTitle.value = ''
@@ -197,13 +200,14 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, modelP, envP, upP, rolesP, ghP] = await Promise.all([
+    const [proj, execP, modelP, envP, upP, typesP, agentsP, ghP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getModelProfiles(props.projectId),
       getSandboxImage(props.projectId),
       getUpstream(props.projectId),
-      listRoles(),
+      listAgentTypes(),
+      listProjectAgents(props.projectId),
       getGithubConnection(props.projectId),
     ])
     projectName.value = proj.name
@@ -212,8 +216,8 @@ async function load() {
     env.value = envP
     upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
-    roles.value = rolesP.data
-    roleCurrent.value = proj.expert_role ?? ''
+    agentTypes.value = typesP.data
+    agentTypeCurrent.value = agentsP.data.find((a) => a.is_default)?.type_name ?? ''
     githubConnection.value = ghP
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
@@ -411,7 +415,7 @@ watch(() => props.projectId, load)
           <div class="page-section-body">
             <div class="d-flex align-center" style="gap: 8px">
               <v-select
-                :model-value="roleCurrent"
+                :model-value="agentTypeCurrent"
                 :items="roleItems"
                 item-title="title"
                 item-value="name"

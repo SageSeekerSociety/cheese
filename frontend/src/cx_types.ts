@@ -8,24 +8,40 @@ export interface Project {
   summary?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
   root_topic_id?: string
-  // 专家角色 (spec §8.2): which persona 芝士 loads. Null = generic 芝士.
-  expert_role?: string | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
 }
 
-// 专家角色 (spec §8.2): one entry of the merged catalog — built-in roles come
-// from the file library (read-only), custom roles from the DB. The body is the
-// persona system prompt.
-export interface ExpertRole {
+// One entry of the merged agent-type catalog. Presets come from the file
+// library (read-only); custom types come from the DB and shadow a preset of the
+// same name. `body` is the system prompt; the rest is how the agent runs.
+export interface AgentType {
   name: string
   title: string
   description: string
   body: string
   builtin: boolean
-  space_id?: string | null
+  skills?: string[]
+  mcp_servers?: string[]
+  model?: string | null
+  effort?: string | null
+  harness?: string | null
+  space_id?: number | null
   created_by?: string | null
+}
+
+// One agent working inside one project — it owns what it has learned here.
+// `configured: false` is the 芝士 a project has before anyone picked one: it
+// resolves and it owns a memory pool, but there is no row to edit yet.
+export interface ProjectAgent {
+  id: string | null
+  project_id: string
+  handle: string
+  type_name: string | null
+  display_name: string
+  is_default: boolean
+  configured: boolean
 }
 
 export interface Topic {

@@ -49,12 +49,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.services import (
-    IMPLICIT_DEFAULT,
-    AgentInstanceService,
-    legacy_topic_pool,
-    memory_pool,
-)
 from app.domain.agent.service import (
     AgentDeliveryFailure,
     AgentEvent,
@@ -68,6 +62,12 @@ from app.domain.agent.service import (
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
 from app.domain.agent.stages import resolve_stage, stage_scenario
+from app.domain.agent_instance.services import (
+    IMPLICIT_DEFAULT,
+    AgentInstanceService,
+    legacy_topic_pool,
+    memory_pool,
+)
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import (
@@ -125,6 +125,11 @@ class _HookWorkState:
     is_private: bool
     private_owner: str | None
     acting_agent: str
+    # Attribution and memory part ways here, deliberately: `acting_agent` is
+    # this room's 分身 (who did it), while the pool belongs to the agent working
+    # the room (whose memory it is). Resolved at turn start and carried, because
+    # the hook path reaches turn end with no session left open to ask.
+    agent_pool: tuple[MemoryScope, str] | None
     user_text: str
     started_at: datetime
     assistant_count: int = 0
@@ -2024,7 +2029,7 @@ class ChatService:
                 project_id=state.project_id,
                 is_private=state.is_private,
                 private_owner=state.private_owner,
-                agent_handle=state.acting_agent,
+                agent_pool=state.agent_pool,
                 user_text=state.user_text,
                 assistant_text=result.text,
             )
@@ -3109,6 +3114,7 @@ class ChatService:
                 else IMPLICIT_DEFAULT
             )
             role = await agents.system_prompt(agent)
+            agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             roster = (
                 [] if is_private else await projects_repo.list_members(topic.project_id)
@@ -3366,6 +3372,7 @@ class ChatService:
                         is_private=is_private,
                         private_owner=private_owner,
                         acting_agent=acting_agent,
+                        agent_pool=agent_pool,
                         user_text=prompt_text,
                         started_at=datetime.now(UTC),
                         known_commits=known_commits,

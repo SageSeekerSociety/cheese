@@ -57,9 +57,7 @@ IMPLICIT_DEFAULT = ResolvedAgent(
 )
 
 
-def memory_pool(
-    project_id: uuid.UUID, agent: ResolvedAgent
-) -> tuple[MemoryScope, str]:
+def memory_pool(project_id: uuid.UUID, agent: ResolvedAgent) -> tuple[MemoryScope, str]:
     """The pool this agent's memory lives in, inside this project."""
     return MemoryScope.agent_project, agent_project_scope_id(project_id, agent.handle)
 
