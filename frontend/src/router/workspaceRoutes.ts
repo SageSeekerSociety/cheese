@@ -72,6 +72,13 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { title: '日历' },
     },
     {
+      name: 'project-agents',
+      path: 'agents',
+      component: () => import('@/views/ProjectAgentsView.vue'),
+      props: true,
+      meta: { title: 'AI 队友' },
+    },
+    {
       name: 'project-settings',
       path: 'settings',
       component: () => import('@/views/ProjectSettingsView.vue'),

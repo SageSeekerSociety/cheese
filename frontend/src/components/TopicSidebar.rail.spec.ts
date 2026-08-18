@@ -128,10 +128,10 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('全局 / 总览 / 日历 是三行与话题行同语法的列表行，不再是 pills', () => {
+  it('全局 / 总览 / 日历 / AI 队友 是与话题行同语法的列表行，不再是 pills', () => {
     const { container } = mount()
     expect(container.querySelector('.proj-pages')).toBeNull()
-    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '总览', '日历'])
+    expect(titlesIn(container, '.pinned-row')).toEqual(['全局', '总览', '日历', 'AI 队友'])
   })
 
   it('点项目名不打开任何房间——它开的是项目菜单', async () => {
