@@ -21,14 +21,7 @@ import {
   updateAgentType,
   updateProjectAgent,
 } from '../../api'
-import {
-  displayNameError,
-  fieldChoices,
-  fieldIsChoosable,
-  findType,
-  handleError,
-  unavailableFields as unavailableFieldList,
-} from '../../lib/projectAgents'
+import { displayNameError, fieldChoices, fieldIsChoosable, findType, handleError } from '../../lib/projectAgents'
 
 const props = defineProps<{
   modelValue: boolean
@@ -83,16 +76,10 @@ const typeOptions = computed(() => [
   ...allTypes.value.map((t) => ({ title: t.title || t.name, value: t.name })),
 ])
 
-// 哪些字段能设、哪些不能设，以及不能设的理由，全部来自后端那一份目录。这里
-// 不留第二份清单：一个字段接上运行链路（或者反过来）时，只改后端一处。
+// 能设什么由后端那份目录说了算，这里不留第二份清单。接不上运行链路的字段直接
+// 不渲染 —— 不摆一个填了不生效的框，也不摆一句「暂不可设置」的说明：两者都是
+// 在界面上给一个不存在的功能留位置。哪天它真接上了，改后端一处即可。
 const options = ref<AgentTypeOptions>({})
-const OPTION_LABELS: Record<string, string> = {
-  model: '模型',
-  effort: '思考深度',
-  harness: '运行方式',
-  skills: '技能',
-  mcp_servers: '外部工具',
-}
 
 function fieldChoosable(name: string): boolean {
   return fieldIsChoosable(options.value, name)
@@ -100,9 +87,6 @@ function fieldChoosable(name: string): boolean {
 function fieldItems(name: string): AgentFieldChoice[] {
   return fieldChoices(options.value, name)
 }
-
-// 目录没取到时不列任何「暂不可设置」——那会把一次请求失败说成产品限制。
-const unavailableFields = computed(() => unavailableFieldList(options.value, OPTION_LABELS))
 
 const modelHint = computed(() => {
   const fallback = fieldItems('model').find((c) => c.default)
@@ -367,12 +351,6 @@ async function save() {
               persistent-hint
               style="min-width: 220px; flex: 1 1 220px"
             />
-          </div>
-          <!-- 还没接上运行链路的字段：说清楚为什么不能设，而不是摆一个填了也不
-               生效的框。哪天它真接上了，改的是后端那份目录，这里自己就长出来。 -->
-          <div v-if="unavailableFields.length" class="unavailable-note">
-            <div class="t-meta c-muted mb-1">暂不可设置</div>
-            <div v-for="f in unavailableFields" :key="f.name" class="t-meta c-faint">{{ f.label }} —— {{ f.note }}</div>
           </div>
         </template>
       </v-card-text>

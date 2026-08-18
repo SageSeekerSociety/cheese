@@ -62,21 +62,6 @@ export function typeLabel(types: AgentType[], name: string | null | undefined): 
   return findType(types, name)?.title || name
 }
 
-// effort 的三档。后端不限定取值（只限长度），所以认不出来的原样显示，
-// 而不是吞掉一个我们没见过但确实生效了的设定。
-const EFFORT_LABELS: Record<string, string> = {
-  low: '快',
-  medium: '标准',
-  high: '深',
-  xhigh: '很深',
-  max: '最深',
-}
-
-export function effortLabel(effort: string | null | undefined): string {
-  if (!effort) return ''
-  return EFFORT_LABELS[effort] ?? effort
-}
-
 // handle 是记忆池的键，也会出现在 URL 里，所以取值受限：小写字母/数字开头，
 // 之后可跟 `.` `_` `-`，最长 64。和后端 `_HANDLE_RE` 同一套规则 —— 前端先拦一道，
 // 是为了让人当场看见哪里不对，而不是提交后收一个 422。
@@ -116,21 +101,4 @@ export function fieldChoices(options: Record<string, FieldOptionsLike>, name: st
   // 只有 choosable 的字段才交出选项。一个 unavailable 的字段哪天带着残留的
   // choices 回来，也不该被渲染成能选 —— state 是唯一的判据。
   return fieldIsChoosable(options, name) ? options[name]?.choices ?? [] : []
-}
-
-export interface UnavailableField {
-  name: string
-  label: string
-  note: string
-}
-
-// 不能设的字段 + 给人看的理由。目录为空（没取到）时返回空数组：一次请求失败
-// 不该被说成产品限制。
-export function unavailableFields(
-  options: Record<string, FieldOptionsLike>,
-  labels: Record<string, string>
-): UnavailableField[] {
-  return Object.entries(options)
-    .filter(([, o]) => o.state === 'unavailable')
-    .map(([name, o]) => ({ name, label: labels[name] ?? name, note: o.note }))
 }
