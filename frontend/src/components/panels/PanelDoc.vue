@@ -10,6 +10,7 @@ import type { Block, Topic } from '../../cx_types'
 import type { SlashItem } from '../../lib/docSlashMenu'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 import { Extension } from '@tiptap/core'
 import { DragHandle } from '@tiptap/extension-drag-handle-vue-3'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
@@ -384,6 +385,7 @@ const commentsRef = ref<{
 } | null>(null)
 
 const AUTHOR = myHandle()
+const { mdAndUp } = useDisplay()
 
 const editable = ref(true)
 const loading = ref(false)
@@ -1125,7 +1127,22 @@ function onBlur() {
   if (dirty.value && !(lossy.value && !sourceMode.value)) save()
 }
 
+// 手机上不提供源码模式：软键盘配 Monaco 不是能救的组合。而源码模式恰恰是
+// 「这份文档可视化编辑会丢格式」时唯一存得下去的那条路——escape hatch 不在，就不
+// 该让人先编辑一通再发现存不了。所以这种文档在手机上是只读的，并且明说去哪儿改。
+const editingBlocked = computed(() => !mdAndUp.value && lossy.value)
+watch(
+  editingBlocked,
+  (blocked) => {
+    if (!blocked) return
+    editable.value = false
+    editor.value?.setEditable(false, false)
+  },
+  { immediate: true }
+)
+
 function toggleEditable() {
+  if (editingBlocked.value) return
   editable.value = !editable.value
   // emitUpdate=false: tiptap v3's setEditable fires a synthetic 'update' by
   // default (no doc change!) — our onUpdate would mark the doc dirty and,
@@ -1317,12 +1334,21 @@ onBeforeUnmount(() => {
         </span>
         <span v-else-if="saveStatus === 'dirty'" class="t-meta me-2">编辑中…</span>
 
-        <v-btn size="small" variant="text" class="me-1 c-muted" :disabled="sourceMode" @click="toggleEditable">
+        <v-btn
+          v-if="!editingBlocked"
+          size="small"
+          variant="text"
+          class="me-1 c-muted"
+          :disabled="sourceMode"
+          @click="toggleEditable"
+        >
           {{ editable ? '只读' : '编辑' }}
         </v-btn>
         <!-- 源码: raw markdown in Monaco — the lossless escape hatch for any
-             syntax the visual editor can't fully represent (军规 1). -->
+             syntax the visual editor can't fully represent (军规 1)。手机上不提供，
+             见 editingBlocked。 -->
         <v-btn
+          v-if="mdAndUp"
           size="small"
           variant="text"
           :class="sourceMode ? 'tool-btn--active' : 'c-muted'"
@@ -1381,9 +1407,15 @@ onBeforeUnmount(() => {
             <div v-if="lossy" class="doc-lossy-banner">
               <v-icon size="16" class="doc-lossy-banner__icon">mdi-alert-outline</v-icon>
               <div class="doc-lossy-banner__text">
-                此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。自动保存已暂停，建议用源码模式编辑。
+                {{
+                  editingBlocked
+                    ? '此文档包含编辑器暂不完全支持的语法，改起来需要源码模式，手机上不提供。在电脑上打开可以编辑。'
+                    : '此文档包含编辑器暂不完全支持的语法，可视化编辑保存可能丢失格式。自动保存已暂停，建议用源码模式编辑。'
+                }}
               </div>
-              <button type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">源码模式</button>
+              <button v-if="!editingBlocked" type="button" class="doc-lossy-banner__btn" @click="enterSourceMode()">
+                源码模式
+              </button>
             </div>
             <div class="doc-editor-wrap" @click="onDocClick" @keydown="onDocKeydown" @mouseover="onDocMouseOver">
               <EditorContent v-if="editor" :editor="editor" class="doc-editor" />

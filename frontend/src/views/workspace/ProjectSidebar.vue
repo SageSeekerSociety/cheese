@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { myHandle } from '@/me'
@@ -15,7 +16,10 @@ import { useWorkspaceStore } from '@/stores/workspace'
 // reason a click's outcome was unpredictable.
 defineOptions({ name: 'ProjectSidebar' })
 
-const props = defineProps<{ projectId: string }>()
+// `page`: 手机上话题列表是页面栈的一层，占满内容区（由 WorkspaceEntry 挂起来）。
+// 不带这个 prop 的那份是常驻侧栏——桌面才有，所以手机上它整个不渲染。
+const props = defineProps<{ projectId: string; page?: boolean }>()
+const { mdAndUp } = useDisplay()
 const route = useRoute()
 const router = useRouter()
 const store = useWorkspaceStore()
@@ -35,8 +39,8 @@ function openDocs(kind: string) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind } })
 }
 
-async function onCreateTopic(title: string) {
-  const topic = await store.create(title)
+async function onCreateTopic(title: string, agentInstanceId?: string | null) {
+  const topic = await store.create(title, agentInstanceId)
   if (topic) openTopic(topic.id)
 }
 
@@ -57,6 +61,8 @@ async function onArchiveTopic(topicId: string) {
 
 <template>
   <TopicSidebar
+    v-if="page || mdAndUp"
+    :page="page"
     :width="store.railWidth"
     :projects="store.projects"
     :selected-project-id="store.projectId"

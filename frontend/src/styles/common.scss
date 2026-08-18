@@ -26,6 +26,16 @@ body,
   --app-page-header-rule: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
 }
 
+/* 手机上所有页头都是 56px —— 那是系统顶栏 (MobileAppBar) 的高度，而一个人在手机上
+ * 翻页时看到的是同一条横条在换内容。48 和 56 混着用，那条线每翻一页跳一次，而且
+ * 48px 的一行放不下拇指够得着的图标按钮。这里换的是**尺度**，不是布局——手机上
+ * 不成立的交互一律不渲染，不靠断点缩。 */
+@media (max-width: 959.98px) {
+  :root {
+    --app-page-header-height: 56px;
+  }
+}
+
 /* 侧栏顶栏 —— 侧边栏最上面那条（空间名 / 用户名 / “首页”）。
  *
  * 它以前也叫 .page-header，和 components/common/PageHeader.vue 撞名：同一个类名

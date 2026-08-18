@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import type { Project, ProjectMemberRow, Topic } from '../cx_types'
+import type { Project, ProjectAgent, ProjectMemberRow, Topic } from '../cx_types'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { listProjectAgents } from '../api'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -45,11 +46,13 @@ const props = defineProps<{
   // 私聊未读: {peerHandle: count}, `cheese` = the 芝士 DM. Separate from
   // unreadMap because DM rows are built from the roster and have no topic id.
   privateUnreadMap?: Record<string, number>
+  // 整页形态: 手机上话题列表是页面栈的一层，占满内容区，不是侧边抽屉。
+  page?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
-  (e: 'create-topic', title: string): void
+  (e: 'create-topic', title: string, agentInstanceId?: string | null): void
   (e: 'split-topic', payload: { topicId: string; title: string }): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
@@ -92,6 +95,7 @@ const route = useRoute()
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
+  { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return
@@ -100,9 +104,34 @@ function openProjectPage(name: string) {
 
 // New topic: don't ask the human for a title — create an untitled one and open
 // it; the title is derived from the first message (and 芝士 can refine it).
-function newTopic() {
-  emit('create-topic', '')
+//
+// 队友是另一回事，必须在这一刻选：换队友会丢掉话题的会话，所以事后再改改的是一
+// 段已经有人说过话的对话。菜单第一项就是默认那个，常用路径仍然是「点开、点第一
+// 项」两下，而且点之前就看得见这个房间要交给谁。
+function newTopic(agentInstanceId?: string | null) {
+  emit('create-topic', '', agentInstanceId)
 }
+
+// 这个项目有哪些队友，供上面那个菜单用。拿不到就退化成不带队友创建（跟项目默认
+// 走）—— 一个还没上线 agent 接口的环境不该连新建话题都点不动。
+const projectAgents = ref<ProjectAgent[]>([])
+async function loadProjectAgents(pid: string | null | undefined) {
+  if (!pid) {
+    projectAgents.value = []
+    return
+  }
+  try {
+    projectAgents.value = (await listProjectAgents(pid)).data
+  } catch {
+    projectAgents.value = []
+  }
+}
+watch(() => props.selectedProjectId, loadProjectAgents, { immediate: true })
+
+// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。
+const newTopicAgents = computed(() =>
+  [...projectAgents.value].sort((a, b) => Number(b.is_default) - Number(a.is_default))
+)
 
 // ----- Topic tree -----
 // A flattened tree node: a topic plus its nesting depth, so the template can
@@ -425,9 +454,15 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 </script>
 
 <template>
-  <SecondaryNavigation :width="width ?? 280" custom-class="topic-rail">
-    <!-- Drag handle on the right edge to resize the rail. -->
-    <div class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
+  <component
+    :is="page ? 'div' : SecondaryNavigation"
+    :width="page ? undefined : width ?? 280"
+    :custom-class="page ? undefined : 'topic-rail'"
+    :class="page ? 'topic-rail topic-rail--page' : undefined"
+  >
+    <!-- Drag handle on the right edge to resize the rail. 整页形态下没有可拖的
+         宽度——它占满内容区。 -->
+    <div v-if="!page" class="rail-resizer" title="拖动调整宽度" @mousedown="startResize" />
     <!-- 三段式 (C3): 头固定 / 中段唯一滚动 / 尾固定。私聊和它的未读徽标在
          话题列表滚到底时必须还在屏幕上。 -->
     <div class="d-flex flex-column fill-height">
@@ -521,7 +556,34 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 
           <div class="t-eyebrow side-subhead side-subhead--row">
             <span>话题</span>
-            <v-btn icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" @click="newTopic" />
+            <!-- 建话题时就把房间交给谁定下来。队友列表拿不到时（旧环境）退回
+                 一键直建，不让侧栏的主要动作被一个可选接口卡住。 -->
+            <v-menu v-if="projectAgents.length" location="bottom end">
+              <template #activator="{ props: menu }">
+                <v-btn v-bind="menu" icon="mdi-plus" size="x-small" variant="tonal" color="primary" title="新建话题" />
+              </template>
+              <v-list density="compact" min-width="220">
+                <v-list-subheader>交给哪个 AI 队友</v-list-subheader>
+                <v-list-item v-for="a in newTopicAgents" :key="a.id ?? a.handle" @click="newTopic(a.id)">
+                  <template #prepend>
+                    <v-icon size="small" icon="mdi-robot-outline" />
+                  </template>
+                  <v-list-item-title>{{ a.display_name }}</v-list-item-title>
+                  <template v-if="a.is_default" #append>
+                    <span class="t-meta c-muted">默认</span>
+                  </template>
+                </v-list-item>
+              </v-list>
+            </v-menu>
+            <v-btn
+              v-else
+              icon="mdi-plus"
+              size="x-small"
+              variant="tonal"
+              color="primary"
+              title="新建话题"
+              @click="newTopic()"
+            />
           </div>
 
           <div v-if="loadingTopics" class="px-4 py-2">
@@ -853,11 +915,17 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
       <!-- 新建项目 moved to the project rail's + (App.vue) — one affordance,
            Discord-style. The create-project emit stays for API compatibility. -->
     </div>
-  </SecondaryNavigation>
+  </component>
 </template>
 
 <style scoped>
 /* Right-edge resize handle (sits on top of the drawer's border). */
+/* 整页形态：占满内容区，不画抽屉那条右边线。 */
+.topic-rail--page {
+  width: 100%;
+  height: 100%;
+  background: var(--canvas);
+}
 .rail-resizer {
   position: absolute;
   top: 0;
@@ -933,7 +1001,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 }
 .rail-header__name {
   min-width: 0;
-  font-size: 14px;
+  /* 15/600 = .t-title，和话题头、手机顶栏同一号：这三条横条在屏幕上是接着的。 */
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
@@ -1299,6 +1368,18 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 .split-btn:hover {
   background: var(--fill);
   color: var(--accent);
+}
+/* 触摸屏没有 hover，:focus-within 又要先聚焦——这两条规则加起来，⋯ 菜单在手机上
+   根本摸不到。所以在没有 hover 能力的设备上它常驻。按输入方式判断，不按视口宽度：
+   带触摸屏的笔记本两样都对。 */
+@media (hover: none) {
+  .row-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .topic-row .unread-badge {
+    opacity: 1;
+  }
 }
 /* 菜单展开时那颗 ⋯ 必须留着：它是菜单的 activator，跟 hover 一起消失的话
    鼠标一离开行、菜单就没了根。 */

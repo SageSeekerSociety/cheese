@@ -20,6 +20,11 @@ provisioning configured), not for one that does not exist.
 from dataclasses import dataclass
 
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.device.supply import (
+    Visibility,
+    default_visibility,
+    has_runnable_transport,
+)
 
 # Compute provider names (match ComputeProvider.name in compute.py).
 COMPUTE_LOCAL = "local-docker"
@@ -185,12 +190,15 @@ MACHINE_VISIBILITY_NOTICE = "让它看到整台机器（能操作这台机器上
 def visibility_listings() -> list[PoolListing]:
     """The visibility 档 a room may run its self-hosted compute under (#282 §四).
 
-    ``isolated`` is the conservative DEFAULT (``default=True``) but its per-room
-    container transport is not built yet (#358 step 2), so it is honestly
-    ``available=False`` — same convention as an undeployed compute pool. ``host``
-    (whole machine) works today but is 申请制: ``default=False``, and its
-    description IS the #282 safety line, so whoever renders the picker or the room
-    badge reads the warning straight from the catalog."""
+    ``available`` says whether a 档 has a transport; ``default`` says which one a
+    topic gets when nobody picks. Both come from `device.supply`, so this catalogue
+    cannot tell someone their topic is boxed while the resolver binds it to the
+    whole machine — which is exactly what it used to do, `isolated` being declared
+    the default here while `resolve_pinned_device` wrote `host` unconditionally.
+
+    ``host``'s description IS the #282 safety line, so whoever renders the picker
+    or the room badge reads the warning straight from the catalogue."""
+    default = default_visibility()
     return [
         PoolListing(
             kind="visibility",
@@ -199,8 +207,8 @@ def visibility_listings() -> list[PoolListing]:
             tier="included",
             price="包含",
             description="每个房间一个容器，只看得到自己的工作树，房间之间互不串扰；即将上线。",
-            available=False,
-            default=True,
+            available=has_runnable_transport(Visibility.isolated),
+            default=default is Visibility.isolated,
         ),
         PoolListing(
             kind="visibility",
@@ -209,8 +217,8 @@ def visibility_listings() -> list[PoolListing]:
             tier="byo",
             price="自备",
             description=MACHINE_VISIBILITY_NOTICE,
-            available=True,
-            default=False,
+            available=has_runnable_transport(Visibility.host),
+            default=default is Visibility.host,
         ),
     ]
 

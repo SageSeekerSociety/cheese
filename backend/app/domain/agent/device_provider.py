@@ -47,7 +47,10 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MARKER,
 )
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Visibility, has_runnable_transport
+from app.domain.device.supply import (
+    default_visibility,
+    has_runnable_transport,
+)
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
@@ -145,10 +148,12 @@ async def resolve_pinned_device(
     # pin that the resolver can quietly change is the original drift bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
-        # Only the host transport exists today; isolated bindings become selectable
-        # when #358 step 2 supplies their per-room container transport.
+        # The same fact the market catalogue publishes as `default=True`, read from
+        # one place so the picker can never advertise a 档 the resolver does not
+        # bind. Today that resolves to `host`, because `isolated` has no transport;
+        # when #358 step 2 supplies one, this and the catalogue move together.
         await service.bind_topic_device(
-            topic_id, device.device_id, visibility=Visibility.host
+            topic_id, device.device_id, visibility=default_visibility()
         )
         return device.device_id
     return None

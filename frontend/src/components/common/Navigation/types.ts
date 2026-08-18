@@ -13,8 +13,6 @@ export type NavItem = {
   // A subtle "add" affordance (dashed square, mdi-plus) rather than a project tile.
   add?: boolean
   permanent?: boolean
-  visibleOnMobile?: boolean
-  visibleOnPC?: boolean
   // Discord-style ⌘N quick-switch number shown in the hover tooltip.
   shortcut?: number
 }

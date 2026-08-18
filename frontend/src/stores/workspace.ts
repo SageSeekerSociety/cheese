@@ -32,6 +32,7 @@ const LAYOUT_KEY = 'cheesex.layout'
 interface StoredLayout {
   railWidth?: number
   chatPct?: number
+  lastProjectId?: string
 }
 
 function loadLayout(): StoredLayout {
@@ -44,6 +45,12 @@ function loadLayout(): StoredLayout {
 }
 
 const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
+
+// 手机底栏「工作区」那一格要在冷启动时就知道该落到哪个项目，那时 store 里还没有
+// 打开过任何项目——所以这个值从存储里直接读，不经过 store 实例。
+export function lastOpenedProjectId(): string | null {
+  return loadLayout().lastProjectId ?? null
+}
 
 export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const projectId = ref<string | null>(null)
@@ -75,7 +82,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   const railWidth = ref(typeof stored.railWidth === 'number' ? stored.railWidth : 280)
   const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : 50)
   function persistLayout() {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ railWidth: railWidth.value, chatPct: chatPct.value }))
+    localStorage.setItem(
+      LAYOUT_KEY,
+      JSON.stringify({
+        railWidth: railWidth.value,
+        chatPct: chatPct.value,
+        lastProjectId: projectId.value ?? undefined,
+      })
+    )
   }
   function setRailWidth(w: number) {
     railWidth.value = clampNum(w, 190, 480)
@@ -139,6 +153,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       return
     }
     projectId.value = id
+    persistLayout()
     topics.value = []
     members.value = []
     unreadMap.value = {}
@@ -264,12 +279,15 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   // The three ways a topic is born. Each returns the new topic so the caller can
   // navigate to it — creating a topic without opening it is never what was meant.
-  async function create(title: string): Promise<Topic | null> {
+  // agentInstanceId 不传 = 跟着项目默认走。选队友必须发生在**创建这一刻**：话题
+  // 一建出来第一条消息就可能进去了，而换队友要丢掉会话 —— 事后再改，改的就是一
+  // 段已经由别人说过话的对话。
+  async function create(title: string, agentInstanceId?: string | null): Promise<Topic | null> {
     const pid = projectId.value
     if (!pid) return null
     try {
       // Untitled by default — the title is derived from the first message.
-      const topic = await createTopic(pid, title.trim() || '新话题')
+      const topic = await createTopic(pid, title.trim() || '新话题', undefined, agentInstanceId)
       topics.value.push(topic)
       return topic
     } catch (e) {

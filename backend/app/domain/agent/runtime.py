@@ -1278,7 +1278,12 @@ class AgentWorkRunner:
         reason: str = "从上一轮的断点继续",
         *,
         continuation_id: uuid.UUID | None = None,
-        chain: int = 0,
+        # 1, not 0: scheduling one IS the first automatic continuation, so a
+        # caller that does not count for itself still spends from the budget.
+        # There is no zeroth resume, and treating the sweep's remedy as one let
+        # it hand out a fresh set of retries after the chain had already given
+        # up — the platform taking its own handover back (#574).
+        chain: int = 1,
     ):
         """Wait, then run a system-nudged continuation of the saved session.
 

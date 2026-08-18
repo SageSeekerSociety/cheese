@@ -66,8 +66,20 @@ class Project(UuidPk, Timestamps, Base):
     external_task_id: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True, index=True
     )
-    # Active expert role name (spec §8.2).
-    expert_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The agent a new topic in this project gets, and the one project-wide work
+    # acts as. NULL = the implicit 芝士 (handle `cheese`, no type) — which is
+    # what every project had before agents were pickable, so nothing has to be
+    # backfilled for a project to resolve.
+    # use_alter: projects↔agent_instances is a circular FK; add this one via ALTER.
+    default_agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "agent_instances.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_projects_default_agent_instance_id",
+        ),
+        nullable=True,
+    )
     # 一页纸总结 (spec §7.3/F2): AI-maintained one-pager, 老师 30 秒读懂。
     summary: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Free-form policy: branch protection approvals, notify level, etc.

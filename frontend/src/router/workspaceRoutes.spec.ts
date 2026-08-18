@@ -38,6 +38,7 @@ describe('the project frame', () => {
     ['/docs/decisions', 'project-docs'],
     ['/overview', 'overview'],
     ['/calendar', 'calendar'],
+    ['/agents', 'project-agents'],
     ['/settings', 'project-settings'],
     ['/members/lisi', 'member'],
   ])('renders %s inside the frame, not beside it', (suffix, name) => {
@@ -85,5 +86,45 @@ describe('links that used to work', () => {
     await r.push(`/projects/${PROJECT}/${kind}`)
     expect(r.currentRoute.value.name).toBe('project-docs')
     expect(r.currentRoute.value.path).toBe(`/projects/${PROJECT}/docs/${kind}`)
+  })
+})
+
+// 手机上工作台是一条页面栈：工作区 → 话题列表 → 话题页。栈末端那一层要收起
+// 底栏（它不是一级目的地）并给出回哪儿去——两样都是路由上的数据，缺了不会编译
+// 失败，只会在手机上表现为"底栏压着对话框"或"进去就出不来"。
+describe('页面栈的末端', () => {
+  const leafOf = (path: string) => {
+    const matched = router().resolve(path).matched
+    return matched[matched.length - 1]
+  }
+
+  // 话题列表之外的每一层都是走进去的，所以都得能走回来。漏一条不会编译失败，
+  // 只会在手机上表现为"进去就出不来"，而且是新加一条路由时最容易漏的一件事。
+  it('列表之外的每一层都收起底栏，并说明回哪一层', () => {
+    const paths = [
+      `/projects/${PROJECT}/topics/t1`,
+      `/projects/${PROJECT}/dm/cheese`,
+      `/projects/${PROJECT}/docs/charter`,
+      `/projects/${PROJECT}/overview`,
+      `/projects/${PROJECT}/calendar`,
+      `/projects/${PROJECT}/settings`,
+      `/projects/${PROJECT}/members/alice`,
+    ]
+    for (const path of paths) {
+      const leaf = leafOf(path)
+      expect(leaf.meta.hideTabs, path).toBe(true)
+      expect(leaf.meta.backTo, path).toBe('workspace-project')
+    }
+  })
+
+  it('话题列表那一层自己是一级目的地，底栏留着', () => {
+    expect(leafOf(`/projects/${PROJECT}`).meta.hideTabs).toBeUndefined()
+  })
+
+  // 自带页头的那两层不要系统顶栏：两条横条写同一个标题，在手机上占掉一屏的 13%。
+  it('自带页头的层不再叠一条系统顶栏', () => {
+    expect(leafOf(`/projects/${PROJECT}`).meta.ownHeader).toBe(true)
+    expect(leafOf(`/projects/${PROJECT}/topics/t1`).meta.ownHeader).toBe(true)
+    expect(leafOf(`/projects/${PROJECT}/dm/cheese`).meta.ownHeader).toBeUndefined()
   })
 })

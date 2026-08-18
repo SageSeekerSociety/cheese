@@ -107,6 +107,11 @@ _BIGRAM_WEIGHT = 1.0
 _PHRASE_MAX = 8
 # Bounds the OR-clause a query can turn into.
 _MAX_TERMS = 24
+# A turn's context is not a question — it is a title plus a few messages plus a
+# doc excerpt, and cutting it to 24 keywords would keep only the longest CJK
+# phrases and throw away every identifier in it. Injection ranks in Python
+# (no OR-clause to bound), so it can afford a wider term set.
+INJECTION_MAX_TERMS = 96
 # Below this a match is a coincidence, not an answer — see `is_relevant`.
 _MIN_COVERAGE = 0.15
 
@@ -118,7 +123,7 @@ def _add(terms: dict[str, float], term: str, weight: float) -> None:
         terms[term] = weight
 
 
-def query_terms(query: str) -> list[tuple[str, float]]:
+def query_terms(query: str, *, max_terms: int = _MAX_TERMS) -> list[tuple[str, float]]:
     """Split ``query`` into weighted keywords, strongest first.
 
     Empty when the query carries no usable keyword (all punctuation, or nothing
@@ -140,7 +145,7 @@ def query_terms(query: str) -> list[tuple[str, float]]:
             if bigram not in _CJK_STOPWORDS:
                 _add(terms, bigram, _BIGRAM_WEIGHT)
     ranked = sorted(terms.items(), key=lambda kv: (-kv[1], kv[0]))
-    return ranked[:_MAX_TERMS]
+    return ranked[:max_terms]
 
 
 def match_content(terms: list[tuple[str, float]], content: str) -> tuple[float, float]:

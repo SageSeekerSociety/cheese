@@ -48,6 +48,9 @@ const props = withDefaults(
     // 话题此刻处在哪一段. Only used to pick which tab a topic OPENS on, and only
     // when the address named none — after that it is the reader's choice.
     phase?: TopicPhase
+    // 手机上对话不是左边那一栏，是这条 tab 栏的第一格——一屏放不下两栏，而这两
+    // 样东西本来就是平级的。开着它的时候 `chat` 插槽就是这一格的内容。
+    withChat?: boolean
   }>(),
   {
     worklog: () => [],
@@ -56,6 +59,7 @@ const props = withDefaults(
     topicList: () => [],
     tab: undefined,
     phase: undefined,
+    withChat: false,
   }
 )
 
@@ -65,19 +69,23 @@ const emit = defineEmits<{
   (e: 'update:tab', key: string): void
 }>()
 
-type TabKey = 'doc' | 'site' | 'changes' | 'preview'
+type TabKey = 'chat' | 'doc' | 'site' | 'changes' | 'preview'
 interface TabDef {
   key: TabKey
   label: string
   icon: string
 }
 const ALL_TABS: TabDef[] = [
+  { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
   { key: 'doc', label: '文档', icon: 'mdi-file-document-outline' },
   { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
   { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
   { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
 ]
-const active = ref<TabKey>('doc')
+// 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
+// 的），桌面上对话就在旁边那一栏，所以是文档。
+const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'doc'))
+const active = ref<TabKey>(defaultTab.value)
 
 /** The URL's answer, if it names a tab that exists. */
 function tabFromUrl(): TabKey | null {
@@ -109,7 +117,7 @@ const settled = ref(false)
 function tabForPhase(phase: TopicPhase): TabKey {
   if (phase === 'working') return 'site'
   if (phase === 'reviewing' || phase === 'delivering') return 'changes'
-  return 'doc'
+  return defaultTab.value
 }
 
 // Back / forward, or someone pasting a link into the open topic.
@@ -125,7 +133,7 @@ watch(
 // what the drawer effectively did with its state (openPath, expanded folders,
 // the transcript all survived a close/open). 文档 is mounted from the start
 // because it is the default tab and its editor is expensive to rebuild.
-const mounted = ref<Set<TabKey>>(new Set<TabKey>(['doc']))
+const mounted = ref<Set<TabKey>>(new Set<TabKey>([active.value]))
 watch(active, (k) => {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 })
@@ -232,6 +240,7 @@ function tabIsOffered(key: TabKey): boolean {
   // just merged, or whose preview 芝士 retracted, would otherwise close the
   // thing you were reading — the same rule as 「信号上 Tab，不抢占视图」.
   if (key === active.value) return true
+  if (key === 'chat') return props.withChat
   if (key === 'doc') return true
   // 现场 is where 芝士 works: it is there once the topic has run, and from the
   // first moment of the first turn (before the session id is captured).
@@ -263,7 +272,7 @@ const showTabBar = computed(() => tabs.value.length > 1)
 watch(
   () => props.topic?.id,
   (id) => {
-    active.value = tabFromUrl() ?? 'doc'
+    active.value = tabFromUrl() ?? defaultTab.value
     // 「URL 里显式带 ?tab= 时以 URL 为准」: an address that names a tab has already
     // decided, so the phase does not get to.
     settled.value = !!tabFromUrl()
@@ -356,6 +365,11 @@ defineExpose({ pulse, highlightTurn, openFile })
       </div>
 
       <div class="tabbody">
+        <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
+             而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
+        <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat">
+          <slot name="chat" />
+        </div>
         <PanelDoc
           v-show="active === 'doc'"
           ref="docRef"
@@ -406,6 +420,15 @@ defineExpose({ pulse, highlightTurn, openFile })
   min-height: 0;
   height: 100%;
   background: var(--surface);
+}
+.tabpane-chat {
+  display: flex;
+  /* tabbody 是一条 flex 行，这一格必须占满它——按内容收缩的话，输入框只有半屏宽。 */
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 .tabbar {
   display: flex;
