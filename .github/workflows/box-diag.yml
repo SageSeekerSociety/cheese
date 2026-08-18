@@ -98,6 +98,28 @@ jobs:
           docker logs --since 2h --timestamps cheese-backend-1 2>&1 \
             | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
             | tail -600 || true
+      - name: Data plane (llm tunnel + api front)
+        # The standing pair from #573 carries ALL machine model traffic, and it
+        # is deliberately outside deploy-docker.sh's stack — so when it breaks,
+        # nothing in the backend's own log says so. On 2026-08-18 every claude
+        # on the dev box died with `API Error: Unable to connect to API
+        # (ConnectionRefused)` while cheese-llm-tunnel and cheese-api-front were
+        # both listed as running: "the container is up" is not "the pipe works",
+        # and their logs were the one place that could tell the two apart.
+        #
+        # Port bindings go with the logs on purpose: this pair's whole contract
+        # is who owns :8081 and who answers on :8091, and a half-finished
+        # cutover (backend still on :8081, or nginx pointing at a port nothing
+        # serves) is invisible in `docker ps --format '{{.Names}}'`.
+        run: |
+          for c in cheese-llm-tunnel cheese-api-front; do
+            echo "===== $c ====="
+            docker inspect -f '{{.State.Status}} started={{.State.StartedAt}} restarts={{.RestartCount}}' "$c" 2>&1 || true
+            docker port "$c" 2>&1 || true
+            docker logs --since 2h --timestamps --tail 200 "$c" 2>&1 || true
+          done
+          echo "===== who owns :8081 / :8091 ====="
+          docker ps --format '{{.Names}}  {{.Ports}}' | grep -E '8081|8091|18081' || true
 
   prod-box:
     runs-on: [self-hosted, cheese-prod]
