@@ -195,7 +195,11 @@ class ConclusionCardService:
             return {"skipped": "话题不存在"}
         # 只有「房间里的一件活」共用房间的分支。房间自己（root 的儿子）照旧从
         # 基线分支长出来、照旧靠采纳并进 main —— 把它并进根话题是没有意义的。
+        #
+        # 记成 DONE 而不是直接返回：这个判断的答案永远不会变，不记的话每一轮扫描
+        # 都要把它重新问一遍，而它的数量是「项目里所有房间级采信卡」，只增不减。
         if sub.kind not in (TopicKind.task, TopicKind.subtopic):
+            room_branch.write_state(card.id, room_branch.DONE)
             return {"skipped": "不是房间里的一件活"}
         from app.domain.review.services import AcceptService  # 局部 import：避免成环
 
