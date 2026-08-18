@@ -19,6 +19,7 @@ import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
+import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import { topicPhaseBadge, topicShortId, topicStateBadge } from '@/lib/topicState'
 import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
@@ -118,8 +119,20 @@ watch(
 
       <v-spacer />
 
-      <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row. -->
-      <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
+      <!-- 算力：这个话题的轮次在哪儿跑。它以前住在输入区的动作行里，可那一行是
+           「这条消息」的动作，而算力发完第一条就锁死了——是话题的属性，属于这一行。
+           手机上这一行没有它的位置，它浮在对话上方（TopicChatColumn）。 -->
+      <TopicComputePicker v-if="mdAndUp && isWorkTopic" :key="topic.id" :topic-id="topic.id" />
+
+      <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
+           芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
+      <TopicMembers
+        v-if="isWorkTopic"
+        :topic-id="topic.id"
+        :project-id="topic.project_id"
+        :project-members="members"
+        :me="me"
+      />
 
       <!-- 用量: was the 资源 drawer. -->
       <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
