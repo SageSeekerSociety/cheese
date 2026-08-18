@@ -40,14 +40,13 @@ export function deliveryStageOf(card: Pick<AcceptCard, 'stages'>): DeliveryStage
   }
 }
 
-// 后端把交付途中的阶段信息/故障写在卡的 `note` 上，并用 emoji 前缀区分严重程度
-// （services.py: `⚠️` 检查未通过/轮询暂停、`🚫` GitHub 拒绝合并、`✋` 三个例外
-// 之一命中、平台拒绝免人自动合并）。这里只把前缀翻成一个颜色，不解析文案。
-export function deliveryNoteTone(note: string): 'error' | 'info' | null {
-  const text = note.trim()
-  if (!text) return null
-  // `✋` 不是故障，但它跟前面几个一样是"停住了、等人动手"，按能见度算同一档——
-  // 划到 info 里就会跟"检查还在跑"长得一模一样，那正是这条安全阀要避免的事。
-  if (['⚠️', '❌', '🚫', '✋'].some((p) => text.startsWith(p))) return 'error'
-  return 'info'
+// 后端把交付途中的阶段信息/故障写在卡的 `note` 上，并随卡下发一个 `note_level`。
+//
+// 这里以前是自己按 emoji 开头猜的：一份写死的 `['⚠️','❌','🚫','✋']`。它漏过东西
+// —— `🌿 本地分支与 PR 分支已分叉` 是后来加的，卡在那个状态上是「停住了、等人动
+// 手」，却因为不在这份列表里而和「还在等检查」渲染成同一个颜色。分级现在住在拥有
+// 那些前缀的地方 (backend domain/review/notes.py)，这里只把码画成颜色。
+export function deliveryNoteTone(note: Pick<AcceptCard, 'note' | 'note_level'>): 'error' | 'info' | null {
+  if (!note.note?.trim()) return null
+  return note.note_level === 'error' ? 'error' : 'info'
 }

@@ -466,6 +466,9 @@ export interface AcceptCard {
   decided_by: string | null
   decided_at: string | null
   note: string
+  // 这条 note 是「停住了」(error) 还是「还在走」(info)；空 note 是 null。
+  // 后端算好下发（domain/review/notes.py），别在这边按文案开头去猜。
+  note_level: 'error' | 'info' | null
   created_at: string
   // 机器闸门: when the check passed + the tail of its output.
   gate_passed_at: string | null

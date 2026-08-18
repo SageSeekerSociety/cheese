@@ -70,9 +70,10 @@ const deliveryStage = computed(() => (deliveringCard.value ? deliveryStageOf(del
 // 交付途中后端把阶段信息/故障写在卡的 note 上（CI 红了、GitHub 拒绝合并、轮询用的
 // token 失效），那是这些事唯一露头的地方，照原样显示。
 const deliveryNote = computed(() => {
-  const note = deliveringCard.value?.note ?? ''
-  const tone = deliveryNoteTone(note)
-  return tone ? { text: note, tone } : null
+  const card = deliveringCard.value
+  if (!card) return null
+  const tone = deliveryNoteTone(card)
+  return tone ? { text: card.note, tone } : null
 })
 
 // 机器闸门 (eval C2): the newest card while the platform check runs / after it
