@@ -10,7 +10,13 @@ class AgentTypeCreate(BaseModel):
     title: str = Field(default="", max_length=128)
     description: str = ""
     # The system prompt this agent runs under (= the markdown body of a preset).
-    body: str = Field(min_length=1)
+    #
+    # Optional, and empty is a real answer rather than a half-filled form: an
+    # agent is made "that agent" by the memory it accumulates, which is injected
+    # every turn regardless. Requiring prose up front asks people to invent a
+    # personality before the agent has done anything — and the agent can write
+    # its own later.
+    body: str = ""
     skills: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
     model: str | None = Field(default=None, max_length=64)
@@ -24,7 +30,7 @@ class AgentTypeCreate(BaseModel):
 class AgentTypeUpdate(BaseModel):
     title: str | None = Field(default=None, max_length=128)
     description: str | None = None
-    body: str | None = Field(default=None, min_length=1)
+    body: str | None = None  # "" clears it — see AgentTypeCreate.body
     skills: list[str] | None = None
     mcp_servers: list[str] | None = None
     model: str | None = Field(default=None, max_length=64)

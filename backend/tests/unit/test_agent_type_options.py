@@ -39,3 +39,17 @@ def test_every_unavailable_field_names_why():
             assert opts["note"], name
         else:
             assert not opts["reason"], name
+
+
+def test_an_agent_can_be_created_without_writing_a_personality():
+    """空的角色设定是一个真答案，不是没填完的表单。
+
+    让一个 agent 成为「那个 agent」的是它攒下的记忆 —— 那份记忆每轮都注入，
+    和这段文字写没写无关。要求先写一段人格，等于要求人在这个 agent 还什么都
+    没做过的时候先编一个；而它自己之后可以改这一段。
+    """
+    from app.domain.agent_type.schemas import AgentTypeCreate, AgentTypeUpdate
+
+    assert AgentTypeCreate(name="fresh").body == ""
+    # 改成空 = 把它清掉，同样是一个真动作，不该被 422 挡回去。
+    assert AgentTypeUpdate(body="").body == ""
