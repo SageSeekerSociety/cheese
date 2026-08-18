@@ -14,15 +14,13 @@ import asyncio
 
 from sqlalchemy import delete, select
 
+import app.models  # noqa: F401 — every table, so any FK on the ones below resolves
 from app.core.db import async_session_factory
 from app.domain.project.models import (
     AiMode,
     Project,
     ProjectMember,
     ProjectRole,
-)
-from app.domain.team.models import (
-    Team,  # noqa: F401 — register `team` for Project.team_id FK
 )
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService

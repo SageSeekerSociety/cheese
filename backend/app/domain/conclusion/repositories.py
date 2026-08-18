@@ -120,6 +120,22 @@ class ConclusionCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_accepted(self, *, limit: int) -> list[ConclusionCard]:
+        """采信过的卡，最近的在前 —— 「提交并进母话题分支」那条重试队列的输入。
+
+        队列本身不存库：一张卡还欠不欠合并，git 自己答得出来（提交在不在母话题
+        分支上），所以这里只负责把候选捞出来，判读在 `room_branch` 里。`limit`
+        是防跑飞的护栏而不是策略——真正把这条扫描压到近乎零成本的是磁盘上那张
+        「这张卡合完了」的备忘，绝大多数候选连 git 都不用问就跳过了。
+        """
+        stmt = (
+            select(ConclusionCard)
+            .where(ConclusionCard.status == ConclusionStatus.accepted)
+            .order_by(ConclusionCard.settled_at.desc())
+            .limit(limit)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_live_under(self, topic_ids: list[uuid.UUID]) -> list[ConclusionCard]:
         """Unsettled cards produced by any of these topics (archive cascade)."""
         if not topic_ids:

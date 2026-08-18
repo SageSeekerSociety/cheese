@@ -136,38 +136,21 @@ def _recall(client, project_id: str, topic_id: str, query: str) -> list[dict]:
     ).json()["data"]["hits"]
 
 
-def test_two_agents_in_one_project_keep_separate_memories(client):
-    """One 芝士's memory is not the other's, the way two teammates' aren't.
+def _hand_room_to_a_new_agent(client, project_id: str, topic_id: str, handle: str):
+    """Put a SECOND agent in this project and give it this room.
 
-    Both rooms live in the same project, which is what makes this the case the
-    per-agent key exists for: with a project-wide pool, ops would read what
-    cheese wrote.
+    Which agent works in a room is what keys its memory — deliberately not the
+    roster, which answers the other question (who authored this block). A room
+    can list several agent members while exactly one of them is the 芝士 whose
+    memory the turn reads and writes.
     """
-    project_id = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
-
-    def _topic(title: str) -> str:
-        return client.post(
-            "/topics",
-            json={"project_id": project_id, "title": title, "created_by": "alice"},
-        ).json()["data"]["id"]
-
-    cheese_room, ops_room = _topic("A"), _topic("B")
-    _swap_agent(client, ops_room, "ops")
-
-    _remember(client, project_id, cheese_room, "部署脚本在 deploy/deploy.sh")
-    _remember(client, project_id, ops_room, "告警阈值是 p99 500ms")
-
-    assert any(
-        "deploy.sh" in h["abstract"]
-        for h in _recall(client, project_id, cheese_room, "部署")
+    created = client.post(f"/projects/{project_id}/agents", json={"handle": handle})
+    assert created.status_code == 200, created.text
+    r = client.put(
+        f"/topics/{topic_id}/agent",
+        json={"instance_id": created.json()["data"]["id"]},
     )
-    assert not any(
-        "deploy.sh" in h["abstract"]
-        for h in _recall(client, project_id, ops_room, "部署")
-    )
-    assert not any(
-        "p99" in h["abstract"] for h in _recall(client, project_id, cheese_room, "告警")
-    )
+    assert r.status_code == 200, r.text
 
 
 def test_the_shared_pool_stays_readable_by_every_agent(client):
@@ -185,7 +168,7 @@ def test_the_shared_pool_stays_readable_by_every_agent(client):
         ).json()["data"]["id"]
 
     cheese_room, ops_room = _topic("A"), _topic("B")
-    _swap_agent(client, ops_room, "ops")
+    _hand_room_to_a_new_agent(client, project_id, ops_room, "ops")
 
     # No topic → the legacy shared pool.
     client.post(
@@ -277,7 +260,10 @@ def test_listing_a_project_shows_what_its_agents_remembered(client):
     entries = _list_memory(client, project_id)
     assert [e["content"] for e in entries] == ["部署脚本在 deploy/deploy.sh"]
     assert entries[0]["scope"] == "agent_project"
-    assert entries[0]["scope_id"] == f"{project_id}:{_own_agent(topic_id)}"
+    # Keyed by the AGENT working in the room — the project's default 芝士 here —
+    # not by the room, so what it learns is one pool across every room it works
+    # in rather than one pool per room.
+    assert entries[0]["scope_id"] == f"{project_id}:cheese"
 
 
 def test_listing_covers_every_agent_pool_in_the_project(client):
@@ -292,7 +278,7 @@ def test_listing_covers_every_agent_pool_in_the_project(client):
         ).json()["data"]["id"]
 
     cheese_room, ops_room = _topic("A"), _topic("B")
-    _swap_agent(client, ops_room, "ops")
+    _hand_room_to_a_new_agent(client, project_id, ops_room, "ops")
     _remember(client, project_id, cheese_room, "部署脚本在 deploy/deploy.sh")
     _remember(client, project_id, ops_room, "告警阈值是 p99 500ms")
 
@@ -302,7 +288,7 @@ def test_listing_covers_every_agent_pool_in_the_project(client):
         "告警阈值是 p99 500ms",
     }
     assert {e["scope_id"] for e in everything} == {
-        f"{project_id}:{_own_agent(cheese_room)}",
+        f"{project_id}:cheese",
         f"{project_id}:ops",
     }
 

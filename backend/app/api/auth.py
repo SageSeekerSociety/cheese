@@ -32,7 +32,8 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.authz.policy import authorize_topic_access
 from app.domain.identity.actor import Actor, TokenIdentity, resolve_actor
-from app.domain.identity.services import CHEESE_HANDLE, IdentityService
+from app.domain.identity.handles import UNRESOLVED_AGENT_HANDLE, topic_agent_handle
+from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicRole
@@ -148,17 +149,31 @@ class ActorResolver:
 
         # WHO the scoped token acts as: the topic's own 分身 (claim ``a``), not the
         # one collapsed platform account. A token minted before this claim existed —
-        # or a project-wide one with no topic — carries none and falls back to
-        # ``cheese``, which is exactly the previous behaviour.
+        # or a project-wide one — carries none, and then the ROOM answers: the 分身
+        # of the topic being acted on is the same identity a per-turn token would
+        # have named, and it is a real user row, so the write stays attributable.
+        #
+        # `cheese` is deliberately no longer that answer. It is now a real agent
+        # owning a real memory pool, so using it as "we could not tell" would put
+        # every unattributable action on the default agent's name. What is left
+        # over — no claim AND no room — is the sentinel, which owns nothing.
+        #
+        # Note this is the AUTHORSHIP axis only ("who took this action"). Which
+        # agent's memory a turn reads and writes is resolved from the topic's
+        # agent instance instead (app.domain.agent_instance.services); collapsing
+        # the two would tie memory back to the topic, which is the thing the
+        # instance layer exists to undo.
         agent_handle = (
             token_agent_handle(self._cheese_token) if self._cheese_token else None
         )
+        if self._cheese_token and not agent_handle and topic_id is not None:
+            agent_handle = topic_agent_handle(topic_id)
         actor = await resolve_actor(
             bearer_token=self._bearer,
             verify_token=_token_verifier,
             cheese_valid=cheese_valid,
             is_agent=self._identity.is_agent,
-            cheese_handle=agent_handle or CHEESE_HANDLE,
+            cheese_handle=agent_handle or UNRESOLVED_AGENT_HANDLE,
             fallback_handle=fallback_handle,
         )
         if actor is None:

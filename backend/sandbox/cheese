@@ -558,18 +558,30 @@ def build_parser() -> argparse.ArgumentParser:
             "\n"
             "只记「跨话题还成立、且从代码/git 历史里读不出来」的东西。"
             "代码结构、改过什么 bug、本轮的临时状态都不要记。"
-            "相对时间要换成绝对日期。"
+            "相对时间要换成绝对日期。\n"
+            "\n"
+            "普通记忆按当轮上下文检索后注入,不一定每轮都在场;--core 的每轮全量注入。"
         ),
     )
     prem.add_argument("fact", help="一条事实,一句话")
+    prem.add_argument(
+        "--core",
+        action="store_true",
+        help=(
+            "记成核心记忆:每轮都在场,不参与相关性筛选。"
+            "只给「你是谁、你的长期规则和目标」这类永远成立的东西用——"
+            "核心记忆的预算很小,多一条就挤掉另一条,写多了等于没有核心记忆。"
+        ),
+    )
 
     prec = sub.add_parser(
         "recall",
         help="按需检索记忆（关键词检索,不是语义检索）",
         description=(
-            "检索项目记忆。开场注入的不是全部——放不下的会被截断,"
-            "而且截断时注入块会明说「另有 N 条更早的记忆没放进来」。所以:"
-            "需要某条的细节、或怀疑有相关旧记忆没出现在开场里时,先 recall 再回答。\n"
+            "检索项目记忆。开场注入的不是全部——核心记忆每轮都在,其余的是按本轮"
+            "上下文挑出来的,挑剩下的注入块会明说「还有 N 条这一轮没注入」。所以:"
+            "话题拐弯了、需要某条的细节、或怀疑有相关旧记忆没出现在开场里时,"
+            "先 recall 再回答。\n"
             "\n"
             "这是**关键词检索**,不是语义检索:你的问题会被拆成关键词,"
             "按命中覆盖度排序。**一次没查到不等于没有这条记忆**——"
@@ -865,14 +877,17 @@ def main() -> None:
         # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆
         # (同一个项目里的两个芝士各记各的，跟人一样)。
         body = {"content": a.fact, "topic": TOPIC}
+        if a.core:
+            body["layer"] = "core"
+        kind = "核心记忆（每轮都在场）" if a.core else "记忆"
         if MEMORY_SCOPE == "personal" and OWNER:
             body["scope"] = "user"
             body["owner"] = OWNER
             _call("POST", f"/projects/{proj}/memory", body)
-            print("已记入个人记忆。")
+            print(f"已记入个人{kind}。")
         else:
             _call("POST", f"/projects/{proj}/memory", body)
-            print("已记入项目记忆。")
+            print(f"已记入项目{kind}。")
     elif a.cmd == "recall":
         proj = _need("CHEESE_PROJECT", PROJECT)
         body = {"query": a.query, "topic": TOPIC}
