@@ -79,10 +79,7 @@ class CloudProvider(DeviceProvider):
         )
         if ready:
             return True, ""
-        return (
-            False,
-            "⏳ Cloud 机器正在创建并接入，本话题会保留这条消息，机器就绪后自动继续。",
-        )
+        return False, "Cloud 机器正在创建并接入"
 
     async def _resolve_device_agent(
         self, project_id: uuid.UUID, topic_id: uuid.UUID

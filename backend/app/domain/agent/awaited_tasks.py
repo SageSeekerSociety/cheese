@@ -361,7 +361,7 @@ def _submit_wake(runner, chat_service, task: AwaitedTask, content: str) -> bool:
             "接着处理它的结果：绿了就继续推进原来的活，红了就修。"
         ),
         summon=True,
-        nudge_event=f"⏱️ 后台任务「{task.label}」跑完了，芝士来处理",
+        nudge_event=f"后台任务「{task.label}」跑完了，芝士来处理",
     )
     return True
 

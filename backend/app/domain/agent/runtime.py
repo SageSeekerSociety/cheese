@@ -1976,7 +1976,7 @@ class AgentWorkRunner:
                 channel,
                 {
                     "type": "error",
-                    "message": "⚠️ 芝士这轮被强制结束了（详情见话题里的系统事件）。",
+                    "message": "芝士这轮被强制结束了",
                     "persisted": False,
                 },
             )

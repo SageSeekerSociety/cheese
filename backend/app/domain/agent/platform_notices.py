@@ -76,6 +76,20 @@ EVENT_TURN_TIMEOUT: Final = "turn_timeout"
 EVENT_DEPLOY_INTERRUPTED: Final = "deploy_interrupted"
 #: 项目并发已满，这轮在排队。
 EVENT_TURN_QUEUED: Final = "turn_queued"
+#: 话题的运行环境被重建 —— 会话和后台任务都断了，项目文件没事。
+EVENT_SANDBOX_REBUILT: Final = "sandbox_rebuilt"
+#: 采纳后触发的部署，跑完了。
+EVENT_DEPLOY_DONE: Final = "deploy_done"
+#: 采纳后触发的部署没跑完 / 回滚了 / 结果不明。
+EVENT_DEPLOY_FAILED: Final = "deploy_failed"
+#: 子话题的提交并进了母话题分支 / 先排队 / 冲突了。
+EVENT_ROOM_MERGE: Final = "room_merge"
+#: 一张采信卡有结果了：被采信 / 要补证据 / 升级等人拍板。
+EVENT_CONCLUSION_SETTLED: Final = "conclusion_settled"
+#: 话题的 Cloud 机器还在创建，这条消息先留着。
+EVENT_MACHINE_PROVISIONING: Final = "machine_provisioning"
+#: 话题绑定的机器连着失败，平台暂停向它派活（可能还换了一台）。
+EVENT_HOST_SWAP: Final = "host_swap"
 #: 结论结算了，但这个话题的归档欠着 —— 它还挂着一张没决议的验收卡。
 EVENT_ARCHIVE_DEFERRED: Final = "archive_deferred"
 #: 人点了采纳，改动交给了 CI（或 PR 已开），等检查。
@@ -112,6 +126,13 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEPLOY_INTERRUPTED,
         EVENT_ARCHIVE_DEFERRED,
         EVENT_TURN_QUEUED,
+        EVENT_SANDBOX_REBUILT,
+        EVENT_DEPLOY_DONE,
+        EVENT_DEPLOY_FAILED,
+        EVENT_ROOM_MERGE,
+        EVENT_CONCLUSION_SETTLED,
+        EVENT_MACHINE_PROVISIONING,
+        EVENT_HOST_SWAP,
         EVENT_ACCEPT_AUTHORIZED,
         EVENT_ACCEPT_DONE,
         EVENT_ACCEPT_STOPPED,

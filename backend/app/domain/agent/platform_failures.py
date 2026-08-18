@@ -49,7 +49,7 @@ TURN_TIMEOUT_CODE = "turn_timeout"
 # 「AI 服务返回错误」, blaming the model provider for a turn the provider never
 # saw — which sends whoever is debugging in exactly the wrong direction.
 PROMPT_UNDELIVERED_MESSAGE = (
-    "⚠️ 这条消息没能送到芝士那边，它的会话没有任何反应。改动都还在，"
+    "这条消息没能送到芝士那边，它的会话没有任何反应。改动都还在，"
     "再 @ 它一次就会重开会话重试。"
 )
 TURN_TIMEOUT_MESSAGE = "轮次超时"

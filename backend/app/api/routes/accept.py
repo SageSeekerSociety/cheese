@@ -271,7 +271,7 @@ async def reject_card(
             "在对话里简短回一句问清楚。"
         ),
         summon=True,
-        nudge_event=f"↩️ {decided_by} 驳回了验收卡，芝士去改",
+        nudge_event=f"{decided_by} 驳回了验收卡，芝士去改",
         nudge_meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,

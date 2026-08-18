@@ -42,6 +42,7 @@ from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
@@ -1132,7 +1133,7 @@ def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
         clipped = f"{text[:24]}…" if len(text) > 24 else text
         head = f"，最早的一条是 [{first.author}]「{clipped}」"
     return (
-        f"🔁 这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
+        f"这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
         f"前面几次都没跑完{head}。"
     )
 
@@ -1316,7 +1317,7 @@ class ChatService:
             # still the whole instruction 芝士 gets as its prompt.
             if not nudge_event:
                 why = resume_reason or "从上一轮的断点继续"
-                nudge_event = f"⏯️ 自动续跑：{why}"
+                nudge_event = f"自动续跑：{why}"
             payload = await self.post_system_event(
                 topic_id, nudge_event, turn_id, meta=nudge_meta
             )
@@ -3341,6 +3342,14 @@ class ChatService:
                             kind=BlockKind.event,
                             turn_id=turn_id,
                             meta={
+                                # 这条已有自己的 event_type / state，前端按它渲染；
+                                # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
+                                "severity": SEVERITY_INFO,
+                                "who": WHO_PLATFORM,
+                                "detail": (
+                                    "本话题会保留这条消息，机器就绪后自动继续。"
+                                ),
+                                "detail_label": "接下来会发生什么",
                                 "event_type": "cloud_provisioning",
                                 "state": "waiting",
                             },
@@ -3814,8 +3823,8 @@ class ChatService:
                 )
                 recover = "恢复后我会自动接着跑" if not is_resume else "到点再 @ 它"
                 fail_text = (
-                    f"⚠️ 芝士的 AI 座位额度用完了，北京时间 "
-                    f"{resets:%m-%d %H:%M} 恢复，{recover}。"
+                    f"芝士的 AI 座位额度用完了，北京时间 "
+                    f"{resets:%m-%d %H:%M} 恢复，{recover}"
                 )
                 if not is_resume:
                     # Resume ~2min after the window opens (clock skew buffer).
@@ -3827,15 +3836,13 @@ class ChatService:
                 # A spent balance is not a wait — no amount of retrying refills
                 # it, and telling someone to try again later sends them into a
                 # loop that cannot succeed. Say what actually has to happen.
-                fail_text = "⚠️ 芝士这轮没跑完——AI 中继余额用尽，重试无效，要人充值。"
+                fail_text = "芝士这轮没跑完：AI 中继余额用尽，要人充值"
                 fail_hint = (
                     "这不是等一等就能好的，需要有人充值或把机器切到其他 AI 供给；"
                     "重试无效。"
                 )
             elif api_error_status:
-                fail_text = (
-                    f"⚠️ 芝士这轮没跑完——AI 接口错误（HTTP {api_error_status}）。"
-                )
+                fail_text = f"芝士这轮没跑完：AI 接口错误 HTTP {api_error_status}"
                 fail_hint = "稍后再 @ 它重试。"
             else:
                 # #450 rule 2: an unclassified failure shows the SERVICE'S OWN
@@ -3849,9 +3856,9 @@ class ChatService:
                 if len(first_line) > 160:
                     first_line = first_line[:160] + "…"
                 fail_text = (
-                    f"⚠️ 芝士这轮没跑完——{first_line}"
+                    f"芝士这轮没跑完：{first_line}"
                     if first_line
-                    else "⚠️ 芝士这轮没跑完——AI 服务返回错误。"
+                    else "芝士这轮没跑完：AI 服务返回错误"
                 )
                 fail_hint = "稍后再 @ 它重试。"
             if fail_meta is None:

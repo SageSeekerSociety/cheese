@@ -20,7 +20,7 @@ import uuid
 
 import pytest
 
-from app.domain.agent.sandbox_notices import REBUILD_CAUSE_TEXT, rebuild_notice_text
+from app.domain.agent.sandbox_notices import REBUILD_CAUSE_TEXT, rebuild_notice
 from app.domain.agent.tmux_provider import TmuxHooksProvider
 
 TOPIC = uuid.uuid4()
@@ -103,19 +103,20 @@ async def test_each_cause_is_named_accurately(monkeypatch, kwargs, cause):
     await _provider()._ensure_container(TOPIC, ROOM, ENV)
 
     assert said == [(TOPIC, cause)]
-    assert REBUILD_CAUSE_TEXT[cause] in rebuild_notice_text(cause)
+    assert REBUILD_CAUSE_TEXT[cause] in rebuild_notice(cause)[0]
 
 
 def test_a_box_rebuild_and_a_session_restart_say_different_things():
     """The two consequences differ in SCOPE, and a notice that overstates or
     understates it is the reason someone goes looking in the wrong place: a box
     rebuild takes every topic in the room, a session restart takes one."""
-    box_text = rebuild_notice_text("image")
-    session_text = rebuild_notice_text("token")
-    assert "沙箱容器已重建" in box_text
-    assert "交互会话已重启" in session_text
-    assert "同房间其他话题不受影响" in session_text
-    assert "同房间其他话题不受影响" not in box_text
+    box_line, box_meta = rebuild_notice("image")
+    session_line, session_meta = rebuild_notice("token")
+    assert "沙箱容器已重建" in box_meta["detail"]
+    assert "交互会话已重启" in session_meta["detail"]
+    # 影响范围是展开区的内容 —— 那一行只说重建了什么。
+    assert "同房间其他话题不受影响" in session_meta["detail"]
+    assert "同房间其他话题不受影响" not in box_meta["detail"]
 
 
 @pytest.mark.anyio
@@ -150,6 +151,6 @@ async def test_a_first_ever_creation_says_nothing(monkeypatch):
 def test_an_unregistered_cause_still_produces_a_sentence():
     """A future rebuild trigger that forgets to register its wording must
     degrade to a vaguer notice, never to silence."""
-    text = rebuild_notice_text("something-nobody-registered")
-    assert "已重建" in text
-    assert "都被终止了" in text
+    line, meta = rebuild_notice("something-nobody-registered")
+    assert "已重建" in line
+    assert "都被终止了" in meta["detail"]

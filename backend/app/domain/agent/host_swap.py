@@ -39,6 +39,13 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.domain.agent.platform_failures import PlatformFailure
+from app.domain.agent.platform_notices import (
+    EVENT_HOST_SWAP,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.device.service import DeviceService, device_service_for_session
 from app.domain.device.supply import Supply, has_runnable_transport
 
@@ -48,6 +55,20 @@ logger = logging.getLogger(__name__)
 # short enough that the room does not look abandoned.
 SWAP_RESUME_AFTER_S = 15.0
 SWAP_RESUME_REASON = "已换到另一台机器，接着跑"
+
+
+def _swap_meta(failure, verdict, whose: str, detail: str) -> dict:
+    """换机事件的 `meta`。失败次数和原因是**展开区**的内容，不是那一行。"""
+    return notice(
+        EVENT_HOST_SWAP,
+        severity=SEVERITY_WARN,
+        who=whose,
+        detail=(
+            f"连续 {verdict.consecutive_failures} 轮因「{failure.title}」失败。\n"
+            f"{detail}"
+        ),
+        detail_label="发生了什么",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,11 +135,13 @@ async def swap_topic_device(
         return SwapOutcome(
             quarantined=True,
             old_device=old_id,
-            message=(
-                f"⚠️ 机器「{old_name}」连续 {verdict.consecutive_failures} 轮"
-                f"因「{failure.title}」失败，已暂停向它派活；"
-                "本话题仍留在这台机器上，平台会等待它恢复，不会迁移到别的机器。"
-                "请在机器恢复后再 @芝士。"
+            message=f"机器「{old_name}」连续失败，已暂停派活",
+            event_meta=_swap_meta(
+                failure,
+                verdict,
+                WHO_HUMAN,
+                "本话题仍留在这台机器上，平台会等它恢复，不会迁移到别的机器。"
+                "请在机器恢复后再 @芝士。",
             ),
         )
     if old is not None and old.supply is Supply.cloud:
@@ -126,22 +149,29 @@ async def swap_topic_device(
             return SwapOutcome(
                 quarantined=True,
                 old_device=old_id,
-                message=(
-                    f"⚠️ Cloud 机器「{old_name}」连续 "
-                    f"{verdict.consecutive_failures} 轮因「{failure.title}」失败；"
-                    "本话题不会借用另一话题的机器。"
+                message=f"Cloud 机器「{old_name}」连续失败",
+                event_meta=_swap_meta(
+                    failure, verdict, WHO_HUMAN, "本话题不会借用另一话题的机器。"
                 ),
             )
         await replace_cloud()
         return SwapOutcome(
             quarantined=True,
             old_device=old_id,
-            message=(
-                f"🔁 Cloud 机器「{old_name}」连续 "
-                f"{verdict.consecutive_failures} 轮因「{failure.title}」失败，"
-                "正在为本话题创建替代机器；消息会保留，就绪后自动继续。"
-            ),
-            event_meta={"event_type": "cloud_provisioning", "state": "waiting"},
+            message=f"Cloud 机器「{old_name}」连续失败，正在换一台",
+            # `cloud_provisioning` wins over the swap code: the room's "机器还在
+            # 创建" branch keys on it, and a topic waiting for a replacement is
+            # in exactly that state.
+            event_meta={
+                **_swap_meta(
+                    failure,
+                    verdict,
+                    WHO_PLATFORM,
+                    "正在为本话题创建替代机器，消息会保留，就绪后自动继续。",
+                ),
+                "event_type": "cloud_provisioning",
+                "state": "waiting",
+            },
         )
     candidates = (
         []
@@ -164,11 +194,13 @@ async def swap_topic_device(
         return SwapOutcome(
             quarantined=True,
             old_device=old_id,
-            message=(
-                f"⚠️ 机器「{old_name}」连续 {verdict.consecutive_failures} 轮"
-                f"因「{failure.title}」失败，已暂停向它派活；"
-                "但当前没有别的可用机器接手，本话题只能等它恢复。"
-                "请稍后再 @芝士，或让管理员加一台机器。"
+            message=f"机器「{old_name}」连续失败，已暂停派活",
+            event_meta=_swap_meta(
+                failure,
+                verdict,
+                WHO_HUMAN,
+                "当前没有别的可用机器接手，本话题只能等它恢复。"
+                "请稍后再 @芝士，或让管理员加一台机器。",
             ),
         )
 
@@ -193,12 +225,13 @@ async def swap_topic_device(
         quarantined=True,
         old_device=old_id,
         new_device=target.device_id,
-        message=(
-            f"🔁 机器「{old_name}」连续 {verdict.consecutive_failures} 轮"
-            f"因「{failure.title}」失败，已暂停向它派活；"
-            f"本话题已换到「{target.name}」上继续。"
-            "代码会从 git 恢复，已提交的改动都在；"
-            "上一轮没来得及提交的半成品可能丢失。"
+        message=f"机器「{old_name}」连续失败，已换到「{target.name}」",
+        event_meta=_swap_meta(
+            failure,
+            verdict,
+            WHO_PLATFORM,
+            "已暂停向原机器派活。代码会从 git 恢复，已提交的改动都在；"
+            "上一轮没来得及提交的半成品可能丢失。",
         ),
         resume_after_s=SWAP_RESUME_AFTER_S,
         resume_reason=SWAP_RESUME_REASON,
