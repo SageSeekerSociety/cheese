@@ -68,6 +68,7 @@ import { getAvatarUrl } from '../utils/materials'
 
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
+import TimelineMark from './TimelineMark.vue'
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
@@ -110,6 +111,9 @@ const props = withDefaults(
     // Header label override for a 私聊 whose stored title is a bookkeeping key
     // (e.g. a person DM's canonical "私聊 · a · b"): show the peer's name instead.
     titleOverride?: string | null
+    // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
+    // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
+    unreadOnOpen?: number
   }>(),
   {
     defaultSummon: false,
@@ -119,6 +123,7 @@ const props = withDefaults(
     members: () => [],
     topicList: () => [],
     titleOverride: null,
+    unreadOnOpen: 0,
   }
 )
 
@@ -665,6 +670,7 @@ async function loadTopic(topic: Topic) {
     })
     .catch(() => {})
   reactionPickerFor.value = null
+  unreadAnchorId.value = null
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   loadingOlder.value = false
@@ -698,6 +704,7 @@ async function loadTopic(topic: Topic) {
     messages.value = merged.blocks
     hasMore.value = merged.hasMore
     setCachedWindow(topic.id, merged)
+    placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
     if (!cached) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
     openSocket(topic.id)
@@ -781,6 +788,60 @@ defineExpose({ send, connected })
 // accidental merge.
 const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(messages.value)))
 const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
+
+// ---- 时间刻度 ----
+// 「这条属于哪一天」只在跨天时说一次。用本地日期而不是 UTC：读的人在哪个时区,
+// 「今天」就该是哪个时区的今天。
+const DAY_MS = 86_400_000
+function dayKey(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+function dayLabel(iso: string): string {
+  const d = new Date(iso)
+  const today = new Date()
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((startOf(today) - startOf(d)) / DAY_MS)
+  if (days === 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 7 && days > 0) return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  const sameYear = d.getFullYear() === today.getFullYear()
+  return d.toLocaleDateString([], sameYear ? { month: 'long', day: 'numeric' } : undefined)
+}
+// blockId → 要画在它上面的那条日期线。第一条也画：翻到时间线顶部的人同样需要
+// 知道这段是什么时候的。
+const dayLabels = computed(() => {
+  const out = new Map<string, string>()
+  let prev: string | null = null
+  for (const { block } of rows.value) {
+    const key = dayKey(block.created_at)
+    if (key !== prev) out.set(block.id, dayLabel(block.created_at))
+    prev = key
+  }
+  return out
+})
+
+// 新消息线锚在哪条块上。开话题时按当时的未读数往回数一次就冻住 —— 它是「我上次
+// 看到哪儿」的记号，不是一个会跟着新消息跑的游标。
+const unreadAnchorId = ref<string | null>(null)
+function placeUnreadAnchor() {
+  const n = props.unreadOnOpen
+  if (!n || n <= 0) return
+  let seen = 0
+  for (let i = rows.value.length - 1; i >= 0; i -= 1) {
+    const b = rows.value[i].block
+    // 和后端未读口径一致：只数别人发的消息，系统事件不算。
+    if ((b.kind !== 'message' && b.kind !== 'attachment') || b.author === AUTHOR) continue
+    seen += 1
+    if (seen === n) {
+      unreadAnchorId.value = b.id
+      return
+    }
+  }
+  // 未读比这一页还多：线就画在这一页最老的那条别人的消息上，别装作没有。
+  const oldest = rows.value.find((r) => r.block.author !== AUTHOR && r.block.kind === 'message')
+  unreadAnchorId.value = oldest?.block.id ?? null
+}
 
 // 「已派出」标记 (issue #314): 本房间拆出去的子话题，在时间线上它被拆出去的那个
 // 时刻标一行，点进去就是那边。库里没有这行 —— split 不往父话题写任何 block，所以
@@ -1126,10 +1187,19 @@ onBeforeUnmount(() => {
             class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
             data-testid="chat-older-loader"
           >
-            {{ loadingOlder ? '加载更早的消息…' : '向上滚动查看更早的消息' }}
+            {{ loadingOlder ? '加载更早的消息…' : '更早的消息' }}
           </div>
 
           <template v-for="({ block: m, notice }, i) in rows" :key="m.id">
+            <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
+               哪条是今天的——这条线是唯一说得出「那是上周」的东西。 -->
+            <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
+            <!-- 时间刻度: 你上次离开时看到哪儿。侧栏的未读角标只回答「有没有新的」,
+               这条线回答「新的从哪开始」。开话题时算一次就冻住，不随新消息移动。 -->
+            <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
+              <v-icon size="12">mdi-arrow-down</v-icon>
+              以下是新消息
+            </TimelineMark>
             <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
                这一行是按子话题的 parent_id + created_at 现算出来的，插在它被拆出
                去的那个时刻上。它不是消息，但会像 event 一样把消息分组打断。 -->

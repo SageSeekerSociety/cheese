@@ -199,13 +199,19 @@ async function handleUpgradeMessage(messageId: string) {
 }
 
 // Everything topic-scoped resets when the URL names a different topic.
+// 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
+// 所以在归零之前抓一次，交给对话栏去画那条线。
+const unreadOnOpen = ref(0)
 watch(
   () => props.topicId,
   (id) => {
     worklog.value = []
     working.value = false
     workingSince.value = null
-    if (id) store.markRead(id)
+    if (id) {
+      unreadOnOpen.value = store.unreadMap[id] ?? 0
+      store.markRead(id)
+    }
   },
   { immediate: true }
 )
@@ -244,6 +250,7 @@ watch(
           show-composer
           :members="store.members"
           :topic-list="store.topics"
+          :unread-on-open="unreadOnOpen"
           @turn-done="handleTurnDone"
           @tool-used="handleToolUsed"
           @state-changed="handleStateChanged"
