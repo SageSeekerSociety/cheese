@@ -19,5 +19,6 @@ defineOptions({ name: 'InboxView' })
 .inbox-page {
   height: 100%;
   overflow-y: auto;
+  background: var(--surface);
 }
 </style>

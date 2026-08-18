@@ -18,34 +18,8 @@
       <!-- 渲染动态 actions 组件 -->
       <component :is="actionsComponent" v-if="actionsComponent" />
 
-      <!-- 通知按钮 -->
-      <v-menu
-        v-if="userMenu.loggedIn.value"
-        v-model="notifications.notificationMenuOpen.value"
-        :close-on-content-click="false"
-        location="bottom"
-        :offset="8"
-        transition="scale-transition"
-      >
-        <template #activator="{ props }">
-          <v-btn icon v-bind="props" variant="text">
-            <v-icon>mdi-bell</v-icon>
-            <v-badge
-              v-if="notifications.unreadNotificationsCount.value > 0"
-              color="error"
-              :content="
-                notifications.unreadNotificationsCount.value > 99
-                  ? '99+'
-                  : notifications.unreadNotificationsCount.value.toString()
-              "
-              floating
-              dot
-              :model-value="notifications.unreadNotificationsCount.value > 0"
-            />
-          </v-btn>
-        </template>
-        <notification-panel @update-count="notifications.updateUnreadCount" />
-      </v-menu>
+      <!-- 通知的铃铛不在这儿了：手机上它的去处是底栏「待办」那一格
+           (docs/plans/2026-08-18-mobile-shell-design.md §3.3)。 -->
 
       <!-- 用户头像菜单 -->
       <v-menu
@@ -156,11 +130,8 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 
-import { useNotifications } from '@/composables/useNotifications'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useUserMenu } from '@/composables/useUserMenu'
-
-import NotificationPanel from '../Notification/NotificationPanel.vue'
 
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import { useNavigationStore } from '@/stores/navigation'
@@ -168,7 +139,6 @@ import { usePageTitleStore } from '@/stores/title'
 
 // 使用 composables
 const userMenu = useUserMenu()
-const notifications = useNotifications()
 
 const route = useRoute()
 const router = useRouter()
@@ -177,6 +147,7 @@ const navigationStore = useNavigationStore()
 // 栈末端的路由自己说它回哪儿去（meta.backTo），而不是靠 history.back()——
 // 从别处直接打开一个话题链接时，后退会离开这个 app。
 const backTo = computed(() => (typeof route.meta.backTo === 'string' ? route.meta.backTo : null))
+
 function goBack() {
   if (backTo.value) void router.push({ name: backTo.value, params: route.params })
 }
@@ -196,9 +167,10 @@ const toggleDrawer = () => {
 // 它以前取的是第一个 isFullPage 的**祖先**，而工作台那条路由上写着
 // `{ title: '项目工作台', isFullPage: true }`——所以在手机上打开任何一个话题，
 // 顶栏都写着「项目工作台」，既不是话题名也不是项目名。
+// getRouteHierarchy 是**叶到根**排的（它自己末尾 reverse 过），所以当前页是第一个。
 const updateTitle = () => {
-  const named = getRouteHierarchy.value.filter((item) => item.title)
-  currentTitle.value = named.length ? named[named.length - 1].title : '知是社区'
+  const current = getRouteHierarchy.value.find((item) => item.title)
+  currentTitle.value = current?.title ?? '知是社区'
 }
 
 watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true })

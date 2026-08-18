@@ -97,8 +97,19 @@ describe('页面栈的末端', () => {
     return matched[matched.length - 1]
   }
 
-  it('话题页和私聊页收起底栏，并说明回哪一层', () => {
-    for (const path of [`/projects/${PROJECT}/topics/t1`, `/projects/${PROJECT}/dm/cheese`]) {
+  // 话题列表之外的每一层都是走进去的，所以都得能走回来。漏一条不会编译失败，
+  // 只会在手机上表现为"进去就出不来"，而且是新加一条路由时最容易漏的一件事。
+  it('列表之外的每一层都收起底栏，并说明回哪一层', () => {
+    const paths = [
+      `/projects/${PROJECT}/topics/t1`,
+      `/projects/${PROJECT}/dm/cheese`,
+      `/projects/${PROJECT}/docs/charter`,
+      `/projects/${PROJECT}/overview`,
+      `/projects/${PROJECT}/calendar`,
+      `/projects/${PROJECT}/settings`,
+      `/projects/${PROJECT}/members/alice`,
+    ]
+    for (const path of paths) {
       const leaf = leafOf(path)
       expect(leaf.meta.hideTabs, path).toBe(true)
       expect(leaf.meta.backTo, path).toBe('workspace-project')
@@ -107,5 +118,12 @@ describe('页面栈的末端', () => {
 
   it('话题列表那一层自己是一级目的地，底栏留着', () => {
     expect(leafOf(`/projects/${PROJECT}`).meta.hideTabs).toBeUndefined()
+  })
+
+  // 自带页头的那两层不要系统顶栏：两条横条写同一个标题，在手机上占掉一屏的 13%。
+  it('自带页头的层不再叠一条系统顶栏', () => {
+    expect(leafOf(`/projects/${PROJECT}`).meta.ownHeader).toBe(true)
+    expect(leafOf(`/projects/${PROJECT}/topics/t1`).meta.ownHeader).toBe(true)
+    expect(leafOf(`/projects/${PROJECT}/dm/cheese`).meta.ownHeader).toBeUndefined()
   })
 })

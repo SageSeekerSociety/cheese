@@ -18,7 +18,7 @@
 
       <!-- 移动端：使用全高 Toolbar -->
       <keep-alive>
-        <mobile-app-bar v-if="!hideAppBar" />
+        <mobile-app-bar v-if="!hideAppBar && !ownHeader" />
       </keep-alive>
 
       <!-- 一级导航：桌面端左侧 Rail，移动端底部 -->
@@ -149,6 +149,9 @@ const hideAppBar = computed(() => {
 
 // 页面栈的末端（话题页、私聊页）收起底栏：它们是栈里的一层，不是一级目的地。
 const hideTabs = computed(() => currentRoute.meta.hideTabs === true)
+
+// 自带页头的页面不要系统顶栏——两条横条写同一个标题，在手机上很贵。
+const ownHeader = computed(() => currentRoute.meta.ownHeader === true)
 
 // Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区

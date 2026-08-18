@@ -3,13 +3,14 @@
     class="notification-panel"
     :class="page ? 'rounded-0' : 'rounded-lg'"
     :elevation="page ? 0 : 1"
+    :border="page ? false : undefined"
     :min-width="page ? undefined : 380"
     :max-width="page ? undefined : 420"
   >
-    <v-card-title class="d-flex justify-space-between align-center pa-4">
-      <!-- 整页形态下顶栏已经写着这一页叫什么，卡片再写一遍就是两层标题叠着。 -->
+    <!-- 整页形态下顶栏已经写着这一页叫什么，卡片再写一遍就是两层标题叠着；
+         所以这一行只在还剩东西可放（全部标为已读）的时候才存在。 -->
+    <v-card-title v-if="!page || hasUnread" class="d-flex justify-space-between align-center pa-4">
       <span v-if="!page" class="text-h6 font-weight-medium">{{ t('notifications.common.notificationCenter') }}</span>
-      <span v-else></span>
       <div class="d-flex align-center">
         <v-btn
           v-if="hasUnread"
@@ -24,7 +25,7 @@
       </div>
     </v-card-title>
 
-    <v-divider></v-divider>
+    <v-divider v-if="!page || hasUnread"></v-divider>
 
     <v-card-text
       class="pa-0 notification-list-container"

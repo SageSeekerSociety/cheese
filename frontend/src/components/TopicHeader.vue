@@ -16,6 +16,7 @@ import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { TopicPhase } from '@/lib/topicState'
 
 import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
@@ -40,6 +41,16 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
 
 const { mdAndUp } = useDisplay()
+const router = useRouter()
+const route = useRoute()
+
+// 手机上这条头就是页面栈这一层的顶栏（系统那条不渲染），所以「回上一层」长在这儿。
+// 去哪由路由说，不用 history.back()——从别处直接打开一个话题链接时，后退会离开
+// 这个 app。
+function goBack() {
+  const backTo = route.meta.backTo
+  if (typeof backTo === 'string') void router.push({ name: backTo, params: route.params })
+}
 
 // 头部常驻状态条 (规则 4): where this topic stands, always on screen. It used to
 // read the topic row's `status` alone, which knows only 归档 —— 「待验收」 and
@@ -91,6 +102,15 @@ watch(
 
 <template>
   <div class="topic-header">
+    <!-- 手机上这条头就是这一层的顶栏，← 在它左边（系统顶栏不渲染）。 -->
+    <v-btn
+      v-if="!mdAndUp"
+      icon="mdi-arrow-left"
+      variant="text"
+      size="small"
+      aria-label="返回话题列表"
+      @click="goBack"
+    />
     <span class="topic-header__title t-title">{{ topic.title }}</span>
     <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
     <span class="pr-state" :class="state.cls">{{ state.label }}</span>
