@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.config import settings
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.models import MemoryLayer, MemoryScope
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +44,19 @@ _ACCOUNT = "cheesex"
 _SAFE_ID = re.compile(r"[^a-zA-Z0-9_.@-]")
 # OpenViking appends a machine-readable metadata comment to each memory card.
 _MEMORY_FIELDS_RE = re.compile(r"<!--\s*MEMORY_FIELDS\b.*?-->", re.DOTALL)
+# The core layer gets a scope space of its own rather than a marker inside the
+# shared one. OpenViking's extractor decides placement and wording for every
+# card it files, so there is no field here we could set and later trust — but
+# "which space is this in" is ours. A separate space is also the only way to
+# read the whole core layer back cheaply, which is what injecting it every turn
+# requires.
+_CORE_SPACE_SUFFIX = "-core"
 
 
-def scope_user_id(scope: MemoryScope, scope_id: str) -> str:
-    """Deterministic OpenViking user id for a CheeseX memory scope.
+def scope_user_id(
+    scope: MemoryScope, scope_id: str, layer: MemoryLayer = MemoryLayer.fact
+) -> str:
+    """Deterministic OpenViking user id for a CheeseX memory scope + layer.
 
     Invalid chars are replaced with ``_``; a short hash keeps sanitized ids
     collision-free (two distinct handles must never share a memory space).
@@ -59,11 +68,14 @@ def scope_user_id(scope: MemoryScope, scope_id: str) -> str:
 
         digest = hashlib.sha256(raw.encode()).hexdigest()[:8]
         safe = f"{safe.strip('_') or 'x'}-{digest}"
-    return f"{scope.value}-{safe}"
+    suffix = _CORE_SPACE_SUFFIX if layer is MemoryLayer.core else ""
+    return f"{scope.value}-{safe}{suffix}"
 
 
-def memories_uri(scope: MemoryScope, scope_id: str) -> str:
-    return f"viking://user/{scope_user_id(scope, scope_id)}/memories"
+def memories_uri(
+    scope: MemoryScope, scope_id: str, layer: MemoryLayer = MemoryLayer.fact
+) -> str:
+    return f"viking://user/{scope_user_id(scope, scope_id, layer)}/memories"
 
 
 @dataclass
@@ -174,8 +186,10 @@ class _OpenVikingRuntime:
             self._known_users.add(uid)
         return ctx
 
-    async def ctx_for(self, scope: MemoryScope, scope_id: str) -> Any:
-        return await self.ctx_for_uid(scope_user_id(scope, scope_id))
+    async def ctx_for(
+        self, scope: MemoryScope, scope_id: str, layer: MemoryLayer = MemoryLayer.fact
+    ) -> Any:
+        return await self.ctx_for_uid(scope_user_id(scope, scope_id, layer))
 
     async def service(self) -> Any:
         client = await self.client()
@@ -215,40 +229,69 @@ class OpenVikingMemoryStore:
     async def recall(
         self, scope: MemoryScope, scope_id: str, limit: int = 50
     ) -> list[str]:
-        """Injection layer: one line per memory card, newest last.
+        """Both layers: one line per memory card, newest last.
 
         Each extracted memory is a compact card file; its content IS the
         atomic memory unit (the omem model), so recall reads the newest cards
         directly. Everything else — session archives, trajectories, resources
         — stays behind on-demand ``search``/``read_memory`` (spec §15 Q9).
         """
-        files = await self._memory_files(scope, scope_id)
-        files.sort(key=lambda e: str(e.get("modTime", "")))
-        picked = files[-limit:]
-        if not picked:
-            return []
-        service = await self._rt.service()
-        ctx = await self._rt.ctx_for(scope, scope_id)
-        contents = await asyncio.gather(
-            *(self._read_card(service, ctx, str(e.get("uri", ""))) for e in picked)
-        )
-        lines: list[str] = []
-        for e, content in zip(picked, contents, strict=True):
-            if content:
-                lines.append(f"[{e.get('rel_path', '')}] {content}")
-        return lines
+        entries: list[tuple[MemoryLayer, dict[str, Any]]] = []
+        for layer in (MemoryLayer.core, MemoryLayer.fact):
+            entries += [
+                (layer, e) for e in await self._memory_files(scope, scope_id, layer)
+            ]
+        entries.sort(key=lambda pair: str(pair[1].get("modTime", "")))
+        return await self._read_entries(scope, scope_id, entries[-limit:])
+
+    async def recall_core(self, scope: MemoryScope, scope_id: str) -> list[str]:
+        """The whole core layer of a scope, oldest first — its own space, so
+        this is a full listing rather than a search."""
+        return await self._cards(scope, scope_id, MemoryLayer.core)
+
+    async def rank_facts(
+        self,
+        scope: MemoryScope,
+        scope_id: str,
+        query: str,
+        limit: int = 500,
+    ) -> list[tuple[float, str]]:
+        """Non-core facts scored against the turn's context.
+
+        This is the one place the two backends genuinely differ in kind: here
+        the ranking is OpenViking's semantic search, so a fact can be retrieved
+        for meaning something related rather than for sharing a word. An empty
+        query has nothing to search with, so it degrades to newest-first at
+        score 0.0 — the same floor the flat backend has.
+        """
+        if not query.strip():
+            return [
+                (0.0, line) for line in reversed(await self.recall(scope, scope_id))
+            ]
+        hits = await self.search(scope, scope_id, query, limit=limit)
+        return [(h.score, h.abstract) for h in hits if h.abstract]
 
     async def count(self, scope: MemoryScope, scope_id: str) -> int:
-        """Memory cards in the scope, including the ones `recall` left out —
-        injection subtracts the two to report what it had to cut."""
-        return len(await self._memory_files(scope, scope_id))
+        """Memory cards in the scope, both layers, including the ones a turn
+        did not retrieve — injection subtracts the two to report what is
+        missing from this turn."""
+        return len(await self._memory_files(scope, scope_id)) + len(
+            await self._memory_files(scope, scope_id, MemoryLayer.core)
+        )
 
-    async def remember(self, scope: MemoryScope, scope_id: str, content: str) -> None:
+    async def remember(
+        self,
+        scope: MemoryScope,
+        scope_id: str,
+        content: str,
+        *,
+        layer: MemoryLayer = MemoryLayer.fact,
+    ) -> None:
         """Persist a fact through OpenViking's canonical write path: a one-shot
         session commit. OpenViking's extractor classifies/merges/dedups it into
         the taxonomy (语义分类由 AI 做, 规则4)."""
         service = await self._rt.service()
-        ctx = await self._rt.ctx_for(scope, scope_id)
+        ctx = await self._rt.ctx_for(scope, scope_id, layer)
         from openviking.message.part import TextPart
 
         session_id = f"remember-{uuid.uuid4().hex[:12]}"
@@ -299,16 +342,32 @@ class OpenVikingMemoryStore:
     async def list_entries(
         self, scope: MemoryScope, scope_id: str, limit: int = 200
     ) -> list[dict[str, Any]]:
-        """Flat listing for the memory page: uri + card content + modTime."""
-        files = await self._memory_files(scope, scope_id)
-        files.sort(key=lambda e: str(e.get("modTime", "")), reverse=True)
-        picked = files[:limit]
+        """Flat listing for the memory page: uri + card content + modTime.
+
+        Both layers — the page exists so a human can see and prune what the
+        agent remembers, and the core layer is the part that costs a seat on
+        every single turn, so hiding it there would hide exactly the entries
+        most worth curating.
+        """
+        entries: list[tuple[MemoryLayer, dict[str, Any]]] = []
+        for layer in (MemoryLayer.core, MemoryLayer.fact):
+            entries += [
+                (layer, e) for e in await self._memory_files(scope, scope_id, layer)
+            ]
+        entries.sort(key=lambda pair: str(pair[1].get("modTime", "")), reverse=True)
+        picked = entries[:limit]
         if not picked:
             return []
         service = await self._rt.service()
-        ctx = await self._rt.ctx_for(scope, scope_id)
+        ctxs = {
+            layer: await self._rt.ctx_for(scope, scope_id, layer)
+            for layer in {layer for layer, _ in picked}
+        }
         contents = await asyncio.gather(
-            *(self._read_card(service, ctx, str(e.get("uri", ""))) for e in picked)
+            *(
+                self._read_card(service, ctxs[layer], str(e.get("uri", "")))
+                for layer, e in picked
+            )
         )
         return [
             {
@@ -316,19 +375,57 @@ class OpenVikingMemoryStore:
                 "rel_path": str(e.get("rel_path", "")),
                 "abstract": content,
                 "mod_time": str(e.get("modTime", "")),
+                "layer": layer.value,
             }
-            for e, content in zip(picked, contents, strict=True)
+            for (layer, e), content in zip(picked, contents, strict=True)
+        ]
+
+    async def _cards(
+        self, scope: MemoryScope, scope_id: str, layer: MemoryLayer
+    ) -> list[str]:
+        """Every card of one layer, oldest first."""
+        files = await self._memory_files(scope, scope_id, layer)
+        files.sort(key=lambda e: str(e.get("modTime", "")))
+        return await self._read_entries(scope, scope_id, [(layer, e) for e in files])
+
+    async def _read_entries(
+        self,
+        scope: MemoryScope,
+        scope_id: str,
+        entries: list[tuple[MemoryLayer, dict[str, Any]]],
+    ) -> list[str]:
+        """Card contents for listed files, in the order given; empties dropped."""
+        if not entries:
+            return []
+        service = await self._rt.service()
+        ctxs = {
+            layer: await self._rt.ctx_for(scope, scope_id, layer)
+            for layer in {layer for layer, _ in entries}
+        }
+        contents = await asyncio.gather(
+            *(
+                self._read_card(service, ctxs[layer], str(e.get("uri", "")))
+                for layer, e in entries
+            )
+        )
+        return [
+            f"[{e.get('rel_path', '')}] {content}"
+            for (_, e), content in zip(entries, contents, strict=True)
+            if content
         ]
 
     async def _memory_files(
-        self, scope: MemoryScope, scope_id: str
+        self,
+        scope: MemoryScope,
+        scope_id: str,
+        layer: MemoryLayer = MemoryLayer.fact,
     ) -> list[dict[str, Any]]:
-        """Memory card files of one scope (structural filter, no NL parsing)."""
+        """Memory card files of one scope layer (structural filter, no NL parsing)."""
         service = await self._rt.service()
-        ctx = await self._rt.ctx_for(scope, scope_id)
+        ctx = await self._rt.ctx_for(scope, scope_id, layer)
         try:
             entries = await service.fs.tree(
-                memories_uri(scope, scope_id),
+                memories_uri(scope, scope_id, layer),
                 ctx=ctx,
                 output="original",
                 show_all_hidden=False,

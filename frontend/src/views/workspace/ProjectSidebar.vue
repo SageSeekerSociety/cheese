@@ -39,8 +39,8 @@ function openDocs(kind: string) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind } })
 }
 
-async function onCreateTopic(title: string) {
-  const topic = await store.create(title)
+async function onCreateTopic(title: string, agentInstanceId?: string | null) {
+  const topic = await store.create(title, agentInstanceId)
   if (topic) openTopic(topic.id)
 }
 

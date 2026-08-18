@@ -13,6 +13,13 @@ Stage one is PURELY ADDITIVE: `TopicService.return_conclusion` keeps all
 three of its original side effects (message into the parent, a section appended
 to the parent's living doc, a change-alert) and merely opens a card beside them.
 
+采信 is also what moves a sub-topic's COMMITS: they are folded into the room's
+branch (`fold_into_room`), so a room's accept card ships everything its tasks
+produced instead of every task opening a PR of its own. That fold can be refused
+(the room is waiting on CI, somebody is editing in its workspace) or can
+conflict — none of which may fail the settlement, so the card settles either way
+and `sweep_room_merges` is the exit from the queue.
+
 采信即归档有**一个**例外，and it is not a softening of 默认采信: a sub-topic
 holding an undecided ACCEPT card (验收卡) is not archived yet — archiving would
 revoke that card (`review/archive.py`), and the platform tells 分身 to both
@@ -22,6 +29,8 @@ still flows to the parent; only the archive is owed, and
 `sweep_deferred_archives` pays it back the moment nobody is waiting on a card.
 """
 
+import asyncio
+import logging
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -33,6 +42,7 @@ from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.conclusion import room_branch
 from app.domain.conclusion.models import (
     ARCHIVE_DEFERRED,
     ARCHIVE_DEFERRED_DONE,
@@ -44,11 +54,19 @@ from app.domain.conclusion.models import (
     ConclusionStatus,
 )
 from app.domain.conclusion.repositories import ConclusionCardRepository
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicRepository
+from app.domain.workspace import service as ws
+
+logger = logging.getLogger("cheesex.conclusion")
 
 #: 平台自己结算时记的 handle（轮结束自动采信 / 超时采信 / 被 supersede）。
 SYSTEM_ACTOR = "system"
+
+#: 一轮扫描最多看多少张采信卡。护栏而不是策略：磁盘备忘让已经合完的卡连 git 都
+#: 不用问，所以真正会被检查的只有还欠着的那几张。撞到上限会记 warning——「悄悄
+#: 少扫了一批」比慢一点危险得多。
+_ROOM_MERGE_SWEEP_LIMIT = 500
 
 #: 实际允许的打回次数。策略值是 1；2 是硬上限，任何调参都不许越过它
 #: (设计 §二 机制③：用完只剩采信或升级)。
@@ -138,6 +156,11 @@ class ConclusionCardService:
     async def accept(self, card: ConclusionCard, *, by: str) -> ConclusionCard:
         """采信 —— the default. Settles the card and archives the sub-topic.
 
+        采信 is also when the sub-topic's COMMITS join the room's branch
+        (`fold_into_room`) — 一个房间一条分支一个 PR. It cannot fail the
+        settlement: a merge that has to wait (or that conflicts) leaves the card
+        accepted and gets picked up by `sweep_room_merges`.
+
         归档是这里唯一可能欠下的动作：子话题还挂着一张等人的验收卡时，采信照做、
         回流照做，只把归档推迟到卡有结果之后（`_archive_subtopic`）。
         """
@@ -145,8 +168,130 @@ class ConclusionCardService:
         await self._settle(
             card, status=ConclusionStatus.accepted, by=by, reason="", announce=True
         )
+        try:
+            await self.fold_into_room(card)
+        except Exception:  # noqa: BLE001 — 采信 must not depend on git
+            logger.exception("folding sub-topic %s into its room failed", card.topic_id)
         await self._archive_subtopic(card, by=by)
         return card
+
+    # ---- 提交进母话题那一个 PR ------------------------------------------
+
+    async def fold_into_room(self, card: ConclusionCard) -> dict:
+        """把子话题分支上的提交并进母话题的分支 —— 一个房间一条分支一个 PR。
+
+        子话题不是「更小的房间」，是房间里看得见的一条 subagent 线：上下文和
+        session 跟它走，房间、容器、PR 跟母话题走。所以它的产出不该自己开一个
+        PR，而该落进母话题手上那一个。
+
+        三种情况不合，各有各的说法，**没有一种是默默算了**：母话题在等 CI
+        （`pr_open`，合了就把 CI 打回起点）、母话题工作区有人在改（人的未提交
+        编辑绝不能被机器扫掉）、两条活改到了同一处（冲突）。前两种排队等下一轮
+        扫描，第三种要人解——三种都会在房间里说一句。
+        """
+        sub = await self._topics.get(card.topic_id)
+        room = await self._topics.get(card.receiver_topic_id)
+        if sub is None or room is None:
+            return {"skipped": "话题不存在"}
+        # 只有「房间里的一件活」共用房间的分支。房间自己（root 的儿子）照旧从
+        # 基线分支长出来、照旧靠采纳并进 main —— 把它并进根话题是没有意义的。
+        #
+        # 记成 DONE 而不是直接返回：这个判断的答案永远不会变，不记的话每一轮扫描
+        # 都要把它重新问一遍，而它的数量是「项目里所有房间级采信卡」，只增不减。
+        if sub.kind not in (TopicKind.task, TopicKind.subtopic):
+            room_branch.write_state(card.id, room_branch.DONE)
+            return {"skipped": "不是房间里的一件活"}
+        from app.domain.review.services import AcceptService  # 局部 import：避免成环
+
+        if await AcceptService(self._session).pr_is_in_flight(room.id):
+            return await self._record_fold(
+                card,
+                sub,
+                room,
+                {
+                    "merged": False,
+                    "deferred": True,
+                    "reason": "母话题的验收卡正在等 CI（PR 已开），"
+                    "现在并进去会让整条 CI 队列从头重排",
+                },
+            )
+        result = await asyncio.to_thread(
+            ws.merge_subtopic_into_room, card.project_id, sub.id, room.id
+        )
+        return await self._record_fold(card, sub, room, result)
+
+    async def _record_fold(
+        self, card: ConclusionCard, sub: Topic, room: Topic, result: dict
+    ) -> dict:
+        """Remember what happened, and say it in the room if it is news.
+
+        Only a CHANGE is announced: the sweep retries a queued or conflicted
+        merge every round, and a room that repeated "还在排队" every few minutes
+        would be worse than silent.
+        """
+        state = room_branch.state_of(result)
+        previously = room_branch.read_state(card.id)
+        room_branch.write_state(card.id, state)
+        if state == previously or room.status == TopicStatus.archived:
+            return result
+        if result.get("merged"):
+            await self._say_in_room(
+                room, room_branch.merged_text(title=sub.title, result=result)
+            )
+        elif state == room_branch.DEFERRED:
+            await self._say_in_room(
+                room,
+                room_branch.deferred_text(
+                    title=sub.title, reason=result.get("reason", "")
+                ),
+            )
+        elif state == room_branch.CONFLICT:
+            await self._say_in_room(
+                room, room_branch.conflict_text(title=sub.title, result=result)
+            )
+            await AlertService(self._session).create(
+                project_id=card.project_id,
+                level=AlertLevel.strong,
+                kind=AlertKind.decision_request,
+                title=f"子话题「{sub.title}」的提交并不进本房间的分支：冲突",
+                body=markdown_preview(str(result.get("reason", "")), 200),
+                topic_id=room.id,
+            )
+        return result
+
+    async def _say_in_room(self, room: Topic, text: str) -> None:
+        await self._blocks.add(
+            project_id=room.project_id,
+            topic_id=room.id,
+            author=SYSTEM_ACTOR,
+            author_type=AuthorType.system,
+            content=text,
+            kind=BlockKind.event,
+            meta={"platform": True, "room_merge": True},
+        )
+
+    async def sweep_room_merges(self) -> list[uuid.UUID]:
+        """还没并进母话题分支的那些采信卡，再试一次 —— 排队的出口就是这里。
+
+        队列是**推导出来的**，不是存下来的：「这张采信卡的提交在不在母话题分支
+        上」git 自己答得出来，所以既不需要新列也不需要迁移。磁盘上那张备忘只是
+        让扫描跳过已经干完的卡（丢了就多问几次 git，不会答错）。
+        """
+        folded: list[uuid.UUID] = []
+        cards = await self._repo.list_accepted(limit=_ROOM_MERGE_SWEEP_LIMIT)
+        if len(cards) == _ROOM_MERGE_SWEEP_LIMIT:
+            logger.warning(
+                "room-merge sweep hit its %d-card ceiling; older accepted cards "
+                "were not examined this round",
+                _ROOM_MERGE_SWEEP_LIMIT,
+            )
+        for card in cards:
+            if room_branch.read_state(card.id) == room_branch.DONE:
+                continue
+            result = await self.fold_into_room(card)
+            if result.get("merged"):
+                folded.append(card.topic_id)
+        return folded
 
     async def need_evidence(
         self,

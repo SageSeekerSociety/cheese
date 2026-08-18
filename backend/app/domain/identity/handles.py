@@ -8,10 +8,21 @@ is still ``IdentityService.is_agent`` (the ``AgentBinding``).
 
 import uuid
 
-# 芝士's platform-wide handle — a real user row, seeded once. The fallback
-# identity: what a token that names no 分身 resolves to.
+# 芝士's platform-wide handle — a real user row, seeded once, and the handle a
+# project's default agent keys its memory under.
+#
+# It used to double as the fallback identity ("a token that names no 分身"), and
+# that was one job too many: once an agent's memory is keyed by its handle, every
+# call the platform could not attribute wrote into the DEFAULT agent's pool. The
+# unattributable case now has a name of its own, below.
 CHEESE_HANDLE = "cheese"
 CHEESE_NAME = "芝士"
+
+# What a credential that names no 分身 resolves to when there is no project to
+# ask either — i.e. genuinely "we cannot tell which agent this is". Inside the
+# `cheese-` namespace on purpose: it is reserved against human registration and
+# renders as an agent by the same house rule as every other 分身 handle.
+UNRESOLVED_AGENT_HANDLE = "cheese-unresolved"
 
 # Namespace for per-topic 分身 handles. Derived, never stored as a lookup table:
 # the handle is a pure function of the topic id, so a token can carry the acting

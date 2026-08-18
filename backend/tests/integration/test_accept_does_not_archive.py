@@ -35,15 +35,36 @@ def _topic(client, project_id: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _card(client, topic_id: str, reviewer: str = "alice"):
+def _card(
+    client,
+    topic_id: str,
+    reviewer: str = "alice",
+    subject: str = "chore(test): file an accept card",
+):
     return client.post(
         f"/topics/{topic_id}/accept-card",
         json={
-            "change_subject": "chore(test): file an accept card",
+            "change_subject": subject,
             "reviewer_handle": reviewer,
             "routing_reason": "最懂",
         },
     )
+
+
+def _commit_to_topic_branch(project_id: str, topic_id: str, text: str) -> None:
+    """在这个话题的分支上再落一个提交 —— 也就是「房间里又干了一件活」。
+
+    直接写工作区再让平台快照，是这条路径在真实使用里的样子：人和分身都不手动
+    commit，改动由平台折成提交。
+    """
+    import uuid as _uuid
+
+    from app.domain.workspace import service as ws
+
+    pid, tid = _uuid.UUID(project_id), _uuid.UUID(topic_id)
+    worktree = ws._ensure_worktree(pid, tid)
+    (worktree / "next-task.txt").write_text(text, encoding="utf-8")
+    ws.snapshot_worktree(pid, tid)
 
 
 def _accept(client, card_id: str, by: str = "alice"):
@@ -78,18 +99,38 @@ def test_merge_leaves_the_topic_active_with_a_delivery_marker(client):
     assert topic["accepted_at"] is not None
 
 
-def test_a_delivered_topic_cannot_file_a_second_card(client):
-    """防空 PR：这个话题的分支已经合进 main 了。"""
+def test_a_delivered_topic_with_nothing_new_cannot_file_a_second_card(client):
+    """防空 PR：分支上没有 main 没有的东西，这一张卡交付不了任何改动。
+
+    注意拒绝的**理由**：不是「这个话题交付过了」，而是「这条分支现在没有新提交」。
+    两者在这一刻的结论相同，往后就不同了 —— 见下面那条。
+    """
     _pid, tid = _delivered_topic(client)
 
     r = _card(client, tid, reviewer="bob")
     assert r.status_code == 422
     # 拒绝话术要说清出路（读它的是一轮之后就要再试一次的芝士）。
     message = r.json()["message"]
-    assert "已经交付过一次" in message
-    assert "新话题" in message
-    # 而且这个冻结不靠归档 —— 话题还活着。
+    assert "没有新提交" in message
+    assert "先把改动提交到工作区" in message
+    # 而且这个拒绝不靠归档 —— 话题还活着。
     assert _state(client, tid)["status"] == "active"
+
+
+def test_a_delivered_room_can_deliver_again_once_there_are_new_commits(client):
+    """一个 task 完成了可以再新开 task —— 这是房间比它承载的活儿长的全部意义。
+
+    这条曾经是不成立的：守卫看的是「历史上有没有一张卡到过 accepted」，于是
+    房间交付一次之后就永久冻住，而 #536 让话题在合并后活下来，恰恰是为了让它
+    接着干下一件事。守卫现在问的是分支的事实，所以工作区里有了新提交就能再递。
+    """
+    pid, tid = _delivered_topic(client)
+
+    # 干下一件活：往这个房间的分支上再写一笔。
+    _commit_to_topic_branch(pid, tid, "next task")
+
+    r = _card(client, tid, reviewer="bob", subject="feat(x): the next task")
+    assert r.status_code == 200, r.text
 
 
 def test_revoking_the_accept_lets_the_topic_deliver_again(client):
@@ -184,4 +225,4 @@ def test_one_card_at_a_time_covers_both_live_and_delivered(client, blocked_statu
     if blocked_status == "pending":
         assert "改验收人" in message
     else:
-        assert "已经交付过一次" in message
+        assert "没有新提交" in message

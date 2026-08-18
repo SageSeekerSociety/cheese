@@ -2,13 +2,13 @@
 // ApiEnvelope; these helpers unwrap `data` and surface non-200 codes as errors.
 import type {
   AcceptCard,
+  AgentType,
   ApiEnvelope,
   Block,
   ChatAttachment,
   ComputeProfiles,
   Contributions,
   ExecProfiles,
-  ExpertRole,
   FileContent,
   GitCommit,
   GithubConnection,
@@ -22,6 +22,7 @@ import type {
   PrChecks,
   PreviewInfo,
   Project,
+  ProjectAgent,
   ProjectCredits,
   ProjectMemberRow,
   ProjectOverview,
@@ -102,6 +103,14 @@ export class ApiError extends Error {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+// A page whose backend ships separately has to tell "this feature is not
+// deployed here yet" apart from "it is deployed and it failed" — otherwise the
+// first render of a not-yet-merged API is an error banner that reads like a bug.
+// 404/405 is the only honest signal for it: the route does not exist.
+export function isEndpointMissing(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 404 || e.status === 405)
 }
 
 // How close to expiry is "about to expire". The refresh below is what keeps a
@@ -482,12 +491,46 @@ export function listTopics(
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
+export function createTopic(
+  projectId: string,
+  title: string,
+  parentId?: string,
+  // 谁在这个话题里干活。不传 = 跟着项目的默认走，而且**继续跟着**它变 —— 这和
+  // 「把当前默认抄一份存下来」不是一回事，后者会在换默认时留下一批不动的旧话题。
+  agentInstanceId?: string | null
+): Promise<Topic> {
   const body: Record<string, string> = { project_id: projectId, title }
   if (parentId) body.parent_id = parentId
+  if (agentInstanceId) body.agent_instance_id = agentInstanceId
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+// ---- 话题用哪个 AI 队友 ----
+
+export interface TopicAgent {
+  topic_id: string
+  instance_id: string | null
+  handle: string
+  type_name: string | null
+  display_name: string
+  /** true = 这个话题没自己选过，跟着项目默认走（换了默认它会跟着换） */
+  inherited: boolean
+  /** 换人会丢掉这个话题的会话 —— 换之前要让人知道 */
+  session_reset: boolean
+}
+
+export function getTopicAgent(topicId: string): Promise<TopicAgent> {
+  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`)
+}
+
+// instance_id: null = 交还给项目默认。
+export function setTopicAgent(topicId: string, instanceId: string | null): Promise<TopicAgent> {
+  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`, {
+    method: 'PUT',
+    body: JSON.stringify({ instance_id: instanceId }),
   })
 }
 
@@ -655,28 +698,122 @@ export function setTopicComputeProfile(
   })
 }
 
-// 专家角色 (spec §8.2): merged catalog — built-in file-library roles + custom
-// (DB) roles; a custom role shadows a built-in with the same name.
-export function listRoles(): Promise<ListPayload<ExpertRole>> {
-  return request<ListPayload<ExpertRole>>('/roles')
+// Which type the project's default agent wears; an empty name clears it. The
+// agent itself stays — and so does the memory it has been accumulating.
+export function setProjectAgentType(projectId: string, typeName: string): Promise<ProjectAgent> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
+    method: 'PUT',
+    body: JSON.stringify({ type_name: typeName }),
+  })
 }
-export function createRole(payload: {
-  name: string
-  title: string
+
+// ---- AI 队友 (agent 类型与实例) ----
+//
+// 「不能停用最后一个」and the like are the backend's to enforce; these are plain
+// transports. What they must NOT do is paper over a missing endpoint: the agent
+// backend lands separately, so a 404 here has to reach the caller as a 404 (see
+// `isEndpointMissing`) rather than as an empty list that reads like "no agents".
+
+// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
+// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
+// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+export interface AgentFieldChoice {
+  id: string
+  label: string
   description: string
-  body: string
+  default: boolean
+}
+
+export interface AgentFieldOptions {
+  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
+  state: 'choosable' | 'unavailable'
+  choices: AgentFieldChoice[]
+  reason: string
+  note: string
+}
+
+export type AgentTypeOptions = Record<string, AgentFieldOptions>
+
+export function getAgentTypeOptions(): Promise<AgentTypeOptions> {
+  return request<AgentTypeOptions>('/agent-types/options')
+}
+
+// The merged type catalog: platform presets + this project's custom types.
+export function listAgentTypes(): Promise<ListPayload<AgentType>> {
+  return request<ListPayload<AgentType>>('/agent-types')
+}
+
+export interface AgentTypeInput {
+  title?: string
+  description?: string
+  body?: string
+  skills?: string[]
+  mcp_servers?: string[]
+  model?: string | null
+  effort?: string | null
+  harness?: string | null
+  // Who authored the type — the backend records it and shows it in the catalog.
   created_by?: string
-}): Promise<ExpertRole> {
-  return request<ExpertRole>('/roles', {
+}
+
+export function createAgentType(payload: AgentTypeInput & { name: string; body: string }): Promise<AgentType> {
+  return request<AgentType>('/agent-types', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function updateAgentType(name: string, payload: AgentTypeInput): Promise<AgentType> {
+  return request<AgentType>(`/agent-types/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+// The agents this project has. A project that never configured one still gets a
+// row back — the implicit 芝士, `configured: false` — because it is really
+// working in every room and owns a real memory pool.
+export function listProjectAgents(projectId: string): Promise<ListPayload<ProjectAgent>> {
+  return request<ListPayload<ProjectAgent>>(`/projects/${encodeURIComponent(projectId)}/agents`)
+}
+
+export function createProjectAgent(
+  projectId: string,
+  payload: { display_name: string; handle?: string; type_name?: string | null }
+): Promise<ProjectAgent> {
+  return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
-// Which persona 芝士 loads for this project; empty role clears it.
-export function setProjectExpertRole(projectId: string, role: string): Promise<{ current: string | null }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/expert-role`, {
+
+export function updateProjectAgent(
+  projectId: string,
+  agentId: string,
+  payload: { display_name?: string; type_name?: string | null }
+): Promise<ProjectAgent> {
+  return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PUT',
-    body: JSON.stringify({ role }),
+    body: JSON.stringify(payload),
+  })
+}
+
+// 停用 — not a physical delete. Topics already using it keep working and its
+// memory is kept; it just stops being选得到 for new ones.
+export function deactivateProjectAgent(projectId: string, agentId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`,
+    { method: 'DELETE' }
+  )
+}
+
+// Which agent a new topic gets. `instance_id` picks a different agent (a
+// different memory pool); `type_name` re-skins the one the project already has,
+// so the pool it has been filling stays its own.
+export function setProjectDefaultAgent(
+  projectId: string,
+  body: { instance_id?: string | null; type_name?: string | null }
+): Promise<ProjectAgent> {
+  return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
   })
 }
 

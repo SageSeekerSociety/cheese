@@ -6,6 +6,7 @@ import { computed, ref } from 'vue'
 
 import ChatPanel from '@/components/ChatPanel.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
+import TopicAgentPicker from '@/components/TopicAgentPicker.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
@@ -81,6 +82,7 @@ defineExpose({
       <span v-if="topic.status === 'archived'" class="d-inline-flex align-center ga-1 c-faint archived-chip">
         <span class="status-dot status-dot--muted" />已归档
       </span>
+      <TopicAgentPicker :key="`agent-${topic.id}`" :topic-id="topic.id" :project-id="topic.project_id" />
       <TopicComputePicker :key="topic.id" :topic-id="topic.id" />
     </template>
   </ChatPanel>

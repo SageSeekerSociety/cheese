@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.project.models import AiMode, Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic.models import TopicKind
@@ -27,7 +28,7 @@ class ProjectService:
         name: str,
         owner_handle: str | None = None,
         ai_mode: AiMode = AiMode.collaborative,
-        expert_role: str | None = None,
+        agent_type: str | None = None,
         team_id: int | None = None,
         external_task_id: int | None = None,
     ) -> Project:
@@ -46,7 +47,6 @@ class ProjectService:
             name=name,
             owner_handle=owner_handle,
             ai_mode=ai_mode,
-            expert_role=expert_role,
             team_id=team_id,
             external_task_id=external_task_id,
         )
@@ -59,6 +59,8 @@ class ProjectService:
         # exists, and nothing yet needs "a team holding unspent credits".
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
+        if agent_type:
+            await self._set_agent_type(project, agent_type)
         root = await self._topics.add(
             project_id=project.id,
             title=f"{name} · 项目总览",
@@ -91,6 +93,18 @@ class ProjectService:
             return None
         team = await team_service(self._session).ensure_personal_team(user.id)
         return team.id
+
+    async def _set_agent_type(self, project: Project, type_name: str) -> None:
+        """Give this project's default agent a type (its persona).
+
+        The type goes on the agent, never on the project: a project can host
+        more than one agent, and only the agent knows which memory pool the
+        persona is talking out of.
+        """
+        agents = AgentInstanceService(self._session)
+        instance = await agents.materialize_default(project)
+        await agents.set_type(instance, type_name)
+        await self._session.flush()
 
     async def get(self, project_id: uuid.UUID) -> Project | None:
         """项目本身，不存在返回 None。
@@ -154,8 +168,11 @@ class ProjectService:
             else None
         )
         protocol = resolve(category=category, task=task)
-        if not project.expert_role and protocol.default_role:
-            project.expert_role = protocol.default_role
+        # The 项目集 supplies a default agent type; a project that already picked
+        # one keeps it, so accepting the protocol never overwrites a choice.
+        agent = await AgentInstanceService(self._session).for_project(project)
+        if protocol.default_role and agent.type_name is None:
+            await self._set_agent_type(project, protocol.default_role)
         if protocol.compute_credits > 0:
             await self._grants.grant(
                 project_id=project.id,

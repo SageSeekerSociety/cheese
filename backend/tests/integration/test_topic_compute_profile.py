@@ -303,22 +303,28 @@ def test_selecting_cloud_without_machine_create_authority_is_refused(
     provision.assert_not_awaited()
 
 
-def test_visibility_block_is_present_non_default_and_carries_the_notice(client):
+def test_visibility_block_is_present_and_carries_the_notice(client):
     """#282 §四 / #358: the compute-profile response a room reads carries the
-    visibility 档 so the room can SHOW whether a turn sees the whole machine. Boxed
-    is the default-but-undeployed option; whole-machine is available yet non-default
-    and describes itself with the honest #282 warning. A topic with no pinned device
-    is not a Hosted Machine turn, so `machine_access` is False."""
+    visibility 档 so the room can SHOW whether a turn sees the whole machine.
+
+    The default is whichever 档 has a transport, and today that is whole-machine:
+    boxed `isolated` is honestly undeployed until #358 step 2, so naming it the
+    default here — as this test used to — told a room its topic was boxed while
+    the resolver bound it to the whole machine. A topic with no pinned device is
+    not a Hosted Machine turn at all, so `machine_access` is False."""
     pid = _project(client)
     tid = _topic(client, pid)
     vis = client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
 
     opts = {o["id"]: o for o in vis["options"]}
-    assert opts["isolated"]["default"] is True
     assert opts["isolated"]["available"] is False
-    assert opts["host"]["default"] is False
+    assert opts["isolated"]["default"] is False
     assert opts["host"]["available"] is True
+    assert opts["host"]["default"] is True
     assert "整台机器" in opts["host"]["description"]
+    # Survives step 2 flipping the answer: one default, and it can run.
+    defaults = [o for o in vis["options"] if o["default"]]
+    assert len(defaults) == 1 and defaults[0]["available"] is True
 
     assert vis["effective"] is None  # not pinned to any device
     assert vis["machine_access"] is False
