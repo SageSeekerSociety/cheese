@@ -5,8 +5,8 @@
 // the check ever used different schemas, the check would be meaningless — so
 // they can't: both import from here.
 //
-// 军规 1 (never silently drop content): the doc's source of truth is a markdown
-// file in the project's git repo. Any syntax the visual editor can't represent
+// 军规 1 (never silently drop content): the doc is markdown, and the panel
+// reads and writes it whole. Any syntax the visual editor can't represent
 // would be destroyed by a load→save cycle, so `compareRoundTrip` detects that
 // at LOAD time and DocPanel pauses autosave + shows a banner. The escape hatch
 // is source mode, which edits the raw markdown and can never be lossy.
