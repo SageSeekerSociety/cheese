@@ -491,12 +491,46 @@ export function listTopics(
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
+export function createTopic(
+  projectId: string,
+  title: string,
+  parentId?: string,
+  // 谁在这个话题里干活。不传 = 跟着项目的默认走，而且**继续跟着**它变 —— 这和
+  // 「把当前默认抄一份存下来」不是一回事，后者会在换默认时留下一批不动的旧话题。
+  agentInstanceId?: string | null
+): Promise<Topic> {
   const body: Record<string, string> = { project_id: projectId, title }
   if (parentId) body.parent_id = parentId
+  if (agentInstanceId) body.agent_instance_id = agentInstanceId
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+// ---- 话题用哪个 AI 队友 ----
+
+export interface TopicAgent {
+  topic_id: string
+  instance_id: string | null
+  handle: string
+  type_name: string | null
+  display_name: string
+  /** true = 这个话题没自己选过，跟着项目默认走（换了默认它会跟着换） */
+  inherited: boolean
+  /** 换人会丢掉这个话题的会话 —— 换之前要让人知道 */
+  session_reset: boolean
+}
+
+export function getTopicAgent(topicId: string): Promise<TopicAgent> {
+  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`)
+}
+
+// instance_id: null = 交还给项目默认。
+export function setTopicAgent(topicId: string, instanceId: string | null): Promise<TopicAgent> {
+  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`, {
+    method: 'PUT',
+    body: JSON.stringify({ instance_id: instanceId }),
   })
 }
 
@@ -679,6 +713,30 @@ export function setProjectAgentType(projectId: string, typeName: string): Promis
 // transports. What they must NOT do is paper over a missing endpoint: the agent
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
+
+// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
+// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
+// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+export interface AgentFieldChoice {
+  id: string
+  label: string
+  description: string
+  default: boolean
+}
+
+export interface AgentFieldOptions {
+  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
+  state: 'choosable' | 'unavailable'
+  choices: AgentFieldChoice[]
+  reason: string
+  note: string
+}
+
+export type AgentTypeOptions = Record<string, AgentFieldOptions>
+
+export function getAgentTypeOptions(): Promise<AgentTypeOptions> {
+  return request<AgentTypeOptions>('/agent-types/options')
+}
 
 // The merged type catalog: platform presets + this project's custom types.
 export function listAgentTypes(): Promise<ListPayload<AgentType>> {
