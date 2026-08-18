@@ -72,7 +72,7 @@ def test_missing_runtime_image_is_a_sanitized_platform_event():
         "event_type": "platform_error",
         "code": "runtime_image_missing",
         "severity": "error",
-        "title": "Agent 运行组件暂时缺失",
+        "title": "运行环境镜像暂时不可用",
         "retryable": True,
         "detail": (
             "本轮还没有开始执行，项目文件没有受到影响。"

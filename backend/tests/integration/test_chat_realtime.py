@@ -675,7 +675,7 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
     ]
     assert len(fallback_frames) == 1
     fallback = fallback_frames[0]["block"]
-    assert "实时送入当前会话失败" in fallback["content"]
+    assert "没能直接送进正在进行的会话" in fallback["content"]
     assert fallback["meta"]["severity"] == "error"
     assert fallback["meta"]["who"] == "platform"
     assert all(frame["type"] != "error" for frame in second_frames)

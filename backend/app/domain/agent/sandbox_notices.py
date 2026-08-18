@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 REBUILD_CAUSE_TEXT: dict[str, str] = {
     "image": "运行环境镜像已切换",
     "env": "运行环境配置已变更（例如模型路由）",
-    "cli_mount": "平台 CLI 的挂载已更新",
+    "cli_mount": "平台命令行工具已更新",
     # Reached when SANDBOX_TOKEN is rotated under a live session, or the
     # session's token ages past its TTL: its hooks are all rejected and the
     # topic can never report anything again (#316). Restarting the session is
