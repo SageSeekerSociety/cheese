@@ -528,8 +528,10 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
 
 @pytest.mark.anyio
 async def test_failed_turn_auto_resumes_once(monkeypatch):
-    """续跑: a crashed turn schedules exactly ONE system-nudged continuation;
-    the resumed turn carries is_resume=True so it can never chain another."""
+    """续跑: a crashed turn schedules a system-nudged continuation, and the
+    continuation carries is_resume=True so 芝士 is told to pick up rather than
+    start over. What bounds the chain is the resume counter, not this flag —
+    see test_unclassified_failure_stops_chaining_and_hands_to_a_human."""
 
     async def _instant(_s):
         return None
@@ -1518,3 +1520,108 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
     assert len(metas) == 1
     assert metas[0].get("severity") == "warn"
     assert metas[0].get("who") == "human"
+
+
+@pytest.mark.anyio
+async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(monkeypatch):
+    """一个平台认不出来的失败,不能一直自动接着跑 (#574).
+
+    Dev ran one topic this way for 87 minutes: every crash scheduled the next
+    turn, that turn crashed the same way, and only a deploy restart ever broke
+    the chain — 228 events, and one user's 「1」 re-sent into a turn 80 times.
+
+    A turn that failed for a reason the platform cannot name gives no grounds to
+    repeat it indefinitely. A bounded number of attempts is right (most such
+    failures are transient); when they are spent the topic goes to a person
+    rather than round again."""
+    real_sleep = asyncio.sleep
+
+    async def _instant(_s):
+        # Skip the wait but keep the yield point — a resume chain only advances
+        # if control actually returns to the loop.
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", _instant)
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+
+    class _AlwaysBroken:
+        """Fails with an exception no classifier recognises — where all 257 of
+        dev's measured failures landed, every one with an empty meta.code."""
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+            self.events: list[tuple[str, dict]] = []
+
+        async def converse(self, **kw):
+            self.calls.append(kw)
+            raise RuntimeError("boom")
+            yield  # pragma: no cover — makes this an async generator
+
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
+            self.events.append((content, meta or {}))
+            return {"id": "sys", "kind": "event", "content": content, "meta": meta}
+
+    svc = _AlwaysBroken()
+    topic = uuid.uuid4()
+    runner.submit(svc, topic, author="u", content="hi", summon=True)
+    for _ in range(400):  # drain the chain, however long it decides to be
+        await real_sleep(0)
+        if any(meta.get("who") == "human" for _, meta in svc.events):
+            break
+
+    assert len(svc.calls) <= 4, (
+        f"未分类失败连着自动跑了 {len(svc.calls)} 轮 —— 自动续跑没有上限"
+    )
+    assert any(meta.get("who") == "human" for _, meta in svc.events), (
+        "续跑用尽后没有把话题交给人:房间里没有一条 who=human 的事件"
+    )
+
+
+@pytest.mark.anyio
+async def test_repeated_timeouts_also_stop_chaining(monkeypatch):
+    """超时那条路径和崩溃那条一样要有上限 (#574).
+
+    Both ends of `_execute` schedule the same auto-resume, and a turn that keeps
+    timing out is exactly as unbounded as one that keeps crashing — the room
+    measured on dev carried both wordings. Fixing one and leaving the other is
+    how this comes back wearing the other message."""
+    real_sleep = asyncio.sleep
+
+    async def _instant(_s):
+        await real_sleep(0)
+
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker, turn_timeout_s=0.01)
+
+    class _AlwaysHangs:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+            self.events: list[tuple[str, dict]] = []
+
+        async def converse(self, **kw):
+            self.calls.append(kw)
+            await real_sleep(0.05)  # outlive the ceiling, every time
+            yield {"type": "done"}  # pragma: no cover
+
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
+            self.events.append((content, meta or {}))
+            return {"id": "sys", "kind": "event", "content": content, "meta": meta}
+
+    svc = _AlwaysHangs()
+    topic = uuid.uuid4()
+    runner.submit(svc, topic, author="u", content="hi", summon=True)
+    # Patch the clock only now: the ceiling above must stay real, it is what
+    # makes each turn time out. Only the resume delay is skipped.
+    monkeypatch.setattr(asyncio, "sleep", _instant)
+    for _ in range(400):
+        await real_sleep(0.005)
+        if any(meta.get("who") == "human" for _, meta in svc.events):
+            break
+
+    assert len(svc.calls) <= 4, (
+        f"超时连着自动跑了 {len(svc.calls)} 轮 —— 超时那条路径也没有上限"
+    )
+    assert any(meta.get("who") == "human" for _, meta in svc.events), (
+        "超时续跑用尽后没有把话题交给人"
+    )

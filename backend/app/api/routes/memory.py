@@ -43,6 +43,7 @@ def _entry_out(e: MemoryEntry) -> dict:
         "scope": e.scope.value,
         "scope_id": e.scope_id,
         "content": e.content,
+        "layer": e.layer.value,
         "created_at": e.created_at.isoformat(),
         # 记忆整理 computes its snapshot from the newest of these, so that the
         # concurrency check compares two timestamps from the SAME clock — the
@@ -107,6 +108,7 @@ async def _list_openviking(
                     "scope": scope.value,
                     "scope_id": scope_id,
                     "content": f"[{e['rel_path']}] {e['abstract']}".strip(),
+                    "layer": e["layer"],
                     "created_at": e["mod_time"],
                 }
             )

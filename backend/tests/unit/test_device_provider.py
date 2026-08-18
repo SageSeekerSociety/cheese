@@ -1,13 +1,16 @@
 """DeviceProvider: turn orchestration + hook→AgentEvent translation (injected hub)."""
 
 import asyncio
+import os
 import uuid
 from types import SimpleNamespace
 
 import pytest
 
+from app.core.config import settings
 from app.domain.agent.device_hub import HubScreen
-from app.domain.agent.device_provider import DeviceProvider
+from app.domain.agent.device_launch import DEVICE_TUNNEL_PROBE
+from app.domain.agent.device_provider import DeviceProvider, tunnel_port_for_topic
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
@@ -369,6 +372,157 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
     assert hub.closed == ["s1"]  # … the stale screen was dropped …
     assert [s.sid for s in hub.opened] == ["s2"]  # … and a fresh screen Spawned
     assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+
+
+class DeadTunnelHub(DeadClaudeHub):
+    """A device whose `claude` is ALIVE and whose machine-local tunnel helper is
+    GONE — the state a data-plane swap leaves behind. Answers the two probes
+    independently so the tunnel gate can be told apart from the liveness gate."""
+
+    def __init__(self, tunnel_verdict: str = "down", tunnel_exit: int = 0) -> None:
+        super().__init__()
+        self.tunnel_verdict = tunnel_verdict
+        self.tunnel_exit = tunnel_exit
+        self.probed_ports: list[str] = []
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        self.execs.append((argv, stdin))
+        if env and "CHEESE_TUNNEL_PROBE_PORT" in env:
+            self.probed_ports.append(env["CHEESE_TUNNEL_PROBE_PORT"])
+            return {
+                "stdout": self.tunnel_verdict,
+                "stderr": "",
+                "exit": self.tunnel_exit,
+                "truncated": False,
+            }
+        if env and "CHEESE_ALIVE_TOPIC" in env:
+            return {"stdout": "alive", "stderr": "", "exit": 0, "truncated": False}
+        return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
+
+
+async def _two_turns(provider, router, project_id, topic_id):
+    router_key = str(topic_id)
+    for turn in range(2):
+        _events, task = await _run(
+            provider,
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt=f"turn {turn}",
+            system_prompt="",
+            resume_session_id=None,
+        )
+        await asyncio.sleep(0.05)
+        router.push(
+            router_key, {"hook_event_name": "Stop", "last_assistant_message": "ok"}
+        )
+        await asyncio.wait_for(task, timeout=5)
+
+
+async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatch):
+    """`claude` dials a machine-local tunnel helper it was handed at startup and
+    never re-reads. That helper is brought up ONLY by the launcher's prefix, and a
+    reused screen is reasserted (a cheeselet hot-reload) rather than relaunched —
+    so when the helper dies under a still-running `claude`, nothing on either side
+    restores it and every turn after that dies with ConnectionRefused while the
+    process-tree probe still answers `alive`.
+
+    Observed 2026-08-18: a standing data-plane swap left five screens in exactly
+    this state, one replaying the same 28-message batch for the 30th time. The
+    reuse gate must therefore retire such a screen so a FRESH launch runs the
+    prefix again — the same treatment a dead credential already gets."""
+    monkeypatch.setattr(
+        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
+    )
+    hub = DeadTunnelHub(tunnel_verdict="down")
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    await _two_turns(provider, router, project_id, topic_id)
+
+    assert hub.reasserted == []  # never reasserted onto the dead helper …
+    assert hub.closed == ["s1"]  # … the screen was retired …
+    assert [s.sid for s in hub.opened] == ["s2"]  # … and relaunched fresh
+    assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+    # The port probed is the topic's own, so concurrent topics on one machine are
+    # judged independently rather than sharing one verdict.
+    assert hub.probed_ports == [str(tunnel_port_for_topic(topic_id))]
+
+
+@pytest.mark.parametrize(
+    ("verdict", "exit_code"),
+    [("up", 0), ("unknown", 0), ("down", 1), ("", 0)],
+)
+async def test_only_an_explicit_down_retires_a_screen(monkeypatch, verdict, exit_code):
+    """The gate throws away a live screen and the work in flight behind it, so it
+    fires only on proof. A helper that is up, a box with no /proc or no awk
+    (`unknown`), a probe that failed to run (non-zero exit), and an empty answer
+    must all leave the screen alone — otherwise a hiccup on the probe path costs
+    a working agent its session."""
+    monkeypatch.setattr(
+        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
+    )
+    hub = DeadTunnelHub(tunnel_verdict=verdict, tunnel_exit=exit_code)
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    await _two_turns(provider, router, project_id, topic_id)
+
+    assert hub.closed == []  # the screen survived …
+    assert hub.reasserted == ["s1"]  # … and the second turn reused it
+
+
+async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
+    """Where no tunnel is configured the device dials the meter directly and there
+    is no helper to lose, so the gate must not cost an extra round trip to every
+    box on every turn."""
+    monkeypatch.setattr(settings, "subscription_tunnel_url", "")
+    hub = DeadTunnelHub(tunnel_verdict="down")
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    await _two_turns(provider, router, project_id, topic_id)
+
+    assert hub.probed_ports == []  # never asked
+    assert hub.closed == []  # and nothing retired on a verdict it never got
+
+
+def test_the_tunnel_probe_reads_a_real_listening_socket():
+    """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
+    of thing that passes review and is wrong on the box. Run it for real: against a
+    port this test is actually listening on it must say `up`, and against one
+    nothing holds it must say `down`. A port is used rather than the helper's pid
+    because ConnectionRefused — what `claude` reports — is precisely 'nothing is
+    listening', and a lingering helper that still holds the port is not this bug."""
+    import socket
+    import subprocess
+
+    if not os.access("/proc/net/tcp", os.R_OK):
+        pytest.skip("no readable /proc/net/tcp on this platform")
+
+    def verdict(port: int) -> str:
+        return subprocess.run(
+            ["sh", "-c", DEVICE_TUNNEL_PROBE],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CHEESE_TUNNEL_PROBE_PORT": str(port)},
+            timeout=30,
+        ).stdout.strip()
+
+    with socket.socket() as live:
+        live.bind(("127.0.0.1", 0))
+        live.listen(1)
+        listening = live.getsockname()[1]
+        assert verdict(listening) == "up"
+
+    with socket.socket() as probe:  # bound, then released → nothing listening
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    assert verdict(free) == "down"
 
 
 async def test_launch_script_ships_as_a_file_never_as_tmux_argv():

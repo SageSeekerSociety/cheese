@@ -15,7 +15,7 @@ Additive and reversible: downgrade drops the columns and the table, leaving the
 entries exactly as they were (retired ones simply become visible again).
 
 Revision ID: b1d47f0a3c25
-Revises: c3e8b2d94f61
+Revises: d5a2f70c9b18
 """
 
 from collections.abc import Sequence
@@ -25,7 +25,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b1d47f0a3c25"
-down_revision: str | Sequence[str] | None = "c3e8b2d94f61"
+down_revision: str | Sequence[str] | None = "d5a2f70c9b18"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

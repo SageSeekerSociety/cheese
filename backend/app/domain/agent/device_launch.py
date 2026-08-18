@@ -260,6 +260,48 @@ echo unknown
 """
 
 
+# Is the machine-local tunnel helper this topic's `claude` was pointed at still
+# listening? Companion to DEVICE_ALIVE_PROBE, for the OTHER half of "the process
+# is alive but cannot reach the model".
+#
+# The helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
+# launcher's prefix — and a reused screen is reasserted (a cheeselet hot-reload),
+# never relaunched. So a helper that dies under a still-running `claude` never
+# comes back on its own, and `claude` bakes its HTTPS_PROXY at startup and never
+# re-reads it: every turn thereafter dies with `API Error: Unable to connect to
+# API (ConnectionRefused)` while the process-tree probe above reports `alive`.
+# Measured 2026-08-18 on the dev box: five screens in that state, one of them
+# replaying the same 28-message batch for the 30th time, ~3 minutes burnt per
+# attempt, with no path in the system able to restore them.
+#
+# LISTEN on the port is the right question, not "is the helper's pid alive": the
+# port is exactly what `claude` connects to, and ConnectionRefused is exactly
+# "nothing is listening there". A lingering helper process that has lost its
+# upstream still holds the port and is NOT this failure.
+#
+# Prints exactly one of `up` / `down` / `unknown`, same tri-state discipline as
+# the probe above: only an explicit `down` is actionable, so a missing /proc, an
+# absent awk, or any hiccup leaves a working screen alone.
+DEVICE_TUNNEL_PROBE = r"""port="${CHEESE_TUNNEL_PROBE_PORT:-}"
+case "$port" in ''|*[!0-9]*) echo unknown; exit 0 ;; esac
+[ -r /proc/net/tcp ] || { echo unknown; exit 0; }
+command -v awk >/dev/null 2>&1 || { echo unknown; exit 0; }
+hex=$(printf '%04X' "$port" 2>/dev/null) || { echo unknown; exit 0; }
+# /proc/net/tcp columns: $2 is local_address as HEXIP:HEXPORT, $4 is the state
+# (0A = LISTEN). The header row's $4 is the literal "st", so it never matches.
+# tcp6 has a 32-char hex address but the same `:PORT` suffix, hence split on ":"
+# and compare the LAST field rather than matching the whole column.
+for f in /proc/net/tcp /proc/net/tcp6; do
+  [ -r "$f" ] || continue
+  if awk -v p="$hex" '$4=="0A" { n=split($2,a,":"); if (a[n]==p) f=1 }
+                      END { exit f?0:1 }' "$f"; then
+    echo up; exit 0
+  fi
+done
+echo down
+"""
+
+
 # The spool drainer, shipped to "$HOME/.claude/cheese-drain" and started INSIDE
 # claude's own tmux session (same life, same death). It used to be backgrounded
 # in the OUTER launcher tree — the CONNECTOR's process tree — so a connector

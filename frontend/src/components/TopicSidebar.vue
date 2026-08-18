@@ -92,6 +92,7 @@ const route = useRoute()
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
+  { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
 ] as const
 function openProjectPage(name: string) {
   if (!props.selectedProjectId) return

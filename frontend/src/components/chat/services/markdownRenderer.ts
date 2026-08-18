@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify'
 import { Marked } from 'marked'
+import markedCjkFriendly from 'marked-cjk-friendly'
 import { markedHighlight } from 'marked-highlight'
 import Prism from 'prismjs'
 
@@ -40,7 +41,9 @@ export class MarkdownRenderer {
           }
         },
       }),
-      markedKatex({ strict: 'ignore' })
+      markedKatex({ strict: 'ignore' }),
+      // 见 src/lib/markdown.ts: 中文里的 `**粗体**` 常常闭合不了。
+      markedCjkFriendly()
     )
     this.marked.setOptions({
       breaks: true,

@@ -5,14 +5,15 @@
 // the check ever used different schemas, the check would be meaningless — so
 // they can't: both import from here.
 //
-// 军规 1 (never silently drop content): the doc's source of truth is a markdown
-// file in the project's git repo. Any syntax the visual editor can't represent
+// 军规 1 (never silently drop content): the doc is markdown, and the panel
+// reads and writes it whole. Any syntax the visual editor can't represent
 // would be destroyed by a load→save cycle, so `compareRoundTrip` detects that
 // at LOAD time and DocPanel pauses autosave + shows a banner. The escape hatch
 // is source mode, which edits the raw markdown and can never be lossy.
 
 import type { AnyExtension } from '@tiptap/core'
 import type { ImageOptions } from '@tiptap/extension-image'
+import type { marked } from 'marked'
 
 import { Extension, InputRule, mergeAttributes } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
@@ -22,9 +23,21 @@ import { TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
+import { Marked } from 'marked'
+import markedCjkFriendly from 'marked-cjk-friendly'
 
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
 export const lowlight = createLowlight(common)
+
+// CommonMark's flanking rules make a closing `**` that is preceded by
+// punctuation and followed by a letter unable to close — so
+// `**执行档案（ExecutionProfile）**解析` is not bold, and neither is
+// `**这句。**下一句`. English never hits it because a space always follows the
+// delimiter; Chinese has no such space, so it hits constantly. The CJK-friendly
+// extension (CommonMark issue #650) counts CJK characters as punctuation for
+// flanking, which supplies exactly the missing escape hatch and leaves
+// non-CJK text alone.
+export const docMarked = new Marked(markedCjkFriendly())
 
 // ---- Image: display resolves workspace-relative paths to the raw-file API,
 // but the node ATTR keeps the original path — markdown serialization reads the
@@ -157,7 +170,11 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
         HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
       },
     }),
-    Markdown,
+    // The cast: @tiptap/markdown types this option as the marked MODULE, but
+    // reads only Lexer/defaults/use/lexer/setOptions off it — all present on an
+    // instance, which is what its own README passes. `getDefaults` is the one
+    // module-only member, and nothing in the package calls it.
+    Markdown.configure({ marked: docMarked as unknown as typeof marked }),
     TableKit.configure({ table: { resizable: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),
@@ -190,6 +207,16 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
 //   8. "Empty" ATX heading trailing #s are NOT normalized (rare, keep strict).
 //  11. Intraword `\_` unescapes to `_` outside inline code (CommonMark:
 //      intraword underscores never toggle emphasis — escape is pure noise).
+//  12. Block boundaries always carry a blank line. The serializer writes one
+//      between every pair of blocks; a document written without it (`正文\n##
+//      小节`) parses identically. Both sides get the blank INSERTED, never
+//      removed, so a serializer that merged two blocks into one still fails —
+//      merging changes the text of the lines, not just the space between them.
+//  13. A paragraph's continuation lines carry no indentation of their own.
+//      `1. 第一条` + a 4-space continuation is the same list item as the same
+//      text continued at 2 spaces; only the item markers state the nesting, and
+//      those are left strict. A line that follows a BLANK line keeps its indent,
+//      which is what leaves 4-space indented code blocks strict.
 //
 // Everything else — dropped constructs, reordered content, lost alignment,
 // lost language tags, escaped-away tokens — fails the comparison.
@@ -215,6 +242,15 @@ const ESCAPED_TOKEN_RE = /&lt;(@[\w-]+|#[0-9a-fA-F-]{8,}|&amp;[\w./一-鿿-]+)&g
 // renderMarkdown can't do this — the manager splits marks into open/close
 // around a placeholder, so text===href is only visible after serialization.
 const AUTOLINK_RT_RE = /\[(https?:\/\/[^\s\]]+|mailto:[^\s\]]+)\]\(\1\)/g
+
+// The serializer escapes every character that could start a construct, whether
+// or not one is possible here — so `P1~P4` comes back `P1\~P4` and `app[bot]`
+// comes back `app\[bot\]`, and a save writes that backslash into the file. Drop
+// the two that never carry meaning on their own: a lone `~` needs a partner to
+// open strikethrough, and a `[` needs a `](` or `][` to open a link. Underscore
+// is deliberately NOT here — it pairs across a line often enough that
+// unescaping it changes how real documents parse.
+const INERT_ESCAPE_RE = /\\([~[\]])/g
 
 // Apply `fn` to prose only: skip fenced code lines entirely and inline code
 // spans within a line, so literal `[x](x)` / `&lt;` inside code is never touched.
@@ -243,6 +279,7 @@ export function serializeDoc(editor: { getMarkdown: () => string }): string {
     seg
       .replace(ESCAPED_TOKEN_RE, (_m, inner: string) => `<${inner.replace(/^&amp;/, '&')}>`)
       .replace(AUTOLINK_RT_RE, '$1')
+      .replace(INERT_ESCAPE_RE, '$1')
   )
 }
 
@@ -283,6 +320,19 @@ function normalizeTableRow(line: string): string {
   return `| ${cells.join(' | ')} |`
 }
 
+// A line that opens a block of its own: heading, quote, list item, fence,
+// table row, thematic break. Everything else continues the block above it.
+const BLOCK_START_RE = /^ {0,3}(#{1,6}(\s|$)|>|([-*+]|\d{1,9}[.)])(\s|$)|(```|~~~)|\||((\*|-|_)\s*){3,}$)/
+// A heading is a block all by itself, so whatever follows it starts a new one.
+const HEADING_RE = /^ {0,3}#{1,6}(\s|$)/
+
+// The per-line rules that apply to prose wherever it appears. Table cells and
+// blockquote bodies are prose too — running only part of this on them is how
+// `| login_security.py |` came to report a document as unsafe to edit.
+function prose(line: string): string {
+  return decodeBasicEntities(unescapeIntrawordUnderscores(line))
+}
+
 export function normalizeMarkdown(md: string): string {
   const lines = md.replace(/\r\n?/g, '\n').split('\n')
   // Each entry keeps whether the line is fence content, so the blank-line
@@ -300,7 +350,7 @@ export function normalizeMarkdown(md: string): string {
     }
     raw = raw.replace(/\s+$/, '')
     if (TABLE_ROW_RE.test(raw)) {
-      out.push({ text: decodeBasicEntities(normalizeTableRow(raw)), literal: false })
+      out.push({ text: prose(normalizeTableRow(raw)), literal: false })
       continue
     }
     // A line of only quote markers is the serializer's block separator inside
@@ -313,17 +363,31 @@ export function normalizeMarkdown(md: string): string {
     if (bq) {
       const depth = (bq[1].match(/>/g) ?? []).length
       raw = '> '.repeat(depth) + bq[2].trim()
-      out.push({ text: decodeBasicEntities(raw.trimEnd()), literal: false })
+      out.push({ text: prose(raw.trimEnd()), literal: false })
       continue
     }
     // Bullet markers * / + → - (preserve indentation).
     raw = raw.replace(/^(\s*)[*+](\s)/, '$1-$2')
-    out.push({ text: decodeBasicEntities(unescapeIntrawordUnderscores(raw)), literal: false })
+    out.push({ text: prose(raw), literal: false })
   }
+  // Rules 12 & 13: put a blank line on every block boundary, and drop the
+  // indent a paragraph's continuation lines were wrapped at. Both read the
+  // fence flag, so code keeps its own spacing byte-exact.
+  const spaced: { text: string; literal: boolean }[] = []
+  for (const l of out) {
+    const prev = spaced[spaced.length - 1]
+    if (!l.literal && prev && !prev.literal && prev.text !== '') {
+      const boundary = HEADING_RE.test(prev.text) || (!BLOCK_START_RE.test(prev.text) && BLOCK_START_RE.test(l.text))
+      if (boundary && l.text !== '') spaced.push({ text: '', literal: false })
+    }
+    const continuation = !l.literal && prev && !prev.literal && prev.text !== '' && !BLOCK_START_RE.test(l.text)
+    spaced.push(continuation ? { text: l.text.replace(/^ +(?=\S)/, ''), literal: false } : l)
+  }
+
   // Collapse blank-line runs (never inside fences); trim document edges.
   const collapsed: string[] = []
   let prevBlank = false
-  for (const l of out) {
+  for (const l of spaced) {
     if (!l.literal && l.text === '') {
       if (prevBlank) continue
       prevBlank = true

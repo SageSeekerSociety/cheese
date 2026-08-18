@@ -42,9 +42,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.memory.models import (
     MemoryDream,
     MemoryEntry,
+    MemoryLayer,
     MemoryScope,
     agent_project_scope_id,
 )
+
+# Merging across layers keeps the HIGHEST one: a fact that was injected
+# unconditionally must not lose that seat because it was consolidated with a
+# lesser one. Demotion is a curation decision for a human, not a side effect of
+# tidying — and it would be a silent one.
+_LAYER_RANK = {MemoryLayer.fact: 0, MemoryLayer.core: 1}
 
 # What the pass is asked to do, on the machine, with the workspace in front of
 # it. Kept here as one constant rather than assembled at the call site: it is
@@ -294,14 +301,17 @@ async def apply_dream(
             # merged text anyway would ADD a fact while retiring nothing — the
             # duplicate this pass exists to remove.
             continue
-        # The merged fact stays in the pool the originals lived in. Moving a
-        # shared-pool fact into one agent's private pool would make it vanish
-        # for every other 芝士 in the project, which is a visible loss dressed
-        # up as tidying.
+        # The merged fact stays in the pool AND the layer the originals lived
+        # in. Moving a shared-pool fact into one agent's private pool would make
+        # it vanish for every other 芝士 in the project; demoting a `core` fact
+        # to `fact` would drop it out of the layer that is injected
+        # unconditionally. Both are a visible loss dressed up as tidying, and
+        # neither would raise anything.
         session.add(
             MemoryEntry(
                 scope=claimed[0].scope,
                 scope_id=claimed[0].scope_id,
+                layer=max((e.layer for e in claimed), key=_LAYER_RANK.__getitem__),
                 content=content,
                 created_by=dream.id,
             )

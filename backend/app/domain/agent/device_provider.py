@@ -30,7 +30,11 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
-from app.domain.agent.device_launch import DEVICE_ALIVE_PROBE, build_screen_launch
+from app.domain.agent.device_launch import (
+    DEVICE_ALIVE_PROBE,
+    DEVICE_TUNNEL_PROBE,
+    build_screen_launch,
+)
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import (
     SESSION_TOKEN_TTL_S,
@@ -43,7 +47,10 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MARKER,
 )
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Visibility, has_runnable_transport
+from app.domain.device.supply import (
+    default_visibility,
+    has_runnable_transport,
+)
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
@@ -141,10 +148,12 @@ async def resolve_pinned_device(
     # pin that the resolver can quietly change is the original drift bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
-        # Only the host transport exists today; isolated bindings become selectable
-        # when #358 step 2 supplies their per-room container transport.
+        # The same fact the market catalogue publishes as `default=True`, read from
+        # one place so the picker can never advertise a 档 the resolver does not
+        # bind. Today that resolves to `host`, because `isolated` has no transport;
+        # when #358 step 2 supplies one, this and the catalogue move together.
         await service.bind_topic_device(
-            topic_id, device.device_id, visibility=Visibility.host
+            topic_id, device.device_id, visibility=default_visibility()
         )
         return device.device_id
     return None
@@ -613,6 +622,28 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             # probe-hiccup screen is still reasserted, exactly as before.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
+        if existing is not None and await self._tunnel_helper_is_down(existing):
+            # The third way a reused screen can be alive and unusable, and the one
+            # that had no gate: its `claude` runs, its credential is fresh, and the
+            # machine-local tunnel helper its HTTPS_PROXY points at is GONE. That
+            # helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
+            # launcher's prefix — and reuse reasserts (hot-reloads the cheeselet)
+            # instead of relaunching, so nothing on either side ever restarts it.
+            # `claude` read that HTTPS_PROXY once at startup and never re-reads it,
+            # so every turn from then on dies with `API Error: Unable to connect to
+            # API (ConnectionRefused)` while `_confirm_alive` keeps answering
+            # `alive` — the same "live process + dead dependency" shape the
+            # credential gate above exists for, on the other dependency.
+            #
+            # Measured 2026-08-18: the dev box's standing data plane was swapped
+            # (#573) under five still-running screens. Every subsequent turn failed,
+            # one topic replayed the same 28-message batch 30 times at ~3 minutes a
+            # try, and no re-@ could ever have fixed it — the only cure was a fresh
+            # launch, which nothing was able to ask for. Retire the screen here so
+            # the OPEN below Spawns one whose launcher runs `cheese-tunnel-up`
+            # again.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
         # project/topic root so the screen's git-backed work persists across turns.
         # The home MUST be per topic, not per project: every hook event lands in
@@ -899,6 +930,44 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         if exp is None:
             return False
         return exp <= int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
+
+    async def _tunnel_helper_is_down(self, screen: HubScreen) -> bool:
+        """Whether the machine-local tunnel helper this screen's `claude` dials has
+        stopped listening — the second half of the reuse gate, alongside
+        `_credential_is_stale`.
+
+        Both answer the same question about different dependencies: `claude` reads
+        its HTTPS_PROXY exactly once at startup, and a reused screen is reasserted
+        rather than relaunched, so a dependency that dies under the running process
+        can never be repaired in place. For the credential that meant a permanent
+        407; for the tunnel helper it means a permanent ConnectionRefused, with the
+        process-tree probe reporting `alive` throughout.
+
+        Skipped entirely on a deployment with no tunnel (the device dials the meter
+        directly, so there is no helper to lose) — that keeps the per-turn cost at
+        zero everywhere the failure cannot happen.
+
+        Conservative in the same direction as `_confirm_alive`: only an explicit
+        `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
+        (no /proc, no awk) is read as "still up", so a probe hiccup never throws
+        away a healthy screen and its in-progress work."""
+        topic_id = screen.topic_id
+        if topic_id is None:
+            return False
+        if not uses_tunnel(tunnel_url=settings.subscription_tunnel_url.strip()):
+            return False
+        try:
+            result = await self._hub.exec(
+                screen.device_id,
+                ["sh", "-c", DEVICE_TUNNEL_PROBE],
+                env={"CHEESE_TUNNEL_PROBE_PORT": str(tunnel_port_for_topic(topic_id))},
+                timeout=_ALIVE_PROBE_TIMEOUT_S,
+            )
+        except Exception:  # noqa: BLE001 — a probe failure is not proof of death
+            return False
+        if result.get("exit") != 0:
+            return False
+        return (result.get("stdout") or "").strip() == "down"
 
     async def _confirm_alive(self, screen: HubScreen) -> bool:
         """Idle-suspect liveness probe for a device screen (turn 活跃度检测, the

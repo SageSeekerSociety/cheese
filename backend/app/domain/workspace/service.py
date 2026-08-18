@@ -443,10 +443,33 @@ def _worktree_path(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     ).resolve()
 
 
+def _fork_point(repo: Path, topic_id: uuid.UUID) -> str | None:
+    """The revision a topic's brand-new workspace starts from: its room's branch
+    when it has one, None for jj's own default (the base branch).
+
+    None covers three cases that all want the same answer — a room (nothing to
+    fork), a topic split before branches were shared (no marker), and a room
+    that has never committed anything (no branch yet, so the base branch IS its
+    content). Chosen once, at creation: `jj workspace add` is the only moment a
+    fork point exists to pick."""
+    parent = branch_parent_for_topic(topic_id)
+    if parent is None:
+        return None
+    branch = branch_for_topic(parent)
+    # The room's branch may have been moved by a plain git ref update (an
+    # accept's CAS, a push) that jj has not seen yet — import before asking, or
+    # the fork would start from a stale bookmark.
+    with contextlib.suppress(ValidationError):
+        _jj(repo, "git", "import")
+    return branch if _branch_exists(repo, branch) else None
+
+
 def _ensure_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """每话题一个独立 jj workspace（沙箱地基）：分身在自己的工作目录里干活，
     jj 自动快照其改动；并行话题互不覆盖。导出一个 git 分支（`branch_for_topic`）
-    供采纳/diff——分支名与工作区目录名各自独立派生，见 `_topic_dirname`。"""
+    供采纳/diff——分支名与工作区目录名各自独立派生，见 `_topic_dirname`。
+
+    子话题从母话题的分支长出来 (`_fork_point`)：一个房间一条分支一个 PR。"""
     main = ensure_repo(project_id)
     _ensure_base_commit(main)  # a workspace needs a base commit to fork from
     branch = branch_for_topic(topic_id)
@@ -461,7 +484,11 @@ def _ensure_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
             pass
         shutil.rmtree(wt, ignore_errors=True)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    _jj(main, "workspace", "add", "--name", _topic_dirname(topic_id), str(wt))
+    add_args = ["workspace", "add", "--name", _topic_dirname(topic_id)]
+    fork_point = _fork_point(main, topic_id)
+    if fork_point is not None:
+        add_args += ["-r", fork_point]
+    _jj(main, *add_args, str(wt))
     # Export a git branch (= jj bookmark) for this topic so merge/diff use git.
     _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
     _jj(wt, "git", "export")
@@ -638,25 +665,32 @@ def _rooms_dir() -> Path:
     return Path(settings.workspace_root) / _ROOMS_DIRNAME
 
 
-def bind_room(topic_id: uuid.UUID, room_id: uuid.UUID) -> None:
-    """Record which room's box a topic runs in. Idempotent, best-effort: the
-    mapping is a cache of a DB fact, so losing it costs a fallback, not
-    correctness."""
-    path = _rooms_dir() / topic_id.hex
+def _write_marker(path: Path, value: str, what: str) -> None:
+    """Record one small DB-derived fact on disk, idempotently and atomically.
+
+    Write-then-replace: a reader must never see a half-written value, and two
+    concurrent turns of one room both write here. Best-effort by design — every
+    caller's fact is a cache of something the DB owns, so losing the file costs
+    a fallback, not correctness."""
     try:
-        if path.read_text().strip() == room_id.hex:
+        if path.read_text().strip() == value:
             return
     except OSError:
         pass
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Write-then-replace: a reader must never see a half-written id, and
-        # concurrent turns for two topics of one room both write here.
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(room_id.hex)
+        tmp.write_text(value)
         tmp.replace(path)
     except OSError:
-        logger.warning("could not record room binding for %s", topic_id, exc_info=True)
+        logger.warning("could not record %s for %s", what, path.name, exc_info=True)
+
+
+def bind_room(topic_id: uuid.UUID, room_id: uuid.UUID) -> None:
+    """Record which room's box a topic runs in. Idempotent, best-effort: the
+    mapping is a cache of a DB fact, so losing it costs a fallback, not
+    correctness."""
+    _write_marker(_rooms_dir() / topic_id.hex, room_id.hex, "room binding")
 
 
 def room_for_topic(topic_id: uuid.UUID) -> uuid.UUID:
@@ -677,6 +711,47 @@ def forget_room(topic_id: uuid.UUID) -> None:
     """Drop a topic's room binding (its box no longer hosts it)."""
     with contextlib.suppress(OSError):
         (_rooms_dir() / topic_id.hex).unlink()
+
+
+# --- which branch a topic's own branch grows out of --------------------------
+#
+# A piece of work split out of a room is not a fork of the base branch: it forks
+# THE ROOM, and its commits flow back into the room's branch when its conclusion
+# is 采信'd (`merge_subtopic_into_room`). One room, one branch, one PR — the
+# room's accept card ships everything its tasks produced, instead of every task
+# opening a PR of its own.
+#
+# Which topic a branch forks from is a DB fact (the topic tree plus `kind`), and
+# this module is deliberately sync and DB-free, so the topic layer writes the
+# answer here the moment it splits — exactly the shape `bind_room` uses. No
+# marker means "fork the base branch", which is what a room itself does and what
+# every topic did before this existed: a degraded answer, never a wrong one.
+_BRANCH_PARENTS_DIRNAME = ".branch-parents"
+
+
+def _branch_parents_dir() -> Path:
+    return Path(settings.workspace_root) / _BRANCH_PARENTS_DIRNAME
+
+
+def bind_branch_parent(topic_id: uuid.UUID, parent_topic_id: uuid.UUID) -> None:
+    """Record that `topic_id`'s branch belongs to `parent_topic_id`'s.
+
+    Must be written before anything can materialise the topic's workspace — the
+    fork point is chosen once, when the jj workspace is created, and no later
+    call can move it."""
+    _write_marker(
+        _branch_parents_dir() / topic_id.hex, parent_topic_id.hex, "branch parent"
+    )
+
+
+def branch_parent_for_topic(topic_id: uuid.UUID) -> uuid.UUID | None:
+    """The topic whose branch this one forks from and merges back into, or None
+    when it stands on the base branch (every room, and every topic created
+    before branches were shared)."""
+    try:
+        return uuid.UUID(hex=(_branch_parents_dir() / topic_id.hex).read_text().strip())
+    except (OSError, ValueError):
+        return None
 
 
 def gate_workdir_for(worktree: Path) -> str:
@@ -806,7 +881,7 @@ def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
     return wt
 
 
-def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
+def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> bool:
     """Materialise commits that reached the branch without going through here.
 
     A machine that owns its tree pushes straight to the ref. The workspace is the
@@ -818,19 +893,25 @@ def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
     a human's uncommitted edit here must never be swept aside by a machine's
     push. When both sides have moved, the workspace wins and stays put — its
     changes are the ones a person is looking at.
+
+    Returns whether the workspace now sits on the branch tip. False is not an
+    error — it is "the workspace declined, it holds something a person cares
+    about" — but a caller that just MOVED the branch has to know, because the
+    next `snapshot_worktree` sets the bookmark from this workspace and would
+    carry the branch back off whatever it missed.
     """
     repo = ensure_repo(project_id)
     try:
         tip = _git(repo, "rev-parse", branch).strip()
     except ValidationError:
-        return  # branch not created yet — nothing to catch up to
+        return False  # branch not created yet — nothing to catch up to
     if not tip:
-        return
+        return False
     if _jj(wt, "diff", "-s").strip():
-        return  # pending local edits: leave them alone
+        return False  # pending local edits: leave them alone
     current = _jj(wt, "log", "-r", "@-", "--no-graph", "-T", "commit_id").strip()
     if current == tip:
-        return
+        return True
     # Fast-forward only: move only when the workspace has nothing the branch lacks.
     ancestor = subprocess.run(
         ["git", "merge-base", "--is-ancestor", current, tip],
@@ -839,9 +920,10 @@ def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
         timeout=20,
     )
     if current and ancestor.returncode != 0:
-        return
+        return False
     _jj(wt, "git", "import")
     _jj(wt, "new", branch)
+    return True
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
@@ -1065,19 +1147,36 @@ def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:
     return _git(repo, "diff")
 
 
+def _diff_base(repo: Path, topic_id: uuid.UUID) -> str:
+    """What a topic's changes are measured AGAINST: its room's branch when it
+    forked one, the project's base branch otherwise.
+
+    A task's branch grows out of its room (`_fork_point`), so measuring it
+    against main would report the room's whole diff as the task's own — every
+    file the room had already changed showing up in the 改动 tab of a task that
+    never touched them. The question the panel asks is "what did THIS piece of
+    work change", and the answer is relative to where it started.
+    """
+    parent = branch_parent_for_topic(topic_id)
+    if parent is not None:
+        parent_branch = branch_for_topic(parent)
+        if _branch_exists(repo, parent_branch):
+            return parent_branch
+    return _base_branch(repo)
+
+
 def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
-    """Full diff of a topic's branch vs the base (what 采纳 would merge)."""
+    """Full diff of a topic's branch vs what it grew out of (`_diff_base`)."""
     repo = ensure_repo(project_id)
     branch = branch_for_topic(topic_id)
     if not _branch_exists(repo, branch):
         return ""
-    base = _base_branch(repo)
-    return _git(repo, "diff", f"{base}...{branch}")
+    return _git(repo, "diff", f"{_diff_base(repo, topic_id)}...{branch}")
 
 
 def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
-    """Paths a topic's branch changes relative to the base — the same range
-    :func:`topic_diff` renders, named only.
+    """Paths a topic's branch changes relative to what it grew out of — the same
+    range :func:`topic_diff` renders, named only.
 
     It exists so the panel can answer "is there anything to review, and how
     much" WITHOUT fetching the diff. The 改动 tab has to be right while it is
@@ -1092,8 +1191,7 @@ def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]
     branch = branch_for_topic(topic_id)
     if not _branch_exists(repo, branch):
         return []
-    base = _base_branch(repo)
-    out = _git(repo, "diff", "--name-only", f"{base}...{branch}")
+    out = _git(repo, "diff", "--name-only", f"{_diff_base(repo, topic_id)}...{branch}")
     return [line.strip() for line in out.splitlines() if line.strip()]
 
 
@@ -1363,6 +1461,7 @@ def _merge_ref_into_base(
     message: str,
     *,
     allow_unrelated_histories: bool = False,
+    sync_checkout: bool = True,
 ) -> dict:
     """Merge `merge_ref` into `base` without ever running the merge itself in
     the project's shared working directory. The merge happens in a throwaway
@@ -1372,6 +1471,14 @@ def _merge_ref_into_base(
     (`update-ref old new`) — if another accept landed on `base` in the
     meantime, this retries against the new tip rather than clobbering it or
     silently merging on top of a stale base.
+
+    `sync_checkout=False` for a `base` that is NOT the project's base branch —
+    a room's branch taking in one of its tasks (`merge_subtopic_into_room`).
+    The shared directory mirrors the base tip and nothing else; pointing it at a
+    room's branch would hand every project-level reader (list_files/read_file/
+    exec_in_sandbox with topic_id=None) one room's in-progress work as if it
+    were the project. Those readers are already correct here — the base branch
+    did not move — so the sync is not merely unnecessary, it is the bug.
 
     Never raises for an ordinary merge failure (conflict, or retries
     exhausted) — always returns a dict with a `merged` key, same contract as
@@ -1425,6 +1532,8 @@ def _merge_ref_into_base(
         # is NOT a failed merge. Letting it raise told the user "采纳未完成：
         # 合并出错" about work that was already on the base branch, and invited a
         # re-accept of an already-merged topic (observed 2026-08-11).
+        if not sync_checkout:
+            return {"merged": True, "branch": merge_ref, "into": base}
         try:
             _sync_shared_checkout(repo, base, new_sha)
         except ValidationError as exc:
@@ -1472,6 +1581,101 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     return _merge_ref_into_base(
         project_id, repo, base, branch, f"chore: merge {branch} into {base}"
     )
+
+
+def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ref, of],
+            cwd=repo,
+            capture_output=True,
+            timeout=20,
+        ).returncode
+        == 0
+    )
+
+
+def merge_subtopic_into_room(
+    project_id: uuid.UUID, topic_id: uuid.UUID, room_topic_id: uuid.UUID
+) -> dict:
+    """子话题的提交进母话题那一个 PR: fold a task's branch into the room's.
+
+    Called when the task's conclusion is 采信'd. From then on the room's branch
+    — the one its accept card and its PR ride — carries the task's commits, so
+    the work reaches GitHub through the room instead of a PR of its own.
+
+    Three things can stop it, and none of them may fail silently:
+
+    - **conflict** — two tasks in one room touched the same lines. Merging into
+      the room is what surfaces it, days before it would have surfaced between
+      two PRs; the conflicting paths come back in `conflicts` for the caller to
+      say so out loud.
+    - **the room's workspace has uncommitted edits** — somebody is editing in
+      there right now. 人的未提交编辑绝不能被机器扫掉, so the merge is refused
+      and queued (`deferred`), never forced.
+    - **the room's workspace could not follow the branch** — it went dirty
+      between the check and the ref move. The merge itself is durable, but the
+      next `snapshot_worktree` would set the bookmark from that stale workspace
+      and carry the branch back off these commits, so it reports
+      `workspace_stale` and the caller leaves the card queued for a retry.
+
+    "It has nothing to add" (no branch, or already merged) is `noop`, not a
+    failure: a research task that wrote no code is the normal case.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_topic(topic_id)
+    room_branch = branch_for_topic(room_topic_id)
+    if branch == room_branch:
+        return {"merged": False, "noop": True, "reason": "子话题和母话题是同一条分支"}
+    if not _branch_exists(repo, branch):
+        return {"merged": False, "noop": True, "reason": "子话题没有分支，没有提交要并"}
+    # Materialising the room's workspace also guarantees it HAS a branch — a
+    # room whose own 芝士 never committed anything has none until now.
+    room_wt = _ensure_worktree(project_id, room_topic_id)
+    if _is_ancestor(repo, branch, room_branch):
+        # Already on the branch — but not finished until the room's workspace
+        # holds it too, for the `workspace_stale` reason below. A retry that
+        # stopped here would mark the job done while the rewind was still armed.
+        settled = _catch_up_with_branch(project_id, room_wt, room_branch)
+        return {
+            "merged": False,
+            "noop": True,
+            "workspace_stale": not settled,
+            "reason": "这些提交已经在母话题分支上",
+        }
+    if _jj(room_wt, "diff", "-s").strip():
+        return {
+            "merged": False,
+            "deferred": True,
+            "reason": "母话题工作区有未提交的改动，合并排队等它落定",
+        }
+    commits = len(
+        _git(repo, "rev-list", f"{room_branch}..{branch}").strip().splitlines()
+    )
+    result = _merge_ref_into_base(
+        project_id,
+        repo,
+        room_branch,
+        branch,
+        f"chore: merge {branch} into {room_branch}",
+        sync_checkout=False,
+    )
+    if not result["merged"]:
+        return result
+    if not _catch_up_with_branch(project_id, room_wt, room_branch):
+        return {
+            "merged": True,
+            "workspace_stale": True,
+            "commits": commits,
+            "branch": branch,
+            "into": room_branch,
+        }
+    return {
+        "merged": True,
+        "commits": commits,
+        "branch": branch,
+        "into": room_branch,
+    }
 
 
 # ---- 上游仓库 (spec §6.3): 关联已有 repo + 同步上游 ----------------------------

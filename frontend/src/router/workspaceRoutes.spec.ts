@@ -38,6 +38,7 @@ describe('the project frame', () => {
     ['/docs/decisions', 'project-docs'],
     ['/overview', 'overview'],
     ['/calendar', 'calendar'],
+    ['/agents', 'project-agents'],
     ['/settings', 'project-settings'],
     ['/members/lisi', 'member'],
   ])('renders %s inside the frame, not beside it', (suffix, name) => {

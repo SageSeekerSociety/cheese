@@ -37,17 +37,23 @@ def test_build_system_prompt_includes_skills_doc_and_memory():
     assert "- fact B" in prompt
 
 
-def test_build_system_prompt_includes_expert_role():
+def test_build_system_prompt_includes_the_agents_persona():
     prompt = _build_system_prompt("base", "", None, [], role="你是学术研究导师")
     assert "你是学术研究导师" in prompt
 
 
-def test_role_description_lookup():
-    from app.domain.agent.roles import role_description
+def test_preset_types_are_loaded_from_their_files():
+    """A preset carries its system prompt AND how it runs — the second half is
+    what a persona alone never covered."""
+    from app.domain.agent_type.library import preset_types
 
-    assert role_description(None) is None
-    assert role_description("unknown-role") is None
-    assert "学术" in (role_description("academic-research") or "")
+    presets = preset_types()
+    assert "学术" in presets["academic-research"].body
+    assert "no-such-type" not in presets
+    # Every preset resolves to the same shape, whatever its file left out.
+    for definition in presets.values():
+        assert isinstance(definition.skills, list)
+        assert isinstance(definition.mcp_servers, list)
 
 
 def test_chipify_paths_wraps_bare_relative_paths():

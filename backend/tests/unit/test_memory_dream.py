@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.domain.memory.dream import apply_dream, revert_dream
-from app.domain.memory.models import MemoryEntry, MemoryScope
+from app.domain.memory.models import MemoryEntry, MemoryLayer, MemoryScope
 from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
@@ -261,6 +261,53 @@ async def test_retired_facts_leave_recall_count_and_search(client):
         ]
         assert await store.count(MemoryScope.project, str(project.id)) == 1
         assert await store.search(MemoryScope.project, str(project.id), "5433") == []
+
+
+async def test_merging_a_core_fact_keeps_it_core(client):
+    """`core` is the layer injected unconditionally every turn. Consolidating a
+    core fact with an ordinary one must not quietly demote the result — that
+    would remove it from every prompt, raise nothing, and look like tidying."""
+    async with client.test_factory() as session:
+        project, topic = await _project_topic(session)
+        store = DbMemoryStore(session)
+        await store.remember(
+            MemoryScope.project, str(project.id), "汇报要短", layer=MemoryLayer.core
+        )
+        await store.remember(MemoryScope.project, str(project.id), "汇报别写长篇")
+        ids = [
+            r.id
+            for r in (
+                await session.scalars(
+                    select(MemoryEntry).where(MemoryEntry.scope_id == str(project.id))
+                )
+            ).all()
+        ]
+
+        await apply_dream(
+            session,
+            topic_id=topic.id,
+            snapshot_at=None,
+            merges=[{"replaces": [str(i) for i in ids], "content": "汇报要短"}],
+            drops=[],
+            adds=["整理时新收割的一条"],
+        )
+        await session.commit()
+
+        merged = await session.scalar(
+            select(MemoryEntry).where(
+                MemoryEntry.content == "汇报要短", MemoryEntry.retired_at.is_(None)
+            )
+        )
+        assert merged is not None and merged.layer == MemoryLayer.core
+        # It is still in the layer injection reads unconditionally.
+        assert await store.recall_core(MemoryScope.project, str(project.id)) == [
+            "汇报要短"
+        ]
+        # A newly harvested fact is not born core — it has to earn that.
+        harvested = await session.scalar(
+            select(MemoryEntry).where(MemoryEntry.content == "整理时新收割的一条")
+        )
+        assert harvested is not None and harvested.layer == MemoryLayer.fact
 
 
 async def test_new_facts_land_in_the_agents_own_pool(client):
