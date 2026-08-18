@@ -111,14 +111,25 @@ watch(
       aria-label="返回话题列表"
       @click="goBack"
     />
-    <span class="topic-header__title t-title">{{ topic.title }}</span>
-    <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
-    <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-    <span
-      class="status-dot"
-      :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-      :title="connected ? '已连接' : '未连接'"
-    />
+    <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
+         390px 上只剩七个字，而它才是你要看的那个。桌面上宽度够，一行摆开更快读。 -->
+    <div class="topic-header__text">
+      <span class="topic-header__title t-title">{{ topic.title }}</span>
+      <span v-if="!mdAndUp" class="topic-header__meta t-meta">
+        <template v-if="isWorkTopic">#{{ shortId }}</template>
+        <span class="pr-state" :class="state.cls">{{ state.label }}</span>
+        <template v-if="!connected">未连接</template>
+      </span>
+    </div>
+    <template v-if="mdAndUp">
+      <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
+      <span class="pr-state" :class="state.cls">{{ state.label }}</span>
+      <span
+        class="status-dot"
+        :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
+        :title="connected ? '已连接' : '未连接'"
+      />
+    </template>
 
     <v-spacer />
 
@@ -210,10 +221,28 @@ watch(
   background: var(--surface);
   border-bottom: var(--app-page-header-rule);
 }
+.topic-header__text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  /* 这一块吃掉整行剩下的宽度，标题才有得截断；不写 min-width 的话 flex 子项
+     以内容为最小宽度，右边的按钮会被挤出去。 */
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
 .topic-header__title {
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topic-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.2;
+  overflow: hidden;
   white-space: nowrap;
 }
 .topic-header__num {

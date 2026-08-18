@@ -9,7 +9,9 @@
     </template>
 
     <!-- 中间标题 -->
-    <v-app-bar-title>
+    <!-- 标题读页头那一号字 (.t-title 15/600)：屏幕上这条横条和页内页头是同一条，
+         Vuetify 默认的 20px 会让它们看起来是两种东西。 -->
+    <v-app-bar-title class="t-title">
       {{ currentTitle }}
     </v-app-bar-title>
 
@@ -177,6 +179,16 @@ watch([getRouteHierarchy, () => updateTrigger], updateTitle, { immediate: true }
 </script>
 
 <style lang="scss" scoped>
+/* Vuetify 的工具栏标题自带 20px/400，比页内页头的标题 (.t-title 15/600) 大一号——
+   而在手机上这两条横条是同一条东西在换内容，一页大一号就看得出是两套。加类名
+   压过它，而不是去改 .t-title：那一号字是设计 token，页头都读它。 */
+.v-toolbar-title.t-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--ink);
+}
+
 .user-menu-card {
   overflow: hidden;
   border: 1px solid rgba(var(--v-theme-on-surface), 0.08);

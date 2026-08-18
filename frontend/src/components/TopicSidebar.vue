@@ -947,7 +947,8 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 }
 .rail-header__name {
   min-width: 0;
-  font-size: 14px;
+  /* 15/600 = .t-title，和话题头、手机顶栏同一号：这三条横条在屏幕上是接着的。 */
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink);
   white-space: nowrap;
