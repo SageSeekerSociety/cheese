@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError, UnprocessableEntityError
 from app.domain.user.services import UserAuthService, UserProfileService, UserService
 
 # ---------------------------------------------------------------------------
@@ -163,6 +163,70 @@ class TestUserProfileService:
 
         with pytest.raises(NotFoundError, match="User profile not found"):
             await service.update_profile(user_id=999, nickname="X")
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        "nickname", ["李", "A", "小明", "a b", "李Lee_2026", "123456", "7"]
+    )
+    async def test_update_profile_accepts_short_nicknames(
+        self, service, profile_repo, nickname
+    ) -> None:
+        existing = _profile()
+        profile_repo.get_profile_by_user_id.return_value = existing
+
+        await service.update_profile(user_id=1, nickname=nickname)
+
+        profile_repo.update_profile.assert_awaited_once_with(
+            existing, nickname=nickname, intro=None, avatar_id=None
+        )
+
+    @pytest.mark.anyio
+    async def test_update_profile_trims_surrounding_whitespace(
+        self, service, profile_repo
+    ) -> None:
+        existing = _profile()
+        profile_repo.get_profile_by_user_id.return_value = existing
+
+        await service.update_profile(user_id=1, nickname="  小明  ")
+
+        profile_repo.update_profile.assert_awaited_once_with(
+            existing, nickname="小明", intro=None, avatar_id=None
+        )
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize(
+        ("nickname", "message"),
+        [
+            ("", "must not be empty"),
+            ("   ", "must not be empty"),
+            ("!!!???", "at least one letter"),
+            ("---", "at least one letter"),
+            ("😀😀", "at least one letter"),
+            ("A" * 51, "at most 50 characters"),
+        ],
+    )
+    async def test_update_profile_rejects_unusable_nicknames(
+        self, service, profile_repo, nickname, message
+    ) -> None:
+        profile_repo.get_profile_by_user_id.return_value = _profile()
+
+        with pytest.raises(UnprocessableEntityError, match=message):
+            await service.update_profile(user_id=1, nickname=nickname)
+
+        profile_repo.update_profile.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_update_profile_without_nickname_skips_validation(
+        self, service, profile_repo
+    ) -> None:
+        existing = _profile()
+        profile_repo.get_profile_by_user_id.return_value = existing
+
+        await service.update_profile(user_id=1, intro="Hi")
+
+        profile_repo.update_profile.assert_awaited_once_with(
+            existing, nickname=None, intro="Hi", avatar_id=None
+        )
 
 
 # ===========================================================================
