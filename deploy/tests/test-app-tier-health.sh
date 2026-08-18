@@ -5,6 +5,15 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CASE="${1:-all}"
 FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
 
+# deploy-docker.sh CREATES the openviking memory dir (it must exist before the
+# bind mount, or docker makes it root-owned and the backend cannot write it).
+# Its default is a real path on the dev box, which a CI runner has neither
+# reason nor permission to create — so every deploy in this file gets one
+# inside the test tree. Exported once rather than per case: a future test that
+# forgets it would not fail here, it would fail on someone's machine.
+export VIKING_HOST_PATH="$ROOT/tmp/viking-$$"
+trap 'rm -rf "$ROOT/tmp/viking-$$"' EXIT
+
 fail() {
   echo "FAIL: $*" >&2
   exit 1

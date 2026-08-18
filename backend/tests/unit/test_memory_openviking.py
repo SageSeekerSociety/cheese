@@ -155,3 +155,32 @@ async def test_openviking_listing_covers_a_named_agent_pool(monkeypatch):
     plain = await memory_routes._list_openviking(pid, None, None)
     assert asked == [(MemoryScope.project, str(pid))]
     assert [e["scope"] for e in plain] == ["project"]
+
+
+# --- the key-less stand-in endpoint --------------------------------------
+# Its own logic, not OpenViking's. Both defects below are invisible locally:
+# they depend on the order OpenViking happens to build its schema in, which
+# is not stable across machines, and each cost a CI round trip.
+
+
+def test_stand_in_picks_its_memory_type_deterministically():
+    from tests.support.fake_model_endpoint import _target_memory_type
+
+    reserved = {"delete_uris"}
+    forwards = {"preferences": {}, "events": {}, "delete_uris": {}}
+    backwards = {"events": {}, "delete_uris": {}, "preferences": {}}
+    assert _target_memory_type(forwards, reserved) == "preferences"
+    assert _target_memory_type(backwards, reserved) == "preferences"
+    # No preferred type present: still deterministic, never the dict's order.
+    assert _target_memory_type({"tools": {}, "soul": {}}, reserved) == "soul"
+    assert _target_memory_type({"delete_uris": {}}, reserved) is None
+
+
+def test_stand_in_writes_message_ranges_openviking_can_parse():
+    """`ranges` is parsed with int() per comma-separated part. A bracketed
+    value raises there, and extraction then fails with a message about missing
+    URIs that says nothing about the real cause."""
+    from tests.support.fake_model_endpoint import _SchemaFiller
+
+    value = _SchemaFiller({}, "记住这件事")._string_for("ranges", {})
+    assert all(int(part) >= 0 for part in value.split(","))

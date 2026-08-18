@@ -143,8 +143,10 @@ class _SchemaFiller:
         if name in _BODY_FIELDS:
             return self._text
         if name == "ranges":
-            # Message-index range of the extracted turn, not prose.
-            return "[0]"
+            # Message indices of the extracted turn, in OpenViking's own
+            # notation: "0-10,15" — comma-separated indices and spans, each
+            # side parsed with int(). Anything bracket-shaped raises there.
+            return "0"
         return self.short_label()
 
     def short_label(self) -> str:
@@ -174,14 +176,27 @@ def _operations_json(schema: dict[str, Any], text: str) -> str:
     ops: dict[str, Any] = {"delete_uris": []}
     if "links" in props:
         ops["links"] = []
-    # One item in the first memory type the schema offers. Enough to prove the
-    # write→index→search path; picking a *good* type is the model's job.
-    for name, sub in props.items():
-        if name in ops:
-            continue
-        ops[name] = filler.build(sub, name)
-        break
+    target = _target_memory_type(props, skip=set(ops))
+    if target is not None:
+        # One item, in one memory type. Enough to prove the write→index→search
+        # path; picking a *good* type is the model's job.
+        ops[target] = filler.build(props[target], target)
     return json.dumps(ops, ensure_ascii=False)
+
+
+def _target_memory_type(props: dict[str, Any], skip: set[str]) -> str | None:
+    """Which memory type the stand-in writes into — deterministically.
+
+    Taking "whichever key came first" made the fixture depend on the order
+    OpenViking happens to build its schema in, which is not stable across
+    processes: locally it yielded `preferences`, in CI `events`, and an events
+    item needs fields (message ranges) a stand-in has no honest value for.
+    """
+    candidates = [name for name in props if name not in skip]
+    for preferred in ("preferences", "entities", "profile"):
+        if preferred in candidates:
+            return preferred
+    return sorted(candidates)[0] if candidates else None
 
 
 def _content_text(message: dict[str, Any]) -> str:
