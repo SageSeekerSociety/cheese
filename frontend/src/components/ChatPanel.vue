@@ -1019,6 +1019,12 @@ const prState = computed(() => topicStateBadge(props.topic?.status))
 // ---- Self-contained composer (only when showComposer) ----
 const draft = ref('')
 const summon = ref(props.defaultSummon)
+// 拖文件到输入栏 (spec §7.1)。只是把落区标出来，判断留给 usePendingAttachments。
+const dragOver = ref(false)
+function onDropFiles(e: DragEvent) {
+  dragOver.value = false
+  onComposerDrop(e)
+}
 const composerInput = ref<{ focus?: () => void } | null>(null)
 
 // 同 TopicView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
@@ -1107,6 +1113,7 @@ const {
   uploading: attsUploading,
   addFiles,
   onPaste: onComposerPaste,
+  onDrop: onComposerDrop,
   removeAt: removePendingAtt,
   clear: clearPendingAtts,
 } = usePendingAttachments(
@@ -1664,7 +1671,14 @@ onBeforeUnmount(() => {
       <!-- Built-in composer (private chat / standalone use). -->
       <template v-if="showComposer">
         <v-divider />
-        <div class="composer pa-2 px-3">
+        <div
+          class="composer pa-2 px-3"
+          :class="{ 'composer--drop': dragOver }"
+          @dragenter.prevent="dragOver = true"
+          @dragover.prevent="dragOver = true"
+          @dragleave="dragOver = false"
+          @drop="onDropFiles"
+        >
           <div class="d-flex align-center ga-2 mb-1">
             <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
             <button
@@ -1877,6 +1891,11 @@ details.sys-row > summary::-webkit-details-marker {
 .sys-occurrence + .sys-occurrence {
   border-top: 1px solid var(--line);
   padding-top: 4px;
+}
+/* 拖文件进来时的落区，只描一圈，不改布局（改了会把输入框顶一下）。 */
+.composer--drop {
+  outline: 1px dashed var(--accent);
+  outline-offset: -3px;
 }
 /* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
 .im-row--pending .im-text,
