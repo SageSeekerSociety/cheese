@@ -57,56 +57,38 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
 
 logger = logging.getLogger("cheesex.review")
 
-# note 前缀家族 (docs/topics/诊断信息搬上验收卡.md). 多个写入方共用一条 `note`,
-# 靠前缀互相识别 —— 所以每个前缀都必须是**具名常量**, 不能靠 "⚠️" 这个共同的
-# 表情去粗判 (2026-08-10 修的就是这个: 用 "⚠️" 粗判会让"轮询暂停"冒充"重推
-# 失败", 把真正的 CI 失败通知整个吞掉, 见 _nudge_pr_fix).
-_REPUSH_FAILED_PREFIX = notes.REPUSH_FAILED_PREFIX
+# 卡上那句话的措辞。状态码在 review/notes.py，这里只有文案——两者分开之后，改一
+# 句话不再改掉任何一处判断，所以这些常量存在的理由只剩「同一句话写在两处」。
 #: 本地话题分支与 PR 分支分叉 (采纳即合并 #296, 2026-08-12). `push_topic_branch_
 #: for_github_pr` 是**非强制**推送，一旦本地分支被 jj rewind / rebase 挪到了 PR
 #: 分支的祖先或旁支上（bookmark set --allow-backwards 允许回退），plain push 就会
 #: 被 GitHub 以 non-fast-forward 拒绝——而轮询每 60 秒无脑重试这条注定失败的推送，
 #: 就是 card 946bf5de 每 ~70 秒失败一次的死循环。检测到不能快进就**不推**，留一条
-#: 具名 note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
-_REPUSH_DIVERGED_PREFIX = notes.REPUSH_DIVERGED_PREFIX
-_POLL_PAUSED_PREFIX = notes.POLL_PAUSED_PREFIX
-# One occurrence per automatic base-update (#468) — counted to cap rebase loops.
-_REBASE_NOTE_MARK = notes.REBASE_NOTE_MARK
+#: note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
+_REPUSH_DIVERGED_PREFIX = "🌿 本地分支与 PR 分支已分叉"
 #: 采纳现场补开 App PR 失败（存量无 PR 卡，#296 stage 1 的回归修复）。开不出 PR
 #: 时采纳停下、原因亮在卡上——绑定 GitHub 的项目绝不静默本地合并直推 main
 #: （all commits go through PR）。卡保持 pending，人处理后可直接重试采纳。
-_ACCEPT_PR_OPEN_FAILED_PREFIX = notes.ACCEPT_PR_OPEN_FAILED_PREFIX
+_ACCEPT_PR_OPEN_FAILED_PREFIX = "⚠️ 采纳未完成：无法为这张卡开 PR"
 #: 卡上有 PR 但此刻推进不了（GitHub 不可达 / PR 被关闭未合并 / …）。绑定 GitHub
 #: 的项目采纳只通过合并 PR 完成 (#363)——这类失败停下亮出来，永不落 local merge。
-_ACCEPT_PR_STALLED_PREFIX = notes.ACCEPT_PR_STALLED_PREFIX
-#: 未接 GitHub 的项目 (#363)：平台自己就是 forge，local merge 是它唯一、正当的
-#: 采纳语义——不是降级。这句写在卡上，让它和「该走 PR 却没走」的卡一眼可分。
-#: 合并很久了，部署既没成功也没失败——最常见的成因是这个提交根本没有部署 run
-#: (2026-08-11 实测)。比"还在等"强、比"❌ 部署失败"弱，所以是自己的前缀。
-_DEPLOY_STALLED_PREFIX = notes.DEPLOY_STALLED_PREFIX
-
-#: 一次轮询里最多问 GitHub 多少次「这次成功部署包含我的提交吗」
-#: (`_later_successful_deploy`)。顶替我们的那次部署必然是合并之后最近的几次之一，
-#: 而这段代码每 60 秒跑一次 —— 无上限地遍历会把一次误报变成持续的 API 消耗。
-_MAX_SUPERSEDE_COMPARES = 5
+_ACCEPT_PR_STALLED_PREFIX = "⚠️ 采纳未完成：PR 未能合并"
 
 #: pending_gate 孤儿卡 (2026-08-11). 判死的卡和检查真红了的卡都落在 `gate_failed`
 #: 上，但对芝士意味着完全相反的下一步——「没跑完」= 原样重递，「没通过」= 去修
-#: 代码。状态列分不开，所以**这条前缀就是那个区分**：它在 note 和 gate_output 里
-#: 都出现，任何读卡的人/代码靠它判断，不要靠猜 gate_output 是不是空的。
-GATE_ABANDONED_PREFIX = notes.GATE_ABANDONED_PREFIX
+#: 代码。gate_sweep.py 把这句话同时写进 note 和 gate_output，也发给芝士。
+GATE_ABANDONED_PREFIX = "⏱ 闸门没跑完"
 #: 人工作废 (2026-08-11)。作废复用 `revoked` 终态（archive.py 收敛非终态卡时也
-#: 用它），所以「谁作废的、为什么」只能靠这条前缀留在 note 里。
-VOIDED_PREFIX = notes.VOIDED_PREFIX
+#: 用它），所以「谁作废的、为什么」只能写在 note 里。
+VOIDED_PREFIX = "🗑 卡片已作废"
 #: 等 CI (App 采纳等 CI 再合)。`pr_open` 期间「什么都没发生」和「还在等」在卡面上
-#: 长得一模一样——一张不动的卡读起来像死了。这条前缀让等待自己说话：在等哪几项、
-#: 已经等了多久。它是 note 家族里**优先级最低**的一条：只在 note 为空、或上一条
-#: 也是它自己的时候才写，绝不盖掉 ⚠️/🚫/✋/❌/🌿/🚪 这些描述真实故障的 note。
-WAITING_CHECKS_PREFIX = notes.WAITING_CHECKS_PREFIX
+#: 长得一模一样——一张不动的卡读起来像死了。这句话让等待自己说话：在等哪几项、
+#: 已经等了多久。它是 note 家族里**优先级最低**的一条，见 _note_waiting_on_checks。
+WAITING_CHECKS_PREFIX = "⏳ 等 CI"
 #: 人工放行 (App 采纳等 CI 再合)。红着合有时是对的（CI 基础设施抽风、与本次改动
-#: 无关的既有失败），不能接受的是**没有人做过这个决定**。这条前缀就是那个署名：
+#: 无关的既有失败），不能接受的是**没有人做过这个决定**。这条 note 就是那个署名：
 #: 谁、什么时候、当时检查是什么状态、理由。默认拒绝、显式放行。
-FORCE_MERGED_PREFIX = notes.FORCE_MERGED_PREFIX
+FORCE_MERGED_PREFIX = "🔨 人工放行"
 
 #: 等待提示里「已等多久」的粒度。轮询每 60 秒一次，按分钟写会让这条 note 每一轮
 #: 都变一次（等于每分钟一次无意义的写 + UI 抖动）；按 5 分钟分档，一次等待里它
@@ -255,23 +237,27 @@ def _github_merge_refusal_message(exc: BaseException) -> str:
     return match.group(1)[:300] if match else ""
 
 
-def _with_pr_degrade_note(base: str, pr_degrade_reason: str) -> str:
+def _annotate_pr_degrade(card: AcceptCard, pr_degrade_reason: str) -> None:
     """Prefix a local-merge accept note with WHY the two-phase PR path was
     skipped, so a card that fell back reads as "两阶段采纳没走成，原因是 X；
     然后走了老路径，结果是 Y" instead of looking identical to a topic that
     was never eligible for the PR path at all. No-op when the PR path never
     even attempted a degrade for this accept (`pr_degrade_reason` empty).
 
-    One shape: ⚠️ + the raw reason. Every degrade that ends in a local merge
-    deserves a human's glance now — the calm ℹ️ variant for workflow-scope
-    rejections is gone with its "known permanent limitation" premise: the
-    platform's App credential has held `workflows:write` since 2026-08-12
-    (installation 152342238), so a workflow-file rejection is a failure to
-    look at, not a fact of life to absorb."""
+    Every degrade that ends in a local merge deserves a human's glance now —
+    the calm variant for workflow-scope rejections is gone with its "known
+    permanent limitation" premise: the platform's App credential has held
+    `workflows:write` since 2026-08-12 (installation 152342238), so a
+    workflow-file rejection is a failure to look at, not a fact of life.
+
+    The code is claimed only when the card has none yet: a conflicted card is
+    stopped ON the conflict, and the degrade is merely how it got there.
+    """
     if not pr_degrade_reason:
-        return base
-    prefix = f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）"
-    return (f"{prefix}；{base}" if base else prefix)[:2000]
+        return
+    notes.annotate(card, f"⚠️ 未走 PR 采纳（{pr_degrade_reason}）")
+    if card.note_code is None:
+        card.note_code = notes.NoteCode.pr_skipped
 
 
 # 递卡互斥 (2026-08-10): a topic may have at most one card that is still
@@ -846,10 +832,10 @@ class AcceptService:
         """AcceptCardOut payload enriched with the vote state (approvals live in
         their own table; the requirement is a project setting)."""
         data = AcceptCardOut.model_validate(card).model_dump(mode="json")
-        # 「这条 note 有多严重」由拥有这些前缀的那一侧算（domain/review/notes.py），
-        # 随卡下发一个码。浏览器过去自己按 emoji 开头猜，而那份硬编码列表漏掉了
-        # 后来加的 `🌿`。
-        level = notes.note_level(card.note)
+        # 「这条 note 有多严重」是它的状态码算出来的（domain/review/notes.py），
+        # 随卡下发。浏览器过去自己按 emoji 开头猜，而那份硬编码列表漏掉了后来加
+        # 的 `🌿` 和 `🚪`——两条都是「停住了」，却和「还在等」画成同一个颜色。
+        level = notes.note_level(card.note_code, card.note)
         data["note_level"] = level.value if level else None
         data["approvals"] = await self._repo.list_approver_handles(card.id)
         topic = await self._topics.get(card.topic_id)
@@ -1178,9 +1164,10 @@ class AcceptService:
                 card.status = AcceptStatus.conflict
                 card.decided_by = decided_by
                 card.decided_at = datetime.now(UTC)
-                card.note = _with_pr_degrade_note(
-                    merged.get("reason", ""), pr_degrade_reason
+                notes.record(
+                    card, notes.NoteCode.merge_conflict, merged.get("reason", "")
                 )
+                _annotate_pr_degrade(card, pr_degrade_reason)
                 await self._session.flush()
                 await self._session.refresh(card)
                 conflict_msg = "❌ 采纳未完成：合并冲突，需要芝士处理后重试。"
@@ -1237,17 +1224,17 @@ class AcceptService:
                     note = str(pushed.get("reason") or "")[:2000]
                 elif mode == "none":
                     note = str(pushed.get("reason") or "")[:2000]
-            card.note = _with_pr_degrade_note(note, pr_degrade_reason)
+            notes.record(card, None, note)
+            _annotate_pr_degrade(card, pr_degrade_reason)
         else:
             # noop (nothing to merge, e.g. a discussion-only topic) still
             # deserves the degrade reason — the two-phase attempt happened
             # and fell back, even though there's no push outcome to report.
-            card.note = _with_pr_degrade_note("", pr_degrade_reason)
+            notes.clear(card)
+            _annotate_pr_degrade(card, pr_degrade_reason)
         if unbound_note:
             # 平台即 forge (#363): 如实标注，而不是让这张卡看起来像绕过了 PR。
-            card.note = (f"{unbound_note}；{card.note}" if card.note else unbound_note)[
-                :2000
-            ]
+            notes.annotate(card, unbound_note)
 
         # 这次改动交付完了 → 释放计费算力，工作面留着（见 _release_billed_compute）。
         await self._release_billed_compute(topic)
@@ -1410,13 +1397,15 @@ class AcceptService:
             )
             if remote_head:
                 card.pr_head_sha = remote_head
-            if not card.note.startswith(_REPUSH_DIVERGED_PREFIX):
-                card.note = (
+            if card.note_code is not notes.NoteCode.repush_diverged:
+                notes.record(
+                    card,
+                    notes.NoteCode.repush_diverged,
                     f"{_REPUSH_DIVERGED_PREFIX}：本地话题分支（{local_head[:8]}）"
                     f"落后于/偏离了 PR 分支（{remote_head[:8]}），平台不会强推覆盖 PR "
                     "上已有的提交。请在这个话题的工作区里把 PR 分支的新提交合并进来"
-                    "再提交，平台会自动把结果同步到这个 PR。"
-                )[:2000]
+                    "再提交，平台会自动把结果同步到这个 PR。",
+                )
             await self._session.flush()
             return False
         try:
@@ -1442,14 +1431,21 @@ class AcceptService:
             )
             # Visible on the card, not just logger (agent has no host SSH):
             # otherwise 芝士 believes its fix was pushed and just waits forever.
-            # Dedup by prefix — this fires every 60s poll tick until the push
+            # Dedup by code — this fires every 60s poll tick until the push
             # succeeds, and must not spam the note each time.
-            if not card.note.startswith(_REPUSH_FAILED_PREFIX):
-                card.note = (f"{_REPUSH_FAILED_PREFIX}（下一轮还会重试）：{exc}")[:2000]
+            if card.note_code is not notes.NoteCode.repush_failed:
+                notes.record(
+                    card,
+                    notes.NoteCode.repush_failed,
+                    f"⚠️ 平台自动重推失败（下一轮还会重试）：{exc}",
+                )
                 await self._session.flush()
             return False
         card.pr_head_sha = pushed["head_sha"]
-        card.note = ""
+        # 芝士推了新东西 → 换基的账重新算。上限管的是「同一段落后里换了几次还没
+        # 赶上」，不是一张卡一辈子的额度。
+        card.rebase_count = 0
+        notes.clear(card)
         await self._session.flush()
         return True
 
@@ -1547,9 +1543,10 @@ class AcceptService:
             if pr.already_existed
             else f"已开 PR #{pr.number}"
         )
-        card.note = (
+        opened = (
             f"{pr_phrase}，真 CI 现在才开始跑，全绿且没超出授权范围才自动合并：{pr.url}"
         )
+        notes.record(card, None, opened)
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
@@ -1649,10 +1646,12 @@ class AcceptService:
             )
             # Without this the card just sits at `pr_open` forever and looks
             # identical to "CI still running" — no signal anyone's token died.
-            if not card.note.startswith(_POLL_PAUSED_PREFIX):
-                card.note = (f"{_POLL_PAUSED_PREFIX}（下一轮还会重试）：{reason}")[
-                    :2000
-                ]
+            if card.note_code is not notes.NoteCode.poll_paused:
+                notes.record(
+                    card,
+                    notes.NoteCode.poll_paused,
+                    f"⚠️ 轮询暂停（下一轮还会重试）：{reason}",
+                )
                 await self._session.flush()
             return
 
@@ -1661,9 +1660,9 @@ class AcceptService:
         # that no longer holds, AND it can no longer sit in front of a real CI
         # failure (which is how "轮询暂停" used to swallow CI 失败 notifications
         # — see _nudge_pr_fix). Only this exact prefix is cleared; 重推失败 /
-        # 部署失败 / 拒绝合并 notes describe live conditions and stay put.
-        if card.note.startswith(_POLL_PAUSED_PREFIX):
-            card.note = ""
+        # 拒绝合并 / 检查未通过 notes describe live conditions and stay put.
+        if card.note_code is notes.NoteCode.poll_paused:
+            notes.clear(card)
             await self._session.flush()
 
         from app.domain.review import github_pr
@@ -1772,7 +1771,7 @@ class AcceptService:
             # Clear any "already nudged" marker so a fresh failure on the NEW
             # commit still notifies (see the note-based dedup in _nudge_pr_fix).
             card.pr_head_sha = live_head
-            card.note = ""
+            notes.clear(card)
             await self._session.flush()
 
         state, tail = await client.check_state(
@@ -1861,8 +1860,7 @@ class AcceptService:
             token=creds.read,
         )
         if ancestry in ("behind", "diverged"):
-            rebases = card.note.count(_REBASE_NOTE_MARK)
-            if rebases >= 3:
+            if card.rebase_count >= 3:
                 self._note_needs_human(
                     card=card,
                     topic=topic,
@@ -1881,10 +1879,8 @@ class AcceptService:
                 if updated
                 else "自动更新分支被拒，下一轮重试。"
             )
-            card.note = (
-                f"{_REBASE_NOTE_MARK}基线落后于 main（{ancestry}），"
-                f"{outcome}{card.note}"
-            )[:2000]
+            card.rebase_count += 1
+            notes.annotate(card, f"基线落后于 main（{ancestry}），{outcome}")
             await self._session.flush()
             return
 
@@ -2112,23 +2108,21 @@ class AcceptService:
         other (docs 诊断信息搬上验收卡 的优先级说明):
 
         - **Lowest priority in the family.** It writes only into an empty note
-          or over one of its own. `⚠️` (CI 红了 / 重推失败 / 轮询暂停)、`🌿`
-          (分支分叉)、`🚫` (GitHub 拒绝合并)、`✋` (安全阀扣住)、`🚪` (PR 被关)、
-          `❌` (部署失败) all describe something that needs a human and must
-          never be replaced by "还在等".
+          or over one of its own. Every other code on a `pr_open` card means
+          something needs a human, and must never be replaced by "还在等".
         - **No churn.** The elapsed time is bucketed (`_WAIT_BUCKET_MINUTES`)
           and the write is skipped when the text is unchanged, so a 16-minute
           wait costs a handful of updates rather than one per 60s tick.
         """
-        if card.note and not card.note.startswith(WAITING_CHECKS_PREFIX):
+        if card.note and card.note_code is not notes.NoteCode.waiting_checks:
             return
         note = (
             f"{WAITING_CHECKS_PREFIX}（{self._waited_phrase(card)}）："
             f"{tail}。全绿后平台自动合并"
-        )[:2000]
+        )
         if note == card.note:
             return
-        card.note = note
+        notes.record(card, notes.NoteCode.waiting_checks, note)
 
     def _note_needs_human(
         self,
@@ -2147,26 +2141,21 @@ class AcceptService:
         for another reason (a required check that never reported) must pass its
         own, or the room gets told a confident falsehood about what happened.
 
-        The ✋ prefix is deliberately none of the existing ones: `⚠️` is
-        `_nudge_pr_fix`'s "已经叫过芝士了" marker (reusing it would silence the
-        next real CI failure), `🚫` is GitHub refusing to merge, `❌` is a
-        broken deploy. This is neither a failure nor a refusal — it is the
-        machine declining to act on an authorization that no longer covers
-        what's in the PR. `❌` still outranks it, same as for 🚫.
+        `merge_withheld` is its own code because this is neither a failure nor
+        a refusal — it is the machine declining to act on an authorization that
+        no longer covers what's in the PR.
 
-        Dedup by exact text rather than by prefix: the poll runs every 60s, and
+        Dedup by exact text rather than by code: the poll runs every 60s, and
         the reason can legitimately change (范围漂移 → 目标是 prod → …) while
         the card itself hasn't moved."""
-        if card.note.startswith("❌"):
-            return
         note = (
             f"✋ PR #{card.pr_number} 平台不会自动合并：{reason}。"
             "需要人来定：在卡片上「人工放行」（会记下是谁、什么时候、当时检查什么"
             "状态），自己在 GitHub 上合并这个 PR，或者作废这张卡。"
-        )[:2000]
+        )
         if card.note == note:
             return  # already said once — the 60s poll must not repeat it
-        card.note = note
+        notes.record(card, notes.NoteCode.merge_withheld, note)
         logger.warning("card %s: auto-merge withheld — %s", card.id, reason)
         why = explain or (
             f"这是「人类授权动作前移」的安全阀之一：{card.decided_by} 当初授权的是"
@@ -2213,10 +2202,10 @@ class AcceptService:
         note = (
             f"🚪 PR #{card.pr_number} 已在 GitHub 被关闭且没有合并，平台不会自动合并。"
             "需要人决定：重开 PR，或撤销这次采纳。"
-        )[:2000]
+        )
         if card.note == note:
             return  # already said once — the 60s poll must not repeat it
-        card.note = note
+        notes.record(card, notes.NoteCode.pr_closed_unmerged, note)
         logger.warning(
             "card %s: PR #%s was closed unmerged — poller is now idling on it",
             card.id,
@@ -2254,23 +2243,16 @@ class AcceptService:
 
         - **No spam.** The note is rewritten only when the text actually
           changes, so an unchanging reason costs one write, not one per poll.
-          (Stricter than `_nudge_pr_fix`'s prefix check, which can't notice a
+          (Stricter than `_nudge_pr_fix`'s code check, which can't notice a
           405 turning into a 409.)
         - **One summon per reason.** The dispatch hangs off that same "the note
-          really changed" test rather than a prefix check, so a 405 that turns
-          into a 409 gets a fresh nudge while an unchanging one stays quiet.
-        - **No clobbering.** `❌ 部署失败` outranks this and is never
-          overwritten — that note describes a merged PR whose deploy broke,
-          which is strictly more urgent than "not merged yet" — and, since it
-          returns before the write, never summons either.
+          really changed" test, so a 405 that turns into a 409 gets a fresh
+          nudge while an unchanging one stays quiet.
         """
-        if card.note.startswith("❌"):
-            return
         note = f"🚫 PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并（{reason}）"
-        note = note[:2000]
         if card.note == note:
             return
-        card.note = note
+        notes.record(card, notes.NoteCode.merge_refused, note)
         logger.warning("PR merge refused for card %s: %s", card.id, reason)
         runner.submit(
             chat_service,
@@ -2322,10 +2304,10 @@ class AcceptService:
         #   2. 重推失败/分支分叉 outrank a CI failure and must not be overwritten
         #      — both mean 芝士's fix never reached GitHub, so the red CI on
         #      record is stale (docs/topics/诊断信息搬上验收卡.md, 优先级说明).
-        if (
-            card.note.startswith(_nudge_note_prefix(stage))
-            or card.note.startswith(_REPUSH_FAILED_PREFIX)
-            or card.note.startswith(_REPUSH_DIVERGED_PREFIX)
+        if card.note_code in (
+            notes.NoteCode.checks_failed,
+            notes.NoteCode.repush_failed,
+            notes.NoteCode.repush_diverged,
         ):
             return
         # `tail` is now a headline PLUS per-job links and log excerpts (see
@@ -2334,7 +2316,9 @@ class AcceptService:
         # the message is for, and duplicating it into a 2000-char column would
         # cost the note its glanceability for no reader's benefit.
         headline = tail.splitlines()[0] if tail else ""
-        card.note = f"{_nudge_note_prefix(stage)}{headline}"[:2000]
+        notes.record(
+            card, notes.NoteCode.checks_failed, f"{_nudge_note_prefix(stage)}{headline}"
+        )
         runner.submit(
             chat_service,
             topic.id,
@@ -2398,7 +2382,7 @@ class AcceptService:
             else "已合并"
         )
         settled = f"PR #{card.pr_number} {how}：{card.pr_url}"
-        card.note = (f"{headline}；{settled}" if headline else settled)[:2000]
+        notes.record(card, None, f"{headline}；{settled}" if headline else settled)
         await self._release_billed_compute(topic)
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
         topic.accepted_by = by
@@ -2474,7 +2458,9 @@ class AcceptService:
             "处理后可重试采纳。",
         )
         await self._session.rollback()
-        await self._note_outside_accept_txn(card_id, note)
+        await self._note_outside_accept_txn(
+            card_id, notes.NoteCode.accept_pr_stalled, note
+        )
         raise ValidationError(f"采纳未完成：PR 未能合并（{why}）。处理后重试采纳")
 
     async def _publish_pr_for_accept(self, card: AcceptCard, topic: Topic) -> None:
@@ -2540,7 +2526,9 @@ class AcceptService:
             # its own connection, and it must never be able to queue behind a
             # lock this doomed transaction is still holding.
             await self._session.rollback()
-            await self._note_outside_accept_txn(card_id, note)
+            await self._note_outside_accept_txn(
+                card_id, notes.NoteCode.accept_pr_open_failed, note
+            )
             raise ValidationError(
                 "采纳未完成：无法为这张卡开 PR（原因已写在卡片上）。"
                 "平台不会在没有 PR 的情况下把改动直推上游；修复后重试采纳"
@@ -2554,8 +2542,8 @@ class AcceptService:
         await pr_publish.record_pr(factory, card_id=card.id, pr=pr)
         card.pr_number = int(pr["number"])
         card.pr_url = str(pr.get("html_url") or "")[:255] or None
-        if card.note.startswith(pr_publish.PR_OPEN_FAILED_PREFIX):
-            card.note = ""  # mirror record_pr's stale-failure-note clearing
+        if card.note_code is notes.NoteCode.pr_open_failed:
+            notes.clear(card)  # mirror record_pr's stale-failure-note clearing
         await self._session.flush()
 
     async def _authorize_pr_for_accept(
@@ -2657,10 +2645,12 @@ class AcceptService:
         # 芝士推的每个修复走，这一个不会——轮询器合并前拿两者比对。
         card.pr_authorized_sha = head_sha
         card.pr_merged_at = None
-        card.note = (
+        notes.record(
+            card,
+            notes.NoteCode.waiting_checks,
             f"{WAITING_CHECKS_PREFIX}（刚开始等）：已授权 PR #{number}，"
-            f"检查全绿且没超出授权范围时平台自动合并：{card.pr_url or ''}"
-        )[:2000]
+            f"检查全绿且没超出授权范围时平台自动合并：{card.pr_url or ''}",
+        )
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
@@ -2675,7 +2665,9 @@ class AcceptService:
         )
         return card
 
-    async def _note_outside_accept_txn(self, card_id: uuid.UUID, note: str) -> None:
+    async def _note_outside_accept_txn(
+        self, card_id: uuid.UUID, code: notes.NoteCode, note: str
+    ) -> None:
         """Persist a card note through its own session + commit, so it survives
         the rollback of the accept transaction it accompanies (the caller is
         about to raise). Sessions are minted off the request session's own
@@ -2688,7 +2680,7 @@ class AcceptService:
                 fresh = await AcceptCardRepository(session).get(card_id)
                 if fresh is None:
                     return
-                fresh.note = note[:2000]
+                notes.record(fresh, code, note)
                 await session.commit()
         except Exception:  # noqa: BLE001
             logger.exception("could not record the PR-open failure on card %s", card_id)
@@ -2833,9 +2825,11 @@ class AcceptService:
             card.status = AcceptStatus.conflict
             card.decided_by = decided_by
             card.decided_at = datetime.now(UTC)
-            card.note = (f"PR #{number} 合并冲突，已派芝士解决{sync_failure_note}")[
-                :2000
-            ]
+            notes.record(
+                card,
+                notes.NoteCode.merge_conflict,
+                f"PR #{number} 合并冲突，已派芝士解决{sync_failure_note}",
+            )
             await self._session.flush()
             await self._session.refresh(card)
             return card, ""
@@ -2887,7 +2881,7 @@ class AcceptService:
         card.status = AcceptStatus.accepted
         card.decided_by = decided_by
         card.decided_at = now
-        card.note = note[:2000]
+        notes.record(card, None, note)
 
         await self._release_billed_compute(topic)
 
@@ -2911,7 +2905,7 @@ class AcceptService:
         card.status = AcceptStatus.rejected
         card.decided_by = decided_by
         card.decided_at = datetime.now(UTC)
-        card.note = note
+        notes.record(card, None, note)
 
         # Topic stays active on rejection.
         await self._session.flush()
@@ -3126,7 +3120,9 @@ class AcceptService:
                 f"决定：{card.pr_url or '(无链接)'}{reason}"
             )
         card.status = AcceptStatus.revoked
-        card.note = archive.prefix_note(card.note, headline)
+        notes.record(
+            card, notes.NoteCode.voided, archive.prefix_note(card.note, headline)
+        )
         # 只在空的时候补：`pr_open` 的卡上 decided_by 记的是当初授权开 PR 的人，
         # 覆盖掉就丢了授权来源；作废人始终写在 note 里。
         if card.decided_by is None:

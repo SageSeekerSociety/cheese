@@ -47,6 +47,7 @@ from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.review import notes
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 
@@ -94,26 +95,30 @@ async def close_cards_for_archived_topic(
         if was == AcceptStatus.pr_open and card.pr_merged_at is not None:
             # PR 已经进 main 了，这是收尾，不是撤销。
             card.status = AcceptStatus.accepted
-            card.note = prefix_note(
-                card.note,
-                f"{_ARCHIVE_NOTE_PREFIX} 话题归档收尾：PR #{card.pr_number} 已合并。",
+            wrapped = (
+                f"{_ARCHIVE_NOTE_PREFIX} 话题归档收尾：PR #{card.pr_number} 已合并。"
             )
+            notes.record(card, notes.NoteCode.archived, prefix_note(card.note, wrapped))
         elif was == AcceptStatus.pr_open:
             # 第一阶段：PR 还开着。停止推进，但不替任何人去关它。
             card.status = AcceptStatus.revoked
-            card.note = prefix_note(
-                card.note,
-                f"{_ARCHIVE_NOTE_PREFIX} 话题归档，平台已停止推进 PR "
-                f"#{card.pr_number}。PR 未合并、仍开在 GitHub 上，需要人工决定"
-                f"合并还是关闭：{card.pr_url or '(无链接)'}",
+            notes.record(
+                card,
+                notes.NoteCode.archived,
+                prefix_note(
+                    card.note,
+                    f"{_ARCHIVE_NOTE_PREFIX} 话题归档，平台已停止推进 PR "
+                    f"#{card.pr_number}。PR 未合并、仍开在 GitHub 上，需要人工决定"
+                    f"合并还是关闭：{card.pr_url or '(无链接)'}",
+                ),
             )
             stranded.append(card)
         else:
             card.status = AcceptStatus.revoked
-            card.note = prefix_note(
-                card.note,
-                f"{_ARCHIVE_NOTE_PREFIX} 话题归档，验收卡随之关闭（原状态：{was}）。",
+            closed = (
+                f"{_ARCHIVE_NOTE_PREFIX} 话题归档，验收卡随之关闭（原状态：{was}）。"
             )
+            notes.record(card, notes.NoteCode.archived, prefix_note(card.note, closed))
         # 只在空的时候补：`pr_open` 的卡上 decided_by/decided_at 记的是当初点
         # 采纳的人和时刻，覆盖掉就丢了授权来源。
         if card.decided_by is None:

@@ -52,7 +52,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.review import archive
+from app.domain.review import archive, notes
 from app.domain.review.gate import GATE_TIMEOUT_S
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
@@ -112,9 +112,13 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
     """
     card.status = AcceptStatus.gate_failed
     card.gate_output = archive.prefix_note(card.gate_output, _ABANDONED_OUTPUT)
-    card.note = archive.prefix_note(
-        card.note,
-        f"{GATE_ABANDONED_PREFIX}：检查没跑完就失去结果，卡片判死，话题可以重新递卡。",
+    notes.record(
+        card,
+        notes.NoteCode.gate_abandoned,
+        archive.prefix_note(
+            card.note,
+            f"{GATE_ABANDONED_PREFIX}：检查没跑完就失去结果，卡片判死，话题可以重新递卡。",
+        ),
     )
     # decided_by/decided_at 留空是刻意的：没有人做过这个决定，写上谁都是假的。
     await session.flush()

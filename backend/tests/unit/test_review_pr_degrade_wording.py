@@ -9,9 +9,8 @@ credential — that premise died on 2026-08-12 when the GitHub App was granted
 workflow rejection now reads exactly like every other GitHub-side failure:
 ⚠️, needing a human, never a calm auto-direct-merge.
 
-These tests pin that single wording on `card.note`, and pin the invariant that
-keeps the prefix safe: a degraded card never reaches the pr_open poller whose
-dedup keys on `note.startswith("⚠️")`.
+These tests pin that single wording on `card.note`, and pin that a degraded
+card never reaches the pr_open poller at all.
 """
 
 import asyncio
@@ -50,6 +49,8 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         decided_by=None,
         decided_at=None,
         note="",
+        note_code=None,
+        rebase_count=0,
         # No PR riding this card yet — accept tries to OPEN one, and it is that
         # attempt which degrades.
         pr_number=None,
@@ -157,10 +158,9 @@ async def test_all_failures_keep_the_warning_wording(monkeypatch, message, fragm
 
 @pytest.mark.anyio
 async def test_degraded_card_never_reaches_the_pr_poller(monkeypatch):
-    """The invariant that makes changing the prefix safe: `_nudge_pr_fix` dedups
-    on `note.startswith("⚠️")`, but it only ever runs for `pr_open` cards, and a
-    card carrying a degrade note is `accepted`. Drive the poller with such a
-    card and it must do nothing at all — no note rewrite, no 芝士 summon."""
+    """`_nudge_pr_fix` only ever runs for `pr_open` cards, and a card carrying a
+    degrade note is `accepted`. Drive the poller with such a card and it must do
+    nothing at all — no note rewrite, no 芝士 summon."""
     service, card, _topic = _accept_service()
     _stub_local_merge(monkeypatch)
     _fail_push(monkeypatch, WORKFLOW_REJECTION)
@@ -177,7 +177,7 @@ async def test_degraded_card_never_reaches_the_pr_poller(monkeypatch):
 
 @pytest.mark.anyio
 async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
-    """The ⚠️ dedup itself is untouched: a second poll tick on the same failing
+    """The dedup itself is untouched: a second poll tick on the same failing
     commit must not re-notify 芝士."""
     service, card, topic = _accept_service()
     runner = MagicMock()

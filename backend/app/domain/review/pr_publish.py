@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.github_app import github_app_tokens_for_project
+from app.domain.review import notes
 from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
 from app.domain.workspace import service as ws
 
@@ -239,8 +240,8 @@ async def record_pr(
             return
         card.pr_number = int(pr["number"])
         card.pr_url = str(pr.get("html_url") or "")[:255] or None
-        if card.note.startswith(PR_OPEN_FAILED_PREFIX):
-            card.note = ""
+        if card.note_code is notes.NoteCode.pr_open_failed:
+            notes.clear(card)
         await session.commit()
 
 
@@ -266,7 +267,7 @@ async def _record_failure(
             card = await AcceptCardRepository(session).get(card_id)
             if card is None:
                 return
-            card.note = note
+            notes.record(card, notes.NoteCode.pr_open_failed, note)
             await session.commit()
     except Exception:  # noqa: BLE001
         logger.exception("PR publish failure not recorded on card %s", card_id)

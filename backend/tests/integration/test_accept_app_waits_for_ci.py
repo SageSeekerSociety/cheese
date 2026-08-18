@@ -959,22 +959,23 @@ def test_the_fallback_note_still_does_not_churn(client, app_world):
     assert _cards(client, tid)[0]["note"] == first
 
 
-def _set_note(client, card_id: str, note: str) -> None:
-    """直接把一条 note 摆到卡上 —— 用来立起「已经有更高优先级的 note」这个前提。
+def _stop_card_on(client, card_id: str, code, note: str) -> None:
+    """直接把卡摆成「已经停在某件事上」—— 用来立起更高优先级 note 的前提。
 
     不走「让 CI 真的红一次」那条路：那会叫醒芝士，于是测试得等一个 agent 轮次
-    静默下来 —— 而这里要证的性质跟这条 note 是怎么来的毫无关系，只跟「它已经在
-    卡上」有关。少绑一个 helper，就少一次因为别人重构那个 helper 而假红。"""
+    静默下来 —— 而这里要证的性质跟这条 note 是怎么来的毫无关系，只跟「卡已经停
+    在那儿」有关。少绑一个 helper，就少一次因为别人重构那个 helper 而假红。"""
     import asyncio
     import uuid
 
+    from app.domain.review import notes
     from app.domain.review.repositories import AcceptCardRepository
 
     async def _do() -> None:
         async with client.test_factory() as session:
             card = await AcceptCardRepository(session).get(uuid.UUID(card_id))
             assert card is not None
-            card.note = note
+            notes.record(card, code, note)
             await session.commit()
 
     asyncio.run(_do())
@@ -985,8 +986,10 @@ def test_the_fallback_note_never_overwrites_a_real_failure(client, app_world):
     fake = app_world["fake"]
     tid, cid, number, head_sha = _authorized(client, app_world)
 
+    from app.domain.review.notes import NoteCode
+
     failed_note = "⚠️ CI 检查未通过：Backend Test: failure"
-    _set_note(client, cid, failed_note)
+    _stop_card_on(client, cid, NoteCode.checks_failed, failed_note)
 
     fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
     fake.check_names_by_sha[head_sha] = {"guards", "lint"}
@@ -1031,6 +1034,31 @@ def test_a_stale_base_gets_updated_not_merged(client, app_world):
     card = _cards(client, tid)[0]
     assert card["status"] == "pr_open"
     assert "落后" in card["note"]
+
+
+def test_rebasing_stops_after_three_tries(client, app_world):
+    """换基有上限：main 比 CI 还快时平台交给人，而不是一直换基下去。
+
+    上限过去是数 note 里 `⟲` 的个数，而 note 是一列所有写入方共用的散文：换基本身
+    让 PR 的 head 前进，下一轮轮询发现 head 变了就把整条 note 清空——计数器跟着归
+    零，上限永远够不着。这条测试把 GitHub 的 Update branch 会造一个提交这件事也一
+    起建模，因为不建模就看不见这个缺陷。
+    """
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    sha = head_sha
+    for _ in range(5):
+        fake.check_state_by_sha[sha] = ("success", "绿，但绿在旧基上")
+        fake.compare_status_by_pair[("main", sha)] = "behind"
+        _poll(client)
+        sha = fake.prs[number]["head_sha"]
+
+    assert fake.merge_calls == []
+    assert len(fake.update_branch_calls) == 3
+    note = _cards(client, tid)[0]["note"]
+    assert note.startswith("✋")
+    assert "已自动换基 3 次" in note
 
 
 def test_current_base_and_full_roster_still_merge(client, app_world):

@@ -281,6 +281,13 @@ class FakeGitHubPrClient:
 
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
+        if self.update_branch_result:
+            # GitHub's Update branch MERGES base into head, so it creates a
+            # commit and the PR's head moves. Modelling that is what makes the
+            # rebase cap observable at all — see
+            # test_accept_app_waits_for_ci.test_rebasing_stops_after_three_tries.
+            pr = self.prs[number]
+            pr["head_sha"] = f"{pr['head_sha']}-rebased"
         return self.update_branch_result
 
     async def workflow_run_jobs(
