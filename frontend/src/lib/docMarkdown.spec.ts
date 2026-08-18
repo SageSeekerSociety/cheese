@@ -138,6 +138,27 @@ describe('round-trip corpus', () => {
     expectClean('第一段\n\n\n\n第二段\n\n\n第三段')
   })
 
+  // CommonMark says a closing `**` preceded by punctuation and followed by a
+  // letter cannot close. Chinese puts no space after the delimiter, so this is
+  // how bold is normally written here — it has to parse, not survive as
+  // literal asterisks. (See docMarkdown.ts's CJK-friendly note.)
+  it('bold closing before a CJK letter', () => {
+    expectClean('按**执行档案（ExecutionProfile）**解析出模型。\n')
+  })
+
+  it('bold closing on a full stop, sentence continues', () => {
+    expectClean('**这句话是粗体。**下一句不是。\n')
+  })
+
+  it('strikethrough closing before a CJK letter', () => {
+    expectClean('前面~~删除（括号）~~后面\n')
+  })
+
+  // The same relaxation must not reach English, where the rule is doing its job.
+  it('ASCII emphasis is unaffected', () => {
+    expectClean('a **bold (paren)** b, an *italic* and a ~~strike~~.\n')
+  })
+
   it('CJK/English mixed prose', () => {
     expectClean(
       '这是一段中英混排 mixed-language paragraph，包含 100% 的数字、英文 words 和标点：句号。逗号，分号；括号（成对）。'

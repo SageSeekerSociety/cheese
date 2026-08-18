@@ -117,9 +117,10 @@ import type { Project, ProjectMemberRole } from '@/types'
 
 import { computed, defineProps, inject } from 'vue'
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { markdown } from '@/lib/markdown'
 
 // 定义 props
 const props = defineProps<{
@@ -132,7 +133,7 @@ const goToMembersTab = inject('goToMembersTab', () => {})
 // 渲染 Markdown 内容
 const renderedContent = computed(() => {
   if (!props.project?.content) return ''
-  const rawHtml = marked.parse(props.project.content) as string
+  const rawHtml = markdown.parse(props.project.content) as string
   return DOMPurify.sanitize(rawHtml)
 })
 

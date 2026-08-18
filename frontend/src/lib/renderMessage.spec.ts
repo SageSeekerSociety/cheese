@@ -32,6 +32,14 @@ describe('renderMarkdown (芝士 replies)', () => {
     expect(html).toContain('#搭建推荐算法原型')
   })
 
+  // 芝士 writes Chinese, and Chinese puts no space after a closing `**` —
+  // which is the one position CommonMark refuses to close on. Plain marked
+  // leaves the asterisks in the message body.
+  it('renders bold that closes right before a CJK character', () => {
+    expect(renderMarkdown('按**执行档案（ExecutionProfile）**解析出模型', MAPS)).toContain('<strong>')
+    expect(renderMarkdown('**这句话是粗体。**下一句不是', MAPS)).toContain('<strong>')
+  })
+
   it('falls back to the raw handle when the roster has no name', () => {
     const html = renderMarkdown('<@ghost> 看下', MAPS)
     expect(html).toContain('data-handle="ghost"')

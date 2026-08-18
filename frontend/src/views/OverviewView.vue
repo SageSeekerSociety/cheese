@@ -3,11 +3,12 @@ import type { Contributions, InboxItem, ProjectCredits, ProjectOverview, TopicRe
 
 import { computed, onMounted, ref, watch } from 'vue'
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 
 import { getContributions, getInbox, getOverview, getProject, getProjectCredits, markRead, sendFeedback } from '../api'
 import { label, NOTIF_KIND, PROJECT_ROLE, TOPIC_STATUS } from '../labels'
 import { myHandle } from '../me'
+
+import { markdown } from '@/lib/markdown'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -26,7 +27,7 @@ const error = ref<string | null>(null)
 const summary = ref<string>('')
 
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+  return DOMPurify.sanitize(markdown.parse(text, { async: false }) as string)
 }
 
 // waiting_on_you is keyed by handle. Pull out my items vs. everyone else's.

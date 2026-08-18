@@ -13,6 +13,7 @@
 
 import type { AnyExtension } from '@tiptap/core'
 import type { ImageOptions } from '@tiptap/extension-image'
+import type { marked } from 'marked'
 
 import { Extension, InputRule, mergeAttributes } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
@@ -22,9 +23,21 @@ import { TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
+import { Marked } from 'marked'
+import markedCjkFriendly from 'marked-cjk-friendly'
 
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
 export const lowlight = createLowlight(common)
+
+// CommonMark's flanking rules make a closing `**` that is preceded by
+// punctuation and followed by a letter unable to close — so
+// `**执行档案（ExecutionProfile）**解析` is not bold, and neither is
+// `**这句。**下一句`. English never hits it because a space always follows the
+// delimiter; Chinese has no such space, so it hits constantly. The CJK-friendly
+// extension (CommonMark issue #650) counts CJK characters as punctuation for
+// flanking, which supplies exactly the missing escape hatch and leaves
+// non-CJK text alone.
+export const docMarked = new Marked(markedCjkFriendly())
 
 // ---- Image: display resolves workspace-relative paths to the raw-file API,
 // but the node ATTR keeps the original path — markdown serialization reads the
@@ -157,7 +170,11 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
         HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
       },
     }),
-    Markdown,
+    // The cast: @tiptap/markdown types this option as the marked MODULE, but
+    // reads only Lexer/defaults/use/lexer/setOptions off it — all present on an
+    // instance, which is what its own README passes. `getDefaults` is the one
+    // module-only member, and nothing in the package calls it.
+    Markdown.configure({ marked: docMarked as unknown as typeof marked }),
     TableKit.configure({ table: { resizable: false } }),
     TaskList,
     TaskItem.configure({ nested: true }),
