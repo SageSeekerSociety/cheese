@@ -313,12 +313,18 @@ class SchedulerService:
         sub-topic still held an undecided accept card. That deferral is what
         keeps a reviewer's card from being revoked out from under them; this is
         what keeps the deferral from turning into a never-archived sub-topic.
+
+        Third job: land the sub-topic commits 采信 could not fold into the room's
+        branch at the time — the room was waiting on CI, or somebody was editing
+        in its workspace. Queuing those is the whole reason they are safe to
+        refuse; this is the exit from the queue.
         """
         from app.domain.conclusion.services import ConclusionCardService
 
         errors: list[str] = []
         settled: list[uuid.UUID] = []
         archived: list[uuid.UUID] = []
+        folded: list[uuid.UUID] = []
         async with self._sessions() as session:
             try:
                 settled = await ConclusionCardService(session).sweep_expired()
@@ -340,7 +346,25 @@ class SchedulerService:
                 await session.rollback()
                 logger.exception("deferred archive sweep failed")
                 errors.append(str(exc))
-        return {"settled": len(settled), "archived": len(archived), "errors": errors}
+        # 同理，合并重试也走自己的事务：git 那一侧出错不能把结算和归档回滚掉。
+        async with self._sessions() as session:
+            try:
+                folded = await ConclusionCardService(session).sweep_room_merges()
+                # Unconditional, unlike the two above: a round that folds
+                # nothing can still have written the room a line saying why
+                # (queued, or conflicted), and dropping that is what "不能默默
+                # 失败" forbids.
+                await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("room merge sweep failed")
+                errors.append(str(exc))
+        return {
+            "settled": len(settled),
+            "archived": len(archived),
+            "folded": len(folded),
+            "errors": errors,
+        }
 
 
 class SchedulerRunner:
@@ -586,7 +610,7 @@ class ConclusionSweepRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._scheduler.sweep_conclusion_cards()
-                if result["settled"] or result["archived"] or result["errors"]:
+                if any(result[k] for k in ("settled", "archived", "folded", "errors")):
                     logger.info("conclusion sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("conclusion sweep failed")

@@ -74,6 +74,21 @@ def _child_kind(parent: Topic) -> TopicKind:
     return TopicKind.topic if parent.kind == TopicKind.root else TopicKind.task
 
 
+def _bind_room_branch(
+    *, child_id: uuid.UUID, parent_id: uuid.UUID | None, kind: TopicKind
+) -> None:
+    """一个房间一条分支：一件活的分支从它所在房间的分支长出来，采信时再并回去。
+
+    Rooms are unaffected — they fork the base branch and reach main through
+    采纳, as they always did. Recorded the instant the row is created, because
+    the fork point is chosen once, when the jj workspace is materialised
+    (`workspace.service._ensure_worktree`), and nothing can move it afterwards.
+    """
+    if parent_id is None or kind not in (TopicKind.task, TopicKind.subtopic):
+        return
+    ws.bind_branch_parent(child_id, parent_id)
+
+
 def _brief_doc(
     *,
     child_title: str,
@@ -204,6 +219,7 @@ class TopicService:
             kind=kind,
             created_by=created_by,
         )
+        _bind_room_branch(child_id=topic.id, parent_id=parent_id, kind=kind)
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
         # 芝士 joins as a member. `created_by` alone is not enough: 芝士 itself
         # creating a topic, or a caller whose token didn't resolve (anonymous
@@ -608,6 +624,7 @@ class TopicService:
             created_by=created_by,
             upgraded_from_block_id=block.id,
         )
+        _bind_room_branch(child_id=new_topic.id, parent_id=parent_id, kind=kind)
         # Same fallback ladder as create()/split_to_subtopic — 升级 is usually the
         # 分身's own suggestion, and this route does not resolve an actor at all
         # (it trusts body.created_by, which the web UI leaves empty when its
@@ -681,13 +698,18 @@ class TopicService:
         # follow-up work starts a new topic from the conclusion (升级), not here.
         if parent.status == TopicStatus.archived:
             raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
+        kind = _child_kind(parent)
         new_topic = await self._repo.add(
             project_id=parent.project_id,
             title=title,
             parent_id=parent.id,
-            kind=_child_kind(parent),
+            kind=kind,
             created_by=created_by,
         )
+        # 一个房间一条分支一个 PR: this task's branch forks the room's and folds
+        # back into it when its conclusion is 采信'd, instead of opening a PR of
+        # its own. Written here, before anything can materialise the workspace.
+        _bind_room_branch(child_id=new_topic.id, parent_id=parent.id, kind=kind)
         # Inherit the parent's roster (not just the requested owner): a 分身-
         # initiated split otherwise leaves every human off the child's roster
         # (owner_handle="cheese" is skipped by seed()), which is the bug this
