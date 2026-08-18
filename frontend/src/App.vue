@@ -106,6 +106,7 @@ import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
+import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import { myHandle } from '@/me'
 import AccountService from '@/services/account'
@@ -119,6 +120,9 @@ import { useAppTheme } from '@/theme'
 // logged-in user menu. Without this line a signed-out visitor sitting on the
 // login page would not follow their machine switching to dark at sunset.
 useAppTheme()
+
+// 软键盘盖住多少，写进 --keyboard-inset 供布局减掉 (style.css)。
+trackKeyboardInset()
 
 const currentRoute = useRoute()
 const router = useRouter()

@@ -963,6 +963,13 @@ function isImeKey(e: KeyboardEvent) {
   return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
 }
 
+// 触摸屏上回车是换行。软键盘没有 Shift 这一层，所以「Enter 发送 / Shift+Enter
+// 换行」在手机上等于「打不出第二行」——发送有按钮，换行没有别的办法。
+// 按输入方式判断，不按视口宽度：带触摸屏的笔记本两样都对。
+const coarse = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none)') : undefined
+const enterSends = ref(!coarse?.matches)
+coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.value = !e.matches))
+
 function onComposerKey(e: KeyboardEvent) {
   if (e.key !== 'Enter' || e.shiftKey) return
   // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
@@ -970,12 +977,14 @@ function onComposerKey(e: KeyboardEvent) {
   // Only act on Enter from the focused composer textarea itself.
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
-  e.preventDefault()
   // While the @-menu is open, Enter picks the first match instead of sending.
   if (mentionMatches.value.length) {
+    e.preventDefault()
     pickMention(mentionMatches.value[0])
     return
   }
+  if (!enterSends.value) return
+  e.preventDefault()
   sendDraft()
 }
 
@@ -1435,7 +1444,7 @@ onBeforeUnmount(() => {
               density="comfortable"
               class="composer-input flex-grow-1"
               :placeholder="summon ? '告诉芝士要做什么…' : '输入消息…'"
-              title="Enter 发送，Shift+Enter 换行，可直接粘贴图片"
+              :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               :disabled="!connected"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
@@ -1584,6 +1593,8 @@ onBeforeUnmount(() => {
 }
 .composer {
   background: var(--surface);
+  /* 手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
 }
 .composer-input :deep(textarea) {
   font-size: 14px;

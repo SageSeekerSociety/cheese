@@ -223,6 +223,15 @@
    below still apply to our grafted views without fighting main's layout.
    (The standalone cheesex app keeps these via its own style.css.) */
 
+/* 视口高度：dvh，减掉软键盘盖住的那一截。
+   `vh` 在手机上是地址栏**展开时**的高度，所以 100vh 总比看得见的那块高一截，
+   页面底部（底栏、输入框）被顶到屏幕外面。`dvh` 修的是地址栏那一半；键盘那一半
+   浏览器不报进任何 CSS 单位里，只报在 visualViewport 上——见 lib/keyboardInset.ts。
+   `--keyboard-inset` 没有键盘时是 0px，所以桌面上这条等于 min-height: 100dvh。 */
+.v-application__wrap {
+  min-height: calc(100dvh - var(--keyboard-inset, 0px));
+}
+
 /* ---------------------------------------------------------------------------
    Type hierarchy — utility classes referenced across views. Enforces the spec:
    tight headings in --ink, lighter body in --text, metadata always --faint mono.
