@@ -2769,7 +2769,10 @@ class ChatService:
             logger.exception("spool reconcile failed for topic %s", topic_id)
 
     async def _model_kwargs(
-        self, project_id: uuid.UUID, provider_name: str
+        self,
+        project_id: uuid.UUID,
+        provider_name: str,
+        topic_id: uuid.UUID | None = None,
     ) -> tuple[dict, str]:
         """Per-turn overrides for the agent call, resolved from project.settings:
         the ExecutionProfile → model+env (design §2), and the sandbox image (spec
@@ -2794,9 +2797,23 @@ class ChatService:
         and its spend is metered by the proxy's usage log. Only WITHOUT the
         subscription does a device turn ride /llm → gateway. Labeling device
         turns "subscription" while their traffic went through /llm was a real
-        bug once — the label must follow the traffic, in both directions."""
+        bug once — the label must follow the traffic, in both directions.
+
+        The model a turn runs on is the AGENT's before it is the project's: an
+        agent whose type names a model runs on that model in every room it
+        works in, which is the whole of "the model follows the agent". A type
+        that names none declines to choose, and the project's pick still
+        applies — so the override is `agent or project`, never a blank winning."""
+        agent_model: str | None = None
         async with self._sessions() as session:
             project = await ProjectRepository(session).get(project_id)
+            if topic_id is not None and project is not None:
+                topic = await TopicRepository(session).get(topic_id)
+                if topic is not None:
+                    agents = AgentInstanceService(session)
+                    agent_model = await agents.model(
+                        await agents.for_topic(topic, project)
+                    )
         kwargs: dict = {}
         image = (project.settings or {}).get("sandbox_image") if project else None
         if image:
@@ -2812,7 +2829,7 @@ class ChatService:
             # and the backend swaps in the project's virtual key per request
             # (routes/llm_proxy).
             if settings.subscription_enabled:
-                choice = (
+                choice = agent_model or (
                     (project.settings or {}).get("subscription_model")
                     if project
                     else None
@@ -2829,7 +2846,7 @@ class ChatService:
             # that env — the sdk provider under this flag used to fall through
             # with no env at all and run on whatever the backend process itself
             # inherited.
-            choice = (
+            choice = agent_model or (
                 (project.settings or {}).get("subscription_model") if project else None
             )
             kwargs["model"] = subscription_model_alias(choice)
@@ -3364,7 +3381,9 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        model_kwargs, route = await self._model_kwargs(project_id, provider.name)
+        model_kwargs, route = await self._model_kwargs(
+            project_id, provider.name, topic_id
+        )
         if isinstance(provider, HooksSessionProvider):
             # Internal: the screen subscription, not this request, owns timeout
             # and thinking lifecycle. Runtime consumes this frame and disables
@@ -4190,7 +4209,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider.name))[0],
+            **(await self._model_kwargs(project_id, provider.name, topic_id))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -4301,7 +4320,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider.name))[0],
+            **(await self._model_kwargs(project_id, provider.name, root_topic_id))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -4397,7 +4416,11 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider.name))[0],
+            **(
+                await self._model_kwargs(
+                    project_id, provider.name, project.root_topic_id
+                )
+            )[0],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text

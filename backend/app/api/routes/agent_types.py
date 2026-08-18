@@ -12,12 +12,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.domain.agent_type.options import agent_type_options
 from app.domain.agent_type.schemas import AgentTypeCreate, AgentTypeUpdate
 from app.domain.agent_type.services import AgentTypeService
 
 router = APIRouter(prefix="/agent-types", tags=["agent-types"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+
+# Declared before `/{name}` would ever be reached for it — there is no
+# `GET /{name}` today, and this keeps it that way by construction.
+@router.get("/options")
+async def get_agent_type_options() -> dict:
+    """What each configurable field may be set to, or why it cannot be set.
+
+    The editor renders from this and holds no list of its own, so a field that
+    starts (or stops) taking effect changes here and nowhere else.
+    """
+    return ok(agent_type_options())
 
 
 @router.get("")
