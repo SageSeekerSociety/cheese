@@ -93,3 +93,44 @@ export function displayNameError(name: string): string | null {
   if (trimmed.length > 64) return '名字最长 64 个字'
   return null
 }
+
+// ---- 编辑器能提供什么设置 ----
+//
+// 后端那份目录（GET /agent-types/options）说了每个字段能不能设、不能设的理由。
+// 把「怎么读它」放在这里而不是组件里，理由和这个文件开头那条一样：这是这一页
+// 的承诺所在 —— 提供出来的每个值都必须真的会生效 —— 值得被测试直接盯着，而不是
+// 靠在 jsdom 里点开一个浮层去间接验证。
+
+export interface FieldOptionsLike {
+  state: string
+  choices: { id: string; label: string; description: string; default: boolean }[]
+  reason: string
+  note: string
+}
+
+export function fieldIsChoosable(options: Record<string, FieldOptionsLike>, name: string): boolean {
+  return options[name]?.state === 'choosable'
+}
+
+export function fieldChoices(options: Record<string, FieldOptionsLike>, name: string): FieldOptionsLike['choices'] {
+  // 只有 choosable 的字段才交出选项。一个 unavailable 的字段哪天带着残留的
+  // choices 回来，也不该被渲染成能选 —— state 是唯一的判据。
+  return fieldIsChoosable(options, name) ? options[name]?.choices ?? [] : []
+}
+
+export interface UnavailableField {
+  name: string
+  label: string
+  note: string
+}
+
+// 不能设的字段 + 给人看的理由。目录为空（没取到）时返回空数组：一次请求失败
+// 不该被说成产品限制。
+export function unavailableFields(
+  options: Record<string, FieldOptionsLike>,
+  labels: Record<string, string>
+): UnavailableField[] {
+  return Object.entries(options)
+    .filter(([, o]) => o.state === 'unavailable')
+    .map(([name, o]) => ({ name, label: labels[name] ?? name, note: o.note }))
+}

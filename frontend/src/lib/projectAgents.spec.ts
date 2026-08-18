@@ -10,10 +10,13 @@ import {
   agentKey,
   displayNameError,
   effortLabel,
+  fieldChoices,
+  fieldIsChoosable,
   handleError,
   memoryCountsByHandle,
   topicCountsByAgent,
   typeLabel,
+  unavailableFields,
 } from './projectAgents'
 
 const PROJECT = 'de808b13-ffd2-4b8a-9d1d-fba7babe389f'
@@ -158,5 +161,53 @@ describe('表单校验', () => {
     expect(handleError('code reviewer')).toBeTruthy()
     expect(handleError('a:b')).toBeTruthy()
     expect(handleError('code-reviewer.2')).toBeNull()
+  })
+})
+
+describe('编辑器能提供什么设置', () => {
+  const OPTS = {
+    model: {
+      state: 'choosable',
+      choices: [
+        { id: 'sonnet', label: 'Sonnet 5', description: '均衡', default: true },
+        { id: 'opus', label: 'Opus 5', description: '最强', default: false },
+      ],
+      reason: '',
+      note: '',
+    },
+    effort: { state: 'unavailable', choices: [], reason: 'noConsumerOnRunPath', note: '模型自己决定' },
+  }
+
+  it('可选字段交出的就是后端那份清单，一个不多一个不少', () => {
+    // 前端自带清单时的两种坏法：多出来的值发到后端被 422，少掉的值人永远选不到。
+    expect(fieldChoices(OPTS, 'model').map((c) => c.id)).toEqual(['sonnet', 'opus'])
+    expect(fieldIsChoosable(OPTS, 'model')).toBe(true)
+  })
+
+  it('不可选字段一个选项都不交，即使它带着残留的 choices', () => {
+    // state 是唯一判据。哪天目录里一个 unavailable 字段带回了 choices，它也不能
+    // 被渲染成能选 —— 那正是「填了不生效」重新长回来的路径。
+    const stale = {
+      x: {
+        state: 'unavailable',
+        choices: [{ id: 'a', label: 'A', description: '', default: false }],
+        reason: 'r',
+        note: 'n',
+      },
+    }
+    expect(fieldChoices(stale, 'x')).toEqual([])
+    expect(fieldIsChoosable(stale, 'x')).toBe(false)
+  })
+
+  it('不可选字段带着人看得懂的理由列出来', () => {
+    expect(unavailableFields(OPTS, { effort: '思考深度' })).toEqual([
+      { name: 'effort', label: '思考深度', note: '模型自己决定' },
+    ])
+  })
+
+  it('目录为空时什么都不宣布', () => {
+    // 目录没取到 ≠ 平台限制。这里返回空，界面上就既没有选择器也没有「暂不可设置」。
+    expect(unavailableFields({}, {})).toEqual([])
+    expect(fieldChoices({}, 'model')).toEqual([])
   })
 })

@@ -7,6 +7,7 @@
 // 被别的项目共用的出厂设置。把两段并排放在一起，是因为人来这里想的是「改这个
 // 队友」，而不是「改一个类型」—— 但改下面那段会影响所有用同一个类型的队友，
 // 所以下面那段自己说明了这一点，平台预设更是直接只读。
+import type { AgentFieldChoice, AgentTypeOptions } from '../../api'
 import type { AgentType, ProjectAgent } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -14,12 +15,20 @@ import { computed, ref, watch } from 'vue'
 import {
   createAgentType,
   createProjectAgent,
+  getAgentTypeOptions,
   isEndpointMissing,
   setProjectDefaultAgent,
   updateAgentType,
   updateProjectAgent,
 } from '../../api'
-import { displayNameError, findType, handleError } from '../../lib/projectAgents'
+import {
+  displayNameError,
+  fieldChoices,
+  fieldIsChoosable,
+  findType,
+  handleError,
+  unavailableFields as unavailableFieldList,
+} from '../../lib/projectAgents'
 
 const props = defineProps<{
   modelValue: boolean
@@ -61,7 +70,7 @@ const submitted = ref(false)
 // 存进 B 类型。
 const typeBody = ref('')
 const typeHarness = ref('')
-const typeModel = ref('')
+const typeModel = ref<string | null>('')
 const typeEffort = ref<string | null>(null)
 const typeSkills = ref<string[]>([])
 const typeMcp = ref<string[]>([])
@@ -74,19 +83,38 @@ const typeOptions = computed(() => [
   ...allTypes.value.map((t) => ({ title: t.title || t.name, value: t.name })),
 ])
 
-const EFFORT_OPTIONS = [
-  { title: '跟随平台', value: null },
-  { title: '快', value: 'low' },
-  { title: '标准', value: 'medium' },
-  { title: '深', value: 'high' },
-  { title: '很深', value: 'xhigh' },
-  { title: '最深', value: 'max' },
-]
+// 哪些字段能设、哪些不能设，以及不能设的理由，全部来自后端那一份目录。这里
+// 不留第二份清单：一个字段接上运行链路（或者反过来）时，只改后端一处。
+const options = ref<AgentTypeOptions>({})
+const OPTION_LABELS: Record<string, string> = {
+  model: '模型',
+  effort: '思考深度',
+  harness: '运行方式',
+  skills: '技能',
+  mcp_servers: '外部工具',
+}
+
+function fieldChoosable(name: string): boolean {
+  return fieldIsChoosable(options.value, name)
+}
+function fieldItems(name: string): AgentFieldChoice[] {
+  return fieldChoices(options.value, name)
+}
+
+// 目录没取到时不列任何「暂不可设置」——那会把一次请求失败说成产品限制。
+const unavailableFields = computed(() => unavailableFieldList(options.value, OPTION_LABELS))
+
+const modelHint = computed(() => {
+  const fallback = fieldItems('model').find((c) => c.default)
+  return typeModel.value
+    ? '用这个类型的队友，在所有房间里都跑这个模型'
+    : `不指定就跟项目走${fallback ? `（现在是 ${fallback.label}）` : ''}`
+})
 
 function loadTypeDraft(t: AgentType | null) {
   typeBody.value = t?.body ?? ''
   typeHarness.value = t?.harness ?? ''
-  typeModel.value = t?.model ?? ''
+  typeModel.value = t?.model ?? null
   typeEffort.value = t?.effort ?? null
   typeSkills.value = [...(t?.skills ?? [])]
   typeMcp.value = [...(t?.mcp_servers ?? [])]
@@ -103,9 +131,20 @@ watch(
     handle.value = props.agent?.handle ?? ''
     typeName.value = props.agent?.type_name ?? null
     loadTypeDraft(findType(allTypes.value, props.agent?.type_name))
+    void loadOptions()
   },
   { immediate: true }
 )
+
+// 取不到目录时保持空 —— 空的意思是「不知道能设什么」，于是模型选择器不渲染、
+// 也不列任何「暂不可设置」。把一次请求失败说成产品限制，比少显示一个框更糟。
+async function loadOptions() {
+  try {
+    options.value = await getAgentTypeOptions()
+  } catch {
+    options.value = {}
+  }
+}
 
 watch(typeName, (name) => loadTypeDraft(findType(allTypes.value, name)))
 
@@ -126,7 +165,7 @@ const typeDirty = computed(() => {
   return (
     typeBody.value !== t.body ||
     typeHarness.value !== (t.harness ?? '') ||
-    typeModel.value !== (t.model ?? '') ||
+    (typeModel.value || null) !== (t.model ?? null) ||
     typeEffort.value !== (t.effort ?? null) ||
     !sameList(typeSkills.value, t.skills) ||
     !sameList(typeMcp.value, t.mcp_servers)
@@ -190,7 +229,7 @@ async function save() {
       await updateAgentType(selectedType.value.name, {
         body: typeBody.value,
         harness: typeHarness.value.trim() || null,
-        model: typeModel.value.trim() || null,
+        model: typeModel.value || null,
         effort: typeEffort.value,
         skills: typeSkills.value,
         mcp_servers: typeMcp.value,
@@ -312,55 +351,29 @@ async function save() {
             class="mb-1"
           />
           <div class="d-flex ga-3 mb-1 flex-wrap">
-            <v-text-field
-              v-model="typeModel"
-              label="模型"
-              placeholder="跟随平台"
-              density="comfortable"
-              variant="outlined"
-              :readonly="typeIsBuiltin"
-              style="min-width: 180px; flex: 1 1 180px"
-            />
             <v-select
-              v-model="typeEffort"
-              :items="EFFORT_OPTIONS"
-              label="思考深度"
+              v-if="fieldChoosable('model')"
+              v-model="typeModel"
+              :items="fieldItems('model')"
+              item-title="label"
+              item-value="id"
+              label="模型"
+              placeholder="跟随项目"
+              clearable
               density="comfortable"
               variant="outlined"
               :readonly="typeIsBuiltin"
-              style="min-width: 180px; flex: 1 1 180px"
-            />
-            <v-text-field
-              v-model="typeHarness"
-              label="运行方式"
-              placeholder="跟随平台"
-              density="comfortable"
-              variant="outlined"
-              :readonly="typeIsBuiltin"
-              style="min-width: 180px; flex: 1 1 180px"
+              :hint="modelHint"
+              persistent-hint
+              style="min-width: 220px; flex: 1 1 220px"
             />
           </div>
-          <v-combobox
-            v-model="typeSkills"
-            label="技能"
-            multiple
-            chips
-            closable-chips
-            density="comfortable"
-            variant="outlined"
-            :readonly="typeIsBuiltin"
-            class="mb-1"
-          />
-          <v-combobox
-            v-model="typeMcp"
-            label="外部工具"
-            multiple
-            chips
-            closable-chips
-            density="comfortable"
-            variant="outlined"
-            :readonly="typeIsBuiltin"
-          />
+          <!-- 还没接上运行链路的字段：说清楚为什么不能设，而不是摆一个填了也不
+               生效的框。哪天它真接上了，改的是后端那份目录，这里自己就长出来。 -->
+          <div v-if="unavailableFields.length" class="unavailable-note">
+            <div class="t-meta c-muted mb-1">暂不可设置</div>
+            <div v-for="f in unavailableFields" :key="f.name" class="t-meta c-faint">{{ f.label }} —— {{ f.note }}</div>
+          </div>
         </template>
       </v-card-text>
 
