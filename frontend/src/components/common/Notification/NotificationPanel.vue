@@ -1,7 +1,15 @@
 <template>
-  <v-card class="notification-panel rounded-lg" elevation="1" min-width="380" max-width="420">
+  <v-card
+    class="notification-panel"
+    :class="page ? 'rounded-0' : 'rounded-lg'"
+    :elevation="page ? 0 : 1"
+    :min-width="page ? undefined : 380"
+    :max-width="page ? undefined : 420"
+  >
     <v-card-title class="d-flex justify-space-between align-center pa-4">
-      <span class="text-h6 font-weight-medium">{{ t('notifications.common.notificationCenter') }}</span>
+      <!-- 整页形态下顶栏已经写着这一页叫什么，卡片再写一遍就是两层标题叠着。 -->
+      <span v-if="!page" class="text-h6 font-weight-medium">{{ t('notifications.common.notificationCenter') }}</span>
+      <span v-else></span>
       <div class="d-flex align-center">
         <v-btn
           v-if="hasUnread"
@@ -18,7 +26,10 @@
 
     <v-divider></v-divider>
 
-    <v-card-text class="pa-0 notification-list-container" :style="{ maxHeight: '420px', overflowY: 'auto' }">
+    <v-card-text
+      class="pa-0 notification-list-container"
+      :style="{ maxHeight: page ? undefined : '420px', overflowY: 'auto' }"
+    >
       <v-list v-if="notifications.length > 0" density="compact" lines="three" class="py-0">
         <notification-item
           v-for="notification in notifications"
@@ -59,6 +70,8 @@ const { t } = useI18n()
 
 const props = defineProps<{
   onClose?: () => void
+  /** 整页形态（手机底栏「待办」那一格），不是顶栏铃铛的下拉卡片。 */
+  page?: boolean
 }>()
 
 const emit = defineEmits<{
