@@ -85,7 +85,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 describe('输入框的内容属于它被打出来的那个话题', () => {
   it('切走再回来，草稿还在；切到别的话题，输入框是空的', async () => {
     const { container, rerender } = render(Panel, {
-      props: { topic: topicOf('t1'), showComposer: true },
+      props: { topic: topicOf('draft-a'), showComposer: true },
       global: { plugins: [vuetify] },
     })
     await settle()
@@ -93,11 +93,11 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
     const textarea = container.querySelector('textarea') as HTMLTextAreaElement
     await fireEvent.update(textarea, '这句话是说给 t1 的')
 
-    await rerender({ topic: topicOf('t2'), showComposer: true })
+    await rerender({ topic: topicOf('draft-b'), showComposer: true })
     await settle()
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('')
 
-    await rerender({ topic: topicOf('t1'), showComposer: true })
+    await rerender({ topic: topicOf('draft-a'), showComposer: true })
     await settle()
     expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('这句话是说给 t1 的')
   })
@@ -120,5 +120,53 @@ describe('输入框的内容属于它被打出来的那个话题', () => {
     await settle()
     // 留着的话，下一条发到 t2 的消息会带上 t1 的 reply_to。
     expect(container.querySelector('.reply-bar')).toBeNull()
+  })
+})
+
+describe('发出去的消息立刻显示，没送到能重试', () => {
+  it('socket 没开也能打字、也能发——消息进队列，屏幕上立刻有', async () => {
+    const { container } = render(Panel, {
+      props: { topic: topicOf('t1'), showComposer: true },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    // 断线时输入框曾经是 disabled 的：一天二十几次部署，等于每天有相当多的
+    // 时间这个框是死的。
+    expect(textarea.disabled).toBe(false)
+
+    textarea.focus()
+    await fireEvent.update(textarea, '断线时说的话')
+    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    await settle()
+
+    const pending = container.querySelector('.im-row--pending')
+    expect(pending).toBeTruthy()
+    expect(pending!.textContent).toContain('断线时说的话')
+    // 输入框清空了：这条已经交给发件箱了，不该还留在草稿里。
+    expect((container.querySelector('textarea') as HTMLTextAreaElement).value).toBe('')
+  })
+
+  it('待发的消息属于它被打出来的那个话题，不跟着你换房间', async () => {
+    const { container, rerender } = render(Panel, {
+      props: { topic: topicOf('out-a'), showComposer: true },
+      global: { plugins: [vuetify] },
+    })
+    await settle()
+    const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+    textarea.focus()
+    await fireEvent.update(textarea, '这条是发给 t1 的')
+    await fireEvent.keyDown(textarea, { key: 'Enter' })
+    await settle()
+    expect(container.querySelector('.im-row--pending')).toBeTruthy()
+
+    await rerender({ topic: topicOf('out-b'), showComposer: true })
+    await settle()
+    expect(container.querySelector('.im-row--pending')).toBeNull()
+
+    await rerender({ topic: topicOf('out-a'), showComposer: true })
+    await settle()
+    expect(container.querySelector('.im-row--pending')?.textContent).toContain('这条是发给 t1 的')
   })
 })

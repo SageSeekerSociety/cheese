@@ -2046,6 +2046,7 @@ class ChatService:
         turn_id: uuid.UUID | None,
         reply_to: str | None,
         attachments: list[dict] | None = None,
+        client_id: str | None = None,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID]]:
         """Persist the human message (+ its image attachment blocks) and the
         @mention notifications in one short transaction, outside any turn lock.
@@ -2107,6 +2108,12 @@ class ChatService:
                     kind=BlockKind.message,
                     turn_id=turn_id,
                     reply_to=reply_uuid,  # B3: thread under another
+                    # The sender's own id for this send, echoed straight back on
+                    # the broadcast. A client that showed the message the instant
+                    # it was typed (§14.1 实时) needs to recognise its own copy
+                    # coming home; matching on text cannot do that, because this
+                    # method rewrites the text on the way in.
+                    meta={"client_id": client_id} if client_id else None,
                 )
                 if attribution_id is None:
                     attribution_id = user_block.id

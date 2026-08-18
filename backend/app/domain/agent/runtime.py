@@ -650,6 +650,7 @@ class AgentWorkRunner:
         reply_to: str | None = None,
         attachments: list[dict] | None = None,
         provision_actor: Actor | None = None,
+        client_id: str | None = None,
     ) -> uuid.UUID:
         """Persist one human message now, then schedule AI work if requested.
 
@@ -671,6 +672,7 @@ class AgentWorkRunner:
             turn_id=None,
             reply_to=reply_to,
             attachments=attachments,
+            client_id=client_id,
         )
         turn_id = user_block_id
         for payload in payloads:

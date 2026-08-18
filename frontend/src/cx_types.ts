@@ -187,6 +187,9 @@ export interface WsClientMessage {
   summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
+  // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
+  // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
+  client_id?: string
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----

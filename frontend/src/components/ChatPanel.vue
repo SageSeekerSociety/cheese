@@ -24,8 +24,21 @@ interface ComposerDraft {
   summon: boolean
   reply: Block | null
   atts: ChatAttachment[]
+  /** 还没落库的消息。它们是发给**这个**话题的，跟着它走，不跟着屏幕走。 */
+  outbox: Outgoing[]
 }
 const composerMemory = new Map<string, ComposerDraft>()
+
+/** 发件箱里一条还没落库的消息。 */
+interface Outgoing {
+  clientId: string
+  content: string
+  summon: boolean
+  replyTo?: string
+  atts?: ChatAttachment[]
+  /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
+  state: 'queued' | 'sending' | 'failed'
+}
 </script>
 
 <script setup lang="ts">
@@ -506,10 +519,19 @@ function openSocket(topicId: string) {
     connected.value = true
     retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
     errorMsg.value = null
+    flushOutbox() // 断线期间打的字，连上就自己走
   }
   ws.onclose = () => {
     if (socket === ws) {
       connected.value = false
+      // Anything still waiting for an echo lost its channel — queue it again
+      // rather than let its timer call it undelivered while we reconnect.
+      for (const item of outbox.value) {
+        if (item.state === 'sending') {
+          clearEchoTimer(item.clientId)
+          item.state = 'queued'
+        }
+      }
       scheduleReconnect(topicId)
     }
   }
@@ -557,6 +579,7 @@ function pushBlock(b: Block) {
 function handleFrame(frame: WsServerFrame) {
   switch (frame.type) {
     case 'user_block':
+      settleOutbox(frame.block)
       pushBlock(frame.block)
       autoScroll()
       break
@@ -755,21 +778,94 @@ function scrollToMessage(id: string) {
   document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
+// ---- 发件箱 (§14.1 实时) ----
+// 「人发的消息立即显示，绝不排在 AI turn 后面。别的都可以错，现场不能错」——
+// 而在这之前，发送是把帧塞进 socket 就完了：屏幕上什么都没有，要等后端落库
+// （名册查询、mention 解析、通知写入）再广播回来才显示。快的时候看不出，慢的
+// 时候你会以为自己的消息发丢了；socket 没开时更直接：输入框本身是禁用的。
+//
+// 现在消息立刻出现在时间线末尾，再去对账：后端把 client_id 原样戳回块上，回声
+// 一到就把本地这条换成真的。对不上账的那条不会消失，它变成一条能重试的行。
+const outbox = ref<Outgoing[]>([])
+// 等回声等多久算没送到。宁可长一点：误报「未送达」比晚一点显示更伤——房间里
+// 已经有过一次这种误报（#539）。
+const ECHO_TIMEOUT_MS = 30_000
+const echoTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function clearEchoTimer(clientId: string) {
+  const t = echoTimers.get(clientId)
+  if (t) clearTimeout(t)
+  echoTimers.delete(clientId)
+}
+
+function markFailed(clientId: string) {
+  clearEchoTimer(clientId)
+  const item = outbox.value.find((o) => o.clientId === clientId)
+  if (item && item.state !== 'failed') item.state = 'failed'
+}
+
+/** Hand one queued message to the socket, if there is one to hand it to. */
+function flushOutbox() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  for (const item of outbox.value) {
+    if (item.state === 'sending') continue
+    const msg: WsClientMessage = {
+      type: 'message',
+      content: item.content,
+      summon: item.summon,
+      reply_to: item.replyTo,
+      attachments: item.atts,
+      client_id: item.clientId,
+    }
+    socket.send(JSON.stringify(msg))
+    item.state = 'sending'
+    clearEchoTimer(item.clientId)
+    echoTimers.set(
+      item.clientId,
+      setTimeout(() => markFailed(item.clientId), ECHO_TIMEOUT_MS)
+    )
+  }
+}
+
+/** The echo came home — this local copy has a real block now. */
+function settleOutbox(block: Block): boolean {
+  const clientId = (block.meta as Record<string, unknown> | null)?.client_id
+  if (typeof clientId !== 'string') return false
+  const i = outbox.value.findIndex((o) => o.clientId === clientId)
+  if (i < 0) return false
+  clearEchoTimer(clientId)
+  outbox.value.splice(i, 1)
+  return true
+}
+
+function retrySend(clientId: string) {
+  const item = outbox.value.find((o) => o.clientId === clientId)
+  if (!item) return
+  item.state = 'queued'
+  flushOutbox()
+}
+
+function dropSend(clientId: string) {
+  clearEchoTimer(clientId)
+  outbox.value = outbox.value.filter((o) => o.clientId !== clientId)
+}
+
 function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
   const trimmed = content.trim()
   const atts = attachments?.length ? attachments : undefined
   // An image-only send (no text) is a valid message (图片输入).
-  if ((!trimmed && !atts) || !socket || socket.readyState !== WebSocket.OPEN) return false
+  if (!trimmed && !atts) return false
   errorMsg.value = null
-  const msg: WsClientMessage = {
-    type: 'message',
+  outbox.value.push({
+    clientId: `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     content: trimmed,
     summon,
-    reply_to: replyTarget.value?.id ?? undefined,
-    attachments: atts,
-  }
+    replyTo: replyTarget.value?.id ?? undefined,
+    atts,
+    state: 'queued',
+  })
   replyTarget.value = null
-  socket.send(JSON.stringify(msg))
+  flushOutbox()
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
   // instant local ack (正在看…) even before the backend's ✅ receipt lands.
   if (summon) awaitingReply.value = true
@@ -885,6 +981,14 @@ function onAvatarError(handle: string): void {
   if (avatarBroken.value.has(handle)) return
   avatarBroken.value = new Set(avatarBroken.value).add(handle)
 }
+// 自己在名册上的名字（发件箱那几行用它，因为它们还没有作者字段）。
+const myName = computed(() => memberByHandle.value.get(AUTHOR)?.name || AUTHOR)
+
+function outgoingState(item: Outgoing): string {
+  if (item.state === 'failed') return '未送达'
+  return connected.value ? '发送中…' : '等待连接'
+}
+
 function fmtTime(iso: string): string {
   // Local HH:mm next to the name on the first of a run (not raw UTC).
   return new Date(iso).toLocaleTimeString([], {
@@ -1034,7 +1138,8 @@ function rememberComposer(topicId: string) {
   // A bare @芝士 toggle over an empty box is not a draft — remembering it would
   // relight the chip days later with nothing typed, which is the shape of
   // #349 (you believe you summoned it) pointed the other way.
-  const hasContent = !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value
+  const hasContent =
+    !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value || outbox.value.length > 0
   if (!hasContent) composerMemory.delete(topicId)
   else
     composerMemory.set(topicId, {
@@ -1042,6 +1147,7 @@ function rememberComposer(topicId: string) {
       summon: summon.value,
       reply: replyTarget.value,
       atts: pendingAtts.value.slice(),
+      outbox: outbox.value.slice(),
     })
 }
 
@@ -1051,6 +1157,9 @@ function restoreComposer(topicId: string | undefined) {
   summon.value = saved?.summon ?? props.defaultSummon
   replyTarget.value = saved?.reply ?? null
   pendingAtts.value = saved?.atts ?? []
+  // 换话题时在飞的那些没法再等回声了（socket 换了），回到队列，等这个话题
+  // 下次连上再走。它们不会在别的房间里露面。
+  outbox.value = (saved?.outbox ?? []).map((o) => (o.state === 'sending' ? { ...o, state: 'queued' } : o))
 }
 
 // IME (输入法) guard — see TopicView.vue for the full story: Safari fires
@@ -1099,7 +1208,10 @@ watch(
       const el = scrollRef.value
       scrollMemory.set(oldId, { top: el.scrollTop, atBottom: isAtBottom(el) })
     }
-    if (oldId) rememberComposer(oldId)
+    if (oldId) {
+      rememberComposer(oldId)
+      for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
+    }
     if (props.topic) {
       // loadTopic clears the pending attachments synchronously before its first
       // await, so this topic's own draft has to be restored AFTER the call.
@@ -1116,6 +1228,7 @@ watch(
 onBeforeUnmount(() => {
   rememberScroll() // persist position across an unmount (e.g. leaving the view)
   if (props.topic) rememberComposer(props.topic.id)
+  for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
   contentObserver?.disconnect()
   contentObserver = null
   closeSocket()
@@ -1463,6 +1576,34 @@ onBeforeUnmount(() => {
             @open="emit('open-topic', $event)"
           />
 
+          <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
+             只是右边多一行状态——「立即显示」是第一位的，送达状态是第二位的。 -->
+          <div v-for="item in outbox" :key="item.clientId" class="im-row im-row--pending">
+            <div class="im-gutter">
+              <img
+                v-if="avatarSrc(AUTHOR)"
+                class="im-avatar im-avatar--photo"
+                :src="avatarSrc(AUTHOR)!"
+                alt=""
+                @error="onAvatarError(AUTHOR)"
+              />
+              <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(AUTHOR) }">
+                {{ avatarInitial(myName) }}
+              </div>
+            </div>
+            <div class="im-main">
+              <div class="im-meta">
+                <span class="im-name">{{ myName }}</span>
+                <span class="im-time">{{ outgoingState(item) }}</span>
+              </div>
+              <div class="im-text im-text--verbatim" v-html="renderPlain(item.content)" />
+              <div v-if="item.state === 'failed'" class="outbox-actions">
+                <button type="button" class="outbox-act" @click="retrySend(item.clientId)">重试</button>
+                <button type="button" class="outbox-act" @click="dropSend(item.clientId)">删除</button>
+              </div>
+            </div>
+          </div>
+
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
              from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
@@ -1592,7 +1733,6 @@ onBeforeUnmount(() => {
               class="composer-input flex-grow-1"
               placeholder="输入消息…"
               title="Enter 发送，Shift+Enter 换行，可直接粘贴图片"
-              :disabled="!connected"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
@@ -1606,20 +1746,13 @@ onBeforeUnmount(() => {
               class="d-none"
               @change="onFilePicked"
             />
-            <v-btn
-              icon="mdi-image-plus-outline"
-              variant="text"
-              size="small"
-              title="发送图片"
-              :disabled="!connected"
-              @click="pickFiles"
-            />
+            <v-btn icon="mdi-image-plus-outline" variant="text" size="small" title="发送图片" @click="pickFiles" />
             <v-btn
               color="primary"
               variant="flat"
               icon="mdi-send"
               size="small"
-              :disabled="!connected || (!draft.trim() && !pendingAtts.length)"
+              :disabled="!draft.trim() && !pendingAtts.length"
               @click="sendDraft"
             />
           </div>
@@ -1744,6 +1877,27 @@ details.sys-row > summary::-webkit-details-marker {
 .sys-occurrence + .sys-occurrence {
   border-top: 1px solid var(--line);
   padding-top: 4px;
+}
+/* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
+.im-row--pending .im-text,
+.im-row--pending .im-name {
+  opacity: 0.62;
+}
+.outbox-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+.outbox-act {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.outbox-act:hover {
+  text-decoration: underline;
 }
 /* 本轮摘要：文件清单是次要信息，压到元信息档，一行放不下就截断。 */
 .sys-files {
