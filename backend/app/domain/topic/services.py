@@ -660,6 +660,10 @@ class TopicService:
             kind=kind,
             created_by=created_by,
             upgraded_from_block_id=block.id,
+            # Same agent as the room the block came out of — 升级 continues a
+            # conversation that already had one, and handing it to a different
+            # agent would file what it learns in a pool the original never reads.
+            agent_instance_id=parent.agent_instance_id,
         )
         # Same fallback ladder as create()/split_to_subtopic — 升级 is usually the
         # 分身's own suggestion, and this route does not resolve an actor at all
@@ -740,6 +744,13 @@ class TopicService:
             parent_id=parent.id,
             kind=_child_kind(parent),
             created_by=created_by,
+            # The work goes out under the SAME agent the room runs — which is
+            # what closes the loop the split exists for: whatever the 分身 learns
+            # doing it lands in that agent's pool, so the room has it afterwards.
+            # Copied rather than left NULL because the parent's own choice may be
+            # a pin; NULL here would mean "the project's default", which is a
+            # different agent and a different memory.
+            agent_instance_id=parent.agent_instance_id,
         )
         # Inherit the parent's roster (not just the requested owner): a 分身-
         # initiated split otherwise leaves every human off the child's roster

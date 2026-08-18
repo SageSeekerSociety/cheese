@@ -252,11 +252,20 @@ async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
         _agent_out(
             project_id,
             AgentInstanceService.resolved(row),
-            is_default=row.id == project.default_agent_instance_id,
+            # A row under the implicit handle IS the project's 芝士 — same
+            # handle, therefore the same memory pool — so it holds the default
+            # even before anything points at it.
+            is_default=row.id == project.default_agent_instance_id
+            or (
+                project.default_agent_instance_id is None
+                and row.handle == IMPLICIT_DEFAULT.handle
+            ),
         )
         for row in rows
     ]
-    if default.instance_id is None:
+    # Synthesized only when nothing materialized it yet. Listing both would show
+    # two agents under one handle, reading as two teammates where there is one.
+    if default.instance_id is None and not any(item["is_default"] for item in items):
         items.insert(0, _agent_out(project_id, default, is_default=True))
     return ok(page(items, len(items)))
 

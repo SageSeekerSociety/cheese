@@ -146,6 +146,33 @@ def test_a_project_starts_with_an_implicit_cheese_that_owns_a_pool(client):
     assert default["id"] is None
 
 
+def test_the_projects_cheese_is_listed_once_after_it_materializes(client):
+    """Giving 芝士 a type turns the implicit default into a row. It is still ONE
+    agent under one handle — listing the row AND the synthesized default would
+    show two teammates sharing a memory pool."""
+    pid = _project(client)
+    r = client.put(
+        f"/projects/{pid}/default-agent", json={"type_name": "product-design"}
+    )
+    assert r.status_code == 200, r.text
+
+    agents = _agents(client, pid)
+    assert [(a["handle"], a["is_default"]) for a in agents] == [("cheese", True)]
+    assert agents[0]["configured"] is True
+    assert agents[0]["type_name"] == "product-design"
+
+
+def test_an_agent_added_under_the_default_handle_is_the_default(client):
+    """Same handle = same memory pool, so it cannot be a second, separate agent
+    — whatever order it was created in."""
+    pid = _project(client)
+    created = _add_agent(client, pid, handle="cheese", display_name="芝士")
+
+    agents = _agents(client, pid)
+    assert [(a["handle"], a["is_default"]) for a in agents] == [("cheese", True)]
+    assert agents[0]["id"] == created["id"]
+
+
 def test_a_new_topic_follows_the_projects_default(client):
     pid = _project(client)
     designer = _add_agent(client, pid, handle="designer", type_name="product-design")
@@ -184,6 +211,32 @@ def test_a_topic_can_be_created_with_its_own_agent(client):
     agent = client.get(f"/topics/{topic_id}/agent").json()["data"]
     assert agent["handle"] == "reviewer"
     assert agent["inherited"] is False
+
+
+def test_work_split_out_of_a_room_goes_out_under_the_same_agent(client):
+    """This is the loop the split exists for: whatever the 分身 learns doing the
+    work lands in the SAME pool the room reads, so the room has it afterwards.
+    A child that fell back to the project's default would be a different agent
+    and a different memory."""
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer")
+    room = _topic(client, pid, "review room")
+    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
+
+    r = client.post(
+        f"/topics/{room}/split",
+        json={"title": "拆出来的活", "created_by": "u"},
+    )
+    assert r.status_code == 200, r.text
+    child = r.json()["data"]["id"]
+
+    assert client.get(f"/topics/{child}/agent").json()["data"]["handle"] == "reviewer"
+
+    # And what the child learns is readable from the room that dispatched it.
+    _remember(client, pid, child, "分身查出来的事")
+    assert [h["abstract"] for h in _recall(client, pid, room, "查出来")] == [
+        "分身查出来的事"
+    ]
 
 
 def test_a_topic_cannot_borrow_another_projects_agent(client):
