@@ -121,9 +121,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 
-- **行为**：右栏是芝士维护的 markdown 实况文档（状态，不是流水账）；用户可直接编辑，**改了等于给芝士下指令**（芝士下轮读到最新文档）。
-- **实现**：`GET/PUT /api/topics/{id}/doc`（`TopicService.get_doc/edit_doc`），doc 块 `kind=doc`。芝士侧用 `cheese doc set` 覆盖式更新。归档话题文档定格(只读)。
-- 🟡 未做：编辑文档后对话流出现「编辑了文档」系统事件（edit_doc 已写 event 块，但前端对话流过滤了 ai-event；human/system event 会显示）；AI `update_doc` 与用户编辑的冲突合并（当前后写覆盖）。
+- **行为**：右栏是芝士维护的 markdown 实况文档（状态，不是流水账）；用户可直接编辑，**改了等于给芝士下指令**——正在跑的那一轮当场收到「第几版 + 一句改了哪」的通知，不在跑就由下一轮开头读到最新文档。
+- **实现**：`GET/PUT /api/topics/{id}/doc`（`TopicService.get_doc/edit_doc`），doc 块 `kind=doc`。归档话题文档定格(只读)。
+- **只有整块写法**，所以每次写入都要带 `expected_version`（读到的那一版，0 = 还没有文档），不匹配就 409。芝士侧 `cheese doc get` 记住它给出的版本、`cheese doc set` 按那一版写——版本是读过的证据，没有让它自己声明的口子。
+- 🟡 未做：编辑文档后对话流出现「编辑了文档」系统事件（edit_doc 已写 event 块，但前端对话流过滤了 ai-event；human/system event 会显示）。
 
 ### 3.5 验收 / 采纳（状态机）  ✅
 

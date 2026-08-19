@@ -1518,6 +1518,36 @@ class ChatService:
             return False
         return True
 
+    async def notify_running_turn(self, topic_id: uuid.UUID, notice: str) -> bool:
+        """Tell the turn already running on this topic that the world changed
+        under it. Returns whether the live session took it.
+
+        The same channel as a person's mid-turn message, carrying the other kind
+        of thing a turn needs to hear. A long turn is built on a snapshot taken
+        at its first second — the doc, the roster, the cards — and until now the
+        only way anything could reach it afterwards was somebody typing. So a
+        person editing the living doc mid-turn changed nothing 芝士 could see,
+        and it kept working from, and writing back, the version it started with.
+
+        Framed as a platform notice, and the body is neutralized first: the
+        marker is the one thing in a prompt that claims institutional authority,
+        so a heading someone typed into the doc must not be able to carry it in.
+
+        A notice that does not land is dropped rather than replayed. It says
+        what is true right now — the next turn reads the doc fresh anyway — and
+        a version claim replayed into a later session is worse than silence.
+        """
+        if topic_id not in self._active_turn_ids:
+            return False
+        try:
+            line = platform_prompt(_strip_platform_notice(notice))
+            return bool(await self._compute.deliver(topic_id, line))
+        except Exception:  # noqa: BLE001 — a failed notice must not fail the write
+            logger.exception(
+                "platform notice into running turn failed (topic=%s)", topic_id
+            )
+            return False
+
     async def confirm_prompt_receipt(self, topic_id: uuid.UUID, prompt: str) -> None:
         """A UserPromptSubmit receipt from the topic's screen: the session
         consumed an input. If it is one we injected mid-turn, stamp its blocks

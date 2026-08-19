@@ -55,6 +55,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.team.repositories import TeamRepository
+from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.relay import TopicRelayService, deliver_or_wake
 from app.domain.topic.repositories import SortOrder, TopicSortField
@@ -691,12 +692,21 @@ async def edit_topic_doc(
     body: DocEditIn,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """改文档即指令 (eval B2): edit the living doc; emits a conversation event.
 
     Conditional on ``expected_version``: this doc has no partial write, so a
     save based on a version that is no longer current is refused with 409
-    rather than quietly erasing whatever landed in between."""
+    rather than quietly erasing whatever landed in between.
+
+    A person's edit is also pushed into whatever turn is running right now.
+    改文档即指令 has always been true of the NEXT turn — the doc is read at the
+    top of one — and false of the turn already in progress, which went on
+    working from the version it started with and would then set that version
+    back. What gets pushed is the version number and a line about what moved,
+    never the text: the doc is one `cheese doc get` away, and a document
+    injected mid-turn displaces the work instead of informing it."""
     topic = await TopicService(db).get_or_404(topic_id)
     # actor 在信任边界注入: prefer the verified token, fall back to body.author.
     actor = await resolver.resolve(
@@ -713,12 +723,25 @@ async def edit_topic_doc(
     content = await canonicalize_refs(
         db, topic.project_id, body.content, exclude_topic_id=topic_id
     )
+    # Read before the write, for the summary. Not a race: a doc that moved in
+    # between is exactly what `expected_version` refuses, so the version this
+    # read saw is the version the accepted write replaced.
+    previous = await BlockRepository(db).doc_root(topic_id)
+    was = previous.content if previous else ""
     doc = await TopicService(db).edit_doc(
         topic_id=topic_id,
         content=content,
         author=actor.handle,
         expected_version=body.expected_version,
     )
+    if not actor.is_agent:
+        # 芝士's own `cheese doc set` is not news to 芝士.
+        await chat.notify_running_turn(
+            topic_id,
+            f"{actor.handle} 刚改了实况文档，现在是第 {doc.doc_version} 版"
+            f"（{summarize_doc_change(was, content)}）。你手上那份可能已经旧了："
+            "要接着改文档，先 cheese doc get 重新读一遍，否则写回去会被拒。",
+        )
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
 
 
