@@ -38,6 +38,7 @@ from app.domain.agent.harness import (
     SessionRef,
 )
 from app.domain.agent.harness.claude_code import event_spool
+from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
 from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     HookSink,
@@ -52,7 +53,6 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.service import (
-    DISALLOWED_TOOLS,
     AgentDeliveryFailure,
     AgentEvent,
     AgentMessage,
@@ -100,7 +100,7 @@ def hooks_settings(extra_stop: list[str] | None = None) -> dict:
     return {
         "skipDangerousModePermissionPrompt": True,
         # Tools with no way out of this platform (AskUserQuestion — see
-        # service.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
+        # cli.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
         # launch line; a deny rule that only lives in one of the two is a deny
         # rule that a future launcher tweak can silently drop.
         "permissions": {"deny": list(DISALLOWED_TOOLS)},

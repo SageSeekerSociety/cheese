@@ -22,10 +22,11 @@ harness 一样都不用付。
 
 三类，性质完全不同：
 
-- **channels**（tmux / device / cloud）：它们实现 ``Channel``，所以拿走这一个接缝
-  和它抛的错。剩下那几个名字才是账——``hooks_settings``、``build_screen_launch``、
-  ``SESSION_TOKEN_TTL_S``：这些是 Claude Code 的知识，今天还长在传输层里，本该在接缝
-  的另一边。第二个 harness 要接上 tmux 的时候，红的就是这几行。
+- **channels**（tmux / device / cloud）：它们实现 ``Channel``，拿走这一个接缝、它抛
+  的错，和一份 ``LaunchSpec``（跑什么、要什么 env、开机前盘上得有什么）——最后这个是
+  transport 拿来照做的，不是它自己拼的。剩下那几个名字才是账——
+  ``build_screen_launch``、``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE``：Claude Code
+  的知识，今天还长在传输层里。第二个 harness 要接上的时候，红的就是这几行。
 - **chat.py**：拿走 ``TopicSubscription`` 和 ``MessageAssembler``——也就是说「把
   hook 翻译成房间里的东西」这件事还有一半住在平台侧，而它认得的是 Claude Code 的
   事件形状。
@@ -87,8 +88,9 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "Channel",
         "SESSION_TOKEN_TTL_S",
         "ScreenSetupError",
+        "SessionFile",
+        "build_session_launch",
         "drop_screen_subscriptions",
-        "hooks_settings",
     ),
 }
 

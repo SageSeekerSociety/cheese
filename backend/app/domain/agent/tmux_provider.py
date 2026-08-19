@@ -43,7 +43,6 @@ device backend hit exactly this on a shared machine, see device_launch.py).
 import asyncio
 import contextlib
 import hashlib
-import json
 import logging
 import uuid
 from dataclasses import dataclass
@@ -53,17 +52,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
-from app.domain.agent import awaited_tasks, clone, provider_env
+from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.harness.claude_code import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
     Channel,
     ScreenSetupError,
+    SessionFile,
+    build_session_launch,
     drop_screen_subscriptions,
-    hooks_settings,
 )
 from app.domain.agent.sandbox_notices import warn_container_rebuilt
-from app.domain.agent.service import CLAUDE_BASE_CMD
 from app.domain.agent.tmux_control import TmuxControlClient
 from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
@@ -75,7 +74,6 @@ _TTYD_PORT = ws.TTYD_PORT  # in-container ttyd base port (施工现场 pane mirr
 # There is deliberately no fixed absolute path for it any more: it lives in the
 # topic's OWN config dir, which differs per session inside a shared box, so
 # `_ensure_session` builds the path from that session's CLAUDE_CONFIG_DIR.
-_SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
 # Wait this long for the pane to reach the `❯` input box after (re)starting.
 _READY_TIMEOUT_S = 45.0
 _READY_POLL_S = 0.4
@@ -158,15 +156,6 @@ def _rewrite(path: Path, content: str, *, mode: int) -> None:
         pass
     path.write_text(content, encoding="utf-8")
     _best_effort_chmod(path, mode)
-
-
-def _resume_ready(session_dir: str, resume_session_id: str) -> bool:
-    """True when a resumable transcript for ``resume_session_id`` is present in
-    this topic's ~/.claude mount (i.e. a cloned/forked conversation was written
-    there), under whatever slug it was written with. Pure so it can be
-    unit-tested without a container. Guards the `--resume` path so an ordinary
-    fresh topic (no transcript) never resumes."""
-    return clone.find_transcript(Path(session_dir), resume_session_id) is not None
 
 
 # Container label carrying the routing-env stamp (see _ensure_container).
@@ -811,23 +800,16 @@ class TmuxChannel(Channel):
     async def _ensure_session(
         self,
         screen: TmuxScreen,
-        model: str | None,
         *,
         session_env: dict[str, str],
-        resume_session_id: str | None = None,
-        session_dir: str | None = None,
-        system_prompt: str = "",
+        command: str,
     ) -> None:
-        """Ensure the topic's interactive `claude` tmux session exists (lazy,
-        reused).
+        """Ensure the topic's session exists (lazy, reused), running ``command``.
 
-        Normally the tmux session IS the continuity, so this starts a FRESH
-        `claude`. The ONE exception (enabling clone, fusion-design §6): when a
-        resumable session id is given AND its transcript is actually present in
-        this topic's config dir, start `claude --resume <id>` so a cloned
-        (transcript-fork) conversation is picked up on the target topic's first
-        turn. The transcript-existence guard keeps every normal path unchanged —
-        a fresh topic has no transcript, so it never accidentally resumes."""
+        What that command is — which binary, which flags, whether it resumes
+        anything — is the harness's answer (``build_session_launch``); the
+        session is a place to run it and this method is about keeping that place
+        alive."""
         rc, _, _ = await _docker(
             "exec", screen.container, "tmux", "has-session", "-t", screen.session
         )
@@ -858,27 +840,6 @@ class TmuxChannel(Channel):
                 await self._pin_window_size(screen)
                 return
         await self._retire_legacy_session(screen.container)
-        claude_cmd = CLAUDE_BASE_CMD
-        # The platform's system prompt, written into the session dir by
-        # ensure_ready. Only a FRESH claude reads it — an already-running
-        # session keeps the prompt it launched with (same as settings.json).
-        if system_prompt:
-            claude_cmd += (
-                f" --append-system-prompt-file {session_env['CLAUDE_CONFIG_DIR']}"
-                f"/{_SYSTEM_PROMPT_FILE}"
-            )
-        if (
-            resume_session_id
-            and session_dir
-            and _resume_ready(session_dir, resume_session_id)
-        ):
-            claude_cmd += f" --resume {resume_session_id}"
-        # Pass --model when set. On the subscription this is the project's pick
-        # ("opus"; empty = the subscription's default Sonnet, so no flag). On the
-        # gateway it's the gateway model name. Either way, an empty model means
-        # "use the default" — never pin a name the provider does not serve.
-        if model:
-            claude_cmd += f" --model {model}"
         args = [
             "exec",
             screen.container,
@@ -905,7 +866,7 @@ class TmuxChannel(Channel):
         for key, value in session_env.items():
             if value:
                 args += ["-e", f"{key}={value}"]
-        args.append(claude_cmd)
+        args.append(command)
         rc, _, err = await _docker(*args)
         if rc != 0:
             raise RuntimeError(f"tmux new-session failed: {err.strip()}")
@@ -1267,8 +1228,9 @@ class TmuxChannel(Channel):
             # Subscription: point Claude Code at the metering proxy, trust its CA
             # (mounted by _subscription_args), attribute to this topic. No gateway
             # key, no model pin — see subscription_provider. The container also
-            # ships a fake credential (see _write_session_settings); the real one
-            # never leaves the backend.
+            # logs in through a placeholder CLAUDE_CODE_OAUTH_TOKEN in this env
+            # and never through a credential FILE (see session_launch); the real
+            # credential never leaves the backend.
             #
             # The subscription env WINS over the caller's `env`: that env carries
             # the gateway's ANTHROPIC_BASE_URL/token (the default provider), and
@@ -1303,18 +1265,15 @@ class TmuxChannel(Channel):
             merged = {**sub}
         else:
             merged = {}
+        # Where claude's own state goes. The KEY that points it there belongs
+        # to the harness (`build_session_launch`), because which env var isolates
+        # one claude from another is a fact about claude; the PATH is this
+        # transport's, and the two dirs below hang off it. HOME stays room-wide
+        # on purpose — the caches, the toolchain and the git identity under it
+        # are things a room SHOULD share.
         config_dir = ws.sandbox_session_dir(topic_id)
         merged.update(
             {
-                # THE isolation boundary inside a shared box: claude reads AND
-                # writes its config — settings.json, .claude.json, the
-                # transcripts --resume reads — under CLAUDE_CONFIG_DIR, and never
-                # falls back to $HOME/.claude when it is set (verified on the
-                # device path, device_launch.py). HOME stays room-wide on
-                # purpose: the shared caches, the toolchain and the git identity
-                # under it are things a room SHOULD share; only claude's own
-                # state must not be.
-                "CLAUDE_CONFIG_DIR": config_dir,
                 # The session's cwd (`new-session -c`), which is also the trust
                 # entry in .claude.json — this topic's own worktree, at its real
                 # path under the project-tree mount.
@@ -1473,20 +1432,23 @@ class TmuxChannel(Channel):
                 owner=owner,
                 turn_id=turn_id,
             )
-            # Seed hooks + skip-disclaimer settings before the session starts
-            # (only read at session creation), then bring the session up.
-            self._write_session_settings(session_dir, topic_env["CHEESE_WORKDIR"])
-            # Always (re)write the system prompt, even when the session already
-            # exists: a running claude keeps the prompt it launched with, and
-            # this write is what the NEXT fresh session picks up.
-            self._write_system_prompt(session_dir, system_prompt)
+            launch = build_session_launch(
+                config_dir=ws.sandbox_session_dir(topic_id),
+                workdir=topic_env["CHEESE_WORKDIR"],
+                system_prompt=system_prompt,
+                model=model,
+                resume_session_id=resume_session_id,
+                # The same directory as the backend can read it: the resume
+                # guard has to look at the transcript through the mount.
+                transcripts_at=Path(session_dir),
+            )
+            # Everything claude reads at launch goes down before the session
+            # starts — and again on a reused one, for the NEXT fresh session.
+            self._plant(session_dir, launch.files)
             await self._ensure_session(
                 screen,
-                model,
-                session_env=topic_env,
-                resume_session_id=resume_session_id,
-                session_dir=session_dir,
-                system_prompt=system_prompt,
+                session_env={**topic_env, **launch.env},
+                command=launch.command,
             )
             # _wait_ready inside the wrap too: its docker exec can itself fail
             # (docker binary vanishing mid-turn) — that must surface as a clean
@@ -1498,65 +1460,17 @@ class TmuxChannel(Channel):
             raise ScreenSetupError("tmux 会话未就绪（未等到输入框），已放弃本轮")
         return screen
 
-    def _write_session_settings(self, session_dir: str, workdir: str) -> None:
-        """Seed the topic's CLAUDE_CONFIG_DIR: the hooks settings, and the
-        first-launch gates.
+    def _plant(self, session_dir: str, files: tuple[SessionFile, ...]) -> None:
+        """Put the harness's launch files into this topic's session mount.
 
-        Idempotent — the hook command is static (the per-topic URL + token live
-        in the tmux session env, not the file).
-
-        The GATES have to be written here, and this is not belt-and-braces. The
-        sandbox image bakes them at `/home/node/.claude.json` (tmux.Dockerfile),
-        which worked while claude read its config from $HOME — but with
-        CLAUDE_CONFIG_DIR set, claude reads AND writes `.claude.json` under THAT
-        directory and never falls back to $HOME (verified on the device path,
-        device_launch.py). Without this the onboarding/trust dialog eats the
-        first prompt, the pane never reaches `❯`, and every turn dies at the
-        45-second ready handshake with nothing saying why.
-
-        The trust entry names this topic's OWN cwd. The baked file trusts
-        `/work`, a remap that no longer exists — another thing a per-topic file
-        can get right and a baked one cannot."""
-        target = Path(session_dir) / "settings.json"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _rewrite(
-            target,
-            json.dumps(hooks_settings(), ensure_ascii=False),
-            mode=0o666,
-        )
-        _rewrite(
-            Path(session_dir) / ".claude.json",
-            json.dumps(
-                {
-                    "hasCompletedOnboarding": True,
-                    "autoUpdates": False,
-                    # Legacy fallback, still honored; it migrates to
-                    # skipDangerousModePermissionPrompt on first run.
-                    "bypassPermissionsModeAccepted": True,
-                    "projects": {
-                        workdir: {
-                            "hasTrustDialogAccepted": True,
-                            "hasCompletedProjectOnboarding": True,
-                        }
-                    },
-                },
-                ensure_ascii=False,
-            ),
-            mode=0o666,
-        )
-        # Login is via CLAUDE_CODE_OAUTH_TOKEN in the container env (see
-        # subscription_provider), NOT a .credentials.json — the file gets the
-        # local validation the env var skips, and rejected the placeholder as
-        # "Not logged in". So nothing credential-shaped is planted here.
-
-    def _write_system_prompt(self, session_dir: str, system_prompt: str) -> None:
-        """Write the platform's system prompt into the session mount, where the
-        launch line's ``--append-system-prompt-file`` points. An empty prompt
-        still writes (an empty file), so a topic whose prompt was withdrawn does
-        not keep serving a stale one to its next fresh session."""
-        target = Path(session_dir) / _SYSTEM_PROMPT_FILE
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _rewrite(target, system_prompt, mode=0o644)
+        WHAT to write is the harness's answer; that it has to survive two
+        different uids writing the same host directory is this transport's
+        problem, and `_rewrite` is where that is handled.
+        """
+        root = Path(session_dir)
+        root.mkdir(parents=True, exist_ok=True)
+        for planted in files:
+            _rewrite(root / planted.name, planted.content, mode=planted.mode)
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history

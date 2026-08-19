@@ -17,9 +17,9 @@ paid off.
 What the list says today, honestly: the transports (tmux / device / cloud) are
 ``Channel`` implementations, so they import that one seam and the errors it
 raises. That is the whole crossing — one runtime driven over any channel — and
-what still shows up next to it (a ledger row taking ``hooks_settings``, or
-``build_screen_launch``) is Claude Code knowledge that has not made it across
-the seam yet.
+what still shows up next to it (a ledger row taking ``build_screen_launch``,
+or the hook env a transport still wires by hand) is Claude Code knowledge that
+has not made it across the seam yet.
 """
 
 from app.domain.agent.harness.claude_code.device_launch import (
@@ -49,11 +49,15 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     drop_screen_subscriptions,
     drop_topic_subscriptions,
     expire_log,
-    hooks_settings,
     log_cursor,
     read_log,
     schedule_screen_subscription_drop,
     schedule_topic_subscription_drop,
+)
+from app.domain.agent.harness.claude_code.session_launch import (
+    LaunchSpec,
+    SessionFile,
+    build_session_launch,
 )
 
 __all__ = [
@@ -68,18 +72,20 @@ __all__ = [
     "HookActivityConsumer",
     "HookEventConsumer",
     "HookRouter",
+    "LaunchSpec",
     "MessageAssembler",
     "ScreenSetupError",
+    "SessionFile",
     "TopicSubscription",
     "acknowledge_log",
     "append_event",
     "build_screen_launch",
+    "build_session_launch",
     "drop_device_subscriptions",
     "drop_screen_subscriptions",
     "drop_topic_subscriptions",
     "expire_log",
     "hook_router",
-    "hooks_settings",
     "log_cursor",
     "read_log",
     "schedule_screen_subscription_drop",

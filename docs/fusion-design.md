@@ -181,6 +181,13 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
   `CloudChannel` 租来的机器）。channel 只答两件事：把屏幕开起来、把字送进去；订阅、
   活跃度、spool、收据全在缝的上面写一次。原来是基类，于是每条传输各带一份，第二个
   harness 得按传输数写 M×N 份；现在是 M+N。
+- ✅ **launch 也过了缝**：`session_launch.build_session_launch` 交出一份 `LaunchSpec`
+  ——跑哪条命令、claude 自己读哪几个 env、开机前盘上得有哪三个文件（hooks settings、
+  首启闸门、system prompt）。tmux channel 给路径、拿结果、按自己的方式落地（写进
+  mount、`-e` 传 env、`new-session` 跑命令），不再自己拼 `--append-system-prompt-file`
+  / `--resume` / `--model`。和 device 那边 `build_screen_launch` 对称。
+  故意**不**和 `build_launch_script` 合并：装到别人机器上的启动脚本和隔壁容器里的一条
+  命令本来就不是一回事，要消掉的 M×N 是订阅/活跃度/spool/收据那套机器，不是 launch 细节。
 - ✅ **单一来源 forwarder**：`cheese-hook` 由 `scripts/gen-sandbox-assets.py` 从
   `CHEESE_HOOK_SCRIPT` 生成为 `sandbox/cheese-hook`，tmux 镜像 `COPY` 它（不再 inline printf）；
   `test_hooks_substrate.py` 断言二者一致 → **漂移即测试失败**。device launcher 运行时写的是同一

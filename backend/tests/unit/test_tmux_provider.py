@@ -233,20 +233,6 @@ async def test_send_prompt_clears_a_poisoned_composer_before_pasting(
     assert screen.enters == 0, "the old garbage widget was verified as this paste"
 
 
-def test_resume_ready_only_when_transcript_present(tmp_path):
-    from app.domain.agent import clone
-
-    sid = "cloned-session-id"
-    # No transcript yet → do NOT resume (ordinary fresh topic stays fresh).
-    assert tp._resume_ready(str(tmp_path), sid) is False
-    # Write the forked transcript where the mount would hold it → resume.
-    # (Any slug counts — reads key off the session id, not the cwd.)
-    f = clone.transcript_file(tmp_path, sid, cwd="/topics/topic_ab12cd34")
-    f.parent.mkdir(parents=True)
-    f.write_text("{}", encoding="utf-8")
-    assert tp._resume_ready(str(tmp_path), sid) is True
-
-
 class _FakeRun:
     def __init__(self, returncode: int, stdout: str) -> None:
         self.returncode = returncode
@@ -277,55 +263,74 @@ def test_ttyd_endpoint_none_without_docker(monkeypatch):
     assert tp.ttyd_endpoint(uuid.uuid4()) is None
 
 
+async def _launched(provider, monkeypatch, topic_id, **opening) -> str:
+    """Bring a topic's screen up the way a turn does; hand back what the box was
+    actually told to run."""
+    calls: list[tuple[str, ...]] = []
+    inner = tp._docker
+
+    async def recording(*args: str, stdin=None):
+        calls.append(args)
+        return await inner(*args, stdin=stdin)
+
+    monkeypatch.setattr(tp, "_docker", recording)
+    await provider.ensure_ready(
+        project_id=uuid.uuid4(),
+        topic_id=topic_id,
+        token="tok",
+        model=opening.pop("model", None),
+        env=None,
+        memory_scope=None,
+        owner=None,
+        turn_id=None,
+        resume_session_id=opening.pop("resume_session_id", None),
+        system_prompt=opening.pop("system_prompt", ""),
+        precheck=None,
+    )
+    assert not opening
+    return " ".join(next(c for c in calls if "new-session" in c))
+
+
 @pytest.mark.anyio
-async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
+async def test_a_cloned_conversation_is_resumed_and_a_fresh_topic_is_not(
+    _stub_env, monkeypatch, tmp_path
+):
+    """The tmux session IS the continuity, so --resume exists for exactly one
+    case: a forked transcript written into a fresh topic's config dir (enabling
+    clone). An ordinary topic has none, and must not be asked to resume."""
     from app.domain.agent import clone
 
-    calls: list[tuple[str, ...]] = []
-
-    async def fake_docker(*args: str, stdin=None):
-        calls.append(args)
-        if "has-session" in args:
-            return 1, "", ""  # no live session → create one
-        return 0, "", ""
-
-    monkeypatch.setattr(tp, "_docker", fake_docker)
     provider = TmuxChannel(image="img:test")
     sid = "cloned-sid"
 
-    # No transcript → fresh session (no --resume).
-    await provider._ensure_session(
-        _BOX,
-        None,
-        session_env=_topic_env(),
-        resume_session_id=sid,
-        session_dir=str(tmp_path),
-    )
-    new_session = next(c for c in calls if "new-session" in c)
-    assert "--resume" not in " ".join(new_session)
+    launch = await _launched(provider, monkeypatch, uuid.uuid4(), resume_session_id=sid)
+    assert "--resume" not in launch
 
-    # Write the cloned transcript → next session creation resumes it. A legacy
-    # /work-slug transcript must count too (pre-project-mount sessions).
-    f = clone.transcript_file(tmp_path, sid, cwd=clone.LEGACY_CONTAINER_CWD)
+    # A legacy /work-slug transcript counts too (pre-project-mount sessions).
+    f = clone.transcript_file(tmp_path / "session", sid, cwd=clone.LEGACY_CONTAINER_CWD)
     f.parent.mkdir(parents=True)
     f.write_text("{}", encoding="utf-8")
-    calls.clear()
-    await provider._ensure_session(
-        _BOX,
-        None,
-        session_env=_topic_env(),
-        resume_session_id=sid,
-        session_dir=str(tmp_path),
-    )
-    new_session = next(c for c in calls if "new-session" in c)
-    assert f"--resume {sid}" in " ".join(new_session)
+    launch = await _launched(provider, monkeypatch, uuid.uuid4(), resume_session_id=sid)
+    assert f"--resume {sid}" in launch
 
 
-async def test_ensure_session_denies_the_unanswerable_ask_tool(monkeypatch, tmp_path):
+@pytest.mark.anyio
+async def test_the_launched_claude_denies_the_unanswerable_ask_tool(
+    _stub_env, monkeypatch
+):
     """AskUserQuestion draws its picker inside the pane, where nobody can answer
     it — the turn then hangs. The launch line must deny it (cheese ask is the
     platform's way to ask), and --dangerously-skip-permissions must not be able
     to wave it through."""
+    provider = TmuxChannel(image="img:test")
+    launch = await _launched(provider, monkeypatch, uuid.uuid4())
+    assert "--disallowedTools AskUserQuestion" in launch
+
+
+@pytest.mark.anyio
+async def test_the_box_runs_the_command_the_harness_handed_it(monkeypatch, tmp_path):
+    """The session is a place to run a claude, not the thing that decides which
+    one. Whatever the harness composed is what `tmux new-session` gets."""
     calls: list[tuple[str, ...]] = []
 
     async def fake_docker(*args: str, stdin=None):
@@ -335,11 +340,11 @@ async def test_ensure_session_denies_the_unanswerable_ask_tool(monkeypatch, tmp_
     monkeypatch.setattr(tp, "_docker", fake_docker)
     provider = TmuxChannel(image="img:test")
     await provider._ensure_session(
-        _BOX, None, session_env=_topic_env(), session_dir=str(tmp_path)
+        _BOX, session_env=_topic_env(), command="claude --whatever-the-harness-said"
     )
 
-    new_session = " ".join(next(c for c in calls if "new-session" in c))
-    assert "--disallowedTools AskUserQuestion" in new_session
+    new_session = next(c for c in calls if "new-session" in c)
+    assert new_session[-1] == "claude --whatever-the-harness-said"
 
 
 @pytest.fixture

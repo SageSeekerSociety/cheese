@@ -133,23 +133,3 @@ class AgentResult:
 AgentEvent = (
     AgentMessage | AgentToolUse | AgentToolResult | AgentSessionInfo | AgentResult
 )
-
-
-# Native tools that have NO way out of this platform, denied on every backend.
-#
-# AskUserQuestion ("向用户提问") is the one that bites: on the hooks backends the
-# interactive `claude` draws its option picker INSIDE the tmux pane, where no
-# user can ever reach it — the model then waits for a keypress that will never
-# come and the turn hangs until the wedged-turn safety net kills it. `cheese ask`
-# is the platform's equivalent (real buttons in the conversation, the answer
-# arrives on the next turn), so the native tool is denied outright rather than
-# left as a trap.
-DISALLOWED_TOOLS = ["AskUserQuestion"]
-
-# The interactive `claude` both hooks backends (tmux, device) launch. Kept here
-# so the two launchers can't drift, and so the deny travels WITH the command:
-# --dangerously-skip-permissions waves through permission prompts, and an
-# explicit --disallowedTools is what keeps this tool out regardless.
-CLAUDE_BASE_CMD = "claude --dangerously-skip-permissions --disallowedTools " + " ".join(
-    DISALLOWED_TOOLS
-)
