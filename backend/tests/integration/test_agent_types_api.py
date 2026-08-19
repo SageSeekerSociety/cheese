@@ -114,7 +114,7 @@ def test_custom_shadows_preset_in_the_catalog(client):
     assert entries[0]["body"] == custom_body
 
 
-def test_the_agents_type_is_what_reaches_the_system_prompt(client, stub_agent):
+def test_the_agents_type_is_what_reaches_the_system_prompt(client, stub_hooks):
     """End-to-end: the persona 芝士 speaks with comes from the type its agent
     wears — and a custom type shadowing a preset wins."""
     custom_body = "你是自定义的评审专家人格。"
@@ -142,10 +142,10 @@ def test_the_agents_type_is_what_reaches_the_system_prompt(client, stub_agent):
             if frame["type"] in ("done", "error"):
                 break
 
-    assert stub_agent.last_system_prompt is not None
-    assert custom_body in stub_agent.last_system_prompt
+    assert stub_hooks.last_system_prompt is not None
+    assert custom_body in stub_hooks.last_system_prompt
     preset_body = preset_types()["academic-research"].body
-    assert preset_body not in stub_agent.last_system_prompt
+    assert preset_body not in stub_hooks.last_system_prompt
 
 
 def test_a_project_can_be_created_wearing_a_type(client):

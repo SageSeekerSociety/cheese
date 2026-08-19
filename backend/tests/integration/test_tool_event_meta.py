@@ -3,50 +3,33 @@ platform} in `meta` so the UI translates and colors dots at DISPLAY time —
 including tools missing from today's verb table, and subagent-nested calls
 (which arrive through the same AgentToolUse path with the same field shapes)."""
 
+import uuid
+
 import pytest
 
-from app.domain.agent.service import (
-    AgentDelta,
-    AgentResult,
-    AgentToolUse,
-    AgentUsage,
-)
-from tests.conftest import StubAgent
+from tests.conftest import StubHooksProvider
 from tests.integration.conftest import chat_ws_url
 
 
-class ToolStubAgent(StubAgent):
-    """Streams a mix of platform / plain / unmapped tool calls, then a result."""
+class ToolScreen(StubHooksProvider):
+    """A session using a mix of platform / plain / unmapped tools."""
 
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        self.last_system_prompt = system_prompt
-        yield AgentToolUse(name="Grep", input={"pattern": "TODO", "path": "src"})
-        yield AgentToolUse(name="mcp__cheese__update_doc", input={"content": "# 文档"})
-        yield AgentToolUse(name="Bash", input={"command": 'cheese title "新标题"'})
-        yield AgentToolUse(name="Bash", input={"command": "ls -la"})
-        yield AgentToolUse(name="FutureTool", input={"x": 1})
-        yield AgentDelta(text="done")
-        yield AgentResult(
-            text="done",
-            session_id="sess-tools-1",
-            usage=AgentUsage(model="stub", input_tokens=1, output_tokens=1),
-        )
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.uses(topic_id, "Grep", pattern="TODO", path="src")
+        self.uses(topic_id, "mcp__cheese__update_doc", content="# 文档")
+        self.uses(topic_id, "Bash", command='cheese title "新标题"')
+        self.uses(topic_id, "Bash", command="ls -la")
+        self.uses(topic_id, "FutureTool", x=1)
+        self.stops(topic_id, "done")
 
 
 @pytest.fixture
-def stub_agent() -> ToolStubAgent:
-    # Overrides conftest's stub_agent for this module; `client` picks it up.
-    return ToolStubAgent()
+def stub_hooks() -> ToolScreen:
+    # Overrides conftest's stub_hooks for this module; `client` picks it up.
+    return ToolScreen()
 
 
 def _chat(client, topic_id: str) -> None:

@@ -8,18 +8,12 @@ Two facts used to be invisible in the room and are asserted here:
 """
 
 import threading
-from collections.abc import Callable
+import uuid
 
 import pytest
 
-from app.domain.agent.service import (
-    AgentResult,
-    AgentToolResult,
-    AgentToolUse,
-    AgentUsage,
-)
 from app.domain.workspace import service as ws
-from tests.conftest import StubAgent
+from tests.conftest import StubHooksProvider
 from tests.integration.conftest import chat_ws_url
 
 DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
@@ -33,46 +27,29 @@ DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
 """
 
 
-class SubagentStubAgent(StubAgent):
+class SubagentScreen(StubHooksProvider):
     """Spawns a subagent, then hands its conclusion back — the two halves the
     room needs to pair up."""
 
-    # Fired the moment the provider actually starts, so a test can assert what
-    # does (and does not) happen before that point.
-    on_start: Callable[[], None] | None = None
-
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        if self.on_start is not None:
-            self.on_start()
-        self.last_system_prompt = system_prompt
-        yield AgentToolUse(name="Task", input={"description": "查分页接口现状"})
-        yield AgentToolResult(
-            name="Task",
-            description="查分页接口现状",
-            text="结论：分页用的是 offset，\n改动点在路由层",
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.uses(topic_id, "Task", description="查分页接口现状")
+        self.returns(
+            topic_id,
+            "Task",
+            "结论：分页用的是 offset，\n改动点在路由层",
             eid="sub-1",
+            description="查分页接口现状",
         )
-        yield AgentResult(
-            text="查完了",
-            session_id="sess-sub-1",
-            usage=AgentUsage(model="stub", input_tokens=1, output_tokens=1),
-        )
+        self.stops(topic_id, "查完了")
 
 
 @pytest.fixture
-def stub_agent() -> SubagentStubAgent:
-    # Overrides conftest's stub_agent for this module; `client` picks it up.
-    return SubagentStubAgent()
+def stub_hooks() -> SubagentScreen:
+    # Overrides conftest's stub_hooks for this module; `client` picks it up.
+    return SubagentScreen()
 
 
 def _chat(client, topic_id: str) -> None:
@@ -222,7 +199,7 @@ def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
 
 
 def test_the_baseline_read_never_delays_the_turns_start(
-    client, monkeypatch, stub_agent
+    client, monkeypatch, stub_hooks
 ):
     """The baseline is read through `git_log`, which ensures the repo exists —
     on a cold project that is a `git init` plus a jj colocate. Awaited in front
@@ -242,7 +219,7 @@ def test_the_baseline_read_never_delays_the_turns_start(
         saw_the_agent_first.append(agent_started.wait(timeout=5))
         return []
 
-    stub_agent.on_start = agent_started.set
+    stub_hooks.on_start = agent_started.set
     monkeypatch.setattr(ws, "git_log", slow_git_log)
 
     topic_id = _topic(client)

@@ -18,6 +18,7 @@ import asyncio
 import os
 import re
 import time
+import uuid
 from collections.abc import Callable, Iterator
 
 import pytest
@@ -80,6 +81,11 @@ from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: 
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
+from app.domain.agent.compute import ComputePool  # noqa: E402
+from app.domain.agent.harness.claude_code import (  # noqa: E402
+    HookRouter,
+    HooksSessionProvider,
+)
 from app.domain.agent.service import (  # noqa: E402
     AgentDelta,
     AgentResult,
@@ -148,9 +154,157 @@ class StubAgent(AgentService):
         )
 
 
+class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
+    """A hooks backend with no machine behind it.
+
+    The turn flow tests exercise is the one production runs: the prompt is
+    handed to a session and the reply comes back later through the hook
+    subscription, not through the caller's iterator. So this stub supplies the
+    only thing a real screen supplies — the hooks — and every layer above
+    (assembly, attribution, receipts, turn close) is the real one.
+
+    The four hooks are the vocabulary of a one-message turn. ``UserPromptSubmit``
+    is not decoration: it is the receipt that stamps an injected message
+    consumed, and without it mid-turn deliveries stay pending forever and replay.
+    """
+
+    name = "stub-hooks"
+
+    def __init__(self) -> None:
+        # Its own router: the module-global one is shared process-wide, and a
+        # test that inherited another test's sink would read its hooks.
+        super().__init__(router=HookRouter())
+        self.last_system_prompt: str | None = None
+        self.last_resume_session_id: str | None = None
+        self.last_prompt: str | None = None
+        self.reply = "Hello world"
+        # Fired the moment the transport actually writes, so a test can assert
+        # what did (and did not) happen before the session was reached.
+        self.on_start: Callable[[], None] | None = None
+
+    async def _ensure_ready(  # type: ignore[override]
+        self,
+        *,
+        topic_id: uuid.UUID,
+        system_prompt: str,
+        resume_session_id: str | None,
+        **_: object,
+    ) -> uuid.UUID:
+        self.last_system_prompt = system_prompt
+        self.last_resume_session_id = resume_session_id
+        return topic_id
+
+    async def _send_prompt(
+        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+    ) -> bool:
+        del images
+        self.last_prompt = prompt
+        if self.on_start is not None:
+            self.on_start()
+        # AFTER this returns, never inside it. `_send_prompt` is the transport
+        # write; a screen that answered during it would collapse the whole
+        # reason this contract separates feeding from reading, and would put
+        # the reply ahead of frames the caller has not yielded yet.
+        asyncio.get_running_loop().call_soon(self.emit_turn, screen, prompt, self.reply)
+        return True
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        """The hooks a screen emits for one prompt it answered.
+
+        Override this to script a different turn — a tool call between two
+        messages, a subagent, silence. What must not change is the frame: a
+        session announces itself, acknowledges the prompt, and stops. ``Stop``
+        in particular is not optional: it is what closes the turn, publishes
+        ``done``, and ends the inherited ``run_turn``.
+        """
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, reply)
+        self.stops(topic_id, reply)
+
+    # --- the hooks, one method each ----------------------------------------
+
+    def hook(self, topic_id: uuid.UUID, **payload: object) -> None:
+        self._router.push(str(topic_id), dict(payload))
+
+    def starts(self, topic_id: uuid.UUID, session_id: str = "sess-test-1") -> None:
+        self.hook(topic_id, hook_event_name="SessionStart", session_id=session_id)
+
+    def acknowledges(self, topic_id: uuid.UUID, prompt: str) -> None:
+        """UserPromptSubmit — the receipt that stamps an injected message
+        consumed. A session that never emits it leaves every mid-turn delivery
+        pending, and pending messages are replayed (宁可重复不可丢失)."""
+        self.hook(topic_id, hook_event_name="UserPromptSubmit", prompt=prompt)
+
+    def says(self, topic_id: uuid.UUID, text: str) -> None:
+        self.hook(topic_id, hook_event_name="MessageDisplay", delta=text)
+
+    def uses(
+        self,
+        topic_id: uuid.UUID,
+        name: str,
+        *,
+        eid: str | None = None,
+        **tool_input: object,
+    ) -> None:
+        self.hook(
+            topic_id,
+            hook_event_name="PreToolUse",
+            tool_name=name,
+            tool_input=dict(tool_input),
+            _eid=eid,
+        )
+
+    def returns(
+        self,
+        topic_id: uuid.UUID,
+        name: str,
+        response: object,
+        *,
+        eid: str | None = None,
+        **tool_input: object,
+    ) -> None:
+        self.hook(
+            topic_id,
+            hook_event_name="PostToolUse",
+            tool_name=name,
+            tool_response=response,
+            tool_input=dict(tool_input),
+            _eid=eid,
+        )
+
+    def stops(
+        self,
+        topic_id: uuid.UUID,
+        text: str,
+        session_id: str = "sess-test-1",
+        **extra: object,
+    ) -> None:
+        self.hook(
+            topic_id,
+            hook_event_name="Stop",
+            session_id=session_id,
+            last_assistant_message=text,
+            usage={
+                "model": "stub",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cost_usd": 0.001,
+            },
+            **extra,
+        )
+
+
 @pytest.fixture
 def stub_agent() -> StubAgent:
     return StubAgent()
+
+
+@pytest.fixture
+def stub_hooks() -> StubHooksProvider:
+    # Per test: its subscriptions and consumer tasks live on the TestClient's
+    # portal loop, which goes away with the client.
+    return StubHooksProvider()
 
 
 @pytest.fixture
@@ -175,7 +329,9 @@ def bearer() -> Callable[[str], dict[str, str]]:
 
 
 @pytest.fixture
-def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
+def client(
+    _pg_schema, stub_agent: StubAgent, stub_hooks: StubHooksProvider, tmp_path
+) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -208,13 +364,19 @@ def client(_pg_schema, stub_agent: StubAgent, tmp_path) -> Iterator[TestClient]:
                 await session.rollback()
                 raise
 
+    chat_service = ChatService(
+        session_factory=test_factory,
+        agent=stub_agent,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([stub_hooks], stub_hooks.name),
+    )
+
     def override_get_chat_service() -> ChatService:
-        return ChatService(
-            session_factory=test_factory,
-            agent=stub_agent,
-            base_system_prompt="你是芝士。",
-            workspace_root=str(tmp_path / "ws"),
-        )
+        # ONE instance, like production's lru_cache. A per-request instance was
+        # harmless while a turn was self-contained; it is not now that the reply
+        # arrives on a subscription owned by the service that started the turn.
+        return chat_service
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_chat_service] = override_get_chat_service
@@ -471,7 +633,12 @@ async def db_factory(_pg_schema):
 
 
 @pytest.fixture
-async def python_client(_pg_schema, stub_agent: StubAgent, tmp_path):
+async def python_client(
+    _pg_schema,
+    stub_agent: StubAgent,
+    stub_hooks: StubHooksProvider,
+    tmp_path,
+):
     """Async httpx client bound to the app over ASGI — the async counterpart to
     `client`. Inherited contract/route tests written against the main backend use
     it. Same postgres test DB + truncate isolation + agent seed as `client`, but
@@ -497,13 +664,19 @@ async def python_client(_pg_schema, stub_agent: StubAgent, tmp_path):
                 await session.rollback()
                 raise
 
+    chat_service = ChatService(
+        session_factory=test_factory,
+        agent=stub_agent,
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([stub_hooks], stub_hooks.name),
+    )
+
     def override_get_chat_service() -> ChatService:
-        return ChatService(
-            session_factory=test_factory,
-            agent=stub_agent,
-            base_system_prompt="你是芝士。",
-            workspace_root=str(tmp_path / "ws"),
-        )
+        # ONE instance, like production's lru_cache. A per-request instance was
+        # harmless while a turn was self-contained; it is not now that the reply
+        # arrives on a subscription owned by the service that started the turn.
+        return chat_service
 
     # ONE get_db across the whole app (app.db.session re-exports app.core.db's),
     # so a single override moves every route — cheesex and 知是 alike — onto the

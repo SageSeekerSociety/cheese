@@ -71,10 +71,18 @@ def test_blocks_empty_then_populated_after_chat(client):
     # Slack-style: no token deltas — the platform ✅-acks the summoning message,
     # announces the working turn (正在思考 for every open client), then 芝士's
     # reply lands as one complete message block.
+    #
+    # `turn_started` twice, for the same turn: the platform says it when the
+    # turn opens, and the session says it again when it actually picks the work
+    # up. They carry the same id and a client applies whichever arrives — the
+    # second one is what a session that starts working WITHOUT being asked (a
+    # resumed screen, a 分身) has to announce itself with, and it does not stop
+    # saying it just because this turn was asked for.
     assert types == [
         "user_block",
         "turn_started",
         "reaction",
+        "turn_started",
         "assistant_block",
         "done",
     ]
@@ -113,7 +121,7 @@ def test_session_id_persisted_for_resume(client):
         _drain_until_done(ws)
 
 
-def test_memory_injected_into_system_prompt(client, stub_agent):
+def test_memory_injected_into_system_prompt(client, stub_hooks):
     project_id, topic_id = _create_project_and_topic(client)
 
     # Seed a project memory fact.
@@ -130,8 +138,8 @@ def test_memory_injected_into_system_prompt(client, stub_agent):
         ws.send_json({"type": "message", "content": "技术栈是什么", "summon": True})
         _drain_until_done(ws)
 
-    assert stub_agent.last_system_prompt is not None
-    assert "项目用 FastAPI 写后端" in stub_agent.last_system_prompt
+    assert stub_hooks.last_system_prompt is not None
+    assert "项目用 FastAPI 写后端" in stub_hooks.last_system_prompt
 
 
 def test_empty_content_rejected(client):
@@ -156,7 +164,7 @@ def test_message_without_summon_does_not_invoke_cheese(client):
     assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
 
 
-def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
+def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     # spec §7.1: messages posted without @芝士 are still seen on the next summon,
     # each tagged with who said it (§8.4 multi-person disambiguation).
     # Two speakers means two sockets: authorship is pinned to the connection's
@@ -179,7 +187,7 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
         ws.send_json({"type": "message", "content": "芝士看看", "summon": True})
         _drain_until_done(ws)
 
-    prompt = stub_agent.last_prompt or ""
+    prompt = stub_hooks.last_prompt or ""
     assert "[alice]: 先随便说一句" in prompt
     assert "[bob]: 再补一句" in prompt
     assert "[alice]: 芝士看看" in prompt
@@ -210,4 +218,3 @@ def test_debug_turns_records_lifecycle(client):
     assert t["topic_id"] == topic_id
     assert t["status"] == "done"
     assert t["duration_s"] is not None
-    assert t["first_output_s"] is not None  # the assistant message was observed

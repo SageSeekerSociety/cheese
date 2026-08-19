@@ -335,7 +335,7 @@ def _turn(client, room: str, text: str) -> None:
                 break
 
 
-def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_agent):
+def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_hooks):
     """Handing a room to another agent costs nothing and loses nothing.
 
     A conversation belongs to ONE agent — resuming it as somebody else produces
@@ -348,11 +348,11 @@ def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_agent):
     reviewer = _add_agent(client, pid, handle="reviewer")
 
     _turn(client, room, "你好")
-    first_session = stub_agent.last_resume_session_id
+    first_session = stub_hooks.last_resume_session_id
     _turn(client, room, "再说一句")
     # 芝士 is resuming its own thread by now.
-    assert stub_agent.last_resume_session_id is not None
-    cheese_session = stub_agent.last_resume_session_id
+    assert stub_hooks.last_resume_session_id is not None
+    cheese_session = stub_hooks.last_resume_session_id
     assert first_session is None
 
     r = client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
@@ -361,13 +361,13 @@ def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_agent):
 
     # The reviewer starts a fresh conversation rather than inheriting 芝士's.
     _turn(client, room, "还在吗")
-    assert stub_agent.last_resume_session_id is None
+    assert stub_hooks.last_resume_session_id is None
 
     # ...and handing the room back finds 芝士's thread still there.
     r = client.put(f"/topics/{room}/agent", json={"instance_id": None})
     assert r.status_code == 200, r.text
     _turn(client, room, "我回来了")
-    assert stub_agent.last_resume_session_id == cheese_session
+    assert stub_hooks.last_resume_session_id == cheese_session
 
 
 def test_switching_back_to_the_project_default_is_a_switch_too(client):
@@ -382,7 +382,7 @@ def test_switching_back_to_the_project_default_is_a_switch_too(client):
     assert r.json()["data"]["inherited"] is True
 
 
-def test_setting_the_same_agent_again_keeps_the_conversation(client, stub_agent):
+def test_setting_the_same_agent_again_keeps_the_conversation(client, stub_hooks):
     """An idempotent PUT is not a handover — the thread carries on."""
     pid = _project(client)
     reviewer = _add_agent(client, pid, handle="reviewer")
@@ -391,10 +391,10 @@ def test_setting_the_same_agent_again_keeps_the_conversation(client, stub_agent)
     client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
     _turn(client, room, "开工")
     _turn(client, room, "继续")
-    resumed = stub_agent.last_resume_session_id
+    resumed = stub_hooks.last_resume_session_id
     assert resumed is not None
 
     r = client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
     assert r.status_code == 200, r.text
     _turn(client, room, "还在")
-    assert stub_agent.last_resume_session_id == resumed
+    assert stub_hooks.last_resume_session_id == resumed
