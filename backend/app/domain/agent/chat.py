@@ -63,7 +63,7 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from app.domain.agent.skills import DEFAULT_CHAT_SKILLS, load_scenario, load_skills
-from app.domain.agent.stages import resolve_stage, stage_scenario
+from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.agent_instance.services import (
     IMPLICIT_DEFAULT,
     AgentInstanceService,
@@ -145,6 +145,60 @@ class _HookWorkState:
     # started. `None` (or a read that failed) means the turn lands NO change
     # summary rather than a wrong one: with no baseline, every commit looks new.
     known_commits: asyncio.Task[set[str] | None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _TurnContext:
+    """Everything one turn needs to run, read once before anything runs it.
+
+    A turn is assembled and then executed, and the two halves want opposite
+    things from a database session: assembling is a dozen reads that belong in
+    one transaction, executing is minutes of streaming that must hold none. This
+    is what crosses between them — so a backend that runs a turn some other way
+    receives THIS, rather than a session and instructions on what to read.
+    """
+
+    # Who is here and what they are working under.
+    project_id: uuid.UUID
+    acting_agent: str
+    agent: ResolvedAgent
+    agent_pool: tuple[MemoryScope, str] | None
+    role: str | None
+    roster: list[dict]
+    is_private: bool
+    private_owner: str | None
+    untitled: bool
+
+    # What this turn was given, and what it is being asked about.
+    prompt_text: str
+    pending_ids: list[uuid.UUID]
+    turn_images: list[dict]
+    replay_notice: str | None
+    resume_session_id: str | None
+
+    # What it should know: the doc, the memories, the checklist it left behind,
+    # the cards waiting on it, and which段 of the flow this topic is in.
+    doc_text: str | None
+    memories: RecallResult
+    prior_progress: list[dict]
+    open_cards: list[AcceptCard]
+    topic_stage: TopicStage | None
+    topic_refs: list[dict]
+    topic_refs_for_prompt: list[dict]
+
+    # Which machine, and whether it reports its own liveness (which decides who
+    # owns this turn's clock — see the `turn_ceiling` frame).
+    provider: ComputeProvider
+    is_activity_aware_backend: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _TurnBail:
+    """The turn ended while it was still being assembled, and these are the
+    frames that say so. Not an error: nobody was waiting on an answer, or the
+    machine is still being built."""
+
+    frames: list[dict]
 
 
 # How long a message's spooled flushes may sit incomplete (no final flush, no
@@ -3242,21 +3296,26 @@ class ChatService:
                 )
         return resolved, unresolved
 
-    async def _converse_impl(
+    async def _assemble_turn(
         self,
         *,
         topic_id: uuid.UUID,
         content: str,
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID | None,
-        is_resume: bool = False,
-        continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
-    ) -> AsyncIterator[dict]:
-        """Run the AGENT part of a turn (the human block was already posted by
-        post_user_message), yielding WS frames as JSON-ready dicts. Runs under
-        the per-topic lock; the prompt is built from history at lock time so a
-        queued turn picks up every message posted while it waited."""
+        provision_actor: Actor | None,
+    ) -> "_TurnContext | _TurnBail":
+        """Everything a turn needs before anything runs it, read in one
+        transaction: who is here, what was said, what is remembered, which
+        machine, and the prompt built out of all of it.
+
+        Returns a ``_TurnBail`` when the turn ends here instead of starting —
+        nobody is actually waiting on an answer, or the machine is still being
+        built. Both are ordinary outcomes, not errors, and both have to reach
+        the room as frames, which is why they travel back rather than being
+        yielded: assembling is a question with an answer, and a coroutine can
+        return one.
+        """
         # --- tx1: load topic + history, load memory ---
         async with self._sessions() as session:
             topics = TopicRepository(session)
@@ -3279,8 +3338,7 @@ class ChatService:
                 # @，第一轮在锁上把两条合并答掉）。再跑一轮就是白烧一轮算力，还会
                 # 走下面的 platform_prompt 兜底、把已经答过的话当成平台指令重投一
                 # 遍。这里直接收工 —— 只是不跑这一轮，不碰任何排队/锁的逻辑。
-                yield {"type": "done"}
-                return
+                return _TurnBail([{"type": "done"}])
             # 图片输入: every pending image is offered to the provider as
             # {"path", "media_type"}. Whether it actually reaches the model as a
             # native base64 block depends on the provider (`embeds_images`), and
@@ -3442,11 +3500,12 @@ class ChatService:
                             BlockOut.model_validate(waiting_block)
                         )
                     await session.commit()
+                    frames: list[dict] = []
                     if waiting_payload is not None:
-                        yield {"type": "event_block", "block": waiting_payload}
-                    yield {"type": "waiting", "state": "cloud_provisioning"}
-                    yield {"type": "done"}
-                    return
+                        frames.append({"type": "event_block", "block": waiting_payload})
+                    frames.append({"type": "waiting", "state": "cloud_provisioning"})
+                    frames.append({"type": "done"})
+                    return _TurnBail(frames)
             # The prompt is built HERE, not where `pending` was computed: an
             # attachment line has to describe how the image reaches 芝士 on THIS
             # backend, and that is only knowable once the provider is picked.
@@ -3491,6 +3550,85 @@ class ChatService:
                 # never move an existing work tree or resumable Claude session.
                 topic.compute_profile = provider.name
                 await session.commit()
+        return _TurnContext(
+            acting_agent=acting_agent,
+            agent=agent,
+            agent_pool=agent_pool,
+            doc_text=doc_text,
+            is_activity_aware_backend=is_activity_aware_backend,
+            is_private=is_private,
+            memories=memories,
+            open_cards=open_cards,
+            pending_ids=pending_ids,
+            prior_progress=prior_progress,
+            private_owner=private_owner,
+            project_id=project_id,
+            prompt_text=prompt_text,
+            provider=provider,
+            replay_notice=replay_notice,
+            resume_session_id=resume_session_id,
+            role=role,
+            roster=roster,
+            topic_refs=topic_refs,
+            topic_refs_for_prompt=topic_refs_for_prompt,
+            topic_stage=topic_stage,
+            turn_images=turn_images,
+            untitled=untitled,
+        )
+
+    async def _converse_impl(
+        self,
+        *,
+        topic_id: uuid.UUID,
+        content: str,
+        turn_id: uuid.UUID,
+        user_block_id: uuid.UUID | None,
+        is_resume: bool = False,
+        continuation_id: uuid.UUID | None = None,
+        provision_actor: Actor | None = None,
+    ) -> AsyncIterator[dict]:
+        """Run the AGENT part of a turn (the human block was already posted by
+        post_user_message), yielding WS frames as JSON-ready dicts. Runs under
+        the per-topic lock; the prompt is built from history at lock time so a
+        queued turn picks up every message posted while it waited."""
+        prepared = await self._assemble_turn(
+            topic_id=topic_id,
+            content=content,
+            turn_id=turn_id,
+            user_block_id=user_block_id,
+            provision_actor=provision_actor,
+        )
+        if isinstance(prepared, _TurnBail):
+            for frame in prepared.frames:
+                yield frame
+            return
+        # Unpacked into the names the rest of this function already used, rather
+        # than read through `prepared.` throughout: what follows is unchanged,
+        # and a move that also rewrote seven hundred lines of references would
+        # not be reviewable as the inert one it is.
+        acting_agent = prepared.acting_agent
+        agent = prepared.agent
+        agent_pool = prepared.agent_pool
+        doc_text = prepared.doc_text
+        is_activity_aware_backend = prepared.is_activity_aware_backend
+        is_private = prepared.is_private
+        memories = prepared.memories
+        open_cards = prepared.open_cards
+        pending_ids = prepared.pending_ids
+        prior_progress = prepared.prior_progress
+        private_owner = prepared.private_owner
+        project_id = prepared.project_id
+        prompt_text = prepared.prompt_text
+        provider = prepared.provider
+        replay_notice = prepared.replay_notice
+        resume_session_id = prepared.resume_session_id
+        role = prepared.role
+        roster = prepared.roster
+        topic_refs = prepared.topic_refs
+        topic_refs_for_prompt = prepared.topic_refs_for_prompt
+        topic_stage = prepared.topic_stage
+        turn_images = prepared.turn_images
+        untitled = prepared.untitled
 
         # --- streaming: no DB transaction held open ---
         if is_activity_aware_backend:
