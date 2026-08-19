@@ -15,7 +15,6 @@ import pytest
 from app.domain.agent import tmux_provider as tp
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code import (
-    LaunchSpec,
     input_box_ready,
     session_launch,
 )
@@ -24,6 +23,8 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     ActivityTracker,
     ClaudeCodeRuntime,
 )
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.launch import LaunchSpec
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -283,13 +284,15 @@ async def _launched(provider, monkeypatch, topic_id, **opening) -> str:
         project_id=uuid.uuid4(),
         topic_id=topic_id,
         token="tok",
-        model=opening.pop("model", None),
         env=None,
         memory_scope=None,
         owner=None,
         turn_id=None,
-        resume_session_id=opening.pop("resume_session_id", None),
-        system_prompt=opening.pop("system_prompt", ""),
+        launch=ClaudeLaunch(
+            system_prompt=opening.pop("system_prompt", ""),
+            model=opening.pop("model", None),
+            resume_session_id=opening.pop("resume_session_id", None),
+        ),
         precheck=None,
     )
     assert not opening
@@ -859,13 +862,11 @@ async def _bring_up(provider, box, project_id, topic_id, room_id, token="tok"):
         project_id=project_id,
         topic_id=topic_id,
         token=token,
-        model=None,
         env=None,
         memory_scope=None,
         owner=None,
         turn_id=None,
-        resume_session_id=None,
-        system_prompt="",
+        launch=ClaudeLaunch(system_prompt=""),
         precheck=None,
     )
 

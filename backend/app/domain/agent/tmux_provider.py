@@ -58,13 +58,16 @@ from app.domain.agent.harness.claude_code import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
     Channel,
-    LaunchSpec,
     ScreenSetupError,
-    SessionFile,
-    build_session_launch,
     drop_screen_subscriptions,
     ensure_claude,
     harness_of,
+)
+from app.domain.agent.harness.launch import (
+    LaunchPlan,
+    LaunchSpec,
+    ScreenPlace,
+    SessionFile,
 )
 from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.tmux_control import TmuxControlClient
@@ -1375,18 +1378,16 @@ class TmuxChannel(Channel):
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         token: str,
-        model: str | None,
         env: dict[str, str] | None,
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
-        resume_session_id: str | None,
-        system_prompt: str,
+        launch: LaunchPlan,
         precheck: object,
     ) -> TmuxScreen:
-        """Bring up (or reuse) the topic's tmux `claude` and wait for the `❯`
-        input box; return its screen (the room's box + this topic's session).
-        Raises ScreenSetupError on setup failure / not-ready."""
+        """Bring up (or reuse) the topic's tmux session running ``launch``, and
+        wait for its input box; return its screen (the room's box + this topic's
+        session). Raises ScreenSetupError on setup failure / not-ready."""
         try:
             room_id = await self._room_id(project_id, topic_id)
             # session_dir() seeds the cheese skill into this topic's config dir;
@@ -1419,24 +1420,25 @@ class TmuxChannel(Channel):
                 owner=owner,
                 turn_id=turn_id,
             )
-            launch = build_session_launch(
-                config_dir=ws.sandbox_session_dir(topic_id),
-                workdir=topic_env["CHEESE_WORKDIR"],
-                system_prompt=system_prompt,
-                model=model,
-                resume_session_id=resume_session_id,
-                # The same directory as the backend can read it: the resume
-                # guard has to look at the transcript through the mount.
-                transcripts_at=Path(session_dir),
+            # The machine's whole half of a launch: where this topic's session
+            # state sits on each side of the mount, and what the session's cwd
+            # is. Which process those coordinates get handed to came in with the
+            # turn — this file has no opinion about it and no way to have one.
+            spec = launch.at(
+                ScreenPlace(
+                    state_dir=ws.sandbox_session_dir(topic_id),
+                    workdir=topic_env["CHEESE_WORKDIR"],
+                    state_at=Path(session_dir),
+                )
             )
-            # Everything claude reads at launch goes down before the session
-            # starts — and again on a reused one, for the NEXT fresh session.
-            self._plant(session_dir, launch.files)
+            # Everything the session reads at launch goes down before it starts
+            # — and again on a reused one, for the NEXT fresh session.
+            self._plant(session_dir, spec.files)
             # Inside the wrap: every docker exec below can itself fail (the
             # binary vanishing mid-turn) and must surface as a clean error
             # result, not a raw exception.
             ready = await ensure_claude(
-                self, screen, replace(launch, env={**topic_env, **launch.env})
+                self, screen, replace(spec, env={**topic_env, **spec.env})
             )
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc

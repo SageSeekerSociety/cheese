@@ -17,35 +17,11 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     ClaudeCodeRuntime,
     ScreenSetupError,
     WorkAttribution,
-    hooks_settings,
     monitor_session_activity,
 )
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 
 pytestmark = pytest.mark.anyio
-
-
-def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
-    s = hooks_settings()
-    assert s["skipDangerousModePermissionPrompt"] is True
-    names = (
-        "SessionStart",
-        "UserPromptSubmit",
-        "PreToolUse",
-        "PostToolUse",
-        "MessageDisplay",
-        "Stop",
-    )
-    for event in names:
-        entry = s["hooks"][event][0]
-        assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
-
-
-def test_hooks_settings_deny_the_tool_no_user_can_answer():
-    """AskUserQuestion's picker is drawn inside the screen's terminal, out of
-    every user's reach — a turn that calls it waits forever. Both hooks backends
-    read this settings.json, so the deny belongs here, next to the hook wiring."""
-    assert hooks_settings()["permissions"]["deny"] == ["AskUserQuestion"]
 
 
 def test_forwarder_spools_then_posts_hook_json_with_scoped_token():

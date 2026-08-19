@@ -10,10 +10,11 @@ the order they go in.
 import pytest
 
 from app.domain.agent.harness.claude_code import (
-    LaunchSpec,
     ensure_claude,
+    hooks_settings,
     session_launch,
 )
+from app.domain.agent.harness.launch import LaunchSpec
 
 pytestmark = pytest.mark.anyio
 
@@ -118,3 +119,26 @@ def test_a_withdrawn_system_prompt_leaves_no_stale_one_behind():
     planted = {f.name: f.content for f in launch.files}
     assert planted["cheese-system-prompt.md"] == ""
     assert "--append-system-prompt-file" not in launch.command
+
+
+def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
+    s = hooks_settings()
+    assert s["skipDangerousModePermissionPrompt"] is True
+    names = (
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "MessageDisplay",
+        "Stop",
+    )
+    for event in names:
+        entry = s["hooks"][event][0]
+        assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
+
+
+def test_hooks_settings_deny_the_tool_no_user_can_answer():
+    """AskUserQuestion's picker is drawn inside the screen's terminal, out of
+    every user's reach — a turn that calls it waits forever. Both hooks backends
+    read this settings.json, so the deny belongs here, next to the hook wiring."""
+    assert hooks_settings()["permissions"]["deny"] == ["AskUserQuestion"]

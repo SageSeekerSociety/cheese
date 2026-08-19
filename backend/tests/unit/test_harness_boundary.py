@@ -23,11 +23,16 @@ harness 一样都不用付。
 三类，性质完全不同：
 
 - **channels**（tmux / device / cloud）：它们实现 ``Channel``，拿走这一个接缝、它抛
-  的错、一份 ``LaunchSpec``（跑什么、要什么 env、开机前盘上得有什么），以及
-  ``ensure_claude``（一块屏幕上什么时候可以复用一个 claude、什么时候必须重开）——
-  这些都是 transport 拿来照做的，不是它自己定的。剩下那几个名字才是账——
-  ``build_screen_launch``、``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE``：Claude Code
-  的知识，今天还长在传输层里。第二个 harness 要接上的时候，红的就是这几行。
+  的错，以及 ``ensure_claude``（一块屏幕上什么时候可以复用一个会话、什么时候必须
+  重开）——这些都是 transport 拿来照做的，不是它自己定的。**「跑什么」不在这张表
+  里**：那是 ``harness.launch`` 的 ``LaunchPlan``，通道说自己的坐标、拿回一份它读
+  不懂的 ``LaunchSpec``，所以 tmux 那一行不再有 ``build_session_launch``。device 还
+  有：一台远程机器的启动是这边写出来的一段 shell，脚本里写着 claude，所以
+  ``build_screen_launch`` 留在账上。剩下 ``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE``
+  同理：Claude Code 的知识，今天还长在传输层里。``ensure_claude`` 是半笔——复用顺序
+  谁都一样，但它等的是 ``❯``，那是 Claude Code 画的。等到第二个 harness 的 spike
+  说清「起来了」在它那儿长什么样，这个判据才该搬进 ``LaunchPlan``；在那之前照着
+  它猜一个接口，猜错的概率比省下的功夫大。
 - **平台侧（chat.py）：一行也没有了。** 曾经它拿走 ``MessageAssembler`` 和 spool 的
   四个读写函数——「把 hook 翻译成房间里的东西」有一半住在平台侧，认得的是 Claude Code
   的事件形状。现在它只通过 ``AgentRuntime`` 的 ``backlog`` 拿到已经拼好的
@@ -76,11 +81,8 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "ActivityTracker",
         "Channel",
         "HARNESS_ENV",
-        "LaunchSpec",
         "SESSION_TOKEN_TTL_S",
         "ScreenSetupError",
-        "SessionFile",
-        "build_session_launch",
         "drop_screen_subscriptions",
         "ensure_claude",
         "harness_of",

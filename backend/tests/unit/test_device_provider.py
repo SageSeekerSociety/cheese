@@ -14,6 +14,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
 from app.domain.device.supply import Visibility
@@ -659,7 +660,7 @@ async def test_concurrent_topics_never_share_a_device_home():
 def test_device_hook_set_pushes_while_local_container_hook_set_does_not():
     """Every device owns a clone and pushes; the local container edits the
     backend worktree and must not also try to push it."""
-    from app.domain.agent.harness.claude_code.hooks_substrate import hooks_settings
+    from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 
     def stop_commands(settings_obj) -> list[str]:
         return [
@@ -727,8 +728,8 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="tok",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
 
     for key in ("CHEESE_API", "CHEESE_HOOK_URL", "CHEESE_GIT_REMOTE"):
@@ -772,8 +773,8 @@ async def test_every_device_is_told_where_to_clone_from():
         project_id=project,
         topic_id=topic,
         token="tok",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
 
     assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
@@ -975,8 +976,8 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="scoped-token-for-this-topic",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
 
     blob = repr(hub.env)
@@ -1035,8 +1036,8 @@ async def _subscription_screen(
         project_id=project,
         topic_id=topic,
         token="hook-token",
-        model=None,
         env=env,
+        launch=ClaudeLaunch(system_prompt=""),
     )
     return hub, project, topic
 
@@ -1188,8 +1189,8 @@ async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="scoped-tok",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
     assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
     assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-tok"
@@ -1532,8 +1533,8 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
             project_id=pid,
             topic_id=tid,
             token="tok",
-            model=None,
             env=None,
+            launch=ClaudeLaunch(system_prompt=""),
         )
 
     first = await ensure()
@@ -1572,8 +1573,8 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
             project_id=pid,
             topic_id=tid,
             token="tok",
-            model=None,
             env=None,
+            launch=ClaudeLaunch(system_prompt=""),
         )
 
     first = await ensure()

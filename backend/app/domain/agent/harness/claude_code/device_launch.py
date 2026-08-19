@@ -27,10 +27,8 @@ from pathlib import Path
 # this module's launcher and its callers build on it.
 from app.domain.agent import machine_tunnel
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-from app.domain.agent.harness.claude_code.hooks_substrate import (
-    CHEESE_HOOK_SCRIPT,
-    hooks_settings,
-)
+from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
+from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
 # kept here as the readable statement of what the launch script writes inline.

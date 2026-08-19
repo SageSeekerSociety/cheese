@@ -11,12 +11,11 @@ receipts, hold the turn's attribution — is a cost of driving a TUI written for
 person, and none of it changes with the transport. It used to be a base class,
 so each transport carried its own copy and a second harness would have needed
 one copy per transport. A channel now answers two questions (bring a screen up,
-put text into it) and never hears the word "hook".
+put text into it) and never hears the word "hook" — nor the word "claude": what
+to run arrives as a ``LaunchPlan`` it hands its own coordinates to.
 
 Also here, all transport-free and unit-testable without Docker or a device:
 
-- ``hooks_settings()`` — the ``~/.claude/settings.json`` wiring Claude Code COMMAND
-  hooks to the ``cheese-hook`` forwarder (HTTP hooks are blocked to non-loopback).
 - ``CHEESE_HOOK_SCRIPT`` — the forwarder: POST each hook's JSON to the backend.
 - ``monitor_session_activity(...)`` — shared idle, liveness, and ceiling policy.
 - ``SESSION_TOKEN_TTL_S`` — the shared session-length scoped-token TTL.
@@ -42,7 +41,6 @@ from app.domain.agent.harness import (
     SessionRef,
 )
 from app.domain.agent.harness.claude_code import event_spool
-from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
 from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     HookSink,
@@ -50,6 +48,8 @@ from app.domain.agent.harness.claude_code.hook_events import (
     hook_router,
     translate_hook,
 )
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_CODE,
     PROMPT_UNDELIVERED_MESSAGE,
@@ -78,50 +78,6 @@ _MAX_REDELIVERIES = 3
 # The hook token lives with the interactive screen. Topic scope prevents a stale
 # token from reaching another topic. Both transports use the same lifetime.
 SESSION_TOKEN_TTL_S = 30 * 24 * 3600
-
-
-def hooks_settings(extra_stop: list[str] | None = None) -> dict:
-    """``~/.claude/settings.json`` for a hooks-driven session: pre-accept the
-    bypass disclaimer AND forward every structured event to our hook endpoint via
-    a COMMAND hook (``cheese-hook``).
-
-    Command (not the built-in ``"type":"http"``) hooks: Claude Code 2.1.x BLOCKS
-    HTTP hooks whose host resolves to a non-loopback / private IP, and only
-    127.0.0.1/::1 are allowed — which a container / device can't use to reach the
-    backend. The ``cheese-hook`` forwarder reads the hook JSON on stdin and POSTs
-    it to ``CHEESE_HOOK_URL`` with the ``CHEESE_TOKEN`` header, sidestepping that.
-
-    Shared by the local (tmux) and remote (device) backends so their perception
-    wiring is one thing — change it here, both backends move together."""
-    cmd = {"type": "command", "command": "cheese-hook"}
-    tool_matched = [{"matcher": "*", "hooks": [cmd]}]
-    plain = [{"hooks": [cmd]}]
-    # A remote machine also has to hand its work back at turn end; the local
-    # container edits the real worktree and has nothing to send.
-    stop_hooks = [cmd] + [
-        {"type": "command", "command": name} for name in (extra_stop or [])
-    ]
-    return {
-        "skipDangerousModePermissionPrompt": True,
-        # Tools with no way out of this platform (AskUserQuestion — see
-        # cli.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
-        # launch line; a deny rule that only lives in one of the two is a deny
-        # rule that a future launcher tweak can silently drop.
-        "permissions": {"deny": list(DISALLOWED_TOOLS)},
-        "hooks": {
-            "SessionStart": plain,
-            # The delivery receipt. We inject a prompt by typing it into the
-            # terminal, and typing has no return value: tmux confirms the bytes
-            # reached the pane and nothing confirms a prompt box read them. This
-            # hook fires for pasted input exactly as for a human's keystrokes,
-            # so its arrival is the proof that the message became a user turn.
-            "UserPromptSubmit": plain,
-            "PreToolUse": tool_matched,
-            "PostToolUse": tool_matched,
-            "MessageDisplay": plain,
-            "Stop": [{"hooks": stop_hooks}],
-        },
-    }
 
 
 # The forwarder: reads a Claude Code hook's JSON on stdin, durably spools it (when
@@ -675,22 +631,26 @@ class Channel:
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         token: str,
-        model: str | None,
         env: dict[str, str] | None,
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
-        resume_session_id: str | None,
-        system_prompt: str,
+        launch: LaunchPlan,
         precheck: object,
     ) -> object:
         """Bring the topic's screen to a prompt-ready state; raise
         ``ScreenSetupError`` if it can't be. Implemented by every channel.
 
-        ``system_prompt`` is the platform's assembled system prompt and MUST be
-        delivered to the `claude` this screen hosts (``--append-system-prompt``
-        at launch). It is a launch-time input, not a per-prompt one: a screen
-        that is merely reused keeps the prompt it was started with."""
+        ``launch`` is what to run. A channel does not build it and does not read
+        it: it says where this screen keeps its state and what its cwd is
+        (``launch.at(ScreenPlace(...))``), plants the files that come back,
+        starts the command. Which harness that turns out to be is the caller's
+        business — a channel that decided could only ever host the one.
+
+        It is a launch-time input, not a per-prompt one. The system prompt
+        inside it reaches the session through a file read exactly once at exec,
+        so a screen that is merely reused keeps the one it was started with, and
+        the plan matters only on the call that turns out to be a cold start."""
         raise NotImplementedError
 
     async def send_prompt(
@@ -1379,13 +1339,15 @@ class ClaudeCodeRuntime:
             project_id=session.project_id,
             topic_id=session.topic_id,
             token=token,
-            model=opening.model,
             env=opening.env,
             memory_scope=opening.memory_scope,
             owner=opening.owner,
             turn_id=work_id,
-            resume_session_id=opening.resume_token,
-            system_prompt=opening.system_prompt,
+            launch=ClaudeLaunch(
+                system_prompt=opening.system_prompt,
+                model=opening.model,
+                resume_session_id=opening.resume_token,
+            ),
             precheck=precheck,
         )
         subscription = await self.ensure_subscription(
@@ -1507,13 +1469,15 @@ class ClaudeCodeRuntime:
                     project_id=project_id,
                     topic_id=topic_id,
                     token=token,
-                    model=model,
                     env=env,
                     memory_scope=memory_scope,
                     owner=owner,
                     turn_id=turn_id,
-                    resume_session_id=resume_session_id,
-                    system_prompt=system_prompt,
+                    launch=ClaudeLaunch(
+                        system_prompt=system_prompt,
+                        model=model,
+                        resume_session_id=resume_session_id,
+                    ),
                     precheck=precheck,
                 )
                 subscription = await self.ensure_subscription(project_id, topic_id)

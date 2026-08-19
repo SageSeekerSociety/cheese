@@ -55,12 +55,11 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
 )
 from app.domain.agent.harness.claude_code.session_launch import (
     HARNESS_ENV,
-    LaunchSpec,
     ScreenHost,
-    SessionFile,
     build_session_launch,
     ensure_claude,
     harness_of,
+    hooks_settings,
     input_box_ready,
 )
 
@@ -75,11 +74,9 @@ __all__ = [
     "Channel",
     "ClaudeCodeRuntime",
     "HookRouter",
-    "LaunchSpec",
     "MessageAssembler",
     "ScreenHost",
     "ScreenSetupError",
-    "SessionFile",
     "SpoolBacklog",
     "TopicSubscription",
     "acknowledge_log",
@@ -92,6 +89,7 @@ __all__ = [
     "drop_topic_subscriptions",
     "expire_log",
     "harness_of",
+    "hooks_settings",
     "hook_router",
     "input_box_ready",
     "log_cursor",

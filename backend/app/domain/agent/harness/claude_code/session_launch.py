@@ -6,6 +6,11 @@ the files it reads exactly once at launch. A channel takes the three and does
 its own transport with them — write the files where its mount points, pass the
 env the way its sessions take env, run the command.
 
+It is never a channel that asks for them. ``ClaudeLaunch`` is what a channel is
+handed, and all it can do with one is say where its screen keeps things and take
+back a launch; the answer being Claude Code's is not something the transport
+finds out.
+
 Every line here is a fact about Claude Code and none is a fact about a
 transport, which is the whole reason it moved. It used to live inside the tmux
 backend, tangled with `docker exec tmux new-session -e`, so the second
@@ -39,8 +44,8 @@ from typing import Protocol
 
 from app.domain.agent import clone
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
-from app.domain.agent.harness.claude_code.hooks_substrate import hooks_settings
+from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD, DISALLOWED_TOOLS
+from app.domain.agent.harness.launch import LaunchSpec, ScreenPlace, SessionFile
 
 # THE isolation boundary between two claudes on one machine: claude reads AND
 # writes its config — settings.json, .claude.json, the transcripts --resume
@@ -61,37 +66,48 @@ GATES_FILE = ".claude.json"
 SYSTEM_PROMPT_FILE = "cheese-system-prompt.md"
 
 
-@dataclass(frozen=True, slots=True)
-class SessionFile:
-    """One file claude reads at launch, named relative to its config dir.
+def hooks_settings(extra_stop: list[str] | None = None) -> dict:
+    """``~/.claude/settings.json`` for a hooks-driven session: pre-accept the
+    bypass disclaimer AND forward every structured event to our hook endpoint via
+    a COMMAND hook (``cheese-hook``).
 
-    ``mode`` is carried because the two sides of the mount are different users:
-    the backend plants these and the sandbox's claude rewrites some of them, so
-    a file it must be able to replace has to be writable by both.
-    """
+    Command (not the built-in ``"type":"http"``) hooks: Claude Code 2.1.x BLOCKS
+    HTTP hooks whose host resolves to a non-loopback / private IP, and only
+    127.0.0.1/::1 are allowed — which a container / device can't use to reach the
+    backend. The ``cheese-hook`` forwarder reads the hook JSON on stdin and POSTs
+    it to ``CHEESE_HOOK_URL`` with the ``CHEESE_TOKEN`` header, sidestepping that.
 
-    name: str
-    content: str
-    mode: int
-
-
-@dataclass(frozen=True, slots=True)
-class LaunchSpec:
-    """Everything a channel needs to start this harness, and nothing else.
-
-    A channel that can honour these three has a claude on it; what it does with
-    them — a tmux session in a container, a launcher shipped to someone's
-    machine — is its own business, and this type is where that stops being the
-    harness's problem.
-
-    ``env`` is only the part claude itself reads. A channel adds its own wiring
-    to it before starting the session, because the session takes ONE
-    environment and both halves have to be in it.
-    """
-
-    command: str
-    env: dict[str, str]
-    files: tuple[SessionFile, ...]
+    Shared by the local (tmux) and remote (device) backends so their perception
+    wiring is one thing — change it here, both backends move together."""
+    cmd = {"type": "command", "command": "cheese-hook"}
+    tool_matched = [{"matcher": "*", "hooks": [cmd]}]
+    plain = [{"hooks": [cmd]}]
+    # A remote machine also has to hand its work back at turn end; the local
+    # container edits the real worktree and has nothing to send.
+    stop_hooks = [cmd] + [
+        {"type": "command", "command": name} for name in (extra_stop or [])
+    ]
+    return {
+        "skipDangerousModePermissionPrompt": True,
+        # Tools with no way out of this platform (AskUserQuestion — see
+        # cli.DISALLOWED_TOOLS). Also passed as --disallowedTools on the
+        # launch line; a deny rule that only lives in one of the two is a deny
+        # rule that a future launcher tweak can silently drop.
+        "permissions": {"deny": list(DISALLOWED_TOOLS)},
+        "hooks": {
+            "SessionStart": plain,
+            # The delivery receipt. We inject a prompt by typing it into the
+            # terminal, and typing has no return value: tmux confirms the bytes
+            # reached the pane and nothing confirms a prompt box read them. This
+            # hook fires for pasted input exactly as for a human's keystrokes,
+            # so its arrival is the proof that the message became a user turn.
+            "UserPromptSubmit": plain,
+            "PreToolUse": tool_matched,
+            "PostToolUse": tool_matched,
+            "MessageDisplay": plain,
+            "Stop": [{"hooks": stop_hooks}],
+        },
+    }
 
 
 def build_session_launch(
@@ -173,6 +189,35 @@ def _gates(workdir: str) -> str:
         },
         ensure_ascii=False,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ClaudeLaunch:
+    """Claude Code as a ``LaunchPlan``: 跑什么，交给机器去说在哪。
+
+    The three values a turn actually chooses, held until a channel says where
+    its screen keeps things — at which point ``at`` turns them into the argv and
+    the files above. Nothing else about this harness reaches a transport: a
+    channel holding one of these knows it has *a* launch to perform and not
+    which one, which is exactly what lets the next harness reuse the channel
+    without editing it.
+    """
+
+    system_prompt: str
+    model: str | None = None
+    resume_session_id: str | None = None
+
+    def at(self, place: ScreenPlace) -> LaunchSpec:
+        return build_session_launch(
+            config_dir=place.state_dir,
+            workdir=place.workdir,
+            system_prompt=self.system_prompt,
+            model=self.model,
+            resume_session_id=self.resume_session_id,
+            # The same directory as the backend can read it: the resume guard
+            # has to look at the transcript through the mount.
+            transcripts_at=place.state_at,
+        )
 
 
 # How long a fresh `claude` gets to draw its input box, and how often to look.

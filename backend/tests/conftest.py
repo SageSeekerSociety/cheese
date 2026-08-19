@@ -87,6 +87,7 @@ from app.domain.agent.harness.claude_code import (  # noqa: E402
     ClaudeCodeRuntime,
     HookRouter,
 )
+from app.domain.agent.harness.launch import LaunchPlan  # noqa: E402
 from app.main import app  # noqa: E402
 
 # Tests always run on the DB memory backend: the openviking backend holds an
@@ -151,12 +152,11 @@ class StubChannel(Channel):
         self,
         *,
         topic_id: uuid.UUID,
-        system_prompt: str,
-        resume_session_id: str | None,
+        launch: LaunchPlan,
         **_: object,
     ) -> uuid.UUID:
-        self.last_system_prompt = system_prompt
-        self.last_resume_session_id = resume_session_id
+        self.last_system_prompt = launch.system_prompt
+        self.last_resume_session_id = launch.resume_session_id
         return topic_id
 
     async def send_prompt(  # type: ignore[override]

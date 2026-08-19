@@ -39,6 +39,7 @@ from app.domain.agent.harness.claude_code import (
     build_screen_launch,
     drop_topic_subscriptions,
 )
+from app.domain.agent.harness.launch import LaunchPlan
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
     HOST_UNREACHABLE_CODE,
@@ -548,9 +549,8 @@ class DeviceChannel(Channel):
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         token: str,
-        model: str | None,
         env: dict[str, str] | None,
-        system_prompt: str = "",
+        launch: LaunchPlan,
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
@@ -747,7 +747,7 @@ class DeviceChannel(Channel):
             hook_token=token,
             home_dir=home_dir,
             work_dir=work_dir,
-            model=model,
+            model=launch.model,
             extra_env=model_env,
             # The base already maps 1:1 onto the backend root (see
             # settings.connector_public_base), and every backend route is bare
@@ -764,7 +764,7 @@ class DeviceChannel(Channel):
             # Every device owns its checkout and syncs through authenticated git.
             git_remote=f"{self._public_base}/projects/{project_id}/git",
             git_branch=ws.branch_for_topic(topic_id),
-            system_prompt=system_prompt,
+            system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
         )
         command = await self._ship_launcher(device_id, topic_id, command)
@@ -816,18 +816,22 @@ class DeviceChannel(Channel):
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         token: str,
-        model: str | None,
         env: dict[str, str] | None,
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
-        resume_session_id: str | None,
-        system_prompt: str,
+        launch: LaunchPlan,
         precheck: object,
     ) -> HubScreen:
         """Reuse/open the topic's screen running `claude` with our hooks on the
         device resolved by ``precheck``; return the screen (ctx). Raises
-        ScreenSetupError when the screen fails."""
+        ScreenSetupError when the screen fails.
+
+        This channel READS the plan rather than performing it — a remote screen
+        is built out of a shell script this side writes, so the launch has to be
+        assembled here, and the script it goes into says ``claude``. That is the
+        crossing the ledger still records against this file: the tmux channel
+        can host whatever it is handed, and this one cannot."""
         assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
@@ -838,9 +842,8 @@ class DeviceChannel(Channel):
                 project_id=project_id,
                 topic_id=topic_id,
                 token=token,
-                model=model,
                 env=env,
-                system_prompt=system_prompt,
+                launch=launch,
             )
             self._subscription_devices[topic_id] = device_id
             return screen
