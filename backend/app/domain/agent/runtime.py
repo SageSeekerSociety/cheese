@@ -13,16 +13,12 @@ the durable lease is the documented multi-instance upgrade.
 
 import asyncio
 import contextlib
-import json
 import logging
-import os
-import tempfile
-import threading
 import time
 import uuid
 from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import lru_cache
 
 from app.core.errors import AppError
@@ -44,6 +40,7 @@ from app.domain.agent.platform_notices import (
     delivery_fallback_notice,
     notice,
 )
+from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import names_a_person
 
@@ -63,134 +60,48 @@ def _fire_on_done(callback: Callable[[], None]) -> None:
         logger.exception("submit on_done hook failed")
 
 
-_inflight_lock = threading.Lock()
+async def _open_turns(session_factory) -> dict[uuid.UUID, TurnRecord]:
+    """Every turn interval still open, keyed by turn id.
 
-
-def _inflight_path():
-    from pathlib import Path
-
-    from app.core.config import settings
-
-    return Path(settings.workspace_root) / ".turns-inflight.json"
-
-
-def _load_inflight_unlocked() -> dict:
-    try:
-        return json.loads(_inflight_path().read_text())
-    except FileNotFoundError:
-        return {}
-    except Exception:  # noqa: BLE001 — registry recovery must not kill the app
-        logger.exception("failed to read in-flight turn registry; treating as empty")
-        return {}
-
-
-def _load_inflight() -> dict:
-    with _inflight_lock:
-        return _load_inflight_unlocked()
-
-
-def _save_inflight_unlocked(reg: dict) -> None:
-    tmp_path: str | None = None
-    try:
-        path = _inflight_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Same-directory temp + replace: readers see either the old complete
-        # registry or the new complete registry, never a half-written JSON file.
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as tmp:
-            tmp_path = tmp.name
-            json.dump(reg, tmp, separators=(",", ":"))
-            tmp.flush()
-            os.fsync(tmp.fileno())
-        os.replace(tmp_path, path)
-        tmp_path = None
-    except Exception:  # noqa: BLE001 — registry is best-effort
-        logger.exception("failed to persist in-flight turn registry")
-    finally:
-        if tmp_path is not None:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
-
-
-def _save_inflight(reg: dict) -> None:
-    with _inflight_lock:
-        _save_inflight_unlocked(reg)
-
-
-def _mutate_inflight(mutator: Callable[[dict], object]) -> dict:
-    """Atomically load, mutate, and replace the durable turn registry.
-
-    The file replace prevents torn JSON; this process-local mutex prevents two
-    concurrent turns from both reading the same snapshot and erasing each
-    other's update with last-writer-wins.
+    Whether reading this can fail is the sweep's business, not this function's:
+    it raises, and the callers that must survive a database blip say so where
+    they say what else they do on failure.
     """
-    with _inflight_lock:
-        reg = _load_inflight_unlocked()
-        mutator(reg)
-        _save_inflight_unlocked(reg)
-        return reg
+    async with session_factory() as session:
+        rows = await AgentTurnRepository(session).open_turns()
+    return {record.turn_id: record for record in rows}
 
 
-def _continuation_of(turn_id: str, info: dict) -> uuid.UUID:
-    """The continuation an orphaned registry entry should resume under.
-
-    Written by a current backend, the entry carries one. A LEGACY entry (written
-    before the field existed) does not, and its turn id is the right fallback:
-    "the continuation of a first attempt IS its turn id" is the invariant
-    ``_execute`` maintains.
-
-    Anything unparseable gets a fresh id rather than an exception. That means no
-    key from the dead turn will match — the resume degrades to the old
-    duplicate-side-effect risk for that ONE turn — but the alternative is
-    raising out of the orphan sweep, which would strand every OTHER turn the
-    sweep exists to rescue. A narrower failure beats a louder one here."""
-    raw = info.get("continuation_id")
-    for candidate in (raw, turn_id):
-        if isinstance(candidate, str):
-            try:
-                return uuid.UUID(candidate)
-            except ValueError:
-                continue
-    logger.warning("orphan entry %s has no usable continuation id", turn_id)
-    return uuid.uuid4()
+async def _open_turn(session_factory, **fields) -> None:
+    async with session_factory() as session:
+        await AgentTurnRepository(session).open(**fields)
+        await session.commit()
 
 
-def _mark_delivered(turn_id: uuid.UUID) -> Callable[[dict], None]:
-    """Stamp one in-flight entry as proven delivered, in place.
+async def _stamp_delivery(session_factory, turn_id: uuid.UUID) -> None:
+    """Record that the transport accepted this turn's prompt.
 
-    Best-effort by design: an entry already claimed by a sweep is simply gone,
-    and re-adding it would resurrect work nobody is waiting for."""
+    Swallows its own failure, unlike opening the interval. This runs mid-turn on
+    a turn that is working: losing the stamp costs at most one duplicate re-send
+    if the process then dies, while raising here would kill the live turn to
+    protect it from a hypothetical one — a trade nobody would make deliberately.
+    """
+    try:
+        async with session_factory() as session:
+            await AgentTurnRepository(session).mark_delivered(turn_id, _utcnow())
+            await session.commit()
+    except Exception:  # noqa: BLE001 — bookkeeping must not kill a working turn
+        logger.exception("could not stamp delivery for turn %s", turn_id)
 
-    def _mutate(reg: dict) -> None:
-        entry = reg.get(str(turn_id))
-        if isinstance(entry, dict):
-            entry["delivered_at"] = time.time()
 
-    return _mutate
+async def _close_turns(session_factory, turn_ids) -> None:
+    async with session_factory() as session:
+        await AgentTurnRepository(session).close(turn_ids, _utcnow())
+        await session.commit()
 
 
-def _entry_resendable(info: dict) -> bool:
-    """May the orphan sweep re-deliver this entry by re-submitting its content?
-
-    A current backend decides this where the turn starts (see ``_execute``) and
-    writes the answer down. A LEGACY entry — written by the process generation
-    this one just replaced — has no such field, and is judged by the rule that
-    was in force when it was written: human-authored, not an auto-resume. Ruling
-    those out instead would make the deploy that ships this field strand exactly
-    the in-flight prompts the field exists to protect."""
-    if "resendable" in info:
-        return bool(info["resendable"])
-    return (
-        not info.get("is_resume")
-        and str(info.get("author") or "system") != "system"
-        and bool(str(info.get("content") or "").strip())
-    )
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
 # Channel = the topic id (str). Frames are the same dicts converse yields.
@@ -799,41 +710,42 @@ class AgentWorkRunner:
 
     async def _wedged_turns(
         self,
-        reg: dict,
+        open_turns: dict[uuid.UUID, TurnRecord],
         last_activity: (
             Callable[[set[uuid.UUID]], Awaitable[dict[uuid.UUID, datetime]]] | None
         ),
         silence_s: float,
-        now: float,
-    ) -> set[str]:
+        now: datetime,
+    ) -> set[uuid.UUID]:
         """Of the turns this process believes it is running, which have gone
         quiet on BOTH signals? Startup passes no `last_activity` — there is
         nothing in `_live` to judge then, so the probe is skipped entirely."""
-        candidates = {tid for tid in reg if tid in self._live}
+        candidates = {tid for tid in open_turns if str(tid) in self._live}
         if not candidates or last_activity is None:
             return set()
-        topics = {uuid.UUID(reg[tid]["topic_id"]) for tid in candidates}
         try:
-            blocks_at = await last_activity(topics)
+            blocks_at = await last_activity(
+                {open_turns[tid].topic_id for tid in candidates}
+            )
         except Exception:  # noqa: BLE001 — a failed probe must not cancel turns
             logger.exception("orphan sweep: last-activity probe failed")
             return set()
         mono = time.monotonic()
-        wedged: set[str] = set()
+        wedged: set[uuid.UUID] = set()
         for tid in candidates:
-            info = reg[tid]
+            record = open_turns[tid]
             # Wall-clock age of the newest Block in the topic...
-            last_block = blocks_at.get(uuid.UUID(info["topic_id"]))
+            last_block = blocks_at.get(record.topic_id)
             block_quiet_s = (
-                (now - last_block.timestamp())
+                (now - last_block).total_seconds()
                 if last_block is not None
-                else (now - float(info.get("started_at", 0)))
+                else record.age_s(now)
             )
             # ...versus the newest frame this process published for this turn.
             # A turn we are running always has an entry (set at start), so a
             # missing one means the bookkeeping is off — treat it as fresh and
             # let the not-in-`_live` branch handle it instead of guessing.
-            frame_at = self._last_frame_at.get(tid)
+            frame_at = self._last_frame_at.get(str(tid))
             if frame_at is None:
                 continue
             frame_quiet_s = mono - frame_at
@@ -858,8 +770,8 @@ class AgentWorkRunner:
         logger.warning("cancelled wedged turn %s on topic %s", turn_id, topic_id)
 
     async def resume_orphans(self, chat_service) -> int:
-        """Startup sweep. `_live` is empty at boot, so every registry entry is
-        by definition an orphan of the previous process generation — which makes
+        """Startup sweep. `_live` is empty at boot, so every open interval is by
+        definition an orphan of the previous process generation — which makes
         this exactly `sweep_orphans` with the young-entry guard switched off
         (nothing can be racing us: lifespan runs before the app serves)."""
         return await self.sweep_orphans(chat_service, min_age_s=0.0)
@@ -874,14 +786,14 @@ class AgentWorkRunner:
         ) = None,
         silence_s: float | None = None,
     ) -> int:
-        """Claim every registered turn that is not actually progressing, and make
-        its fate VISIBLE in the topic. Returns how many were auto-resumed.
+        """Claim every turn whose interval is open but not actually progressing,
+        and make its fate VISIBLE in the topic. Returns how many were auto-resumed.
 
         Why this is not startup-only (the 101/173-minute incident, 2026-08-11):
         a turn dying does not imply the platform restarted. A container recreate,
         an OOM-killed child, a sandbox image swap — each kills a turn while the
-        process lives happily on. Nothing then ever re-reads the registry, so the
-        entry sits there and the topic keeps reporting `active` with a last block
+        process lives happily on. Nothing then ever re-reads the open intervals,
+        so one sits there and the topic keeps reporting `active` with a last block
         that is a command which never returned. That is indistinguishable, to a
         human reading the platform, from a slow test run.
 
@@ -890,7 +802,7 @@ class AgentWorkRunner:
         process was up the whole time:
 
         1. Not in `_live` — a previous generation of the process started it and
-           died. The registry outlives the process; `_live` does not.
+           died. An open interval outlives the process; `_live` does not.
         2. In `_live` but SILENT — the task is still parked in the event loop,
            but nothing is coming out of it. What died is the thing it was driving
            (the sandbox container, the provider stream), not the task. The wall
@@ -927,63 +839,55 @@ class AgentWorkRunner:
         Every branch below ends in a system event. A turn we do not resume is a
         turn someone has to pick up by hand, and they can only do that if the
         topic says so — silence is the failure mode, not the loud recovery."""
-        import time as _time
-
-        reg = _load_inflight()
-        if not reg:
+        open_turns = await _open_turns(chat_service.session_factory)
+        if not open_turns:
             return 0
         if min_age_s is None:
             min_age_s = self.SWEEP_MIN_AGE_S
         if silence_s is None:
             silence_s = self.SILENT_TURN_S
-        now = _time.time()
+        now = _utcnow()
         old_enough = {
-            tid: info
-            for tid, info in reg.items()
-            if now - float(info.get("started_at", 0)) >= min_age_s
+            tid: record
+            for tid, record in open_turns.items()
+            if record.age_s(now) >= min_age_s
         }
         wedged = await self._wedged_turns(old_enough, last_activity, silence_s, now)
         orphans = {
-            tid: info
-            for tid, info in old_enough.items()
-            if tid not in self._live or tid in wedged
+            tid: record
+            for tid, record in old_enough.items()
+            if str(tid) not in self._live or tid in wedged
         }
         if not orphans:
             return 0
 
-        # Keep what we did not claim (live turns, entries too young to judge);
-        # their own completion path removes them. Re-read rather than writing
-        # back the snapshot from the top of this method: the activity probe
-        # awaited, and a turn that registered during that window is in the file
-        # but not in `reg`. Writing the stale copy would delete its entry — and
-        # a running turn with no registry entry is invisible to every future
-        # sweep, i.e. the next death is silent again, which is the whole bug.
-        def drop_claimed(surviving: dict) -> None:
-            for key in orphans:
-                surviving.pop(key, None)
-
-        _mutate_inflight(drop_claimed)
+        # Claim them by closing their intervals: a turn this sweep is deciding
+        # the fate of must not be decided again by the next one. Only these ids
+        # — a turn that opened while the activity probe awaited is still open,
+        # and a running turn no sweep can see is how the next death goes silent
+        # again, which is the whole bug.
+        await _close_turns(chat_service.session_factory, orphans)
         resumed = 0
         # --- wedged turns: cancel + (maybe) resume, the pre-#316 treatment.
         # Their claude died WITH whatever they were driving, so a resumed
         # session — which still holds the conversation — is the right remedy.
-        wedged_topics: set[str] = set()
-        for turn_id, info in orphans.items():
+        wedged_topics: set[uuid.UUID] = set()
+        for turn_id, record in orphans.items():
             if turn_id not in wedged:
                 continue
-            topic_id = uuid.UUID(info["topic_id"])
-            age_s = now - float(info.get("started_at", 0))
+            topic_id = record.topic_id
+            age_s = record.age_s(now)
             stale = age_s > self.ORPHAN_STALE_S
-            chained = bool(info.get("is_resume"))
+            chained = record.is_resume
             # A wedged turn still owns the topic lock. Cancelling is not tidiness
             # — a resume would queue behind it forever, and even a turn we refuse
             # to resume must let the next human message through.
-            self._cancel_wedged(turn_id, topic_id)
+            self._cancel_wedged(str(turn_id), topic_id)
             how = f"卡死了：{round(age_s / 60)} 分钟里一个字都没输出，已强制结束"
             # One remedy per topic: a queued turn parked behind a wedged one
             # looks wedged too, and resuming both would stack prompts — the
             # exact pile-up this sweep is being fixed to stop.
-            if stale or chained or info["topic_id"] in wedged_topics:
+            if stale or chained or topic_id in wedged_topics:
                 why = (
                     f"已经中断 {round(age_s / 60)} 分钟了，太久，不自动接着跑"
                     if stale
@@ -1017,7 +921,7 @@ class AgentWorkRunner:
                     round(age_s),
                 )
                 continue
-            wedged_topics.add(info["topic_id"])
+            wedged_topics.add(topic_id)
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
@@ -1038,28 +942,19 @@ class AgentWorkRunner:
                 topic_id,
                 10.0,
                 "上一轮被强制中断，接着跑",
-                continuation_id=_continuation_of(turn_id, info),
+                continuation_id=record.continuation_id,
             )
             resumed += 1
             logger.info("orphan turn %s scheduled for resume", turn_id)
         # --- restart orphans: a dead process generation left them behind, so
         # the executing claude probably did NOT die (#316). Decide per TOPIC —
         # attach by default, re-send only on proof of non-delivery.
-        by_topic: dict[str, list[tuple[str, dict]]] = {}
-        for turn_id, info in orphans.items():
+        by_topic: dict[uuid.UUID, list[TurnRecord]] = {}
+        for turn_id, record in orphans.items():
             if turn_id in wedged:
                 continue
-            by_topic.setdefault(str(info.get("topic_id")), []).append((turn_id, info))
-        for topic_key, entries in by_topic.items():
-            try:
-                topic_id = uuid.UUID(topic_key)
-            except ValueError:
-                logger.warning(
-                    "orphan entries %s dropped: unusable topic id %r",
-                    [tid for tid, _ in entries],
-                    topic_key,
-                )
-                continue
+            by_topic.setdefault(record.topic_id, []).append(record)
+        for topic_id, entries in by_topic.items():
             resumed += await self._settle_restart_orphans(
                 chat_service,
                 topic_id,
@@ -1067,7 +962,7 @@ class AgentWorkRunner:
                 now,
                 # A topic the wedged branch already remedied gets no second
                 # action — its restart orphans are folded in, loudly.
-                allow_actions=topic_key not in wedged_topics,
+                allow_actions=topic_id not in wedged_topics,
             )
         return resumed
 
@@ -1075,8 +970,8 @@ class AgentWorkRunner:
         self,
         chat_service,
         topic_id: uuid.UUID,
-        entries: list[tuple[str, dict]],
-        now: float,
+        entries: list[TurnRecord],
+        now: datetime,
         *,
         allow_actions: bool = True,
     ) -> int:
@@ -1094,9 +989,8 @@ class AgentWorkRunner:
         - an AI-authored block bearing the turn's id — claude acted, so it
           heard. Second-hand, and it only becomes true once claude has produced
           something, so a prompt that arrived seconds before the process died
-          leaves no trace here. Kept for entries written before the stamp
-          existed, and as a backstop for a death between the write and the
-          stamp.
+          leaves no trace here. Kept as the backstop for a death between the
+          write and the stamp.
         - anything in the topic's durable spool beyond SessionStart (hooks that
           arrived with nobody listening; they cannot be pinned to one turn, so
           they veto every re-send on the topic).
@@ -1113,41 +1007,35 @@ class AgentWorkRunner:
         permanently as a person's message, and the room shows nothing either
         way. Re-sending it is what keeps the platform working rather than merely
         quiet."""
-        turn_uuids: list[uuid.UUID] = []
-        for tid, _info in entries:
-            try:
-                turn_uuids.append(uuid.UUID(tid))
-            except ValueError:
-                continue
+        turn_uuids = [record.turn_id for record in entries]
         # First-hand: the transport accepted the write (#563) and the runtime
-        # wrote that down before this process died. Needs no probe and no
-        # database, and is true from the instant the prompt lands rather than
-        # from whenever 芝士 first produces something.
-        delivered = {tid for tid, info in entries if info.get("delivered_at")}
+        # wrote that down before this process died. True from the instant the
+        # prompt lands, rather than from whenever 芝士 first produces something.
+        delivered = {record.turn_id for record in entries if record.delivered}
         spool_trace = False
         probe_ok = False
         try:
             evidence = await chat_service.orphan_turn_evidence(topic_id, turn_uuids)
-            delivered |= {str(t) for t in evidence.get("delivered", ())}
+            delivered |= set(evidence.get("delivered", ()))
             spool_trace = bool(evidence.get("spool"))
             probe_ok = True
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
             logger.exception("orphan evidence probe failed for %s", topic_id)
         attach = bool(delivered) or spool_trace or not probe_ok
 
-        resend: tuple[str, dict] | None = None
+        resend: TurnRecord | None = None
         if allow_actions and probe_ok and not spool_trace:
             candidates = [
-                (tid, info)
-                for tid, info in entries
-                if tid not in delivered
+                record
+                for record in entries
+                if record.turn_id not in delivered
                 # Decided where the turn starts (see `_execute`): it holds for a
                 # person's message and for every platform task alike.
-                and _entry_resendable(info)
-                and now - float(info.get("started_at", 0)) <= self.ORPHAN_STALE_S
+                and record.resendable
+                and record.age_s(now) <= self.ORPHAN_STALE_S
             ]
             if candidates:
-                resend = max(candidates, key=lambda e: float(e[1].get("started_at", 0)))
+                resend = max(candidates, key=lambda record: record.started_at)
 
         # 一次部署把这个话题的轮次打断了，接下来会发生什么，决定要不要说话。
         #
@@ -1172,8 +1060,8 @@ class AgentWorkRunner:
         #   对一个从没听过任务的会话没有意义，平台不会再自动跑第二次。
         stranded = allow_actions and probe_ok and not attach and resend is None
         if stranded and entries:
-            newest = max(entries, key=lambda e: float(e[1].get("started_at", 0)))
-            age_s = now - float(newest[1].get("started_at", 0))
+            newest = max(entries, key=lambda record: record.started_at)
+            age_s = newest.age_s(now)
             stale = age_s > self.ORPHAN_STALE_S
             # 平台提示统一契约: 房间里一行 `text`，展开才看的长文进 meta.detail。
             text = (
@@ -1220,21 +1108,20 @@ class AgentWorkRunner:
                 logger.exception("spool settle scheduling failed for %s", topic_id)
             logger.info(
                 "orphan turn(s) %s attached on topic %s (delivered=%d spool=%s)",
-                [tid for tid, _ in entries],
+                [record.turn_id for record in entries],
                 topic_id,
                 len(delivered),
                 spool_trace,
             )
         if resend is not None:
-            tid, info = resend
             self._schedule_resend(
                 chat_service,
                 topic_id,
                 3.0,
-                str(info.get("content") or ""),
-                continuation_id=_continuation_of(tid, info),
+                resend.content,
+                continuation_id=resend.continuation_id,
             )
-            logger.info("orphan turn %s scheduled for re-send", tid)
+            logger.info("orphan turn %s scheduled for re-send", resend.turn_id)
             return 1
         return 0
 
@@ -1622,7 +1509,7 @@ class AgentWorkRunner:
             # task cancellation (CancelledError is a BaseException — it misses
             # every `except` inside `_execute`, including the registry cleanup)
             # must stop counting as live, so the next sweep can claim it. The
-            # on-disk entry deliberately survives — that is what gets it resumed.
+            # open interval deliberately survives — that is what gets it resumed.
             self._live.pop(str(turn_id), None)
             self._last_frame_at.pop(str(turn_id), None)
             self._live_topics.pop(str(turn_id), None)
@@ -1709,44 +1596,32 @@ class AgentWorkRunner:
             "detail": None,
         }
         self._recent.append(rec)
-        # Durable in-flight registry: if the PROCESS dies (deploy past the drain
-        # ceiling, crash), startup finds the orphan and auto-resumes it — a
-        # killed turn must never just vanish.
-        entry = {
-            "topic_id": str(topic_id),
-            "started_at": rec["started_at"],
-            "is_resume": is_resume,
-            # Carried across the process death: the orphan sweep must resume
-            # under the SAME continuation, or every key the dead turn claimed
-            # stops matching and its side effects are all repeated.
-            "continuation_id": str(continuation_id),
-            # Who started the turn and with what. When nothing is pending in the
-            # topic — every platform-authored turn, and any human message whose
-            # block the deploy beat — this stored text is the only copy of it.
-            "author": author,
-            "content": content,
-            # May the sweep re-deliver this turn by re-submitting `content`?
-            #
-            # Yes for anything whose content IS the task: a person's message, a
-            # 分身's kickoff prompt, and every platform nudge (验收卡被驳回、
-            # 上游合并冲突、CI 红了、后台任务跑完了). Each is a standalone
-            # instruction, and re-sending it verbatim is the whole of what "the
-            # work still happens" means.
-            #
-            # No for a resume nudge. "从上一轮的断点继续" says nothing to a
-            # session that never heard the task, and re-issuing it is exactly
-            # what stacked five zombie turns on one topic in a day (#324).
-            "resendable": bool(content.strip())
-            and (not is_resume or resume_reason == self.RESEND_REASON),
-        }
-        _mutate_inflight(lambda reg: reg.__setitem__(str(turn_id), entry))
-        # Same instant, no await in between: a sweep can never observe this turn
-        # on disk but not in `_live` and mistake a just-started turn for a corpse.
+        # `_live` FIRST, and only then the durable row. Opening the interval is
+        # a database round-trip, so a sweep can land in the gap — and a sweep
+        # that sees this turn in `_live` and not in the table finds nothing to
+        # claim, where the other order would show it a row with no task and read
+        # it as a corpse. `SWEEP_MIN_AGE_S` is what actually protects the window;
+        # a just-registered turn is too young to be judged either way.
         current = asyncio.current_task()
         if current is not None:
             self._live[str(turn_id)] = current
         self._last_frame_at[str(turn_id)] = time.monotonic()
         self._live_topics[str(turn_id)] = topic_id
+        # The durable interval: if the PROCESS dies (deploy past the drain
+        # ceiling, crash), startup finds it still open — a killed turn must
+        # never just vanish.
+        await _open_turn(
+            chat_service.session_factory,
+            turn_id=turn_id,
+            topic_id=topic_id,
+            continuation_id=continuation_id,
+            author=author,
+            content=content,
+            is_resume=is_resume,
+            resendable=bool(content.strip())
+            and (not is_resume or resume_reason == self.RESEND_REASON),
+            started_at=_utcnow(),
+        )
         logger.info(
             "turn start: author=%s summon=%s resume=%s", author, summon, is_resume
         )
@@ -1851,7 +1726,7 @@ class AgentWorkRunner:
                         # registry NOW: if this process dies a moment later, the
                         # sweep reads a fact instead of guessing from side
                         # effects that may not exist yet.
-                        _mutate_inflight(_mark_delivered(turn_id))
+                        await _stamp_delivery(chat_service.session_factory, turn_id)
                         continue
                     if kind == "turn_ceiling":
                         ceiling_s = float(frame.get("seconds", self._timeout))
@@ -2244,5 +2119,16 @@ class AgentWorkRunner:
                     )
             except Exception:  # noqa: BLE001 — a turn must never fail on this
                 logger.exception("conclusion settle failed for topic %s", topic_id)
-        _mutate_inflight(lambda reg: reg.pop(str(turn_id), None))
+        # The interval ends here. Closing, not deleting: this turn's id is on
+        # every block it produced, and an interval erased at its end is one
+        # nobody can ask about afterwards.
+        #
+        # Failing to close is survivable and must not be reported as the turn
+        # failing — the turn is over and its work landed. What is left open gets
+        # picked up by the next sweep, which sees a delivered prompt and
+        # attaches rather than re-sending it.
+        try:
+            await _close_turns(chat_service.session_factory, [turn_id])
+        except Exception:  # noqa: BLE001 — the turn already finished
+            logger.exception("could not close the interval for turn %s", turn_id)
         clear_context("turn", "topic")

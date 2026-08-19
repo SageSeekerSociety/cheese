@@ -425,11 +425,14 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     """Provision the DB schema for the tests that need it — and only those.
 
     ``_pg_schema`` used to be ``autouse=True`` at session scope, which meant a
-    host with no Postgres could not run *any* test, including the ~132 unit files
-    that never touch a database: the session fixture errored during setup and took
-    the whole run down with it. Gating it per-test keeps behaviour identical for
-    DB-backed tests (still built once per session — ``_pg_schema`` is still
-    session-scoped) while letting ``tests/unit/`` run with no server at all.
+    host with no Postgres could not run *any* test, including the great majority
+    of unit files that never touch a database: the session fixture errored during
+    setup and took the whole run down with it. Gating it per-test keeps behaviour
+    identical for DB-backed tests (still built once per session — ``_pg_schema``
+    is still session-scoped) while letting every unit test that asks for nothing
+    run with no server at all. A unit test that DOES name a DB fixture (the turn
+    log lives in Postgres, so the runner's tests do) pays for one; the rest
+    still do not.
     """
     if _needs_db(request):
         request.getfixturevalue("_pg_schema")
@@ -450,6 +453,21 @@ def _pg_schema():
     _create_and_migrate(_INTG_DB_NAME, settings.database_url)
     _create_and_migrate(_CLIENT_DB_NAME, TEST_DATABASE_URL)
     yield
+
+
+@pytest.fixture
+async def db_factory(_pg_schema):
+    """A truncated database and a session factory over it — no app around it.
+
+    ``client`` builds a whole TestClient to arrive at one of these. A test that
+    only seeds and reads rows should not pay for an ASGI app to do it, and
+    saying so in the fixture list is also how ``_pg_schema_gate`` learns this
+    test needs a database at all.
+    """
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    await _truncate_all(engine)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
 
 
 @pytest.fixture

@@ -6,7 +6,6 @@ and an undelivered prompt (the ONE re-send case) goes out as the original text.
 """
 
 import asyncio
-import time as _time
 import uuid
 
 import pytest
@@ -14,7 +13,6 @@ import pytest
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
-from app.domain.agent import runtime as rt
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.agent.service import AgentResult, AgentService
@@ -25,6 +23,7 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
+from tests.turn_log import open_turn, open_turn_ids
 
 
 def _spool_event(spool, eid: str, payload: dict) -> None:
@@ -163,7 +162,6 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     schedules finishes the turn on its own — saying nothing, because from the
     room's side nothing broke."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     factory = client.test_factory
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
@@ -180,18 +178,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
         lambda self, topic_id, delay_s=2.0: real_schedule(self, topic_id, delay_s=0),
     )
 
-    rt._save_inflight(
-        {
-            str(uuid.uuid4()): {
-                "topic_id": str(tid),
-                "started_at": _time.time() - 300,
-                "is_resume": False,
-                "author": "u",
-                "content": "把测试跑绿",
-                "resendable": True,
-            }
-        }
-    )
+    await open_turn(factory, tid, content="把测试跑绿", age_s=300)
     _spool_event(
         ws.spool_dir(pid, tid),
         "s1",
@@ -230,7 +217,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
         if b.author_type == AuthorType.system and "部署中断" in (b.content or "")
     ]
     assert verdicts == []
-    assert rt._load_inflight() == {}
+    assert await open_turn_ids(factory) == set()
 
 
 @pytest.mark.anyio
@@ -240,7 +227,6 @@ async def test_zero_evidence_orphan_resends_the_original_text(
     """No block, no spool trace → the sweep re-sends, and the turn's prompt is
     the pending HUMAN message verbatim — not a continuation nudge."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     factory = client.test_factory
     _pid, tid = await _seed_topic(factory)
     agent = _RecordingAgent()
@@ -262,18 +248,7 @@ async def test_zero_evidence_orphan_resends_the_original_text(
             kind=BlockKind.message,
         )
         await session.commit()
-    rt._save_inflight(
-        {
-            str(uuid.uuid4()): {
-                "topic_id": str(tid),
-                "started_at": _time.time() - 300,
-                "is_resume": False,
-                "author": "u",
-                "content": "修一下登录页",
-                "resendable": True,
-            }
-        }
-    )
+    await open_turn(factory, tid, content="修一下登录页", age_s=300)
     # Collapse the 3s re-send delay, keep the real path.
     real_resend = AgentWorkRunner._schedule_resend
     monkeypatch.setattr(

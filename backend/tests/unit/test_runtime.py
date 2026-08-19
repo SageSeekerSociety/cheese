@@ -6,9 +6,12 @@ import time
 import uuid
 
 import pytest
+from sqlalchemy import select
 
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
 from app.domain.identity.actor import Actor
+from tests.turn_log import a_topic, open_turn, open_turn_ids, turn_row
 
 
 async def _park_a_task() -> asyncio.Task:
@@ -25,10 +28,14 @@ async def _park_a_task() -> asyncio.Task:
 
 class _FakeChat:
     """Stand-in ChatService.converse: yields a fixed frame sequence, recording
-    that it ran even if no one consumes the result."""
+    that it ran even if no one consumes the result.
 
-    def __init__(self, frames):
+    `session_factory` is where the runner keeps its turn intervals — a real
+    ChatService carries one, so a stand-in that runs turns has to as well."""
+
+    def __init__(self, frames, session_factory=None):
         self._frames = frames
+        self.session_factory = session_factory
         self.ran = False
         self.kwargs: dict = {}
 
@@ -107,13 +114,14 @@ async def test_buffer_drops_after_turn_so_fresh_subscriber_replays_nothing():
 
 
 @pytest.mark.anyio
-async def test_runner_publishes_turn_frames_to_subscribers():
+async def test_runner_publishes_turn_frames_to_subscribers(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     chat = _FakeChat(
-        [{"type": "user_block"}, {"type": "delta", "text": "x"}, {"type": "done"}]
+        [{"type": "user_block"}, {"type": "delta", "text": "x"}, {"type": "done"}],
+        db_factory,
     )
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(chat, topic, author="u", content="hi", summon=True)
         seen = []
@@ -132,17 +140,15 @@ async def test_runner_publishes_turn_frames_to_subscribers():
 
 
 @pytest.mark.anyio
-async def test_cloud_wait_is_terminal_without_spending_a_retry(tmp_path, monkeypatch):
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory, monkeypatch):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     chat = _FakeChat(
         [
             {"type": "waiting", "state": "cloud_provisioning"},
             {"type": "done"},
-        ]
+        ],
+        db_factory,
     )
     actor = Actor("owner", 1, False, "token")
     scheduled: list[object] = []
@@ -152,7 +158,7 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(tmp_path, monkeyp
 
     runner.submit(
         chat,
-        uuid.uuid4(),
+        await a_topic(db_factory),
         author="owner",
         content="保留这条消息",
         summon=True,
@@ -171,7 +177,8 @@ class _FakeKickoffChat:
     """Stand-in ChatService.kickoff: the 分身's first turn after a split —
     frames flow with NO human message posted."""
 
-    def __init__(self):
+    def __init__(self, session_factory=None):
+        self.session_factory = session_factory
         self.ran = False
 
     async def kickoff(self, *, topic_id, turn_id=None, prompt=None):
@@ -183,13 +190,13 @@ class _FakeKickoffChat:
 
 
 @pytest.mark.anyio
-async def test_submit_kickoff_runs_first_turn_without_user_block():
+async def test_submit_kickoff_runs_first_turn_without_user_block(db_factory):
     # 分身自动开工 (spec §8.4): a split sub-topic's first turn starts by itself;
     # the frame stream carries the 分身's own opening, never a user_block.
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    chat = _FakeKickoffChat()
-    topic = uuid.uuid4()
+    chat = _FakeKickoffChat(db_factory)
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit_kickoff(chat, topic)
         seen = []
@@ -204,22 +211,24 @@ async def test_submit_kickoff_runs_first_turn_without_user_block():
 
 
 @pytest.mark.anyio
-async def test_turn_runs_to_completion_without_a_subscriber():
+async def test_turn_runs_to_completion_without_a_subscriber(db_factory):
     # The job does not depend on who is watching (invariant 2): no subscriber,
     # the turn still runs.
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    chat = _FakeChat([{"type": "done"}])
-    runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
-    for _ in range(50):
-        await asyncio.sleep(0)
+    chat = _FakeChat([{"type": "done"}], db_factory)
+    runner.submit(
+        chat, await a_topic(db_factory), author="u", content="hi", summon=True
+    )
+    for _ in range(200):
+        await asyncio.sleep(0.01)
         if chat.ran:
             break
     assert chat.ran is True
 
 
 @pytest.mark.anyio
-async def test_wedged_turn_times_out_and_is_cancelled():
+async def test_wedged_turn_times_out_and_is_cancelled(db_factory):
     # R8: a turn that never finishes must not hold on forever. With a tiny budget
     # it is interrupted (error frame) and the converse generator is cancelled.
     broker = InProcessBroker()
@@ -227,6 +236,8 @@ async def test_wedged_turn_times_out_and_is_cancelled():
     cancelled = asyncio.Event()
 
     class _Hang:
+        session_factory = db_factory
+
         async def converse(self, **_):
             yield {"type": "user_block"}
             try:
@@ -236,7 +247,7 @@ async def test_wedged_turn_times_out_and_is_cancelled():
                 raise
             yield {"type": "done"}  # pragma: no cover
 
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_Hang(), topic, author="u", content="hi", summon=True)
         kinds = []
@@ -258,13 +269,15 @@ async def test_wedged_turn_times_out_and_is_cancelled():
 
 
 @pytest.mark.anyio
-async def test_turn_ceiling_frame_reschedules_the_outer_timeout():
+async def test_turn_ceiling_frame_reschedules_the_outer_timeout(db_factory):
     """The tmux backend signals its OWN (longer) ceiling via a `turn_ceiling`
     frame — AgentWorkRunner must reschedule its outer wall-clock wrap to that value."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)  # the generic default
 
     class _LongTmuxTurn:
+        session_factory = db_factory
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 10.0}
             # Longer than the generic 0.05s default, well under the 10s ceiling
@@ -272,7 +285,7 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout():
             await asyncio.sleep(0.15)
             yield {"type": "done"}
 
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_LongTmuxTurn(), topic, author="u", content="hi", summon=True)
         f = await _next_frame(q, "done", timeout=2)
@@ -281,16 +294,18 @@ async def test_turn_ceiling_frame_reschedules_the_outer_timeout():
 
 
 @pytest.mark.anyio
-async def test_topic_turn_reports_the_rescheduled_ceiling():
+async def test_topic_turn_reports_the_rescheduled_ceiling(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
 
     class _Turn:
+        session_factory = db_factory
+
         async def converse(self, **_):
             yield {"type": "turn_ceiling", "seconds": 123.0}
             yield {"type": "done"}
 
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_Turn(), topic, author="u", content="hi", summon=True)
         await _next_frame(q, "done", timeout=2)
@@ -300,7 +315,7 @@ async def test_topic_turn_reports_the_rescheduled_ceiling():
 
 
 @pytest.mark.anyio
-async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
+async def test_timeout_message_reports_the_effective_ceiling_and_elapsed(db_factory):
     """F: the timeline message a timed-out turn posts used to drop the actual
     timeout value entirely ("⚠️ 芝士这轮超时被中断了..." with no number) —
     only logger.warning had it, and agent has no host SSH to read logger. The
@@ -310,6 +325,8 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
     runner = AgentWorkRunner(broker, turn_timeout_s=1.0)
 
     class _Hang:
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.posted: str | None = None
             self.posted_meta: dict | None = None
@@ -330,7 +347,7 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
             return {"id": "b1", "kind": "event", "content": content}
 
     svc = _Hang()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
         await _next_frame(q, "event_block", timeout=3)
@@ -343,7 +360,9 @@ async def test_timeout_message_reports_the_effective_ceiling_and_elapsed():
 
 
 @pytest.mark.anyio
-async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_default():
+async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_default(
+    db_factory,
+):
     """A turn that rescheduled its ceiling via `turn_ceiling` (turn 活跃度检测,
     e.g. the tmux backend) must have its timeout message report THAT ceiling,
     not the generic outer default — otherwise "was this the generic safety
@@ -353,6 +372,8 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)  # tiny generic default
 
     class _Hang:
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.posted: str | None = None
             self.posted_meta: dict | None = None
@@ -372,7 +393,7 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
             return {"id": "b1", "kind": "event", "content": content}
 
     svc = _Hang()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
         await _next_frame(q, "event_block", timeout=5)
@@ -382,23 +403,25 @@ async def test_timeout_message_uses_the_rescheduled_ceiling_not_the_generic_defa
 
 
 @pytest.mark.anyio
-async def test_running_topic_ids_reports_only_in_flight_turns():
+async def test_running_topic_ids_reports_only_in_flight_turns(db_factory):
     # Bulk signal for the sidebar's「芝士还在跑」indicator: a topic whose turn
     # already finished must drop out, one still mid-flight must show up.
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
     class _SlowTurn:
+        session_factory = db_factory
+
         async def converse(self, **_):
             await asyncio.sleep(0.2)
             yield {"type": "done"}
 
-    finished_topic = uuid.uuid4()
-    running_topic = uuid.uuid4()
+    finished_topic = await a_topic(db_factory)
+    running_topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(finished_topic)) as q:
         runner.submit(
-            _FakeChat([{"type": "done"}]),
+            _FakeChat([{"type": "done"}], db_factory),
             finished_topic,
             author="u",
             content="hi",
@@ -415,16 +438,18 @@ async def test_running_topic_ids_reports_only_in_flight_turns():
 
 
 @pytest.mark.anyio
-async def test_runner_publishes_friendly_error_on_failure():
+async def test_runner_publishes_friendly_error_on_failure(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
     class _Boom:
+        session_factory = db_factory
+
         async def converse(self, **_):
             raise RuntimeError("kaboom")
             yield  # pragma: no cover — makes this an async generator
 
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(_Boom(), topic, author="u", content="hi", summon=True)
         frame = await _next_frame(q, "error")
@@ -432,7 +457,7 @@ async def test_runner_publishes_friendly_error_on_failure():
 
 
 @pytest.mark.anyio
-async def test_turn_failure_lands_in_the_timeline():
+async def test_turn_failure_lands_in_the_timeline(db_factory):
     """现场即事实记录: a failed turn persists a system event block (survives
     reload, scrolls with the flow) and marks the error frame persisted=True so
     the client doesn't double-show a banner."""
@@ -440,6 +465,8 @@ async def test_turn_failure_lands_in_the_timeline():
     runner = AgentWorkRunner(broker)
 
     class _Boom:
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.posted: str | None = None
             self.posted_meta: dict | None = None
@@ -454,7 +481,7 @@ async def test_turn_failure_lands_in_the_timeline():
             return {"id": "b1", "kind": "event", "content": content}
 
     svc = _Boom()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
         first = await _next_frame(q, "event_block")
@@ -480,12 +507,14 @@ async def test_turn_failure_lands_in_the_timeline():
     ],
 )
 async def test_platform_failure_is_coded_and_never_auto_resumes(
-    monkeypatch, failure, expected_code
+    db_factory, monkeypatch, failure, expected_code
 ):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
     class _Full:
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.meta: dict | None = None
 
@@ -509,7 +538,7 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
 
     monkeypatch.setattr(runner, "_schedule_resume", unexpected_resume)
     svc = _Full()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
         event = await _next_frame(q, "event_block")
@@ -527,7 +556,7 @@ async def test_platform_failure_is_coded_and_never_auto_resumes(
 
 
 @pytest.mark.anyio
-async def test_failed_turn_auto_resumes_once(monkeypatch):
+async def test_failed_turn_auto_resumes_once(db_factory, monkeypatch):
     """续跑: a crashed turn schedules a system-nudged continuation, and the
     continuation carries is_resume=True so 芝士 is told to pick up rather than
     start over. What bounds the chain is the resume counter, not this flag —
@@ -541,6 +570,8 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
     runner = AgentWorkRunner(broker)
 
     class _Svc:
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.calls: list[dict] = []
 
@@ -556,7 +587,7 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
             return {"id": "sys", "kind": "event", "content": content}
 
     svc = _Svc()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(svc, topic, author="u", content="hi", summon=True)
         seen: list[str] = []
@@ -574,11 +605,13 @@ async def test_failed_turn_auto_resumes_once(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_repeated_platform_failure_stays_platform_owned(monkeypatch):
+async def test_repeated_platform_failure_stays_platform_owned(db_factory, monkeypatch):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
 
     class _BoomAgain:
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.events: list[tuple[str, dict]] = []
 
@@ -598,7 +631,7 @@ async def test_repeated_platform_failure_stays_platform_owned(monkeypatch):
         lambda *args, **kwargs: scheduled.append((args, kwargs)),
     )
     svc = _BoomAgain()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as queue:
         runner.submit(
             svc,
@@ -619,50 +652,28 @@ async def test_repeated_platform_failure_stays_platform_owned(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
+async def test_orphan_turns_resume_after_restart(db_factory, monkeypatch):
     """A turn that was RUNNING when the process died must be swept up on the
     next startup: ⚠️ event posted + (for an undelivered human prompt) a re-send
     of the original message — never silently vanish (the deploy-kills-a-turn
     hole). Delivered turns take the attach path instead — see
     test_orphan_sweep_attach.py."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "t1": {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "author": "u",
-                "content": "修一下登录页",
-                "resendable": True,
-            },
-            # an auto-resume nudge must never chain another automatic turn, even
-            # across restarts: "从上一轮的断点继续" means nothing to a session
-            # that never heard the task
-            "t2": {
-                "topic_id": str(uuid.uuid4()),
-                "started_at": _time.time() - 60,
-                "is_resume": True,
-                "author": "system",
-                "content": "续跑",
-                "resendable": False,
-            },
-            # stale (>2h) entries are dropped, not resurrected
-            "t3": {
-                "topic_id": str(uuid.uuid4()),
-                "started_at": _time.time() - 7300,
-                "is_resume": False,
-                "author": "u",
-                "content": "旧任务",
-                "resendable": True,
-            },
-        }
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, content="修一下登录页", age_s=60)
+    # an auto-resume nudge must never chain another automatic turn, even across
+    # restarts: "从上一轮的断点继续" means nothing to a session that never heard
+    # the task
+    await open_turn(
+        db_factory,
+        await a_topic(db_factory),
+        author="system",
+        content="续跑",
+        age_s=60,
+        is_resume=True,
+        resendable=False,
     )
+    # stale (>2h) intervals are dropped, not resurrected
+    await open_turn(db_factory, await a_topic(db_factory), content="旧任务", age_s=7300)
 
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
@@ -692,6 +703,7 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
             raise AssertionError("no evidence → nothing to attach to")
 
     chat = _Chat()
+    chat.session_factory = db_factory
     n = await runner.resume_orphans(chat)
     assert n == 1
     # The undelivered human turn is re-sent with its ORIGINAL text — never a
@@ -705,50 +717,29 @@ async def test_orphan_turns_resume_after_restart(tmp_path, monkeypatch):
     dropped = [text for tid, text in chat.notices if tid != topic]
     assert len(dropped) == 2
     assert all("@ 芝士" in text for text in dropped)
-    # registry cleared: a second sweep is a no-op
-    assert await runner.resume_orphans(_Chat()) == 0
+    # every interval closed: a second sweep is a no-op
+    second = _Chat()
+    second.session_factory = db_factory
+    assert await runner.resume_orphans(second) == 0
 
 
 @pytest.mark.anyio
 async def test_periodic_sweep_claims_turn_killed_without_a_restart(
-    tmp_path, monkeypatch
+    db_factory, monkeypatch
 ):
     """The 101/173-minute hole: a turn can be killed (container recreate, OOM,
-    sandbox swap) while the PROCESS lives on. Nothing then re-reads the registry
-    on the startup path, so the sweep must also run periodically — and it must
-    tell the live turns apart from the corpses."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    dead_topic = uuid.uuid4()
-    live_topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "dead": {
-                "topic_id": str(dead_topic),
-                "started_at": _time.time() - 600,
-                "is_resume": False,
-                "author": "u",
-                "content": "查一下日志",
-                "resendable": True,
-            },
-            "live": {
-                "topic_id": str(live_topic),
-                "started_at": _time.time() - 600,
-                "is_resume": False,
-                "author": "u",
-                "content": "别动我",
-                "resendable": True,
-            },
-        }
-    )
+    sandbox swap) while the PROCESS lives on. Nothing then re-reads the open
+    intervals on the startup path, so the sweep must also run periodically — and
+    it must tell the live turns apart from the corpses."""
+    dead_topic = await a_topic(db_factory)
+    live_topic = await a_topic(db_factory)
+    dead = await open_turn(db_factory, dead_topic, content="查一下日志", age_s=600)
+    live = await open_turn(db_factory, live_topic, content="别动我", age_s=600)
 
     runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()  # this process really is running it
-    runner._live["live"] = task
-    runner._last_frame_at["live"] = time.monotonic()
+    runner._live[str(live)] = task
+    runner._last_frame_at[str(live)] = time.monotonic()
     scheduled: list[uuid.UUID] = []
     monkeypatch.setattr(
         runner,
@@ -757,6 +748,8 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
     )
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
@@ -765,63 +758,38 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
 
     assert await runner.sweep_orphans(_Chat()) == 1
     assert scheduled == [dead_topic]
-    # The live turn keeps its registry entry — its own completion path owns it.
-    assert list(rt._load_inflight()) == ["live"]
-    # And a second sweep does not double-resume the one already claimed.
+    # The live turn's interval stays open — its own completion path closes it;
+    # the dead one is claimed, so a second sweep does not double-resume it.
+    assert await open_turn_ids(db_factory) == {live}
+    assert dead is not None
     assert await runner.sweep_orphans(_Chat()) == 0
 
 
 @pytest.mark.anyio
-async def test_periodic_sweep_ignores_a_just_started_turn(tmp_path, monkeypatch):
-    """Belt-and-braces against resuming a live turn: an entry younger than
+async def test_periodic_sweep_ignores_a_just_started_turn(db_factory):
+    """Belt-and-braces against resuming a live turn: an interval younger than
     SWEEP_MIN_AGE_S is never claimed, even if `_live` somehow missed it."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    rt._save_inflight(
-        {
-            "fresh": {
-                "topic_id": str(uuid.uuid4()),
-                "started_at": _time.time() - 2,
-                "is_resume": False,
-            }
-        }
-    )
+    fresh = await open_turn(db_factory, await a_topic(db_factory), age_s=2)
     runner = AgentWorkRunner(InProcessBroker())
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             raise AssertionError("a just-started turn must not be touched")
 
     assert await runner.sweep_orphans(_Chat()) == 0
-    assert list(rt._load_inflight()) == ["fresh"]
+    assert await open_turn_ids(db_factory) == {fresh}
 
 
 @pytest.mark.anyio
-async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
+async def test_stale_orphan_is_dropped_loudly(db_factory, monkeypatch):
     """Crossing the 2h line must not be a silent `continue`. We still don't
     auto-resume (that part was right) — but the topic has to say so, because a
     human is now the only thing that can move it."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "old": {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 10380,  # 173 min, the real incident
-                "is_resume": False,
-                "author": "u",
-                "content": "老任务",
-                "resendable": True,
-            }
-        }
-    )
+    topic = await a_topic(db_factory)
+    # 173 min, the real incident
+    await open_turn(db_factory, topic, content="老任务", age_s=10380)
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     seen: list[dict] = []
@@ -847,50 +815,37 @@ async def test_stale_orphan_is_dropped_loudly(tmp_path, monkeypatch):
             return {"delivered": set(), "spool": False}
 
     chat = _Chat()
+    chat.session_factory = db_factory
     assert await runner.sweep_orphans(chat) == 0  # not resumed...
     assert len(chat.texts) == 1  # ...but not silent either
     assert "173" in chat.texts[0]  # says how long it has been dead
     assert "@ 芝士" in chat.notices[0]  # says what the human can do
-    assert rt._load_inflight() == {}  # claimed, so it is not re-announced
+    # claimed (the interval is closed), so it is not re-announced
+    assert await open_turn_ids(db_factory) == set()
     assert [f["type"] for f in seen] == ["event_block"]  # pushed to the UI live
 
 
 @pytest.mark.anyio
-async def test_turn_registers_and_clears_inflight(tmp_path, monkeypatch):
-    """While a turn runs it is in the durable registry; after it ends it is
-    gone — so only genuinely orphaned turns survive to the next startup."""
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    broker = InProcessBroker()
-    runner = AgentWorkRunner(broker)
-    chat = _FakeChat([{"type": "done"}])
-    runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
+async def test_a_finished_turn_leaves_a_closed_interval(db_factory):
+    """While a turn runs its interval is open; when it ends the interval closes
+    — so only genuinely orphaned turns survive to the next startup, and the turn
+    that DID finish is still there to be asked about."""
+    topic = await a_topic(db_factory)
+    runner = AgentWorkRunner(InProcessBroker())
+    chat = _FakeChat([{"type": "done"}], db_factory)
+    runner.submit(chat, topic, author="u", content="hi", summon=True)
     for _ in range(200):
         await asyncio.sleep(0.01)
-        if chat.ran and not rt._load_inflight():
+        if chat.ran and not await open_turn_ids(db_factory):
             break
     assert chat.ran
-    assert rt._load_inflight() == {}
-
-
-@pytest.mark.anyio
-async def test_concurrent_inflight_mutations_do_not_lose_updates(tmp_path, monkeypatch):
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    rt._save_inflight({"count": 0})
-
-    def increment(_index: int) -> None:
-        def mutate(reg: dict) -> None:
-            current = int(reg["count"])
-            time.sleep(0.005)
-            reg["count"] = current + 1
-
-        rt._mutate_inflight(mutate)
-
-    await asyncio.gather(*(asyncio.to_thread(increment, i) for i in range(12)))
-    assert rt._load_inflight() == {"count": 12}
+    assert await open_turn_ids(db_factory) == set()
+    # Closed, not erased: this id is on every block the turn produced.
+    async with db_factory() as session:
+        rows = list((await session.execute(select(AgentTurn))).scalars())
+    assert len(rows) == 1
+    assert rows[0].topic_id == topic
+    assert rows[0].stopped_at is not None
 
 
 @pytest.mark.anyio
@@ -921,32 +876,20 @@ async def test_finishing_one_turn_does_not_clear_another_turns_state():
 
 
 @pytest.mark.anyio
-async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch):
+async def test_sweep_claims_a_turn_that_is_live_but_silent(db_factory):
     """The 8-hour incident (2026-08-11): three topics went quiet after their last
     block and nothing noticed all night, while this process was up the whole
     time. The task was still in `_live` — what died was the container it drove —
-    so `registry - _live` alone sweeps right past it. Silence is the judge."""
-    import time as _time
+    so `open intervals - _live` alone sweeps right past it. Silence is the judge."""
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "wedged": {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 8 * 3600,
-                "is_resume": False,
-            }
-        }
-    )
+    topic = await a_topic(db_factory)
+    wedged = await open_turn(db_factory, topic, age_s=8 * 3600)
     runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["wedged"] = task
+    runner._live[str(wedged)] = task
     # Both signals cold: no frame for 8h, and the topic's newest block is 8h old.
-    runner._last_frame_at["wedged"] = time.monotonic() - 8 * 3600
+    runner._last_frame_at[str(wedged)] = time.monotonic() - 8 * 3600
 
     async def _last_block(topic_ids):
         assert topic_ids == {topic}
@@ -965,6 +908,7 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
             return {"id": "b1", "content": text}
 
     chat = _Chat()
+    chat.session_factory = db_factory
     # 8h is past ORPHAN_STALE_S, so it is not auto-resumed — but it must still be
     # torn down and announced, which is the entire point.
     assert await runner.sweep_orphans(chat, last_activity=_last_block) == 0
@@ -973,110 +917,76 @@ async def test_sweep_claims_a_turn_that_is_live_but_silent(tmp_path, monkeypatch
     assert len(chat.texts) == 1
     assert "卡死" in chat.texts[0]  # says HOW it died, not just that it did
     assert "@ 芝士" in chat.notices[0]
-    assert rt._load_inflight() == {}
+    assert await open_turn_ids(db_factory) == set()
 
 
 @pytest.mark.anyio
-async def test_sweep_spares_a_turn_grinding_through_tools(tmp_path, monkeypatch):
+async def test_sweep_spares_a_turn_grinding_through_tools(db_factory):
     """A tool call persists no Block, so a turn deep in a tool chain can look
     silent to the DB while being perfectly alive. Cancelling that is worse than
     catching a corpse late — the frame signal is what prevents it."""
-    import time as _time
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "busy": {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 4 * 3600,
-                "is_resume": False,
-            }
-        }
-    )
+    topic = await a_topic(db_factory)
+    busy = await open_turn(db_factory, topic, age_s=4 * 3600)
     runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["busy"] = task
-    runner._last_frame_at["busy"] = time.monotonic() - 5  # a tool frame just now
+    runner._live[str(busy)] = task
+    runner._last_frame_at[str(busy)] = time.monotonic() - 5  # a tool frame just now
 
     async def _last_block(topic_ids):
         return {topic: datetime.now(UTC) - timedelta(hours=4)}  # DB says silent
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             raise AssertionError("a turn that is still emitting frames is alive")
 
     assert await runner.sweep_orphans(_Chat(), last_activity=_last_block) == 0
     assert not task.cancelled()
-    assert list(rt._load_inflight()) == ["busy"]  # untouched
+    assert await open_turn_ids(db_factory) == {busy}  # untouched
     task.cancel()
 
 
 @pytest.mark.anyio
-async def test_sweep_spares_live_turns_when_the_activity_probe_fails(
-    tmp_path, monkeypatch
-):
+async def test_sweep_spares_live_turns_when_the_activity_probe_fails(db_factory):
     """A DB hiccup must not become a mass cancellation: with no usable evidence
     of silence, a live turn is assumed alive."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    rt._save_inflight(
-        {
-            "live": {
-                "topic_id": str(uuid.uuid4()),
-                "started_at": _time.time() - 9 * 3600,
-                "is_resume": False,
-            }
-        }
-    )
+    live = await open_turn(db_factory, await a_topic(db_factory), age_s=9 * 3600)
     runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["live"] = task
-    runner._last_frame_at["live"] = time.monotonic() - 9 * 3600
+    runner._live[str(live)] = task
+    runner._last_frame_at[str(live)] = time.monotonic() - 9 * 3600
 
     async def _boom(topic_ids):
         raise RuntimeError("PG is down")
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             raise AssertionError("no verdict may be reached without evidence")
 
     assert await runner.sweep_orphans(_Chat(), last_activity=_boom) == 0
     assert not task.cancelled()
-    assert list(rt._load_inflight()) == ["live"]
+    assert await open_turn_ids(db_factory) == {live}
     task.cancel()
 
 
 @pytest.mark.anyio
-async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeypatch):
+async def test_a_wedged_turn_young_enough_to_resume_is_resumed(db_factory, monkeypatch):
     """Under ORPHAN_STALE_S the wedged turn gets the full treatment: torn down,
     announced, AND continued — nobody has to come back and @ it by hand."""
-    import time as _time
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "wedged": {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 2700,  # 45 min: silent, but not stale
-                "is_resume": False,
-            }
-        }
-    )
+    topic = await a_topic(db_factory)
+    # 45 min: silent, but not stale
+    wedged = await open_turn(db_factory, topic, age_s=2700)
     runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["wedged"] = task
-    runner._last_frame_at["wedged"] = time.monotonic() - 2700
+    runner._live[str(wedged)] = task
+    runner._last_frame_at[str(wedged)] = time.monotonic() - 2700
     scheduled: list[tuple[uuid.UUID, float]] = []
     monkeypatch.setattr(
         runner,
@@ -1088,6 +998,8 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
         return {topic: datetime.now(UTC) - timedelta(seconds=2700)}
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
@@ -1100,64 +1012,49 @@ async def test_a_wedged_turn_young_enough_to_resume_is_resumed(tmp_path, monkeyp
 
 
 @pytest.mark.anyio
-async def test_sweep_keeps_a_turn_that_registered_while_it_was_probing(
-    tmp_path, monkeypatch
-):
-    """The sweep must not delete registry entries it never looked at.
+async def test_sweep_keeps_a_turn_that_opened_while_it_was_probing(db_factory):
+    """The sweep must not close intervals it never looked at.
 
-    It loads the registry, then AWAITS the activity probe, then writes back. A
-    turn that starts inside that window writes its own entry — and writing back
-    the pre-probe snapshot erases it. The turn keeps running with nothing on
-    disk, so no later sweep can ever find it: its death would be silent forever,
-    which is the exact failure this whole mechanism exists to end.
+    It reads the open intervals, then AWAITS the activity probe, then claims. A
+    turn that starts inside that window opens its own interval — and claiming
+    "everything that was open" would close it. The turn keeps running with a
+    closed interval, so no later sweep can ever find it: its death would be
+    silent forever, which is the exact failure this whole mechanism exists to
+    end.
     """
-    import time as _time
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    dead_topic, new_topic = uuid.uuid4(), uuid.uuid4()
-    rt._save_inflight(
-        {
-            "wedged": {
-                "topic_id": str(dead_topic),
-                "started_at": _time.time() - 8 * 3600,
-                "is_resume": False,
-            }
-        }
-    )
+    dead_topic = await a_topic(db_factory)
+    new_topic = await a_topic(db_factory)
+    wedged = await open_turn(db_factory, dead_topic, age_s=8 * 3600)
     runner = AgentWorkRunner(InProcessBroker())
     task = await _park_a_task()
-    runner._live["wedged"] = task
-    runner._last_frame_at["wedged"] = time.monotonic() - 8 * 3600
+    runner._live[str(wedged)] = task
+    runner._last_frame_at[str(wedged)] = time.monotonic() - 8 * 3600
+    newcomer: list[uuid.UUID] = []
 
     async def _last_block(topic_ids):
         # A fresh turn starts while the probe is in flight, exactly as a real
-        # `_execute` would: load, add itself, save.
-        reg = rt._load_inflight()
-        reg["newcomer"] = {
-            "topic_id": str(new_topic),
-            "started_at": _time.time(),
-            "is_resume": False,
-        }
-        rt._save_inflight(reg)
+        # `_execute` would.
+        newcomer.append(await open_turn(db_factory, new_topic, age_s=0))
         return {dead_topic: datetime.now(UTC) - timedelta(hours=8)}
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
     await runner.sweep_orphans(_Chat(), last_activity=_last_block)
 
-    left = rt._load_inflight()
-    assert "wedged" not in left  # claimed and announced
-    assert "newcomer" in left  # never judged, so never dropped
+    left = await open_turn_ids(db_factory)
+    assert wedged not in left  # claimed and announced
+    assert newcomer[0] in left  # never judged, so never closed
     task.cancel()
 
 
 @pytest.mark.anyio
-async def test_live_turn_for_topic_tracks_a_running_turn(tmp_path, monkeypatch):
+async def test_live_turn_for_topic_tracks_a_running_turn(db_factory):
     """The heartbeat half of the stall verdict (`/topics/{id}/status` → `stall`).
 
     It has to answer from what the process is REALLY executing, not from
@@ -1166,18 +1063,17 @@ async def test_live_turn_for_topic_tracks_a_running_turn(tmp_path, monkeypatch):
     turn, a live entry with a fresh frame stamp while it streams, nothing again
     once it ends.
     """
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     assert runner.live_work_for_topic(topic) is None
 
     streaming = asyncio.Event()
     finish = asyncio.Event()
 
     class _Slow:
+        session_factory = db_factory
+
         async def converse(self, **_):
             yield {"type": "user_block"}
             streaming.set()
@@ -1193,15 +1089,15 @@ async def test_live_turn_for_topic_tracks_a_running_turn(tmp_path, monkeypatch):
     assert runner.live_work_for_topic(uuid.uuid4()) is None  # scoped to its topic
 
     finish.set()
-    for _ in range(50):
-        await asyncio.sleep(0)
+    for _ in range(200):
+        await asyncio.sleep(0.01)
         if runner.live_work_for_topic(topic) is None:
             break
     assert runner.live_work_for_topic(topic) is None
 
 
 @pytest.mark.anyio
-async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch):
+async def test_a_killed_turn_stops_claiming_to_be_running(db_factory):
     """Tearing a wedged turn down must also END it for every reader.
 
     The sweep kills a wedged turn with `task.cancel()`. CancelledError is a
@@ -1212,19 +1108,19 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
     the broker's replay buffer kept greeting every reconnect with `turn_active`
     — the 8-hour incident's symptom outliving its own fix.
     """
-    import time as _time
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent import runtime as rt
+    from sqlalchemy import update
 
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=300)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     streaming = asyncio.Event()
 
     class _DeadContainer:
         """A turn whose sandbox died mid-stream: frames stop, the task lives."""
+
+        session_factory = db_factory
 
         async def converse(self, **_):
             yield {"type": "user_block"}
@@ -1239,20 +1135,26 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
     # Age it into the sweep's sights: both signals cold for eight hours.
     turn_id = next(iter(runner._live))
     runner._last_frame_at[turn_id] = time.monotonic() - 8 * 3600
-    reg = rt._load_inflight()
-    reg[turn_id]["started_at"] = _time.time() - 8 * 3600
-    rt._save_inflight(reg)
+    async with db_factory() as session:
+        await session.execute(
+            update(AgentTurn)
+            .where(AgentTurn.id == uuid.UUID(turn_id))
+            .values(started_at=datetime.now(UTC) - timedelta(hours=8))
+        )
+        await session.commit()
 
     async def _last_block(topic_ids):
         return {topic: datetime.now(UTC) - timedelta(hours=8)}
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
     await runner.sweep_orphans(_Chat(), last_activity=_last_block)
-    for _ in range(50):  # let the cancellation land at the turn's await point
-        await asyncio.sleep(0)
+    for _ in range(200):  # let the cancellation land at the turn's await point
+        await asyncio.sleep(0.01)
         if topic not in runner.running_topic_ids():
             break
 
@@ -1263,7 +1165,9 @@ async def test_a_killed_turn_stops_claiming_to_be_running(tmp_path, monkeypatch)
 
 
 @pytest.mark.anyio
-async def test_a_deploy_the_platform_handles_itself_says_nothing(tmp_path, monkeypatch):
+async def test_a_deploy_the_platform_handles_itself_says_nothing(
+    db_factory, monkeypatch
+):
     """Nothing happened that a person can see, so nothing is said.
 
     #316 added this event because a deploy left the room looking dead: the
@@ -1274,24 +1178,8 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(tmp_path, monke
     platform re-sends down that same session, which is indistinguishable from
     the person asking again.
     """
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "undelivered": {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "author": "u",
-                "content": "把测试跑一遍",
-                "resendable": True,
-            }
-        }
-    )
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, content="把测试跑一遍", age_s=60)
 
     runner = AgentWorkRunner(InProcessBroker())
     scheduled: list[uuid.UUID] = []
@@ -1303,6 +1191,8 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(tmp_path, monke
     metas: list[dict] = []
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             metas.append(meta or {})
             return {"id": "b1", "content": text}
@@ -1316,25 +1206,21 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(tmp_path, monke
 
 
 @pytest.mark.anyio
-async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(
-    tmp_path, monkeypatch
-):
-    """The `prompt_delivered` frame must reach the durable registry.
+async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(db_factory):
+    """The `prompt_delivered` frame must reach the durable interval.
 
     This wiring has no other symptom. If the frame stopped being emitted or
     stopped being handled, every turn would quietly go back to being judged by
     whether 芝士 happened to produce a block first — visible only later, as
     duplicate re-sends after a deploy. So the stamp is read WHILE the turn is
-    still running: its own completion path removes the entry at the end."""
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
+    still running, the way a dying process would leave it."""
     stamped = asyncio.Event()
     release = asyncio.Event()
 
     class _GatedChat:
-        """Yields the delivery frame, then holds the turn open so the test can
-        look at the registry the way a dying process would leave it."""
+        """Yields the delivery frame, then holds the turn open."""
+
+        session_factory = db_factory
 
         async def converse(self, **kwargs):
             yield {"type": "prompt_delivered"}
@@ -1345,7 +1231,7 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(
 
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     seen: list[str] = []
 
     async with broker.subscribe(str(topic)) as q:
@@ -1353,8 +1239,12 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(
             _GatedChat(), topic, author="u", content="hi", summon=True
         )
         await asyncio.wait_for(stamped.wait(), 1)
-        entry = rt._load_inflight()[str(turn_id)]
-        assert entry["delivered_at"] > 0
+        for _ in range(200):
+            row = await turn_row(db_factory, turn_id)
+            if row is not None and row.delivered_at is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert row is not None and row.delivered_at is not None
         release.set()
         while True:
             frame = await asyncio.wait_for(q.get(), 1)
@@ -1367,62 +1257,8 @@ async def test_a_delivered_prompt_is_recorded_before_the_process_can_die(
 
 
 @pytest.mark.anyio
-async def test_a_legacy_entry_is_judged_by_the_rule_it_was_written_under(
-    tmp_path, monkeypatch
-):
-    """The deploy that ships `resendable` reads entries written without it.
-
-    Treating a missing field as "not re-sendable" would strand exactly the
-    in-flight human prompts the field exists to protect — on the one deploy
-    where the registry is guaranteed to hold some."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    human_topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            # No `resendable` key anywhere below: this is the old record shape.
-            "human": {
-                "topic_id": str(human_topic),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "author": "u",
-                "content": "把测试跑一遍",
-            },
-            "auto_resume": {
-                "topic_id": str(uuid.uuid4()),
-                "started_at": _time.time() - 60,
-                "is_resume": True,
-                "author": "system",
-                "content": "续跑",
-            },
-        }
-    )
-
-    runner = AgentWorkRunner(InProcessBroker())
-    scheduled: list[uuid.UUID] = []
-    monkeypatch.setattr(
-        runner,
-        "_schedule_resend",
-        lambda _chat, tid, after, content, **_kw: scheduled.append(tid),
-    )
-
-    class _Chat:
-        async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
-            return {"id": "b1", "content": text}
-
-        async def orphan_turn_evidence(self, topic_id, turn_ids):
-            return {"delivered": set(), "spool": False}
-
-    assert await runner.sweep_orphans(_Chat()) == 1
-    assert scheduled == [human_topic]
-
-
-@pytest.mark.anyio
 async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
-    tmp_path, monkeypatch
+    db_factory, monkeypatch
 ):
     """A turn the PLATFORM started — 验收卡被驳回, CI 红了, 上游合并冲突, a 分身's
     kickoff — is re-sent exactly like a person's message.
@@ -1431,25 +1267,9 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
     to lose". Nothing is lost only in the sense that nobody typed it: the work
     itself still evaporates, the room shows nothing, and the topic sits until
     someone happens to notice. Whose turn it was never made it any less gone."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     nudge = "PR #123 的检查没通过：…请在这个话题的工作区里修复问题并提交。"
-    rt._save_inflight(
-        {
-            "ci_red": {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "author": "system",
-                "content": nudge,
-                "resendable": True,
-            }
-        }
-    )
+    await open_turn(db_factory, topic, author="system", content=nudge, age_s=60)
 
     runner = AgentWorkRunner(InProcessBroker())
     scheduled: list[tuple[uuid.UUID, str]] = []
@@ -1461,6 +1281,8 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
     metas: list[dict] = []
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             metas.append(meta or {})
             return {"id": "b1", "content": text}
@@ -1477,29 +1299,18 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
 
 @pytest.mark.anyio
 async def test_a_deploy_that_loses_a_message_for_good_still_warns(
-    tmp_path, monkeypatch
+    db_factory, monkeypatch
 ):
     """The one case that survives: the message never reached 芝士 and the
     platform will not re-send it. Nothing else in the room shows that — the
     person would wait for an answer that is never coming."""
-    import time as _time
-
-    from app.domain.agent import runtime as rt
-
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "stale": {
-                "topic_id": str(topic),
-                # Older than ORPHAN_STALE_S: too old to re-send on its own.
-                "started_at": _time.time() - AgentWorkRunner.ORPHAN_STALE_S - 600,
-                "is_resume": False,
-                "author": "u",
-                "content": "把测试跑一遍",
-                "resendable": True,
-            }
-        }
+    topic = await a_topic(db_factory)
+    await open_turn(
+        db_factory,
+        topic,
+        content="把测试跑一遍",
+        # Older than ORPHAN_STALE_S: too old to re-send on its own.
+        age_s=AgentWorkRunner.ORPHAN_STALE_S + 600,
     )
 
     runner = AgentWorkRunner(InProcessBroker())
@@ -1509,6 +1320,8 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
     metas: list[dict] = []
 
     class _Chat:
+        session_factory = db_factory
+
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             metas.append(meta or {})
             return {"id": "b1", "content": text}
@@ -1523,7 +1336,9 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
 
 
 @pytest.mark.anyio
-async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(monkeypatch):
+async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(
+    db_factory, monkeypatch
+):
     """一个平台认不出来的失败,不能一直自动接着跑 (#574).
 
     Dev ran one topic this way for 87 minutes: every crash scheduled the next
@@ -1549,6 +1364,8 @@ async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(monkeypa
         """Fails with an exception no classifier recognises — where all 257 of
         dev's measured failures landed, every one with an empty meta.code."""
 
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
@@ -1563,10 +1380,10 @@ async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(monkeypa
             return {"id": "sys", "kind": "event", "content": content, "meta": meta}
 
     svc = _AlwaysBroken()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     runner.submit(svc, topic, author="u", content="hi", summon=True)
     for _ in range(400):  # drain the chain, however long it decides to be
-        await real_sleep(0)
+        await real_sleep(0.01)
         if any(meta.get("who") == "human" for _, meta in svc.events):
             break
 
@@ -1579,7 +1396,7 @@ async def test_unclassified_failure_stops_chaining_and_hands_to_a_human(monkeypa
 
 
 @pytest.mark.anyio
-async def test_repeated_timeouts_also_stop_chaining(monkeypatch):
+async def test_repeated_timeouts_also_stop_chaining(db_factory, monkeypatch):
     """超时那条路径和崩溃那条一样要有上限 (#574).
 
     Both ends of `_execute` schedule the same auto-resume, and a turn that keeps
@@ -1595,6 +1412,8 @@ async def test_repeated_timeouts_also_stop_chaining(monkeypatch):
     runner = AgentWorkRunner(broker, turn_timeout_s=0.01)
 
     class _AlwaysHangs:
+        session_factory = db_factory
+
         def __init__(self) -> None:
             self.calls: list[dict] = []
             self.events: list[tuple[str, dict]] = []
@@ -1609,7 +1428,7 @@ async def test_repeated_timeouts_also_stop_chaining(monkeypatch):
             return {"id": "sys", "kind": "event", "content": content, "meta": meta}
 
     svc = _AlwaysHangs()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     runner.submit(svc, topic, author="u", content="hi", summon=True)
     # Patch the clock only now: the ceiling above must stay real, it is what
     # makes each turn time out. Only the resume delay is skipped.

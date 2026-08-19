@@ -25,20 +25,23 @@ only the case where the prompt is gone and nothing will re-send it (see
 
 import asyncio
 import time
-import time as _time
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.domain.agent import runtime as rt
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from tests.turn_log import a_topic, open_turn, open_turn_ids
 
 
 class _Chat:
     """ChatService stand-in for sweep flows: serves the evidence probe, records
     events, settle scheduling, and any turn the sweep actually submits."""
 
-    def __init__(self, *, delivered=(), spool=False, probe_error=False):
+    def __init__(self, factory, *, delivered=(), spool=False, probe_error=False):
+        # The sweep reads and closes turn intervals through this, the same way
+        # the real ChatService hands the runner its database.
+        self.session_factory = factory
         self._delivered = {str(t) for t in delivered}
         self._spool = spool
         self._probe_error = probe_error
@@ -69,32 +72,15 @@ class _Chat:
         yield {"type": "done"}
 
 
-def _entry(
-    topic: uuid.UUID,
-    *,
-    author: str = "u",
-    content: str = "修一下登录页",
-    age_s: float = 90,
-    is_resume: bool = False,
-    resendable: bool = True,
-) -> dict:
-    return {
-        "topic_id": str(topic),
-        "started_at": _time.time() - age_s,
-        "is_resume": is_resume,
-        "author": author,
-        "content": content,
-        # Decided where the turn starts (`_execute`): true for anything whose
-        # content IS the task, false for an auto-resume nudge.
-        "resendable": resendable,
-    }
+# Captured before any test patches `asyncio.sleep` away. `_drain` has to wait on
+# real time now: the path it is waiting for opens a turn interval in the
+# database, and a loop spun with sleep(0) never gives that round-trip a chance.
+_REAL_SLEEP = asyncio.sleep
 
 
 def _instant_sleep(monkeypatch) -> None:
-    real_sleep = asyncio.sleep
-
     async def _instant(_delay, *a, **k):
-        await real_sleep(0)
+        await _REAL_SLEEP(0)
 
     monkeypatch.setattr(asyncio, "sleep", _instant)
 
@@ -102,20 +88,21 @@ def _instant_sleep(monkeypatch) -> None:
 async def _drain(chat: _Chat, rounds: int = 300) -> None:
     """Give scheduled re-send tasks (sleep → submit → converse) time to land."""
     for _ in range(rounds):
-        await asyncio.sleep(0)
+        await _REAL_SLEEP(0.01)
         if chat.converse_calls:
             return
 
 
 @pytest.mark.anyio
-async def test_delivered_orphan_attaches_instead_of_reprompting(tmp_path, monkeypatch):
+async def test_delivered_orphan_attaches_instead_of_reprompting(
+    db_factory, monkeypatch
+):
     """Hook evidence on the turn → the sweep says so, schedules the spool
     settle, and sends NOTHING — the survivor finishes on its own."""
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic, turn = uuid.uuid4(), uuid.uuid4()
-    rt._save_inflight({str(turn): _entry(topic)})
-    chat = _Chat(delivered=[turn])
+    topic = await a_topic(db_factory)
+    turn = await open_turn(db_factory, topic, age_s=90)
+    chat = _Chat(db_factory, delivered=[turn])
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
@@ -126,12 +113,13 @@ async def test_delivered_orphan_attaches_instead_of_reprompting(tmp_path, monkey
     # survivor's output keeps landing in the room on its own and there is no
     # break for the room to explain.
     assert chat.events == []
-    assert rt._load_inflight() == {}  # claimed — no re-announce next sweep
+    # claimed — the interval is closed, so no re-announce next sweep
+    assert await open_turn_ids(db_factory) == set()
 
 
 @pytest.mark.anyio
 async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
-    tmp_path, monkeypatch
+    db_factory, monkeypatch
 ):
     """The prompt landed two seconds before the process died.
 
@@ -141,12 +129,9 @@ async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
     alone re-sends a prompt 芝士 is already working on, and the person gets
     answered twice."""
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic, turn = uuid.uuid4(), uuid.uuid4()
-    entry = _entry(topic, age_s=90)
-    entry["delivered_at"] = _time.time() - 88
-    rt._save_inflight({str(turn): entry})
-    chat = _Chat()  # no AI block, empty spool: the old evidence sees nothing
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, age_s=90, delivered=True)
+    chat = _Chat(db_factory)  # no AI block, empty spool: the old evidence sees nothing
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
@@ -157,20 +142,15 @@ async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
 
 
 @pytest.mark.anyio
-async def test_spool_trace_attaches_and_vetoes_every_resend(tmp_path, monkeypatch):
+async def test_spool_trace_attaches_and_vetoes_every_resend(db_factory, monkeypatch):
     """A Stop (or any non-SessionStart hook) parked in the topic's spool proves
     a claude has been talking. It carries no turn id, so it vetoes re-sending
     ANY of the topic's orphans — the settle lands it instead."""
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            str(uuid.uuid4()): _entry(topic, content="任务甲", age_s=120),
-            str(uuid.uuid4()): _entry(topic, content="任务乙", age_s=80),
-        }
-    )
-    chat = _Chat(spool=True)
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, content="任务甲", age_s=120)
+    await open_turn(db_factory, topic, content="任务乙", age_s=80)
+    chat = _Chat(db_factory, spool=True)
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
@@ -181,14 +161,13 @@ async def test_spool_trace_attaches_and_vetoes_every_resend(tmp_path, monkeypatc
 
 
 @pytest.mark.anyio
-async def test_zero_evidence_resends_the_original_prompt_once(tmp_path, monkeypatch):
+async def test_zero_evidence_resends_the_original_prompt_once(db_factory, monkeypatch):
     """No block, no spool trace → the task never arrived. The re-sent turn
     carries the ORIGINAL text (is_resume, so it can never chain further)."""
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight({str(uuid.uuid4()): _entry(topic, content="修一下登录页")})
-    chat = _Chat()
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, content="修一下登录页", age_s=90)
+    chat = _Chat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
@@ -206,18 +185,14 @@ async def test_zero_evidence_resends_the_original_prompt_once(tmp_path, monkeypa
 
 
 @pytest.mark.anyio
-async def test_five_orphans_one_topic_get_at_most_one_action(tmp_path, monkeypatch):
+async def test_five_orphans_one_topic_get_at_most_one_action(db_factory, monkeypatch):
     """The incident shape: five orphans on one topic. One re-send (the newest
     human turn), one event; the rest are folded in — never five prompts."""
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    reg = {
-        str(uuid.uuid4()): _entry(topic, content=f"任务{i}", age_s=600 - i * 60)
-        for i in range(5)
-    }
-    rt._save_inflight(reg)
-    chat = _Chat()
+    topic = await a_topic(db_factory)
+    for i in range(5):
+        await open_turn(db_factory, topic, content=f"任务{i}", age_s=600 - i * 60)
+    chat = _Chat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
@@ -229,14 +204,13 @@ async def test_five_orphans_one_topic_get_at_most_one_action(tmp_path, monkeypat
 
 
 @pytest.mark.anyio
-async def test_probe_failure_is_treated_as_evidence(tmp_path, monkeypatch):
+async def test_probe_failure_is_treated_as_evidence(db_factory, monkeypatch):
     """DB down mid-sweep: with no way to prove non-delivery, speaking is the
     dangerous side — attach, never re-prompt on a guess."""
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    rt._save_inflight({str(uuid.uuid4()): _entry(topic)})
-    chat = _Chat(probe_error=True)
+    topic = await a_topic(db_factory)
+    await open_turn(db_factory, topic, age_s=90)
+    chat = _Chat(db_factory, probe_error=True)
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
@@ -248,22 +222,16 @@ async def test_probe_failure_is_treated_as_evidence(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_delivered_and_undelivered_split_gets_both_remedies(
-    tmp_path, monkeypatch
+    db_factory, monkeypatch
 ):
     """A running turn (delivered) plus a queued human message (never sent, spool
     clean): the delivered one is attached, the undelivered one is re-sent —
     still one prompt total."""
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    running = uuid.uuid4()
-    rt._save_inflight(
-        {
-            str(running): _entry(topic, content="老任务", age_s=600),
-            str(uuid.uuid4()): _entry(topic, content="新消息", age_s=120),
-        }
-    )
-    chat = _Chat(delivered=[running])
+    topic = await a_topic(db_factory)
+    running = await open_turn(db_factory, topic, content="老任务", age_s=600)
+    await open_turn(db_factory, topic, content="新消息", age_s=120)
+    chat = _Chat(db_factory, delivered=[running])
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 1
@@ -275,7 +243,7 @@ async def test_delivered_and_undelivered_split_gets_both_remedies(
 
 
 @pytest.mark.anyio
-async def test_a_wedged_resume_spends_from_the_same_budget(tmp_path, monkeypatch):
+async def test_a_wedged_resume_spends_from_the_same_budget(db_factory, monkeypatch):
     """卡死清扫排的那次续跑，算进同一份预算里 (#574).
 
     The sweep's remedy for a wedged turn IS an automatic continuation, so it has
@@ -288,9 +256,8 @@ async def test_a_wedged_resume_spends_from_the_same_budget(tmp_path, monkeypatch
     the room sees is how many times 芝士 restarted, and that is what is asserted.
     """
     _instant_sleep(monkeypatch)
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic, turn = uuid.uuid4(), uuid.uuid4()
-    rt._save_inflight({str(turn): _entry(topic)})
+    topic = await a_topic(db_factory)
+    turn = await open_turn(db_factory, topic, age_s=90)
 
     class _BrokenChat(_Chat):
         """Every turn after the sweep's fails the way dev's 257 did: an
@@ -301,7 +268,7 @@ async def test_a_wedged_resume_spends_from_the_same_budget(tmp_path, monkeypatch
             raise RuntimeError("boom")
             yield  # pragma: no cover — makes this an async generator
 
-    chat = _BrokenChat()
+    chat = _BrokenChat(db_factory)
     runner = AgentWorkRunner(InProcessBroker())
 
     # A turn whose task is alive but silent on both signals — what the sweep
@@ -314,11 +281,8 @@ async def test_a_wedged_resume_spends_from_the_same_budget(tmp_path, monkeypatch
     runner._live[str(turn)] = task
     runner._last_frame_at[str(turn)] = time.monotonic() - 4000
 
-    class _Old:
-        timestamp = staticmethod(lambda: _time.time() - 4000)
-
     async def _last_activity(_topics):
-        return {topic: _Old()}
+        return {topic: datetime.now(UTC) - timedelta(seconds=4000)}
 
     assert await runner.sweep_orphans(chat, last_activity=_last_activity) == 1
     for _ in range(400):

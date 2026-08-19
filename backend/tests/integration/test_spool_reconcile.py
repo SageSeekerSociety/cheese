@@ -13,7 +13,7 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent import event_spool
-from app.domain.agent.chat import ChatService, _SPOOL_PARTIAL_GRACE_S
+from app.domain.agent.chat import _SPOOL_PARTIAL_GRACE_S, ChatService
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
