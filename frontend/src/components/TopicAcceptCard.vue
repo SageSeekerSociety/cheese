@@ -571,13 +571,16 @@ defineExpose({ reload: loadAcceptCard })
             </span>
           </template>
         </div>
-        <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。 -->
+        <!-- 后端把故障写在卡的 note 上，这是它唯一露头的地方。轻重由后端下发的
+             note_level 决定，不是从文案开头那个字符猜的 —— 所以这里画一个真的图
+             标：颜色是唯一信号的话，色觉障碍和灰度截图上就什么都没有了。 -->
         <div
           v-if="deliveryNote"
-          class="text-caption mb-2"
+          class="d-flex align-start ga-1 text-caption mb-2"
           :class="deliveryNote.tone === 'error' ? 'text-error' : 'text-medium-emphasis'"
         >
-          {{ deliveryNote.text }}
+          <v-icon v-if="deliveryNote.tone === 'error'" icon="mdi-alert-circle-outline" size="14" class="mt-1" />
+          <span>{{ deliveryNote.text }}</span>
         </div>
         <!-- PR + 实时 CI，复用待采纳卡那套 prChecks 轮询。 -->
         <div v-if="deliveringCard.pr_url">

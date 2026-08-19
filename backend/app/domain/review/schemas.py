@@ -69,8 +69,8 @@ class AcceptCardOut(BaseModel):
     decided_at: datetime | None
     note: str
     #: 这条 note 是「停住了」(error) 还是「还在走」(info)，空 note 是 None。
-    #: 服务端算好下发——分级和它依据的前缀常量住在一起 (domain/review/notes.py)，
-    #: 浏览器只把码画成颜色，不再去读文案开头那个字符。
+    #: 服务端从卡的状态码算好下发 (domain/review/notes.py)，浏览器只把它画成
+    #: 颜色，不再去读文案开头那个字符。
     note_level: str | None = None
     created_at: datetime
     # 机器闸门 (eval C2): when the check_command started / passed. `started` is

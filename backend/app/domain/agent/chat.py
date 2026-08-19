@@ -39,9 +39,11 @@ from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
 from app.domain.agent.platform_notices import (
+    EVENT_PROMPT_REPLAYED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
@@ -527,7 +529,7 @@ async def _team_compute_profile(session: AsyncSession, project) -> str | None:
 
 
 def _transient_provider_error(result: AgentResult) -> bool:
-    if classify_platform_failure(result.text) is not None:
+    if classify_platform_failure(result.text, code=result.failure_code) is not None:
         # Retrying cannot create disk space and can make pressure worse.
         return False
     rl = result.rate_limit or {}
@@ -1146,7 +1148,7 @@ def _replay_notice(attempt: int, pending: list[Block]) -> str | None:
         clipped = f"{text[:24]}…" if len(text) > 24 else text
         head = f"，最早的一条是 [{first.author}]「{clipped}」"
     return (
-        f"🔁 这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
+        f"这 {len(pending)} 条消息已经是第 {attempt} 次送进轮次，"
         f"前面几次都没跑完{head}。"
     )
 
@@ -1330,7 +1332,7 @@ class ChatService:
             # still the whole instruction 芝士 gets as its prompt.
             if not nudge_event:
                 why = resume_reason or "从上一轮的断点继续"
-                nudge_event = f"⏯️ 自动续跑：{why}"
+                nudge_event = f"自动续跑：{why}"
             payload = await self.post_system_event(
                 topic_id, nudge_event, turn_id, meta=nudge_meta
             )
@@ -1587,9 +1589,11 @@ class ChatService:
         *,
         meta: dict | None = None,
     ) -> dict | None:
-        """Persist a system event into the 现场 timeline (e.g. a turn failure):
-        visible in the flow, scrolls with it, and survives a reload — unlike a
-        transient banner. Returns the block payload, or None if the topic died."""
+        """Persist a system event into the room (e.g. a turn failure): visible in
+        the conversation, scrolls with it, and survives a reload — unlike a
+        transient banner. It carries no ``meta.in_room``, and absent means shown,
+        which is the whole point of this call: the platform says it out loud.
+        Returns the block payload, or None if the topic died."""
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
@@ -2407,6 +2411,7 @@ class ChatService:
                         content=warn,
                         kind=BlockKind.event,
                         turn_id=turn_id,
+                        meta={"in_room": False},
                     )
             payload = _block_payload(BlockOut.model_validate(block))
             await session.commit()
@@ -2476,6 +2481,7 @@ class ChatService:
         backfilled: bool = False,
         platform_unsolicited: bool = False,
         in_room: bool = False,
+        author_type: AuthorType = AuthorType.ai,
     ) -> dict | None:
         """One event block, committed NOW and deduped by event-id.
 
@@ -2484,11 +2490,19 @@ class ChatService:
         durability and idempotency contract instead of three copies of it that
         drift. Returns None when this event-id already landed.
 
-        ``in_room`` decides whether the conversation shows it at all. The
-        frontend reads that off ``author_type`` (system = the room, ai = 现场
-        only), which is an implicit switch with no error path: pick wrong and the
-        event simply never appears, silently, forever. Naming it here at least
-        makes the choice visible at every call site."""
+        ``in_room`` decides whether the conversation shows it at all, and it
+        travels as ``meta.in_room`` — its own field, because visibility is not
+        authorship. It used to ride on ``author_type`` (system = the room, ai =
+        现场 only), which meant an event genuinely written by 芝士 could not be
+        shown in the room without lying about who wrote it, and anything that
+        later wanted to know the author was reading a field answering a
+        different question. Absent means shown: every other writer in the
+        codebase posts to the room.
+
+        ``author_type`` is then free to answer its own question, and does: 芝士
+        wrote the tool calls and the subagent conclusions, the platform wrote
+        the change summary."""
+        meta = {**meta, "in_room": in_room}
         if eid:
             meta = {**meta, "eid": eid}
         if backfilled:
@@ -2503,7 +2517,7 @@ class ChatService:
                 project_id=project_id,
                 topic_id=topic_id,
                 author=await self._agent_handle(session, topic_id),
-                author_type=AuthorType.system if in_room else AuthorType.ai,
+                author_type=author_type,
                 content=content,
                 kind=BlockKind.event,
                 turn_id=turn_id,
@@ -2625,6 +2639,7 @@ class ChatService:
             meta=_change_summary_meta(changeset),
             turn_id=turn_id,
             in_room=True,
+            author_type=AuthorType.system,  # 平台自己数出来的，不是芝士说的
         )
 
     async def _reconcile_spool(
@@ -3383,6 +3398,14 @@ class ChatService:
                             kind=BlockKind.event,
                             turn_id=turn_id,
                             meta={
+                                # 这条已有自己的 event_type / state，前端按它渲染；
+                                # 补上轻重和「谁在管」，等待就不必再靠一个 ⏳ 说话。
+                                "severity": SEVERITY_INFO,
+                                "who": WHO_PLATFORM,
+                                "detail": (
+                                    "本话题会保留这条消息，机器就绪后自动继续。"
+                                ),
+                                "detail_label": "接下来会发生什么",
                                 "event_type": "cloud_provisioning",
                                 "state": "waiting",
                             },
@@ -3484,6 +3507,7 @@ class ChatService:
         last_assistant_block_id: str | None = None
         api_error_status: int | None = None
         rate_limit: dict | None = None
+        failure_code: str | None = None
 
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
@@ -3502,7 +3526,19 @@ class ChatService:
         # whole point is that this turn may produce nothing either — a notice
         # written afterwards is exactly the one that never gets written.
         if replay_notice is not None:
-            payload = await self.post_system_event(topic_id, replay_notice, turn_id)
+            payload = await self.post_system_event(
+                topic_id,
+                replay_notice,
+                turn_id,
+                # 「又重投了一次」是一条码说了算的事。它以前只有开头那个 🔁 —— 一个
+                # 字符同时当类别、当轻重、当给人看的记号，读它的人和读它的代码都得
+                # 猜。码在这里，前端照码渲染。
+                meta=notice(
+                    EVENT_PROMPT_REPLAYED,
+                    severity=SEVERITY_WARN,
+                    who=WHO_PLATFORM,
+                ),
+            )
             if payload is not None:
                 yield {"type": "event_block", "block": payload}
 
@@ -3593,7 +3629,7 @@ class ChatService:
                 marked_work_id = marked_work_ids[-1] if marked_work_ids else turn_id
                 payload = await self.post_system_event(
                     topic_id,
-                    "⏳ 机器上的会话正在启动，提示词已就位，输入框一出现就会自动发送。",
+                    "机器上的会话正在启动，消息已就位，会自动发送",
                     marked_work_id,
                 )
                 if payload is not None:
@@ -3742,6 +3778,7 @@ class ChatService:
                     result_error = event.is_error
                     api_error_status = event.api_error_status
                     rate_limit = event.rate_limit
+                    failure_code = event.failure_code
         except BaseException:
             # The turn died mid-stream (error, timeout-cancel, crash). Persist
             # the session pointer FIRST — the partial work lives in that session
@@ -3791,7 +3828,7 @@ class ChatService:
                 api_error_status,
             )
             detail = final_text.strip()
-            platform_failure = classify_platform_failure(detail)
+            platform_failure = classify_platform_failure(detail, code=failure_code)
             # The CLI sometimes emits the SAME error string as a final
             # AssistantMessage before the error result — the discrete-message
             # path already persisted it as 芝士's reply. Exact-equality match
@@ -3854,8 +3891,8 @@ class ChatService:
                 )
                 recover = "恢复后我会自动接着跑" if not is_resume else "到点再 @ 它"
                 fail_text = (
-                    f"⚠️ 芝士的 AI 座位额度用完了，北京时间 "
-                    f"{resets:%m-%d %H:%M} 恢复，{recover}。"
+                    f"芝士的 AI 座位额度用完了，北京时间 "
+                    f"{resets:%m-%d %H:%M} 恢复，{recover}"
                 )
                 if not is_resume:
                     # Resume ~2min after the window opens (clock skew buffer).
@@ -3867,15 +3904,13 @@ class ChatService:
                 # A spent balance is not a wait — no amount of retrying refills
                 # it, and telling someone to try again later sends them into a
                 # loop that cannot succeed. Say what actually has to happen.
-                fail_text = "⚠️ 芝士这轮没跑完——AI 中继余额用尽，重试无效，要人充值。"
+                fail_text = "芝士这轮没跑完：AI 中继余额用尽，要人充值"
                 fail_hint = (
                     "这不是等一等就能好的，需要有人充值或把机器切到其他 AI 供给；"
                     "重试无效。"
                 )
             elif api_error_status:
-                fail_text = (
-                    f"⚠️ 芝士这轮没跑完——AI 接口错误（HTTP {api_error_status}）。"
-                )
+                fail_text = f"芝士这轮没跑完：AI 接口错误 HTTP {api_error_status}"
                 fail_hint = "稍后再 @ 它重试。"
             else:
                 # #450 rule 2: an unclassified failure shows the SERVICE'S OWN
@@ -3889,9 +3924,9 @@ class ChatService:
                 if len(first_line) > 160:
                     first_line = first_line[:160] + "…"
                 fail_text = (
-                    f"⚠️ 芝士这轮没跑完——{first_line}"
+                    f"芝士这轮没跑完：{first_line}"
                     if first_line
-                    else "⚠️ 芝士这轮没跑完——AI 服务返回错误。"
+                    else "芝士这轮没跑完：AI 服务返回错误"
                 )
                 fail_hint = "稍后再 @ 它重试。"
             if fail_meta is None:
@@ -4278,6 +4313,8 @@ class ChatService:
                 author_type=AuthorType.human,
                 content=text,
                 kind=BlockKind.event,
+                # 原始素材，不是房间里的一句话：房间读的是芝士消化出来的结构化文档。
+                meta={"in_room": False},
             )
             memories = await self._recall_agent_memories(
                 memory,
@@ -4452,6 +4489,7 @@ class ChatService:
                 author_type=AuthorType.ai,
                 content=f"【巡检决策日志】\n{final_text}",
                 kind=BlockKind.event,
+                meta={"in_room": False},
             )
             await session.commit()
 

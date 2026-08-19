@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+from app.domain.review.notes import NoteCode
 
 
 class AcceptStatus(enum.StrEnum):
@@ -95,6 +96,18 @@ class AcceptCard(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     note: Mapped[str] = mapped_column(Text, default="")
+    # 卡此刻停在什么上 (review/notes.py)。`note` 是给人看的一句话，这一列是给代码
+    # 看的状态——两者分开的理由：它们过去是同一个字段，判断靠 `note.startswith(带
+    # emoji 的前缀)`，于是改一句文案就能改掉一次判断，而没有任何东西会红。NULL =
+    # 这条 note 只是一句交代，没有代码要据此分支。
+    note_code: Mapped[NoteCode | None] = mapped_column(
+        Enum(NoteCode, native_enum=False, length=32), nullable=True
+    )
+    # 平台已经替这张卡自动换过几次基。封顶用 (review/services.py)：换基换不上来说
+    # 明 main 移动得比 CI 还快，得叫人。曾经是数 `note` 里 `⟲` 的个数，而 `note`
+    # 每被别的状态覆写一次、每被换基自己推动 head 一次就清空——计数器归零，上限
+    # 永远够不着，平台无限换基下去。
+    rebase_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # 机器闸门 (eval C2): when the project's check_command STARTED running for
     # this card. Deliberately not "when the card was filed" (that is
     # `created_at`) — the gap between the two is queueing + worktree

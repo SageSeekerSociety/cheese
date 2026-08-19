@@ -117,7 +117,7 @@ async def dispatch(
         summon=True,
         # 平台提示统一契约: 一行给房间，完整冲突文件清单进 meta.detail
         # （`_prompt` 里那份为了可读只列前 15 个）。给芝士的 content 一字未动。
-        nudge_event=f"⚠️ 同步上游时合并冲突，芝士在解（{len(files)} 个文件）",
+        nudge_event=f"同步上游时合并冲突，{len(files)} 个文件",
         nudge_meta=notice(
             EVENT_UPSTREAM_CONFLICT,
             severity=SEVERITY_WARN,

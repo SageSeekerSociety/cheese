@@ -129,7 +129,6 @@ async def test_concurrency_gate_queues_and_announces_position(db_factory):
     runner.submit(chat, topic, author="u2", content="第二轮", summon=True)
     await _until(lambda: len(chat.system_events) == 1)
     assert "排队" in chat.system_events[0]
-    assert "等前面的轮次结束" in chat.system_events[0]
 
     # Third turn: one waiter already ahead of it.
     runner.submit(chat, topic, author="u3", content="第三轮", summon=True)
@@ -334,7 +333,7 @@ async def test_live_delivery_fallback_reports_error_then_runs_normally(
         "done",
         "turn_finished",
     ]
-    assert "没能直接送进正在进行的会话" in frames[1]["block"]["content"]
+    assert "没能送进正在进行的会话" in frames[1]["block"]["content"]
     assert frames[1]["block"]["meta"]["event_type"] == "delivery_fallback"
     assert frames[1]["block"]["meta"]["severity"] == "error"
     assert frames[1]["block"]["meta"]["who"] == "platform"

@@ -157,7 +157,8 @@ def test_failure_leaves_the_card_prless_but_never_silent(client, monkeypatch):
     card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["pr_number"] is None
     assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 开 PR 失败")
+    assert card["note_level"] == "error"
+    assert card["note"].startswith("开 PR 失败")
     assert "push refused" in card["note"]
 
     # The push works again → a re-publish records the PR and clears the note.

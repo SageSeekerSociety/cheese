@@ -32,8 +32,10 @@ from app.domain.agent.platform_failures import (
 from app.domain.agent.platform_notices import (
     EVENT_DEPLOY_INTERRUPTED,
     EVENT_TURN_FAILED,
+    EVENT_TURN_QUEUED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
     WHO_PLATFORM,
@@ -900,7 +902,7 @@ class AgentWorkRunner:
                 await self._post_orphan_event(
                     chat_service,
                     topic_id,
-                    f"⚠️ 芝士上一轮{how}，{why}。",
+                    f"芝士上一轮{how}，{why}",
                     notice(
                         EVENT_TURN_TIMEOUT,
                         severity=SEVERITY_WARN,
@@ -925,7 +927,7 @@ class AgentWorkRunner:
             await self._post_orphan_event(
                 chat_service,
                 topic_id,
-                f"⚠️ 上一轮{how}，马上自动接着跑。",
+                f"上一轮{how}，平台自动接着跑",
                 notice(
                     EVENT_TURN_TIMEOUT,
                     severity=SEVERITY_WARN,
@@ -1065,13 +1067,9 @@ class AgentWorkRunner:
             stale = age_s > self.ORPHAN_STALE_S
             # 平台提示统一契约: 房间里一行 `text`，展开才看的长文进 meta.detail。
             text = (
-                f"⚠️ 这条消息没送到芝士那边（平台重启时丢的），"
-                f"已经搁了 {round(age_s / 60)} 分钟，太久了，平台不替你重发。"
+                f"这条消息没送到芝士那边，已经搁了 {round(age_s / 60)} 分钟"
                 if stale
-                else (
-                    "⚠️ 上一次自动续跑被平台重启打断了，没送到芝士那边，"
-                    "平台不再自动重试。"
-                )
+                else "上一次自动续跑被平台重启打断了，没送到芝士那边"
             )
             detail = (
                 "没有迹象表明消息送到了芝士那边，而它搁置得太久，"
@@ -1257,8 +1255,17 @@ class AgentWorkRunner:
     @staticmethod
     def _queued_text(ahead: int) -> str:
         if ahead <= 0:
-            return "⏳ 项目同时进行的轮次已满，这轮先排队，等前面的轮次结束就开跑。"
-        return f"⏳ 项目同时进行的轮次已满，这轮先排队，前面还有 {ahead} 个在等。"
+            return "项目同时进行的轮次已满，这轮先排队"
+        return f"项目同时进行的轮次已满，这轮先排队，前面还有 {ahead} 个"
+
+    #: 排队不是故障：平台自己会往前推，没人需要动手。
+    _QUEUED_META = notice(
+        EVENT_TURN_QUEUED,
+        severity=SEVERITY_INFO,
+        who=WHO_PLATFORM,
+        detail="前面的轮次结束就自动开跑，不用重发。",
+        detail_label="接下来会发生什么",
+    )
 
     async def _post_event(
         self,
@@ -1314,7 +1321,11 @@ class AgentWorkRunner:
         if sem.locked():
             ahead = self._project_waiting.get(key, 0)
             await self._post_event(
-                chat_service, topic_id, turn_id, self._queued_text(ahead)
+                chat_service,
+                topic_id,
+                turn_id,
+                self._queued_text(ahead),
+                meta=self._QUEUED_META,
             )
             logger.info("turn %s queued (project=%s ahead=%s)", turn_id, key, ahead)
         self._project_waiting[key] = self._project_waiting.get(key, 0) + 1
@@ -1345,7 +1356,10 @@ class AgentWorkRunner:
         (speaking is free — only the AI turn is metered): it goes through a
         summon=False converse pass, then the structured platform event says why
         芝士 isn't coming. The copy is the PLATFORM's, never the model's."""
-        from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
+        from app.domain.usage.credits import (
+            CREDITS_EXHAUSTED_EVENT,
+            CREDITS_EXHAUSTED_META,
+        )
 
         channel = str(topic_id)
         if is_message_turn and not message_landed and (content or attachments):
@@ -1364,7 +1378,11 @@ class AgentWorkRunner:
             except Exception:  # noqa: BLE001 — still surface the refusal
                 logger.exception("failed to land message for refused turn")
         posted = await self._post_event(
-            chat_service, topic_id, turn_id, CREDITS_EXHAUSTED_EVENT
+            chat_service,
+            topic_id,
+            turn_id,
+            CREDITS_EXHAUSTED_EVENT,
+            meta=CREDITS_EXHAUSTED_META,
         )
         await self._broker.publish(
             channel,
@@ -1833,7 +1851,7 @@ class AgentWorkRunner:
                 channel,
                 {
                     "type": "error",
-                    "message": "⚠️ 芝士这轮被强制结束了（详情见话题里的系统事件）。",
+                    "message": "芝士这轮被强制结束了",
                     "persisted": False,
                 },
             )
@@ -1895,7 +1913,7 @@ class AgentWorkRunner:
                 rec["detail"] = "no first output"
                 # 平台提示统一契约: 房间里一行，「常见原因」那一串进 meta.detail。
                 text = (
-                    f"⚠️ 芝士这轮**一个字都没输出**"
+                    f"芝士这轮一个字都没输出"
                     f"（{round(self._first_output_timeout_s)}秒），"
                     "平台会自动恢复并继续重试。"
                 )
@@ -1923,7 +1941,7 @@ class AgentWorkRunner:
                     topic_id,
                 )
                 text = (
-                    f"⚠️ 芝士这轮超时被中断了"
+                    f"芝士这轮超时被中断了"
                     f"（{effective_ceiling_s}秒的上限），平台会自动接着跑。"
                 )
                 timeout_meta = notice(
@@ -1991,7 +2009,7 @@ class AgentWorkRunner:
             else:
                 # 平台提示统一契约: 一行给房间，别的收进 detail。真正的 traceback
                 # 只进日志（这里连异常文本都不外发是刻意的 —— 见上面那段注释）。
-                text = "⚠️ 芝士这轮中断了，平台会自动恢复并接着跑。"
+                text = "芝士这轮中断了，平台会自动恢复并接着跑"
                 event_meta = notice(
                     EVENT_TURN_FAILED,
                     severity=SEVERITY_ERROR,
@@ -2082,8 +2100,7 @@ class AgentWorkRunner:
                 chat_service,
                 topic_id,
                 turn_id,
-                f"⚠️ 芝士连着 {resume_chain + 1} 轮都没跑起来，平台自动接着跑了"
-                f"{resume_chain} 次仍然失败，不再自动重试了。",
+                f"芝士连着 {resume_chain + 1} 轮都没跑起来，不再自动重试",
                 meta=notice(
                     EVENT_TURN_FAILED,
                     severity=SEVERITY_ERROR,

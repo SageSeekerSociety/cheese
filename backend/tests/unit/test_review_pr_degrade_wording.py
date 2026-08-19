@@ -1,17 +1,16 @@
-"""两阶段采纳降级措辞 (2026-08-10, revised 2026-08-13).
+"""两阶段采纳降级 (2026-08-10, revised 2026-08-13 和 2026-08-18).
 
-A card that falls back from the personal-token PR path to a direct merge keeps
-the reason on `card.note`: "⚠️ 未走 PR 采纳（GitHub 侧调用失败：…raw tail…）".
-There used to be a second, calm ℹ️ shape for workflow-permission rejections,
-premised on those being a KNOWN PERMANENT limitation of the platform's
-credential — that premise died on 2026-08-12 when the GitHub App was granted
-`workflows:write` (installation 152342238), so the sentinel is deleted and a
-workflow rejection now reads exactly like every other GitHub-side failure:
-⚠️, needing a human, never a calm auto-direct-merge.
+A card that falls back from the personal-token PR path to a direct merge says
+so on `card.note`, and stops at `NoteCode.pr_skipped` — one shape for every
+GitHub-side failure. There used to be a second, calm variant for
+workflow-permission rejections, premised on those being a KNOWN PERMANENT
+limitation of the platform's credential — that premise died on 2026-08-12 when
+the GitHub App was granted `workflows:write` (installation 152342238), so the
+sentinel is deleted and a workflow rejection now lands like every other one:
+needing a human, never a calm auto-direct-merge.
 
-These tests pin that single wording on `card.note`, and pin the invariant that
-keeps the prefix safe: a degraded card never reaches the pr_open poller whose
-dedup keys on `note.startswith("⚠️")`.
+These tests pin the state and the sentence, and pin that a degraded card never
+reaches the pr_open poller at all.
 """
 
 import asyncio
@@ -25,6 +24,7 @@ from app.core.errors import ValidationError
 from app.domain.project.models import AiMode
 from app.domain.review import services as review_services
 from app.domain.review.models import AcceptStatus
+from app.domain.review.notes import NoteCode
 from app.domain.review.services import AcceptService
 from app.domain.topic.models import TopicStatus
 from app.domain.webhook import service as webhook_service
@@ -50,6 +50,8 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         decided_by=None,
         decided_at=None,
         note="",
+        note_code=None,
+        rebase_count=0,
         # No PR riding this card yet — accept tries to OPEN one, and it is that
         # attempt which degrades.
         pr_number=None,
@@ -140,8 +142,10 @@ def _fail_push(monkeypatch, message: str) -> None:
         (WORKFLOW_REJECTION, "refusing to allow"),
     ],
 )
-async def test_all_failures_keep_the_warning_wording(monkeypatch, message, fragment):
-    """一切失败 → ⚠️ + 原始错误尾巴，没有平静的 ℹ️ 例外。"""
+async def test_all_failures_land_on_the_same_stopped_state(
+    monkeypatch, message, fragment
+):
+    """一切失败 → 同一个码 + 原始错误尾巴，没有平静的例外。"""
     service, card, topic = _accept_service()
     _stub_local_merge(monkeypatch)
     _fail_push(monkeypatch, message)
@@ -150,17 +154,17 @@ async def test_all_failures_keep_the_warning_wording(monkeypatch, message, fragm
     await asyncio.sleep(0)
 
     assert card.status == AcceptStatus.accepted
-    assert card.note.startswith("⚠️ 未走 PR 采纳（GitHub 侧调用失败：")
+    assert card.note_code is NoteCode.pr_skipped
+    assert card.note.startswith("未走 PR 采纳（GitHub 侧调用失败：")
     assert fragment in card.note
     assert "已合并并推送到上游 origin/main" in card.note
 
 
 @pytest.mark.anyio
 async def test_degraded_card_never_reaches_the_pr_poller(monkeypatch):
-    """The invariant that makes changing the prefix safe: `_nudge_pr_fix` dedups
-    on `note.startswith("⚠️")`, but it only ever runs for `pr_open` cards, and a
-    card carrying a degrade note is `accepted`. Drive the poller with such a
-    card and it must do nothing at all — no note rewrite, no 芝士 summon."""
+    """`_nudge_pr_fix` only ever runs for `pr_open` cards, and a card carrying a
+    degrade note is `accepted`. Drive the poller with such a card and it must do
+    nothing at all — no note rewrite, no 芝士 summon."""
     service, card, _topic = _accept_service()
     _stub_local_merge(monkeypatch)
     _fail_push(monkeypatch, WORKFLOW_REJECTION)
@@ -177,7 +181,7 @@ async def test_degraded_card_never_reaches_the_pr_poller(monkeypatch):
 
 @pytest.mark.anyio
 async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
-    """The ⚠️ dedup itself is untouched: a second poll tick on the same failing
+    """The dedup itself is untouched: a second poll tick on the same failing
     commit must not re-notify 芝士."""
     service, card, topic = _accept_service()
     runner = MagicMock()
@@ -191,7 +195,7 @@ async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
         runner=runner,
     )
     first_note = card.note
-    assert first_note.startswith("⚠️")
+    assert card.note_code is NoteCode.checks_failed
     assert runner.submit.call_count == 1
 
     service._nudge_pr_fix(

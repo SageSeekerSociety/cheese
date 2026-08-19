@@ -18,7 +18,7 @@ looks up a key with no row and starts fresh, the old row stays where it is, and
 handing the room back finds it again.
 
 Revision ID: b3e91d47c05a
-Revises: d5a2f70c9b18
+Revises: c9f4a2b7e130
 """
 
 from collections.abc import Sequence
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "b3e91d47c05a"
-down_revision: str | Sequence[str] | None = "d5a2f70c9b18"
+down_revision: str | Sequence[str] | None = "c9f4a2b7e130"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

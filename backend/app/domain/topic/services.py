@@ -587,9 +587,9 @@ class TopicService:
             by=by,
         )
         note = (
-            f"📦 随父话题「{cascaded_from}」一同归档"
+            f"随父话题「{cascaded_from}」一同归档"
             if cascaded_from
-            else f"📦 <@{by}> 归档了话题"
+            else f"<@{by}> 归档了话题"
         )
         await self._blocks.add(
             project_id=topic.project_id,
@@ -621,7 +621,7 @@ class TopicService:
             topic_id=topic.id,
             author=by,
             author_type=AuthorType.system,
-            content=f"📂 <@{by}> 取消归档，话题恢复活跃",
+            content=f"<@{by}> 取消归档，话题恢复活跃",
             kind=BlockKind.event,
             meta={"platform": True},
         )

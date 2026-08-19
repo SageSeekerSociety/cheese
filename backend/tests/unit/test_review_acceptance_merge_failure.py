@@ -102,7 +102,9 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
     assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
-    assert "git object database unavailable" in kwargs["content"]
+    # 房间只看到一行；报错原话在展开区里，一个字没少。
+    assert kwargs["content"] == "采纳未完成：合并出错"
+    assert "git object database unavailable" in kwargs["meta"]["detail"]
 
 
 @pytest.mark.anyio
@@ -131,7 +133,7 @@ async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"
-    assert "失败" in kwargs["content"]
+    assert kwargs["content"] == "采纳未完成：合并失败"
 
 
 @pytest.mark.anyio
@@ -161,8 +163,8 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
     assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
-    assert "冲突" in kwargs["content"]
-    assert "app/main.py" in kwargs["content"]
+    assert kwargs["content"] == "采纳未完成：合并冲突"
+    assert "app/main.py" in kwargs["meta"]["detail"]
 
 
 @pytest.mark.anyio
@@ -191,8 +193,8 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
     assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
-    assert "✅" in kwargs["content"]
     assert "alice" in kwargs["content"]
+    assert kwargs["meta"]["severity"] == "info"
 
 
 @pytest.mark.anyio
@@ -221,5 +223,6 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"
-    assert "✅" in kwargs["content"]
-    assert "origin/main" in kwargs["content"]
+    assert kwargs["meta"]["severity"] == "info"
+    # 推送去向是交付说明的一部分，收进展开区，不占房间那一行。
+    assert "origin/main" in kwargs["meta"]["detail"]

@@ -28,6 +28,12 @@ import logging
 import uuid
 
 from app.core.db import async_session_factory
+from app.domain.agent.platform_notices import (
+    EVENT_SANDBOX_REBUILT,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -66,16 +72,24 @@ _SESSION_CONSEQUENCE = (
 )
 
 
-def rebuild_notice_text(cause: str) -> str:
-    """The notice for one rebuild cause. An unknown cause still produces a
-    usable sentence — a caller that forgot to register its reason must not be
-    the thing that silences the notice — and is treated as a BOX rebuild, the
-    larger of the two consequences, so the notice never understates what was
-    lost."""
-    consequence = (
-        _SESSION_CONSEQUENCE if cause in _SESSION_ONLY_CAUSES else _CONSEQUENCE
+def rebuild_notice(cause: str) -> tuple[str, dict]:
+    """房间那一行 + 展开区。An unknown cause still produces a usable sentence — a
+    caller that forgot to register its reason must not be the thing that
+    silences the notice — and is treated as a BOX rebuild, the larger of the two
+    consequences, so the notice never understates what was lost."""
+    session_only = cause in _SESSION_ONLY_CAUSES
+    return (
+        REBUILD_CAUSE_TEXT.get(cause, "运行环境已重建"),
+        notice(
+            EVENT_SANDBOX_REBUILT,
+            severity=SEVERITY_WARN,
+            who=WHO_HUMAN,
+            detail=(_SESSION_CONSEQUENCE if session_only else _CONSEQUENCE).lstrip(
+                "，"
+            ),
+            detail_label="影响到什么",
+        ),
     )
-    return "⚠️ " + REBUILD_CAUSE_TEXT.get(cause, "运行环境已重建") + consequence
 
 
 async def warn_container_rebuilt(topic_id: uuid.UUID, cause: str = "image") -> None:
@@ -84,6 +98,7 @@ async def warn_container_rebuilt(topic_id: uuid.UUID, cause: str = "image") -> N
     Best-effort / fire-and-forget: this is a courtesy notice, never allowed to
     affect the turn it races with.
     """
+    content, meta = rebuild_notice(cause)
     try:
         async with async_session_factory() as session:
             topic = await TopicRepository(session).get(topic_id)
@@ -94,8 +109,9 @@ async def warn_container_rebuilt(topic_id: uuid.UUID, cause: str = "image") -> N
                 topic_id=topic.id,
                 author="system",
                 author_type=AuthorType.system,
-                content=rebuild_notice_text(cause),
+                content=content,
                 kind=BlockKind.event,
+                meta=meta,
             )
             payload = BlockOut.model_validate(block).model_dump(mode="json")
             await session.commit()

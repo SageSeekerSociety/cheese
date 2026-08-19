@@ -21,6 +21,14 @@ import uuid
 from pathlib import Path
 
 from app.core.config import settings
+from app.domain.agent.platform_notices import (
+    EVENT_ROOM_MERGE,
+    SEVERITY_ERROR,
+    SEVERITY_INFO,
+    WHO_CHEESE,
+    WHO_PLATFORM,
+    notice,
+)
 
 logger = logging.getLogger("cheesex.conclusion.room_branch")
 
@@ -81,29 +89,54 @@ def state_of(result: dict) -> str:
     return CONFLICT
 
 
-def merged_text(*, title: str, result: dict) -> str:
+def merged_notice(*, title: str, result: dict) -> tuple[str, dict]:
     commits = result.get("commits") or 0
     return (
-        f"🔀 子话题《{title}》的 {commits} 个提交已并入本房间的分支 "
-        f"`{result.get('into')}` —— 跟着本房间的验收卡/PR 一起交付，不再单开一个 PR。"
+        f"子话题《{title}》的 {commits} 个提交已并入本房间的分支",
+        notice(
+            EVENT_ROOM_MERGE,
+            severity=SEVERITY_INFO,
+            who=WHO_PLATFORM,
+            detail=(
+                f"并进了 `{result.get('into')}`，跟着本房间的验收卡一起交付，"
+                "不再单开一个 PR。"
+            ),
+            detail_label="并到哪了",
+        ),
     )
 
 
-def deferred_text(*, title: str, reason: str) -> str:
+def deferred_notice(*, title: str, reason: str) -> tuple[str, dict]:
     return (
-        f"⏸ 子话题《{title}》的提交先排队，暂时不并进本房间的分支：{reason}。"
-        "条件解除后平台会自动再合一次，不需要谁来催。"
+        f"子话题《{title}》的提交先排队",
+        notice(
+            EVENT_ROOM_MERGE,
+            severity=SEVERITY_INFO,
+            who=WHO_PLATFORM,
+            detail=(
+                f"暂时不并进本房间的分支：{reason}。"
+                "条件解除后平台会自动再合一次，不需要谁来催。"
+            ),
+            detail_label="为什么排队",
+        ),
     )
 
 
-def conflict_text(*, title: str, result: dict) -> str:
+def conflict_notice(*, title: str, result: dict) -> tuple[str, dict]:
     conflicts = result.get("conflicts") or []
-    where = (
-        "、".join(f"`{p}`" for p in conflicts[:20]) if conflicts else "（见下方原因）"
-    )
+    where = "、".join(conflicts[:20]) if conflicts else "（见原因）"
     return (
-        f"⚠️ 子话题《{title}》的提交并进本房间的分支时**冲突**了：{where}\n\n"
-        f"原因：{result.get('reason', '')}\n\n"
-        "两条活改到了同一处。在本房间的工作区里解掉冲突并提交，平台下一轮会自动重试；"
-        "这比等到两个 PR 之间才发现要早得多。"
+        f"子话题《{title}》的提交并进本房间分支时冲突",
+        notice(
+            EVENT_ROOM_MERGE,
+            severity=SEVERITY_ERROR,
+            who=WHO_CHEESE,
+            detail=(
+                f"冲突在：{where}\n"
+                f"原因：{result.get('reason', '')}\n"
+                "两条活改到了同一处。在本房间的工作区里解掉冲突并提交，平台下一轮"
+                "会自动重试；这比等到两个 PR 之间才发现要早得多。"
+            ),
+            detail_label="冲突详情",
+        ),
     )

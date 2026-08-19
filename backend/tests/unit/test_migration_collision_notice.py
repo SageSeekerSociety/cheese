@@ -53,8 +53,11 @@ def _service(
 
     service._repo = SimpleNamespace(list_live_in_project=list_live_in_project)  # type: ignore[attr-defined]
     service._topics = SimpleNamespace(get=get_topic)  # type: ignore[attr-defined]
-    service._notify_merge_result = lambda topic, content: recorder.messages.append(  # type: ignore[attr-defined]
-        content
+    # 房间那一行 + 展开区，一起记下来：要去看哪几间房是展开区的内容。
+    service._notify_merge_result = (  # type: ignore[attr-defined]
+        lambda topic, content, meta=None: recorder.messages.append(
+            f"{content}\n{(meta or {}).get('detail') or ''}"
+        )
     )
 
     def added(project_id, topic_id):

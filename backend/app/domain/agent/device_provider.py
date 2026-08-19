@@ -44,7 +44,7 @@ from app.domain.agent.hooks_substrate import (
 )
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
-    TURN_TIMEOUT_MARKER,
+    HOST_UNREACHABLE_CODE,
 )
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import (
@@ -133,7 +133,9 @@ async def resolve_pinned_device(
         if await service.get_hosted_device(device_id) is None:
             raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
         if not is_online(device_id):
-            raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
+            raise ScreenSetupError(
+                DEVICE_OFFLINE_MESSAGE, failure_code=HOST_UNREACHABLE_CODE
+            )
         # An isolated binding must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
         if not has_runnable_transport(chosen.visibility):
@@ -328,7 +330,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
 
     name = "device"
     _needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
-    _timeout_message = f"device {TURN_TIMEOUT_MARKER}"
+    _timeout_message = "device 轮次超时"
 
     def __init__(
         self,
