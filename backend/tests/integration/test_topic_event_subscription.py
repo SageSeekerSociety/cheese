@@ -398,7 +398,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     assert [row.content for row in ai_messages] == ["Background work finished"]
     assert resumes_by == "session-autonomous"
 
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
     assert subscription.consumer_task is not None
     assert subscription.consumer_task.done()
 
@@ -474,7 +474,7 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
     }
     assert uuid.UUID(frame["block"]["turn_id"]) != requested_id
     assert frame["block"]["meta"]["platform_unsolicited"] is True
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_restart_reattaches_and_replays_spooled_hooks(
@@ -531,7 +531,7 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     # they were consumed is the cursor, so the tail past it must be empty.
     spool = ws.spool_dir(project_id, topic_id)
     assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
@@ -598,7 +598,7 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     async with factory() as session:
         row = await session.get(AgentTurn, interrupted)
     assert row is not None and row.stopped_at is not None
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
@@ -642,7 +642,7 @@ async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
     async with factory() as session:
         row = await session.get(AgentTurn, still_provisioning)
     assert row is not None and row.stopped_at is None
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -> None:
@@ -654,7 +654,7 @@ async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -
     without this test it can stop being emitted with no visible symptom — until
     a deploy re-sends a prompt 芝士 already has.
 
-    A refused write raises out of `inject_work` instead, so reaching this frame
+    A refused write raises out of `send` instead, so reaching this frame
     is itself the acceptance (#563)."""
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
@@ -677,7 +677,7 @@ async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -
         )
     )
     assert "prompt_delivered" in [frame["type"] for frame in frames]
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_session_timeout_retires_activity_but_keeps_subscription(
@@ -753,4 +753,4 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     ]
     assert late_frames[1]["block"]["meta"]["platform_unsolicited"] is True
     assert late_frames[1]["block"]["turn_id"] != str(work_id)
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)

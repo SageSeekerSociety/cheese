@@ -1038,6 +1038,13 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
                 return False
             await asyncio.sleep(_SETTLE_POLL_S)
 
+    async def _send_interrupt(self, screen: TmuxScreen) -> bool:
+        """Escape into the pane — the key a person watching would press. Sent
+        with `send-keys`, the same way this backend types anything else."""
+        control = await self._control(screen)
+        result = await control.send("send-keys", "-t", screen.session, "Escape")
+        return bool(result.ok)
+
     async def _send_prompt(
         self, screen: TmuxScreen, prompt: str, images: list[dict] | None = None
     ) -> None:

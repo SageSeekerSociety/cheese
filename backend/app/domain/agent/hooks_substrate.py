@@ -29,6 +29,7 @@ from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import event_spool
+from app.domain.agent.harness import HarnessEvent, Opening, SessionRef
 from app.domain.agent.hook_events import (
     HookRouter,
     HookSink,
@@ -50,6 +51,7 @@ from app.domain.agent.service import (
     AgentResult,
     AgentToolUse,
 )
+from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +193,54 @@ DELIVERY_TIMEOUT_S = 25.0
 UNDELIVERED_MESSAGE = PROMPT_UNDELIVERED_MESSAGE
 
 
+# --- the log this harness writes, read from a cursor -------------------------
+#
+# Claude Code has no event API. What it has is hooks, and every one of them is
+# appended to a durable spool before anything downstream sees it — which makes
+# that spool this harness's event log, not its backup. `read` is nothing more
+# than these: entries after a cursor, the cursor, and a way to move it. Reading
+# never consumes, so two readers at different cursors both see the whole tail;
+# retention is the only thing that deletes.
+#
+# Free functions, not methods on a live provider, because the log is addressed
+# by SESSION and outlives every transport that ever wrote to it: the crash
+# recovery that reads it runs before any screen has been found, and the settle
+# that drains an orphan's tail has no provider in hand. The methods on
+# `HooksSessionProvider` are the same four, so the contract is satisfied by an
+# instance too.
+
+
+def _spool_of(session: SessionRef) -> Path:
+    return ws.spool_dir(session.project_id, session.topic_id)
+
+
+def read_log(session: SessionRef, *, since: str | None = None) -> list[HarnessEvent]:
+    """This session's events after ``since``, oldest first."""
+    return [
+        HarnessEvent(
+            key=path.name, eid=eid, payload=payload, age_s=event_spool.age_s(path)
+        )
+        for path, eid, payload in event_spool.spool_entries(
+            _spool_of(session), after=since
+        )
+    ]
+
+
+def log_cursor(session: SessionRef) -> str | None:
+    """How far the platform's own reader has got. None = nothing yet."""
+    return event_spool.read_cursor(_spool_of(session))
+
+
+def acknowledge_log(session: SessionRef, *, through: str) -> None:
+    """Everything up to and including ``through`` has been landed."""
+    event_spool.write_cursor(_spool_of(session), through)
+
+
+def expire_log(session: SessionRef, *, older_than_s: float) -> int:
+    """Drop events past the platform's retention — the only deletion there is."""
+    return event_spool.prune(_spool_of(session), older_than_s=older_than_s)
+
+
 @dataclass
 class ActivityTracker:
     """Shared clock for one active period of an interactive session.
@@ -255,7 +305,7 @@ class TopicSubscription:
     # the cursor only advances over the longest prefix that has actually been
     # persisted — so one event whose persist raised is retried on the next read
     # instead of being stepped over by the ones behind it.
-    replay_spool: Path | None = None
+    replaying: bool = False
     replay_queue: list[tuple[str, str]] = field(default_factory=list)
     replay_done: set[str] = field(default_factory=set)
     replay_seen_messages: set[str] = field(default_factory=set)
@@ -285,8 +335,10 @@ def _advance_replay_cursor(subscription: TopicSubscription) -> None:
         # this is a replayed event, so keeping their ids is a set that only
         # ever grows.
         subscription.replay_done.clear()
-    if reached is not None and subscription.replay_spool is not None:
-        event_spool.write_cursor(subscription.replay_spool, reached)
+    if reached is not None and subscription.replaying:
+        acknowledge_log(
+            SessionRef(subscription.project_id, subscription.topic_id), through=reached
+        )
 
 
 HookEventConsumer = Callable[
@@ -683,8 +735,23 @@ class HooksSessionProvider[ScreenT]:
         """Drop recovered subscriptions associated with a disconnected device."""
         del device_id
 
-    async def drop_subscription(self, topic_id: uuid.UUID) -> None:
-        """Drop the sink and consumer after the topic's screen is known dead."""
+    async def close(self, session: SessionRef) -> None:
+        """Let this session go: stop listening, forget the channel.
+
+        Not the same as killing the screen. The conversation on the other side
+        is untouched — this is the platform putting the phone down.
+        """
+        await self._close_topic(session.topic_id)
+
+    async def _close_topic(self, topic_id: uuid.UUID) -> None:
+        """``close`` keyed the way this adapter's own tables are keyed.
+
+        The bulk teardowns — a device went offline, a screen died, a workspace
+        was reaped — arrive holding a topic and nothing else, and inventing the
+        other half of a ``SessionRef`` for them would be inventing an id. One
+        conversation per topic is what makes that possible; the day a room hosts
+        two agents at once, this key grows and so does theirs.
+        """
         subscription = self._subscriptions.pop(topic_id, None)
         self._live.pop(topic_id, None)
         if subscription is None:
@@ -709,7 +776,46 @@ class HooksSessionProvider[ScreenT]:
             if live_screen is screen or live_screen == screen
         ]
         for topic_id in topic_ids:
-            await self.drop_subscription(topic_id)
+            await self._close_topic(topic_id)
+
+    # --- AgentRuntime -------------------------------------------------------
+
+    def read(
+        self, session: SessionRef, *, since: str | None = None
+    ) -> list[HarnessEvent]:
+        return read_log(session, since=since)
+
+    def cursor(self, session: SessionRef) -> str | None:
+        return log_cursor(session)
+
+    def acknowledge(self, session: SessionRef, *, through: str) -> None:
+        acknowledge_log(session, through=through)
+
+    def expire(self, session: SessionRef, *, older_than_s: float) -> int:
+        return expire_log(session, older_than_s=older_than_s)
+
+    async def interrupt(self, session: SessionRef) -> bool:
+        """Take the work away without saying anything. Escape is what stops a
+        claude mid-generation — the same key a person watching the screen would
+        press, sent down the same channel that carries their typing.
+
+        Weaker than tearing the screen down, deliberately: the session and its
+        conversation survive, and the next ``send`` continues it.
+        """
+        screen = self._live.get(session.topic_id)
+        if screen is None:
+            return False
+        try:
+            return await self._send_interrupt(screen)
+        except Exception:  # noqa: BLE001 — a transport that refuses is a False
+            logger.exception("interrupt failed for topic %s", session.topic_id)
+            return False
+
+    async def _send_interrupt(self, screen: ScreenT) -> bool:
+        """Transport seam: press Escape on this screen. Subclasses implement it
+        the same way they implement typing a prompt."""
+        del screen
+        return False
 
     async def _consume_subscription(self, subscription: TopicSubscription) -> None:
         """Continuously translate the screen's hooks into attributed events."""
@@ -943,47 +1049,67 @@ class HooksSessionProvider[ScreenT]:
                 except asyncio.CancelledError:
                     pass
 
-    async def inject_work(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        prompt: str,
-        system_prompt: str,
-        resume_session_id: str | None,
-        work_id: uuid.UUID,
-        on_mark: Callable[[uuid.UUID], None],
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        sandbox_image: str | None = None,
-        images: list[dict] | None = None,
-    ) -> bool | None:
-        """Inject work into the live session and return after transport receipt."""
-        del sandbox_image
-        prompt = _prompt_with_native_images(prompt, images)
-        precheck = await self._precheck(project_id, topic_id)
+    async def ensure(
+        self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
+    ) -> tuple[ScreenT, TopicSubscription]:
+        """Is this session live? Start it if not. Returns the screen and the
+        subscription listening to it.
+
+        The opening rides along on every call rather than being set once,
+        because Claude Code reads a system prompt exactly once — at launch, out
+        of a file this writes. An already-running session keeps the one it
+        started with, so the opening matters only on the call that turns out to
+        be a cold start, and no caller can know in advance which one that is.
+        """
+        precheck = await self._precheck(session.project_id, session.topic_id)
         token = mint_scoped_token(
-            project_id=str(project_id),
-            topic_id=str(topic_id),
+            project_id=str(session.project_id),
+            topic_id=str(session.topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
         )
         screen = await self._ensure_ready(
-            project_id=project_id,
-            topic_id=topic_id,
+            project_id=session.project_id,
+            topic_id=session.topic_id,
             token=token,
-            model=model,
-            env=env,
-            memory_scope=memory_scope,
-            owner=owner,
+            model=opening.model,
+            env=opening.env,
+            memory_scope=opening.memory_scope,
+            owner=opening.owner,
             turn_id=work_id,
-            resume_session_id=resume_session_id,
-            system_prompt=system_prompt,
+            resume_session_id=opening.resume_token,
+            system_prompt=opening.system_prompt,
             precheck=precheck,
         )
-        subscription = await self.ensure_subscription(project_id, topic_id)
-        self._live[topic_id] = screen
+        subscription = await self.ensure_subscription(
+            session.project_id, session.topic_id
+        )
+        self._live[session.topic_id] = screen
+        return screen, subscription
+
+    async def send(
+        self,
+        session: SessionRef,
+        message: str,
+        opening: Opening,
+        *,
+        work_id: uuid.UUID,
+        on_mark: Callable[[uuid.UUID], None],
+        images: list[dict] | None = None,
+    ) -> bool | None:
+        """Put a message into the session and return once the transport has it.
+
+        An ack, not an answer: what the agent does about this arrives through
+        ``read``, possibly minutes later and possibly to a different process
+        than the one that sent it.
+
+        ``work_id`` / ``on_mark`` are the platform's turn bookkeeping riding
+        along — a turn is still what the room shows and what gets billed. They
+        are the part of this signature that does not belong to the contract, and
+        they leave when a turn stops being how work is tracked.
+        """
+        topic_id = session.topic_id
+        prompt = _prompt_with_native_images(message, images)
+        screen, subscription = await self.ensure(session, opening, work_id=work_id)
         attribution = subscription.current_work
         if attribution is None:
             attribution = WorkAttribution(
@@ -1272,7 +1398,7 @@ async def drop_topic_subscriptions(topic_id: uuid.UUID) -> None:
     """Notify every live hooks provider that a topic's screen was removed."""
     for provider in list(_PROVIDERS):
         if isinstance(provider, HooksSessionProvider):
-            await provider.drop_subscription(topic_id)
+            await provider._close_topic(topic_id)
 
 
 async def drop_screen_subscriptions(screen: object) -> None:

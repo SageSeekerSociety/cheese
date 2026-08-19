@@ -416,11 +416,11 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             if subscribed_device_id == device_id
         ]
         for topic_id in topic_ids:
-            await self.drop_subscription(topic_id)
+            await self._close_topic(topic_id)
 
-    async def drop_subscription(self, topic_id: uuid.UUID) -> None:
+    async def _close_topic(self, topic_id: uuid.UUID) -> None:
         self._subscription_devices.pop(topic_id, None)
-        await super().drop_subscription(topic_id)
+        await super()._close_topic(topic_id)
 
     # --- device / screen resolution ----------------------------------------
 
@@ -867,6 +867,14 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
 
+    async def _send_interrupt(self, screen: HubScreen) -> bool:
+        """Escape into the screen, down the channel that carries a watching
+        person's keystrokes. Not the rendezvous socket: that enqueues a MESSAGE,
+        and a message is what `send` is for — this is the key that takes the
+        work away without saying anything."""
+        await self._hub.viewer_input(screen.device_id, screen.sid, b"\x1b")
+        return True
+
     async def _send_prompt(
         self, screen: HubScreen, prompt: str, images: list[dict] | None = None
     ) -> bool | None:
@@ -1023,7 +1031,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         successful no-op, and every failure is swallowed so one topic can never break
         a reap loop. The screen is forgotten even when its device is offline, so an
         archived topic leaves no stale registry entry behind."""
-        await self.drop_subscription(topic_id)
+        await self._close_topic(topic_id)
         for screen in self._hub.screens_for_topic(topic_id):
             device_id = screen.device_id
             try:

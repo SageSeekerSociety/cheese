@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.device_provider import DeviceProvider, tunnel_port_for_topic
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
@@ -40,6 +41,7 @@ class FakeHub:
         self.reasserted: list[str] = []  # sids re-sent as adopt-creates
         self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
         self.files: list[tuple[str, str, bytes]] = []  # (sid, path, bytes)
+        self.keys: list[tuple[str, bytes]] = []  # raw keystrokes into a screen
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -88,6 +90,9 @@ class FakeHub:
     async def put_file(self, device_id, sid, path, data, timeout=30):
         self.files.append((sid, path, data))
         return {"ok": True}
+
+    async def viewer_input(self, device_id, sid, data: bytes) -> None:
+        self.keys.append((sid, data))
 
 
 def _provider(hub: FakeHub, router: HookRouter, agent_id: uuid.UUID) -> DeviceProvider:
@@ -1669,3 +1674,32 @@ def test_tunnel_port_is_per_topic_and_stable():
     assert pa != pb, "distinct topics must not share a port"
     url = connect_transport(session_token="t", via_tunnel=True, tunnel_port=pa)
     assert url == f"http://127.0.0.1:{pa}"
+
+
+# --- interrupt: take the work away without saying anything -------------------
+
+
+@pytest.mark.anyio
+async def test_interrupt_presses_escape_rather_than_saying_something():
+    """Escape goes down the channel that carries a watching person's keystrokes
+    — NOT the rendezvous socket, which enqueues a message. A message is what
+    `send` is for; this is the platform taking the work away with nothing to
+    say about it, and the session survives it."""
+    hub = FakeHub()
+    provider = _provider(hub, HookRouter(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    screen = await hub.open_screen(
+        "dev1",
+        "claude",
+        "src",
+        agent_user_id=uuid.uuid4(),
+        agent_handle="agent-x",
+        project_id=session.project_id,
+        topic_id=session.topic_id,
+    )
+    provider._live[session.topic_id] = screen
+
+    assert await provider.interrupt(session) is True
+
+    assert hub.keys == [(screen.sid, b"\x1b")]
+    assert hub.prompts == []  # nothing was said

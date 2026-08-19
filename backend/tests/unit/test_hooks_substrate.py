@@ -242,7 +242,7 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
     assert result.text == "新turn的真实回复"  # NOT the stale turn's text
 
     assert stale_delivered == [False]
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_failed_precheck_never_touches_the_router():
@@ -510,7 +510,7 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
 
     # The screen and subscription outlive the run, but its attribution is closed.
     assert await provider.deliver(topic_id, "晚") is False
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_deliver_reports_false_when_the_screen_refuses():
@@ -562,7 +562,7 @@ async def test_deliver_reports_false_when_the_screen_refuses():
     )
     events = await asyncio.wait_for(turn, 1)
     assert isinstance(events[-1], AgentResult)
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_subscription_outlives_run_and_drops_only_with_screen():
@@ -647,7 +647,7 @@ async def test_run_refuses_to_clobber_existing_attribution():
     assert isinstance(events[0], AgentResult)
     assert events[0].is_error is True
     assert subscription.current_work is open_attribution
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 # --- MessageDisplay flush coalescing on the live subscription ---------------
@@ -710,7 +710,7 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
     assert [m.text for m in messages] == ["line 1\nline 2\nline 3"]
     assert messages[0].eids == ("m1-0", "m1-1")
     assert isinstance(events[-1], AgentResult)
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_run_turn_stop_drains_a_partial_message():
@@ -755,7 +755,7 @@ async def test_run_turn_stop_drains_a_partial_message():
     types = [type(e).__name__ for e in events]
     assert types == ["AgentMessage", "AgentResult"]
     assert events[0].text == "第一行\n到这里就断了\n"
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
@@ -809,7 +809,7 @@ async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
     results = [(e, seen) for e, _eid, seen in consumed if isinstance(e, AgentResult)]
     assert len(results) == 1
     assert results[0][1] is True  # Stop's text matches the assembled message
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 # --- delivery verdicts must leave a server-side trace -------------------------
@@ -935,7 +935,7 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
         {"hook_event_name": "Stop", "last_assistant_message": "好", "_eid": "s1"},
     )
     await asyncio.wait_for(turn, 1)
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_user_prompt_submit_is_reported_to_the_receipt_consumer():
@@ -969,7 +969,7 @@ async def test_user_prompt_submit_is_reported_to_the_receipt_consumer():
         if received:
             break
     assert received == [(topic_id, "[人]: 等一下")]
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 async def test_prompt_redelivery_logs_each_attempt(caplog):
@@ -1020,4 +1020,4 @@ async def test_prompt_redelivery_logs_each_attempt(caplog):
         str(topic_id) in r.getMessage() and "redeliver" in r.getMessage()
         for r in caplog.records
     )
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)

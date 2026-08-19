@@ -148,6 +148,21 @@ def spool_entries(
     return out
 
 
+def age_s(path: Path) -> float:
+    """How long ago this spool file was written, in seconds.
+
+    Its mtime, not its name: the name is a sequence number now (event_spool's
+    docstring says why it stopped being a clock), and the grace below is a real
+    wait for a flush that may still be coming — which only a real clock measures.
+    A file that vanished between listing and here reads as brand new, so a
+    partial waits one more pass instead of being flushed on a stat error.
+    """
+    try:
+        return max(0.0, time.time() - path.stat().st_mtime)
+    except OSError:
+        return 0.0
+
+
 def read_cursor(spool: Path) -> str | None:
     """How far this spool has been read. None means "nothing yet"."""
     try:

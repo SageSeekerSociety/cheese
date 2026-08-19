@@ -14,14 +14,12 @@ import asyncio
 import logging
 import re
 import shutil
-import time
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -29,12 +27,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
-from app.domain.agent import event_spool
 from app.domain.agent.cloud_provider import CloudProvider
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
+from app.domain.agent.harness import Opening, SessionRef, runtime_for
 from app.domain.agent.hook_events import MessageAssembler
-from app.domain.agent.hooks_substrate import HooksSessionProvider, TopicSubscription
+from app.domain.agent.hooks_substrate import (
+    TopicSubscription,
+    acknowledge_log,
+    expire_log,
+    log_cursor,
+    read_log,
+)
 from app.domain.agent.host_swap import NO_SWAP, handle_host_failure
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import classify_platform_failure
@@ -212,21 +216,6 @@ _SPOOL_PARTIAL_GRACE_S = 120
 # enough to answer that and short enough that a busy topic's directory stays
 # something a person can list.
 _SPOOL_RETENTION_S = 24 * 3600
-
-
-def _spool_age_s(path: Path) -> float:
-    """How long ago this spool file was written, in seconds.
-
-    Its mtime, not its name: the name is a sequence number now (event_spool's
-    docstring says why it stopped being a clock), and the grace below is a real
-    wait for a flush that may still be coming — which only a real clock measures.
-    A file that vanished between listing and here reads as brand new, so a
-    partial waits one more pass instead of being flushed on a stat error.
-    """
-    try:
-        return max(0.0, time.time() - path.stat().st_mtime)
-    except OSError:
-        return 0.0
 
 
 def _persisted_eids(blocks: list[Block]) -> set[str]:
@@ -1835,9 +1824,9 @@ class ChatService:
         whoever actually persisted the events instead of reconstructed from
         their leftovers.
         """
-        spool = ws.spool_dir(subscription.project_id, subscription.topic_id)
-        entries = event_spool.spool_entries(spool, after=event_spool.read_cursor(spool))
-        if not entries:
+        session_ref = SessionRef(subscription.project_id, subscription.topic_id)
+        events = read_log(session_ref, since=log_cursor(session_ref))
+        if not events:
             subscription.ready.set()
             return
 
@@ -1846,10 +1835,11 @@ class ChatService:
                 subscription.topic_id
             )
 
-        subscription.replay_spool = spool
+        subscription.replaying = True
         replayed: dict[str, dict] = {}
-        for path, eid, payload in entries:
-            subscription.replay_queue.append((path.name, eid))
+        for event in events:
+            eid, payload = event.eid, event.payload
+            subscription.replay_queue.append((event.key, eid))
             if payload is None:
                 # Unparseable, so nothing can ever be made of it — mark it done
                 # so the cursor steps over it rather than stopping here forever.
@@ -2755,11 +2745,9 @@ class ChatService:
         unless they are stale (no Stop, nothing new for a while), in which
         case what arrived lands joined rather than being lost."""
         try:
-            spool = ws.spool_dir(project_id, topic_id)
-            entries = event_spool.spool_entries(
-                spool, after=event_spool.read_cursor(spool)
-            )
-            if not entries:
+            session_ref = SessionRef(project_id, topic_id)
+            spooled = read_log(session_ref, since=log_cursor(session_ref))
+            if not spooled:
                 return
             # Dedup against everything the live path already persisted (this +
             # prior turns): event-ids stamped on this topic's blocks (any kind).
@@ -2826,7 +2814,8 @@ class ChatService:
                 known_texts.add(_canon(message.text))
                 return block_payload
 
-            for _path, eid, payload in entries:
+            for spooled_event in spooled:
+                eid, payload = spooled_event.eid, spooled_event.payload
                 if payload is None or eid in seen:
                     continue
                 payload["_eid"] = eid
@@ -2932,11 +2921,7 @@ class ChatService:
             pending = assembler.pending_eids()
             if pending:
                 newest = min(
-                    (
-                        _spool_age_s(path)
-                        for path, entry_eid, _payload in entries
-                        if entry_eid in pending
-                    ),
+                    (event.age_s for event in spooled if event.eid in pending),
                     default=0.0,
                 )
                 if newest > _SPOOL_PARTIAL_GRACE_S:
@@ -2954,11 +2939,11 @@ class ChatService:
             # eventually deletes them. It stops at the first still-buffered
             # flush rather than stepping over it, so the pass that completes
             # that message still sees the flushes it is made of.
-            for path, entry_eid, _payload in entries:
-                if entry_eid in pending:
+            for event in spooled:
+                if event.eid in pending:
                     break
-                event_spool.write_cursor(spool, path.name)
-            event_spool.prune(spool, older_than_s=_SPOOL_RETENTION_S)
+                acknowledge_log(session_ref, through=event.key)
+            expire_log(session_ref, older_than_s=_SPOOL_RETENTION_S)
             if recovered:
                 logger.info(
                     "reconciled %d spooled 现场 event(s) for topic %s",
@@ -3543,7 +3528,7 @@ class ChatService:
             # `agent_turn_timeout_s`. The SDK / remote-cheesed backends have no such
             # signal and keep the generic default. Without this the device's own
             # two-layer fix is dead on arrival — the outer guard still kills at 900s.
-            is_activity_aware_backend = isinstance(provider, HooksSessionProvider)
+            is_activity_aware_backend = runtime_for(provider) is not None
             if topic.compute_profile is None:
                 # v4 affinity red line: materialize the effective target BEFORE
                 # the first provider call. A later team-default/sticky change must
@@ -3681,7 +3666,7 @@ class ChatService:
         model_kwargs, route = await self._model_kwargs(
             project_id, provider.name, topic_id
         )
-        if isinstance(provider, HooksSessionProvider):
+        if runtime_for(provider) is not None:
             # Internal: the screen subscription, not this request, owns timeout
             # and thinking lifecycle. Runtime consumes this frame and disables
             # its request-scoped lifecycle before provider setup begins.
@@ -3734,7 +3719,8 @@ class ChatService:
         # function long before its turn ends — so it is started once here and
         # carried on the work state rather than read twice in two places.
         known_commits = asyncio.ensure_future(self._known_commits(project_id, topic_id))
-        if isinstance(provider, HooksSessionProvider):
+        runtime = runtime_for(provider)
+        if runtime is not None:
             marked_work_ids: list[uuid.UUID] = []
 
             def _register_work(marked_work_id: uuid.UUID) -> None:
@@ -3768,20 +3754,22 @@ class ChatService:
                 if prompt_text not in state.user_text:
                     state.user_text = f"{state.user_text}\n{prompt_text}"
 
-            ready = await provider.inject_work(
-                project_id=project_id,
-                topic_id=topic_id,
-                prompt=prompt_text,
-                system_prompt=system_prompt,
-                resume_session_id=resume_session_id,
-                memory_scope="personal" if is_private else None,
-                owner=private_owner if is_private else None,
+            ready = await runtime.send(
+                SessionRef(project_id, topic_id),
+                prompt_text,
+                Opening(
+                    system_prompt=system_prompt,
+                    resume_token=resume_session_id,
+                    memory_scope="personal" if is_private else None,
+                    owner=private_owner if is_private else None,
+                    model=model_kwargs.get("model"),
+                    env=model_kwargs.get("env"),
+                ),
                 work_id=turn_id,
                 images=turn_images or None,
                 on_mark=_register_work,
-                **model_kwargs,
             )
-            # Internal frame: `inject_work` returned, so the transport accepted
+            # Internal frame: `send` returned, so the transport accepted
             # the write — which IS delivery (#563, per #487's contract that a
             # write either reaches the process or errors). The runtime records
             # that as a fact against the durable in-flight registry. Without it

@@ -13,6 +13,7 @@ import uuid
 import pytest
 
 from app.domain.agent import tmux_provider as tp
+from app.domain.agent.harness import SessionRef
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import ActivityTracker
 from app.domain.agent.service import (
@@ -423,7 +424,7 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
     assert _stub_env["prompt"] == "帮我看下"
     # Stop closes only the run marker; the screen subscription stays live.
     assert router.push(topic_key, {"x": 1}) is True
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
     assert router.push(topic_key, {"x": 2}) is False
 
 
@@ -705,7 +706,7 @@ async def test_restart_recovery_subscribes_running_topic_containers(monkeypatch)
     recovered[0].ready.set()
     router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
     await recovered[0].sink.queue.join()
-    await provider.drop_subscription(topic_id)
+    await provider._close_topic(topic_id)
 
 
 # --- one box per room (容器按房间分配) ---------------------------------------
@@ -1056,3 +1057,45 @@ async def test_rebuilding_a_box_is_announced_to_every_topic_in_it(
     told = {topic for topic, _ in _announced}
     assert told == {room_id, task_id}, "a sibling lost its session in silence"
     assert {cause for _, cause in _announced} == {"image"}
+
+
+# --- interrupt: take the work away without saying anything -------------------
+
+
+@pytest.mark.anyio
+async def test_interrupt_presses_escape_on_the_live_screen(monkeypatch):
+    """Escape is what stops a claude mid-generation — the key a person watching
+    would press, down the channel that already carries this backend's typing.
+
+    Weaker than killing the session, deliberately: what the platform wants when
+    it decides a turn should not continue is the work stopped, not the
+    conversation destroyed."""
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    screen = _FakeScreenControl()
+    sent: list[tuple] = []
+
+    async def fake_control(_screen):
+        return screen
+
+    original_send = screen.send
+
+    async def recording_send(*args: str):
+        sent.append(args)
+        return await original_send(*args)
+
+    screen.send = recording_send  # type: ignore[method-assign]
+    monkeypatch.setattr(provider, "_control", fake_control)
+    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    provider._live[session.topic_id] = _BOX
+
+    assert await provider.interrupt(session) is True
+    assert any("Escape" in args for args in sent)
+
+
+@pytest.mark.anyio
+async def test_interrupt_without_a_live_screen_says_so(monkeypatch):
+    """No screen, nothing to stop. False rather than a raise: the caller is
+    deciding what to do about work it believes is stuck, and an exception there
+    would take out whatever else it was in the middle of."""
+    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    assert await provider.interrupt(SessionRef(uuid.uuid4(), uuid.uuid4())) is False
