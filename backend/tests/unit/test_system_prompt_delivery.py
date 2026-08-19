@@ -20,6 +20,7 @@ from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness.claude_code import device_launch
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.tmux_provider import TmuxChannel
 
 _FLAG = "--append-system-prompt-file"
@@ -221,9 +222,8 @@ async def test_device_screen_opens_with_the_system_prompt():
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="tok",
-        model=None,
         env=None,
-        system_prompt=_PROMPT,
+        launch=ClaudeLaunch(system_prompt=_PROMPT),
     )
 
     # The launcher rides to the device as a FILE over `exec` (tmux argv caps out
