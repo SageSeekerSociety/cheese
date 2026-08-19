@@ -15,7 +15,6 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
-from app.domain.agent.service import AgentResult, AgentService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -23,6 +22,7 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
+from tests.conftest import StubHooksProvider, stub_compute
 from tests.turn_log import open_turn, open_turn_ids
 
 
@@ -31,27 +31,30 @@ def _spool_event(spool, eid: str, payload: dict) -> None:
     event_spool.append(spool, eid, payload)
 
 
-class _MustNotRun(AgentService):
-    """An agent whose invocation IS the failure: attach mode means no prompt."""
+class _MustNotRun(StubHooksProvider):
+    """A screen whose being written to IS the failure: attach mode means no
+    prompt is sent at all."""
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-
-    async def stream_reply(self, **_):
+    async def _send_prompt(
+        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+    ) -> bool:
+        del screen, prompt, images
         raise AssertionError("attach mode must never start a turn")
-        yield  # pragma: no cover — makes this an async generator
 
 
-class _RecordingAgent(AgentService):
+class _RecordingScreen(StubHooksProvider):
     """Records every prompt it is asked to run (the re-send path's witness)."""
 
     def __init__(self) -> None:
-        super().__init__(model="stub")
+        super().__init__()
         self.prompts: list[str] = []
 
-    async def stream_reply(self, *, prompt, **_):
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
         self.prompts.append(prompt)
-        yield AgentResult(text="收到", session_id="s-new", usage=None)
+        self.starts(topic_id, session_id="s-new")
+        self.acknowledges(topic_id, prompt)
+        self.stops(topic_id, "收到", session_id="s-new")
 
 
 async def _seed_topic(factory) -> tuple[uuid.UUID, uuid.UUID]:
@@ -77,7 +80,7 @@ async def test_settle_lands_parked_stop_and_finishes_the_turn(
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
-        agent=_MustNotRun(),
+        compute=stub_compute(_MustNotRun()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -126,7 +129,7 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
-        agent=_MustNotRun(),
+        compute=stub_compute(_MustNotRun()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -168,7 +171,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     pid, tid = await _seed_topic(factory)
     svc = ChatService(
         session_factory=factory,
-        agent=_MustNotRun(),
+        compute=stub_compute(_MustNotRun()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -231,10 +234,10 @@ async def test_zero_evidence_orphan_resends_the_original_text(
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     factory = client.test_factory
     _pid, tid = await _seed_topic(factory)
-    agent = _RecordingAgent()
+    agent = _RecordingScreen()
     svc = ChatService(
         session_factory=factory,
-        agent=agent,
+        compute=stub_compute(agent),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )

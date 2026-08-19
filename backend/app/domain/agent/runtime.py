@@ -403,6 +403,27 @@ class AgentWorkRunner:
             return None
         return author
 
+    def note_session_output(self, turn_id: uuid.UUID, *, tool: bool) -> None:
+        """A live session produced something for this turn.
+
+        The turn summary (`/debug/turns`) is stamped from frames crossing the
+        request's own stream, and a session's output does not cross it — the
+        call that started the turn returned before the agent said anything. So
+        every turn read back as `first_output_s: null` / `tools: 0`, which is
+        the exact signature of a sandbox whose hooks never arrive: the one
+        failure the summary exists to make visible was indistinguishable from
+        every healthy turn.
+        """
+        for rec in reversed(self._recent):
+            if rec.get("turn_id") != str(turn_id):
+                continue
+            if tool:
+                rec["tools"] = int(rec.get("tools") or 0) + 1
+            if rec.get("first_output_s") is None and rec.get("started_at"):
+                rec["first_output_s"] = round(time.time() - rec["started_at"], 2)
+            self._last_frame_at[str(turn_id)] = time.monotonic()
+            return
+
     def _current_turn_record(self, topic_id: uuid.UUID) -> dict | None:
         """The `_recent` entry for the turn this topic is running NOW, or None.
 

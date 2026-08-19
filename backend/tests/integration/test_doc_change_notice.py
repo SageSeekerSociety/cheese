@@ -20,7 +20,7 @@ from app.api.deps import get_chat_service
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import PLATFORM_NOTICE, ChatService
 from app.main import app
-from tests.conftest import StubAgent
+from tests.conftest import stub_compute
 
 
 def _project_topic(client) -> tuple[str, str]:
@@ -52,9 +52,9 @@ def _running_turn(client, topic_id: str) -> _Screen:
     screen = _Screen()
     service = ChatService(
         session_factory=client.test_factory,
-        agent=StubAgent(),
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/doc-notice-ws",
+        compute=stub_compute(),
     )
     service._active_turn_ids[uuid.UUID(topic_id)] = uuid.uuid4()
     service._compute.deliver = screen.deliver  # type: ignore[method-assign]
@@ -123,9 +123,9 @@ def test_a_doc_edit_with_nothing_running_says_nothing(client):
     screen = _Screen()
     service = ChatService(
         session_factory=client.test_factory,
-        agent=StubAgent(),
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/doc-notice-ws",
+        compute=stub_compute(),
     )
     service._compute.deliver = screen.deliver  # type: ignore[method-assign]
     app.dependency_overrides[get_chat_service] = lambda: service

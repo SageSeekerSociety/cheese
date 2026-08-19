@@ -9,12 +9,11 @@ project's settings (pick which pool this project runs on). Two kinds of pool:
 `available` is the honest flag: a listing that isn't deployed/credentialed can't
 be selected, so a project never silently runs on something that isn't there.
 
-The catalog carries only pools that EXIST. A permanently unavailable row teaches
-the reader that connecting something would light it up — so `remote-cheesed` and
-`gpu`, which had no provider and no resolution path, were removed rather than
-shown greyed out, and `local-docker` went with the #358 retirement. `available`
-is for a pool that is real but not reachable right now (no machine online, no
-provisioning configured), not for one that does not exist.
+The catalog carries only pools that EXIST. `available` is for a pool that is
+real but not reachable right now (no machine online, no provisioning
+configured); a pool that does not exist is not listed greyed out, it is not
+listed. Teaching a reader that connecting something would light a row up is
+only honest when it would.
 """
 
 from dataclasses import dataclass
@@ -27,11 +26,8 @@ from app.domain.device.supply import (
 )
 
 # Compute provider names (match ComputeProvider.name in compute.py).
-COMPUTE_LOCAL = "local-docker"
-COMPUTE_REMOTE = "remote-cheesed"
 COMPUTE_DEVICE = "device"
 COMPUTE_CLOUD = "cloud"
-COMPUTE_GPU = "gpu"
 
 
 @dataclass(frozen=True)
@@ -112,13 +108,10 @@ def compute_listings(
 
         device_online = bool(device_hub.online_device_ids())
     device_ready = device_online
-    # local-docker is GONE from the catalog (#358 "retire local"): not listed, not
-    # selectable, not the fallback. It stays registered in the ComputePool — the
-    # execution layer never consults this catalog — so a topic whose stored profile
-    # still says `local-docker` keeps running there until its row is cleared. What
-    # is removed is the CHOICE, and with it the last way for a new topic to land on
-    # it. `remote-cheesed` and `gpu` are gone for a different reason: they never had
-    # a provider at all.
+    # The platform's own box is not offered here (#358 "retire local"): what a
+    # person picks between is whose machine runs the work, and "ours" is what
+    # they get by not choosing. It is still in the ComputePool — the execution
+    # layer never consults this catalog — so an unconfigured topic lands there.
     listings = [
         PoolListing(
             kind="compute",
@@ -165,8 +158,8 @@ def compute_default_name() -> str:
     topic's own, then the project's sticky memory, then the team default — see
     `_resolve_compute_id`), and Cloud when there is none.
 
-    It used to be local-docker. That made the retired pool the destination of
-    every unconfigured topic, which is the opposite of retiring it (#358).
+    It used to name the platform's own box. That made the pool nobody was
+    offered the destination of every unconfigured topic (#358).
     """
     return COMPUTE_CLOUD
 

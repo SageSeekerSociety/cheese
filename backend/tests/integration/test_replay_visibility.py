@@ -10,37 +10,41 @@ These tests drive real turns through the WS against a provider whose result is
 an error, and assert what a person sitting in the room would see.
 """
 
+import uuid
+
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import AgentResult
 from app.main import app
-from tests.conftest import StubAgent
+from tests.conftest import StubHooksProvider, stub_compute
 from tests.integration.conftest import chat_ws_url
 
 
-class FailingAgent(StubAgent):
-    """A provider whose turn ends in an error result — the shape that leaves the
-    pending batch unconsumed (chat.py returns before `mark_consumed`)."""
+class SilentScreen(StubHooksProvider):
+    """A session that takes the prompt and then says nothing at all.
 
-    async def stream_reply(self, *, prompt, system_prompt, cwd, resume_session_id, **_):
-        self.last_prompt = prompt
-        self.last_system_prompt = system_prompt
-        yield AgentResult(text="upstream exploded", session_id=None, is_error=True)
+    The turn ends the way a dead session's turn ends — the watchdog gives up and
+    closes it as an error — which is the shape that leaves the pending batch
+    unconsumed (nothing ever reaches `mark_consumed`). The timeouts are squeezed
+    so the test does not sit through the production ones.
+    """
+
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del topic_id, prompt, reply
 
 
-def _use_failing_agent(client) -> FailingAgent:
-    agent = FailingAgent()
+def _use_failing_agent(client) -> SilentScreen:
+    screen = SilentScreen(
+        idle_suspect_s=0.2, hard_ceiling_s=0.4, delivery_timeout_s=0.2
+    )
 
-    def override() -> ChatService:
-        return ChatService(
-            session_factory=client.test_factory,
-            agent=agent,
-            base_system_prompt="你是芝士。",
-            workspace_root="/tmp/replay-ws",
-        )
-
-    app.dependency_overrides[get_chat_service] = override
-    return agent
+    service = ChatService(
+        session_factory=client.test_factory,
+        base_system_prompt="你是芝士。",
+        workspace_root="/tmp/replay-ws",
+        compute=stub_compute(screen),
+    )
+    app.dependency_overrides[get_chat_service] = lambda: service
+    return screen
 
 
 def _project_and_topic(client) -> str:

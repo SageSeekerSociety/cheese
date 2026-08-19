@@ -218,3 +218,8 @@ def test_debug_turns_records_lifecycle(client):
     assert t["topic_id"] == topic_id
     assert t["status"] == "done"
     assert t["duration_s"] is not None
+    # Stamped from what the SESSION produced, not from frames crossing this
+    # request: the call that starts a turn returns before 芝士 says anything, so
+    # a summary fed only by that stream reports every healthy turn with the
+    # exact signature of a sandbox whose hooks never arrive.
+    assert t["first_output_s"] is not None

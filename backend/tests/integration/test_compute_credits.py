@@ -185,8 +185,8 @@ def test_market_nodes_board(client):
     assert r.status_code == 200
     data = r.json()["data"]
     ids = [n["id"] for n in data["nodes"]]
-    assert "local-docker" in ids
-    local = data["nodes"][ids.index("local-docker")]
-    assert local["online"] is True
+    assert "tmux-hooks" in ids
+    local = data["nodes"][ids.index("tmux-hooks")]
+    assert isinstance(local["online"], bool)
     assert isinstance(local["active_turns"], int)
-    assert data["current_provider"] in ("local", "remote")
+    assert data["current_provider"] == "tmux-hooks"

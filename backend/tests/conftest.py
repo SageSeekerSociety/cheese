@@ -86,12 +86,6 @@ from app.domain.agent.harness.claude_code import (  # noqa: E402
     HookRouter,
     HooksSessionProvider,
 )
-from app.domain.agent.service import (  # noqa: E402
-    AgentDelta,
-    AgentResult,
-    AgentService,
-    AgentUsage,
-)
 from app.main import app  # noqa: E402
 
 # Tests always run on the DB memory backend: the openviking backend holds an
@@ -117,43 +111,6 @@ def wait_work_idle() -> None:
         time.sleep(0.01)
 
 
-class StubAgent(AgentService):
-    """Deterministic agent: streams two deltas then a final result.
-
-    Records the last system_prompt so tests can assert memory injection.
-    """
-
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-        self.last_system_prompt: str | None = None
-        self.last_resume_session_id: str | None = None
-        self.last_prompt: str | None = None
-
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        self.last_system_prompt = system_prompt
-        self.last_resume_session_id = resume_session_id
-        self.last_prompt = prompt
-        yield AgentDelta(text="Hello ")
-        yield AgentDelta(text="world")
-        yield AgentResult(
-            text="Hello world",
-            session_id="sess-test-1",
-            usage=AgentUsage(
-                model="stub", input_tokens=10, output_tokens=5, cost_usd=0.001
-            ),
-        )
-
-
 class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
     """A hooks backend with no machine behind it.
 
@@ -170,10 +127,13 @@ class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
 
     name = "stub-hooks"
 
-    def __init__(self) -> None:
+    def __init__(self, **timeouts: float) -> None:
         # Its own router: the module-global one is shared process-wide, and a
         # test that inherited another test's sink would read its hooks.
-        super().__init__(router=HookRouter())
+        # ``timeouts`` are the watchdog's (idle_suspect_s / hard_ceiling_s /
+        # delivery_timeout_s), so a test about a session that goes quiet does
+        # not have to wait the production fifteen minutes for it.
+        super().__init__(router=HookRouter(), **timeouts)
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
@@ -295,9 +255,46 @@ class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
         )
 
 
-@pytest.fixture
-def stub_agent() -> StubAgent:
-    return StubAgent()
+# Captured at import: a test that squeezes a production wait patches
+# `asyncio.sleep` on the shared module, and a poller using the patched one
+# never yields — it spins its whole budget without letting the consumer run.
+_REAL_SLEEP = asyncio.sleep
+
+
+async def drain_hooks(screen: StubHooksProvider, topic_id: uuid.UUID) -> None:
+    """Wait until every hook this screen pushed has been consumed.
+
+    Narrower than `settle_turn`, and the right one when the turn is not going
+    to end: it asks whether what the session already said has landed, not
+    whether the session is done saying things.
+    """
+    subscription = screen._subscriptions.get(topic_id)
+    if subscription is not None:
+        await subscription.sink.queue.join()
+
+
+async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
+    """Wait until the session's hooks have been consumed and the turn closed.
+
+    `converse()` returns as soon as the prompt is in the session — the reply
+    arrives later, on the subscription. A test that drives the service directly
+    (rather than through the runner and a socket) has to wait for that, the
+    same way a room does.
+    """
+    for _ in range(tries):
+        if not any(t == topic_id for t, _ in service._hook_work):
+            return
+        await _REAL_SLEEP(0.01)
+    raise AssertionError(
+        f"turn on {topic_id} never closed; open work: {list(service._hook_work)}"
+    )
+
+
+def stub_compute(provider: StubHooksProvider | None = None) -> ComputePool:
+    """A pool holding one screen, for the many tests that build a ChatService
+    by hand. Pass the provider when the test asserts against it."""
+    screen = provider or StubHooksProvider()
+    return ComputePool([screen], screen.name)
 
 
 @pytest.fixture
@@ -329,9 +326,7 @@ def bearer() -> Callable[[str], dict[str, str]]:
 
 
 @pytest.fixture
-def client(
-    _pg_schema, stub_agent: StubAgent, stub_hooks: StubHooksProvider, tmp_path
-) -> Iterator[TestClient]:
+def client(_pg_schema, stub_hooks: StubHooksProvider, tmp_path) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -366,7 +361,6 @@ def client(
 
     chat_service = ChatService(
         session_factory=test_factory,
-        agent=stub_agent,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks], stub_hooks.name),
@@ -635,7 +629,6 @@ async def db_factory(_pg_schema):
 @pytest.fixture
 async def python_client(
     _pg_schema,
-    stub_agent: StubAgent,
     stub_hooks: StubHooksProvider,
     tmp_path,
 ):
@@ -666,7 +659,6 @@ async def python_client(
 
     chat_service = ChatService(
         session_factory=test_factory,
-        agent=stub_agent,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([stub_hooks], stub_hooks.name),

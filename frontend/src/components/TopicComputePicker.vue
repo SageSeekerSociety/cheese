@@ -21,11 +21,10 @@ const menuOpen = ref(false)
 const DEVICE_PROFILE = 'device'
 
 // Only pools that can actually be picked, plus whichever one this topic is
-// already on. A row that is permanently unavailable teaches the reader that
-// connecting something would light it up, and for a retired pool (local-docker,
-// #358) that is simply false — so it is not shown at all rather than greyed out.
-// The current pool stays listed even when unselectable, because a topic frozen on
-// a retired pool still has to render a readable label for what it is running on.
+// already on. A permanently unavailable row teaches the reader that connecting
+// something would light it up, so a pool that does not exist is not shown at
+// all rather than greyed out. The current pool stays listed even when
+// unselectable — a topic has to render a readable label for what it runs on.
 const visibleProfiles = computed<PoolListing[]>(() => {
   const profiles = state.value?.profiles ?? []
   const current = state.value?.current
@@ -33,13 +32,13 @@ const visibleProfiles = computed<PoolListing[]>(() => {
   return profiles.filter((p) => p.available || p.id === current || (p.id === DEVICE_PROFILE && hasSelfHostedDevices))
 })
 
-// A glyph per pool so the chip reads at a glance — platform container vs. your own
-// machine vs. GPU. Unknown ids fall back to a generic compute icon.
+// A glyph per pool so the chip reads at a glance — the platform's own box vs.
+// your machine vs. a leased one. Unknown ids fall back to a generic icon, which
+// is also what a row from a future pool gets until it earns a glyph.
 const POOL_ICON: Record<string, string> = {
-  'local-docker': 'mdi-server',
+  'tmux-hooks': 'mdi-server',
   device: 'mdi-laptop',
-  'remote-cheesed': 'mdi-server-network',
-  gpu: 'mdi-expansion-card',
+  cloud: 'mdi-cloud-outline',
 }
 function iconFor(id: string): string {
   return POOL_ICON[id] ?? 'mdi-chip'

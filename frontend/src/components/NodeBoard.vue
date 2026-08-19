@@ -5,9 +5,9 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { getMarketNodes } from '../api'
 
-// 节点状态 (spec §9.1): the physical side of the compute pools — every
-// configured node (local docker + cheesed remote), its liveness, and how many
-// turns it is running right now. Self-contained: fetches + refreshes itself.
+// 节点状态 (spec §9.1): the physical side of the compute pools — each node this
+// deployment runs, its liveness, and how many turns it is running right now.
+// Self-contained: fetches + refreshes itself.
 const board = ref<MarketNodes | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)

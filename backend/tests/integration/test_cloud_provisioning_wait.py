@@ -12,7 +12,6 @@ from app.domain.block.models import BlockKind, consumed_turn, prompt_attempts
 from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
 from app.main import app
-from tests.conftest import StubAgent
 from tests.integration.conftest import chat_ws_url
 
 
@@ -44,7 +43,6 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
     def override() -> ChatService:
         return ChatService(
             session_factory=client.test_factory,
-            agent=StubAgent(),
             base_system_prompt="你是芝士。",
             workspace_root=str(tmp_path / "workspace"),
             compute=ComputePool([cloud], "cloud"),

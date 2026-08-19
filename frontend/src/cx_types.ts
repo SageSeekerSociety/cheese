@@ -557,7 +557,7 @@ export interface MarketPools {
 
 // ---- 节点看板 (spec §9.1: where turns physically run) ----
 
-// One configured compute node (local docker / remote cheesed) with liveness.
+// One compute node this deployment runs, with liveness.
 export interface MarketNode {
   id: string
   label: string

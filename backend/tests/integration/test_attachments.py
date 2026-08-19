@@ -10,7 +10,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.main import app
-from tests.conftest import StubAgent, StubHooksProvider
+from tests.conftest import StubHooksProvider
 from tests.integration.conftest import chat_ws_url
 
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
@@ -163,7 +163,6 @@ def _run_on_non_embedding_backend(client, tmp_path) -> _NoEmbedScreen:
     screen = _NoEmbedScreen()
     service = ChatService(
         session_factory=client.test_factory,
-        agent=StubAgent(),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([screen], screen.name),

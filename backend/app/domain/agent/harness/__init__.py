@@ -201,16 +201,22 @@ class AgentRuntime(Protocol):
         ...
 
 
-def runtime_for(provider: "ComputeProvider") -> AgentRuntime | None:
-    """The harness behind this provider, or None if it does not run one.
+def runtime_for(provider: "ComputeProvider") -> AgentRuntime:
+    """The harness behind this provider.
 
-    Not every backend does. A per-turn subprocess starts a model, streams its
-    output and exits — there is no session to ensure, nothing to send into
-    afterwards, and no log to read from a cursor. Asking through this function
-    is how the rest of the code says 「这个后端是长在那儿的会话吗」 without
-    naming Claude Code to find out.
+    Every provider has one — ``ComputePool`` refuses one that does not, so this
+    is where that guarantee is stated rather than a question each caller has to
+    handle a None for. It reads structurally instead of by class so the rest of
+    the code can ask 「这台机器上跑的是什么」 without naming Claude Code to find
+    out.
+
+    There used to be backends with no runtime at all: a subprocess that starts a
+    model, streams its output and exits has no session to ensure, nothing to
+    send into afterwards, and no log to read from a cursor. That shape is gone.
     """
-    return provider if isinstance(provider, AgentRuntime) else None
+    if not isinstance(provider, AgentRuntime):
+        raise TypeError(f"{type(provider).__name__} runs no harness")
+    return provider
 
 
 # --- which harness ----------------------------------------------------------

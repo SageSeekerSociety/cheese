@@ -13,7 +13,6 @@ from types import SimpleNamespace
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
     COMPUTE_DEVICE,
-    COMPUTE_LOCAL,
     compute_default_name,
     compute_listings,
     compute_selectable,
@@ -33,22 +32,22 @@ def _settings() -> SimpleNamespace:
 
 def test_the_catalog_holds_only_pools_that_exist() -> None:
     ids = {p.id for p in compute_listings(_settings(), device_online=True)}
+    # Exact, not a superset: a new listing has to justify itself here, and the
+    # platform's own box is deliberately absent — it is what you get by not
+    # choosing, never something offered.
     assert ids == {COMPUTE_DEVICE, COMPUTE_CLOUD}
-    # Named explicitly so a re-added listing has to justify itself here.
-    assert COMPUTE_LOCAL not in ids
-    assert "remote-cheesed" not in ids and "gpu" not in ids
+    assert "tmux-hooks" not in ids
 
 
 def test_cloud_is_where_a_topic_lands_when_nothing_was_selected() -> None:
-    # Last selection wins upstream (topic → project sticky → team default); this is
-    # the answer when there is none. It used to be local-docker, which made the
-    # retired pool the destination of every unconfigured topic.
+    # Last selection wins upstream (topic → project sticky → team default); this
+    # is the answer when there is none.
     assert compute_default_name() == COMPUTE_CLOUD
 
 
-def test_a_retired_pool_cannot_be_selected() -> None:
+def test_the_platforms_own_box_is_never_a_selectable_pool() -> None:
     selectable = {p.id for p in compute_selectable(_settings(), device_online=True)}
-    assert COMPUTE_LOCAL not in selectable
+    assert "tmux-hooks" not in selectable
     assert COMPUTE_DEVICE in selectable
 
 

@@ -16,7 +16,6 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
-from app.domain.agent.service import AgentService
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.identity.actor import Actor
@@ -99,7 +98,6 @@ async def _replace_topic_cloud(topic_id: uuid.UUID, session: AsyncSession) -> No
 
 @lru_cache
 def get_chat_service() -> ChatService:
-    agent = AgentService(model=settings.agent_model, env=settings.agent_env())
     # Gateway admin client (docs/llm-gateway.md L1/L2): only when the pool routes
     # through the self-hosted gateway AND admin creds are configured.
     gateway = None
@@ -118,12 +116,10 @@ def get_chat_service() -> ChatService:
     )
     return ChatService(
         session_factory=async_session_factory,
-        agent=agent,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
-        sandbox_enabled=settings.agent_sandbox_enabled,
         profiles=get_profile_registry(),
-        compute=build_compute_pool(agent, cloud_provider=cloud),
+        compute=build_compute_pool(cloud_provider=cloud),
         gateway=gateway,
         replace_cloud_machine=_replace_topic_cloud,
     )

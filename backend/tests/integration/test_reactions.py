@@ -9,7 +9,7 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.identity.handles import topic_agent_handle
-from tests.conftest import StubAgent
+from tests.conftest import stub_compute
 from tests.integration.conftest import chat_ws_url
 
 
@@ -142,9 +142,9 @@ async def test_resume_turn_adds_no_receipt(client, tmp_path):
 
     svc = ChatService(
         session_factory=factory,
-        agent=StubAgent(),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     from app.domain.project.services import ProjectService
     from app.domain.topic.services import TopicService
