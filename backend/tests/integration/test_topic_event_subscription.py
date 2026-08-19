@@ -13,8 +13,8 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import (
-    HooksSessionProvider,
-    TopicSubscription,
+    Channel,
+    ClaudeCodeRuntime,
 )
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
@@ -30,13 +30,13 @@ from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from app.domain.workspace import service as ws
-from tests.conftest import StubHooksProvider, settle_turn, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
 
 
-class _ImmediateScreen(StubHooksProvider):
+class _ImmediateScreen(StubChannel):
     """A session that answers the moment it is spoken to."""
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
@@ -57,7 +57,7 @@ class _ImmediateScreen(StubHooksProvider):
         )
 
 
-class _AnsweringLiveScreen(StubHooksProvider):
+class _AnsweringLiveScreen(StubChannel):
     """A live session that takes a message before it finishes its turn."""
 
     name = "answering-live-screen"
@@ -72,10 +72,18 @@ class _AnsweringLiveScreen(StubHooksProvider):
         self.runs = 0
         self._answering: set[asyncio.Task] = set()
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del images
+        if self._answering:
+            # A write into a session that is already working — the transport
+            # cannot tell it from the one that started the turn, and neither
+            # can a real screen. What makes it an injection rather than a
+            # second turn is decided above, on the live-screen lookup.
+            self.delivered.append(prompt)
+            self.injected.set()
+            return True
         self.runs += 1
         self.last_prompt = prompt
         self.started.set()
@@ -95,44 +103,31 @@ class _AnsweringLiveScreen(StubHooksProvider):
             session_id="session-live",
         )
 
-    async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
-    ) -> bool:
-        del topic_id, images
-        self.delivered.append(text)
-        self.injected.set()
-        return True
 
-
-class _IdleHooksProvider(HooksSessionProvider[str]):
+class _IdleChannel(Channel):
     """A live screen whose hooks can arrive without a platform request."""
 
     name = "idle-hooks"
 
-    async def _ensure_ready(self, **_: object) -> str:
+    async def ensure_ready(self, **_: object) -> str:
         return "screen"
 
-    async def _send_prompt(self, screen: str, prompt: str) -> None:
+    async def send_prompt(self, screen: str, prompt: str) -> None:
         del screen, prompt
 
 
-class _RecoveringHooksProvider(_IdleHooksProvider):
-    """A provider that rediscovers one surviving screen after restart."""
+class _RecoveringChannel(_IdleChannel):
+    """A channel that rediscovers one surviving screen after restart."""
 
     def __init__(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         self.project_id = project_id
         self.topic_id = topic_id
-        super().__init__(router=HookRouter())
 
-    async def recover_subscriptions(
+    async def discover(
         self, device_id: str | None = None
-    ) -> list[TopicSubscription]:
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
         del device_id
-        subscription = await self.ensure_subscription(
-            self.project_id, self.topic_id, paused=True
-        )
-        self._live[self.topic_id] = "surviving-screen"
-        return [subscription]
+        return [(self.project_id, self.topic_id, "surviving-screen")]
 
 
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
@@ -281,7 +276,7 @@ async def test_mid_run_message_is_consumed_before_the_run_succeeds(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider], provider.name),  # type: ignore[list-item]
+        compute=ComputePool([provider.runtime], provider.name),
     )
 
     first = asyncio.create_task(
@@ -347,7 +342,7 @@ async def test_session_initiated_work_is_persisted_and_broadcast(
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
-    provider = _IdleHooksProvider(router=router)
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=router)
     ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
@@ -427,8 +422,8 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
     router = HookRouter()
     topic_key = str(topic_id)
 
-    class _PlatformProvider(_IdleHooksProvider):
-        async def _send_prompt(self, screen: str, prompt: str) -> None:
+    class _PlatformChannel(_IdleChannel):
+        async def send_prompt(self, screen: str, prompt: str) -> None:
             del screen, prompt
             router.push(
                 topic_key,
@@ -439,7 +434,7 @@ async def test_late_hook_opens_fresh_unsolicited_work(client, tmp_path) -> None:
                 },
             )
 
-    provider = _PlatformProvider(router=router)
+    provider = ClaudeCodeRuntime(_PlatformChannel(), router=router)
     ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
@@ -517,7 +512,9 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
             "session_id": "session-after-restart",
         },
     )
-    provider = _RecoveringHooksProvider(project_id, topic_id)
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=HookRouter()
+    )
     service = ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
@@ -588,7 +585,9 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
     ):
         event_spool.append(ws.spool_dir(project_id, topic_id), eid, payload)
 
-    provider = _RecoveringHooksProvider(project_id, topic_id)
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=HookRouter()
+    )
     service = ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
@@ -644,7 +643,9 @@ async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
         },
     )
 
-    provider = _RecoveringHooksProvider(project_id, topic_id)
+    provider = ClaudeCodeRuntime(
+        _RecoveringChannel(project_id, topic_id), router=HookRouter()
+    )
     service = ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
@@ -673,7 +674,7 @@ async def test_an_accepted_write_is_announced_to_the_runtime(client, tmp_path) -
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     del project_id
-    provider = _IdleHooksProvider(router=HookRouter())
+    provider = ClaudeCodeRuntime(_IdleChannel(), router=HookRouter())
     service = ChatService(
         session_factory=factory,
         base_system_prompt="You are Cheese.",
@@ -699,7 +700,8 @@ async def test_session_timeout_retires_activity_but_keeps_subscription(
     factory = client.test_factory
     project_id, topic_id = await _seed_topic(factory)
     router = HookRouter()
-    provider = _IdleHooksProvider(
+    provider = ClaudeCodeRuntime(
+        _IdleChannel(),
         router=router,
         idle_suspect_s=0.2,
         hard_ceiling_s=0.2,

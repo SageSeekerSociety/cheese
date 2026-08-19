@@ -2796,7 +2796,7 @@ def tmux_container_name(topic_id: uuid.UUID) -> str:
     """Deterministic name of a topic's long-lived tmux-backend container — distinct
     from the SDK one so the two backends never collide. Lives here (the shared
     workspace layer) so the accept/archive reaper can free it WITHOUT importing the
-    provider; TmuxHooksProvider references this as its single source of truth."""
+    provider; TmuxChannel references this as its single source of truth."""
     return f"cheesex-tmux-{topic_id.hex[:12]}"
 
 

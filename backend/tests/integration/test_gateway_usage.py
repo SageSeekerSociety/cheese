@@ -19,10 +19,10 @@ from app.domain.agent.profiles import (
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.conftest import StubHooksProvider, settle_turn, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
-class QuietScreen(StubHooksProvider):
+class QuietScreen(StubChannel):
     """A turn that reports NO usage — the interactive reality."""
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
@@ -380,7 +380,7 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(client, tmp
     is 'unknown', not 'this turn was free'. Without a meter for the route, the
     row must say unmetered."""
 
-    class ZeroUsageScreen(StubHooksProvider):
+    class ZeroUsageScreen(StubChannel):
         def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
             del reply
             self.starts(topic_id, session_id="s1")

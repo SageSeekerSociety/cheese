@@ -26,7 +26,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
-from app.domain.agent.cloud_provider import CloudProvider
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
@@ -1770,7 +1769,7 @@ class ChatService:
 
     def has_live_screen(self, topic_id: uuid.UUID) -> bool:
         """Is a screen for this topic still reachable? See
-        `HooksSessionProvider.has_live_screen` — this is the orphan sweep's
+        `ClaudeCodeRuntime.has_live_screen` — this is the orphan sweep's
         first question, and the one that used to be unanswerable."""
         return self._compute.has_live_screen(topic_id)
 
@@ -3519,7 +3518,7 @@ class ChatService:
                         {"type": "done"},
                     ]
                 )
-            if isinstance(provider, CloudProvider):
+            if provider.provisions_machine:
                 ready, waiting_text = await provider.prepare_topic(
                     project_id=project_id,
                     topic_id=topic_id,

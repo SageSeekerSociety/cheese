@@ -37,7 +37,7 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.idempotency.keys import action_key
 from app.domain.milestone.models import Milestone
 from app.domain.topic.models import Topic
-from tests.conftest import StubHooksProvider, settle_turn, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import session_auth_headers
 
 # One fixed continuation for every test here: it stands for "the interrupted
@@ -76,7 +76,7 @@ async def _count(factory, stmt) -> int:
 # --- 1. 发消息 ---------------------------------------------------------------
 
 
-class _SameMessageTwice(StubHooksProvider):
+class _SameMessageTwice(StubChannel):
     """A 芝士 that says the exact same thing on both attempts — which is what a
     resumed session with no memory of the first attempt does."""
 

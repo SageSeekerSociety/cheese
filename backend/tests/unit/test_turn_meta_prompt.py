@@ -27,9 +27,7 @@ def test_no_countdown_is_ever_claimed() -> None:
 
 
 def test_resume_line_present_on_resumed_turn() -> None:
-    lines = _turn_meta_lines(
-        is_resume=True, disk=None, open_cards=None
-    )
+    lines = _turn_meta_lines(is_resume=True, disk=None, open_cards=None)
     assert any("本轮是自动续跑" in ln for ln in lines)
 
 
@@ -98,9 +96,7 @@ def test_a_backend_that_does_not_know_its_size_says_nothing() -> None:
     """An enrolled machine belongs to someone else and the platform does not set
     its limits. Inventing a number there would be worse than staying quiet: the
     agent would skip work it could actually have done."""
-    lines = _turn_meta_lines(
-        is_resume=False, disk=None, open_cards=None
-    )
+    lines = _turn_meta_lines(is_resume=False, disk=None, open_cards=None)
     joined = "\n".join(lines)
     assert "内存" not in joined
     assert "OOM" not in joined
@@ -120,12 +116,19 @@ def test_a_fractional_gigabyte_is_not_rounded_to_a_lie() -> None:
 
 def test_the_stated_size_is_the_one_the_container_actually_gets() -> None:
     """Two places could drift: the docker args and the sentence in the prompt.
-    They read the same constants, and this is what keeps that true."""
-    from app.domain.agent.tmux_provider import (
-        SANDBOX_CORES,
-        SANDBOX_MEMORY_MB,
-        TmuxHooksProvider,
-    )
+    They read the same constants, and this is what keeps that true.
 
-    assert TmuxHooksProvider.sandbox_memory_mb == SANDBOX_MEMORY_MB
-    assert TmuxHooksProvider.sandbox_cores == SANDBOX_CORES
+    Asked of the backend the pool hands the turn, not of a class: the size has
+    to survive every layer between the container and the prompt, and a layer
+    that stopped forwarding it would leave the sentence silently missing."""
+    from app.domain.agent.chat import _sandbox_limits
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.tmux_provider import SANDBOX_CORES, SANDBOX_MEMORY_MB
+
+    pool = build_compute_pool()
+    assert _sandbox_limits(pool.select(provider_id="tmux-hooks")) == (
+        SANDBOX_MEMORY_MB,
+        SANDBOX_CORES,
+    )
+    # A machine that belongs to someone else says nothing rather than guessing.
+    assert _sandbox_limits(pool.select(provider_id="device")) is None

@@ -18,10 +18,10 @@ import pytest
 from app.domain.agent.chat import PLATFORM_NOTICE, ChatService
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
-from tests.conftest import StubHooksProvider, settle_turn, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
-class RecordingScreen(StubHooksProvider):
+class RecordingScreen(StubChannel):
     """记下每一轮拿到的 prompt；第一轮的会话停在半路，直到 `release` 放行。
 
     停住的那一轮就是「轮次运行中」这个窗口 —— 期间落库的人类消息，时间戳都排在
@@ -35,7 +35,7 @@ class RecordingScreen(StubHooksProvider):
         self.release = asyncio.Event()
         self._answering: set[asyncio.Task] = set()
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del images
@@ -61,7 +61,7 @@ class RecordingScreen(StubHooksProvider):
         self.stops(topic_id, f"回复 {nth}", session_id="s-window")
 
 
-async def _service(factory, agent: StubHooksProvider, tmp_path) -> ChatService:
+async def _service(factory, agent: StubChannel, tmp_path) -> ChatService:
     return ChatService(
         session_factory=factory,
         compute=stub_compute(agent),

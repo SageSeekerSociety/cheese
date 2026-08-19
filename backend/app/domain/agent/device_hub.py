@@ -18,7 +18,7 @@ Our adaptations vs the reference:
   * a screen carries our identity shape — ``agent_user_id: uuid`` + ``agent_handle``
     (the authorship key) — plus its ``project_id``/``topic_id`` and a ``hook_key``
     (the token the device's ``cheese-hook`` posts under, so hooks route to the turn);
-  * ``call_screen`` returns the call id so the caller (DeviceProvider) can correlate
+  * ``call_screen`` returns the call id so the caller (DeviceChannel) can correlate
     an ``rpc.result`` (used to await a ``prompt`` acknowledgement).
 """
 
@@ -61,7 +61,7 @@ class HubScreen:
     token: str  # the CHEESE_SCREEN value injected into the screen
     # A screen *is* an agent (一个 agent 是一个屏幕): it acts as one agent-user in its
     # project/topic. Attribution of the screen's cheese-api calls keys on
-    # agent_user_id; hooks route by hook_key (see DeviceProvider).
+    # agent_user_id; hooks route by hook_key (see DeviceChannel).
     agent_user_id: int
     agent_handle: str
     project_id: uuid.UUID | None = None
@@ -72,7 +72,7 @@ class HubScreen:
     # HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN — ONCE at startup and
     # never re-reads it, and a reused screen is only reasserted (a cheeselet
     # hot-reload), never relaunched, so once this passes the process is a corpse
-    # that 407s/401s every turn while still alive. The DeviceProvider stamps it at
+    # that 407s/401s every turn while still alive. The DeviceChannel stamps it at
     # open time and folds it into the reuse decision (retire + reopen past it),
     # and the zero-output fuse reads it to fast-fail with the true reason (#388).
     # `None` = never recorded (a screen adopted after a server restart, or a dev
@@ -587,5 +587,5 @@ class DeviceHub:
         pass
 
 
-# Shared singleton: the connector route and the DeviceProvider import this instance.
+# Shared singleton: the connector route and the DeviceChannel import this instance.
 device_hub = DeviceHub()

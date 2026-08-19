@@ -1,19 +1,19 @@
-"""TmuxHooksProvider — the interactive/tmux compute backend (spec §9.1).
+"""TmuxChannel — the interactive/tmux compute channel (spec §9.1).
 
-Instead of driving the Claude Agent SDK over stream-json (LocalDockerProvider),
-this provider runs an INTERACTIVE `claude` inside a long-lived tmux session in
-the topic's container, drives it with `tmux send-keys`, and receives structured
-events back through Claude Code HTTP hooks (POST /sandbox/hooks/{topic_id}). The
-spike (docs/tmux-backend-spike.md) proved hooks emit the same structured events
-interactively, mapping 1:1 to AgentEvent.
+A long-lived tmux session in the topic's container on this host, driven with
+`tmux send-keys` over `docker exec`. What runs in it — an interactive `claude`,
+sensed through Claude Code hooks (POST /sandbox/hooks/{topic_id}) — is
+``ClaudeCodeRuntime``'s business; this file is Docker, worktrees, port slots and
+window sizes. The spike (docs/tmux-backend-spike.md) proved hooks emit the same
+structured events interactively, mapping 1:1 to AgentEvent.
 
-Per turn (run_turn):
+Per turn:
   1. ensure the topic's container exists + is running (image/mount checks),
   2. ensure the `cheese` tmux session exists (lazy; first-launch gates are
      pre-accepted in the image so it reaches the input prompt on its own),
   3. ready handshake: wait for the pane to show the `❯` input box,
   4. inject the prompt (load-buffer + paste-buffer + a separate Enter, each
-     half confirmed against the screen — see _send_prompt),
+     half confirmed against the screen — see send_prompt),
   5. drain the topic's hook queue, translating each hook to an AgentEvent,
   6. on the Stop hook (→ AgentResult) end the turn stream and clean up.
 
@@ -57,10 +57,9 @@ from app.domain.agent import awaited_tasks, clone, provider_env
 from app.domain.agent.harness.claude_code import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    HookRouter,
-    HooksSessionProvider,
+    Channel,
     ScreenSetupError,
-    TopicSubscription,
+    drop_screen_subscriptions,
     hooks_settings,
 )
 from app.domain.agent.sandbox_notices import warn_container_rebuilt
@@ -88,7 +87,7 @@ _READY_POLL_S = 0.4
 # not a vote on the geometry the agent actually runs in.
 _PANE_COLS = 120
 _PANE_ROWS = 40
-# Paste → verify → Enter → verify pacing (see _send_prompt). Budgeted so the
+# Paste → verify → Enter → verify pacing (see send_prompt). Budgeted so the
 # whole worst case ((1+_MAX_REPASTES)·_PASTE_SETTLE_S + _MAX_ENTERS·_ENTER_SETTLE_S
 # ≈ 19.5s) finishes — or fails loud — inside hooks_substrate.DELIVERY_TIMEOUT_S
 # (25s), which stays the outer authority via the UserPromptSubmit receipt.
@@ -384,13 +383,15 @@ SANDBOX_MEMORY_MB = int(settings.sandbox_memory_gb * 1024)
 SANDBOX_CORES = int(settings.sandbox_cpus)
 
 
-class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
-    """The LOCAL hooks backend: runs interactive `claude` in a per-topic tmux
-    session inside a platform container, streaming AgentEvents from Claude Code
-    hooks. Transport = docker/tmux; the shared turn flow lives in the base
-    (HooksSessionProvider) — this class implements only the transport seam. The
-    screen ctx is a (container, session) pair: the box belongs to the topic's
-    room, the session to the topic."""
+class TmuxChannel(Channel):
+    """The LOCAL channel: a per-topic tmux session inside a platform container
+    on this host, reached with ``docker exec``. The screen is a (container,
+    session) pair — the box belongs to the topic's room, the session to the
+    topic.
+
+    Docker, worktrees, port slots, ttyd and window sizes are what this file is
+    about. What runs on the screen, and everything that senses it, is
+    ``ClaudeCodeRuntime``."""
 
     # (see _subscription_args below for how a subscription turn is captured)
 
@@ -401,25 +402,19 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
     # guessing — an invented limit would be worse than none.
     sandbox_memory_mb = SANDBOX_MEMORY_MB
     sandbox_cores = SANDBOX_CORES
-    _needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
-    _timeout_message = "tmux 轮次超时"
+    needs_topic_message = "tmux 后端需要 Docker 和话题上下文（缺一不可）"
+    timeout_message = "tmux 轮次超时"
 
     def __init__(
         self,
         *,
         image: str,
-        router: HookRouter | None = None,
-        idle_suspect_s: float = 300.0,
-        hard_ceiling_s: float = 10800.0,
         session_factory: async_sessionmaker | None = None,
     ) -> None:
-        super().__init__(
-            router=router, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
-        )
         self._image = image
         # Only `_room_id` uses it — the transport itself is DB-free, but which
         # BOX a topic belongs to is a fact about the topic tree. Injectable for
-        # the same reason as CloudProvider's: the process-wide factory points at
+        # the same reason as CloudChannel's: the process-wide factory points at
         # the deployment's database, which a test is not running against.
         self._session_factory = session_factory
         # One control-mode connection per SCREEN, reused across turns — the
@@ -428,16 +423,16 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
         self._controls: dict[TmuxScreen, TmuxControlClient] = {}
         # Screen → the running turn's ActivityTracker (turn 活跃度检测), for
         # `cheese status` to read via `activity_status()`. Populated by
-        # `_start_activity_monitor` for exactly as long as its turn runs.
+        # `start_activity_monitor` for exactly as long as its turn runs.
         self._activity: dict[TmuxScreen, ActivityTracker] = {}
 
     def available(self) -> bool:
         return ws.sandbox_available()
 
-    async def recover_subscriptions(
+    async def discover(
         self, device_id: str | None = None
-    ) -> list[TopicSubscription]:
-        """Subscribe every still-running topic after a restart.
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
+        """Every still-running topic session on this host after a restart.
 
         Walks BOXES for the project, then SESSIONS inside each for the topics —
         the topic id is per-session now, so the old shortcut of reading
@@ -454,7 +449,7 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
             )
             return []
 
-        recovered: list[TopicSubscription] = []
+        found: list[tuple[uuid.UUID, uuid.UUID, object | None]] = []
         for name in (line.strip() for line in out.splitlines()):
             if not name:
                 continue
@@ -484,12 +479,8 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
                 )
                 continue
             for session, topic_id in await self._live_sessions(name):
-                subscription = await self.ensure_subscription(
-                    project_id, topic_id, paused=True
-                )
-                self._live[topic_id] = TmuxScreen(name, session)
-                recovered.append(subscription)
-        return recovered
+                found.append((project_id, topic_id, TmuxScreen(name, session)))
+        return found
 
     async def _live_sessions(self, container: str) -> list[tuple[str, uuid.UUID]]:
         """(session name, topic id) for every cheese session in a box.
@@ -869,7 +860,7 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
         await self._retire_legacy_session(screen.container)
         claude_cmd = CLAUDE_BASE_CMD
         # The platform's system prompt, written into the session dir by
-        # _ensure_ready. Only a FRESH claude reads it — an already-running
+        # ensure_ready. Only a FRESH claude reads it — an already-running
         # session keeps the prompt it launched with (same as settings.json).
         if system_prompt:
             claude_cmd += (
@@ -1010,7 +1001,7 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
 
     async def drop_control(self, screen: TmuxScreen) -> None:
         """Forget a screen's control and subscription before it goes away."""
-        await self.drop_screen_subscription(screen)
+        await drop_screen_subscriptions(screen)
         client = self._controls.pop(screen, None)
         if client is not None:
             await client.close()
@@ -1038,14 +1029,14 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
                 return False
             await asyncio.sleep(_SETTLE_POLL_S)
 
-    async def _send_interrupt(self, screen: TmuxScreen) -> bool:
+    async def send_interrupt(self, screen: TmuxScreen) -> bool:
         """Escape into the pane — the key a person watching would press. Sent
         with `send-keys`, the same way this backend types anything else."""
         control = await self._control(screen)
         result = await control.send("send-keys", "-t", screen.session, "Escape")
         return bool(result.ok)
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: TmuxScreen, prompt: str, images: list[dict] | None = None
     ) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
@@ -1141,7 +1132,7 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
     async def _monitor_activity(
         self, screen: TmuxScreen, tracker: ActivityTracker
     ) -> None:
-        """Background loop for `_start_activity_monitor`: captures the pane every
+        """Background loop for `start_activity_monitor`: captures the pane every
         `_ACTIVITY_POLL_S` and touches `tracker` whenever the content changes —
         so a long tool call with no interim hook still counts as "alive" as long
         as the pane keeps producing output, not just on hook arrivals. Registers
@@ -1171,16 +1162,16 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
         finally:
             self._activity.pop(screen, None)
 
-    async def _start_activity_monitor(
+    async def start_activity_monitor(
         self, screen: TmuxScreen, tracker: ActivityTracker
     ) -> asyncio.Task | None:
         return asyncio.create_task(self._monitor_activity(screen, tracker))
 
-    async def _confirm_alive(self, screen: TmuxScreen) -> bool:
+    async def confirm_alive(self, screen: TmuxScreen) -> bool:
         """The idle-suspect probe: a live, on-demand confirmation distinct from
         the passive capture-pane polling above — reuses the same `pane_dead()`
-        check `_send_prompt` already trusts before pasting. Best-effort: a
-        control-connection hiccup is not evidence of death (mirrors `_send_prompt`
+        check `send_prompt` already trusts before pasting. Best-effort: a
+        control-connection hiccup is not evidence of death (mirrors `send_prompt`
         treating a send failure, not a probe failure, as fatal)."""
         try:
             control = await self._control(screen)
@@ -1424,15 +1415,15 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
             logger.warning("could not resolve the room of %s", topic_id, exc_info=True)
         return topic_id
 
-    async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
-        """Fail fast when Docker is absent — BEFORE the base claims the topic's
-        hook queue (pre-refactor ordering, review finding). ``topic_id`` is unused
-        here (the local backend has no per-topic device affinity)."""
+    async def precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
+        """Fail fast when Docker is absent — BEFORE the runtime claims the
+        topic's hook queue. ``topic_id`` is unused here (a local box has no
+        per-topic device affinity)."""
         if not self.available():
-            raise ScreenSetupError(self._needs_topic_message)
+            raise ScreenSetupError(self.needs_topic_message)
         return None
 
-    async def _ensure_ready(
+    async def ensure_ready(
         self,
         *,
         project_id: uuid.UUID,
@@ -1569,7 +1560,7 @@ class TmuxHooksProvider(HooksSessionProvider[TmuxScreen]):
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         """Snapshot the interactive session's native edits into version history
-        (same contract as LocalDockerProvider). Best-effort — never fail a turn.
+        Best-effort — never fail a turn.
         Held while a `cheese await` command is still writing the worktree."""
         if not self.available():
             return

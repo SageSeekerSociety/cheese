@@ -13,7 +13,7 @@ import uuid
 import pytest
 
 from app.domain.workspace import service as ws
-from tests.conftest import StubHooksProvider
+from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url
 
 DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
@@ -27,7 +27,7 @@ DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
 """
 
 
-class SubagentScreen(StubHooksProvider):
+class SubagentScreen(StubChannel):
     """Spawns a subagent, then hands its conclusion back — the two halves the
     room needs to pair up."""
 

@@ -1,4 +1,4 @@
-"""TmuxHooksProvider with docker/tmux mocked out.
+"""TmuxChannel with docker/tmux mocked out.
 
 Drives a full run_turn without a real container: `_docker` is stubbed to canned
 results, workspace paths point at tmp, and the hooks that would arrive over HTTP
@@ -15,14 +15,17 @@ import pytest
 from app.domain.agent import tmux_provider as tp
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
-from app.domain.agent.harness.claude_code.hooks_substrate import ActivityTracker
+from app.domain.agent.harness.claude_code.hooks_substrate import (
+    ActivityTracker,
+    ClaudeCodeRuntime,
+)
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
     AgentSessionInfo,
     AgentToolUse,
 )
-from app.domain.agent.tmux_provider import TmuxHooksProvider, TmuxScreen, pane_ready
+from app.domain.agent.tmux_provider import TmuxChannel, TmuxScreen, pane_ready
 
 
 def test_pane_ready_detects_prompt_box():
@@ -175,11 +178,11 @@ async def test_send_prompt_resends_a_swallowed_enter(_fast_settle, monkeypatch):
     (claude-session-driver #20) — the prompt then sat in the composer until the
     25s undelivered verdict. The sender must see the composer still holding the
     body and nudge Enter again; it must NOT re-paste (that duplicates)."""
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     screen = _FakeScreenControl(swallow_enters=1)
     _wire(monkeypatch, provider, screen)
 
-    await provider._send_prompt(_BOX, "帮我看下这个问题")
+    await provider.send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.pastes == 1, "re-pasting duplicates the prompt"
     assert screen.enters == 2, "the swallowed Enter was never re-sent"
@@ -195,12 +198,12 @@ async def test_send_prompt_fails_loud_when_the_paste_never_lands(
     received the body, and never a silent 25s wait."""
     from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     screen = _FakeScreenControl(drop_pastes=999)
     _wire(monkeypatch, provider, screen)
 
     with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
-        await provider._send_prompt(_BOX, "帮我看下这个问题")
+        await provider.send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.pastes == 1 + tp._MAX_REPASTES
     assert screen.enters == 0, "an Enter was fired at a body-less composer"
@@ -216,7 +219,7 @@ async def test_send_prompt_clears_a_poisoned_composer_before_pasting(
     this turn's paste was dropped — and the Enter then submits pure garbage."""
     from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     screen = _FakeScreenControl(
         drop_pastes=999,
         initial_composer="[Pasted text #9 +40 lines][Pasted text #10 +42 lines]",
@@ -224,7 +227,7 @@ async def test_send_prompt_clears_a_poisoned_composer_before_pasting(
     _wire(monkeypatch, provider, screen)
 
     with pytest.raises(ScreenSetupError, match="没有出现在输入框"):
-        await provider._send_prompt(_BOX, "帮我看下这个问题")
+        await provider.send_prompt(_BOX, "帮我看下这个问题")
 
     assert screen.kills == 1 + tp._MAX_REPASTES, "no Ctrl+U before each paste"
     assert screen.enters == 0, "the old garbage widget was verified as this paste"
@@ -287,7 +290,7 @@ async def test_ensure_session_resumes_cloned_transcript(monkeypatch, tmp_path):
         return 0, "", ""
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     sid = "cloned-sid"
 
     # No transcript → fresh session (no --resume).
@@ -330,7 +333,7 @@ async def test_ensure_session_denies_the_unanswerable_ask_tool(monkeypatch, tmp_
         return (1, "", "") if "has-session" in args else (0, "", "")
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     await provider._ensure_session(
         _BOX, None, session_env=_topic_env(), session_dir=str(tmp_path)
     )
@@ -366,7 +369,7 @@ def _stub_env(monkeypatch, tmp_path):
     monkeypatch.setattr(tp.ws, "sessions_root", lambda p: tmp_path)
     monkeypatch.setattr(tp.ws, "topic_worktree", lambda p, t: tmp_path / "work")
     monkeypatch.setattr(
-        TmuxHooksProvider, "_room_id", lambda self, project_id, topic_id: _aio(topic_id)
+        TmuxChannel, "_room_id", lambda self, project_id, topic_id: _aio(topic_id)
     )
     (tmp_path / "session").mkdir()
     (tmp_path / "work").mkdir()
@@ -376,8 +379,9 @@ def _stub_env(monkeypatch, tmp_path):
 @pytest.mark.anyio
 async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
     router = HookRouter()
-    provider = TmuxHooksProvider(
-        image="img:test", router=router, idle_suspect_s=5, hard_ceiling_s=5
+    channel = TmuxChannel(image="img:test")
+    provider = ClaudeCodeRuntime(
+        channel, router=router, idle_suspect_s=5, hard_ceiling_s=5
     )
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
     topic_key = str(topic_id)
@@ -403,7 +407,7 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
         ]:
             router.push(topic_key, hook)
 
-    monkeypatch.setattr(provider, "_send_prompt", fake_send)
+    monkeypatch.setattr(channel, "send_prompt", fake_send)
 
     events = [
         e
@@ -431,7 +435,7 @@ async def test_run_turn_streams_hook_events_in_order(_stub_env, monkeypatch):
 @pytest.mark.anyio
 async def test_run_turn_without_docker_yields_error_result(monkeypatch):
     monkeypatch.setattr(tp.ws, "sandbox_available", lambda: False)
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = ClaudeCodeRuntime(TmuxChannel(image="img:test"), router=HookRouter())
     events = [
         e
         async for e in provider.run_turn(
@@ -461,7 +465,7 @@ async def test_run_turn_not_ready_yields_error(_stub_env, monkeypatch):
     monkeypatch.setattr(tp, "_docker", never_ready)
     monkeypatch.setattr(tp, "_READY_TIMEOUT_S", 0.5)
     monkeypatch.setattr(tp, "_READY_POLL_S", 0.1)
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = ClaudeCodeRuntime(TmuxChannel(image="img:test"), router=HookRouter())
     events = [
         e
         async for e in provider.run_turn(
@@ -476,12 +480,12 @@ async def test_run_turn_not_ready_yields_error(_stub_env, monkeypatch):
     assert "未就绪" in events[-1].text
 
 
-# --- turn 活跃度检测 (2026-08-09): TmuxHooksProvider's activity-detection seam.
+# --- turn 活跃度检测 (2026-08-09): TmuxChannel's activity-detection seam.
 
 
 @pytest.mark.anyio
 async def test_confirm_alive_reflects_pane_dead(monkeypatch):
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
 
     class _FakeControl:
         def __init__(self, dead: bool) -> None:
@@ -494,26 +498,26 @@ async def test_confirm_alive_reflects_pane_dead(monkeypatch):
         return _FakeControl(False)
 
     monkeypatch.setattr(provider, "_control", control_alive)
-    assert await provider._confirm_alive("box") is True
+    assert await provider.confirm_alive("box") is True
 
     async def control_dead(_name: str):
         return _FakeControl(True)
 
     monkeypatch.setattr(provider, "_control", control_dead)
-    assert await provider._confirm_alive("box") is False
+    assert await provider.confirm_alive("box") is False
 
 
 @pytest.mark.anyio
 async def test_confirm_alive_treats_a_probe_failure_as_alive(monkeypatch):
     """A control-connection hiccup while probing isn't proof of death — mirrors
     `_send_prompt` treating a SEND failure (not a probe failure) as fatal."""
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
 
     async def boom(_name: str):
         raise RuntimeError("control connection dropped")
 
     monkeypatch.setattr(provider, "_control", boom)
-    assert await provider._confirm_alive("box") is True
+    assert await provider.confirm_alive("box") is True
 
 
 @pytest.mark.anyio
@@ -521,7 +525,7 @@ async def test_activity_monitor_touches_tracker_on_pane_change(monkeypatch):
     """The background poller must count a CHANGED capture-pane as activity —
     the tmux backend's answer to "no hook, but the pane is clearly busy"; an
     unchanged pane must NOT keep touching the tracker."""
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     monkeypatch.setattr(provider, "_ACTIVITY_POLL_S", 0.01)
     outputs = ["frame-1", "frame-1", "frame-2", "frame-2", "frame-2"]
     calls = {"i": 0}
@@ -534,7 +538,7 @@ async def test_activity_monitor_touches_tracker_on_pane_change(monkeypatch):
     monkeypatch.setattr(tp, "_docker", fake_docker)
     tracker = ActivityTracker(last_at=0.0)
 
-    task = await provider._start_activity_monitor(_BOX, tracker)
+    task = await provider.start_activity_monitor(_BOX, tracker)
     assert task is not None
     try:
         await asyncio.sleep(0.08)
@@ -549,7 +553,7 @@ async def test_activity_monitor_touches_tracker_on_pane_change(monkeypatch):
 
 @pytest.mark.anyio
 async def test_activity_status_none_when_no_turn_is_monitored():
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     assert provider.activity_status(uuid.uuid4()) is None
 
 
@@ -558,7 +562,7 @@ async def test_activity_status_reports_idle_and_suspect_state(monkeypatch):
     """`cheese status` reads this while a turn is running (turn 活跃度检测) — it
     must reflect a currently-monitored turn's idle time and, once idle-suspect
     trips, how long it's been suspected."""
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     topic_id = uuid.uuid4()
     loop = asyncio.get_event_loop()
     tracker = ActivityTracker(last_at=loop.time())
@@ -637,7 +641,7 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
     from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     monkeypatch.setattr(settings, "subscription_enabled", True)
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = TmuxChannel(image="img:test")
     env = provider._topic_env(
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
@@ -659,12 +663,13 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
 @pytest.mark.anyio
 async def test_drop_control_also_drops_the_container_subscription():
     router = HookRouter()
-    provider = TmuxHooksProvider(image="img:test", router=router)
+    channel = TmuxChannel(image="img:test")
+    provider = ClaudeCodeRuntime(channel, router=router)
     project_id, topic_id = uuid.uuid4(), uuid.uuid4()
     subscription = await provider.ensure_subscription(project_id, topic_id)
     provider._live[topic_id] = _BOX
 
-    await provider.drop_control(_BOX)
+    await channel.drop_control(_BOX)
 
     assert subscription.consumer_task is not None
     assert subscription.consumer_task.done()
@@ -690,7 +695,7 @@ async def test_restart_recovery_subscribes_running_topic_containers(monkeypatch)
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
     router = HookRouter()
-    provider = TmuxHooksProvider(image="img:test", router=router)
+    provider = ClaudeCodeRuntime(TmuxChannel(image="img:test"), router=router)
 
     recovered = await provider.recover_subscriptions()
 
@@ -821,7 +826,7 @@ async def _bring_up(provider, box, project_id, topic_id, room_id, token="tok"):
     """Run only the setup half of a turn and hand back the screen it produced."""
     monkey = getattr(provider, "_room_id")  # noqa: B009 — documents the seam
     assert monkey is not None
-    return await provider._ensure_ready(
+    return await provider.ensure_ready(
         project_id=project_id,
         topic_id=topic_id,
         token=token,
@@ -843,10 +848,8 @@ async def test_a_rooms_topics_share_one_container(_room_box, monkeypatch):
     box = _room_box
     project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     rooms = {room_id: room_id, task_id: room_id}
-    monkeypatch.setattr(
-        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
-    )
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    monkeypatch.setattr(TmuxChannel, "_room_id", lambda self, p, t: _aio(rooms[t]))
+    provider = TmuxChannel(image="img:test")
 
     room_screen = await _bring_up(provider, box, project_id, room_id, room_id)
     task_screen = await _bring_up(provider, box, project_id, task_id, room_id)
@@ -869,10 +872,8 @@ async def test_two_topics_in_one_box_never_share_identity(_room_box, monkeypatch
     box = _room_box
     project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     rooms = {room_id: room_id, task_id: room_id}
-    monkeypatch.setattr(
-        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
-    )
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    monkeypatch.setattr(TmuxChannel, "_room_id", lambda self, p, t: _aio(rooms[t]))
+    provider = TmuxChannel(image="img:test")
 
     await _bring_up(provider, box, project_id, room_id, room_id, token="room-token")
     await _bring_up(provider, box, project_id, task_id, room_id, token="task-token")
@@ -913,10 +914,8 @@ async def test_the_container_environment_holds_nothing_per_topic(
     box = _room_box
     project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     rooms = {room_id: room_id, task_id: room_id}
-    monkeypatch.setattr(
-        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
-    )
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    monkeypatch.setattr(TmuxChannel, "_room_id", lambda self, p, t: _aio(rooms[t]))
+    provider = TmuxChannel(image="img:test")
 
     await _bring_up(provider, box, project_id, task_id, room_id, token="task-token")
 
@@ -969,10 +968,8 @@ async def test_each_topic_gets_its_own_published_port_slot(_room_box, monkeypatc
     box = _room_box
     project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     rooms = {room_id: room_id, task_id: room_id}
-    monkeypatch.setattr(
-        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
-    )
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    monkeypatch.setattr(TmuxChannel, "_room_id", lambda self, p, t: _aio(rooms[t]))
+    provider = TmuxChannel(image="img:test")
 
     await _bring_up(provider, box, project_id, room_id, room_id)
     await _bring_up(provider, box, project_id, task_id, room_id)
@@ -999,10 +996,8 @@ async def test_a_deaf_session_is_restarted_without_touching_the_box(
     box = _room_box
     project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     rooms = {room_id: room_id, task_id: room_id}
-    monkeypatch.setattr(
-        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
-    )
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    monkeypatch.setattr(TmuxChannel, "_room_id", lambda self, p, t: _aio(rooms[t]))
+    provider = TmuxChannel(image="img:test")
     await _bring_up(provider, box, project_id, room_id, room_id)
     await _bring_up(provider, box, project_id, task_id, room_id, token="stale")
     container = tp.ws.tmux_container_name(room_id)
@@ -1042,10 +1037,8 @@ async def test_rebuilding_a_box_is_announced_to_every_topic_in_it(
     box = _room_box
     project_id, room_id, task_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     rooms = {room_id: room_id, task_id: room_id}
-    monkeypatch.setattr(
-        TmuxHooksProvider, "_room_id", lambda self, p, t: _aio(rooms[t])
-    )
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    monkeypatch.setattr(TmuxChannel, "_room_id", lambda self, p, t: _aio(rooms[t]))
+    provider = TmuxChannel(image="img:test")
     await _bring_up(provider, box, project_id, room_id, room_id)
     await _bring_up(provider, box, project_id, task_id, room_id)
     _announced.clear()
@@ -1070,7 +1063,8 @@ async def test_interrupt_presses_escape_on_the_live_screen(monkeypatch):
     Weaker than killing the session, deliberately: what the platform wants when
     it decides a turn should not continue is the work stopped, not the
     conversation destroyed."""
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    channel = TmuxChannel(image="img:test")
+    provider = ClaudeCodeRuntime(channel, router=HookRouter())
     screen = _FakeScreenControl()
     sent: list[tuple] = []
 
@@ -1084,7 +1078,7 @@ async def test_interrupt_presses_escape_on_the_live_screen(monkeypatch):
         return await original_send(*args)
 
     screen.send = recording_send  # type: ignore[method-assign]
-    monkeypatch.setattr(provider, "_control", fake_control)
+    monkeypatch.setattr(channel, "_control", fake_control)
     session = SessionRef(uuid.uuid4(), uuid.uuid4())
     provider._live[session.topic_id] = _BOX
 
@@ -1097,5 +1091,5 @@ async def test_interrupt_without_a_live_screen_says_so(monkeypatch):
     """No screen, nothing to stop. False rather than a raise: the caller is
     deciding what to do about work it believes is stuck, and an exception there
     would take out whatever else it was in the middle of."""
-    provider = TmuxHooksProvider(image="img:test", router=HookRouter())
+    provider = ClaudeCodeRuntime(TmuxChannel(image="img:test"), router=HookRouter())
     assert await provider.interrupt(SessionRef(uuid.uuid4(), uuid.uuid4())) is False

@@ -4,7 +4,7 @@ A topic's work tree + resumable claude session live on ONE self-hosted machine, 
 topic freezes to the device its first turn ran on and every later turn returns to the
 SAME device — it must NEVER drift to another online device (that would start from an
 empty tree and corrupt session resume: the original PR-#46 bug).
-``resolve_pinned_device`` is the pure resolution ``DeviceProvider`` runs each turn;
+``resolve_pinned_device`` is the pure resolution ``DeviceChannel`` runs each turn;
 these test it directly with the in-memory repo (no DB, no hub).
 """
 

@@ -12,11 +12,11 @@ import uuid
 
 import pytest
 
-from tests.conftest import StubHooksProvider, wait_work_idle
+from tests.conftest import StubChannel, wait_work_idle
 from tests.integration.conftest import chat_ws_url
 
 
-class ChecklistScreen(StubHooksProvider):
+class ChecklistScreen(StubChannel):
     """Builds a 3-item checklist, finishes one, starts the next, then stops."""
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:

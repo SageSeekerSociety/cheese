@@ -23,7 +23,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.agent.tmux_provider import TmuxHooksProvider
+from app.domain.agent.tmux_provider import TmuxChannel
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -62,7 +62,7 @@ async def list_nodes(runner: Runner) -> dict:
     online = ws.sandbox_available()
     nodes: list[dict] = [
         {
-            "id": TmuxHooksProvider.name,
+            "id": TmuxChannel.name,
             "label": "知是本地算力",
             "kind": "local",
             "online": online,
@@ -80,7 +80,7 @@ async def list_nodes(runner: Runner) -> dict:
         {
             "nodes": nodes,
             "active_turns_total": active,
-            "current_provider": TmuxHooksProvider.name,
+            "current_provider": TmuxChannel.name,
         }
     )
 

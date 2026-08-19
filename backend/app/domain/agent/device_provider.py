@@ -1,12 +1,12 @@
-"""DeviceProvider — the self-hosted / BYO-compute backend (AGENT_BACKEND=device, P3).
+"""DeviceChannel — the self-hosted / BYO-compute channel (AGENT_BACKEND=device, P3).
 
-Symmetric to ``TmuxHooksProvider`` but the interactive ``claude`` runs on a *user's
-own enrolled machine* instead of a platform container. The platform opens a screen on
-the device over the frozen ``link.Msg`` channel (``DeviceHub``); the screen runs
-``claude`` with our hooks (``device_launch``), so structured events come back through
-the SAME Claude Code hook path (``/sandbox/hooks/{topic}`` → ``hook_router`` →
-``translate_hook``) the tmux backend proved. The prompt is delivered by the minimal
-cheeselet's ``prompt`` function — not by reading/writing the screen from the backend.
+Symmetric to ``TmuxChannel`` but the screen lives on a *user's own enrolled
+machine* instead of a platform container. The platform opens it over the frozen
+``link.Msg`` channel (``DeviceHub``) and the device runs ``claude`` with our
+hooks (``device_launch``), so events come back through the SAME hook path
+(``/sandbox/hooks/{topic}`` → ``hook_router`` → ``translate_hook``) the tmux
+channel uses. The prompt is delivered by the minimal cheeselet's ``prompt``
+function — not by reading/writing the screen from the backend.
 
 Per request:
   1. resolve an online device bound to the project + its agent identity (DB),
@@ -34,11 +34,10 @@ from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
-    HookRouter,
-    HooksSessionProvider,
+    Channel,
     ScreenSetupError,
-    TopicSubscription,
     build_screen_launch,
+    drop_topic_subscriptions,
 )
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,
@@ -281,7 +280,7 @@ def _read_proxy_ca() -> str:
 # How long the idle-suspect liveness probe (DEVICE_ALIVE_PROBE over the link
 # `exec`) may take. Short by design — well under hooks_substrate's CONFIRM_POLL_S
 # (15s) so a suspected-wedged turn re-probes on cadence — and a timeout/hiccup is
-# read as alive, never as death (see `_confirm_alive`).
+# read as alive, never as death (see `confirm_alive`).
 _ALIVE_PROBE_TIMEOUT_S = 8.0
 
 # Retire-and-reopen a reused screen whose baked credential is within this many
@@ -319,16 +318,17 @@ def _credential_expiry(token: str) -> int:
     return int(time.time()) + SESSION_TOKEN_TTL_S
 
 
-class DeviceProvider(HooksSessionProvider[HubScreen]):
-    """The REMOTE hooks backend: runs interactive `claude` on a user's enrolled
-    machine over the frozen link.Msg channel (DeviceHub), streaming AgentEvents
-    from Claude Code hooks. Transport = link.Msg + a device screen; the shared
-    turn flow lives in the base (HooksSessionProvider) — this class implements only
-    the transport seam. The screen ctx is a HubScreen."""
+class DeviceChannel(Channel):
+    """The REMOTE channel: a screen on a user's enrolled machine, opened over
+    the frozen link.Msg link (DeviceHub). The screen is a ``HubScreen``.
+
+    Enrollment, device resolution, rendezvous and the launcher shipped to the
+    machine are what this file is about; what runs on the screen is
+    ``ClaudeCodeRuntime``."""
 
     name = "device"
-    _needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
-    _timeout_message = "device 轮次超时"
+    needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
+    timeout_message = "device 轮次超时"
 
     def __init__(
         self,
@@ -336,26 +336,8 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         hub: DeviceHub | None = None,
         session_factory: async_sessionmaker | None = None,
         device_resolver: DeviceResolver | None = None,
-        router: HookRouter | None = None,
         public_base: str | None = None,
-        idle_suspect_s: float = 300.0,
-        hard_ceiling_s: float = 10800.0,
     ) -> None:
-        # Two-layer turn timeout, symmetric with the local tmux backend (turn 活跃度
-        # 检测). Below `idle_suspect_s` of no hook AND no liveness evidence a turn is
-        # normal; past it it is only SUSPECTED wedged and `_confirm_alive` (the
-        # process-tree probe below) is polled until it confirms the screen is
-        # actually dead; `hard_ceiling_s` is the unconditional backstop. The old
-        # single value collapsed both layers into one 900s deadline that killed a
-        # long-but-silent foreground command (a 20-minute pytest emits no interim
-        # hook) at minute 15. Defaults mirror the tmux backend
-        # (settings.agent_idle_suspect_s / agent_turn_hard_ceiling_s), so the local
-        # and remote hooks backends share ONE timeout policy.
-        super().__init__(
-            router=router,
-            idle_suspect_s=idle_suspect_s,
-            hard_ceiling_s=hard_ceiling_s,
-        )
         self._hub = hub or device_hub
         self._session_factory = session_factory
         # A resolver may be injected (tests / future routing); otherwise the DB-backed
@@ -368,13 +350,18 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
-        happen per turn in ``run_turn``."""
+        happen per turn, in ``precheck``."""
         return bool(self._hub.online_device_ids())
 
-    async def recover_subscriptions(
+    async def discover(
         self, device_id: str | None = None
-    ) -> list[TopicSubscription]:
-        """Subscribe topics durably pinned to currently connected devices."""
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
+        """Topics durably pinned to currently connected devices.
+
+        No screen comes back with them: the ``HubScreen`` that was open before
+        the restart is gone from this process, and the device reattaches on the
+        topic's next turn. What survives is the PIN, which is enough to start
+        listening again."""
         online = set(self._hub.online_device_ids())
         device_ids = [device_id] if device_id in online else []
         if device_id is None:
@@ -398,27 +385,19 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
                     if topic is not None:
                         scopes.append((topic.project_id, topic.id, connected_device_id))
 
-        recovered: list[TopicSubscription] = []
-        for project_id, topic_id, connected_device_id in scopes:
-            subscription = await self.ensure_subscription(
-                project_id, topic_id, paused=True
-            )
+        for _, topic_id, connected_device_id in scopes:
             self._subscription_devices[topic_id] = connected_device_id
-            recovered.append(subscription)
-        return recovered
+        return [(project_id, topic_id, None) for project_id, topic_id, _ in scopes]
 
-    async def drop_device_subscriptions(self, device_id: str) -> None:
-        topic_ids = [
+    def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
+        return [
             topic_id
             for topic_id, subscribed_device_id in self._subscription_devices.items()
             if subscribed_device_id == device_id
         ]
-        for topic_id in topic_ids:
-            await self._close_topic(topic_id)
 
-    async def _close_topic(self, topic_id: uuid.UUID) -> None:
+    def forget_topic(self, topic_id: uuid.UUID) -> None:
         self._subscription_devices.pop(topic_id, None)
-        await super()._close_topic(topic_id)
 
     # --- device / screen resolution ----------------------------------------
 
@@ -580,7 +559,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         it cannot respawn one whose `claude` died while the connector kept running,
         because the connector still holds the sid and merely hot-reloads into the
         dead pane. So a reused screen is first probed for a live `claude`
-        (``_confirm_alive``); an explicitly dead one is closed and reopened under a
+        (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
         if existing is not None and self._credential_is_stale(existing):
@@ -601,7 +580,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             # the next summon instead of an unrunnable screen being reused forever.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
-        if existing is not None and not await self._confirm_alive(existing):
+        if existing is not None and not await self.confirm_alive(existing):
             # The hub still has a screen for this topic, but the `claude` behind it
             # is GONE — its tmux session was killed out from under a STILL-RUNNING
             # connector (an orphan sweep, a `tmux kill-server`, a crash). Reasserting
@@ -618,7 +597,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             # connector forget the sid too) so the code below OPENS a fresh one under
             # a NEW sid the connector cannot short-circuit and must Spawn: the
             # launcher runs, `claude` restarts, hooks flow. Only an explicit `dead`
-            # reading forces this (see `_confirm_alive`) — an alive, `unknown`, or
+            # reading forces this (see `confirm_alive`) — an alive, `unknown`, or
             # probe-hiccup screen is still reasserted, exactly as before.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
@@ -631,7 +610,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             # instead of relaunching, so nothing on either side ever restarts it.
             # `claude` read that HTTPS_PROXY once at startup and never re-reads it,
             # so every turn from then on dies with `API Error: Unable to connect to
-            # API (ConnectionRefused)` while `_confirm_alive` keeps answering
+            # API (ConnectionRefused)` while `confirm_alive` keeps answering
             # `alive` — the same "live process + dead dependency" shape the
             # credential gate above exists for, on the other dependency.
             #
@@ -808,12 +787,12 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
 
     # --- turn --------------------------------------------------------------
 
-    async def _precheck(
+    async def precheck(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> tuple[str, int, str]:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
-        The resolved tuple is handed back to ``_ensure_ready`` via ``precheck``.
+        The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
         Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
         resolved = await self._resolve_device_agent(project_id, topic_id)
         if resolved is None:
@@ -822,7 +801,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             )
         return resolved
 
-    async def _ensure_ready(
+    async def ensure_ready(
         self,
         *,
         project_id: uuid.UUID,
@@ -838,9 +817,9 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         precheck: object,
     ) -> HubScreen:
         """Reuse/open the topic's screen running `claude` with our hooks on the
-        device resolved by ``_precheck``; return the screen (ctx). Raises
+        device resolved by ``precheck``; return the screen (ctx). Raises
         ScreenSetupError when the screen fails."""
-        assert isinstance(precheck, tuple)  # from our _precheck
+        assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
             screen = await self._ensure_screen(
@@ -865,7 +844,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
 
-    async def _send_interrupt(self, screen: HubScreen) -> bool:
+    async def send_interrupt(self, screen: HubScreen) -> bool:
         """Escape into the screen, down the channel that carries a watching
         person's keystrokes. Not the rendezvous socket: that enqueues a MESSAGE,
         and a message is what `send` is for — this is the key that takes the
@@ -873,7 +852,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         await self._hub.viewer_input(screen.device_id, screen.sid, b"\x1b")
         return True
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: HubScreen, prompt: str, images: list[dict] | None = None
     ) -> bool | None:
         """Deliver the prompt over the screen's rendezvous socket, where Claude
@@ -926,11 +905,11 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         (HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN) exactly once at
         startup, and a reused screen is only reasserted (a cheeselet hot-reload),
         never relaunched — so a still-running process on a dead credential is
-        rejected on every request while the process-tree probe (`_confirm_alive`)
+        rejected on every request while the process-tree probe (`confirm_alive`)
         keeps reporting it healthy. This is the local, in-memory half of the gate;
         it never touches the device.
 
-        Conservative in the same direction as `_confirm_alive`: a screen with no
+        Conservative in the same direction as `confirm_alive`: a screen with no
         recorded expiry (`None` — adopted after a server restart, or a dev token
         with no decodable claim) is treated as FRESH and never retired on missing
         information, so we only ever retire a credential we can prove is dying."""
@@ -955,7 +934,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         directly, so there is no helper to lose) — that keeps the per-turn cost at
         zero everywhere the failure cannot happen.
 
-        Conservative in the same direction as `_confirm_alive`: only an explicit
+        Conservative in the same direction as `confirm_alive`: only an explicit
         `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
         (no /proc, no awk) is read as "still up", so a probe hiccup never throws
         away a healthy screen and its in-progress work."""
@@ -977,7 +956,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
             return False
         return (result.get("stdout") or "").strip() == "down"
 
-    async def _confirm_alive(self, screen: HubScreen) -> bool:
+    async def confirm_alive(self, screen: HubScreen) -> bool:
         """Idle-suspect liveness probe for a device screen (turn 活跃度检测, the
         device half). Once a turn crosses `idle_suspect_s`, the hooks substrate
         calls this to tell a `claude` that is silently working — a long FOREGROUND
@@ -991,7 +970,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         cheap screen-byte signal on a headless device (the hub relays raw bytes only
         to a live browser viewer). Every device uses the same probe.
 
-        Conservative, mirroring TmuxHooksProvider._confirm_alive: only an explicit
+        Conservative, mirroring TmuxChannel.confirm_alive: only an explicit
         `dead` reading ends the turn; any exec failure/timeout, a non-zero exit, or
         an `unknown`/empty result is read as alive, so a link hiccup or a hardened
         /proc never false-kills a turn that is really still working."""
@@ -1029,7 +1008,7 @@ class DeviceProvider(HooksSessionProvider[HubScreen]):
         successful no-op, and every failure is swallowed so one topic can never break
         a reap loop. The screen is forgotten even when its device is offline, so an
         archived topic leaves no stale registry entry behind."""
-        await self._close_topic(topic_id)
+        await drop_topic_subscriptions(topic_id)
         for screen in self._hub.screens_for_topic(topic_id):
             device_id = screen.device_id
             try:
@@ -1072,14 +1051,14 @@ async def release_topic_screen(
     hub: DeviceHub | None = None,
     session_factory: async_sessionmaker | None = None,
 ) -> None:
-    """Free a topic's device screen from a caller that holds no ``DeviceProvider`` —
+    """Free a topic's device screen from a caller that holds no ``DeviceChannel`` —
     the accept/archive path and the idle reaper both reach compute through ws-level
-    helpers, not the compute pool. Thin wrapper over ``DeviceProvider.release_topic``
+    helpers, not the compute pool. Thin wrapper over ``DeviceChannel.release_topic``
     bound to the shared ``device_hub`` singleton (``hub=None``). Best-effort and
     idempotent, so it is safe to call for EVERY archived/idle topic regardless of
     backend: a topic that never ran on a device simply has no screen to free."""
-    provider = DeviceProvider(hub=hub, session_factory=session_factory)
-    await provider.release_topic(project_id, topic_id)
+    channel = DeviceChannel(hub=hub, session_factory=session_factory)
+    await channel.release_topic(project_id, topic_id)
 
 
 def topic_credential_expiry(

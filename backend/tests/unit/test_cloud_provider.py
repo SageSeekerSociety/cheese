@@ -1,4 +1,4 @@
-"""CloudProvider readiness and topic-owned endpoint resolution."""
+"""CloudChannel readiness and topic-owned endpoint resolution."""
 
 import uuid
 from types import SimpleNamespace
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.agent.cloud_provider import CloudLease, CloudProvider
+from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
@@ -49,7 +49,7 @@ async def test_running_machine_waits_until_ai_and_connector_are_ready():
         ai_ready=True,
     )
     ensure = AsyncMock(side_effect=[provisioning, ready_lease])
-    provider = CloudProvider(
+    provider = CloudChannel(
         session_factory=_Session,
         hub=_Hub({"cloud-1"}),
         configured=True,
@@ -86,7 +86,7 @@ async def test_cloud_resolution_rejects_another_topics_endpoint(monkeypatch):
     monkeypatch.setattr(
         "app.domain.agent.cloud_provider.sql_device_service", lambda _session: devices
     )
-    provider = CloudProvider(
+    provider = CloudChannel(
         session_factory=_Session,
         hub=_Hub({"own-cloud"}),
         configured=True,
@@ -111,7 +111,7 @@ async def test_cloud_resolution_never_accepts_a_hosted_endpoint(monkeypatch):
     monkeypatch.setattr(
         "app.domain.agent.cloud_provider.sql_device_service", lambda _session: devices
     )
-    provider = CloudProvider(
+    provider = CloudChannel(
         session_factory=_Session,
         hub=_Hub({"hosted-1"}),
         configured=True,

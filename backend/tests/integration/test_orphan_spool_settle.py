@@ -22,7 +22,7 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
-from tests.conftest import StubHooksProvider, stub_compute
+from tests.conftest import StubChannel, stub_compute
 from tests.turn_log import open_turn, open_turn_ids
 
 
@@ -31,18 +31,18 @@ def _spool_event(spool, eid: str, payload: dict) -> None:
     event_spool.append(spool, eid, payload)
 
 
-class _MustNotRun(StubHooksProvider):
+class _MustNotRun(StubChannel):
     """A screen whose being written to IS the failure: attach mode means no
     prompt is sent at all."""
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del screen, prompt, images
         raise AssertionError("attach mode must never start a turn")
 
 
-class _RecordingScreen(StubHooksProvider):
+class _RecordingScreen(StubChannel):
     """Records every prompt it is asked to run (the re-send path's witness)."""
 
     def __init__(self) -> None:

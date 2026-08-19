@@ -131,11 +131,7 @@ class AgentResult:
 
 
 AgentEvent = (
-    AgentMessage
-    | AgentToolUse
-    | AgentToolResult
-    | AgentSessionInfo
-    | AgentResult
+    AgentMessage | AgentToolUse | AgentToolResult | AgentSessionInfo | AgentResult
 )
 
 

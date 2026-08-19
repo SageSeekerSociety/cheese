@@ -36,7 +36,7 @@ import pytest
 from app.core import sandbox_auth
 from app.core.config import Settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.tmux_provider import TmuxHooksProvider, TmuxScreen
+from app.domain.agent.tmux_provider import TmuxChannel, TmuxScreen
 
 PROJECT = str(uuid.uuid4())
 TOPIC = str(uuid.uuid4())
@@ -85,7 +85,7 @@ async def test_a_session_signed_by_a_rotated_secret_is_declared_dead(monkeypatch
         _session_env(CHEESE_TOKEN=stale, CHEESE_PROJECT=PROJECT, CHEESE_TOPIC=TOPIC),
     )
 
-    provider = TmuxHooksProvider(image="img:test")
+    provider = TmuxChannel(image="img:test")
     assert await provider._hook_token_dead(SCREEN) is True
 
 
@@ -99,7 +99,7 @@ async def test_a_session_whose_token_still_verifies_is_left_alone(monkeypatch):
         _session_env(CHEESE_TOKEN=good, CHEESE_PROJECT=PROJECT, CHEESE_TOPIC=TOPIC),
     )
 
-    provider = TmuxHooksProvider(image="img:test")
+    provider = TmuxChannel(image="img:test")
     assert await provider._hook_token_dead(SCREEN) is False
 
 
@@ -115,7 +115,7 @@ async def test_a_token_scoped_to_another_topic_is_dead(monkeypatch):
         _session_env(CHEESE_TOKEN=other, CHEESE_PROJECT=PROJECT, CHEESE_TOPIC=TOPIC),
     )
 
-    provider = TmuxHooksProvider(image="img:test")
+    provider = TmuxChannel(image="img:test")
     assert await provider._hook_token_dead(SCREEN) is True
 
 
@@ -128,7 +128,7 @@ async def test_a_session_with_no_token_is_not_declared_dead(monkeypatch):
         _session_env(CHEESE_PROJECT=PROJECT, CHEESE_TOPIC=TOPIC),
     )
 
-    provider = TmuxHooksProvider(image="img:test")
+    provider = TmuxChannel(image="img:test")
     assert await provider._hook_token_dead(SCREEN) is False
 
 
@@ -143,5 +143,5 @@ async def test_a_failed_probe_never_destroys_a_session(monkeypatch):
 
     monkeypatch.setattr("app.domain.agent.tmux_provider._docker", _docker)
 
-    provider = TmuxHooksProvider(image="img:test")
+    provider = TmuxChannel(image="img:test")
     assert await provider._hook_token_dead(SCREEN) is False

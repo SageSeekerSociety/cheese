@@ -18,6 +18,7 @@ class _FakeProvider:
 
     harness = "claude-code"
     embeds_images = True
+    provisions_machine = False
 
     def __init__(self, name: str):
         self.name = name
@@ -114,22 +115,26 @@ def test_build_pool_registers_device_alongside_the_local_box():
     assert pool.select(provider_id="device").name == "device"
 
 
-def test_build_pool_registers_the_concrete_cloud_provider():
+def test_build_pool_registers_the_concrete_cloud_channel():
     from unittest.mock import AsyncMock
 
-    from app.domain.agent.cloud_provider import CloudProvider
+    from app.domain.agent.cloud_provider import CloudChannel
     from app.domain.agent.compute import build_compute_pool
 
-    cloud = CloudProvider(
+    cloud = CloudChannel(
         configured=False,
         ensure_topic_cloud=AsyncMock(),
         read_topic_cloud=AsyncMock(),
     )
-    pool = build_compute_pool(cloud_provider=cloud)
+    pool = build_compute_pool(cloud_channel=cloud)
 
+    backend = pool.select(provider_id="cloud")
     assert pool.has("cloud")
-    assert pool.select(provider_id="cloud") is cloud
-    assert cloud.available() is False
+    assert backend.channel is cloud
+    # Unconfigured Cloud is registered but not runnable, and it is the one
+    # backend the turn path must wait for a machine on.
+    assert backend.available() is False
+    assert backend.provisions_machine is True
 
 
 def test_device_backend_still_offers_a_local_transport(monkeypatch):

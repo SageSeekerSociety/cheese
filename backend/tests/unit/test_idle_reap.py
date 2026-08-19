@@ -225,7 +225,7 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
     split out of, a room runs in its own, and the answer is recorded where the
     sync workspace layer can read it (`docker port` lookups have no session)."""
     from app.core.config import settings
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.tmux_provider import TmuxChannel
 
     factory = client.test_factory
     async with factory() as session:
@@ -238,7 +238,7 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
         await session.commit()
         project_id, room_id, task_id = project.id, room.id, task.id
 
-    provider = TmuxHooksProvider(image="img:test", session_factory=factory)
+    provider = TmuxChannel(image="img:test", session_factory=factory)
     old_root = settings.workspace_root
     settings.workspace_root = str(tmp_path / "rooms")
     try:

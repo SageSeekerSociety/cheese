@@ -42,12 +42,12 @@ import pytest
 from app.domain.agent.chat import ChatService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.handles import CHEESE_HANDLE
-from tests.conftest import StubHooksProvider, drain_hooks, stub_compute
+from tests.conftest import StubChannel, drain_hooks, stub_compute
 
 SESSION_ID = "sess-exit-path"
 
 
-class _Screen(StubHooksProvider):
+class _Screen(StubChannel):
     """Announces its session id on SessionStart and then ends the turn the way
     this test wants it to end."""
 
@@ -57,7 +57,7 @@ class _Screen(StubHooksProvider):
         super().__init__(idle_suspect_s=0.2, hard_ceiling_s=0.4, delivery_timeout_s=0.2)
         self._mode = mode
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del images
@@ -167,12 +167,12 @@ _CHILD = textwrap.dedent(
     from sqlalchemy.pool import NullPool
     from app.domain.agent.chat import ChatService
     from app.domain.agent.compute import ComputePool
-    from tests.conftest import StubHooksProvider
+    from tests.conftest import StubChannel
 
     DSN, TOPIC, MARKER, WS, SID = sys.argv[1:6]
 
-    class A(StubHooksProvider):
-        async def _send_prompt(self, screen, prompt, images=None):
+    class A(StubChannel):
+        async def send_prompt(self, screen, prompt, images=None):
             self.starts(screen, session_id=SID)
             return True
 
@@ -184,7 +184,7 @@ _CHILD = textwrap.dedent(
             session_factory=factory,
             base_system_prompt="你是芝士。",
             workspace_root=WS,
-            compute=ComputePool([screen], screen.name),
+            compute=ComputePool([screen.runtime], screen.name),
         )
         async for _ in chat.converse(
             topic_id=uuid.UUID(TOPIC), author="u", content="做事", summon=True
@@ -277,11 +277,11 @@ def test_session_pointer_survives_a_real_sigkill(client, tmp_path):
     )
 
 
-class _SilentScreen(StubHooksProvider):
+class _SilentScreen(StubChannel):
     """A screen that dies before announcing anything — the one case where there
     genuinely is no session to point at."""
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del screen, prompt, images

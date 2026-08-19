@@ -95,7 +95,7 @@ async def test_sandbox_container_is_started_as_that_user(project, monkeypatch):
         return 0, "", ""
 
     monkeypatch.setattr(tmux_provider, "_docker", _fake_docker)
-    provider = tmux_provider.TmuxHooksProvider(image="cheesex-agent-sandbox:test")
+    provider = tmux_provider.TmuxChannel(image="cheesex-agent-sandbox:test")
     topic = uuid.uuid4()
     # The argv it builds IS the behaviour under test.
     await provider._create_container(  # noqa: SLF001

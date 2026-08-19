@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
-from app.domain.agent.cloud_provider import CloudProvider
+from app.domain.agent.cloud_provider import CloudChannel
 from app.domain.agent.compute import ComputePool
+from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 from app.domain.block.models import BlockKind, consumed_turn, prompt_attempts
 from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
@@ -31,7 +32,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
             await session.commit()
 
     asyncio.run(_select_cloud())
-    cloud = CloudProvider(
+    cloud = CloudChannel(
         configured=True,
         ensure_topic_cloud=AsyncMock(),
         read_topic_cloud=AsyncMock(),
@@ -45,7 +46,7 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
             session_factory=client.test_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(tmp_path / "workspace"),
-            compute=ComputePool([cloud], "cloud"),
+            compute=ComputePool([ClaudeCodeRuntime(cloud)], "cloud"),
         )
 
     app.dependency_overrides[get_chat_service] = override

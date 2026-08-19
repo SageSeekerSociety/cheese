@@ -22,9 +22,10 @@ harness 一样都不用付。
 
 三类，性质完全不同：
 
-- **transports**（tmux / device / cloud）：它们今天是这套适配器基类的**子类**，所以
-  要 import 它的内部才能接上。这正是将来「组合替代继承」要拆掉的那条边——一个
-  runtime 跑在任意一条通道上，而不是每换一条传输就把 runtime 重新实现一遍。
+- **channels**（tmux / device / cloud）：它们实现 ``Channel``，所以拿走这一个接缝
+  和它抛的错。剩下那几个名字才是账——``hooks_settings``、``build_screen_launch``、
+  ``SESSION_TOKEN_TTL_S``：这些是 Claude Code 的知识，今天还长在传输层里，本该在接缝
+  的另一边。第二个 harness 要接上 tmux 的时候，红的就是这几行。
 - **chat.py**：拿走 ``TopicSubscription`` 和 ``MessageAssembler``——也就是说「把
   hook 翻译成房间里的东西」这件事还有一半住在平台侧，而它认得的是 Claude Code 的
   事件形状。
@@ -57,11 +58,12 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "log_cursor",
         "read_log",
     ),
-    # --- 池子按「是不是长在那儿的会话」分流，靠 isinstance ---
+    # --- 池子装的是 runtime 包着 channel，装配在这里发生 ---
     "app.domain.agent.compute": (
+        "Channel",
+        "ClaudeCodeRuntime",
         "HookActivityConsumer",
         "HookEventConsumer",
-        "HooksSessionProvider",
         "TopicSubscription",
     ),
     "app.domain.agent.device_hub": (
@@ -69,25 +71,23 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "drop_screen_subscriptions",
         "hook_router",
     ),
-    # --- transports：今天是子类，将来是通道 ---
+    # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
     "app.domain.agent.cloud_provider": ("ScreenSetupError",),
     "app.domain.agent.device_provider": (
+        "Channel",
         "DEVICE_ALIVE_PROBE",
         "DEVICE_TUNNEL_PROBE",
-        "HookRouter",
-        "HooksSessionProvider",
         "SESSION_TOKEN_TTL_S",
         "ScreenSetupError",
-        "TopicSubscription",
         "build_screen_launch",
+        "drop_topic_subscriptions",
     ),
     "app.domain.agent.tmux_provider": (
         "ActivityTracker",
-        "HookRouter",
-        "HooksSessionProvider",
+        "Channel",
         "SESSION_TOKEN_TTL_S",
         "ScreenSetupError",
-        "TopicSubscription",
+        "drop_screen_subscriptions",
         "hooks_settings",
     ),
 }

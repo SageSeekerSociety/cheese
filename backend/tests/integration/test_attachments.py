@@ -10,7 +10,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.main import app
-from tests.conftest import StubHooksProvider
+from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url
 
 # A valid 1x1 transparent PNG (67 bytes) — small but real image bytes.
@@ -150,7 +150,7 @@ def test_image_only_message_allowed(client, stub_hooks):
 # per backend, and the prompt's wording follows the declaration.
 
 
-class _NoEmbedScreen(StubHooksProvider):
+class _NoEmbedScreen(StubChannel):
     """The same screen, declaring it cannot carry image bytes."""
 
     name = "no-embed"
@@ -165,7 +165,7 @@ def _run_on_non_embedding_backend(client, tmp_path) -> _NoEmbedScreen:
         session_factory=client.test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([screen], screen.name),
+        compute=ComputePool([screen.runtime], screen.name),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     return screen

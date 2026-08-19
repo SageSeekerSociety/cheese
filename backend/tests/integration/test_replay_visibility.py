@@ -15,11 +15,11 @@ import uuid
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.main import app
-from tests.conftest import StubHooksProvider, stub_compute
+from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
 
 
-class SilentScreen(StubHooksProvider):
+class SilentScreen(StubChannel):
     """A session that takes the prompt and then says nothing at all.
 
     The turn ends the way a dead session's turn ends — the watchdog gives up and

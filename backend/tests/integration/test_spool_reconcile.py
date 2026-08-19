@@ -20,10 +20,10 @@ from app.domain.project.models import ProjectMember
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
-from tests.conftest import StubHooksProvider, settle_turn, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
-class QuietScreen(StubHooksProvider):
+class QuietScreen(StubChannel):
     """A turn that produces no events of its own — so the only 现场 event under
     test is the one recovered from the spool."""
 
@@ -189,7 +189,7 @@ async def test_spooled_chat_message_is_backfilled(client, tmp_path, monkeypatch)
     )
 
 
-class _DupToolScreen(StubHooksProvider):
+class _DupToolScreen(StubChannel):
     """Emits the SAME tool event twice (same event-id) — a device drainer
     re-delivery after a lost ack — then finishes."""
 
@@ -253,7 +253,7 @@ async def test_backfilled_events_are_broadcast_not_just_persisted(
     assert len(message_frames) == 1
 
 
-class _LateSpoolScreen(StubHooksProvider):
+class _LateSpoolScreen(StubChannel):
     """A hooks turn whose final message's OWN MessageDisplay hook lost the race
     with its Stop hook: the hook lands in the spool WHILE this turn is still
     running (mirrors the container's synchronous pre-curl spool write racing
@@ -533,7 +533,7 @@ async def test_incomplete_flushes_wait_for_the_missing_one(
     assert _unread(spool) == []
 
 
-class _FlushedMessageScreen(StubHooksProvider):
+class _FlushedMessageScreen(StubChannel):
     """A live hooks turn after coalescing: ONE whole message carrying every
     constituent flush id, then the Stop echoing the same text."""
 
@@ -624,7 +624,7 @@ async def test_abandoned_partial_lands_joined_after_grace(
 # --- Stop-vs-live dedup across mention canonicalization -----------------------
 
 
-class _LiveMessageScreen(StubHooksProvider):
+class _LiveMessageScreen(StubChannel):
     """One complete 芝士 message delivered live, with its own event id."""
 
     def __init__(self, text: str) -> None:

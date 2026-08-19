@@ -50,9 +50,9 @@ def test_only_a_local_container_can_host_an_app_preview():
     nothing here to look up — that is a different state from "the container
     died", and the panel's copy depends on telling them apart."""
     from app.domain.agent.compute import app_preview_reachable
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.tmux_provider import TmuxChannel
 
-    assert app_preview_reachable(TmuxHooksProvider.name) is True
+    assert app_preview_reachable(TmuxChannel.name) is True
     assert app_preview_reachable("device") is False
     assert app_preview_reachable("cloud") is False
     # Unpinned topic → whatever this deployment defaults to, not a blanket yes.

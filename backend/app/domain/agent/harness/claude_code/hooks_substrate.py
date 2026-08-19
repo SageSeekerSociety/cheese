@@ -1,22 +1,25 @@
-"""Shared substrate for the hooks-driven `claude` backends (fusion-design §8.6).
+"""Claude Code, and the one seam a transport plugs into (fusion-design §8.6).
 
-Both the LOCAL backend (``TmuxHooksProvider`` — a per-topic tmux session in a
-platform container) and the REMOTE backend (``DeviceProvider`` — a screen on a
-user's enrolled machine over the frozen ``link.Msg`` channel) drive an
-interactive ``claude`` and sense it through the same Claude Code hooks. Enrollment
-and transport aside, the session flow is identical: subscribe before screen
-setup, inject through the transport seam, and consume hooks continuously.
+``ClaudeCodeRuntime`` drives an interactive ``claude`` and senses it through
+Claude Code hooks. ``Channel`` is the transport it drives over: a per-topic tmux
+session in a platform container, a screen on someone's enrolled machine across
+the frozen ``link.Msg`` link, a leased Cloud machine reached the same way.
 
-Per the fusion 统一底座 decision, the transport-INDEPENDENT parts live here so the
-two backends are one substrate that can't drift — "本地/远程只差入册，不两套":
+The split is the whole file. Everything the runtime does — subscribe before
+screen setup, spool the hooks, watch for a session that has gone quiet, report
+receipts, hold the turn's attribution — is a cost of driving a TUI written for a
+person, and none of it changes with the transport. It used to be a base class,
+so each transport carried its own copy and a second harness would have needed
+one copy per transport. A channel now answers two questions (bring a screen up,
+put text into it) and never hears the word "hook".
+
+Also here, all transport-free and unit-testable without Docker or a device:
 
 - ``hooks_settings()`` — the ``~/.claude/settings.json`` wiring Claude Code COMMAND
   hooks to the ``cheese-hook`` forwarder (HTTP hooks are blocked to non-loopback).
 - ``CHEESE_HOOK_SCRIPT`` — the forwarder: POST each hook's JSON to the backend.
 - ``monitor_session_activity(...)`` — shared idle, liveness, and ceiling policy.
 - ``SESSION_TOKEN_TTL_S`` — the shared session-length scoped-token TTL.
-
-All pure / transport-free, so it is unit-testable without Docker or a device.
 """
 
 import asyncio
@@ -60,9 +63,9 @@ from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
 
-# Screen teardown starts in transport-specific layers while subscriptions stay
-# owned here. Weak references avoid keeping rebuilt pools and test providers alive.
-_PROVIDERS: weakref.WeakSet[object] = weakref.WeakSet()
+# Screen teardown starts down in a channel while subscriptions stay owned up
+# here. Weak references avoid keeping rebuilt pools and test runtimes alive.
+_RUNTIMES: weakref.WeakSet[object] = weakref.WeakSet()
 
 # How many times the session re-sends an abandoned prompt (#445) before declaring
 # the screen's input path broken and letting the no-output bound take over.
@@ -207,11 +210,11 @@ UNDELIVERED_MESSAGE = PROMPT_UNDELIVERED_MESSAGE
 # never consumes, so two readers at different cursors both see the whole tail;
 # retention is the only thing that deletes.
 #
-# Free functions, not methods on a live provider, because the log is addressed
+# Free functions, not methods on a live runtime, because the log is addressed
 # by SESSION and outlives every transport that ever wrote to it: the crash
 # recovery that reads it runs before any screen has been found, and the settle
-# that drains an orphan's tail has no provider in hand. The methods on
-# `HooksSessionProvider` are the same four, so the contract is satisfied by an
+# that drains an orphan's tail has no runtime in hand. The methods on
+# `ClaudeCodeRuntime` are the same four, so the contract is satisfied by an
 # instance too.
 
 
@@ -531,39 +534,196 @@ def _prompt_with_native_images(prompt: str, images: list[dict] | None) -> str:
     return f"{prompt}\n\n{mentions}" if prompt else mentions
 
 
-class HooksSessionProvider[ScreenT]:
-    """Base for the hooks-driven backends (fusion-design §8.6, increment 2).
+class Channel:
+    """一条通往「机器上一块屏幕」的通道：开机器、把字送进去、按 Escape。
 
-    Owns the transport-independent subscription and activity lifecycle so local
-    and remote screens cannot drift. Subclasses only implement screen setup,
-    prompt injection, and transport liveness.
+    The transport half of what used to be one class. A channel knows how to
+    reach a machine and how to type on it, and nothing about what is running
+    there — the subscription, activity, spool and receipt machinery that every
+    transport used to inherit a copy of is written once above this seam, in
+    ``ClaudeCodeRuntime``.
 
-    A subclass ("本地/远程只差 transport/入册") implements only the transport seam:
-    ``_precheck`` (cheap fail-fast BEFORE the queue is claimed), ``_ensure_ready``
-    (→ a screen ctx of type ``ScreenT``) and ``_send_prompt``, plus the class-level
-    ``name`` / ``_needs_topic_message`` / ``_timeout_message``. All three raise
-    ``ScreenSetupError`` to surface a clean error result. This is the strategy
-    behind ``TmuxHooksProvider`` (local docker/tmux) and ``DeviceProvider``
-    (remote link.Msg)."""
+    Two methods have no sensible default and every channel writes them:
+    ``ensure_ready`` (bring a screen up) and ``send_prompt`` (put text into it).
+    The rest default to 「这条通道没有这个能力」, which is what lets a channel be
+    as small as the transport actually is.
+    """
 
-    name: str = "hooks"
-    # Claude Code resolves an @-mentioned local image into the same native image
-    # block its clipboard paste path produces. Remote devices stage the bytes
-    # before this text is sent; local screens already share the worktree.
-    embeds_images = True
-    _needs_topic_message = "本轮需要话题上下文"
-    # Copy only. A timeout is classified by the code the result carries, so a
-    # subclass may word this however it likes.
-    _timeout_message = TURN_TIMEOUT_MESSAGE
+    # WHICH machine pool this is: what a topic's ``compute_profile`` stores and
+    # what the market board lists. Deliberately not the runtime's ``harness`` —
+    # this says which machine, that says what runs on it.
+    name: str = "channel"
+
+    # 图片输入: whether the bytes actually reach the session on this transport.
+    # The runtime @-mentions the path and Claude Code resolves it into a native
+    # image block — true for a local screen that already shares the worktree and
+    # for a device that stages the file first, and a transport where neither
+    # holds MUST say False rather than let the prompt promise an image 芝士
+    # cannot see.
+    embeds_images: bool = True
+
+    # Does a turn here have to wait for a machine to be created first? The turn
+    # path branches on it (``ChatService`` shows 「机器正在创建」 and holds the
+    # prompt) rather than on the channel's class, so a second leased-machine
+    # transport gets the same waiting room without the platform learning its
+    # name.
+    provisions_machine: bool = False
+
+    # How big the machine behind this channel is, when we are the ones who set
+    # it. None means the channel genuinely does not know — an enrolled machine
+    # belongs to someone else — and the prompt then says nothing rather than
+    # inventing a limit the agent would plan around.
+    sandbox_memory_mb: int | None = None
+    sandbox_cores: int | None = None
+
+    # Copy only. Said when a turn arrives with no topic, and when one times out
+    # — a timeout is classified by the code the result carries, so a channel may
+    # word these however it likes.
+    needs_topic_message: str = "本轮需要话题上下文"
+    timeout_message: str = TURN_TIMEOUT_MESSAGE
+
+    def available(self) -> bool:
+        return True
+
+    async def prepare_topic(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        actor: object | None,
+    ) -> tuple[bool, str]:
+        """Get the machine ready before the turn counts a delivery attempt.
+
+        Only asked of a channel that declares ``provisions_machine``. The
+        default is the answer for every transport whose machine is already
+        there: ready, nothing to say about it.
+        """
+        del project_id, topic_id, actor
+        return True, ""
+
+    async def discover(
+        self, device_id: str | None = None
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
+        """Screens of ours that survived this process, as
+        ``(project_id, topic_id, screen)``. ``screen`` is None when the channel
+        knows the topic is still out there but cannot hand back a handle for it
+        yet (the device transport reattaches on the next turn).
+
+        The runtime subscribes to what this returns. A channel that answers
+        nothing simply has nothing that outlives the backend.
+        """
+        del device_id
+        return []
+
+    def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
+        """Topics whose screen lives on the device that just went away."""
+        del device_id
+        return []
+
+    def forget_topic(self, topic_id: uuid.UUID) -> None:
+        """Drop whatever this channel remembers about a topic being torn down."""
+        del topic_id
+
+    async def precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
+        """Cheap fail-fast checks that run BEFORE the token is minted and the
+        hook queue is claimed — a turn that cannot run at all must never touch
+        the router. Raise ``ScreenSetupError`` to end the turn with a clean
+        error result. The return value is handed to ``ensure_ready`` as
+        ``precheck`` so a channel doesn't resolve twice (the device channel
+        resolves its pinned device here)."""
+        return None
+
+    async def ensure_ready(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        token: str,
+        model: str | None,
+        env: dict[str, str] | None,
+        memory_scope: str | None,
+        owner: str | None,
+        turn_id: uuid.UUID | None,
+        resume_session_id: str | None,
+        system_prompt: str,
+        precheck: object,
+    ) -> object:
+        """Bring the topic's screen to a prompt-ready state; raise
+        ``ScreenSetupError`` if it can't be. Implemented by every channel.
+
+        ``system_prompt`` is the platform's assembled system prompt and MUST be
+        delivered to the `claude` this screen hosts (``--append-system-prompt``
+        at launch). It is a launch-time input, not a per-prompt one: a screen
+        that is merely reused keeps the prompt it was started with."""
+        raise NotImplementedError
+
+    async def send_prompt(
+        self, screen: object, prompt: str, images: list[dict] | None = None
+    ) -> bool | None:
+        """Deliver the turn's prompt to the ready screen.
+
+        Returns the driver's readiness at delivery time when the transport can
+        know it (the device cheeselet answers ``{ready: bool}``): ``False``
+        means the prompt is HELD until the input box paints — worth a visible
+        line in the room instead of silence (#445). ``None`` = unknown."""
+        raise NotImplementedError
+
+    async def start_activity_monitor(
+        self, screen: object, tracker: ActivityTracker
+    ) -> asyncio.Task | None:
+        """Optional background activity signal alongside hook arrivals (e.g. the
+        tmux backend's capture-pane polling — a long tool call between hooks
+        must still count as "alive"). Return a task that keeps ``tracker``
+        touched; ``run_turn`` cancels it when the turn ends.
+
+        Default: no extra signal, activity is judged from hook arrivals alone —
+        correct for the device channel today (TODO: an equivalent remote
+        activity probe, e.g. ``device_hub`` screen bytes, is future work; see
+        ``DeviceChannel``)."""
+        return None
+
+    async def confirm_alive(self, screen: object) -> bool:
+        """Called (repeatedly, while idle persists) once the idle-suspect
+        threshold is crossed, to confirm the screen isn't actually dead before
+        treating the idle window as fatal. Default: assume alive — no cheap
+        probe exists at this level. ``TmuxChannel`` overrides with
+        ``pane_dead()``."""
+        return True
+
+    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        """Snapshot the turn's edits into version history. Default no-op (the
+        device owns its own tree); the tmux channel overrides to git-snapshot."""
+        return
+
+
+class ClaudeCodeRuntime:
+    """Claude Code, driven over one ``Channel``.
+
+    Everything here is a cost of driving a TUI written for a person — a spool of
+    hook files because there is no event API, a subscription per topic to read
+    it, an activity watch because a session that goes quiet is indistinguishable
+    from one that died, a receipt for every prompt because the write and the
+    consumption are minutes apart. None of it is a fact about the transport, and
+    that is the point: it is written ONCE here, over whatever channel the
+    compute side opened.
+
+    It used to be a base class the transports inherited, so every one of those
+    mechanisms existed once per transport, and the only way to add a second
+    harness was to write it once per transport too. Composition is what makes
+    that M×N an M+N: a channel implements ``ensure_ready`` and ``send_prompt``,
+    and knows nothing about hooks.
+    """
 
     def __init__(
         self,
+        channel: Channel,
         *,
         router: HookRouter | None = None,
         idle_suspect_s: float = 900.0,
         hard_ceiling_s: float = 900.0,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
     ) -> None:
+        self._channel = channel
         self._router = router or hook_router
         # Equal by default preserves the legacy single-deadline behavior.
         self._idle_suspect_s = idle_suspect_s
@@ -571,7 +731,7 @@ class HooksSessionProvider[ScreenT]:
         self._delivery_timeout_s = delivery_timeout_s
         # Screen-lifetime state. ``_live`` is the transport handle; subscriptions
         # own the stable router sink, consumer task, and current attribution.
-        self._live: dict[uuid.UUID, ScreenT] = {}
+        self._live: dict[uuid.UUID, object] = {}
         self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
         self._event_consumer: HookEventConsumer | None = None
         self._activity_consumer: HookActivityConsumer | None = None
@@ -583,15 +743,56 @@ class HooksSessionProvider[ScreenT]:
             None
         )
         self._receipt_tasks: set[asyncio.Task[None]] = set()
-        _PROVIDERS.add(self)
+        _RUNTIMES.add(self)
 
     @property
     def hard_ceiling_s(self) -> float:
-        """This provider's absolute active-session ceiling."""
+        """This runtime's absolute active-session ceiling."""
         return self._hard_ceiling_s
 
+    @property
+    def channel(self) -> Channel:
+        """The transport this runtime is driving. Wiring reads it (which pool
+        is this, can it run at all); the turn path never does."""
+        return self._channel
+
+    @property
+    def name(self) -> str:
+        """Which machine pool — the channel's answer, not the runtime's."""
+        return self._channel.name
+
+    @property
+    def embeds_images(self) -> bool:
+        return self._channel.embeds_images
+
+    @property
+    def sandbox_memory_mb(self) -> int | None:
+        return self._channel.sandbox_memory_mb
+
+    @property
+    def sandbox_cores(self) -> int | None:
+        return self._channel.sandbox_cores
+
+    @property
+    def provisions_machine(self) -> bool:
+        return self._channel.provisions_machine
+
     def available(self) -> bool:
-        return True
+        return self._channel.available()
+
+    async def prepare_topic(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        actor: object | None,
+    ) -> tuple[bool, str]:
+        return await self._channel.prepare_topic(
+            project_id=project_id, topic_id=topic_id, actor=actor
+        )
+
+    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        return self._channel.checkpoint(project_id, topic_id)
 
     def bind_event_consumer(self, consumer: HookEventConsumer) -> None:
         """Bind the room persistence and broadcast callback owned by ChatService."""
@@ -646,9 +847,11 @@ class HooksSessionProvider[ScreenT]:
             delivered_text = _prompt_with_native_images(text, images)
             try:
                 if images:
-                    await self._send_prompt(screen, delivered_text, images=images)
+                    await self._channel.send_prompt(
+                        screen, delivered_text, images=images
+                    )
                 else:
-                    await self._send_prompt(screen, delivered_text)
+                    await self._channel.send_prompt(screen, delivered_text)
             except ScreenSetupError as exc:
                 logger.warning(
                     "mid-turn delivery failed at screen setup (topic=%s): %s",
@@ -718,7 +921,7 @@ class HooksSessionProvider[ScreenT]:
         return subscription
 
     def has_live_screen(self, topic_id: uuid.UUID) -> bool:
-        """Is there a screen this provider can still reach for this topic?
+        """Is there a screen this runtime can still reach for this topic?
 
         This is what "the work survived" means after a backend restart: the
         coroutine waiting on the turn died with the process, the claude in the
@@ -732,13 +935,30 @@ class HooksSessionProvider[ScreenT]:
     async def recover_subscriptions(
         self, device_id: str | None = None
     ) -> list[TopicSubscription]:
-        """Discover surviving transport screens after a backend restart."""
-        del device_id
-        return []
+        """Listen again to the screens that outlived this process.
+
+        The channel finds them; subscribing to them is this side's job. It used
+        to be one method a transport overrode wholesale, which meant every
+        transport reached back up into the subscription table to finish the
+        thought — the exact upward call composition exists to remove.
+
+        Paused, because a recovered subscription must not start replaying into
+        a room before the platform has decided what to do with it.
+        """
+        recovered: list[TopicSubscription] = []
+        for project_id, topic_id, screen in await self._channel.discover(device_id):
+            subscription = await self.ensure_subscription(
+                project_id, topic_id, paused=True
+            )
+            if screen is not None:
+                self._live[topic_id] = screen
+            recovered.append(subscription)
+        return recovered
 
     async def drop_device_subscriptions(self, device_id: str) -> None:
         """Drop recovered subscriptions associated with a disconnected device."""
-        del device_id
+        for topic_id in self._channel.topics_on_device(device_id):
+            await self._close_topic(topic_id)
 
     async def close(self, session: SessionRef) -> None:
         """Let this session go: stop listening, forget the channel.
@@ -757,6 +977,7 @@ class HooksSessionProvider[ScreenT]:
         conversation per topic is what makes that possible; the day a room hosts
         two agents at once, this key grows and so does theirs.
         """
+        self._channel.forget_topic(topic_id)
         subscription = self._subscriptions.pop(topic_id, None)
         self._live.pop(topic_id, None)
         if subscription is None:
@@ -816,16 +1037,10 @@ class HooksSessionProvider[ScreenT]:
         if screen is None:
             return False
         try:
-            return await self._send_interrupt(screen)
+            return await self._channel.send_interrupt(screen)
         except Exception:  # noqa: BLE001 — a transport that refuses is a False
             logger.exception("interrupt failed for topic %s", session.topic_id)
             return False
-
-    async def _send_interrupt(self, screen: ScreenT) -> bool:
-        """Transport seam: press Escape on this screen. Subclasses implement it
-        the same way they implement typing a prompt."""
-        del screen
-        return False
 
     async def _consume_subscription(self, subscription: TopicSubscription) -> None:
         """Continuously translate the screen's hooks into attributed events."""
@@ -941,7 +1156,7 @@ class HooksSessionProvider[ScreenT]:
         self,
         subscription: TopicSubscription,
         attribution: WorkAttribution,
-        screen: ScreenT,
+        screen: object,
         *,
         prompt: str | None,
         ready: bool | None,
@@ -1006,11 +1221,11 @@ class HooksSessionProvider[ScreenT]:
         self,
         subscription: TopicSubscription,
         activity: SessionActivity,
-        screen: ScreenT,
+        screen: object,
     ) -> None:
         """Apply delivery, idle, liveness, and ceiling policy to the screen."""
         tracker = ActivityTracker(last_at=asyncio.get_running_loop().time())
-        monitor_task = await self._start_activity_monitor(screen, tracker)
+        monitor_task = await self._channel.start_activity_monitor(screen, tracker)
         redeliveries = 0
         try:
             async for event in monitor_session_activity(
@@ -1018,21 +1233,21 @@ class HooksSessionProvider[ScreenT]:
                 idle_suspect_s=self._idle_suspect_s,
                 hard_ceiling_s=self._hard_ceiling_s,
                 resume_session_id=None,
-                timeout_message=self._timeout_message,
+                timeout_message=self._channel.timeout_message,
                 delivery_timeout_s=(
                     self._idle_suspect_s
                     if activity.ready is False
                     else self._delivery_timeout_s
                 ),
                 tracker=tracker,
-                confirm_alive=lambda: self._confirm_alive(screen),
+                confirm_alive=lambda: self._channel.confirm_alive(screen),
                 context=f"topic={subscription.topic_id} subscription-watch",
             ):
                 if isinstance(event, AgentDeliveryFailure):
                     if activity.prompt is not None:
                         redeliveries += 1
                         if redeliveries <= _MAX_REDELIVERIES:
-                            await self._send_prompt(screen, activity.prompt)
+                            await self._channel.send_prompt(screen, activity.prompt)
                     continue
                 if not isinstance(event, AgentResult) or not event.is_error:
                     continue
@@ -1061,7 +1276,7 @@ class HooksSessionProvider[ScreenT]:
 
     async def ensure(
         self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
-    ) -> tuple[ScreenT, TopicSubscription]:
+    ) -> tuple[object, TopicSubscription]:
         """Is this session live? Start it if not. Returns the screen and the
         subscription listening to it.
 
@@ -1071,13 +1286,13 @@ class HooksSessionProvider[ScreenT]:
         started with, so the opening matters only on the call that turns out to
         be a cold start, and no caller can know in advance which one that is.
         """
-        precheck = await self._precheck(session.project_id, session.topic_id)
+        precheck = await self._channel.precheck(session.project_id, session.topic_id)
         token = mint_scoped_token(
             project_id=str(session.project_id),
             topic_id=str(session.topic_id),
             ttl_s=SESSION_TOKEN_TTL_S,
         )
-        screen = await self._ensure_ready(
+        screen = await self._channel.ensure_ready(
             project_id=session.project_id,
             topic_id=session.topic_id,
             token=token,
@@ -1141,9 +1356,9 @@ class HooksSessionProvider[ScreenT]:
         )
         try:
             if images:
-                ready = await self._send_prompt(screen, prompt, images=images)
+                ready = await self._channel.send_prompt(screen, prompt, images=images)
             else:
-                ready = await self._send_prompt(screen, prompt)
+                ready = await self._channel.send_prompt(screen, prompt)
         except BaseException:
             if starts_activity:
                 await self._end_session_activity(
@@ -1157,77 +1372,6 @@ class HooksSessionProvider[ScreenT]:
                 name=f"hook session activity topic={topic_id}",
             )
         return ready
-
-    async def _precheck(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> object:
-        """Cheap fail-fast checks that run BEFORE the token is minted and the hook
-        queue is claimed (preserves the pre-refactor ordering: a turn that can't
-        run at all never touches the router — review finding). Raise
-        ``ScreenSetupError`` to end the turn with a clean error result. The return
-        value is handed to ``_ensure_ready`` as ``precheck`` so a subclass doesn't
-        resolve twice (e.g. the device backend resolves its pinned device here)."""
-        return None
-
-    async def _ensure_ready(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        token: str,
-        model: str | None,
-        env: dict[str, str] | None,
-        memory_scope: str | None,
-        owner: str | None,
-        turn_id: uuid.UUID | None,
-        resume_session_id: str | None,
-        system_prompt: str,
-        precheck: object,
-    ) -> ScreenT:
-        """Bring the topic's screen to a prompt-ready state; raise
-        ``ScreenSetupError`` if it can't be. Transport-specific (subclass).
-
-        ``system_prompt`` is the platform's assembled system prompt and MUST be
-        delivered to the `claude` this screen hosts (``--append-system-prompt``
-        at launch). It is a launch-time input, not a per-prompt one: a screen
-        that is merely reused keeps the prompt it was started with."""
-        raise NotImplementedError
-
-    async def _send_prompt(
-        self, screen: ScreenT, prompt: str, images: list[dict] | None = None
-    ) -> bool | None:
-        """Deliver the turn's prompt to the ready screen. Transport-specific.
-
-        Returns the driver's readiness at delivery time when the transport can
-        know it (the device cheeselet answers ``{ready: bool}``): ``False``
-        means the prompt is HELD until the input box paints — worth a visible
-        line in the room instead of silence (#445). ``None`` = unknown."""
-        raise NotImplementedError
-
-    async def _start_activity_monitor(
-        self, screen: ScreenT, tracker: ActivityTracker
-    ) -> asyncio.Task | None:
-        """Optional background activity signal alongside hook arrivals (e.g. the
-        tmux backend's capture-pane polling — a long tool call between hooks
-        must still count as "alive"). Return a task that keeps ``tracker``
-        touched; ``run_turn`` cancels it when the turn ends.
-
-        Default: no extra signal, activity is judged from hook arrivals alone —
-        correct for the device backend today (TODO: an equivalent remote
-        activity probe, e.g. ``device_hub`` screen bytes, is future work; see
-        ``DeviceProvider``)."""
-        return None
-
-    async def _confirm_alive(self, screen: ScreenT) -> bool:
-        """Called (repeatedly, while idle persists) once the idle-suspect
-        threshold is crossed, to confirm the screen isn't actually dead before
-        treating the idle window as fatal. Default: assume alive — no cheap
-        probe exists at this level. ``TmuxHooksProvider`` overrides with
-        ``pane_dead()``."""
-        return True
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        """Snapshot the turn's edits into version history. Default no-op (the
-        device owns its own tree); the local backend overrides to git-snapshot."""
-        return
 
     async def run_turn(
         self,
@@ -1247,7 +1391,7 @@ class HooksSessionProvider[ScreenT]:
     ) -> AsyncIterator[AgentEvent]:
         if topic_id is None:
             yield AgentResult(
-                text=self._needs_topic_message,
+                text=self._channel.needs_topic_message,
                 session_id=resume_session_id,
                 is_error=True,
             )
@@ -1258,7 +1402,7 @@ class HooksSessionProvider[ScreenT]:
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.
         try:
-            precheck = await self._precheck(project_id, topic_id)
+            precheck = await self._channel.precheck(project_id, topic_id)
         except ScreenSetupError as exc:
             yield AgentResult(
                 text=str(exc),
@@ -1276,7 +1420,7 @@ class HooksSessionProvider[ScreenT]:
         attribution: WorkAttribution | None = None
         try:
             try:
-                screen = await self._ensure_ready(
+                screen = await self._channel.ensure_ready(
                     project_id=project_id,
                     topic_id=topic_id,
                     token=token,
@@ -1298,9 +1442,11 @@ class HooksSessionProvider[ScreenT]:
                 )
                 subscription.current_work = attribution
                 if images:
-                    ready = await self._send_prompt(screen, prompt, images=images)
+                    ready = await self._channel.send_prompt(
+                        screen, prompt, images=images
+                    )
                 else:
-                    ready = await self._send_prompt(screen, prompt)
+                    ready = await self._channel.send_prompt(screen, prompt)
             except ScreenSetupError as exc:
                 yield AgentResult(
                     text=str(exc),
@@ -1321,7 +1467,7 @@ class HooksSessionProvider[ScreenT]:
                     )
                 )
             tracker = ActivityTracker(last_at=asyncio.get_event_loop().time())
-            monitor_task = await self._start_activity_monitor(screen, tracker)
+            monitor_task = await self._channel.start_activity_monitor(screen, tracker)
             try:
                 # Bounded so a screen whose terminal genuinely eats every write
                 # cannot ping-pong forever: past the cap the failure stays
@@ -1332,9 +1478,9 @@ class HooksSessionProvider[ScreenT]:
                     idle_suspect_s=self._idle_suspect_s,
                     hard_ceiling_s=self._hard_ceiling_s,
                     resume_session_id=resume_session_id,
-                    timeout_message=self._timeout_message,
+                    timeout_message=self._channel.timeout_message,
                     tracker=tracker,
-                    confirm_alive=lambda: self._confirm_alive(screen),
+                    confirm_alive=lambda: self._channel.confirm_alive(screen),
                     # ready=False means the driver HOLDS the prompt until the
                     # input box paints — a queued prompt is not an undelivered
                     # one, so the 25s dead-session verdict does not apply (it
@@ -1369,7 +1515,7 @@ class HooksSessionProvider[ScreenT]:
                                 )
                             )
                             try:
-                                await self._send_prompt(screen, prompt)
+                                await self._channel.send_prompt(screen, prompt)
                             except ScreenSetupError as exc:
                                 yield AgentResult(
                                     text=str(exc),
@@ -1405,24 +1551,24 @@ class HooksSessionProvider[ScreenT]:
 
 
 async def drop_topic_subscriptions(topic_id: uuid.UUID) -> None:
-    """Notify every live hooks provider that a topic's screen was removed."""
-    for provider in list(_PROVIDERS):
-        if isinstance(provider, HooksSessionProvider):
-            await provider._close_topic(topic_id)
+    """Notify every live runtime that a topic's screen was removed."""
+    for runtime in list(_RUNTIMES):
+        if isinstance(runtime, ClaudeCodeRuntime):
+            await runtime._close_topic(topic_id)
 
 
 async def drop_screen_subscriptions(screen: object) -> None:
-    """Notify providers that one concrete transport screen disappeared."""
-    for provider in list(_PROVIDERS):
-        if isinstance(provider, HooksSessionProvider):
-            await provider.drop_screen_subscription(screen)
+    """Notify every live runtime that one concrete screen disappeared."""
+    for runtime in list(_RUNTIMES):
+        if isinstance(runtime, ClaudeCodeRuntime):
+            await runtime.drop_screen_subscription(screen)
 
 
 async def drop_device_subscriptions(device_id: str) -> None:
-    """Notify providers that one device and its recovered topics went offline."""
-    for provider in list(_PROVIDERS):
-        if isinstance(provider, HooksSessionProvider):
-            await provider.drop_device_subscriptions(device_id)
+    """Notify every live runtime that a device and its topics went offline."""
+    for runtime in list(_RUNTIMES):
+        if isinstance(runtime, ClaudeCodeRuntime):
+            await runtime.drop_device_subscriptions(device_id)
 
 
 def schedule_topic_subscription_drop(topic_id: uuid.UUID) -> bool:

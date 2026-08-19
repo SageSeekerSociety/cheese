@@ -83,8 +83,9 @@ from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
 from app.domain.agent.harness.claude_code import (  # noqa: E402
+    Channel,
+    ClaudeCodeRuntime,
     HookRouter,
-    HooksSessionProvider,
 )
 from app.main import app  # noqa: E402
 
@@ -111,8 +112,8 @@ def wait_work_idle() -> None:
         time.sleep(0.01)
 
 
-class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
-    """A hooks backend with no machine behind it.
+class StubChannel(Channel):
+    """A channel with no machine behind it.
 
     The turn flow tests exercise is the one production runs: the prompt is
     handed to a session and the reply comes back later through the hook
@@ -130,10 +131,14 @@ class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
     def __init__(self, **timeouts: float) -> None:
         # Its own router: the module-global one is shared process-wide, and a
         # test that inherited another test's sink would read its hooks.
+        self._router = HookRouter()
+        # The runtime this channel is driven by. A channel and its runtime are
+        # two objects in production and one fixture here, so the ~40 tests that
+        # hand a screen around keep handing one thing around.
         # ``timeouts`` are the watchdog's (idle_suspect_s / hard_ceiling_s /
         # delivery_timeout_s), so a test about a session that goes quiet does
         # not have to wait the production fifteen minutes for it.
-        super().__init__(router=HookRouter(), **timeouts)
+        self.runtime = ClaudeCodeRuntime(self, router=self._router, **timeouts)
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
         self.last_prompt: str | None = None
@@ -142,7 +147,7 @@ class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
         # what did (and did not) happen before the session was reached.
         self.on_start: Callable[[], None] | None = None
 
-    async def _ensure_ready(  # type: ignore[override]
+    async def ensure_ready(  # type: ignore[override]
         self,
         *,
         topic_id: uuid.UUID,
@@ -154,14 +159,14 @@ class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
         self.last_resume_session_id = resume_session_id
         return topic_id
 
-    async def _send_prompt(
+    async def send_prompt(  # type: ignore[override]
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del images
         self.last_prompt = prompt
         if self.on_start is not None:
             self.on_start()
-        # AFTER this returns, never inside it. `_send_prompt` is the transport
+        # AFTER this returns, never inside it. `send_prompt` is the transport
         # write; a screen that answered during it would collapse the whole
         # reason this contract separates feeding from reading, and would put
         # the reply ahead of frames the caller has not yielded yet.
@@ -174,8 +179,8 @@ class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
         Override this to script a different turn — a tool call between two
         messages, a subagent, silence. What must not change is the frame: a
         session announces itself, acknowledges the prompt, and stops. ``Stop``
-        in particular is not optional: it is what closes the turn, publishes
-        ``done``, and ends the inherited ``run_turn``.
+        in particular is not optional: it is what closes the turn and publishes
+        ``done``.
         """
         self.starts(topic_id)
         self.acknowledges(topic_id, prompt)
@@ -261,14 +266,14 @@ class StubHooksProvider(HooksSessionProvider[uuid.UUID]):
 _REAL_SLEEP = asyncio.sleep
 
 
-async def drain_hooks(screen: StubHooksProvider, topic_id: uuid.UUID) -> None:
+async def drain_hooks(screen: StubChannel, topic_id: uuid.UUID) -> None:
     """Wait until every hook this screen pushed has been consumed.
 
     Narrower than `settle_turn`, and the right one when the turn is not going
     to end: it asks whether what the session already said has landed, not
     whether the session is done saying things.
     """
-    subscription = screen._subscriptions.get(topic_id)
+    subscription = screen.runtime._subscriptions.get(topic_id)
     if subscription is not None:
         await subscription.sink.queue.join()
 
@@ -290,18 +295,18 @@ async def settle_turn(service, topic_id, *, tries: int = 2000) -> None:
     )
 
 
-def stub_compute(provider: StubHooksProvider | None = None) -> ComputePool:
+def stub_compute(channel: StubChannel | None = None) -> ComputePool:
     """A pool holding one screen, for the many tests that build a ChatService
-    by hand. Pass the provider when the test asserts against it."""
-    screen = provider or StubHooksProvider()
-    return ComputePool([screen], screen.name)
+    by hand. Pass the channel when the test asserts against it."""
+    screen = channel or StubChannel()
+    return ComputePool([screen.runtime], screen.name)
 
 
 @pytest.fixture
-def stub_hooks() -> StubHooksProvider:
+def stub_hooks() -> StubChannel:
     # Per test: its subscriptions and consumer tasks live on the TestClient's
     # portal loop, which goes away with the client.
-    return StubHooksProvider()
+    return StubChannel()
 
 
 @pytest.fixture
@@ -326,7 +331,7 @@ def bearer() -> Callable[[str], dict[str, str]]:
 
 
 @pytest.fixture
-def client(_pg_schema, stub_hooks: StubHooksProvider, tmp_path) -> Iterator[TestClient]:
+def client(_pg_schema, stub_hooks: StubChannel, tmp_path) -> Iterator[TestClient]:
     # Real PostgreSQL (not sqlite): the merged models use PG-native JSONB,
     # Sequences and ENUM types that sqlite's compiler can't render, and the schema
     # is defined by the alembic migrations (create_all can't build the pg ENUMs).
@@ -363,7 +368,7 @@ def client(_pg_schema, stub_hooks: StubHooksProvider, tmp_path) -> Iterator[Test
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([stub_hooks], stub_hooks.name),
+        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
     )
 
     def override_get_chat_service() -> ChatService:
@@ -629,7 +634,7 @@ async def db_factory(_pg_schema):
 @pytest.fixture
 async def python_client(
     _pg_schema,
-    stub_hooks: StubHooksProvider,
+    stub_hooks: StubChannel,
     tmp_path,
 ):
     """Async httpx client bound to the app over ASGI — the async counterpart to
@@ -661,7 +666,7 @@ async def python_client(
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([stub_hooks], stub_hooks.name),
+        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
     )
 
     def override_get_chat_service() -> ChatService:

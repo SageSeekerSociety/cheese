@@ -13,7 +13,8 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    HooksSessionProvider,
+    Channel,
+    ClaudeCodeRuntime,
     ScreenSetupError,
     WorkAttribution,
     hooks_settings,
@@ -185,10 +186,10 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
     topic_key = str(topic_id)
     stale_delivered: list[bool] = []
 
-    class _FakeProvider(HooksSessionProvider[str]):
+    class _FakeChannel(Channel):
         name = "fake"
 
-        async def _ensure_ready(self, **kwargs):
+        async def ensure_ready(self, **kwargs):
             # While "waiting for the screen", the abandoned previous turn's
             # `claude` process finally finishes and its late Stop arrives.
             stale_delivered.append(
@@ -204,7 +205,7 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
             )
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             # The new turn genuinely starts now — its own events follow.
             router.push(
                 topic_key,
@@ -224,7 +225,9 @@ async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
                 },
             )
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     events = [
         e
         async for e in provider.run_turn(
@@ -251,17 +254,19 @@ async def test_failed_precheck_never_touches_the_router():
     live turn's queue (review finding; matches pre-refactor ordering)."""
     import uuid as _uuid
 
-    class _NoRun(HooksSessionProvider[str]):
+    class _NoRun(Channel):
         name = "no-run"
 
-        async def _precheck(self, project_id, topic_id):
+        async def precheck(self, project_id, topic_id):
             raise ScreenSetupError("挡在门外")
 
     router = HookRouter()
     topic_id = _uuid.uuid4()
     live_sink = router.subscribe(str(topic_id))
 
-    provider = _NoRun(router=router, idle_suspect_s=1, hard_ceiling_s=1)
+    provider = ClaudeCodeRuntime(
+        _NoRun(), router=router, idle_suspect_s=1, hard_ceiling_s=1
+    )
     events = [
         e
         async for e in provider.run_turn(
@@ -460,13 +465,13 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
     injected: list[str] = []
     started = asyncio.Event()
 
-    class _FakeProvider(HooksSessionProvider[str]):
+    class _FakeChannel(Channel):
         name = "fake"
 
-        async def _ensure_ready(self, **kwargs):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             injected.append(prompt)
             if prompt == "第一条":
                 started.set()
@@ -475,7 +480,9 @@ async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
                 topic_key, {"hook_event_name": "UserPromptSubmit", "prompt": prompt}
             )
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
 
     # Before any turn: nothing to inject into, so the caller must run its own.
     assert await provider.deliver(topic_id, "早") is False
@@ -522,19 +529,21 @@ async def test_deliver_reports_false_when_the_screen_refuses():
     topic_key = str(topic_id)
     started = asyncio.Event()
 
-    class _FakeProvider(HooksSessionProvider[str]):
+    class _FakeChannel(Channel):
         name = "fake"
 
-        async def _ensure_ready(self, **kwargs):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             if prompt == "第一条":
                 started.set()
                 return
             raise ScreenSetupError("窗格已经死掉")
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
 
     async def run() -> list:
         return [
@@ -574,11 +583,11 @@ async def test_subscription_outlives_run_and_drops_only_with_screen():
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             router.push(
                 topic_key,
                 {
@@ -588,7 +597,9 @@ async def test_subscription_outlives_run_and_drops_only_with_screen():
                 },
             )
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     events = [
         event
         async for event in provider.run_turn(
@@ -620,14 +631,16 @@ async def test_run_refuses_to_clobber_existing_attribution():
     project_id = _uuid.uuid4()
     topic_id = _uuid.uuid4()
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             return None
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     subscription = await provider.ensure_subscription(project_id, topic_id)
     open_attribution = WorkAttribution(work_id=_uuid.uuid4(), queue=asyncio.Queue())
     subscription.current_work = open_attribution
@@ -677,11 +690,11 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             router.push(topic_key, _display_flush("m1", 0, "line 1\nline 2\n"))
             router.push(topic_key, _display_flush("m1", 1, "line 3", final=True))
             router.push(
@@ -694,7 +707,9 @@ async def test_run_turn_coalesces_message_flushes_into_one_message():
                 },
             )
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     events = [
         event
         async for event in provider.run_turn(
@@ -723,11 +738,11 @@ async def test_run_turn_stop_drains_a_partial_message():
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             router.push(topic_key, _display_flush("m1", 0, "第一行\n"))
             router.push(topic_key, _display_flush("m1", 1, "到这里就断了\n"))
             router.push(
@@ -740,7 +755,9 @@ async def test_run_turn_stop_drains_a_partial_message():
                 },
             )
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     events = [
         event
         async for event in provider.run_turn(
@@ -770,14 +787,16 @@ async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             return None
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     consumed: list[tuple[object, str | None, bool]] = []
 
     async def consumer(
@@ -859,14 +878,14 @@ async def test_hard_ceiling_verdict_logs_a_warning_with_context(caplog):
 async def test_deliver_without_live_screen_logs_why(caplog):
     import uuid as _uuid
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             return None
 
-    provider = _FakeProvider(router=HookRouter())
+    provider = ClaudeCodeRuntime(_FakeChannel(), router=HookRouter())
     topic_id = _uuid.uuid4()
     with caplog.at_level("INFO"):
         assert await provider.deliver(topic_id, "hi") is False
@@ -899,19 +918,21 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
     topic_id = _uuid.uuid4()
     started = asyncio.Event()
 
-    class _FakeProvider(HooksSessionProvider[str]):
+    class _FakeChannel(Channel):
         name = "fake"
 
-        async def _ensure_ready(self, **kwargs):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             # Write accepted; the session is busy — NO UserPromptSubmit comes
             # back for a long while. That must not read as "undelivered".
             if prompt == "第一条":
                 started.set()
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
 
     async def run() -> list:
         return [
@@ -946,14 +967,16 @@ async def test_user_prompt_submit_is_reported_to_the_receipt_consumer():
     topic_id = _uuid.uuid4()
     received: list[tuple[object, str]] = []
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             return None
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
 
     async def on_receipt(tid, prompt):
         received.append((tid, prompt))
@@ -981,11 +1004,11 @@ async def test_prompt_redelivery_logs_each_attempt(caplog):
     topic_key = str(topic_id)
     sends: list[str] = []
 
-    class _FakeProvider(HooksSessionProvider[str]):
-        async def _ensure_ready(self, **kwargs):
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             sends.append(prompt)
             if len(sends) == 1:
                 router.push(
@@ -1002,7 +1025,9 @@ async def test_prompt_redelivery_logs_each_attempt(caplog):
                     {"hook_event_name": "Stop", "last_assistant_message": "好"},
                 )
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     with caplog.at_level("WARNING"):
         events = [
             e

@@ -8,7 +8,7 @@ long-running test run) normally survive between turns — a turn ending or
 timing out never touches the container.
 
 **Three** things force-kill the BOX (`docker rm -f`, no grace period), all in
-`TmuxHooksProvider._ensure_container`: the sandbox image changed, the routing
+`TmuxChannel._ensure_container`: the sandbox image changed, the routing
 env drifted, or the CLI mount went stale. A box serves a whole room now, so
 each of those takes every topic in that room down with it.
 

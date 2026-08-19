@@ -29,7 +29,7 @@
 ## 后端设计(据此)
 - 沙箱镜像烤入 tmux + ttyd + hooks settings.json(HTTP hook → POST 后端)+ 预接受标志。
 - HTTP hook 端点按 session/turn 关联,推进 per-turn asyncio.Queue。
-- 新 ComputeProvider(TmuxHooksProvider).run_turn:确保 tmux 会话 → 就绪握手 →
+- 新 ComputeProvider(TmuxChannel).run_turn:确保 tmux 会话 → 就绪握手 →
   paste prompt → 从 queue 取 hook 事件 → yield AgentEvent → Stop 收尾。
 - 现场:每话题 ttyd,Caddy 反代,前端抽屉嵌 xterm/iframe。
 - `AGENT_BACKEND=sdk|tmux` 切换,SDK 后端保留。

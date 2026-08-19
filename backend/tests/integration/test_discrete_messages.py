@@ -7,11 +7,11 @@ import uuid
 
 import pytest
 
-from tests.conftest import StubHooksProvider
+from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url
 
 
-class MultiMessageScreen(StubHooksProvider):
+class MultiMessageScreen(StubChannel):
     """Two message boundaries with a tool call in between — the shape a real
     session produces. The Stop text repeats the LAST message, exactly like a
     real one does."""

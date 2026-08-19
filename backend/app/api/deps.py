@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import async_session_factory, get_db
 from app.domain.agent.chat import ChatService
-from app.domain.agent.cloud_provider import CloudLease, CloudProvider
+from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
@@ -105,21 +105,19 @@ def get_chat_service() -> ChatService:
         gateway = LlmGateway(
             settings.llm_gateway_admin_base, settings.llm_gateway_admin_key
         )
-    cloud = CloudProvider(
+    cloud = CloudChannel(
         configured=bool(
             settings.microcloud_base_url and settings.microcloud_tenant_secret
         ),
         ensure_topic_cloud=_ensure_topic_cloud,
         read_topic_cloud=_read_topic_cloud,
-        idle_suspect_s=settings.agent_idle_suspect_s,
-        hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
     )
     return ChatService(
         session_factory=async_session_factory,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
         profiles=get_profile_registry(),
-        compute=build_compute_pool(cloud_provider=cloud),
+        compute=build_compute_pool(cloud_channel=cloud),
         gateway=gateway,
         replace_cloud_machine=_replace_topic_cloud,
     )

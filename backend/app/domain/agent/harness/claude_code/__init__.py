@@ -15,11 +15,11 @@ a ratchet — adding to it goes red, and so does forgetting to delete a line you
 paid off.
 
 What the list says today, honestly: the transports (tmux / device / cloud) are
-still SUBCLASSES of this adapter's base, so they import its internals to plug
-in. That is the inheritance the future composition split replaces — one runtime
-driven over any channel, instead of one runtime re-implemented per transport —
-and until then those names stay public because the code is genuinely shaped
-that way, not because nobody looked.
+``Channel`` implementations, so they import that one seam and the errors it
+raises. That is the whole crossing — one runtime driven over any channel — and
+what still shows up next to it (a ledger row taking ``hooks_settings``, or
+``build_screen_launch``) is Claude Code knowledge that has not made it across
+the seam yet.
 """
 
 from app.domain.agent.harness.claude_code.device_launch import (
@@ -38,14 +38,16 @@ from app.domain.agent.harness.claude_code.hook_events import (
 from app.domain.agent.harness.claude_code.hooks_substrate import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
+    Channel,
+    ClaudeCodeRuntime,
     HookActivityConsumer,
     HookEventConsumer,
-    HooksSessionProvider,
     ScreenSetupError,
     TopicSubscription,
     acknowledge_log,
     drop_device_subscriptions,
     drop_screen_subscriptions,
+    drop_topic_subscriptions,
     expire_log,
     hooks_settings,
     log_cursor,
@@ -61,10 +63,11 @@ __all__ = [
     "DEVICE_TUNNEL_PROBE",
     "SESSION_TOKEN_TTL_S",
     "ActivityTracker",
+    "Channel",
+    "ClaudeCodeRuntime",
     "HookActivityConsumer",
     "HookEventConsumer",
     "HookRouter",
-    "HooksSessionProvider",
     "MessageAssembler",
     "ScreenSetupError",
     "TopicSubscription",
@@ -73,6 +76,7 @@ __all__ = [
     "build_screen_launch",
     "drop_device_subscriptions",
     "drop_screen_subscriptions",
+    "drop_topic_subscriptions",
     "expire_log",
     "hook_router",
     "hooks_settings",

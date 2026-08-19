@@ -160,9 +160,9 @@ def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):
     written — not even a fake one (the file gets a local validation that rejected
     the placeholder, and a real token there would be the very leak we forbid)."""
     from app.core.config import settings
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.tmux_provider import TmuxChannel
 
-    provider = TmuxHooksProvider(image="x", idle_suspect_s=1.0, hard_ceiling_s=1.0)
+    provider = TmuxChannel(image="x")
     monkeypatch.setattr(settings, "subscription_enabled", True)
     provider._write_session_settings(str(tmp_path), "/topics/topic_ab12cd34")
     assert not (tmp_path / ".credentials.json").exists()

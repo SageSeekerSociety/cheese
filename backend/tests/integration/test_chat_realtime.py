@@ -17,10 +17,10 @@ from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.project.services import ProjectService
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
-from tests.conftest import StubHooksProvider, settle_turn, stub_compute
+from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
-class SlowScreen(StubHooksProvider):
+class SlowScreen(StubChannel):
     """A session that works for minutes: it takes the prompt and answers only
     once released."""
 
@@ -32,10 +32,16 @@ class SlowScreen(StubHooksProvider):
         self.delivered: list[str] = []
         self._answering: set[asyncio.Task] = set()
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del images
+        if self._answering:
+            # A write into a session that is already working: the transport
+            # cannot tell it from the one that opened the turn, and neither can
+            # a real screen.
+            self.delivered.append(prompt)
+            return True
         self.runs += 1
         self.last_prompt = prompt
         self.started.set()
@@ -49,15 +55,8 @@ class SlowScreen(StubHooksProvider):
         self.starts(topic_id, session_id="s1")
         self.stops(topic_id, "done", session_id="s1")
 
-    async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
-    ) -> bool:
-        del topic_id, images
-        self.delivered.append(text)
-        return True
 
-
-class InstantScreen(StubHooksProvider):
+class InstantScreen(StubChannel):
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
         del prompt, reply
         self.starts(topic_id, session_id="s-affinity")
@@ -159,7 +158,7 @@ async def test_post_lands_while_agent_turn_is_running(client, tmp_path):
     assert [b.content for b in rows if b.author_type == AuthorType.ai] == ["done"]
 
 
-class FailingScreen(StubHooksProvider):
+class FailingScreen(StubChannel):
     """A session that cannot be reached: the turn ends in an error result
     carrying the words the machine gave us, and nothing else."""
 
@@ -168,7 +167,7 @@ class FailingScreen(StubHooksProvider):
         self._text = text
         self._code = failure_code
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del screen, prompt, images
@@ -234,7 +233,7 @@ async def test_a_failed_turn_says_what_failed_and_never_speaks_as_cheese(
     assert meta["detail_label"] == "详细说明"
 
 
-class StorageFullScreen(StubHooksProvider):
+class StorageFullScreen(StubChannel):
     """The exact failure tmux skill staging produces when it hits ENOSPC. It
     must surface once as a platform event, not as an AI service blip."""
 
@@ -242,7 +241,7 @@ class StorageFullScreen(StubHooksProvider):
         super().__init__()
         self.calls = 0
 
-    async def _send_prompt(
+    async def send_prompt(
         self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
     ) -> bool:
         del screen, prompt, images
@@ -326,7 +325,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider], provider.name),  # type: ignore[list-item]
+        compute=ComputePool([provider.runtime], provider.name),
     )
 
     async with factory() as session:
@@ -391,18 +390,25 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
     factory = client.test_factory  # type: ignore[attr-defined]
 
     class _NoScreen(_SlowLiveScreen):
+        """The live handoff fails at the transport: the second write does not
+        land on the screen, so the message has to run from the queue instead."""
+
         name = "fake-noscreen"
 
-        async def deliver(self, topic_id: uuid.UUID, text: str) -> bool:
-            self.delivered.append(text)
-            return False
+        async def send_prompt(
+            self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+        ) -> bool:
+            if self._answering:
+                self.delivered.append(prompt)
+                raise ScreenSetupError("屏幕没了")
+            return await super().send_prompt(screen, prompt, images=images)
 
     provider = _NoScreen()
     svc = ChatService(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider], provider.name),  # type: ignore[list-item]
+        compute=ComputePool([provider.runtime], provider.name),
     )
 
     async with factory() as session:

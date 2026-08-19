@@ -7,11 +7,11 @@ import uuid
 
 import pytest
 
-from tests.conftest import StubHooksProvider
+from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url
 
 
-class ToolScreen(StubHooksProvider):
+class ToolScreen(StubChannel):
     """A session using a mix of platform / plain / unmapped tools."""
 
     def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:

@@ -12,53 +12,62 @@ ran are gone; what remains is the shape that can be reconnected to.
 """
 
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Protocol
 
 from app.core.config import settings
-from app.domain.agent.service import (
-    AgentEvent,
-)
 
 if TYPE_CHECKING:
     from app.domain.agent.harness.claude_code import (
+        Channel,
         HookActivityConsumer,
         HookEventConsumer,
         TopicSubscription,
     )
 
+
 class ComputeProvider(Protocol):
     """Where a turn runs: a machine with a workspace on it, and a way to
     snapshot that workspace afterwards.
 
-    NOT how a turn runs. That is an ``AgentRuntime`` for a backend that keeps a
-    session alive, and a ``TurnStream`` for one that starts a process per turn —
-    two shapes because the platform genuinely has both, not because either is
-    provisional. Which machine and what runs on it were one switch for as long
-    as the only harness we drive was also the only thing that knew how to reach
-    its own machine; separating the questions here is what lets a second harness
-    run on the machines the first one uses.
+    NOT how a turn runs — that is an ``AgentRuntime``. Which machine and what
+    runs on it were one switch for as long as the only harness we drive was also
+    the only thing that knew how to reach its own machine; separating the
+    questions is what lets a second harness run on the machines the first one
+    uses.
 
-    The classes still answer both today — a hooks provider provisions AND drives
-    Claude Code — so nothing about this shrink moves code. It stops the CONTRACT
-    from conflating them, which is what the composition split needs in place
-    before it can begin.
+    What the pool holds is a runtime WRAPPING a channel, and the runtime answers
+    this protocol by forwarding to the channel it is driving. So the two halves
+    are separate objects now, not just separate contracts.
     """
 
     name: str
 
-    # 图片输入: whether THIS provider actually embeds `images=` into the turn's
-    # user message. It is a capability, not a preference — the prompt wording
-    # branches on it (chat._prompt_line). Before this existed, `images=` was
-    # accepted by every provider and silently dropped by the hooks-driven ones,
-    # while the prompt kept telling 芝士 "图片内容已附在本条消息里" on all of
-    # them. An agent that reads that promise and sees nothing does not error —
-    # it invents what the image said, which is worse than saying "我没收到图".
-    # Default True keeps the SDK/relay contract; a backend that drops images
-    # MUST override it to False rather than leave the prompt lying for it.
+    # 图片输入: whether the turn's user message actually carries `images=`. It is
+    # a capability, not a preference — the prompt wording branches on it
+    # (chat._prompt_line). Before this existed, `images=` was accepted by every
+    # provider and silently dropped by some, while the prompt kept telling 芝士
+    # "图片内容已附在本条消息里" on all of them. An agent that reads that promise
+    # and sees nothing does not error — it invents what the image said, which is
+    # worse than saying "我没收到图". A backend that drops images MUST say False
+    # here rather than leave the prompt lying for it.
     embeds_images: bool
 
+    # Does a turn here have to wait for a machine to be created first? The turn
+    # path branches on it — 「机器正在创建」 with the prompt held — instead of on
+    # the backend's class, which is what lets a second leased-machine backend
+    # get the same waiting room without the platform learning its name.
+    provisions_machine: bool
+
     def available(self) -> bool: ...
+
+    async def prepare_topic(
+        self, *, project_id: uuid.UUID, topic_id: uuid.UUID, actor: object | None
+    ) -> tuple[bool, str]:
+        """Get the machine ready, and say whether it is. Only asked of a backend
+        that declares ``provisions_machine``; everyone else's machine is already
+        there."""
+        ...
 
     async def deliver(
         self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
@@ -76,34 +85,6 @@ class ComputeProvider(Protocol):
         ...
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
-
-
-@runtime_checkable
-class TurnStream(Protocol):
-    """A backend that starts something, streams what it says, and is done.
-
-    The other shape a turn can have, and the older one: no session to ensure,
-    nothing to send into afterwards, no log to read from a cursor. Whoever holds
-    the iterator owns the turn, and when that process dies the turn dies with it
-    — which is the property ``AgentRuntime`` exists to not have.
-    """
-
-    def run_turn(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID | None,
-        prompt: str,
-        system_prompt: str,
-        resume_session_id: str | None,
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        turn_id: uuid.UUID | None = None,
-        sandbox_image: str | None = None,
-        images: list[dict] | None = None,
-    ) -> AsyncIterator[AgentEvent]: ...
 
 
 class ComputePool:
@@ -131,46 +112,18 @@ class ComputePool:
     def default(self) -> ComputeProvider:
         return self._providers[self._default_name]
 
-    @classmethod
-    def tmux(
-        cls, *, image: str, idle_suspect_s: float, hard_ceiling_s: float
-    ) -> "ComputePool":
-        """Interactive/tmux backend (AGENT_BACKEND=tmux): drives `claude` in a
-        tmux session and streams events from Claude Code HTTP hooks."""
-        from app.domain.agent.tmux_provider import TmuxHooksProvider
-
-        provider = TmuxHooksProvider(
-            image=image, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
-        )
-        return cls([provider], provider.name)
-
-    @classmethod
-    def device(cls, *, idle_suspect_s: float, hard_ceiling_s: float) -> "ComputePool":
-        """Self-hosted / BYO backend (AGENT_BACKEND=device, P3): runs the turn on a
-        user's own enrolled machine via the frozen link.Msg channel, streaming events
-        from Claude Code hooks — same contract, execution relocated to the device.
-
-        The two-layer timeout is the SAME policy the local tmux backend runs
-        (turn 活跃度检测): `idle_suspect_s` then a `_confirm_alive` process-tree
-        probe, `hard_ceiling_s` as the backstop."""
-        from app.domain.agent.device_provider import DeviceProvider
-
-        provider = DeviceProvider(
-            idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
-        )
-        return cls([provider], provider.name)
-
     def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
         """turn 活跃度检测: `cheese status`'s idle-suspect signal, read from
         whichever tmux provider is in this pool (at most one — see
         `build_compute_pool`). None when there's no tmux provider in the pool,
         or no turn currently monitored for this topic (not running, or running
         on a different backend)."""
-        from app.domain.agent.tmux_provider import TmuxHooksProvider
+        from app.domain.agent.tmux_provider import TmuxChannel
 
         for provider in self._providers.values():
-            if isinstance(provider, TmuxHooksProvider):
-                return provider.activity_status(topic_id)
+            channel = getattr(provider, "channel", None)
+            if isinstance(channel, TmuxChannel):
+                return channel.activity_status(topic_id)
         return None
 
     async def deliver(
@@ -202,12 +155,10 @@ class ComputePool:
         activity_consumer: "HookActivityConsumer | None" = None,
     ) -> None:
         """Give hooks providers the room-side persistence and activity owners."""
-        from app.domain.agent.harness.claude_code import (
-            HooksSessionProvider,
-        )
+        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 
         for provider in self._providers.values():
-            if isinstance(provider, HooksSessionProvider):
+            if isinstance(provider, ClaudeCodeRuntime):
                 provider.bind_event_consumer(consumer)
                 if activity_consumer is not None:
                     provider.bind_activity_consumer(activity_consumer)
@@ -217,38 +168,32 @@ class ComputePool:
     ) -> None:
         """Give hooks providers the owner of UserPromptSubmit receipts — the
         consumed-stamp side of #539 decision A."""
-        from app.domain.agent.harness.claude_code import (
-            HooksSessionProvider,
-        )
+        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 
         for provider in self._providers.values():
-            if isinstance(provider, HooksSessionProvider):
+            if isinstance(provider, ClaudeCodeRuntime):
                 provider.bind_receipt_consumer(consumer)
 
     def has_live_screen(self, topic_id: uuid.UUID) -> bool:
         """Does any provider in this pool still hold a screen for this topic?
-        See `HooksSessionProvider.has_live_screen`."""
-        from app.domain.agent.harness.claude_code import (
-            HooksSessionProvider,
-        )
+        See `ClaudeCodeRuntime.has_live_screen`."""
+        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 
         return any(
             provider.has_live_screen(topic_id)
             for provider in self._providers.values()
-            if isinstance(provider, HooksSessionProvider)
+            if isinstance(provider, ClaudeCodeRuntime)
         )
 
     async def recover_hook_subscriptions(
         self, device_id: str | None = None
     ) -> list["TopicSubscription"]:
         """Recover subscriptions for screens that survived this process."""
-        from app.domain.agent.harness.claude_code import (
-            HooksSessionProvider,
-        )
+        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
 
         recovered: list[TopicSubscription] = []
         for provider in self._providers.values():
-            if isinstance(provider, HooksSessionProvider):
+            if isinstance(provider, ClaudeCodeRuntime):
                 recovered.extend(await provider.recover_subscriptions(device_id))
         return recovered
 
@@ -271,7 +216,7 @@ class ComputePool:
         return self.default()
 
 
-def build_compute_pool(cloud_provider: ComputeProvider | None = None) -> ComputePool:
+def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     """Build the ComputePool from settings.
 
     The local transport (a container on this box) always joins, the device
@@ -283,31 +228,34 @@ def build_compute_pool(cloud_provider: ComputeProvider | None = None) -> Compute
     ``agent_backend`` used to choose between this and an SDK subprocess. There
     is nothing to choose between now.
     """
-    from app.domain.agent.device_provider import DeviceProvider
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.device_provider import DeviceChannel
+    from app.domain.agent.harness.claude_code import Channel, ClaudeCodeRuntime
+    from app.domain.agent.tmux_provider import TmuxChannel
 
-    local = TmuxHooksProvider(
-        image=settings.tmux_sandbox_image,
-        idle_suspect_s=settings.agent_idle_suspect_s,
-        hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
-    )
-    # Same two-layer timeout policy for the remote transport (turn 活跃度检测),
-    # from the SAME settings — the local and remote hooks backends share one knob
-    # pair, they don't drift. Replaces the old single `device_turn_timeout_s` that
-    # collapsed both layers into one 900s deadline and killed long-but-silent turns.
-    providers: list[ComputeProvider] = [
-        local,
-        DeviceProvider(
+    def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:
+        # One timeout policy, applied where the watching happens. The two-layer
+        # shape (turn 活跃度检测) is `idle_suspect_s` of no hook and no liveness
+        # evidence → only SUSPECTED wedged, then a `confirm_alive` probe until it
+        # says dead, with `hard_ceiling_s` as the unconditional backstop. It used
+        # to be a constructor argument on every transport, which is how a single
+        # 900s deadline could kill a long-but-silent turn on one of them and not
+        # the others.
+        return ClaudeCodeRuntime(
+            channel,
             idle_suspect_s=settings.agent_idle_suspect_s,
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
-        ),
+        )
+
+    channels: list[Channel] = [
+        TmuxChannel(image=settings.tmux_sandbox_image),
+        DeviceChannel(),
     ]
-    if cloud_provider is not None:
-        providers.append(cloud_provider)
+    if cloud_channel is not None:
+        channels.append(cloud_channel)
     default_name = (
-        DeviceProvider.name if settings.agent_backend == "device" else local.name
+        DeviceChannel.name if settings.agent_backend == "device" else TmuxChannel.name
     )
-    return ComputePool(providers, default_name)
+    return ComputePool([runs_claude_code(c) for c in channels], default_name)
 
 
 def app_preview_reachable(compute_profile: str | None) -> bool:
@@ -317,7 +265,7 @@ def app_preview_reachable(compute_profile: str | None) -> bool:
     host* publishes (``workspace.app_endpoint`` → ``docker port``). That mapping
     exists only when the topic's box IS a container here. A turn running on
     someone's enrolled machine (``device``) or on a leased Cloud machine
-    (``cloud`` — a DeviceProvider subclass) has no container on this host, so the
+    (``cloud`` — a DeviceChannel subclass) has no container on this host, so the
     lookup returns None for a reason that has nothing to do with the app: there
     is no path from the platform to that port, and there never was.
 
@@ -325,9 +273,9 @@ def app_preview_reachable(compute_profile: str | None) -> bool:
     panel tells those users to @ 芝士 again to bring up a box that is not coming.
     """
     from app.domain.agent.market import compute_default_name
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.tmux_provider import TmuxChannel
 
-    local_box = {TmuxHooksProvider.name}
+    local_box = {TmuxChannel.name}
     # A topic that has an app artifact has necessarily run a turn, and the first
     # turn pins `topic.compute_profile` — so the sticky project/team chain is
     # already collapsed into it and only the deployment default is left to apply.
