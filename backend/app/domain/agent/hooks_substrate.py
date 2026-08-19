@@ -278,6 +278,11 @@ def _advance_replay_cursor(subscription: TopicSubscription) -> None:
             break
         reached = name
         subscription.replay_queue.pop(0)
+    if not subscription.replay_queue:
+        # The replay is over and the screen may live for hours. Nothing after
+        # this is a replayed event, so keeping their ids is a set that only
+        # ever grows.
+        subscription.replay_done.clear()
     if reached is not None and subscription.replay_spool is not None:
         event_spool.write_cursor(subscription.replay_spool, reached)
 
@@ -772,7 +777,11 @@ class HooksSessionProvider[ScreenT]:
                 replay_processed = (not events) or (
                     consumer_owned and consumer is not None and not consume_failed
                 )
-                if replay_processed and hook_eid is not None:
+                if (
+                    replay_processed
+                    and hook_eid is not None
+                    and subscription.replay_queue
+                ):
                     subscription.replay_done.add(hook_eid)
                     _advance_replay_cursor(subscription)
                 if any(isinstance(event, AgentResult) for event in events) and (
