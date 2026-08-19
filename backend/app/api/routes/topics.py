@@ -735,6 +735,9 @@ async def edit_topic_doc(
         expected_version=body.expected_version,
     )
     if not actor.is_agent:
+        # The notice tells 芝士 to go re-read the doc, so the doc has to BE the
+        # new one by the time it does — same ordering as the comment route.
+        await db.commit()
         # 芝士's own `cheese doc set` is not news to 芝士.
         await chat.notify_running_turn(
             topic_id,

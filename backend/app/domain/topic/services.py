@@ -6,6 +6,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 """
 
 import difflib
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -93,6 +94,9 @@ def _bind_room_branch(
     if parent_id is None or kind not in (TopicKind.task, TopicKind.subtopic):
         return
     ws.bind_branch_parent(child_id, parent_id)
+
+
+logger = logging.getLogger("cheesex.topic")
 
 
 def _doc_conflict(current_version: int) -> ConflictError:
@@ -1000,6 +1004,11 @@ class TopicService:
                 return
             except ConflictError:
                 continue
+        logger.warning(
+            "conclusion section not appended to topic %s: the living doc kept "
+            "moving under it",
+            topic_id,
+        )
 
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         """Reconcile the living doc's node tree (B1) with `content` via a

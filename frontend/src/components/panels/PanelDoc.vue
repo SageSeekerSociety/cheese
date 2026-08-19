@@ -1073,6 +1073,10 @@ function queueAutosave() {
   if (autosaveTimer) clearTimeout(autosaveTimer)
   autosaveTimer = setTimeout(() => {
     if (lossy.value && !sourceMode.value) return
+    // While the conflict bar is up, both versions are still on the table and
+    // the person has not chosen. A timer that saved anyway would resolve it for
+    // them — and win, since the panel is now holding the server's version.
+    if (externalDoc.value !== null) return
     if (dirty.value && editable.value && !saving.value) void save()
   }, 2500)
 }
@@ -1156,6 +1160,7 @@ function confirmLossySave() {
 }
 
 function onBlur() {
+  if (externalDoc.value !== null) return // the conflict is the person's to settle
   if (dirty.value && !(lossy.value && !sourceMode.value)) save()
 }
 
