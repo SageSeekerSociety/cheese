@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError, ValidationError
+from app.domain.agent.harness import harness_name
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.repositories import AgentInstanceRepository
 from app.domain.agent_type.services import AgentTypeService
@@ -104,6 +105,18 @@ class AgentInstanceService:
     async def system_prompt(self, agent: ResolvedAgent) -> str | None:
         """The system prompt *agent*'s type contributes, if it has one."""
         return await self._types.system_prompt(agent.type_name)
+
+    async def harness(self, agent: ResolvedAgent) -> str:
+        """Which harness this agent runs on — the platform's default when its
+        type declines to choose, which most do.
+
+        A type is 出厂设置: it says who an agent is, not which of a deployment's
+        runtimes it must use. Pinning one here would override a deployment that
+        ships something else, so a null means "whatever this platform runs" and
+        is resolved, not honoured as an absence.
+        """
+        resolved = await self._types.resolve(agent.type_name)
+        return harness_name(resolved.harness if resolved else None)
 
     async def model(self, agent: ResolvedAgent) -> str | None:
         """The model *agent* runs on, or None to follow the project's pick."""

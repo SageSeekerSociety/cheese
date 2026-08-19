@@ -103,7 +103,11 @@ class Opening:
 class AgentRuntime(Protocol):
     """One harness, driven over whatever channel the compute side opened."""
 
-    name: str
+    # WHICH harness this is — a key in ``HARNESSES``, and what an agent type's
+    # ``harness`` field names. Deliberately not ``name``: the objects that
+    # implement this today also carry a ``name`` that answers a different
+    # question ("which machine pool"), and one attribute cannot mean both.
+    harness: str
 
     async def ensure(
         self, session: SessionRef, opening: Opening, *, work_id: uuid.UUID | None = None
@@ -189,3 +193,35 @@ def runtime_for(provider: "ComputeProvider") -> AgentRuntime | None:
     naming Claude Code to find out.
     """
     return provider if isinstance(provider, AgentRuntime) else None
+
+
+# --- which harness ----------------------------------------------------------
+#
+# ``AgentType.harness`` has existed as a column for a while with nobody reading
+# it. This is the reader. One entry today, and the registry earns its keep
+# anyway: a type that names a harness this deployment does not have must be
+# refused when it is WRITTEN rather than quietly running Claude Code — a stored
+# value nothing honours is how the column got here in the first place.
+
+CLAUDE_CODE = "claude-code"
+
+# Name → what a person would call it. Not a display concern: the set of keys is
+# the set of harnesses that exist, and everything else reads it from here.
+HARNESSES: dict[str, str] = {
+    CLAUDE_CODE: "Claude Code",
+}
+
+# What a type that declines to choose runs on. A type is 出厂设置, not a
+# deployment decision — most of them have no opinion about the harness, and the
+# null they store means "whatever this platform runs", not "none".
+DEFAULT_HARNESS = CLAUDE_CODE
+
+
+def harness_name(declared: str | None) -> str:
+    """The harness a type declared, or the default when it declared none."""
+    return declared or DEFAULT_HARNESS
+
+
+def known_harness(declared: str | None) -> bool:
+    """Is this a harness we can actually run? None (undeclared) always is."""
+    return declared is None or declared in HARNESSES

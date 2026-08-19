@@ -177,3 +177,37 @@ def test_setting_an_unknown_type_is_rejected(client):
     assert r.status_code == 200, r.text
     assert r.json()["data"]["type_name"] is None
     assert r.json()["data"]["handle"] == "cheese"
+
+
+# --- 运行方式 (harness) ---------------------------------------------------
+
+
+def test_a_type_cannot_name_a_harness_this_deployment_does_not_have(client):
+    """存下来没人认的值，正是这个字段头几个月的样子：能设、能存、跑的时候没人看。
+    在写入这一刻拒绝，做错的人还盯着表单；留到起轮次时才发现，就变成几个小时后
+    某个房间里答话的不是他配的那个 agent。"""
+    r = client.post(
+        "/agent-types",
+        json={
+            "name": "pi-engineer",
+            "title": "pi",
+            "description": "",
+            "body": "你是一位工程师。",
+            "harness": "pi",
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "pi" in r.text
+    assert "pi-engineer" not in {t["name"] for t in _list_types(client)}
+
+
+def test_a_type_that_names_no_harness_is_fine(client):
+    """类型是出厂设置，不是部署决定。不选运行方式的意思是「这平台跑什么就跑什么」，
+    不是「没有」——大多数类型对此没有意见。"""
+    created = _create_type(client, name="quiet-type")
+    assert created["harness"] is None
+
+
+def test_the_harness_that_ships_is_settable(client):
+    created = _create_type(client, name="cc-type", harness="claude-code")
+    assert created["harness"] == "claude-code"

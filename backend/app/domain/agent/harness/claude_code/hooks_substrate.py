@@ -28,7 +28,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.harness import HarnessEvent, Opening, SessionRef
+from app.domain.agent.harness import (
+    CLAUDE_CODE,
+    HarnessEvent,
+    Opening,
+    SessionRef,
+)
 from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
@@ -779,6 +784,11 @@ class HooksSessionProvider[ScreenT]:
             await self._close_topic(topic_id)
 
     # --- AgentRuntime -------------------------------------------------------
+
+    # What this adapter drives. Separate from `name`, which every subclass sets
+    # to its compute pool ("tmux-hooks" / "device" / "cloud") — that says which
+    # machine, this says what runs on it.
+    harness = CLAUDE_CODE
 
     def read(
         self, session: SessionRef, *, since: str | None = None

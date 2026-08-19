@@ -3281,6 +3281,31 @@ class ChatService:
                 )
         return resolved, unresolved
 
+    async def _bail_notice(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID,
+        turn_id: uuid.UUID,
+        session: AsyncSession,
+        text: str,
+    ) -> dict:
+        """A system event for a turn that ends before it starts, committed with
+        the rest of the assembling transaction. A room that shows nothing has no
+        way to tell 「没开始」 from 「还在想」."""
+        block = await BlockRepository(session).add(
+            project_id=project_id,
+            topic_id=topic_id,
+            author="system",
+            author_type=AuthorType.system,
+            content=text,
+            kind=BlockKind.event,
+            turn_id=turn_id,
+            meta={"platform": True},
+        )
+        await session.commit()
+        return _block_payload(BlockOut.model_validate(block))
+
     async def _assemble_turn(
         self,
         *,
@@ -3374,6 +3399,7 @@ class ChatService:
                 else IMPLICIT_DEFAULT
             )
             role = await agents.system_prompt(agent)
+            wanted_harness = await agents.harness(agent)
             agent_pool = memory_pool(topic.project_id, agent)
             # Roster so 芝士 can @ real teammates (not just name them in prose).
             roster = (
@@ -3441,6 +3467,32 @@ class ChatService:
                 await _team_compute_profile(session, project),
             )
             provider = self._compute.select(provider_id=compute_id)
+            runs = runtime_for(provider)
+            if runs is not None and runs.harness != wanted_harness:
+                # The machine is fine; what runs on it is not what this agent's
+                # type asked for. Running Claude Code anyway would answer as an
+                # agent nobody configured — say so instead, and leave the type
+                # to be fixed. (One harness ships, so today this needs a row
+                # written before the field was validated at all.)
+                return _TurnBail(
+                    [
+                        {
+                            "type": "event_block",
+                            "block": await self._bail_notice(
+                                project_id=topic.project_id,
+                                topic_id=topic_id,
+                                turn_id=turn_id,
+                                session=session,
+                                text=(
+                                    f"这个 agent 的类型要求用 {wanted_harness} "
+                                    f"跑，而本话题的机器上跑的是 {runs.harness}，"
+                                    "本轮没有开始。"
+                                ),
+                            ),
+                        },
+                        {"type": "done"},
+                    ]
+                )
             if isinstance(provider, CloudProvider):
                 ready, waiting_text = await provider.prepare_topic(
                     project_id=project_id,

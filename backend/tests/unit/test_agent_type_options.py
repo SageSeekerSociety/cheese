@@ -23,10 +23,31 @@ def test_model_offers_exactly_the_models_a_turn_can_run_on():
 
 def test_fields_with_no_consumer_are_not_offered_as_choices():
     options = agent_type_options()
-    for name in ("effort", "harness", "skills", "mcp_servers"):
+    for name in ("effort", "skills", "mcp_servers"):
         assert options[name]["state"] == "unavailable", name
         # No choices, or the UI would render a picker anyway.
         assert options[name]["choices"] == [], name
+
+
+def test_harness_is_withheld_for_having_one_value_not_for_having_no_reader():
+    """The run path reads this field now, and a type naming a harness the
+    deployment cannot run is refused when it is saved. So the reason it is still
+    not offered is a different one — a picker over one entry is a choice nobody
+    has — and the catalog has to say which, because the reason is precisely what
+    whoever ships the second adapter greps for."""
+    from app.domain.agent.harness import HARNESSES
+    from app.domain.agent_type.options import NO_CONSUMER, ONLY_ONE
+
+    harness = agent_type_options()["harness"]
+    if len(HARNESSES) < 2:
+        assert harness["state"] == "unavailable"
+        assert harness["reason"] == ONLY_ONE
+        assert harness["reason"] != NO_CONSUMER
+        assert harness["choices"] == []
+    else:
+        # Nothing here changes when the second one ships except the registry.
+        assert harness["state"] == "choosable"
+        assert {c["id"] for c in harness["choices"]} == set(HARNESSES)
 
 
 def test_every_unavailable_field_names_why():
