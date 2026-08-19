@@ -544,7 +544,7 @@ class SpoolBacklog:
     def unread(self) -> list[HarnessEvent]:
         return self._unread
 
-    def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
+    def assemble(self, entry: HarnessEvent) -> list[AgentEvent | AgentDeliveryFailure]:
         if not isinstance(entry.record, dict):
             return []
         payload = dict(entry.record)
@@ -554,7 +554,7 @@ class SpoolBacklog:
     def unfinished(self) -> set[str]:
         return self._assembler.pending_eids()
 
-    def give_up(self) -> list[AgentEvent]:
+    def give_up(self) -> list[AgentMessage]:
         return list(self._assembler.drain())
 
     def landed(self, *, through: str) -> None:
@@ -717,6 +717,18 @@ class Channel:
         activity probe, e.g. ``device_hub`` screen bytes, is future work; see
         ``DeviceChannel``)."""
         return None
+
+    async def send_interrupt(self, screen: object) -> bool:
+        """Stop whatever this screen is doing, without saying anything. False =
+        this transport has no way to.
+
+        Default: no. Escape is a KEY, and a transport that can put a prompt into
+        a session cannot necessarily press one — so a channel that has not said
+        it can must answer no rather than raise, or the runtime's ``interrupt``
+        turns a missing capability into a crash.
+        """
+        del screen
+        return False
 
     async def confirm_alive(self, screen: object) -> bool:
         """Called (repeatedly, while idle persists) once the idle-suspect
@@ -1023,7 +1035,7 @@ class ClaudeCodeRuntime:
             replayed: dict[str, dict] = {}
             for event in events:
                 subscription.replay_queue.append((event.key, event.eid))
-                if event.record is None:
+                if not isinstance(event.record, dict):
                     # Unparseable, so nothing can ever be made of it — mark it
                     # done so the cursor steps over it rather than stopping here
                     # forever.

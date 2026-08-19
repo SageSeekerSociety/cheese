@@ -6,10 +6,10 @@ machine, the user's own laptop, a container next to the backend — is a
 — is an ``AgentRuntime``. They were the same switch because the only harness we
 drive is also the only thing that knows how to reach its own machine.
 
-The contract is deliberately NOT 「跑一轮，返回一个事件迭代器」. Whoever holds
-such an iterator owns that turn, and when that process dies the turn is gone —
-which is where every piece of salvage machinery came from. Feeding and reading
-are separate here:
+The contract's core is deliberately NOT 「跑一轮，返回一个事件迭代器」. Whoever
+holds such an iterator OWNS that turn, and when that process dies the turn is
+gone — which is where every piece of salvage machinery came from. Feeding and
+reading are separate here:
 
     ensure     在不在；不在就起
     send       送一条消息进去，回一个「收到了」。不返回事件
@@ -21,6 +21,12 @@ The agent was never the fragile part: claude keeps working inside its machine
 while the backend is replaced. What used to die was our BOOKKEEPING, because it
 hung off an iterator that died with the process. Reading from a cursor is what
 makes recovery a reconnect instead of a salvage operation.
+
+``run_turn`` does hand back an iterator, and is safe for the same reason:
+what it iterates is a session that outlives it. Dropping it loses the READING,
+never the work — the agent keeps going and ``backlog`` picks the tail up again.
+That is the whole difference from the shape this contract replaced, where the
+process holding the iterator was the process running the turn.
 
 ``send`` is also how a person interrupts with words — a message that arrives
 mid-work is not a special case here, it is one more send. ``interrupt`` is the
@@ -36,11 +42,15 @@ alive. ``interrupt`` is that missing middle.
 """
 
 import uuid
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from app.domain.agent.service import AgentDeliveryFailure, AgentEvent
+from app.domain.agent.service import (
+    AgentDeliveryFailure,
+    AgentEvent,
+    AgentMessage,
+)
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
@@ -220,6 +230,48 @@ class AgentRuntime(Protocol):
         """Let this session go: stop listening, forget the channel."""
         ...
 
+    @property
+    def hard_ceiling_s(self) -> float:
+        """How long a turn on this harness may run before it is called dead.
+
+        A harness fact, not a machine one: how long "no output" may last before
+        it means something is wrong depends on what is producing the output. The
+        turn path reschedules its own outer wall clock to this rather than to a
+        deployment-wide default, so a harness that thinks longer is not killed
+        for it.
+        """
+        ...
+
+    def run_turn(
+        self,
+        *,
+        project_id: uuid.UUID,
+        topic_id: uuid.UUID | None,
+        prompt: str,
+        system_prompt: str,
+        resume_session_id: str | None,
+        model: str | None = None,
+        env: dict[str, str] | None = None,
+        memory_scope: str | None = None,
+        owner: str | None = None,
+        turn_id: uuid.UUID | None = None,
+        sandbox_image: str | None = None,
+        images: list[dict] | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """One turn, start to finish, as the events it produced.
+
+        ``ensure`` + ``send`` + read, for a caller that has nothing to recover
+        to: the platform's OWN errands — the activity digest, the heartbeat
+        patrol, the project summary — have no room waiting on them and no
+        timeline to backfill, so the turn is worth exactly as much as the
+        iterator that reads it.
+
+        A room's turn does NOT go through here. It sends, and reads what comes
+        back through the subscription and the backlog, because there the work
+        has to survive the reader.
+        """
+        ...
+
     def bind_events(self, consumer: EventConsumer) -> None:
         """Where the room's persistence and broadcast live."""
         ...
@@ -283,7 +335,9 @@ class Backlog(Protocol):
         things during the pass does not change what this returned."""
         ...
 
-    def assemble(self, entry: HarnessEvent) -> Sequence[AgentEvent]:
+    def assemble(
+        self, entry: HarnessEvent
+    ) -> Sequence[AgentEvent | AgentDeliveryFailure]:
         """What this entry means, once anything it completes is folded in.
         Empty = nothing whole yet, or nothing that could be read."""
         ...
@@ -292,9 +346,13 @@ class Backlog(Protocol):
         """Ids of entries assembled so far whose thing is still incomplete."""
         ...
 
-    def give_up(self) -> Sequence[AgentEvent]:
+    def give_up(self) -> Sequence[AgentMessage]:
         """Hand over the incomplete pieces anyway — the session died
-        mid-sentence and what arrived is better landed than lost."""
+        mid-sentence and what arrived is better landed than lost.
+
+        Messages, not events: a tool call is whole the moment it is reported,
+        so the only thing that can be caught half-arrived is something the
+        agent was still saying."""
         ...
 
     def landed(self, *, through: str) -> None:

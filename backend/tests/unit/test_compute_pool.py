@@ -87,6 +87,12 @@ class _FakeBackend:
     async def replay(self, session, *, known_texts):
         return None
 
+    hard_ceiling_s = 900.0
+
+    async def run_turn(self, **kwargs):
+        return
+        yield  # pragma: no cover — an async generator that yields nothing
+
 
 def test_pool_rejects_unknown_default():
     with pytest.raises(ValueError):

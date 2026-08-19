@@ -208,39 +208,46 @@ async def wait_for_input_box(capture: Callable[[], Awaitable[str | None]]) -> bo
     return False
 
 
-class ScreenHost(Protocol):
+class ScreenHost[ScreenT](Protocol):
     """What a transport must be able to do to a screen for a claude to live on
     it. Six verbs, none of which mention Claude Code — the policy that sequences
     them (``ensure_claude``) is the part that does.
+
+    Parameterised by whatever the transport calls one screen — a tmux pane here,
+    a device binding there. All six verbs take the SAME handle, and saying so is
+    the difference between a host that satisfies this and one that merely has
+    six methods of the right names.
     """
 
-    async def session_exists(self, screen: object) -> bool:
+    async def session_exists(self, screen: ScreenT) -> bool:
         """Is there still a session here at all?"""
         ...
 
-    async def session_deaf(self, screen: object) -> bool:
+    async def session_deaf(self, screen: ScreenT) -> bool:
         """Can this session still reach us? A live one that cannot is worse than
         none: it works perfectly and reports nothing."""
         ...
 
-    async def retire_session(self, screen: object) -> None:
+    async def retire_session(self, screen: ScreenT) -> None:
         """Take this session down, and say so — its conversation goes with it."""
         ...
 
-    async def start_session(self, screen: object, launch: LaunchSpec) -> None:
+    async def start_session(self, screen: ScreenT, launch: LaunchSpec) -> None:
         """Bring a fresh session up running ``launch``."""
         ...
 
-    async def reclaim_session(self, screen: object) -> None:
+    async def reclaim_session(self, screen: ScreenT) -> None:
         """Make a session that was left running usable again."""
         ...
 
-    async def capture_session(self, screen: object) -> str | None:
+    async def capture_session(self, screen: ScreenT) -> str | None:
         """What the screen currently shows, or None if it cannot be read."""
         ...
 
 
-async def ensure_claude(host: ScreenHost, screen: object, launch: LaunchSpec) -> bool:
+async def ensure_claude[ScreenT](
+    host: ScreenHost[ScreenT], screen: ScreenT, launch: LaunchSpec
+) -> bool:
     """Have a claude on this screen, ready to be typed at. False = it never came
     up in time.
 

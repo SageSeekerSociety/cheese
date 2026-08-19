@@ -3647,8 +3647,11 @@ class ChatService:
 
         # Tells AgentWorkRunner's outer wall-clock wrap (runtime.py) to reschedule
         # to this backend's real ceiling instead of the generic
-        # `agent_turn_timeout_s` (turn 活跃度检测).
-        yield {"type": "turn_ceiling", "seconds": provider.hard_ceiling_s}
+        # `agent_turn_timeout_s` (turn 活跃度检测). It is the HARNESS's number:
+        # how long a silence may last before it means something is wrong depends
+        # on what is producing the output, not on the machine underneath it.
+        runtime = runtime_for(provider)
+        yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
         skills = load_skills(PRIVATE_SKILLS) if is_private else self._skills
         system_prompt = _build_system_prompt(
             self._base_prompt,
@@ -3732,7 +3735,6 @@ class ChatService:
         # function long before its turn ends — so it is started once here and
         # carried on the work state rather than read twice in two places.
         known_commits = asyncio.ensure_future(self._known_commits(project_id, topic_id))
-        runtime = runtime_for(provider)
         marked_work_ids: list[uuid.UUID] = []
 
         def _register_work(marked_work_id: uuid.UUID) -> None:
@@ -3962,10 +3964,11 @@ class ChatService:
             "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
         )
         provider = self._compute.platform_work(compute_id)
+        runtime = runtime_for(provider)
         final_text = ""
         new_session_id = None
         tools_used: list[str] = []
-        async for event in provider.run_turn(
+        async for event in runtime.run_turn(
             project_id=project_id,
             topic_id=topic_id,
             prompt=prompt,
@@ -4079,9 +4082,10 @@ class ChatService:
             "strong，kind=heartbeat），别骚扰。\n\n" + context
         )
         provider = self._compute.platform_work(compute_id)
+        runtime = runtime_for(provider)
         final_text = ""
         tools_used: list[str] = []
-        async for event in provider.run_turn(
+        async for event in runtime.run_turn(
             project_id=project_id,
             topic_id=root_topic_id,
             prompt=prompt,
@@ -4177,8 +4181,9 @@ class ChatService:
         # provider (root-topic sandbox when present) for a single execution path;
         # topic_id None (no root topic) degrades to a plain model turn.
         provider = self._compute.platform_work(compute_id)
+        runtime = runtime_for(provider)
         final_text = ""
-        async for event in provider.run_turn(
+        async for event in runtime.run_turn(
             project_id=project_id,
             topic_id=project.root_topic_id,
             prompt=prompt,

@@ -147,7 +147,8 @@ class BlockRepository:
             # against an expression it cannot evaluate in Python buys nothing.
             .execution_options(synchronize_session=False)
         )
-        won = (await self._session.execute(stmt)).rowcount == 1
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        won = (await self._session.execute(stmt)).rowcount == 1  # type: ignore[attr-defined]
         # Either way the in-memory block is now behind the row: it either just
         # gained a version, or somebody else's write is what our WHERE missed.
         # The caller reports the current version, so it has to be the real one.

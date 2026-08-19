@@ -118,7 +118,8 @@ class AgentTurnRepository:
             )
             .values(stopped_at=at)
         )
-        return result.rowcount or 0
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        return result.rowcount or 0  # type: ignore[attr-defined]
 
     async def open_turns(self) -> list[TurnRecord]:
         """Every interval still open, oldest first."""

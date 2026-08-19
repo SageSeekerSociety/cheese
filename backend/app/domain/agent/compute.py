@@ -15,6 +15,7 @@ import uuid
 from typing import TYPE_CHECKING, Protocol
 
 from app.core.config import settings
+from app.domain.agent.harness import AgentRuntime, runtime_for
 
 if TYPE_CHECKING:
     from app.domain.agent.harness import (
@@ -39,10 +40,13 @@ class ComputeProvider(Protocol):
 
     What the pool holds is a runtime WRAPPING a channel, and the runtime answers
     this protocol by forwarding to the channel it is driving. So the two halves
-    are separate objects now, not just separate contracts.
+    are separate objects now, not just separate contracts. That forwarding is
+    why the three facts below are read-only: a backend is ASKED which machine it
+    is and what reaches it, and the answer comes from somewhere else.
     """
 
-    name: str
+    @property
+    def name(self) -> str: ...
 
     # 图片输入: whether the turn's user message actually carries `images=`. It is
     # a capability, not a preference — the prompt wording branches on it
@@ -52,13 +56,15 @@ class ComputeProvider(Protocol):
     # and sees nothing does not error — it invents what the image said, which is
     # worse than saying "我没收到图". A backend that drops images MUST say False
     # here rather than leave the prompt lying for it.
-    embeds_images: bool
+    @property
+    def embeds_images(self) -> bool: ...
 
     # Does a turn here have to wait for a machine to be created first? The turn
     # path branches on it — 「机器正在创建」 with the prompt held — instead of on
     # the backend's class, which is what lets a second leased-machine backend
     # get the same waiting room without the platform learning its name.
-    provisions_machine: bool
+    @property
+    def provisions_machine(self) -> bool: ...
 
     def available(self) -> bool: ...
 
@@ -102,7 +108,7 @@ class ComputePool:
     """
 
     def __init__(self, backends: list[ComputeProvider], default_name: str):
-        from app.domain.agent.harness import DEFAULT_HARNESS, runtime_for
+        from app.domain.agent.harness import DEFAULT_HARNESS
 
         # Every backend runs a harness. Checked HERE, once, at wiring time: the
         # turn path then reads `runtime_for` as an answer rather than as a
@@ -118,6 +124,16 @@ class ComputePool:
 
     def default(self) -> ComputeProvider:
         return self._backends[self._default]
+
+    def _runtimes(self) -> list[AgentRuntime]:
+        """Every harness in the pool.
+
+        The pool is keyed by machine and holds objects that answer both
+        questions; the calls below are addressed to the harness half. This is
+        where the guarantee bought at wiring time — every backend runs one — is
+        spent, so the callers read as statements rather than as questions.
+        """
+        return [runtime_for(backend) for backend in self._backends.values()]
 
     def machines(self) -> set[str]:
         """Which machine pools this deployment offers, whatever runs on them."""
@@ -165,28 +181,28 @@ class ComputePool:
         activity: "ActivityConsumer | None" = None,
     ) -> None:
         """Give every runtime the room-side persistence and activity owners."""
-        for backend in self._backends.values():
-            backend.bind_events(consumer)
+        for runtime in self._runtimes():
+            runtime.bind_events(consumer)
             if activity is not None:
-                backend.bind_activity(activity)
+                runtime.bind_activity(activity)
 
     def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
         """Give every runtime the owner of prompt receipts — the consumed-stamp
         side of #539 decision A."""
-        for backend in self._backends.values():
-            backend.bind_receipts(consumer)
+        for runtime in self._runtimes():
+            runtime.bind_receipts(consumer)
 
     def holds(self, topic_id: uuid.UUID) -> bool:
         """Does any backend still hold a live session for this topic?"""
-        return any(backend.holds(topic_id) for backend in self._backends.values())
+        return any(runtime.holds(topic_id) for runtime in self._runtimes())
 
     async def recover_sessions(
         self, device_id: str | None = None
     ) -> list["SessionRef"]:
         """Listen again to sessions that survived this process."""
         recovered: list[SessionRef] = []
-        for backend in self._backends.values():
-            recovered.extend(await backend.recover(device_id))
+        for runtime in self._runtimes():
+            recovered.extend(await runtime.recover(device_id))
         return recovered
 
     def backlog(self, session: "SessionRef") -> "Backlog":
@@ -200,7 +216,7 @@ class ComputePool:
         nobody has anything the reader is empty either way, and the caller still
         gets one to close the pass with.
         """
-        readers = [backend.backlog(session) for backend in self._backends.values()]
+        readers = [runtime.backlog(session) for runtime in self._runtimes()]
         for reader in readers:
             if reader.unread():
                 return reader
@@ -208,8 +224,8 @@ class ComputePool:
 
     async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
         """Land what a recovered session produced while nobody listened."""
-        for backend in self._backends.values():
-            await backend.replay(session, known_texts=known_texts)
+        for runtime in self._runtimes():
+            await runtime.replay(session, known_texts=known_texts)
 
     def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
         """The backend for work the PLATFORM starts — the activity digest, the
@@ -293,7 +309,8 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     default_name = (
         DeviceChannel.name if settings.agent_backend == "device" else TmuxChannel.name
     )
-    return ComputePool([runs_claude_code(c) for c in channels], default_name)
+    backends: list[ComputeProvider] = [runs_claude_code(c) for c in channels]
+    return ComputePool(backends, default_name)
 
 
 def app_preview_reachable(compute_profile: str | None) -> bool:
