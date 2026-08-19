@@ -14,6 +14,11 @@ import pytest
 
 from app.domain.agent import tmux_provider as tp
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.claude_code import (
+    LaunchSpec,
+    input_box_ready,
+    session_launch,
+)
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import (
     ActivityTracker,
@@ -25,12 +30,12 @@ from app.domain.agent.service import (
     AgentSessionInfo,
     AgentToolUse,
 )
-from app.domain.agent.tmux_provider import TmuxChannel, TmuxScreen, pane_ready
+from app.domain.agent.tmux_provider import TmuxChannel, TmuxScreen
 
 
-def test_pane_ready_detects_prompt_box():
-    assert pane_ready("some boot noise\n│ > type here          ❯ │\n") is True
-    assert pane_ready("Welcome to Claude Code\nloading...\n") is False
+def test_the_input_box_is_what_says_claude_is_ready():
+    assert input_box_ready("some boot noise\n│ > type here          ❯ │\n") is True
+    assert input_box_ready("Welcome to Claude Code\nloading...\n") is False
 
 
 # --- prompt-delivery verification (the 2026-08-16 paste-loop / swallowed-Enter
@@ -339,8 +344,13 @@ async def test_the_box_runs_the_command_the_harness_handed_it(monkeypatch, tmp_p
 
     monkeypatch.setattr(tp, "_docker", fake_docker)
     provider = TmuxChannel(image="img:test")
-    await provider._ensure_session(
-        _BOX, session_env=_topic_env(), command="claude --whatever-the-harness-said"
+    await provider.start_session(
+        _BOX,
+        LaunchSpec(
+            command="claude --whatever-the-harness-said",
+            env=_topic_env(),
+            files=(),
+        ),
     )
 
     new_session = next(c for c in calls if "new-session" in c)
@@ -468,8 +478,8 @@ async def test_run_turn_not_ready_yields_error(_stub_env, monkeypatch):
         return 0, "", ""
 
     monkeypatch.setattr(tp, "_docker", never_ready)
-    monkeypatch.setattr(tp, "_READY_TIMEOUT_S", 0.5)
-    monkeypatch.setattr(tp, "_READY_POLL_S", 0.1)
+    monkeypatch.setattr(session_launch, "READY_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(session_launch, "READY_POLL_S", 0.1)
     provider = ClaudeCodeRuntime(TmuxChannel(image="img:test"), router=HookRouter())
     events = [
         e

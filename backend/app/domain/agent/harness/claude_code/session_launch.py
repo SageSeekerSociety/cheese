@@ -30,9 +30,12 @@ for the NEXT fresh session — a container rebuild, a crash — and a stale prom
 served to that one is the failure this prevents.
 """
 
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from app.domain.agent import clone
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
@@ -71,6 +74,10 @@ class LaunchSpec:
     them — a tmux session in a container, a launcher shipped to someone's
     machine — is its own business, and this type is where that stops being the
     harness's problem.
+
+    ``env`` is only the part claude itself reads. A channel adds its own wiring
+    to it before starting the session, because the session takes ONE
+    environment and both halves have to be in it.
     """
 
     command: str
@@ -157,3 +164,93 @@ def _gates(workdir: str) -> str:
         },
         ensure_ascii=False,
     )
+
+
+# How long a fresh `claude` gets to draw its input box, and how often to look.
+# A cold start on a new container is the slow case (the launcher's first-run
+# gates, then the TUI's own boot); past this the screen is not coming up and the
+# turn ends with a clean error instead of hanging.
+READY_TIMEOUT_S = 45.0
+READY_POLL_S = 0.4
+
+
+def input_box_ready(screen_text: str) -> bool:
+    """True when a captured screen shows Claude Code's input box.
+
+    The ``❯`` prompt is the ONLY signal that this TUI is ready to be typed at,
+    and typing before it appears loses the prompt into a boot-time modal. Pure,
+    so it costs no container to test.
+    """
+    return "❯" in screen_text
+
+
+async def wait_for_input_box(capture: Callable[[], Awaitable[str | None]]) -> bool:
+    """Poll a screen until claude's input box shows, or give up (就绪握手).
+
+    The transport supplies the reading; how long a claude takes to come up, and
+    what "up" looks like, are this side's.
+    """
+    deadline = asyncio.get_event_loop().time() + READY_TIMEOUT_S
+    while asyncio.get_event_loop().time() < deadline:
+        screen_text = await capture()
+        if screen_text is not None and input_box_ready(screen_text):
+            return True
+        await asyncio.sleep(READY_POLL_S)
+    return False
+
+
+class ScreenHost(Protocol):
+    """What a transport must be able to do to a screen for a claude to live on
+    it. Six verbs, none of which mention Claude Code — the policy that sequences
+    them (``ensure_claude``) is the part that does.
+    """
+
+    async def session_exists(self, screen: object) -> bool:
+        """Is there still a session here at all?"""
+        ...
+
+    async def session_deaf(self, screen: object) -> bool:
+        """Can this session still reach us? A live one that cannot is worse than
+        none: it works perfectly and reports nothing."""
+        ...
+
+    async def retire_session(self, screen: object) -> None:
+        """Take this session down, and say so — its conversation goes with it."""
+        ...
+
+    async def start_session(self, screen: object, launch: LaunchSpec) -> None:
+        """Bring a fresh session up running ``launch``."""
+        ...
+
+    async def reclaim_session(self, screen: object) -> None:
+        """Make a session that was left running usable again."""
+        ...
+
+    async def capture_session(self, screen: object) -> str | None:
+        """What the screen currently shows, or None if it cannot be read."""
+        ...
+
+
+async def ensure_claude(host: ScreenHost, screen: object, launch: LaunchSpec) -> bool:
+    """Have a claude on this screen, ready to be typed at. False = it never came
+    up in time.
+
+    A session that already exists is REUSED — it is the conversation's
+    continuity, and restarting it throws that away — but only if it can still
+    report. A claude reads its wiring once at exec and never again, so a session
+    whose reporting path has since died is a process that works perfectly and
+    tells nobody: cheaper to lose its memory than to run turns nobody can see.
+
+    The input-box wait happens on both paths, not just the fresh one. A reused
+    session can be mid-render (a previous turn's output still painting), and the
+    first thing done to it either way is typing.
+    """
+    if await host.session_exists(screen):
+        if await host.session_deaf(screen):
+            await host.retire_session(screen)
+            await host.start_session(screen, launch)
+        else:
+            await host.reclaim_session(screen)
+    else:
+        await host.start_session(screen, launch)
+    return await wait_for_input_box(lambda: host.capture_session(screen))

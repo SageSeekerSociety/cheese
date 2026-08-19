@@ -56,8 +56,11 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
 )
 from app.domain.agent.harness.claude_code.session_launch import (
     LaunchSpec,
+    ScreenHost,
     SessionFile,
     build_session_launch,
+    ensure_claude,
+    input_box_ready,
 )
 
 __all__ = [
@@ -74,6 +77,7 @@ __all__ = [
     "HookRouter",
     "LaunchSpec",
     "MessageAssembler",
+    "ScreenHost",
     "ScreenSetupError",
     "SessionFile",
     "TopicSubscription",
@@ -81,11 +85,13 @@ __all__ = [
     "append_event",
     "build_screen_launch",
     "build_session_launch",
+    "ensure_claude",
     "drop_device_subscriptions",
     "drop_screen_subscriptions",
     "drop_topic_subscriptions",
     "expire_log",
     "hook_router",
+    "input_box_ready",
     "log_cursor",
     "read_log",
     "schedule_screen_subscription_drop",

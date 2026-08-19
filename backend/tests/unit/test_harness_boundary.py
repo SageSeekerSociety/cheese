@@ -23,8 +23,9 @@ harness 一样都不用付。
 三类，性质完全不同：
 
 - **channels**（tmux / device / cloud）：它们实现 ``Channel``，拿走这一个接缝、它抛
-  的错，和一份 ``LaunchSpec``（跑什么、要什么 env、开机前盘上得有什么）——最后这个是
-  transport 拿来照做的，不是它自己拼的。剩下那几个名字才是账——
+  的错、一份 ``LaunchSpec``（跑什么、要什么 env、开机前盘上得有什么），以及
+  ``ensure_claude``（一块屏幕上什么时候可以复用一个 claude、什么时候必须重开）——
+  这些都是 transport 拿来照做的，不是它自己定的。剩下那几个名字才是账——
   ``build_screen_launch``、``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE``：Claude Code
   的知识，今天还长在传输层里。第二个 harness 要接上的时候，红的就是这几行。
 - **chat.py**：拿走 ``TopicSubscription`` 和 ``MessageAssembler``——也就是说「把
@@ -86,11 +87,13 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     "app.domain.agent.tmux_provider": (
         "ActivityTracker",
         "Channel",
+        "LaunchSpec",
         "SESSION_TOKEN_TTL_S",
         "ScreenSetupError",
         "SessionFile",
         "build_session_launch",
         "drop_screen_subscriptions",
+        "ensure_claude",
     ),
 }
 

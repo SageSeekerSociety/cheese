@@ -45,7 +45,7 @@ import contextlib
 import hashlib
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -57,10 +57,12 @@ from app.domain.agent.harness.claude_code import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
     Channel,
+    LaunchSpec,
     ScreenSetupError,
     SessionFile,
     build_session_launch,
     drop_screen_subscriptions,
+    ensure_claude,
 )
 from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.tmux_control import TmuxControlClient
@@ -74,9 +76,6 @@ _TTYD_PORT = ws.TTYD_PORT  # in-container ttyd base port (施工现场 pane mirr
 # There is deliberately no fixed absolute path for it any more: it lives in the
 # topic's OWN config dir, which differs per session inside a shared box, so
 # `_ensure_session` builds the path from that session's CLAUDE_CONFIG_DIR.
-# Wait this long for the pane to reach the `❯` input box after (re)starting.
-_READY_TIMEOUT_S = 45.0
-_READY_POLL_S = 0.4
 # Fixed pane geometry (`window-size manual`). Live 现场 viewers attach through
 # ttyd as REAL tmux clients, and the default `window-size latest` handed each of
 # them the pane geometry: a 46-column drawer shrank the running claude's
@@ -194,13 +193,6 @@ def env_stamp_drifted(current: str, wanted: str) -> bool:
     commit sha, so every container is rebuilt (and stamped) within one deploy.
     """
     return bool(current) and current != wanted
-
-
-def pane_ready(capture: str) -> bool:
-    """True when a captured tmux pane shows Claude Code's input box (the `❯`
-    prompt) — the ready signal before injecting a prompt (spike 就绪握手). Pure so
-    it can be unit-tested without a container."""
-    return "❯" in capture
 
 
 # --- prompt-delivery verification (pure, unit-tested) -----------------------
@@ -797,48 +789,49 @@ class TmuxChannel(Channel):
             "exec", container, "tmux", "kill-session", "-t", ws.LEGACY_TMUX_SESSION
         )
 
-    async def _ensure_session(
-        self,
-        screen: TmuxScreen,
-        *,
-        session_env: dict[str, str],
-        command: str,
-    ) -> None:
-        """Ensure the topic's session exists (lazy, reused), running ``command``.
+    # --- ScreenHost: the six things a claude needs done to a tmux session ---
 
-        What that command is — which binary, which flags, whether it resumes
-        anything — is the harness's answer (``build_session_launch``); the
-        session is a place to run it and this method is about keeping that place
-        alive."""
+    async def session_exists(self, screen: TmuxScreen) -> bool:
         rc, _, _ = await _docker(
             "exec", screen.container, "tmux", "has-session", "-t", screen.session
         )
-        if rc == 0:
-            if await self._hook_token_dead(screen):
-                # Deaf: this session can never report anything again, so keeping
-                # it costs more than the continuity restarting it loses. Only
-                # this session goes — the box and its siblings are untouched.
-                await self.drop_control(screen)
-                await _docker(
-                    "exec",
-                    screen.container,
-                    "tmux",
-                    "kill-session",
-                    "-t",
-                    screen.session,
-                )
-                # The conversation is gone with no other warning; tell the topic
-                # (best-effort, never blocks the turn).
-                await warn_container_rebuilt(
-                    uuid.UUID(session_env["CHEESE_TOPIC"]), "token"
-                )
-            else:
-                # Re-pin every turn: a session created before the geometry pin
-                # (or already shrunk by a Live 现场 viewer under `window-size
-                # latest`) must be brought back to the fixed size, not locked
-                # into the viewer's — see _PANE_COLS.
-                await self._pin_window_size(screen)
-                return
+        return rc == 0
+
+    async def session_deaf(self, screen: TmuxScreen) -> bool:
+        return await self._hook_token_dead(screen)
+
+    async def retire_session(self, screen: TmuxScreen) -> None:
+        """Kill this session and tell its topic. Only this session goes — the box
+        and its siblings are untouched, which is the whole point of the state
+        being per topic."""
+        # Read the topic BEFORE the kill: the session env dies with it, and the
+        # notice is the only warning anyone gets that a conversation is gone.
+        topic = await self._session_env_var(screen, "CHEESE_TOPIC")
+        await self.drop_control(screen)
+        await _docker(
+            "exec", screen.container, "tmux", "kill-session", "-t", screen.session
+        )
+        if topic:
+            # Best-effort, never blocks the turn.
+            await warn_container_rebuilt(uuid.UUID(topic), "token")
+
+    async def reclaim_session(self, screen: TmuxScreen) -> None:
+        # Re-pin every turn: a session created before the geometry pin (or
+        # already shrunk by a Live 现场 viewer under `window-size latest`) must
+        # be brought back to the fixed size, not locked into the viewer's — see
+        # _PANE_COLS.
+        await self._pin_window_size(screen)
+
+    async def capture_session(self, screen: TmuxScreen) -> str | None:
+        return await self._capture_pane(screen)
+
+    async def start_session(self, screen: TmuxScreen, launch: LaunchSpec) -> None:
+        """Create the topic's tmux session running ``launch``.
+
+        Which binary, which flags, which files had to be on disk first: not this
+        method's business (``build_session_launch``). This one owns the box, the
+        cwd, the geometry, the per-key environment and the ttyd mirror.
+        """
         await self._retire_legacy_session(screen.container)
         args = [
             "exec",
@@ -853,7 +846,7 @@ class TmuxChannel(Channel):
             "-s",
             screen.session,
             "-c",
-            session_env["CHEESE_WORKDIR"],
+            launch.env["CHEESE_WORKDIR"],
         ]
         # EXPLICITLY per key, never by inheritance. A new tmux session seeds its
         # environment from the SERVER's global one, frozen when that server
@@ -863,10 +856,10 @@ class TmuxChannel(Channel):
         # this on a shared machine (device_launch.py: "/proc of topic B's claude
         # showed topic A's HOME and PATH"). `-e` writes the session env before
         # claude execs, so each topic runs on its own.
-        for key, value in session_env.items():
+        for key, value in launch.env.items():
             if value:
                 args += ["-e", f"{key}={value}"]
-        args.append(command)
+        args.append(launch.command)
         rc, _, err = await _docker(*args)
         if rc != 0:
             raise RuntimeError(f"tmux new-session failed: {err.strip()}")
@@ -876,7 +869,7 @@ class TmuxChannel(Channel):
         # it. The pgrep guard matches the port so a second topic in the same box
         # still gets its own ttyd instead of finding the first one's and
         # skipping.
-        ttyd_port = ws.ttyd_port_for_slot(int(session_env["CHEESE_PORT_SLOT"]))
+        ttyd_port = ws.ttyd_port_for_slot(int(launch.env["CHEESE_PORT_SLOT"]))
         await _docker(
             "exec",
             "-d",
@@ -928,16 +921,6 @@ class TmuxChannel(Channel):
             "exec", screen.container, "tmux", "capture-pane", "-p", "-t", screen.session
         )
         return out if rc == 0 else None
-
-    async def _wait_ready(self, screen: TmuxScreen) -> bool:
-        """Poll capture-pane until the `❯` input box appears (spike 就绪握手)."""
-        deadline = asyncio.get_event_loop().time() + _READY_TIMEOUT_S
-        while asyncio.get_event_loop().time() < deadline:
-            capture = await self._capture_pane(screen)
-            if capture is not None and pane_ready(capture):
-                return True
-            await asyncio.sleep(_READY_POLL_S)
-        return False
 
     async def _control(self, screen: TmuxScreen) -> TmuxControlClient:
         """The screen's control-mode client, created once and reused.
@@ -1445,15 +1428,12 @@ class TmuxChannel(Channel):
             # Everything claude reads at launch goes down before the session
             # starts — and again on a reused one, for the NEXT fresh session.
             self._plant(session_dir, launch.files)
-            await self._ensure_session(
-                screen,
-                session_env={**topic_env, **launch.env},
-                command=launch.command,
+            # Inside the wrap: every docker exec below can itself fail (the
+            # binary vanishing mid-turn) and must surface as a clean error
+            # result, not a raw exception.
+            ready = await ensure_claude(
+                self, screen, replace(launch, env={**topic_env, **launch.env})
             )
-            # _wait_ready inside the wrap too: its docker exec can itself fail
-            # (docker binary vanishing mid-turn) — that must surface as a clean
-            # error result, not a raw exception (review finding).
-            ready = await self._wait_ready(screen)
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             raise ScreenSetupError(f"tmux 后端启动失败：{exc}") from exc
         if not ready:

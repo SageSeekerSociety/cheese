@@ -188,6 +188,13 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
   / `--resume` / `--model`。和 device 那边 `build_screen_launch` 对称。
   故意**不**和 `build_launch_script` 合并：装到别人机器上的启动脚本和隔壁容器里的一条
   命令本来就不是一回事，要消掉的 M×N 是订阅/活跃度/spool/收据那套机器，不是 launch 细节。
+- ✅ **复用策略也过了缝**：`ensure_claude` 决定「一块屏幕上什么时候还能接着用原来那个
+  claude」——在的就复用（它就是对话本身），但只在它还报得回来的前提下；报不回来的一律
+  退役重开；两条路都要等到输入框（❯）出现才算就绪。tmux channel 只提供六个动词
+  （`session_exists` / `session_deaf` / `retire_session` / `start_session` /
+  `reclaim_session` / `capture_session`），一句 claude 的事都不知道。
+  device 侧**不**并进来：它的三道闸（凭据过期 / claude 死了 / 隧道助手没了）是另一种
+  机器的另一组问题，硬套一份编排正是要避免的过度统一。
 - ✅ **单一来源 forwarder**：`cheese-hook` 由 `scripts/gen-sandbox-assets.py` 从
   `CHEESE_HOOK_SCRIPT` 生成为 `sandbox/cheese-hook`，tmux 镜像 `COPY` 它（不再 inline printf）；
   `test_hooks_substrate.py` 断言二者一致 → **漂移即测试失败**。device launcher 运行时写的是同一
