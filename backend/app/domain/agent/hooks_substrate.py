@@ -660,6 +660,18 @@ class HooksSessionProvider[ScreenT]:
         )
         return subscription
 
+    def has_live_screen(self, topic_id: uuid.UUID) -> bool:
+        """Is there a screen this provider can still reach for this topic?
+
+        This is what "the work survived" means after a backend restart: the
+        coroutine waiting on the turn died with the process, the claude in the
+        execution environment did not, and `recover_subscriptions` found it
+        again. Everything the orphan sweep used to infer from side effects — a
+        block bearing the turn's id, an unread hook in the spool — was an
+        attempt to answer this question without being able to ask it.
+        """
+        return topic_id in self._live
+
     async def recover_subscriptions(
         self, device_id: str | None = None
     ) -> list[TopicSubscription]:

@@ -13,7 +13,8 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.hook_events import HookRouter
 from app.domain.agent.hooks_substrate import HooksSessionProvider, TopicSubscription
-from app.domain.agent.runtime import get_broker
+from app.domain.agent.models import AgentTurn
+from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (
     AgentEvent,
     AgentResult,
@@ -29,6 +30,7 @@ from app.domain.topic.services import TopicService
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.repositories import UsageRepository
 from app.domain.workspace import service as ws
+from tests.turn_log import open_turn
 
 pytestmark = pytest.mark.anyio
 
@@ -529,6 +531,117 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
     # they were consumed is the cursor, so the tail past it must be empty.
     spool = ws.spool_dir(project_id, topic_id)
     assert event_spool.spool_entries(spool, after=event_spool.read_cursor(spool)) == []
+    await provider.drop_subscription(topic_id)
+
+
+async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
+    client, tmp_path, monkeypatch
+) -> None:
+    """#316 / #459, as a person would check it: restart the backend mid-turn and
+    the turn finishes anyway — nothing re-prompted, nothing announced, every
+    event landing exactly once.
+
+    What survives a deploy is the screen, not the coroutine waiting on it. So
+    this drives the real shape of a restart: an interval left open by a process
+    that is gone, hook events waiting in the spool, and a provider that
+    rediscovers the screen on the way up. The turn is adopted rather than swept,
+    and what ends it is the Stop that screen sends — the interval closes without
+    anyone deciding it should.
+    """
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+
+    # The dead process got as far as handing the prompt to the transport.
+    interrupted = await open_turn(
+        factory, topic_id, content="把测试跑绿", age_s=300, delivered=True
+    )
+    for eid, payload in (
+        (
+            "deploy-msg-1",
+            {"hook_event_name": "MessageDisplay", "delta": "跑绿了，收工"},
+        ),
+        (
+            "deploy-stop-1",
+            {
+                "hook_event_name": "Stop",
+                "last_assistant_message": "跑绿了，收工",
+                "session_id": "session-across-the-deploy",
+            },
+        ),
+    ):
+        event_spool.append(ws.spool_dir(project_id, topic_id), eid, payload)
+
+    provider = _RecoveringHooksProvider(project_id, topic_id)
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    assert await service.recover_hook_subscriptions() == 1
+
+    # The startup sweep runs next, exactly as `main.py` orders it. It must find
+    # nothing to do: the screen answered for this topic and the prompt reached
+    # it.
+    runner = AgentWorkRunner(get_broker())
+    assert await runner.resume_orphans(service) == 0
+    async with factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    assert [b.content for b in blocks if b.author_type == AuthorType.ai] == [
+        "跑绿了，收工"
+    ]
+    # Nothing was announced — from the room's side the deploy did not happen.
+    assert [b for b in blocks if b.author_type == AuthorType.system] == []
+    # And the Stop closed the books on the interval the dead process opened.
+    async with factory() as session:
+        row = await session.get(AgentTurn, interrupted)
+    assert row is not None and row.stopped_at is not None
+    await provider.drop_subscription(topic_id)
+
+
+async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
+    client, tmp_path, monkeypatch
+) -> None:
+    """A turn spends its first seconds — or minutes, if the box has to boot —
+    between opening its interval and reaching the transport. A Stop from the
+    conversation BEFORE it must not close that interval.
+
+    An interval closed early is a running turn no sweep can see, which is the
+    silent death the whole table exists to end; it would arrive through the one
+    door left open, a stale hook. So the rule is the interval's own definition:
+    投喂 → Stop, and a turn nobody fed is not what this Stop is ending.
+    """
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
+    factory = client.test_factory
+    project_id, topic_id = await _seed_topic(factory)
+    still_provisioning = await open_turn(
+        factory, topic_id, content="新任务", age_s=5, delivered=False
+    )
+    event_spool.append(
+        ws.spool_dir(project_id, topic_id),
+        "stale-stop-1",
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "上一段对话的收尾",
+            "session_id": "session-before",
+        },
+    )
+
+    provider = _RecoveringHooksProvider(project_id, topic_id)
+    service = ChatService(
+        session_factory=factory,
+        agent=_ImmediateAgent(),
+        base_system_prompt="You are Cheese.",
+        workspace_root=str(tmp_path / "ws"),
+        compute=ComputePool([provider], provider.name),
+    )
+    assert await service.recover_hook_subscriptions() == 1
+
+    async with factory() as session:
+        row = await session.get(AgentTurn, still_provisioning)
+    assert row is not None and row.stopped_at is None
     await provider.drop_subscription(topic_id)
 
 

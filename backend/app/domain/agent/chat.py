@@ -1659,54 +1659,44 @@ class ChatService:
             ),
         }
 
-    async def orphan_turn_evidence(
-        self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
-    ) -> dict:
-        """Did claude demonstrably RECEIVE each of these turns' prompts?
+    async def _close_open_turns(self, topic_id: uuid.UUID) -> None:
+        """End every open interval on this topic. Never raises — a Stop that
+        cannot update the bookkeeping must still land the message it carries."""
+        from datetime import UTC, datetime
 
-        The orphan sweep decides attach-vs-re-send on this (#316): re-sending a
-        task claude already heard is how one deploy stacked five zombie turns
-        on a topic. Two sources, matching the two places a hook can leave a
-        durable trace:
+        from app.domain.agent.repositories import AgentTurnRepository
 
-        - ``delivered``: turn ids among ``turn_ids`` that own at least one
-          AI-authored block — the live hook/stream path persisted it, so claude
-          acted on the prompt.
-        - ``spool``: the topic's durable spool holds any event beyond
-          SessionStart (which fires at launch, BEFORE the prompt is typed).
-          Spool entries carry no turn id, so this is topic-level evidence — it
-          vetoes every re-send on the topic rather than crediting one turn.
+        try:
+            async with self._sessions() as session:
+                closed = await AgentTurnRepository(session).close_for_topic(
+                    topic_id, datetime.now(UTC)
+                )
+                if closed:
+                    await session.commit()
+        except Exception:  # noqa: BLE001 — the Stop matters more than the row
+            logger.exception("could not close open turns for topic %s", topic_id)
+
+    def has_live_screen(self, topic_id: uuid.UUID) -> bool:
+        """Is a screen for this topic still reachable? See
+        `HooksSessionProvider.has_live_screen` — this is the orphan sweep's
+        first question, and the one that used to be unanswerable."""
+        return self._compute.has_live_screen(topic_id)
+
+    async def turns_that_produced_something(
+        self, turn_ids: list[uuid.UUID]
+    ) -> set[uuid.UUID]:
+        """Which of these turns own at least one AI-authored block.
+
+        Second-hand proof that the prompt arrived, and a narrow backstop rather
+        than a source: the runtime records delivery first-hand the moment the
+        transport accepts the write, so the only thing this covers is a process
+        dying between that write and the record of it. Without it, that
+        millisecond re-sends a task 芝士 is already working on.
         """
+        if not turn_ids:
+            return set()
         async with self._sessions() as session:
-            topic = await TopicRepository(session).get(topic_id)
-            if topic is None:
-                return {"delivered": set(), "spool": False}
-            blocks = await BlockRepository(session).list_for_topic(topic_id)
-        wanted = set(turn_ids)
-        delivered = {
-            b.turn_id
-            for b in blocks
-            if b.turn_id in wanted and b.author_type == AuthorType.ai
-        }
-        spool = False
-        spool_dir = ws.spool_dir(topic.project_id, topic_id)
-        # Only the UNREAD tail counts. A read event has already become a block,
-        # so the `delivered` arm above speaks for it — and events now live out
-        # their retention on disk instead of being deleted as they are read, so
-        # counting the whole directory would let one ancient hook veto every
-        # re-send this topic ever needs.
-        for _path, _eid, payload in event_spool.spool_entries(
-            spool_dir, after=event_spool.read_cursor(spool_dir)
-        ):
-            if not isinstance(payload, dict):
-                continue
-            name = str(
-                payload.get("hook_event_name") or payload.get("hookEventName") or ""
-            )
-            if name != "SessionStart":
-                spool = True
-                break
-        return {"delivered": delivered, "spool": spool}
+            return await BlockRepository(session).ai_turn_ids(turn_ids)
 
     async def settle_spool(self, topic_id: uuid.UUID) -> int:
         """Drain the topic's hook spool NOW, with no turn required. Returns how
@@ -1988,6 +1978,14 @@ class ChatService:
         if frame is not None:
             await broker.publish(str(topic_id), frame)
         if isinstance(event, AgentResult):
+            # 投喂 → Stop is the interval. Closing it HERE, rather than where the
+            # turn's own coroutine ends, is what lets a turn survive the backend
+            # being replaced under it: the screen kept working, the subscription
+            # reattached, and its Stop closes the books exactly as it would have
+            # if nothing had happened. A turn whose coroutine is alive closes the
+            # same row a moment later and finds it already closed, which is the
+            # correct answer either way.
+            await self._close_open_turns(topic_id)
             if state is not None:
                 try:
                     for close_frame in await self._close_hook_work(state, event):

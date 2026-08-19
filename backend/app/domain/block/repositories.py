@@ -204,6 +204,25 @@ class BlockRepository:
     # Artifacts are preview pointers surfaced in the preview window, not chat.
     _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment, BlockKind.artifact)
 
+    async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these turns produced at least one AI-authored block.
+
+        One query rather than loading a topic's whole timeline to filter it in
+        Python: the caller (the orphan sweep) asks about a handful of turn ids
+        on a topic that may hold thousands of blocks.
+        """
+        if not turn_ids:
+            return set()
+        stmt = (
+            select(Block.turn_id)
+            .where(
+                Block.turn_id.in_(turn_ids),
+                Block.author_type == AuthorType.ai,
+            )
+            .distinct()
+        )
+        return {row for row in (await self._session.scalars(stmt)).all() if row}
+
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
         """Timeline view: blocks of a topic, oldest first (spec §5).
 

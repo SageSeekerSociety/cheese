@@ -94,6 +94,32 @@ class AgentTurnRepository:
             .values(stopped_at=at)
         )
 
+    async def close_for_topic(self, topic_id: uuid.UUID, at: datetime) -> int:
+        """End every DELIVERED open interval on one topic; returns how many.
+
+        What the harness's Stop acts on: it says the session finished, not which
+        turn id the platform had filed that under — and after a restart those
+        are not the same thing, because the coroutine holding the id is gone.
+
+        Delivered, because the interval is 投喂 → Stop and a turn that was never
+        fed cannot be what this Stop is ending. A turn spends its first seconds
+        (or minutes, if the box has to boot) between opening its interval and
+        reaching the transport; a Stop from the previous conversation landing in
+        that window would otherwise close it, and a turn with no open interval is
+        invisible to every future sweep — the silent death this table exists to
+        end. Its own coroutine closes it by id, delivered or not.
+        """
+        result = await self._session.execute(
+            update(AgentTurn)
+            .where(
+                AgentTurn.topic_id == topic_id,
+                AgentTurn.stopped_at.is_(None),
+                AgentTurn.delivered_at.is_not(None),
+            )
+            .values(stopped_at=at)
+        )
+        return result.rowcount or 0
+
     async def open_turns(self) -> list[TurnRecord]:
         """Every interval still open, oldest first."""
         rows = (

@@ -1,17 +1,22 @@
-"""Orphan sweep: attach by default, re-prompt only on proof of non-delivery.
+"""Orphan sweep: adopt what is still running, re-prompt only what reached nobody.
 
 The incident behind this (#316's root-cause side): a backend restart kills only
 the coroutine WAITING on a turn — the claude out in the execution environment
 survives and keeps working. The old sweep re-prompted every orphan to "接着干",
 which stacked five zombie turns on one topic in a single day. The contract now:
 
-- any evidence claude received the task (an AI block on the turn, or anything
-  in the topic's spool) → NO new prompt; the spool settle collects what the
-  survivor sends back (its Stop included);
-- zero evidence anywhere → re-send the ORIGINAL prompt text, once, whoever
-  started the turn — a person's message and 平台's own work (分身开工, 验收卡被
-  驳回, CI 红了) evaporate identically when the prompt never lands;
+- the screen is still there AND the prompt reached it → the turn is not an
+  orphan at all. It is left running and its interval left open, to be closed by
+  the Stop that screen eventually sends;
+- nobody heard it → re-send the ORIGINAL prompt text, once, whoever started the
+  turn — a person's message and 平台's own work (分身开工, 验收卡被驳回, CI 红了)
+  evaporate identically when the prompt never lands;
 - one topic gets at most one remedial prompt, however many orphans it holds.
+
+Whether the screen survived used to be unanswerable, so the sweep inferred it:
+an AI block bearing the turn's id, an unread hook in the topic's spool. The
+platform can ask now. What is left of the old evidence is one narrow backstop —
+a process dying between the transport accepting the write and the record of it.
 
 None of this is announced any more. It used to be, because a restart left the
 room looking dead — the backend half died and the session's output only
@@ -38,12 +43,12 @@ class _Chat:
     """ChatService stand-in for sweep flows: serves the evidence probe, records
     events, settle scheduling, and any turn the sweep actually submits."""
 
-    def __init__(self, factory, *, delivered=(), spool=False, probe_error=False):
+    def __init__(self, factory, *, delivered=(), live_screen=False, probe_error=False):
         # The sweep reads and closes turn intervals through this, the same way
         # the real ChatService hands the runner its database.
         self.session_factory = factory
         self._delivered = {str(t) for t in delivered}
-        self._spool = spool
+        self._live_screen = live_screen
         self._probe_error = probe_error
         self.events: list[tuple[uuid.UUID, str]] = []
         # 平台提示统一契约: 房间里的一行是 `text`，展开才看的长文在 meta.detail。
@@ -56,13 +61,13 @@ class _Chat:
         self.notices.append((topic_id, text + ((meta or {}).get("detail") or "")))
         return {"id": "b1", "content": text}
 
-    async def orphan_turn_evidence(self, topic_id, turn_ids):
+    def has_live_screen(self, topic_id):
+        return self._live_screen
+
+    async def turns_that_produced_something(self, turn_ids):
         if self._probe_error:
             raise RuntimeError("probe blew up")
-        return {
-            "delivered": {t for t in turn_ids if str(t) in self._delivered},
-            "spool": self._spool,
-        }
+        return {t for t in turn_ids if str(t) in self._delivered}
 
     def schedule_spool_settle(self, topic_id, delay_s=2.0):
         self.settled.append(topic_id)
@@ -94,11 +99,12 @@ async def _drain(chat: _Chat, rounds: int = 300) -> None:
 
 
 @pytest.mark.anyio
-async def test_delivered_orphan_attaches_instead_of_reprompting(
+async def test_a_turn_that_produced_something_is_never_reprompted(
     db_factory, monkeypatch
 ):
-    """Hook evidence on the turn → the sweep says so, schedules the spool
-    settle, and sends NOTHING — the survivor finishes on its own."""
+    """No screen answers for this topic any more, but the turn left an AI block
+    behind — so 芝士 did hear the task. Re-sending it would be asking twice for
+    work already done. Drain whatever is parked and say nothing."""
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
     turn = await open_turn(db_factory, topic, age_s=90)
@@ -121,12 +127,13 @@ async def test_delivered_orphan_attaches_instead_of_reprompting(
 async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
     db_factory, monkeypatch
 ):
-    """The prompt landed two seconds before the process died.
+    """The prompt landed two seconds before the process died, and the screen is
+    gone by the time the sweep runs (the container went with the deploy).
 
     The transport accepted the write, so that fact was recorded when it
     happened. The second-hand evidence cannot see it — claude had no time to
     write a block and its first hooks had not arrived — so judging by that
-    alone re-sends a prompt 芝士 is already working on, and the person gets
+    alone re-sends a prompt 芝士 was already working on, and the person gets
     answered twice."""
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
@@ -142,22 +149,52 @@ async def test_a_delivery_stamp_beats_having_produced_nothing_yet(
 
 
 @pytest.mark.anyio
-async def test_spool_trace_attaches_and_vetoes_every_resend(db_factory, monkeypatch):
-    """A Stop (or any non-SessionStart hook) parked in the topic's spool proves
-    a claude has been talking. It carries no turn id, so it vetoes re-sending
-    ANY of the topic's orphans — the settle lands it instead."""
+async def test_a_surviving_screen_is_adopted_rather_than_swept(db_factory, monkeypatch):
+    """The deploy case, end to end: the backend was replaced, the screen was not.
+
+    Both turns reached that screen, so neither is an orphan — nothing is
+    prompted, nothing is announced, and both intervals stay OPEN, because what
+    ends them is the Stop the screen will send, not the sweep."""
     _instant_sleep(monkeypatch)
     topic = await a_topic(db_factory)
-    await open_turn(db_factory, topic, content="任务甲", age_s=120)
-    await open_turn(db_factory, topic, content="任务乙", age_s=80)
-    chat = _Chat(db_factory, spool=True)
+    first = await open_turn(
+        db_factory, topic, content="任务甲", age_s=120, delivered=True
+    )
+    second = await open_turn(
+        db_factory, topic, content="任务乙", age_s=80, delivered=True
+    )
+    chat = _Chat(db_factory, live_screen=True)
     runner = AgentWorkRunner(InProcessBroker())
 
     assert await runner.resume_orphans(chat) == 0
     await _drain(chat, rounds=50)
     assert chat.converse_calls == []
-    assert chat.settled == [topic]
-    assert chat.events == []  # the platform handled it; nothing to explain
+    assert chat.settled == []  # nothing was interrupted, so nothing to collect
+    assert chat.events == []
+    assert await open_turn_ids(db_factory) == {first, second}
+
+
+@pytest.mark.anyio
+async def test_a_surviving_screen_that_never_heard_the_prompt_is_not_adopted(
+    db_factory, monkeypatch
+):
+    """A screen being alive is not enough. The prompt died in the gap between
+    the person pressing send and the transport accepting the write, so that
+    screen is sitting idle — adopting it would wait forever for a Stop nobody
+    is going to send."""
+    _instant_sleep(monkeypatch)
+    topic = await a_topic(db_factory)
+    stranded = await open_turn(db_factory, topic, content="修一下登录页", age_s=90)
+    chat = _Chat(db_factory, live_screen=True)
+    runner = AgentWorkRunner(InProcessBroker())
+
+    assert await runner.resume_orphans(chat) == 1
+    await _drain(chat)
+    assert [call["content"] for call in chat.converse_calls] == ["修一下登录页"]
+    # Claimed, so the next sweep does not send it a third time. (The re-send is
+    # itself a turn and opens an interval of its own, which is why this asks
+    # about the swept one by id rather than for an empty set.)
+    assert stranded not in await open_turn_ids(db_factory)
 
 
 @pytest.mark.anyio

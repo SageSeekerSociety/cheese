@@ -47,9 +47,12 @@ class _Quiet:
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         return {"id": "b1", "content": text}
 
-    async def orphan_turn_evidence(self, topic_id, turn_ids):
+    def has_live_screen(self, topic_id):
+        return False
+
+    async def turns_that_produced_something(self, turn_ids):
         # No trace anywhere → the sweep may re-send (the path under test).
-        return {"delivered": set(), "spool": False}
+        return set()
 
     def schedule_spool_settle(self, topic_id, delay_s=2.0):
         return None

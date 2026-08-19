@@ -710,6 +710,34 @@ class AgentWorkRunner:
     # doing the retrying for as long as retrying can plausibly work.
     MAX_RESUME_CHAIN = 3
 
+    def _adopted(
+        self,
+        chat_service,
+        record: TurnRecord,
+        wedged: set[uuid.UUID],
+    ) -> bool:
+        """Is this turn still being worked, by something this process is not
+        running? Then it is not an orphan and the sweep leaves it alone.
+
+        Both halves have to hold. The screen must still be reachable — that is
+        what a backend restart does NOT take with it, and what
+        `recover_subscriptions` re-establishes on the way up. And the prompt
+        must have reached it: a screen that is alive but never heard the task is
+        not working on anything, and treating it as adopted would strand the
+        message forever.
+
+        A wedged turn is excluded by definition — its screen may well answer a
+        `has_live_screen` probe while the thing behind it is dead, which is the
+        whole reason silence is judged separately.
+        """
+        if record.turn_id in wedged or not record.delivered:
+            return False
+        try:
+            return bool(chat_service.has_live_screen(record.topic_id))
+        except Exception:  # noqa: BLE001 — an unanswerable probe is not a yes
+            logger.exception("live-screen probe failed for %s", record.topic_id)
+            return False
+
     async def _wedged_turns(
         self,
         open_turns: dict[uuid.UUID, TurnRecord],
@@ -820,27 +848,41 @@ class AgentWorkRunner:
         "still alive" is deliberate: resuming a live turn is worse than noticing
         a dead one late.
 
-        The two kinds of corpse get OPPOSITE treatment (#316):
+        Not every turn missing from `_live` is dead, and that is the whole of
+        what this sweep learned to stop doing. A backend restart kills the
+        coroutine WAITING on a turn; the claude out in the execution environment
+        keeps working, and `recover_subscriptions` finds its screen again on the
+        way up. Such a turn is adopted — left running, its interval left open,
+        and closed by the Stop that screen eventually sends, exactly as if
+        nothing had happened. Nothing is said, because nothing broke.
+
+        That used to be inferred rather than known. The sweep read the topic's
+        blocks and its hook spool looking for traces that claude had been
+        talking, because the platform had no way to ask whether the screen was
+        still there. It can ask now, so the tracing is gone.
+
+        What is left needs a remedy:
 
         - WEDGED (in `_live`, silent): the thing the task drove — the sandbox
           container, the provider stream — is what died, taking its claude with
-          it. Cancel + auto-resume stays right here: a `--resume`d session still
-          holds the conversation, so 接着跑 means something.
-        - RESTART ORPHAN (not in `_live`): the backend restarting killed only
-          the WAITER. The claude out in the execution environment survived it
-          and is still working the task. Re-prompting it is how one deploy
-          became five stacked zombie turns on one topic — so the default is to
-          ATTACH, not to speak: mark the turn platform-interrupted and let the
-          spool/parked-hook reconcile land whatever claude sends back (its Stop
-          included). A new prompt goes out ONLY when there is proof the task
-          never arrived — zero hook evidence for the turn AND a clean spool —
-          and then it is the ORIGINAL text (the pending-message mechanism
-          re-hands it verbatim), never a "接着干" nudge a task-less claude
-          cannot act on. One re-send per topic at most; the rest are folded in.
+          it. Cancel + auto-resume: a `--resume`d session still holds the
+          conversation, so 接着跑 means something.
+        - STRANDED (no screen, or a screen that never heard the prompt): the
+          task never reached anyone. One re-send per topic, and it is the
+          ORIGINAL text (the pending-message mechanism re-hands it verbatim),
+          never a "接着干" nudge a task-less claude cannot act on. Too old, or
+          itself an auto-resume, and the topic is handed to a person instead.
+        - DELIVERED but no screen answers: the prompt got through and the
+          container it got through to is gone. This one is silent — collect
+          whatever the dead screen parked and stop there. NOT an auto-resume,
+          even though the saved session would make one possible: a device's
+          screens come back when the device dials in, which can be minutes after
+          this sweep runs, so "no screen" at startup routinely means "not yet".
+          Resuming on that would re-prompt every device topic on every deploy.
 
-        Every branch below ends in a system event. A turn we do not resume is a
-        turn someone has to pick up by hand, and they can only do that if the
-        topic says so — silence is the failure mode, not the loud recovery."""
+        A turn we do not resume is a turn someone has to pick up by hand, and
+        they can only do that if the topic says so — silence is the failure
+        mode, not the loud recovery."""
         open_turns = await _open_turns(chat_service.session_factory)
         if not open_turns:
             return 0
@@ -858,7 +900,8 @@ class AgentWorkRunner:
         orphans = {
             tid: record
             for tid, record in old_enough.items()
-            if str(tid) not in self._live or tid in wedged
+            if (str(tid) not in self._live or tid in wedged)
+            and not self._adopted(chat_service, record, wedged)
         }
         if not orphans:
             return 0
@@ -948,9 +991,9 @@ class AgentWorkRunner:
             )
             resumed += 1
             logger.info("orphan turn %s scheduled for resume", turn_id)
-        # --- restart orphans: a dead process generation left them behind, so
-        # the executing claude probably did NOT die (#316). Decide per TOPIC —
-        # attach by default, re-send only on proof of non-delivery.
+        # --- what is left after adoption: no screen answers for this topic, or
+        # one does and never heard the prompt. Decide per TOPIC, because a
+        # remedy is a prompt into a room and one room takes one.
         by_topic: dict[uuid.UUID, list[TurnRecord]] = {}
         for turn_id, record in orphans.items():
             if turn_id in wedged:
@@ -977,56 +1020,42 @@ class AgentWorkRunner:
         *,
         allow_actions: bool = True,
     ) -> int:
-        """One topic's remedy for turns a dead process generation left behind.
-        Returns how many remedial prompts were scheduled (0 or 1).
+        """One topic's remedy for turns that reached nobody.
 
-        The default is to ATTACH — post the verdict, then let the spool
-        reconcile land whatever the surviving claude sends back (see
-        `ChatService.settle_spool`). Evidence that claude received the task,
-        best first:
+        Returns how many remedial prompts were scheduled (0 or 1). Everything
+        that got through has already been excluded upstream by `_adopted` — what
+        arrives here is a topic whose screen is gone, or whose screen never
+        heard the prompt.
 
-        - **the entry's own `delivered_at` stamp** — the transport accepted the
-          write (#563) and the runtime recorded it before dying. First-hand, and
-          the only source that is true the instant the prompt lands.
-        - an AI-authored block bearing the turn's id — claude acted, so it
-          heard. Second-hand, and it only becomes true once claude has produced
-          something, so a prompt that arrived seconds before the process died
-          leaves no trace here. Kept as the backstop for a death between the
-          write and the stamp.
-        - anything in the topic's durable spool beyond SessionStart (hooks that
-          arrived with nobody listening; they cannot be pinned to one turn, so
-          they veto every re-send on the topic).
+        A re-send is for the newest re-sendable turn (see `_execute` for what
+        that means): the pending-message mechanism re-hands its ORIGINAL text
+        (an interrupted turn never stamps its inputs consumed), and the rest are
+        folded into the same prompt.
 
-        A re-send happens only for a topic with NO such trace, and then only for
-        its newest re-sendable orphan (see `_execute` for what that means): the
-        pending-message mechanism re-hands its ORIGINAL text (an interrupted turn
-        never stamps its inputs consumed), the rest are folded into the same
-        prompt. A probe failure counts as evidence — when we cannot know, acting
-        is the riskier side.
+        One narrow exception to "nobody heard it": a process can die between the
+        transport accepting the write and the record of it, leaving a turn that
+        DID arrive looking undelivered. `turns_that_produced_something` closes
+        that window, and a failure to ask counts as "it arrived" — when we
+        cannot know, sending again is the riskier side.
 
         Whose turn it was does not enter into it. A deploy that strands 平台's
         own work — a 分身's kickoff, 验收卡被驳回, CI 红了 — strands it just as
         permanently as a person's message, and the room shows nothing either
         way. Re-sending it is what keeps the platform working rather than merely
         quiet."""
-        turn_uuids = [record.turn_id for record in entries]
-        # First-hand: the transport accepted the write (#563) and the runtime
-        # wrote that down before this process died. True from the instant the
-        # prompt lands, rather than from whenever 芝士 first produces something.
         delivered = {record.turn_id for record in entries if record.delivered}
-        spool_trace = False
         probe_ok = False
         try:
-            evidence = await chat_service.orphan_turn_evidence(topic_id, turn_uuids)
-            delivered |= set(evidence.get("delivered", ()))
-            spool_trace = bool(evidence.get("spool"))
+            delivered |= await chat_service.turns_that_produced_something(
+                [record.turn_id for record in entries]
+            )
             probe_ok = True
         except Exception:  # noqa: BLE001 — a failed probe must not kill the sweep
-            logger.exception("orphan evidence probe failed for %s", topic_id)
-        attach = bool(delivered) or spool_trace or not probe_ok
+            logger.exception("orphan block probe failed for %s", topic_id)
+        attach = bool(delivered) or not probe_ok
 
         resend: TurnRecord | None = None
-        if allow_actions and probe_ok and not spool_trace:
+        if allow_actions and probe_ok:
             candidates = [
                 record
                 for record in entries
@@ -1105,11 +1134,10 @@ class AgentWorkRunner:
             except Exception:  # noqa: BLE001 — best-effort, the event already told the room
                 logger.exception("spool settle scheduling failed for %s", topic_id)
             logger.info(
-                "orphan turn(s) %s attached on topic %s (delivered=%d spool=%s)",
+                "orphan turn(s) %s attached on topic %s (delivered=%d)",
                 [record.turn_id for record in entries],
                 topic_id,
                 len(delivered),
-                spool_trace,
             )
         if resend is not None:
             self._schedule_resend(

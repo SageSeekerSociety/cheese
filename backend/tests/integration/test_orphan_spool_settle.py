@@ -157,10 +157,12 @@ async def test_settle_lands_a_stop_only_final_message(client, tmp_path, monkeypa
 async def test_orphan_with_parked_stop_is_settled_not_reprompted(
     client, tmp_path, monkeypatch
 ):
-    """The full chain of the incident fix: orphan turn + a Stop in the spool →
-    the sweep attaches (no prompt reaches the agent), and the settle it
-    schedules finishes the turn on its own — saying nothing, because from the
-    room's side nothing broke."""
+    """The full chain of the incident fix: a turn the transport had accepted,
+    whose screen is gone by the time the sweep runs (the container went with the
+    deploy). No prompt reaches the agent — asking again for work 芝士 already
+    heard is what stacked five zombie turns on one topic — and the settle the
+    sweep schedules finishes the turn out of the Stop the dead screen parked,
+    saying nothing, because from the room's side nothing broke."""
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     factory = client.test_factory
     pid, tid = await _seed_topic(factory)
@@ -178,7 +180,7 @@ async def test_orphan_with_parked_stop_is_settled_not_reprompted(
         lambda self, topic_id, delay_s=2.0: real_schedule(self, topic_id, delay_s=0),
     )
 
-    await open_turn(factory, tid, content="把测试跑绿", age_s=300)
+    await open_turn(factory, tid, content="把测试跑绿", age_s=300, delivered=True)
     _spool_event(
         ws.spool_dir(pid, tid),
         "s1",

@@ -696,8 +696,11 @@ async def test_orphan_turns_resume_after_restart(db_factory, monkeypatch):
             self.notices.append((topic_id, text + ((meta or {}).get("detail") or "")))
             return {"id": "b1", "content": text}
 
-        async def orphan_turn_evidence(self, topic_id, turn_ids):
-            return {"delivered": set(), "spool": False}
+        def has_live_screen(self, topic_id):
+            return False  # the container went with the deploy
+
+        async def turns_that_produced_something(self, turn_ids):
+            return set()
 
         def schedule_spool_settle(self, topic_id, delay_s=2.0):
             raise AssertionError("no evidence → nothing to attach to")
@@ -753,8 +756,11 @@ async def test_periodic_sweep_claims_turn_killed_without_a_restart(
         async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
             return {"id": "b1", "content": text}
 
-        async def orphan_turn_evidence(self, topic_id, turn_ids):
-            return {"delivered": set(), "spool": False}
+        def has_live_screen(self, topic_id):
+            return False  # the container went with the deploy
+
+        async def turns_that_produced_something(self, turn_ids):
+            return set()
 
     assert await runner.sweep_orphans(_Chat()) == 1
     assert scheduled == [dead_topic]
@@ -811,8 +817,11 @@ async def test_stale_orphan_is_dropped_loudly(db_factory, monkeypatch):
             self.notices.append(text + ((meta or {}).get("detail") or ""))
             return {"id": "b1", "content": text}
 
-        async def orphan_turn_evidence(self, topic_id, turn_ids):
-            return {"delivered": set(), "spool": False}
+        def has_live_screen(self, topic_id):
+            return False  # the container went with the deploy
+
+        async def turns_that_produced_something(self, turn_ids):
+            return set()
 
     chat = _Chat()
     chat.session_factory = db_factory
@@ -1197,8 +1206,11 @@ async def test_a_deploy_the_platform_handles_itself_says_nothing(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        async def orphan_turn_evidence(self, topic_id, turn_ids):
-            return {"delivered": set(), "spool": False}
+        def has_live_screen(self, topic_id):
+            return False  # the container went with the deploy
+
+        async def turns_that_produced_something(self, turn_ids):
+            return set()
 
     assert await runner.sweep_orphans(_Chat()) == 1
     assert scheduled == [topic], "the re-send must still happen"
@@ -1287,8 +1299,11 @@ async def test_the_platforms_own_work_is_re_sent_like_anyone_elses(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        async def orphan_turn_evidence(self, topic_id, turn_ids):
-            return {"delivered": set(), "spool": False}
+        def has_live_screen(self, topic_id):
+            return False  # the container went with the deploy
+
+        async def turns_that_produced_something(self, turn_ids):
+            return set()
 
     assert await runner.sweep_orphans(_Chat()) == 1
     assert scheduled == [(topic, nudge)]
@@ -1326,8 +1341,11 @@ async def test_a_deploy_that_loses_a_message_for_good_still_warns(
             metas.append(meta or {})
             return {"id": "b1", "content": text}
 
-        async def orphan_turn_evidence(self, topic_id, turn_ids):
-            return {"delivered": set(), "spool": False}
+        def has_live_screen(self, topic_id):
+            return False  # the container went with the deploy
+
+        async def turns_that_produced_something(self, turn_ids):
+            return set()
 
     assert await runner.sweep_orphans(_Chat()) == 0
     assert len(metas) == 1

@@ -499,6 +499,17 @@ class ComputePool:
             if isinstance(provider, HooksSessionProvider):
                 provider.bind_receipt_consumer(consumer)
 
+    def has_live_screen(self, topic_id: uuid.UUID) -> bool:
+        """Does any provider in this pool still hold a screen for this topic?
+        See `HooksSessionProvider.has_live_screen`."""
+        from app.domain.agent.hooks_substrate import HooksSessionProvider
+
+        return any(
+            provider.has_live_screen(topic_id)
+            for provider in self._providers.values()
+            if isinstance(provider, HooksSessionProvider)
+        )
+
     async def recover_hook_subscriptions(
         self, device_id: str | None = None
     ) -> list["TopicSubscription"]:
