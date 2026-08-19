@@ -14,6 +14,7 @@ import uuid
 
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
+from app.domain.agent.runtime import AgentWorkRunner
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import chat_ws_url
@@ -32,7 +33,18 @@ class SilentScreen(StubChannel):
         del topic_id, prompt, reply
 
 
-def _use_failing_agent(client) -> SilentScreen:
+def _use_failing_agent(client, monkeypatch) -> SilentScreen:
+    """A topic whose every turn dies, with nothing else re-prompting it.
+
+    The auto-resume chain is turned off for the same reason the watchdog's
+    timeouts are turned down: these tests count how many times ONE batch is
+    sent, and a turn that dies to the substrate schedules a system turn ten
+    seconds later that sends it again. That extra send is correct in
+    production — the batch really did go in a third time — but whether it
+    lands inside a test's few seconds is wall-clock luck, so the assertions
+    below would be counting the machine's speed.
+    """
+    monkeypatch.setattr(AgentWorkRunner, "MAX_RESUME_CHAIN", 0)
     screen = SilentScreen(
         idle_suspect_s=0.2, hard_ceiling_s=0.4, delivery_timeout_s=0.2
     )
@@ -83,8 +95,8 @@ def _replay_notices(client, topic_id: str) -> list[str]:
     ]
 
 
-def test_a_repeatedly_replayed_batch_is_announced_in_the_room(client):
-    _use_failing_agent(client)
+def test_a_repeatedly_replayed_batch_is_announced_in_the_room(client, monkeypatch):
+    _use_failing_agent(client, monkeypatch)
     topic_id = _project_and_topic(client)
 
     # Three failing turns. The first message rides all three prompts, so by the
@@ -120,10 +132,10 @@ def test_a_turn_that_finishes_never_announces_a_replay(client):
     assert not _replay_notices(client, topic_id)
 
 
-def test_the_notice_throttles_instead_of_burying_the_conversation(client):
+def test_the_notice_throttles_instead_of_burying_the_conversation(client, monkeypatch):
     """A topic retrying for an hour must not fill the room with its own status:
     after the first warning the state is known, so the reminder goes quiet."""
-    _use_failing_agent(client)
+    _use_failing_agent(client, monkeypatch)
     topic_id = _project_and_topic(client)
 
     for i in range(8):

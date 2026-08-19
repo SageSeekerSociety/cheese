@@ -395,11 +395,20 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
 
         name = "fake-noscreen"
 
+        def __init__(self) -> None:
+            super().__init__()
+            # Set when the mid-turn write is ATTEMPTED. The test needs that
+            # moment, and there is no other way to observe it: the attempt is
+            # the whole subject, and it either happens while the first turn is
+            # still working or it does not happen at all.
+            self.tried = asyncio.Event()
+
         async def send_prompt(
             self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
         ) -> bool:
             if self._answering:
                 self.delivered.append(prompt)
+                self.tried.set()
                 raise ScreenSetupError("屏幕没了")
             return await super().send_prompt(screen, prompt, images=images)
 
@@ -431,7 +440,13 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
     await asyncio.wait_for(provider.started.wait(), 5)
 
     second = asyncio.create_task(summoned("user-2", "第二件事"))
-    await asyncio.sleep(0.1)
+    # Wait for the write to be attempted, not for a slice of wall clock. A tenth
+    # of a second used to stand in for "the second message has got as far as the
+    # live handoff"; a loaded box does not honour that, and then the first turn
+    # is released before the handoff happens — `deliver` finds no work in
+    # flight, returns False without ever reaching the screen, and the test fails
+    # on an empty `delivered` that says nothing about what it meant to check.
+    await asyncio.wait_for(provider.tried.wait(), 5)
     assert not second.done()  # queued behind the lock, exactly as before
 
     provider.release.set()
