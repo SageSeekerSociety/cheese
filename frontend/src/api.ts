@@ -981,12 +981,7 @@ export function getProgress(topicId: string): Promise<TopicProgress> {
 // doc yet"). The doc is only ever written whole, so the write is conditional on
 // it: if 芝士 set the doc in between, the backend answers 409 instead of letting
 // this save erase what it wrote.
-export function putDoc(
-  topicId: string,
-  content: string,
-  author: string,
-  expectedVersion: number
-): Promise<Block> {
+export function putDoc(topicId: string, content: string, author: string, expectedVersion: number): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/doc`, {
     method: 'PUT',
     body: JSON.stringify({ content, author, expected_version: expectedVersion }),
