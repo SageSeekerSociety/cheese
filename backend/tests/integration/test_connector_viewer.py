@@ -128,7 +128,7 @@ def test_cheese_call_inside_screen_is_attributed_to_the_agent(client):
     try:
         r = client.put(
             f"/topics/{topic['id']}/doc",
-            json={"content": "# hi", "author": "someone-forged"},
+            json={"content": "# hi", "author": "someone-forged", "expected_version": 0},
             headers={"X-Cheese-Screen": screen.token},
         )
         assert r.status_code == 200, r.text
@@ -147,7 +147,7 @@ def test_cheese_call_without_screen_header_is_not_the_agent(client):
     # No X-Cheese-Screen → the screen attribution never fires (author is the fallback).
     r = client.put(
         f"/topics/{topic['id']}/doc",
-        json={"content": "# hi", "author": "human-alice"},
+        json={"content": "# hi", "author": "human-alice", "expected_version": 0},
     )
     assert r.status_code == 200, r.text
     assert r.json()["data"]["author"] == "human-alice"

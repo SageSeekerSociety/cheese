@@ -18,7 +18,7 @@ import { CellSelection } from '@tiptap/pm/tables'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 
-import { getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../../api'
+import { ApiError, getComments, getDoc, getDocNodes, putDoc, workspaceFileRawUrl } from '../../api'
 // The editor schema + round-trip fidelity machinery live in docMarkdown.ts —
 // ONE extension list shared with the corpus tests, so "what the tests prove"
 // and "what the editor runs" can never drift apart. (History: TipTap without
@@ -421,6 +421,10 @@ const hasPendingEdits = computed(() => pendingEdits.value.length > 0)
 // 军规 1: a newer version arrived from the server while we had unsaved local
 // edits. Neither side wins silently; both are held until the user picks.
 const externalDoc = ref<string | null>(null)
+// The doc_version this panel's content is based on. Every save sends it; the
+// backend refuses a save based on a version somebody has already moved past,
+// which is what keeps a 2.5-second autosave from erasing what 芝士 just wrote.
+const docVersion = ref(0)
 
 // 军规 1: the header used to show 「编辑中…」 while a lossy doc's autosave was
 // paused — the edits were stranded in memory and would NEVER be written. The
@@ -1013,6 +1017,7 @@ async function loadDoc(topicId: string) {
     // Avoid races on fast topic switching.
     if (props.topic?.id !== topicId) return
     installDoc(block?.content ?? '')
+    docVersion.value = block?.doc_version ?? 0
     dirty.value = false
     savedAt.value = null
     // A2 badges + 常驻评论区: refresh nodes/comments for the new doc.
@@ -1037,6 +1042,10 @@ async function reloadFromActivity(topicId: string) {
     if (props.topic?.id !== topicId || saving.value) return
     const full = block?.content ?? ''
     const plan = planExternalUpdate({ dirty: dirty.value, incoming: full, rawDoc: rawDoc.value })
+    // Whatever we do with the content, this IS the server's version now — the
+    // conflict bar's 「用我的版本覆盖」 has to be able to win, and it can only
+    // win against the version it is looking at.
+    docVersion.value = block?.doc_version ?? 0
     if (plan === 'install') {
       installDoc(full)
       externalDoc.value = null
@@ -1091,7 +1100,8 @@ async function save(force = false) {
   saving.value = true
   errorMsg.value = null
   try {
-    await putDoc(topic.id, full, AUTHOR)
+    const saved = await putDoc(topic.id, full, AUTHOR, docVersion.value)
+    docVersion.value = saved.doc_version ?? docVersion.value + 1
     rawDoc.value = full
     lastSavedMarkdown.value = splitDuplicateTitle(full).body
     if (!sourceMode.value) sourceDraft.value = full
@@ -1111,9 +1121,31 @@ async function save(force = false) {
     // Our version is the file now — the conflict (if any) is resolved.
     externalDoc.value = null
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '保存失败'
+    if (e instanceof ApiError && e.status === 409) {
+      // 芝士 wrote the doc since this panel read it. The activity poll is
+      // best-effort — it can miss the window entirely — so this is the only
+      // moment the clobber is certainly catchable. Neither side wins by
+      // default: show the same conflict bar and let the person choose.
+      await showConflictWithServerDoc(topic.id)
+    } else {
+      errorMsg.value = e instanceof Error ? e.message : '保存失败'
+    }
   } finally {
     saving.value = false
+  }
+}
+
+// A refused save, turned into the conflict the person can act on. The local
+// edits are untouched (still dirty, still in the editor); the bar's two buttons
+// are the only ways out, exactly as when the activity poll spots the same thing.
+async function showConflictWithServerDoc(topicId: string) {
+  try {
+    const block = await getDoc(topicId)
+    if (props.topic?.id !== topicId) return
+    docVersion.value = block?.doc_version ?? 0
+    externalDoc.value = block?.content ?? ''
+  } catch {
+    errorMsg.value = '文档在别处被改过了，这次保存没写进去'
   }
 }
 

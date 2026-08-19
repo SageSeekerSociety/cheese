@@ -102,6 +102,7 @@ def test_upgrade_doc_node_to_subtopic(client):
         json={
             "content": "## 拆解\n\n数据清洗\n\n特征工程\n\n模型训练",
             "author": "user-1",
+            "expected_version": 0,
         },
     )
     nodes = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
@@ -143,7 +144,7 @@ def test_archived_topic_is_frozen(client):
     # Editing the frozen topic's doc is rejected.
     r = client.put(
         f"/topics/{topic['id']}/doc",
-        json={"content": "改一下", "author": "alice"},
+        json={"content": "改一下", "author": "alice", "expected_version": 0},
     )
     assert r.status_code == 422
 
@@ -196,7 +197,11 @@ def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
     ).json()["data"]
     client.put(
         f"/topics/{topic['id']}/doc",
-        json={"content": "## 目标\n\n给校园二手书平台做推荐", "author": "user-1"},
+        json={
+            "content": "## 目标\n\n给校园二手书平台做推荐",
+            "author": "user-1",
+            "expected_version": 0,
+        },
     )
 
     sub = client.post(

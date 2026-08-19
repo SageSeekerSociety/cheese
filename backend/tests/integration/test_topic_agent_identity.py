@@ -92,7 +92,7 @@ def test_a_sandbox_token_acts_as_that_topics_agent(client):
     pid, tid = _project_topic(client)
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 分身写的"},
+        json={"content": "# 分身写的", "expected_version": 0},
         headers=_sandbox(pid, tid),
     )
     assert r.status_code == 200
@@ -112,7 +112,7 @@ def test_two_sandboxes_writing_are_told_apart(client):
     for tid in (first, second):
         r = client.put(
             f"/topics/{tid}/doc",
-            json={"content": "# hi"},
+            json={"content": "# hi", "expected_version": 0},
             headers=_sandbox(pid, tid),
         )
         assert r.status_code == 200
@@ -125,7 +125,7 @@ def test_a_forged_author_in_the_body_is_still_ignored(client):
     pid, tid = _project_topic(client)
     r = client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# hi", "author": "alice"},
+        json={"content": "# hi", "author": "alice", "expected_version": 0},
         headers=_sandbox(pid, tid),
     )
     assert r.json()["data"]["author"] == topic_agent_handle(uuid.UUID(tid))

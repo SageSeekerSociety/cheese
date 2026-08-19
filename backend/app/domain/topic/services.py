@@ -14,7 +14,7 @@ from typing import overload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.text import markdown_preview
 from app.domain.agent import clone
 from app.domain.agent_instance.services import (
@@ -93,6 +93,15 @@ def _bind_room_branch(
     if parent_id is None or kind not in (TopicKind.task, TopicKind.subtopic):
         return
     ws.bind_branch_parent(child_id, parent_id)
+
+
+def _doc_conflict(current_version: int) -> ConflictError:
+    """The living doc moved under a writer. The current version rides along so
+    the caller can re-read and rebase without a second round trip."""
+    return ConflictError(
+        "实况文档已经被改过了，你手上这份是旧的",
+        data={"doc_version": current_version},
+    )
 
 
 def _brief_doc(
@@ -902,19 +911,37 @@ class TopicService:
         return [dict(item) for item in row.items], row.updated_at
 
     async def edit_doc(
-        self, *, topic_id: uuid.UUID, content: str, author: str
+        self, *, topic_id: uuid.UUID, content: str, author: str, expected_version: int
     ) -> Block:
         """改文档即指令 (eval B2): upsert the topic's living doc and drop a
         '编辑了文档' event into the conversation. The agent reads the latest doc
-        on its next turn, so the edit acts as an instruction."""
+        on its next turn, so the edit acts as an instruction.
+
+        ``expected_version`` is the ``doc_version`` the writer read; ``0`` says
+        it expects no doc to exist yet. A write based on any other version is
+        refused, because this doc is only ever written whole — 芝士 setting back
+        a document it assembled from a ten-minute-old copy erases whatever a
+        person typed in between, with nothing left to recover it from.
+
+        The refusal comes BEFORE any of the write's effects: no node tree, no
+        '编辑了文档' event. A rejected write that still announced itself would
+        put a change in the room that is not in the document.
+        """
         topic = await self.get_or_404(topic_id)
         # 归档后文档定格 (spec §6.3): a frozen topic's doc is read-only.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，文档已定格，不能再编辑")
         doc = await self._blocks.doc_root(topic_id)
         if doc is not None:
-            doc = await self._blocks.update_content(doc, content)
+            updated = await self._blocks.set_doc_content(
+                doc, content, expected_version=expected_version
+            )
+            if updated is None:
+                raise _doc_conflict(doc.doc_version)
+            doc = updated
         else:
+            if expected_version != 0:
+                raise _doc_conflict(0)
             doc = await self._blocks.add(
                 project_id=topic.project_id,
                 topic_id=topic_id,
@@ -947,6 +974,32 @@ class TopicService:
             meta={"platform": True, "action": "doc"},
         )
         return doc
+
+    async def _append_conclusion_section(
+        self, *, topic_id: uuid.UUID, section: str, author: str
+    ) -> None:
+        """Append a section to a topic's living doc.
+
+        There is no partial write of this doc: appending means reading the whole
+        thing and setting the whole thing back, based on the version that read
+        returned. So a person saving the same doc in the same second turns this
+        into a conflict — re-read and re-append rather than let it through, and
+        rather than drop it. The 分身 that produced this conclusion is finished;
+        nothing is going to retry it by hand.
+        """
+        for _ in range(3):
+            root = await self._blocks.doc_root(topic_id)
+            existing = root.content.strip() if root and root.content else ""
+            try:
+                await self.edit_doc(
+                    topic_id=topic_id,
+                    content=f"{existing}\n\n{section}" if existing else section,
+                    author=author,
+                    expected_version=root.doc_version if root else 0,
+                )
+                return
+            except ConflictError:
+                continue
 
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         """Reconcile the living doc's node tree (B1) with `content` via a
@@ -1047,12 +1100,10 @@ class TopicService:
 
         # 2) Living doc: append the conclusion as a section (unless frozen, §6.3).
         if parent is not None and parent.status != TopicStatus.archived:
-            root = await self._blocks.doc_root(sub.parent_id)
-            section = f"## 子话题结论：{sub.title}\n{conclusion}"
-            existing = root.content.strip() if root and root.content else ""
-            new_content = f"{existing}\n\n{section}" if existing else section
-            await self.edit_doc(
-                topic_id=sub.parent_id, content=new_content, author=parent_agent
+            await self._append_conclusion_section(
+                topic_id=sub.parent_id,
+                section=f"## 子话题结论：{sub.title}\n{conclusion}",
+                author=parent_agent,
             )
 
         # 3) Notify 本体 (the coordinator) that the 分身 finished.

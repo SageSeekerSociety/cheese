@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from sqlalchemy import Text, cast, func, or_, select, tuple_
+from sqlalchemy import Text, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -127,11 +127,32 @@ class BlockRepository:
         block.upgraded_to_topic_id = topic_id
         await self._session.flush()
 
-    async def update_content(self, block: Block, content: str) -> Block:
-        block.content = content
-        await self._session.flush()
-        await self._session.refresh(block)
-        return block
+    async def set_doc_content(
+        self, doc: Block, content: str, *, expected_version: int
+    ) -> Block | None:
+        """Overwrite the living doc, but only if it is still at
+        ``expected_version``. Returns the updated block, or ``None`` when
+        somebody else wrote it first.
+
+        The check is the WHERE clause, not an `if` above the write. Reading the
+        version in Python and comparing it there leaves the two writers that
+        read the same number both passing the comparison and both writing —
+        which is the bug, restated one layer up.
+        """
+        stmt = (
+            update(Block)
+            .where(Block.id == doc.id, Block.doc_version == expected_version)
+            .values(content=content, doc_version=Block.doc_version + 1)
+            # The row is re-read below; letting the ORM guess how to sync it
+            # against an expression it cannot evaluate in Python buys nothing.
+            .execution_options(synchronize_session=False)
+        )
+        won = (await self._session.execute(stmt)).rowcount == 1
+        # Either way the in-memory block is now behind the row: it either just
+        # gained a version, or somebody else's write is what our WHERE missed.
+        # The caller reports the current version, so it has to be the real one.
+        await self._session.refresh(doc)
+        return doc if won else None
 
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID

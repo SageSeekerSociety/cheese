@@ -692,7 +692,11 @@ async def edit_topic_doc(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """改文档即指令 (eval B2): edit the living doc; emits a conversation event."""
+    """改文档即指令 (eval B2): edit the living doc; emits a conversation event.
+
+    Conditional on ``expected_version``: this doc has no partial write, so a
+    save based on a version that is no longer current is refused with 409
+    rather than quietly erasing whatever landed in between."""
     topic = await TopicService(db).get_or_404(topic_id)
     # actor 在信任边界注入: prefer the verified token, fall back to body.author.
     actor = await resolver.resolve(
@@ -710,7 +714,10 @@ async def edit_topic_doc(
         db, topic.project_id, body.content, exclude_topic_id=topic_id
     )
     doc = await TopicService(db).edit_doc(
-        topic_id=topic_id, content=content, author=actor.handle
+        topic_id=topic_id,
+        content=content,
+        author=actor.handle,
+        expected_version=body.expected_version,
     )
     return ok(BlockOut.model_validate(doc).model_dump(mode="json"))
 
