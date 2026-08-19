@@ -9,7 +9,7 @@ wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b3
 - `backend/app/core/config.py`：新增 `agent_idle_suspect_s`（300）、
   `agent_turn_hard_ceiling_s`（10800）。`agent_turn_timeout_s`（900）保留，
   收窄为"SDK 后端外层墙 + device 后端自己的固定超时"，tmux 后端不再用它。
-- `backend/app/domain/agent/hooks_substrate.py`：`run_hooks_turn` 拆成两层
+- `backend/app/domain/agent/harness/claude_code/hooks_substrate.py`：`run_hooks_turn` 拆成两层
   （`idle_suspect_s` 疑似卡死 + `hard_ceiling_s` 绝对硬顶），新增 `ActivityTracker`
   （被 hook 到达 / 外部活跃度信号共同触碰）；`HooksTurnProvider` 新增
   `_start_activity_monitor`/`_confirm_alive` 两个 seam（默认无操作，仿

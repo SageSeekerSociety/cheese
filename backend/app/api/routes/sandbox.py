@@ -19,9 +19,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
-from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
-from app.domain.agent.hook_events import hook_router
+from app.domain.agent.harness.claude_code import append_event, hook_router
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
@@ -127,7 +126,7 @@ async def receive_hook(
         claims = scoped_token_claims(x_cheese_token)
         project = str(claims.get("p") or "") if claims else ""
         try:
-            event_spool.append(
+            append_event(
                 ws.spool_dir(uuid.UUID(project), uuid.UUID(topic_id)),
                 x_cheese_event_id,
                 payload,

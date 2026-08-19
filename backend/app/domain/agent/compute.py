@@ -37,7 +37,7 @@ from app.domain.identity.handles import topic_agent_handle
 from app.domain.workspace import service as ws
 
 if TYPE_CHECKING:
-    from app.domain.agent.hooks_substrate import (
+    from app.domain.agent.harness.claude_code import (
         HookActivityConsumer,
         HookEventConsumer,
         TopicSubscription,
@@ -480,7 +480,9 @@ class ComputePool:
         activity_consumer: "HookActivityConsumer | None" = None,
     ) -> None:
         """Give hooks providers the room-side persistence and activity owners."""
-        from app.domain.agent.hooks_substrate import HooksSessionProvider
+        from app.domain.agent.harness.claude_code import (
+            HooksSessionProvider,
+        )
 
         for provider in self._providers.values():
             if isinstance(provider, HooksSessionProvider):
@@ -493,7 +495,9 @@ class ComputePool:
     ) -> None:
         """Give hooks providers the owner of UserPromptSubmit receipts — the
         consumed-stamp side of #539 decision A."""
-        from app.domain.agent.hooks_substrate import HooksSessionProvider
+        from app.domain.agent.harness.claude_code import (
+            HooksSessionProvider,
+        )
 
         for provider in self._providers.values():
             if isinstance(provider, HooksSessionProvider):
@@ -502,7 +506,9 @@ class ComputePool:
     def has_live_screen(self, topic_id: uuid.UUID) -> bool:
         """Does any provider in this pool still hold a screen for this topic?
         See `HooksSessionProvider.has_live_screen`."""
-        from app.domain.agent.hooks_substrate import HooksSessionProvider
+        from app.domain.agent.harness.claude_code import (
+            HooksSessionProvider,
+        )
 
         return any(
             provider.has_live_screen(topic_id)
@@ -514,7 +520,9 @@ class ComputePool:
         self, device_id: str | None = None
     ) -> list["TopicSubscription"]:
         """Recover subscriptions for screens that survived this process."""
-        from app.domain.agent.hooks_substrate import HooksSessionProvider
+        from app.domain.agent.harness.claude_code import (
+            HooksSessionProvider,
+        )
 
         recovered: list[TopicSubscription] = []
         for provider in self._providers.values():

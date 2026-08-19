@@ -8,11 +8,14 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import HooksSessionProvider, TopicSubscription
+from app.domain.agent.harness.claude_code import event_spool
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import (
+    HooksSessionProvider,
+    TopicSubscription,
+)
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.agent.service import (

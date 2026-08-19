@@ -9,10 +9,10 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent.device_hub import HubScreen
-from app.domain.agent.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.device_provider import DeviceProvider, tunnel_port_for_topic
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
 from app.domain.device.supply import Visibility
@@ -655,7 +655,7 @@ async def test_concurrent_topics_never_share_a_device_home():
 def test_device_hook_set_pushes_while_local_container_hook_set_does_not():
     """Every device owns a clone and pushes; the local container edits the
     backend worktree and must not also try to push it."""
-    from app.domain.agent.hooks_substrate import hooks_settings
+    from app.domain.agent.harness.claude_code.hooks_substrate import hooks_settings
 
     def stop_commands(settings_obj) -> list[str]:
         return [
@@ -1108,7 +1108,7 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     import time
 
     from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen()
@@ -1156,7 +1156,7 @@ async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gatewa
     """Falling back to the gateway would silently swap the model — the failure
     #325 G2 exists to kill. A half-configured deployment must say what to fix."""
     from app.core.config import settings
-    from app.domain.agent.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 
     _subscription_settings(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "subscription_ca_backend_path", "")
@@ -1411,7 +1411,7 @@ async def test_each_launch_ships_a_fresh_now_based_token_expiry():
     out than a session, never a reused past expiry."""
     import time
 
-    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     hub = FakeHub()
     router = HookRouter()

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.domain.agent.cloud_provider import CloudLease, CloudProvider
-from app.domain.agent.hooks_substrate import ScreenSetupError
+from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 from app.domain.device.supply import Supply
 from app.domain.identity.actor import Actor
 

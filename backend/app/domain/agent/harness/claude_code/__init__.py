@@ -1,0 +1,83 @@
+"""The Claude Code adapter — 第一个 harness，和它的全部私有内部。
+
+What is inside this package is how ONE harness happens to work, and none of it
+is a fact about running an agent: a spool of hook files because Claude Code has
+no event API, a message assembler because MessageDisplay fires per flush rather
+than per message, a rendezvous socket pinned to one undocumented build, a
+launch script that pre-accepts three first-run dialogs so the first prompt is
+not eaten by a modal. Every one of those is a cost paid to drive a TUI written
+for a person, and the next harness pays none of them.
+
+So the boundary is the point. ``tests/unit/test_harness_boundary.py`` holds it:
+outside this package you import from HERE, never from a submodule, and this
+file's export list is the ledger of everything that still crosses. The list is
+a ratchet — adding to it goes red, and so does forgetting to delete a line you
+paid off.
+
+What the list says today, honestly: the transports (tmux / device / cloud) are
+still SUBCLASSES of this adapter's base, so they import its internals to plug
+in. That is the inheritance the future composition split replaces — one runtime
+driven over any channel, instead of one runtime re-implemented per transport —
+and until then those names stay public because the code is genuinely shaped
+that way, not because nobody looked.
+"""
+
+from app.domain.agent.harness.claude_code.device_launch import (
+    CLAUDE_MIN_VERSION,
+    CLAUDE_PINNED_VERSION,
+    DEVICE_ALIVE_PROBE,
+    DEVICE_TUNNEL_PROBE,
+    build_screen_launch,
+)
+from app.domain.agent.harness.claude_code.event_spool import append as append_event
+from app.domain.agent.harness.claude_code.hook_events import (
+    HookRouter,
+    MessageAssembler,
+    hook_router,
+)
+from app.domain.agent.harness.claude_code.hooks_substrate import (
+    SESSION_TOKEN_TTL_S,
+    ActivityTracker,
+    HookActivityConsumer,
+    HookEventConsumer,
+    HooksSessionProvider,
+    ScreenSetupError,
+    TopicSubscription,
+    acknowledge_log,
+    drop_device_subscriptions,
+    drop_screen_subscriptions,
+    expire_log,
+    hooks_settings,
+    log_cursor,
+    read_log,
+    schedule_screen_subscription_drop,
+    schedule_topic_subscription_drop,
+)
+
+__all__ = [
+    "CLAUDE_MIN_VERSION",
+    "CLAUDE_PINNED_VERSION",
+    "DEVICE_ALIVE_PROBE",
+    "DEVICE_TUNNEL_PROBE",
+    "SESSION_TOKEN_TTL_S",
+    "ActivityTracker",
+    "HookActivityConsumer",
+    "HookEventConsumer",
+    "HookRouter",
+    "HooksSessionProvider",
+    "MessageAssembler",
+    "ScreenSetupError",
+    "TopicSubscription",
+    "acknowledge_log",
+    "append_event",
+    "build_screen_launch",
+    "drop_device_subscriptions",
+    "drop_screen_subscriptions",
+    "expire_log",
+    "hook_router",
+    "hooks_settings",
+    "log_cursor",
+    "read_log",
+    "schedule_screen_subscription_drop",
+    "schedule_topic_subscription_drop",
+]

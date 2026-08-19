@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import device_launch
 
 
 def test_hooks_settings_wire_command_hook_to_forwarder():
@@ -636,7 +636,7 @@ def test_the_helper_is_verified_by_the_dash_syntax_check_too():
     does not parse it. Extracting it is the only way this is checked at all."""
     import subprocess
 
-    from app.domain.agent.device_launch import CHEESE_TUNNEL_UP
+    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
 
     checked = subprocess.run(
         ["sh", "-n"], input=CHEESE_TUNNEL_UP, text=True, capture_output=True
@@ -733,7 +733,9 @@ def _run_reconcile(
     import os
     import subprocess
 
-    from app.domain.agent.device_launch import CHEESE_SETTINGS_RECONCILE
+    from app.domain.agent.harness.claude_code.device_launch import (
+        CHEESE_SETTINGS_RECONCILE,
+    )
 
     live = f"{tmp}/settings.json"
     if settings is not None:

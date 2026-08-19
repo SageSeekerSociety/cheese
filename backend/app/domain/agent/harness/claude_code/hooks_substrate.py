@@ -28,9 +28,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import event_spool
 from app.domain.agent.harness import HarnessEvent, Opening, SessionRef
-from app.domain.agent.hook_events import (
+from app.domain.agent.harness.claude_code import event_spool
+from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     HookSink,
     MessageAssembler,

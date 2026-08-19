@@ -14,8 +14,8 @@ import pytest
 
 from app.domain.agent import tmux_provider as tp
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import ActivityTracker
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import ActivityTracker
 from app.domain.agent.service import (
     AgentMessage,
     AgentResult,
@@ -193,7 +193,7 @@ async def test_send_prompt_fails_loud_when_the_paste_never_lands(
     """Every paste dropped (the #430 fire-and-forget shape): bounded re-pastes,
     then a clean error — never an Enter fired at a composer that visibly never
     received the body, and never a silent 25s wait."""
-    from app.domain.agent.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
     screen = _FakeScreenControl(drop_pastes=999)
@@ -214,7 +214,7 @@ async def test_send_prompt_clears_a_poisoned_composer_before_pasting(
     deep in prod, 2026-08-17) must be cleared before every paste attempt.
     Without the Ctrl+U, the OLD widget makes the paste-verify pass even when
     this turn's paste was dropped — and the Enter then submits pure garbage."""
-    from app.domain.agent.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())
     screen = _FakeScreenControl(
@@ -634,7 +634,7 @@ def test_subscription_session_token_lives_for_the_session_not_one_hour(monkeypat
 
     from app.core.config import settings
     from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     monkeypatch.setattr(settings, "subscription_enabled", True)
     provider = TmuxHooksProvider(image="img:test", router=HookRouter())

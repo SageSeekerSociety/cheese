@@ -30,17 +30,15 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
-from app.domain.agent.device_launch import (
+from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
-    build_screen_launch,
-)
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import (
     SESSION_TOKEN_TTL_S,
+    HookRouter,
     HooksSessionProvider,
     ScreenSetupError,
     TopicSubscription,
+    build_screen_launch,
 )
 from app.domain.agent.platform_failures import (
     DEVICE_OFFLINE_MESSAGE,

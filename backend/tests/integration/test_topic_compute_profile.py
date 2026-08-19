@@ -15,7 +15,7 @@ import pytest
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
-from app.domain.agent.hooks_substrate import ScreenSetupError
+from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.device.supply import Supply, Visibility

@@ -31,8 +31,8 @@ from app.domain.agent.cloud_provider import CloudProvider
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
-from app.domain.agent.hook_events import MessageAssembler
-from app.domain.agent.hooks_substrate import (
+from app.domain.agent.harness.claude_code import (
+    MessageAssembler,
     TopicSubscription,
     acknowledge_log,
     expire_log,

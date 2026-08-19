@@ -12,7 +12,7 @@ from app.domain.agent.chat import (
     _subagent_event_text,
     _subagent_result_meta,
 )
-from app.domain.agent.hook_events import translate_hook
+from app.domain.agent.harness.claude_code.hook_events import translate_hook
 from app.domain.agent.service import (
     AgentToolResult,
     event_from_dict,

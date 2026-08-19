@@ -169,7 +169,7 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
 后端）＋ 现场 screen relay 随之统一。客户端 frozen、hook 逻辑随服务端更新而**不重装**。
 
 **进度**：
-- ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/hooks_substrate.py`—— turn drain 循环
+- ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/harness/claude_code/hooks_substrate.py`—— turn drain 循环
   `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token TTL。
 - ✅ **增量 2（完成、行为不变、479 测试绿）**：把两个 provider 的**整段 turn 流程**收敛进基类
   `HooksTurnProvider[ScreenT]`（模板方法）——check topic → mint token → register 队列 →

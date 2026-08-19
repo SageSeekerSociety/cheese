@@ -14,11 +14,11 @@ import uuid
 
 import pytest
 
-from app.domain.agent import device_launch
 from app.domain.agent import tmux_provider as tp
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceProvider
-from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.tmux_provider import TmuxHooksProvider
 
 _FLAG = "--append-system-prompt-file"

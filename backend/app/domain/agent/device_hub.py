@@ -125,7 +125,7 @@ def _delivery_hook(name: str) -> "ScreenFn":
         # Local import: hook_events imports nothing from this module, so the
         # edge stays one-directional at runtime while avoiding a module-load
         # cycle through the agent package's wiring.
-        from app.domain.agent.hook_events import hook_router
+        from app.domain.agent.harness.claude_code import hook_router
 
         if screen.topic_id is None:
             return {"ok": False}
@@ -167,7 +167,7 @@ class DeviceHub:
         device = self._devices.get(device_id)
         if device is not None and device.transport is transport:
             device.transport = None
-            from app.domain.agent.hooks_substrate import (
+            from app.domain.agent.harness.claude_code import (
                 drop_device_subscriptions,
                 drop_screen_subscriptions,
             )
@@ -320,7 +320,9 @@ class DeviceHub:
             return False
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
-        from app.domain.agent.hooks_substrate import drop_screen_subscriptions
+        from app.domain.agent.harness.claude_code import (
+            drop_screen_subscriptions,
+        )
 
         await drop_screen_subscriptions(screen)
         await device.send(device_link.session_close(sid))

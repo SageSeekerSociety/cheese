@@ -26,7 +26,10 @@ from pathlib import Path
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
 from app.domain.agent import machine_tunnel
-from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
+from app.domain.agent.harness.claude_code.hooks_substrate import (
+    CHEESE_HOOK_SCRIPT,
+    hooks_settings,
+)
 from app.domain.agent.service import CLAUDE_BASE_CMD
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,

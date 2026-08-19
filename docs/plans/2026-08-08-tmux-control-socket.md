@@ -49,8 +49,8 @@
 ### Task 4: Wire the receipt
 
 **Files:**
-- Modify: `backend/app/domain/agent/hooks_substrate.py`
-- Modify: `backend/app/domain/agent/hook_events.py`
+- Modify: `backend/app/domain/agent/harness/claude_code/hooks_substrate.py`
+- Modify: `backend/app/domain/agent/harness/claude_code/hook_events.py`
 
 **Steps:**
 

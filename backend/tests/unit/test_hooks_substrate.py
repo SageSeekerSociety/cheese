@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import (
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
@@ -892,7 +892,7 @@ async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
     import time as _time
     import uuid as _uuid
 
-    from app.domain.agent import hooks_substrate as hs
+    from app.domain.agent.harness.claude_code import hooks_substrate as hs
 
     monkeypatch.setattr(hs, "DELIVERY_TIMEOUT_S", 0.3)
     router = HookRouter()

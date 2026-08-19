@@ -19,7 +19,10 @@ import logging
 import os
 import tempfile
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import (
+    CLAUDE_MIN_VERSION,
+    CLAUDE_PINNED_VERSION,
+)
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
@@ -93,8 +96,8 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
     # restated: a machine enrolled against a different number than the launcher
     # enforces is a machine that enrolls cleanly and then runs nothing.
     origin_clean = origin.rstrip("/")
-    min_version = device_launch.CLAUDE_MIN_VERSION
-    pinned_version = device_launch.CLAUDE_PINNED_VERSION
+    min_version = CLAUDE_MIN_VERSION
+    pinned_version = CLAUDE_PINNED_VERSION
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in

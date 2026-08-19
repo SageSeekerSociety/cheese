@@ -54,10 +54,10 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
 from app.domain.agent import awaited_tasks, clone, provider_env
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import (
+from app.domain.agent.harness.claude_code import (
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
+    HookRouter,
     HooksSessionProvider,
     ScreenSetupError,
     TopicSubscription,

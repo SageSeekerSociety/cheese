@@ -25,7 +25,7 @@ import subprocess
 
 import pytest
 
-from app.domain.agent.device_launch import cheeselet_source
+from app.domain.agent.harness.claude_code.device_launch import cheeselet_source
 
 # Anything outside the `cheese` global (cli/internal/runtime/api.go) is a crash
 # on the device — the runtime is a bare goja VM with no browser/Node globals.
