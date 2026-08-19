@@ -164,6 +164,24 @@ class AgentRuntime(Protocol):
         """
         ...
 
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
+        """Put text into a session that is already working, with no turn opened
+        for it. True = it landed; False = there is no live session here.
+
+        The bare form of ``send``: no opening, no bookkeeping, nothing to start.
+        It is how a person's mid-turn message reaches 芝士, and how the platform
+        tells a working session that the world changed under it. The two will be
+        one call once a turn stops being how work is tracked; today ``send``
+        opens a turn and this does not, so they are still two.
+
+        Keyed by topic rather than by ``SessionRef`` because the caller is on the
+        hot path with a person waiting and has no project id in hand — the same
+        reason ``close`` is topic-keyed underneath.
+        """
+        ...
+
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the work away. True = the stop signal reached the session.
 

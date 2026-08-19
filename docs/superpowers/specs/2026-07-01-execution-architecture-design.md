@@ -131,16 +131,13 @@ v1 把"多实例"只挂在 broker 上，错了。`asyncio.Lock` 是进程内的�
 
 ## R2（BLOCKER）ComputeProvider 的接缝画在了 SDK 之下，必须上移成"turn 执行器"
 真执行路径是 `AgentService.stream_reply` 在**后端进程**里构造 `ClaudeSDKClient` 并把 `cli_path` 当**本地子进程**拉起。`exec(argv)`/`cli_path` 根本不在 turn 路径上。要做远端节点，返回不同 `cli_path` 没用——整个 `ClaudeSDKClient` + 子进程 + `AgentEvent` 翻译都得搬到节点、把事件流经 RPC 回传。
-**定稿：接口改为 turn 执行器**：
-```
-ComputeProvider:
-  async def run_turn(env_spec, prompt, system_prompt, resume_session_id,
-                     callback) -> AsyncIterator[AgentEvent]   # 同 AgentService 的事件并集
-  async def materialize(env_spec) -> Handle   # 起/复用沙箱 + 工作区就位
-  async def checkpoint(handle) / fetch_refs(handle) / get_diff(handle)  # 工作区 git 生命周期
-  async def teardown(handle);  def capacity() -> Capacity;  caps: Caps
-```
-`LocalDockerProvider` = 今天的进程内 SDK + 本地 docker exec；`RemoteCheesedProvider` = 把请求发给 cheesed 节点、解 RPC 事件流。`cli_path`/`exec` 降级为 LocalDocker 的内部细节。**这是 re-plumb 最热路径，不是填空——诚实写明。**
+**定稿：`ComputeProvider` 只回答「在哪台机器上」——起机器、备好工作区、事后快照。
+「上面跑的是什么」是另一个接缝**：长在那儿的会话是 `AgentRuntime`
+（ensure / send / read / interrupt / close），每轮起一个进程的是 `TurnStream`
+（`run_turn`）。`cli_path`/`exec` 降级为后者的内部细节。
+
+一个接口同时管这两件事，就等于「换 harness」和「换机器」必须是同一个开关——而那
+正是 `AgentType.harness` 存在却没人读的原因。
 
 ## R3（SERIOUS）重连不无缝：整轮产物在 tx2 收尾前只活在瞬时流里
 现状：流式中只发 `delta/tool/state/todo`；**所有持久 block（现场事件、assistant、行动卡、usage、`set_session_id`）都在流结束后的 tx2 才落**。`InProcessBroker` 无 backlog，订阅者只收订阅之后的帧。→ 手机中途打开/掉线重连，`GET /blocks` 只看到用户块，turn 看着像卡住直到最后一坨蹦出来；missed 的 delta 永久丢失。

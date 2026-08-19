@@ -19,7 +19,7 @@ import subprocess
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import httpx
 
@@ -62,9 +62,22 @@ _SANDBOX_TOOLS = [
 
 
 class ComputeProvider(Protocol):
-    """Runs one agent turn (owning the sandbox) and checkpoints its workspace.
-    The unit a remote node reimplements by relocating execution + relaying the
-    event stream / git refs over RPC."""
+    """Where a turn runs: a machine with a workspace on it, and a way to
+    snapshot that workspace afterwards.
+
+    NOT how a turn runs. That is an ``AgentRuntime`` for a backend that keeps a
+    session alive, and a ``TurnStream`` for one that starts a process per turn —
+    two shapes because the platform genuinely has both, not because either is
+    provisional. Which machine and what runs on it were one switch for as long
+    as the only harness we drive was also the only thing that knew how to reach
+    its own machine; separating the questions here is what lets a second harness
+    run on the machines the first one uses.
+
+    The classes still answer both today — a hooks provider provisions AND drives
+    Claude Code — so nothing about this shrink moves code. It stops the CONTRACT
+    from conflating them, which is what the composition split needs in place
+    before it can begin.
+    """
 
     name: str
 
@@ -80,6 +93,34 @@ class ComputeProvider(Protocol):
     embeds_images: bool
 
     def available(self) -> bool: ...
+
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
+        """Inject text into the session already running on this topic, if this
+        backend has one. False = "nothing live here" — the caller queues instead.
+
+        A RUNTIME operation (it is on ``AgentRuntime`` too) that still hangs off
+        the provider, because the pool holds providers and every provider today
+        is its own runtime. It moves when that stops being true. Declared here
+        rather than duck-typed so a backend that cannot take an injection has to
+        say so, which is what stops the pool from silently skipping one that
+        could.
+        """
+        ...
+
+    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
+
+
+@runtime_checkable
+class TurnStream(Protocol):
+    """A backend that starts something, streams what it says, and is done.
+
+    The other shape a turn can have, and the older one: no session to ensure,
+    nothing to send into afterwards, no log to read from a cursor. Whoever holds
+    the iterator owns the turn, and when that process dies the turn dies with it
+    — which is the property ``AgentRuntime`` exists to not have.
+    """
 
     def run_turn(
         self,
@@ -97,18 +138,6 @@ class ComputeProvider(Protocol):
         sandbox_image: str | None = None,
         images: list[dict] | None = None,
     ) -> AsyncIterator[AgentEvent]: ...
-
-    async def deliver(
-        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
-    ) -> bool:
-        """Inject text into the turn already running on this topic, if this
-        transport can. False = "I have no live screen for it" — the caller then
-        runs an ordinary turn. Only the hooks-driven backends (a long-lived
-        interactive Claude Code) can say True; a per-turn subprocess has nothing
-        to inject into once its turn is over."""
-        ...
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
 
 
 class LocalDockerProvider:
@@ -267,7 +296,7 @@ class LocalDockerProvider:
     async def deliver(
         self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
     ) -> bool:
-        """No live screen to inject into: this provider runs the SDK per turn, so
+        """No live screen to inject into: this backend runs the SDK per turn, so
         between turns there is no process to talk to and during one the turn owns
         the stream. The caller falls back to running its own turn."""
         del images
@@ -459,11 +488,16 @@ class ComputePool:
     async def deliver(
         self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
     ) -> bool:
-        """Inject text into whichever provider is currently running a turn on
-        this topic. Asks every provider rather than resolving the topic's
-        configured one: only a provider that HAS a live screen for this exact
-        topic can answer True, so the first True is the right one — and it needs
-        no DB read on the hot path where a human is waiting."""
+        """Inject text into whichever session is currently running on this
+        topic. Asks every runtime rather than resolving the topic's configured
+        one: only one that HAS a live screen for this exact topic can answer
+        True, so the first True is the right one — and it needs no DB read on
+        the hot path where a human is waiting.
+
+        Every provider is asked rather than only the ones that keep a session:
+        answering False is cheap, and a pool that decided in advance who COULD
+        answer would be deciding it from the class rather than from whether
+        there is a live screen — which is the thing actually being asked."""
         for provider in self._providers.values():
             delivered = (
                 await provider.deliver(topic_id, text, images=images)

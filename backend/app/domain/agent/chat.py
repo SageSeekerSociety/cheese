@@ -28,7 +28,7 @@ from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
 from app.domain.agent.cloud_provider import CloudProvider
-from app.domain.agent.compute import ComputePool, ComputeProvider
+from app.domain.agent.compute import ComputePool, ComputeProvider, TurnStream
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
 from app.domain.agent.harness.claude_code import (
@@ -3201,7 +3201,7 @@ class ChatService:
             logger.exception("gateway usage drain failed for %s", project_id)
             return None
 
-    async def _stream_with_retry(self, provider, **kwargs):
+    async def _stream_with_retry(self, provider: TurnStream, **kwargs):
         """Run a streaming turn via the compute provider, retrying transient
         failures with backoff — but ONLY before any output is produced (cold-start
         / SDK exit-1 races). Two failure shapes are retried: exceptions, and a
