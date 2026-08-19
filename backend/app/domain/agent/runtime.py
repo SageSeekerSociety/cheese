@@ -742,7 +742,7 @@ class AgentWorkRunner:
 
         Both halves have to hold. The screen must still be reachable — that is
         what a backend restart does NOT take with it, and what
-        `recover_subscriptions` re-establishes on the way up. And the prompt
+        `recover_sessions` re-establishes on the way up. And the prompt
         must have reached it: a screen that is alive but never heard the task is
         not working on anything, and treating it as adopted would strand the
         message forever.
@@ -872,7 +872,7 @@ class AgentWorkRunner:
         Not every turn missing from `_live` is dead, and that is the whole of
         what this sweep learned to stop doing. A backend restart kills the
         coroutine WAITING on a turn; the claude out in the execution environment
-        keeps working, and `recover_subscriptions` finds its screen again on the
+        keeps working, and `recover_sessions` finds its screen again on the
         way up. Such a turn is adopted — left running, its interval left open,
         and closed by the Stop that screen eventually sends, exactly as if
         nothing had happened. Nothing is said, because nothing broke.

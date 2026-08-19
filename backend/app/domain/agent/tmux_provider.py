@@ -54,6 +54,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, verify_scoped_token
 from app.domain.agent import awaited_tasks, provider_env
 from app.domain.agent.harness.claude_code import (
+    HARNESS_ENV,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
     Channel,
@@ -63,6 +64,7 @@ from app.domain.agent.harness.claude_code import (
     build_session_launch,
     drop_screen_subscriptions,
     ensure_claude,
+    harness_of,
 )
 from app.domain.agent.sandbox_notices import warn_container_rebuilt
 from app.domain.agent.tmux_control import TmuxControlClient
@@ -412,7 +414,7 @@ class TmuxChannel(Channel):
 
     async def discover(
         self, device_id: str | None = None
-    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         """Every still-running topic session on this host after a restart.
 
         Walks BOXES for the project, then SESSIONS inside each for the topics —
@@ -430,7 +432,7 @@ class TmuxChannel(Channel):
             )
             return []
 
-        found: list[tuple[uuid.UUID, uuid.UUID, object | None]] = []
+        found: list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]] = []
         for name in (line.strip() for line in out.splitlines()):
             if not name:
                 continue
@@ -459,12 +461,12 @@ class TmuxChannel(Channel):
                     "tmux subscription recovery skipped %s with invalid scope", name
                 )
                 continue
-            for session, topic_id in await self._live_sessions(name):
-                found.append((project_id, topic_id, TmuxScreen(name, session)))
+            for session, topic_id, runs in await self._live_sessions(name):
+                found.append((project_id, topic_id, TmuxScreen(name, session), runs))
         return found
 
-    async def _live_sessions(self, container: str) -> list[tuple[str, uuid.UUID]]:
-        """(session name, topic id) for every cheese session in a box.
+    async def _live_sessions(self, container: str) -> list[tuple[str, uuid.UUID, str]]:
+        """(session name, topic id, harness) for every cheese session in a box.
 
         The topic id comes from the session's OWN environment rather than from
         parsing its name: the name only carries 8 hex characters (enough to be
@@ -475,17 +477,19 @@ class TmuxChannel(Channel):
         )
         if rc != 0:
             return []  # no tmux server yet, or the box is not running
-        found: list[tuple[str, uuid.UUID]] = []
+        found: list[tuple[str, uuid.UUID, str]] = []
         for session in (line.strip() for line in out.splitlines()):
             if not session.startswith(ws.LEGACY_TMUX_SESSION):
                 continue
-            raw = await self._session_env_var(
-                TmuxScreen(container, session), "CHEESE_TOPIC"
-            )
+            screen = TmuxScreen(container, session)
+            raw = await self._session_env_var(screen, "CHEESE_TOPIC")
             if raw is None:
                 continue
+            runs = await self._session_env_var(screen, HARNESS_ENV)
             with contextlib.suppress(ValueError):
-                found.append((session, uuid.UUID(raw)))
+                found.append(
+                    (session, uuid.UUID(raw), harness_of({HARNESS_ENV: runs or ""}))
+                )
         return found
 
     @staticmethod
@@ -563,7 +567,7 @@ class TmuxChannel(Channel):
             # it, not just the one whose turn happened to notice. Announcing
             # only to this topic would leave the siblings' agents restarted with
             # no memory and nothing in their rooms saying why.
-            bereaved = [topic for _, topic in await self._live_sessions(name)]
+            bereaved = [topic for _, topic, _ in await self._live_sessions(name)]
             await self.drop_container_controls(name)
             await _docker("rm", "-f", name)
             exists = False
@@ -741,7 +745,7 @@ class TmuxChannel(Channel):
         if mine is not None and mine.isdigit():
             return int(mine)
         taken: set[int] = set()
-        for session, _ in await self._live_sessions(screen.container):
+        for session, _, _ in await self._live_sessions(screen.container):
             if session == screen.session:
                 continue
             raw = await self._session_env_var(

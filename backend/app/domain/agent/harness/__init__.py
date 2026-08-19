@@ -13,7 +13,7 @@ are separate here:
 
     ensure     在不在；不在就起
     send       送一条消息进去，回一个「收到了」。不返回事件
-    read       从一个游标往后读事件。可重连、可续、可以有多个读者
+    backlog    从游标往后读它说过什么。可重连、可续、可以有多个读者
     interrupt  停手
     close      这条会话不要了
 
@@ -36,12 +36,42 @@ alive. ``interrupt`` is that missing middle.
 """
 
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from app.domain.agent.service import AgentDeliveryFailure, AgentEvent
+
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputeProvider
+
+
+# What the platform hands a runtime so the room can hear it. The vocabulary is
+# ``AgentEvent`` — a message, a tool call, a result — which every harness has to
+# speak anyway; nothing about these three says how the events were sensed. They
+# lived in the Claude Code adapter under names starting with "Hook", which is
+# how they were sensed and not what they are.
+#
+# (project, topic, work id, event, session id, is-replay, is-live)
+EventConsumer = Callable[
+    [
+        uuid.UUID,
+        uuid.UUID,
+        uuid.UUID,
+        AgentEvent | AgentDeliveryFailure,
+        str | None,
+        bool,
+        bool,
+    ],
+    Awaitable[None],
+]
+
+# (project, topic, work id, active) — a session started or stopped working.
+ActivityConsumer = Callable[[uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[None]]
+
+# (topic, prompt text) — a session CONSUMED an input we injected. Late by
+# design: the write is delivery, this is the receipt.
+ReceiptConsumer = Callable[[uuid.UUID, str], Awaitable[None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,19 +95,23 @@ class HarnessEvent:
     ``key`` is this event's place in the log and doubles as the cursor to read
     from next — it orders, and nothing else about it is meaningful. ``eid`` is
     the harness's own id for the event and is what makes landing it twice
-    harmless. ``payload`` is None for an entry that could not be parsed: a
-    corrupt record must not stop the log behind it, so it is reported and
-    stepped over rather than skipped silently.
+    harmless.
 
     ``age_s`` is how long ago the harness recorded it. A reader waiting for the
     rest of a half-arrived message needs to know whether the rest is still
     coming or the session died mid-sentence, and only a real clock answers that
     — the key is a sequence number, not a time.
+
+    ``record`` is the harness's own note of what happened, and is opaque here on
+    purpose: the platform hands it back to ``Backlog.assemble`` rather than
+    reading it. None means the entry could not be parsed — a corrupt record must
+    not stop the log behind it, so it is reported and stepped over rather than
+    skipped silently.
     """
 
     key: str
     eid: str
-    payload: dict | None
+    record: object | None
     age_s: float
 
 
@@ -140,27 +174,13 @@ class AgentRuntime(Protocol):
         """
         ...
 
-    def read(
-        self, session: SessionRef, *, since: str | None = None
-    ) -> Sequence[HarnessEvent]:
-        """Events after ``since``, oldest first. None reads from the start.
+    def backlog(self, session: SessionRef) -> "Backlog":
+        """What this session has said that the platform has not landed yet.
 
-        A read never consumes: two readers at different cursors both get the
-        whole tail. Retention is what eventually removes an event, never having
-        been read.
-        """
-        ...
-
-    def cursor(self, session: SessionRef) -> str | None:
-        """How far the platform's own reader has got. None = nothing yet."""
-        ...
-
-    def acknowledge(self, session: SessionRef, *, through: str) -> None:
-        """Everything up to and including ``through`` has been landed.
-
-        The one cursor the harness keeps, for the platform's own reader. A
-        second reader keeps its own ``since`` instead — that is the whole point
-        of the log being a log.
+        A fresh reader each call, starting from the one cursor the harness keeps
+        for the platform. Reading never consumes, so a second reader that keeps
+        its own position sees the same tail — that is the whole point of the log
+        being a log.
         """
         ...
 
@@ -198,6 +218,92 @@ class AgentRuntime(Protocol):
 
     async def close(self, session: SessionRef) -> None:
         """Let this session go: stop listening, forget the channel."""
+        ...
+
+    def bind_events(self, consumer: EventConsumer) -> None:
+        """Where the room's persistence and broadcast live."""
+        ...
+
+    def bind_activity(self, consumer: ActivityConsumer) -> None:
+        """Where 「这个会话在干活 / 停了」 goes."""
+        ...
+
+    def bind_receipts(self, consumer: ReceiptConsumer) -> None:
+        """Where 「会话真的读到了那条消息」 goes."""
+        ...
+
+    def holds(self, topic_id: uuid.UUID) -> bool:
+        """Is there a session here this runtime can still reach?
+
+        This is what "the work survived" means after a backend restart: the
+        coroutine waiting on the turn died with the process, the agent in the
+        execution environment did not, and ``recover`` found it again.
+        """
+        ...
+
+    async def recover(self, device_id: str | None = None) -> list[SessionRef]:
+        """Sessions of ours that outlived this process, listening again.
+
+        Called on the way up, and again whenever a machine reconnects. What
+        they SAID while nobody was listening is ``replay``'s job — this only
+        establishes that we are listening.
+        """
+        ...
+
+    async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
+        """Land the tail a recovered session produced while nobody listened.
+
+        ``known_texts`` is what the room already shows, so a message the live
+        path did persist before the process died is not landed twice. The
+        platform supplies it because the room is the platform's; which of the
+        harness's own records are still unlanded is the harness's.
+        """
+        ...
+
+
+@runtime_checkable
+class Backlog(Protocol):
+    """The unread tail of one session, as the platform needs to consume it.
+
+    Six calls, and the split between them is the point. ``unread`` and
+    ``assemble`` are the harness's — what did this agent say, and what does one
+    log entry mean. Deciding what to DO about it (persist a block, broadcast a
+    frame, skip a duplicate) is the platform's, and happens between the two.
+
+    ``assemble`` returns a LIST because one entry is not one thing: a harness
+    that reports partial output emits several records per message, and whether
+    they add up to something whole is knowledge only it has. That is also why
+    ``unfinished`` exists — the platform must not move the cursor past an entry
+    whose message is still missing a piece, or the pass that completes it will
+    never see what it is made of.
+    """
+
+    def unread(self) -> Sequence[HarnessEvent]:
+        """Everything after the cursor, oldest first. A snapshot: landing
+        things during the pass does not change what this returned."""
+        ...
+
+    def assemble(self, entry: HarnessEvent) -> Sequence[AgentEvent]:
+        """What this entry means, once anything it completes is folded in.
+        Empty = nothing whole yet, or nothing that could be read."""
+        ...
+
+    def unfinished(self) -> set[str]:
+        """Ids of entries assembled so far whose thing is still incomplete."""
+        ...
+
+    def give_up(self) -> Sequence[AgentEvent]:
+        """Hand over the incomplete pieces anyway — the session died
+        mid-sentence and what arrived is better landed than lost."""
+        ...
+
+    def landed(self, *, through: str) -> None:
+        """Everything up to and including this key reached the timeline."""
+        ...
+
+    def forget(self, *, older_than_s: float) -> None:
+        """Drop records older than this. Retention removes an event, never
+        having been read."""
         ...
 
 

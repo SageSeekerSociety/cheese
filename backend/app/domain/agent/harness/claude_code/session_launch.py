@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.domain.agent import clone
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import hooks_settings
 
@@ -46,6 +47,14 @@ from app.domain.agent.harness.claude_code.hooks_substrate import hooks_settings
 # reads — under this directory, and never falls back to $HOME/.claude when it is
 # set. HOME can stay shared; this cannot.
 CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
+
+# WHAT was started on this screen, stamped into its own environment. One machine
+# can host sessions of more than one harness, and after a restart the only thing
+# left to tell them apart is what each session carries: a runtime that claimed a
+# screen it does not drive would translate another harness's output with its own
+# assembler and report it as its own. Absent means the session predates tagging,
+# and only one harness existed then.
+HARNESS_ENV = "CHEESE_HARNESS"
 
 SETTINGS_FILE = "settings.json"
 GATES_FILE = ".claude.json"
@@ -124,7 +133,7 @@ def build_session_launch(
         command += f" --model {model}"
     return LaunchSpec(
         command=command,
-        env={CONFIG_DIR_ENV: config_dir},
+        env={CONFIG_DIR_ENV: config_dir, HARNESS_ENV: CLAUDE_CODE},
         files=(
             # 0o666: the sandbox's claude rewrites both of these itself, under a
             # different uid than the backend that plants them.
@@ -254,3 +263,8 @@ async def ensure_claude(host: ScreenHost, screen: object, launch: LaunchSpec) ->
     else:
         await host.start_session(screen, launch)
     return await wait_for_input_box(lambda: host.capture_session(screen))
+
+
+def harness_of(env: dict[str, str]) -> str:
+    """Which harness a session was started to run, from its own environment."""
+    return env.get(HARNESS_ENV) or CLAUDE_CODE

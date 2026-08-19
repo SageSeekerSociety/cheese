@@ -195,6 +195,16 @@ cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToo
   `reclaim_session` / `capture_session`），一句 claude 的事都不知道。
   device 侧**不**并进来：它的三道闸（凭据过期 / claude 死了 / 隧道助手没了）是另一种
   机器的另一组问题，硬套一份编排正是要避免的过度统一。
+- ✅ **池子长出第二个轴，平台不再说 Claude Code 的话**：`ComputePool` 从「按机器」变成
+  「按 (机器, harness)」——机器选不到会退回默认，harness 选不到**直接拒绝**（跑成别的
+  agent 比不跑更糟）。`bind_*` / `holds` / `recover` / `replay` / `backlog` 都进了
+  `AgentRuntime` 契约，池子不再靠 `isinstance` 认人。
+  最要紧的是 `backlog`：崩溃恢复和 spool 补录原来是 chat.py 自己调 `read_log` +
+  `MessageAssembler`，认得 Claude Code 的事件形状；现在它拿到的是拼好的 `AgentEvent`，
+  落库发帧还是它的活，翻译不是。**`test_harness_boundary` 的账本里 chat.py 整行没有了。**
+  会话启动时打 `CHEESE_HARNESS` 标记，重启恢复只认自己的——一台机器上并存两个 harness
+  时，谁也别去认领别人的屏幕。device 通道今天报不出这个标记（绑定表只记话题不记
+  harness），所以那条传输暂时一台机器一个 harness，这一点写在 `discover` 的契约里。
 - ✅ **单一来源 forwarder**：`cheese-hook` 由 `scripts/gen-sandbox-assets.py` 从
   `CHEESE_HOOK_SCRIPT` 生成为 `sandbox/cheese-hook`，tmux 镜像 `COPY` 它（不再 inline printf）；
   `test_hooks_substrate.py` 断言二者一致 → **漂移即测试失败**。device launcher 运行时写的是同一

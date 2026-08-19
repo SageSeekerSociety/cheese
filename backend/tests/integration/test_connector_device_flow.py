@@ -187,7 +187,7 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatc
     recovered: list[str] = []
 
     class Chat:
-        async def recover_hook_subscriptions(self, connected_device_id: str) -> int:
+        async def recover_sessions(self, connected_device_id: str) -> int:
             recovered.append(connected_device_id)
             return 0
 

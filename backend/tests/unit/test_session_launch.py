@@ -96,7 +96,13 @@ def test_the_launch_names_the_files_claude_reads_before_it_starts():
     planted = {f.name: f.content for f in launch.files}
     assert set(planted) == {"settings.json", ".claude.json", "cheese-system-prompt.md"}
     assert planted["cheese-system-prompt.md"] == "你是芝士。"
-    assert launch.env == {"CLAUDE_CONFIG_DIR": "/sessions/x"}
+    # The config dir isolates one claude from another on a machine; the harness
+    # tag is how a runtime tells its own sessions from another harness's after a
+    # restart, on a machine that hosts both.
+    assert launch.env == {
+        "CLAUDE_CONFIG_DIR": "/sessions/x",
+        "CHEESE_HARNESS": "claude-code",
+    }
     assert "--append-system-prompt-file /sessions/x/cheese-system-prompt.md" in (
         launch.command
     )

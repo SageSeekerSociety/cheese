@@ -143,7 +143,7 @@ async def lifespan(_: FastAPI):
         )
 
     try:
-        recovered = await get_chat_service().recover_hook_subscriptions()
+        recovered = await get_chat_service().recover_sessions()
         if recovered:
             get_logger("cheesex.runtime").info(
                 "hook_subscriptions_recovered", topics=recovered

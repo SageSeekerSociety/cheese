@@ -804,7 +804,7 @@ async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
     ):
         consumed.append((event, eid, result_text_seen))
 
-    provider.bind_event_consumer(consumer)
+    provider.bind_events(consumer)
     await provider.ensure_subscription(project_id, topic_id)
 
     router.push(topic_key, _display_flush("m1", 0, "第一行\n"))
@@ -981,7 +981,7 @@ async def test_user_prompt_submit_is_reported_to_the_receipt_consumer():
     async def on_receipt(tid, prompt):
         received.append((tid, prompt))
 
-    provider.bind_receipt_consumer(on_receipt)
+    provider.bind_receipts(on_receipt)
     await provider.ensure_subscription(project_id, topic_id)
     router.push(
         str(topic_id),

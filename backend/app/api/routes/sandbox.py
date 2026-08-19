@@ -1,9 +1,13 @@
-"""Sandbox-facing endpoints for the tmux agent backend.
+"""Claude Code's way in: the hook endpoint, and the CLI a device fetches.
 
-The interactive `claude` running inside a topic's container posts Claude Code
-HTTP hooks here (settings.json `"type": "http"` hooks). This endpoint verifies a
-per-topic scoped token (same auth as the cheese CLI — app.core.sandbox_auth) and
-routes the hook payload into the topic's live screen subscription (HookRouter).
+Every screen running this harness — in a container here or on someone's enrolled
+machine — posts its hooks to this route, which verifies a per-topic scoped token
+(same auth as the cheese CLI — app.core.sandbox_auth) and hands the payload to
+that topic's live subscription (HookRouter).
+
+This is the adapter's outward edge and it is meant to be one: a harness that
+senses itself some other way brings its own ingress rather than being squeezed
+through this one.
 
 It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 /api write paths, so this route does its own token check.

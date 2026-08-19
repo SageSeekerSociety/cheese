@@ -12,18 +12,19 @@ ran are gone; what remains is the shape that can be reconnected to.
 """
 
 import uuid
-from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
 
 from app.core.config import settings
 
 if TYPE_CHECKING:
-    from app.domain.agent.harness.claude_code import (
-        Channel,
-        HookActivityConsumer,
-        HookEventConsumer,
-        TopicSubscription,
+    from app.domain.agent.harness import (
+        ActivityConsumer,
+        Backlog,
+        EventConsumer,
+        ReceiptConsumer,
+        SessionRef,
     )
+    from app.domain.agent.harness.claude_code import Channel
 
 
 class ComputeProvider(Protocol):
@@ -75,9 +76,8 @@ class ComputeProvider(Protocol):
         """Inject text into the session already running on this topic, if this
         backend has one. False = "nothing live here" — the caller queues instead.
 
-        A RUNTIME operation (it is on ``AgentRuntime`` too) that still hangs off
-        the provider, because the pool holds providers and every provider today
-        is its own runtime. It moves when that stops being true. Declared here
+        A RUNTIME operation, declared here too because what the pool holds is a
+        runtime wrapping a channel and the hot path asks the pool. Spelled out
         rather than duck-typed so a backend that cannot take an injection has to
         say so, which is what stops the pool from silently skipping one that
         could.
@@ -88,40 +88,50 @@ class ComputeProvider(Protocol):
 
 
 class ComputePool:
-    """A pool of compute providers + per-turn selection (design §3 / v3).
+    """Which backend a turn lands on — a machine AND a harness.
 
-    Mirror image of AIPool (profiles.ProfileRegistry): a registry with a default
-    that is always available. Caps-matching + project quota + overflow queue land
-    when there is more than one provider; today the default is returned directly.
+    Two axes, because they are two questions. WHICH MACHINE is the topic's
+    ``compute_profile``: a container on this host, someone's enrolled laptop, a
+    leased Cloud box. WHAT RUNS THERE is the agent type's ``harness``. They were
+    one key for as long as one harness existed, and a registry keyed by machine
+    alone cannot hold a second one — two runtimes over the same transport would
+    collide on the same name.
+
+    Caps-matching + project quota + overflow queue land when there is more than
+    one backend per pair; today the pair is looked up directly.
     """
 
-    def __init__(self, providers: list[ComputeProvider], default_name: str):
-        from app.domain.agent.harness import runtime_for
+    def __init__(self, backends: list[ComputeProvider], default_name: str):
+        from app.domain.agent.harness import DEFAULT_HARNESS, runtime_for
 
-        self._providers = {p.name: p for p in providers}
-        if default_name not in self._providers:
-            raise ValueError(f"default provider {default_name!r} not registered")
-        # Every provider runs a harness. Checked HERE, once, at wiring time:
-        # the turn path then reads `runtime_for` as an answer rather than as a
+        # Every backend runs a harness. Checked HERE, once, at wiring time: the
+        # turn path then reads `runtime_for` as an answer rather than as a
         # question, and a backend that forgot half the contract is a startup
         # failure instead of a turn that silently does nothing.
-        for provider in providers:
-            runtime_for(provider)
-        self._default_name = default_name
+        self._backends = {
+            (backend.name, runtime_for(backend).harness): backend
+            for backend in backends
+        }
+        self._default = (default_name, DEFAULT_HARNESS)
+        if self._default not in self._backends:
+            raise ValueError(f"default backend {self._default!r} not registered")
 
     def default(self) -> ComputeProvider:
-        return self._providers[self._default_name]
+        return self._backends[self._default]
+
+    def machines(self) -> set[str]:
+        """Which machine pools this deployment offers, whatever runs on them."""
+        return {name for name, _ in self._backends}
 
     def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
         """turn 活跃度检测: `cheese status`'s idle-suspect signal, read from
-        whichever tmux provider is in this pool (at most one — see
-        `build_compute_pool`). None when there's no tmux provider in the pool,
-        or no turn currently monitored for this topic (not running, or running
-        on a different backend)."""
+        whichever tmux backend is in this pool. None when there is no tmux
+        backend, or no turn currently monitored for this topic (not running, or
+        running on a different machine)."""
         from app.domain.agent.tmux_provider import TmuxChannel
 
-        for provider in self._providers.values():
-            channel = getattr(provider, "channel", None)
+        for backend in self._backends.values():
+            channel = getattr(backend, "channel", None)
             if isinstance(channel, TmuxChannel):
                 return channel.activity_status(topic_id)
         return None
@@ -130,90 +140,118 @@ class ComputePool:
         self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
     ) -> bool:
         """Inject text into whichever session is currently running on this
-        topic. Asks every runtime rather than resolving the topic's configured
-        one: only one that HAS a live screen for this exact topic can answer
+        topic. Asks every backend rather than resolving the topic's configured
+        one: only one that HAS a live session for this exact topic can answer
         True, so the first True is the right one — and it needs no DB read on
         the hot path where a human is waiting.
 
-        Every provider is asked rather than only the ones that keep a session:
+        Every backend is asked rather than only the ones that keep a session:
         answering False is cheap, and a pool that decided in advance who COULD
         answer would be deciding it from the class rather than from whether
-        there is a live screen — which is the thing actually being asked."""
-        for provider in self._providers.values():
+        there is a live session — which is the thing actually being asked."""
+        for backend in self._backends.values():
             delivered = (
-                await provider.deliver(topic_id, text, images=images)
+                await backend.deliver(topic_id, text, images=images)
                 if images
-                else await provider.deliver(topic_id, text)
+                else await backend.deliver(topic_id, text)
             )
             if delivered:
                 return True
         return False
 
-    def bind_hook_event_consumer(
+    def bind_events(
         self,
-        consumer: "HookEventConsumer",
-        activity_consumer: "HookActivityConsumer | None" = None,
+        consumer: "EventConsumer",
+        activity: "ActivityConsumer | None" = None,
     ) -> None:
-        """Give hooks providers the room-side persistence and activity owners."""
-        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+        """Give every runtime the room-side persistence and activity owners."""
+        for backend in self._backends.values():
+            backend.bind_events(consumer)
+            if activity is not None:
+                backend.bind_activity(activity)
 
-        for provider in self._providers.values():
-            if isinstance(provider, ClaudeCodeRuntime):
-                provider.bind_event_consumer(consumer)
-                if activity_consumer is not None:
-                    provider.bind_activity_consumer(activity_consumer)
+    def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
+        """Give every runtime the owner of prompt receipts — the consumed-stamp
+        side of #539 decision A."""
+        for backend in self._backends.values():
+            backend.bind_receipts(consumer)
 
-    def bind_prompt_receipt_consumer(
-        self, consumer: Callable[[uuid.UUID, str], Awaitable[None]]
-    ) -> None:
-        """Give hooks providers the owner of UserPromptSubmit receipts — the
-        consumed-stamp side of #539 decision A."""
-        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
+    def holds(self, topic_id: uuid.UUID) -> bool:
+        """Does any backend still hold a live session for this topic?"""
+        return any(backend.holds(topic_id) for backend in self._backends.values())
 
-        for provider in self._providers.values():
-            if isinstance(provider, ClaudeCodeRuntime):
-                provider.bind_receipt_consumer(consumer)
-
-    def has_live_screen(self, topic_id: uuid.UUID) -> bool:
-        """Does any provider in this pool still hold a screen for this topic?
-        See `ClaudeCodeRuntime.has_live_screen`."""
-        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
-
-        return any(
-            provider.has_live_screen(topic_id)
-            for provider in self._providers.values()
-            if isinstance(provider, ClaudeCodeRuntime)
-        )
-
-    async def recover_hook_subscriptions(
+    async def recover_sessions(
         self, device_id: str | None = None
-    ) -> list["TopicSubscription"]:
-        """Recover subscriptions for screens that survived this process."""
-        from app.domain.agent.harness.claude_code import ClaudeCodeRuntime
-
-        recovered: list[TopicSubscription] = []
-        for provider in self._providers.values():
-            if isinstance(provider, ClaudeCodeRuntime):
-                recovered.extend(await provider.recover_subscriptions(device_id))
+    ) -> list["SessionRef"]:
+        """Listen again to sessions that survived this process."""
+        recovered: list[SessionRef] = []
+        for backend in self._backends.values():
+            recovered.extend(await backend.recover(device_id))
         return recovered
 
+    def backlog(self, session: "SessionRef") -> "Backlog":
+        """The unread tail for this session, from whichever backend kept it.
+
+        A session's records live with the HARNESS that made them, and this call
+        does not know which one ran the topic — resolving that means a DB read
+        the reconcile path does not have in hand. Asking is cheap and
+        unambiguous instead: at most one harness has anything to hand over for a
+        given session, so the first non-empty answer is the right one. When
+        nobody has anything the reader is empty either way, and the caller still
+        gets one to close the pass with.
+        """
+        readers = [backend.backlog(session) for backend in self._backends.values()]
+        for reader in readers:
+            if reader.unread():
+                return reader
+        return readers[0]
+
+    async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
+        """Land what a recovered session produced while nobody listened."""
+        for backend in self._backends.values():
+            await backend.replay(session, known_texts=known_texts)
+
+    def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
+        """The backend for work the PLATFORM starts — the activity digest, the
+        heartbeat patrol, the project summary.
+
+        No agent type stands behind these, so there is no harness to honour and
+        nothing to refuse: they run on whatever the machine runs. Never None,
+        unlike ``select`` — a caller with no type to satisfy always has an
+        answer, and falling back to the default machine is a better one than
+        crashing on a wiring gap.
+        """
+        return self.select(provider_id=provider_id) or self.default()
+
     def has(self, provider_id: str) -> bool:
-        return provider_id in self._providers
+        return provider_id in self.machines()
 
     def select(
-        self, *, provider_id: str | None = None, env_spec: dict | None = None
-    ) -> ComputeProvider:
-        """Pick a provider for this turn (execution-architecture v4 会话级选择).
+        self,
+        *,
+        provider_id: str | None = None,
+        harness: str | None = None,
+        env_spec: dict | None = None,
+    ) -> ComputeProvider | None:
+        """Pick the backend for this turn (execution-architecture v4 会话级选择).
 
-        ``provider_id`` is the compute a topic/project chose (resolved upstream from
-        ``topic.compute_profile`` → project sticky). A registered id routes the turn
-        to that provider; an unknown / None id falls back to the pool default (which
-        is always available) — so a stored selection that isn't deployed here never
-        breaks a turn. caps/quota/queue routing arrives with ``env_spec`` (design §3
+        ``provider_id`` is the machine a topic/project chose (resolved upstream
+        from ``topic.compute_profile`` → project sticky); a machine this
+        deployment does not have falls back to the default one, so a stored
+        selection that was retired never breaks a turn.
+
+        ``harness`` is what the agent's TYPE asks to be run by, and it does NOT
+        fall back. A type that names a harness this deployment does not run on
+        that machine gets None — running something else would answer as an agent
+        nobody configured, which is worse than not answering. None asks for the
+        deployment's default harness.
+
+        caps/quota/queue routing arrives with ``env_spec`` (design §3
         pick_provider, v2 R9)."""
-        if provider_id is not None and provider_id in self._providers:
-            return self._providers[provider_id]
-        return self.default()
+        from app.domain.agent.harness import harness_name
+
+        machine = provider_id if provider_id in self.machines() else self._default[0]
+        return self._backends.get((machine, harness_name(harness)))
 
 
 def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:

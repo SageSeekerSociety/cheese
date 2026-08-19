@@ -7,8 +7,30 @@ import pytest
 from app.domain.agent.compute import ComputePool
 
 
-class _FakeProvider:
-    """Minimal provider stand-in for routing tests (v4 会话级选择).
+class _EmptyBacklog:
+    """A session that said nothing while nobody was listening."""
+
+    def unread(self):
+        return []
+
+    def assemble(self, entry):
+        return []
+
+    def unfinished(self):
+        return set()
+
+    def give_up(self):
+        return []
+
+    def landed(self, *, through):
+        return None
+
+    def forget(self, *, older_than_s):
+        return None
+
+
+class _FakeBackend:
+    """Minimal backend stand-in for routing tests (v4 会话级选择).
 
     Answers the whole ``AgentRuntime`` contract because the pool checks for it
     at construction: a backend that runs no harness cannot be registered, so a
@@ -16,12 +38,12 @@ class _FakeProvider:
     build.
     """
 
-    harness = "claude-code"
     embeds_images = True
     provisions_machine = False
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, harness: str = "claude-code"):
         self.name = name
+        self.harness = harness
 
     def available(self) -> bool:
         return True
@@ -32,14 +54,8 @@ class _FakeProvider:
     async def send(self, session, message, opening, *, work_id, on_mark, images=None):
         return True
 
-    def read(self, session, *, since=None):
-        return []
-
-    def cursor(self, session):
-        return None
-
-    def acknowledge(self, session, *, through):
-        return None
+    def backlog(self, session):
+        return _EmptyBacklog()
 
     async def deliver(self, topic_id, text, images=None):
         return False
@@ -51,6 +67,24 @@ class _FakeProvider:
         return None
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+        return None
+
+    def bind_events(self, consumer) -> None:
+        return None
+
+    def bind_activity(self, consumer) -> None:
+        return None
+
+    def bind_receipts(self, consumer) -> None:
+        return None
+
+    def holds(self, topic_id: uuid.UUID) -> bool:
+        return False
+
+    async def recover(self, device_id=None):
+        return []
+
+    async def replay(self, session, *, known_texts):
         return None
 
 
@@ -74,20 +108,40 @@ def test_pool_rejects_a_backend_that_runs_no_harness():
         ComputePool([_NotARuntime()], "hollow")
 
 
-def _two_provider_pool() -> ComputePool:
+def _two_machine_pool() -> ComputePool:
     return ComputePool(
-        [_FakeProvider("tmux-hooks"), _FakeProvider("device")], "tmux-hooks"
+        [_FakeBackend("tmux-hooks"), _FakeBackend("device")], "tmux-hooks"
     )
 
 
-def test_select_routes_to_the_named_provider():
-    pool = _two_provider_pool()
+def test_select_routes_to_the_named_machine():
+    pool = _two_machine_pool()
     assert pool.select(provider_id="device").name == "device"
     assert pool.select(provider_id="tmux-hooks").name == "tmux-hooks"
 
 
+def test_a_machine_can_offer_more_than_one_harness():
+    """The two axes are two questions. A registry keyed by machine alone could
+    not hold a second harness at all — both backends would answer to the same
+    name and one would silently replace the other."""
+    pool = ComputePool(
+        [_FakeBackend("tmux-hooks"), _FakeBackend("tmux-hooks", harness="pi")],
+        "tmux-hooks",
+    )
+    assert pool.machines() == {"tmux-hooks"}
+    assert pool.select(provider_id="tmux-hooks", harness="pi").harness == "pi"
+    assert pool.select(provider_id="tmux-hooks").harness == "claude-code"
+
+
+def test_a_harness_this_deployment_does_not_run_is_refused_not_substituted():
+    """Running something else would answer as an agent nobody configured. The
+    machine falls back; what runs on it never does."""
+    pool = _two_machine_pool()
+    assert pool.select(provider_id="tmux-hooks", harness="pi") is None
+
+
 def test_select_falls_back_to_default_for_unknown_or_none():
-    pool = _two_provider_pool()
+    pool = _two_machine_pool()
     # None (topic/project chose nothing) → the pool default.
     assert pool.select(provider_id=None).name == "tmux-hooks"
     assert pool.select().name == "tmux-hooks"
@@ -97,7 +151,7 @@ def test_select_falls_back_to_default_for_unknown_or_none():
 
 
 def test_pool_select_returns_available_default():
-    pool = _two_provider_pool()
+    pool = _two_machine_pool()
     provider = pool.select()
     assert provider is pool.default()
     assert provider.available() is True

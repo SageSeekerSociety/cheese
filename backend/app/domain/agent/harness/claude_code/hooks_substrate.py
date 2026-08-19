@@ -33,8 +33,12 @@ from pathlib import Path
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness import (
     CLAUDE_CODE,
+    ActivityConsumer,
+    Backlog,
+    EventConsumer,
     HarnessEvent,
     Opening,
+    ReceiptConsumer,
     SessionRef,
 )
 from app.domain.agent.harness.claude_code import event_spool
@@ -226,7 +230,7 @@ def read_log(session: SessionRef, *, since: str | None = None) -> list[HarnessEv
     """This session's events after ``since``, oldest first."""
     return [
         HarnessEvent(
-            key=path.name, eid=eid, payload=payload, age_s=event_spool.age_s(path)
+            key=path.name, eid=eid, record=payload, age_s=event_spool.age_s(path)
         )
         for path, eid, payload in event_spool.spool_entries(
             _spool_of(session), after=since
@@ -347,24 +351,6 @@ def _advance_replay_cursor(subscription: TopicSubscription) -> None:
         acknowledge_log(
             SessionRef(subscription.project_id, subscription.topic_id), through=reached
         )
-
-
-HookEventConsumer = Callable[
-    [
-        uuid.UUID,
-        uuid.UUID,
-        uuid.UUID,
-        AgentEvent | AgentDeliveryFailure,
-        str | None,
-        bool,
-        bool,
-    ],
-    Awaitable[None],
-]
-
-HookActivityConsumer = Callable[
-    [uuid.UUID, uuid.UUID, uuid.UUID, bool], Awaitable[None]
-]
 
 
 # How often a suspected-wedged session re-checks liveness while it stays idle (a
@@ -534,6 +520,50 @@ def _prompt_with_native_images(prompt: str, images: list[dict] | None) -> str:
     return f"{prompt}\n\n{mentions}" if prompt else mentions
 
 
+class SpoolBacklog:
+    """The unread tail of one session's hook spool, ready to be landed.
+
+    Everything Claude-Code-shaped about backfilling lives here: that the log is
+    a directory of hook files, that a message arrives as several MessageDisplay
+    flushes and only the assembler knows when it is whole, that an entry has to
+    carry its own id into the payload before translation. The platform loops
+    over `unread()` deciding what to persist; it never sees a hook.
+
+    Built per pass, because the assembler is: its buffer of half-arrived
+    messages belongs to this reading, and a flush that never completes must not
+    leak into the next one.
+    """
+
+    def __init__(self, session: SessionRef) -> None:
+        self._session = session
+        self._assembler = MessageAssembler()
+        # Snapshot at construction: landing things as the pass goes must not
+        # change what this pass was asked to land.
+        self._unread = read_log(session, since=log_cursor(session))
+
+    def unread(self) -> list[HarnessEvent]:
+        return self._unread
+
+    def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
+        if not isinstance(entry.record, dict):
+            return []
+        payload = dict(entry.record)
+        payload["_eid"] = entry.eid
+        return self._assembler.translate(payload)
+
+    def unfinished(self) -> set[str]:
+        return self._assembler.pending_eids()
+
+    def give_up(self) -> list[AgentEvent]:
+        return list(self._assembler.drain())
+
+    def landed(self, *, through: str) -> None:
+        acknowledge_log(self._session, through=through)
+
+    def forget(self, *, older_than_s: float) -> None:
+        expire_log(self._session, older_than_s=older_than_s)
+
+
 class Channel:
     """一条通往「机器上一块屏幕」的通道：开机器、把字送进去、按 Escape。
 
@@ -603,11 +633,17 @@ class Channel:
 
     async def discover(
         self, device_id: str | None = None
-    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         """Screens of ours that survived this process, as
-        ``(project_id, topic_id, screen)``. ``screen`` is None when the channel
-        knows the topic is still out there but cannot hand back a handle for it
-        yet (the device transport reattaches on the next turn).
+        ``(project_id, topic_id, screen, running)``. ``screen`` is None when the
+        channel knows the topic is still out there but cannot hand back a handle
+        for it yet (the device transport reattaches on the next turn).
+
+        ``running`` is the tag the screen was started with, handed back unread:
+        one machine can host sessions of more than one harness, and only the
+        runtime knows which tag is its own. None means this channel cannot tell
+        — and a channel that cannot tell cannot host two harnesses at once,
+        because nothing is left to stop one from claiming the other's screens.
 
         The runtime subscribes to what this returns. A channel that answers
         nothing simply has nothing that outlives the backend.
@@ -733,15 +769,13 @@ class ClaudeCodeRuntime:
         # own the stable router sink, consumer task, and current attribution.
         self._live: dict[uuid.UUID, object] = {}
         self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
-        self._event_consumer: HookEventConsumer | None = None
-        self._activity_consumer: HookActivityConsumer | None = None
+        self._event_consumer: EventConsumer | None = None
+        self._activity_consumer: ActivityConsumer | None = None
         self._delivery_locks: dict[uuid.UUID, asyncio.Lock] = {}
         # Every UserPromptSubmit is reported here (#539 decision A): the
         # transport write is delivery — this hook is the CONSUMPTION record,
         # which is when the consumed stamp belongs, however late it fires.
-        self._receipt_consumer: Callable[[uuid.UUID, str], Awaitable[None]] | None = (
-            None
-        )
+        self._receipt_consumer: ReceiptConsumer | None = None
         self._receipt_tasks: set[asyncio.Task[None]] = set()
         _RUNTIMES.add(self)
 
@@ -794,19 +828,17 @@ class ClaudeCodeRuntime:
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
         return self._channel.checkpoint(project_id, topic_id)
 
-    def bind_event_consumer(self, consumer: HookEventConsumer) -> None:
+    def bind_events(self, consumer: EventConsumer) -> None:
         """Bind the room persistence and broadcast callback owned by ChatService."""
         self._event_consumer = consumer
 
-    def bind_receipt_consumer(
-        self, consumer: Callable[[uuid.UUID, str], Awaitable[None]]
-    ) -> None:
+    def bind_receipts(self, consumer: ReceiptConsumer) -> None:
         """Bind the owner of prompt receipts: every UserPromptSubmit the
         screen emits is reported as ``(topic_id, prompt_text)`` — ChatService
         matches it against messages it injected and stamps them consumed."""
         self._receipt_consumer = consumer
 
-    def bind_activity_consumer(self, consumer: HookActivityConsumer) -> None:
+    def bind_activity(self, consumer: ActivityConsumer) -> None:
         """Bind the room's session-activity lifecycle callback."""
         self._activity_consumer = consumer
 
@@ -920,21 +952,19 @@ class ClaudeCodeRuntime:
         )
         return subscription
 
-    def has_live_screen(self, topic_id: uuid.UUID) -> bool:
+    def holds(self, topic_id: uuid.UUID) -> bool:
         """Is there a screen this runtime can still reach for this topic?
 
         This is what "the work survived" means after a backend restart: the
         coroutine waiting on the turn died with the process, the claude in the
-        execution environment did not, and `recover_subscriptions` found it
+        execution environment did not, and `recover` found it
         again. Everything the orphan sweep used to infer from side effects — a
         block bearing the turn's id, an unread hook in the spool — was an
         attempt to answer this question without being able to ask it.
         """
         return topic_id in self._live
 
-    async def recover_subscriptions(
-        self, device_id: str | None = None
-    ) -> list[TopicSubscription]:
+    async def recover(self, device_id: str | None = None) -> list[SessionRef]:
         """Listen again to the screens that outlived this process.
 
         The channel finds them; subscribing to them is this side's job. It used
@@ -945,20 +975,72 @@ class ClaudeCodeRuntime:
         Paused, because a recovered subscription must not start replaying into
         a room before the platform has decided what to do with it.
         """
-        recovered: list[TopicSubscription] = []
-        for project_id, topic_id, screen in await self._channel.discover(device_id):
-            subscription = await self.ensure_subscription(
-                project_id, topic_id, paused=True
-            )
+        recovered: list[SessionRef] = []
+        for project_id, topic_id, screen, runs in await self._channel.discover(
+            device_id
+        ):
+            if runs is not None and runs != self.harness:
+                # Someone else's session on a machine we share. Claiming it
+                # would mean translating another harness's output with this
+                # one's assembler and reporting it as ours.
+                continue
+            await self.ensure_subscription(project_id, topic_id, paused=True)
             if screen is not None:
                 self._live[topic_id] = screen
-            recovered.append(subscription)
+            recovered.append(SessionRef(project_id, topic_id))
         return recovered
 
     async def drop_device_subscriptions(self, device_id: str) -> None:
         """Drop recovered subscriptions associated with a disconnected device."""
         for topic_id in self._channel.topics_on_device(device_id):
             await self._close_topic(topic_id)
+
+    async def replay(self, session: SessionRef, *, known_texts: set[str]) -> None:
+        """Push the spool's unread tail back into a recovered subscription.
+
+        Where the tail starts is the spool's own cursor. It used to be inferred
+        — walk the topic's blocks backwards for the newest event id that also
+        appears in the spool — which was a guess dressed as a fact: an event the
+        live path had persisted WITHOUT an id, or a tail whose every event was
+        of a kind that persists nothing, left the search empty and replayed the
+        whole spool from the beginning. The cursor is the same claim, written by
+        whoever actually persisted the events instead of reconstructed from
+        their leftovers.
+
+        The events go back through the SAME consumer the live path uses, so
+        nothing about landing them is written twice. Until this returns the
+        subscription is held paused, or a hook arriving mid-replay would be
+        translated ahead of the tail it belongs behind.
+        """
+        subscription = self._subscriptions.get(session.topic_id)
+        if subscription is None:
+            return
+        try:
+            events = read_log(session, since=log_cursor(session))
+            if not events:
+                return
+            subscription.replaying = True
+            replayed: dict[str, dict] = {}
+            for event in events:
+                subscription.replay_queue.append((event.key, event.eid))
+                if event.record is None:
+                    # Unparseable, so nothing can ever be made of it — mark it
+                    # done so the cursor steps over it rather than stopping here
+                    # forever.
+                    subscription.replay_done.add(event.eid)
+                    continue
+                if event.eid in replayed:
+                    continue
+                replayed[event.eid] = event.record
+            if replayed:
+                subscription.replay_seen_messages.update(known_texts)
+            for eid, payload in replayed.items():
+                queued = dict(payload)
+                queued["_eid"] = eid
+                subscription.sink.queue.put_nowait(queued)
+        finally:
+            subscription.ready.set()
+        await asyncio.wait_for(subscription.sink.queue.join(), timeout=30)
 
     async def close(self, session: SessionRef) -> None:
         """Let this session go: stop listening, forget the channel.
@@ -1011,19 +1093,8 @@ class ClaudeCodeRuntime:
     # machine, this says what runs on it.
     harness = CLAUDE_CODE
 
-    def read(
-        self, session: SessionRef, *, since: str | None = None
-    ) -> list[HarnessEvent]:
-        return read_log(session, since=since)
-
-    def cursor(self, session: SessionRef) -> str | None:
-        return log_cursor(session)
-
-    def acknowledge(self, session: SessionRef, *, through: str) -> None:
-        acknowledge_log(session, through=through)
-
-    def expire(self, session: SessionRef, *, older_than_s: float) -> int:
-        return expire_log(session, older_than_s=older_than_s)
+    def backlog(self, session: SessionRef) -> Backlog:
+        return SpoolBacklog(session)
 
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the work away without saying anything. Escape is what stops a

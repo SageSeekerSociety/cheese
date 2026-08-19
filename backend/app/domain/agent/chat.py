@@ -29,14 +29,6 @@ from app.core.text import markdown_preview
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
-from app.domain.agent.harness.claude_code import (
-    MessageAssembler,
-    TopicSubscription,
-    acknowledge_log,
-    expire_log,
-    log_cursor,
-    read_log,
-)
 from app.domain.agent.market import subscription_model_alias
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
@@ -1270,10 +1262,8 @@ class ChatService:
         # itself out of an SDK client, and building compute out of nothing is
         # exactly what no longer exists.
         self._compute = compute
-        self._compute.bind_hook_event_consumer(
-            self._consume_hook_event, self._set_hook_activity
-        )
-        self._compute.bind_prompt_receipt_consumer(self.confirm_prompt_receipt)
+        self._compute.bind_events(self._consume_hook_event, self._set_hook_activity)
+        self._compute.bind_receipts(self.confirm_prompt_receipt)
         # Mid-turn messages whose write the transport accepted but whose
         # UserPromptSubmit receipt has not arrived yet (#539 decision A):
         # topic → [(injected text, block ids, consuming turn)]. The receipt
@@ -1768,10 +1758,9 @@ class ChatService:
             logger.exception("could not close open turns for topic %s", topic_id)
 
     def has_live_screen(self, topic_id: uuid.UUID) -> bool:
-        """Is a screen for this topic still reachable? See
-        `ClaudeCodeRuntime.has_live_screen` — this is the orphan sweep's
-        first question, and the one that used to be unanswerable."""
-        return self._compute.has_live_screen(topic_id)
+        """Is a session for this topic still reachable? The orphan sweep's first
+        question, and the one that used to be unanswerable."""
+        return self._compute.holds(topic_id)
 
     async def turns_that_produced_something(
         self, turn_ids: list[uuid.UUID]
@@ -1815,71 +1804,41 @@ class ChatService:
                 landed += 1
         return landed
 
-    async def recover_hook_subscriptions(self, device_id: str | None = None) -> int:
-        """Reattach surviving hook screens and replay their crash-recovery logs."""
-        subscriptions = await self._compute.recover_hook_subscriptions(device_id)
-        unique = {subscription.topic_id: subscription for subscription in subscriptions}
-        for subscription in unique.values():
+    async def recover_sessions(self, device_id: str | None = None) -> int:
+        """Listen again to sessions that outlived this process, and land what
+        they said while nobody was.
+
+        Two calls to the runtime, and the split is deliberate: ``recover``
+        establishes that we are listening, ``replay`` hands over the tail. What
+        the room already shows is ours to supply; which of the harness's own
+        records are still unlanded is its.
+        """
+        sessions = await self._compute.recover_sessions(device_id)
+        unique = {session.topic_id: session for session in sessions}
+        for session in unique.values():
             try:
-                await self._replay_hook_subscription(subscription)
+                # What the room already shows, so a message the live path DID
+                # persist before this process died is not landed twice. The room
+                # is ours; which of the harness's own records are still unlanded
+                # is the harness's.
+                await self._compute.replay(
+                    session, known_texts=await self._said(session)
+                )
             except Exception:  # noqa: BLE001 — one topic cannot block startup
                 logger.exception(
-                    "hook subscription recovery failed for topic %s",
-                    subscription.topic_id,
+                    "session recovery failed for topic %s", session.topic_id
                 )
-                subscription.ready.set()
         return len(unique)
 
-    async def _replay_hook_subscription(self, subscription: TopicSubscription) -> None:
-        """Replay one topic spool's unread tail into the recovered subscription.
-
-        Where the tail starts is the spool's own cursor. It used to be inferred
-        — walk the topic's blocks backwards for the newest event id that also
-        appears in the spool — which was a guess dressed as a fact: an event the
-        live path had persisted WITHOUT an id, or a tail whose every event was
-        of a kind that persists nothing, left the search empty and replayed the
-        whole spool from the beginning. The cursor is the same claim, written by
-        whoever actually persisted the events instead of reconstructed from
-        their leftovers.
-        """
-        session_ref = SessionRef(subscription.project_id, subscription.topic_id)
-        events = read_log(session_ref, since=log_cursor(session_ref))
-        if not events:
-            subscription.ready.set()
-            return
-
-        async with self._sessions() as session:
-            blocks = await BlockRepository(session).list_for_topic(
-                subscription.topic_id
-            )
-
-        subscription.replaying = True
-        replayed: dict[str, dict] = {}
-        for event in events:
-            eid, payload = event.eid, event.payload
-            subscription.replay_queue.append((event.key, eid))
-            if payload is None:
-                # Unparseable, so nothing can ever be made of it — mark it done
-                # so the cursor steps over it rather than stopping here forever.
-                subscription.replay_done.add(eid)
-                continue
-            if eid in replayed:
-                continue
-            replayed[eid] = payload
-
-        if replayed:
-            subscription.replay_seen_messages.update(
-                (block.content or "").strip()
-                for block in blocks
-                if block.kind == BlockKind.message
-                and block.author_type == AuthorType.ai
-            )
-        for eid, payload in replayed.items():
-            replay = dict(payload)
-            replay["_eid"] = eid
-            subscription.sink.queue.put_nowait(replay)
-        subscription.ready.set()
-        await asyncio.wait_for(subscription.sink.queue.join(), timeout=30)
+    async def _said(self, session: SessionRef) -> set[str]:
+        """What 芝士 has already said in this topic, as the room stores it."""
+        async with self._sessions() as db:
+            blocks = await BlockRepository(db).list_for_topic(session.topic_id)
+        return {
+            (block.content or "").strip()
+            for block in blocks
+            if block.kind == BlockKind.message and block.author_type == AuthorType.ai
+        }
 
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
         """Debounced background ``settle_spool``. Two callers: the hooks
@@ -2765,36 +2724,36 @@ class ChatService:
     async def _reconcile_spool(
         self, project_id: uuid.UUID, topic_id: uuid.UUID, turn_id: uuid.UUID | None
     ) -> AsyncIterator[dict]:
-        """Backfill 现场 events the live hook path missed (backend down / no listener
-        during a prior turn) from the durable spool WAL — idempotent by event-id.
-        No-op for the sdk backend (no spool dir) and an empty spool. Best-effort: a
-        reconcile failure never blocks the turn.
+        """Land what a session said while nobody was listening (backend down, or
+        no listener during a prior turn) — idempotent by event id, best-effort,
+        and never blocking the turn.
 
-        Scope: 现场 tool events, 芝士 chat messages (MessageDisplay), AND the
-        turn-ending Stop — all idempotent by event-id, so a copy the live path
-        already persisted is skipped. Backfilled messages skip mention-notify
-        (the moment passed), but they DO yield a WS frame like the live path — a
-        hook that missed its turn's listening window must still reach the
-        frontend, just without threading or an @-notify (bug: it was landing as
-        a silent DB row nobody saw).
+        The harness's ``backlog`` says WHAT was said; this decides what to do
+        about it. Scope: 现场 tool events, 芝士 chat messages, and the turn-ending
+        result — a copy the live path already persisted is skipped by id.
+        Backfilled messages skip mention-notify (the moment passed) but DO yield
+        a WS frame like the live path: something that missed its turn's listening
+        window must still reach the frontend, just without threading or an
+        @-notify (bug: it was landing as a silent DB row nobody saw).
 
-        The Stop is what lets an ORPHANED turn finish (#316): a backend restart
-        kills the waiter, not the working claude, and the sweep no longer
-        re-prompts a claude that heard the task — so its Stop arrives with no
-        turn listening, gets parked, and has to close the books from here: save
-        the finished session's pointer, and land its final message unless a
-        MessageDisplay (live or in this same batch) already carries that text —
-        Stop's last_assistant_message is normally a copy of the last one.
+        The result is what lets an ORPHANED turn finish (#316): a backend restart
+        kills the waiter, not the working agent, and the sweep no longer
+        re-prompts one that heard the task — so its ending arrives with no turn
+        listening, gets parked, and has to close the books from here: save the
+        finished session's pointer, and land its final message unless a message
+        (live or in this same pass) already carries that text — the ending
+        normally echoes the last one.
 
-        MessageDisplay entries are per-flush, not per-message, so they fold
-        through a MessageAssembler exactly like the live path: one whole block
-        per message. Flushes of a message that has not completed yet keep
-        their spool files for the pass where the missing flush has arrived —
-        unless they are stale (no Stop, nothing new for a while), in which
-        case what arrived lands joined rather than being lost."""
+        Whether a message is whole is the harness's call, not ours: ``assemble``
+        answers with nothing until it is, ``unfinished`` names what is still
+        missing a piece — and the cursor must stop before those, so the pass that
+        completes them still sees what they are made of. ``give_up`` is for the
+        session that died mid-sentence: what arrived lands joined rather than
+        being lost."""
         try:
             session_ref = SessionRef(project_id, topic_id)
-            spooled = read_log(session_ref, since=log_cursor(session_ref))
+            backlog = self._compute.backlog(session_ref)
+            spooled = backlog.unread()
             if not spooled:
                 return
             # Dedup against everything the live path already persisted (this +
@@ -2833,7 +2792,6 @@ class ChatService:
                 for b in blocks
                 if b.kind == BlockKind.message and b.author_type == AuthorType.ai
             }
-            assembler = MessageAssembler()
             recovered = 0
 
             async def _land_message(
@@ -2877,11 +2835,10 @@ class ChatService:
                 return block_payload
 
             for spooled_event in spooled:
-                eid, payload = spooled_event.eid, spooled_event.payload
-                if payload is None or eid in seen:
+                eid = spooled_event.eid
+                if eid in seen:
                     continue
-                payload["_eid"] = eid
-                events = assembler.translate(payload)
+                events = backlog.assemble(spooled_event)
                 if events and isinstance(events[-1], AgentResult):
                     # A Stop first drains still-buffered flushes. A drained
                     # partial that is a PREFIX of the Stop's text is the same
@@ -2980,7 +2937,7 @@ class ChatService:
                         continue
                     recovered += 1
                     yield {"type": "event_block", "block": block_payload}
-            pending = assembler.pending_eids()
+            pending = backlog.unfinished()
             if pending:
                 newest = min(
                     (event.age_s for event in spooled if event.eid in pending),
@@ -2990,7 +2947,7 @@ class ChatService:
                     # No Stop and nothing new for a while: the message will
                     # never complete (the screen died mid-message). Land what
                     # arrived, joined, rather than lose it.
-                    for partial in assembler.drain():
+                    for partial in backlog.give_up():
                         block_payload = await _land_message(partial, partial.eid or "")
                         if block_payload is not None:
                             recovered += 1
@@ -3004,8 +2961,8 @@ class ChatService:
             for event in spooled:
                 if event.eid in pending:
                     break
-                acknowledge_log(session_ref, through=event.key)
-            expire_log(session_ref, older_than_s=_SPOOL_RETENTION_S)
+                backlog.landed(through=event.key)
+            backlog.forget(older_than_s=_SPOOL_RETENTION_S)
             if recovered:
                 logger.info(
                     "reconciled %d spooled 现场 event(s) for topic %s",
@@ -3491,9 +3448,10 @@ class ChatService:
                 topic.compute_profile,
                 await _team_compute_profile(session, project),
             )
-            provider = self._compute.select(provider_id=compute_id)
-            runs = runtime_for(provider)
-            if runs.harness != wanted_harness:
+            provider = self._compute.select(
+                provider_id=compute_id, harness=wanted_harness
+            )
+            if provider is None:
                 # The machine is fine; what runs on it is not what this agent's
                 # type asked for. Running Claude Code anyway would answer as an
                 # agent nobody configured — say so instead, and leave the type
@@ -3510,8 +3468,7 @@ class ChatService:
                                 session=session,
                                 text=(
                                     f"这个 agent 的类型要求用 {wanted_harness} "
-                                    f"跑，而本话题的机器上跑的是 {runs.harness}，"
-                                    "本轮没有开始。"
+                                    "跑，而本话题选的机器上没有部署它，本轮没有开始。"
                                 ),
                             ),
                         },
@@ -4004,7 +3961,7 @@ class ChatService:
             "如果这是个关键节点就用 cheese 钉成里程碑；"
             "需要分派的待办用 cheese 通知到人。\n\n---\n" + text
         )
-        provider = self._compute.select(provider_id=compute_id)
+        provider = self._compute.platform_work(compute_id)
         final_text = ""
         new_session_id = None
         tools_used: list[str] = []
@@ -4121,7 +4078,7 @@ class ChatService:
             "然后只对真正需要的事用 cheese 发分级通知（level=silent/light/"
             "strong，kind=heartbeat），别骚扰。\n\n" + context
         )
-        provider = self._compute.select(provider_id=compute_id)
+        provider = self._compute.platform_work(compute_id)
         final_text = ""
         tools_used: list[str] = []
         async for event in provider.run_turn(
@@ -4219,7 +4176,7 @@ class ChatService:
         # Pure text generation (no platform actions) — still runs through the
         # provider (root-topic sandbox when present) for a single execution path;
         # topic_id None (no root topic) degrades to a plain model turn.
-        provider = self._compute.select(provider_id=compute_id)
+        provider = self._compute.platform_work(compute_id)
         final_text = ""
         async for event in provider.run_turn(
             project_id=project_id,

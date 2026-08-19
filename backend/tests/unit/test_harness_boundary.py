@@ -28,12 +28,15 @@ harness 一样都不用付。
   这些都是 transport 拿来照做的，不是它自己定的。剩下那几个名字才是账——
   ``build_screen_launch``、``SESSION_TOKEN_TTL_S``、``DEVICE_*_PROBE``：Claude Code
   的知识，今天还长在传输层里。第二个 harness 要接上的时候，红的就是这几行。
-- **chat.py**：拿走 ``TopicSubscription`` 和 ``MessageAssembler``——也就是说「把
-  hook 翻译成房间里的东西」这件事还有一半住在平台侧，而它认得的是 Claude Code 的
-  事件形状。
+- **平台侧（chat.py）：一行也没有了。** 曾经它拿走 ``MessageAssembler`` 和 spool 的
+  四个读写函数——「把 hook 翻译成房间里的东西」有一半住在平台侧，认得的是 Claude Code
+  的事件形状。现在它只通过 ``AgentRuntime`` 的 ``backlog`` 拿到已经拼好的
+  ``AgentEvent``，落库发帧还是它的活，翻译不是。**这一行别再长回来。**
+- **装配**（``compute``）：``build_compute_pool`` 在这里把 runtime 和 channel 拼起来，
+  所以它认得两个类名。装配处见得到零件是应该的——但也只有这里见得到。
 - **边缘**（``routes/sandbox`` 收 hook、``workspace`` 回收工作区时通知、
   ``machine/enrollment`` 检查版本）：这几条大概率会一直在。适配器有一条对外的边，
-  边总得有人站着。
+  边总得有人站着；第二个 harness 自己带一条，而不是从这条挤进去。
 """
 
 import ast
@@ -51,23 +54,8 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "schedule_screen_subscription_drop",
         "schedule_topic_subscription_drop",
     ),
-    # --- 平台侧还留着一半事件翻译 ---
-    "app.domain.agent.chat": (
-        "MessageAssembler",
-        "TopicSubscription",
-        "acknowledge_log",
-        "expire_log",
-        "log_cursor",
-        "read_log",
-    ),
-    # --- 池子装的是 runtime 包着 channel，装配在这里发生 ---
-    "app.domain.agent.compute": (
-        "Channel",
-        "ClaudeCodeRuntime",
-        "HookActivityConsumer",
-        "HookEventConsumer",
-        "TopicSubscription",
-    ),
+    # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
+    "app.domain.agent.compute": ("Channel", "ClaudeCodeRuntime"),
     "app.domain.agent.device_hub": (
         "drop_device_subscriptions",
         "drop_screen_subscriptions",
@@ -87,6 +75,7 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     "app.domain.agent.tmux_provider": (
         "ActivityTracker",
         "Channel",
+        "HARNESS_ENV",
         "LaunchSpec",
         "SESSION_TOKEN_TTL_S",
         "ScreenSetupError",
@@ -94,6 +83,7 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "build_session_launch",
         "drop_screen_subscriptions",
         "ensure_claude",
+        "harness_of",
     ),
 }
 

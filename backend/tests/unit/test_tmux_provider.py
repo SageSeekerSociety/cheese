@@ -712,20 +712,34 @@ async def test_restart_recovery_subscribes_running_topic_containers(monkeypatch)
     router = HookRouter()
     provider = ClaudeCodeRuntime(TmuxChannel(image="img:test"), router=router)
 
-    recovered = await provider.recover_subscriptions()
+    heard: list = []
 
-    assert len(recovered) == 1
-    assert recovered[0].project_id == project_id
-    assert recovered[0].topic_id == topic_id
-    assert not recovered[0].ready.is_set()
+    async def consume(_p, _t, _w, event, _sid, _replay, _live):
+        heard.append(event)
+
+    provider.bind_events(consume)
+
+    recovered = await provider.recover()
+
+    assert recovered == [SessionRef(project_id, topic_id)]
     assert provider._live[topic_id] == tp.TmuxScreen(
         "topic-box", f"cheese-{topic_id.hex[:8]}"
     )
     assert calls[0][0] == "ps"
 
-    recovered[0].ready.set()
-    router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
-    await recovered[0].sink.queue.join()
+    # HELD until the platform has decided what to do with the tail: a hook that
+    # arrives now must not be translated ahead of the spooled events it belongs
+    # behind. `replay` is what releases it, even with nothing to replay.
+    router.push(
+        str(topic_id),
+        {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {}},
+    )
+    await asyncio.sleep(0.05)
+    assert heard == []
+
+    await provider.replay(recovered[0], known_texts=set())
+    await provider._subscriptions[topic_id].sink.queue.join()
+    assert [type(event).__name__ for event in heard] == ["AgentToolUse"]
     await provider._close_topic(topic_id)
 
 

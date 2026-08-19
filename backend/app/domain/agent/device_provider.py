@@ -224,6 +224,9 @@ def connect_transport(
 # Where the launch script writes the metering proxy's CA on the device (under the
 # screen's ISOLATED home) and exports NODE_EXTRA_CA_CERTS to point. The env value
 # built here carries the literal placeholder; only the script knows the real home.
+# The `.claude` in it is the launcher's config dir, so this string and
+# `device_launch` have to agree — it is written down twice today, once on each
+# side of the seam.
 _DEVICE_PROXY_CA_PATH = "$HOME/.claude/proxy-ca.pem"
 
 
@@ -355,7 +358,7 @@ class DeviceChannel(Channel):
 
     async def discover(
         self, device_id: str | None = None
-    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         """Topics durably pinned to currently connected devices.
 
         No screen comes back with them: the ``HubScreen`` that was open before
@@ -387,7 +390,13 @@ class DeviceChannel(Channel):
 
         for _, topic_id, connected_device_id in scopes:
             self._subscription_devices[topic_id] = connected_device_id
-        return [(project_id, topic_id, None) for project_id, topic_id, _ in scopes]
+        # No harness tag: the pin records WHICH TOPIC is bound to which device,
+        # not what we started on it, and the screen itself is gone from this
+        # process. Running two harnesses on one enrolled machine needs the
+        # binding to record which — until then this transport hosts one.
+        return [
+            (project_id, topic_id, None, None) for project_id, topic_id, _ in scopes
+        ]
 
     def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
         return [

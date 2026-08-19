@@ -224,15 +224,13 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
     )
     provider = ClaudeCodeRuntime(channel, router=router)
 
-    recovered = await provider.recover_subscriptions("dev1")
+    recovered = await provider.recover("dev1")
 
-    assert len(recovered) == 1
-    assert recovered[0].project_id == project_id
-    assert recovered[0].topic_id == topic_id
+    assert recovered == [SessionRef(project_id, topic_id)]
     assert channel._subscription_devices[topic_id] == "dev1"
-    recovered[0].ready.set()
+    await provider.replay(recovered[0], known_texts=set())
     router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
-    await recovered[0].sink.queue.join()
+    await provider._subscriptions[topic_id].sink.queue.join()
 
     await provider.drop_device_subscriptions("dev1")
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False

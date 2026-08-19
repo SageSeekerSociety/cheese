@@ -125,9 +125,9 @@ class _RecoveringChannel(_IdleChannel):
 
     async def discover(
         self, device_id: str | None = None
-    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None]]:
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
         del device_id
-        return [(self.project_id, self.topic_id, "surviving-screen")]
+        return [(self.project_id, self.topic_id, "surviving-screen", "claude-code")]
 
 
 async def _seed_topic(factory: object) -> tuple[uuid.UUID, uuid.UUID]:
@@ -524,7 +524,7 @@ async def test_restart_reattaches_and_replays_spooled_hooks(
 
     broker = get_broker()
     async with broker.subscribe(str(topic_id)) as room:
-        assert await service.recover_hook_subscriptions() == 1
+        assert await service.recover_sessions() == 1
         started = await asyncio.wait_for(room.get(), 1)
         message = await asyncio.wait_for(room.get(), 1)
         assert await asyncio.wait_for(room.get(), 1) == {"type": "done"}
@@ -594,7 +594,7 @@ async def test_a_deploy_does_not_interrupt_a_turn_that_is_already_running(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([provider], provider.name),
     )
-    assert await service.recover_hook_subscriptions() == 1
+    assert await service.recover_sessions() == 1
 
     # The startup sweep runs next, exactly as `main.py` orders it. It must find
     # nothing to do: the screen answered for this topic and the prompt reached
@@ -652,7 +652,7 @@ async def test_a_stop_does_not_end_a_turn_that_was_never_fed(
         workspace_root=str(tmp_path / "ws"),
         compute=ComputePool([provider], provider.name),
     )
-    assert await service.recover_hook_subscriptions() == 1
+    assert await service.recover_sessions() == 1
 
     async with factory() as session:
         row = await session.get(AgentTurn, still_provisioning)
