@@ -18,6 +18,20 @@ class Settings(BaseSettings):
     # TEST_PG_BASE), so running the suite never disturbs your dev data.
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cheese"
     db_echo: bool = False
+    # How many database connections one backend process may hold. SQLAlchemy's
+    # own defaults (5 + 10) size a pool for a thread-per-request server; this is
+    # one asyncio process where every in-flight request holds a connection at
+    # the same time, so the ceiling is 「同时在飞的请求数」, not 「worker 数」. A
+    # single page load fans out dozens of them, and a request that cannot get a
+    # connection within `db_pool_timeout_s` raises TimeoutError — a 500 on a
+    # perfectly healthy database.
+    db_pool_size: int = 20
+    db_max_overflow: int = 30
+    db_pool_timeout_s: float = 30.0
+    # Hand out a connection only after checking it is still alive: a pooled
+    # asyncpg connection that the database (or anything in between) closed while
+    # idle otherwise fails the first statement of whoever checks it out next.
+    db_pool_pre_ping: bool = True
 
     # --- Migration timeouts (#356) ---
     # Bound how long a migration waits on a lock / runs, applied by alembic's
