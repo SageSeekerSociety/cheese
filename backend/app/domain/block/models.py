@@ -21,6 +21,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -145,6 +146,21 @@ class Block(UuidPk, Timestamps, Base):
     # picks a renderer from this, never from parsing the AI's text. Only set on
     # kind=artifact blocks (e.g. text/html, image/svg+xml).
     mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    # How many times the living doc has been written (kind=doc only; every other
+    # block sits at 1 and never moves). A writer sends the version it read and
+    # the update is conditional on it, so 芝士 overwriting the whole doc from a
+    # copy it took ten minutes ago is refused instead of erasing what a person
+    # wrote in between — 整块覆盖 is the only way this doc is ever written, which
+    # makes every stale write a total loss.
+    #
+    # A counter rather than a content hash (the version workspace files carry):
+    # this one is said out loud. A person's edit pushes 「文档已更新到第 7 版」
+    # into the running session, and 第 7 版 is a thing 芝士 can compare against
+    # what it holds; a hash is not.
+    doc_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1", default=1
+    )
 
     # The agent turn that produced this block (review R4): groups a turn's blocks
     # for traceability / recovery / the collaboration-trajectory dataset. Null for

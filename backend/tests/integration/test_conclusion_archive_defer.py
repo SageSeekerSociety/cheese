@@ -20,7 +20,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import AgentService
 from app.domain.conclusion.models import (
     ARCHIVE_DEFERRED,
     ARCHIVE_DEFERRED_DONE,
@@ -33,6 +32,7 @@ from app.domain.review.models import AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.scheduler.service import SchedulerService
 from app.domain.topic.services import TopicService
+from tests.conftest import stub_compute
 from tests.conftest import wait_work_idle as _wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
@@ -435,9 +435,9 @@ def test_the_platform_sweep_is_actually_wired_to_pay_it_back(client, tmp_path):
         scheduler = SchedulerService(
             chat_service=ChatService(
                 session_factory=client.test_factory,
-                agent=AgentService(model="stub"),
                 base_system_prompt="你是芝士。",
                 workspace_root=str(tmp_path / "ws"),
+                compute=stub_compute(),
             )
         )
         return await scheduler.sweep_conclusion_cards()

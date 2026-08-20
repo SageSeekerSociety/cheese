@@ -52,7 +52,7 @@ def _blocks(client, topic_id: str) -> list[dict]:
 # --- 父 → 直接子: 落地 + 真的叫醒 -------------------------------------------
 
 
-def test_parent_tells_child_and_the_child_is_woken(client, stub_agent):
+def test_parent_tells_child_and_the_child_is_woken(client, stub_hooks):
     """The whole point: the message reaches the child's timeline AND a turn runs
     there with the text in its prompt."""
     p = _project(client)
@@ -70,12 +70,12 @@ def test_parent_tells_child_and_the_child_is_woken(client, stub_agent):
     contents = [b["content"] for b in _blocks(client, sub["id"])]
     assert any("口径改了：只算活跃用户" in c for c in contents)
     # 叫醒: the agent actually got the text, tagged as a platform instruction.
-    assert stub_agent.last_prompt is not None
-    assert "口径改了：只算活跃用户" in stub_agent.last_prompt
-    assert "【平台】" in stub_agent.last_prompt
+    assert stub_hooks.last_prompt is not None
+    assert "口径改了：只算活跃用户" in stub_hooks.last_prompt
+    assert "【平台】" in stub_hooks.last_prompt
     # …and it is told the relay OVERRIDES the one-shot brief, which is the whole
     # reason this channel exists.
-    assert "以这条为准" in stub_agent.last_prompt
+    assert "以这条为准" in stub_hooks.last_prompt
 
 
 def test_relayed_block_is_authored_by_the_receiving_room(client):
@@ -100,7 +100,7 @@ def test_relayed_block_is_authored_by_the_receiving_room(client):
     assert "母话题追加" in block["content"]
 
 
-def test_child_tells_parent(client, stub_agent):
+def test_child_tells_parent(client, stub_hooks):
     """The other allowed direction. Distinct from `conclude`: no card, no
     settlement — it is a question or a mid-flight finding."""
     p = _project(client)
@@ -116,8 +116,8 @@ def test_child_tells_parent(client, stub_agent):
         "发现简报里那条前提不成立" in b["content"]
         for b in _blocks(client, parent["id"])
     )
-    assert "发现简报里那条前提不成立" in (stub_agent.last_prompt or "")
-    assert "子话题" in (stub_agent.last_prompt or "")
+    assert "发现简报里那条前提不成立" in (stub_hooks.last_prompt or "")
+    assert "子话题" in (stub_hooks.last_prompt or "")
 
 
 def test_child_can_address_its_parent_as_parent(client):

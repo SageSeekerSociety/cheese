@@ -13,14 +13,18 @@ import uuid
 import pytest
 
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from tests.turn_log import a_topic
 
 
 class FakeChat:
     """Controllable stand-in for ChatService: converse turns block until
     released, so tests can observe concurrency and queue order."""
 
-    def __init__(self, policy: dict | None):
+    def __init__(self, policy: dict | None, session_factory=None):
         self.policy = policy
+        # Where the runner opens each turn's interval — a real ChatService
+        # carries the database, so a stand-in that runs turns carries it too.
+        self.session_factory = session_factory
         self.system_events: list[str] = []
         self.system_event_meta: list[dict | None] = []
         self.running = 0
@@ -106,16 +110,17 @@ def _runner() -> tuple[AgentWorkRunner, InProcessBroker]:
 
 
 @pytest.mark.anyio
-async def test_concurrency_gate_queues_and_announces_position():
+async def test_concurrency_gate_queues_and_announces_position(db_factory):
     chat = FakeChat(
         {
             "project_id": "proj-1",
             "max_concurrent_turns": 1,
             "credits_exhausted": False,
-        }
+        },
+        db_factory,
     )
     runner, _ = _runner()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
 
     runner.submit(chat, topic, author="u1", content="第一轮", summon=True)
     await _until(lambda: chat.running == 1)
@@ -142,18 +147,19 @@ async def test_concurrency_gate_queues_and_announces_position():
 
 
 @pytest.mark.anyio
-async def test_concurrency_gate_allows_up_to_limit_without_queueing():
+async def test_concurrency_gate_allows_up_to_limit_without_queueing(db_factory):
     chat = FakeChat(
         {
             "project_id": "proj-2",
             "max_concurrent_turns": 2,
             "credits_exhausted": False,
-        }
+        },
+        db_factory,
     )
     runner, _ = _runner()
 
-    runner.submit(chat, uuid.uuid4(), author="u", content="a", summon=True)
-    runner.submit(chat, uuid.uuid4(), author="u", content="b", summon=True)
+    runner.submit(chat, await a_topic(db_factory), author="u", content="a", summon=True)
+    runner.submit(chat, await a_topic(db_factory), author="u", content="b", summon=True)
     await _until(lambda: chat.running == 2)
 
     # Both run concurrently; no queue event was posted.
@@ -199,11 +205,13 @@ async def test_exhausted_credits_refuses_turn_but_lands_message():
 
 
 @pytest.mark.anyio
-async def test_unknown_policy_admits_ungated():
-    chat = FakeChat(None)  # topic unknown / unmetered deployment
+async def test_unknown_policy_admits_ungated(db_factory):
+    chat = FakeChat(None, db_factory)  # topic unknown / unmetered deployment
     runner, _ = _runner()
 
-    runner.submit(chat, uuid.uuid4(), author="u", content="hi", summon=True)
+    runner.submit(
+        chat, await a_topic(db_factory), author="u", content="hi", summon=True
+    )
     await _until(lambda: chat.running == 1)
     chat.release.set()
     await _until(lambda: runner.active_work_count() == 0)
@@ -265,14 +273,16 @@ async def test_unsummoned_message_never_touches_turn_admission():
 
 
 @pytest.mark.anyio
-async def test_normal_message_without_live_work_queues_without_fallback_error():
+async def test_normal_message_without_live_work_queues_without_fallback_error(
+    db_factory,
+):
     class Prepared(FakeChat):
         async def converse_prepared(self, **kwargs):
             yield {"type": "done"}
 
-    chat = Prepared(None)
+    chat = Prepared(None, db_factory)
     runner, broker = _runner()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(topic)) as queue:
         await runner.submit_message(
@@ -293,6 +303,7 @@ async def test_normal_message_without_live_work_queues_without_fallback_error():
 @pytest.mark.anyio
 @pytest.mark.parametrize("delivery_result", [False, None])
 async def test_live_delivery_fallback_reports_error_then_runs_normally(
+    db_factory,
     delivery_result,
 ):
     class FailedLiveDelivery(FakeChat):
@@ -305,9 +316,9 @@ async def test_live_delivery_fallback_reports_error_then_runs_normally(
         async def converse_prepared(self, **kwargs):
             yield {"type": "done"}
 
-    chat = FailedLiveDelivery(None)
+    chat = FailedLiveDelivery(None, db_factory)
     runner, broker = _runner()
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(topic)) as queue:
         await runner.submit_message(

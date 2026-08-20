@@ -99,6 +99,11 @@ class RelayIn(BaseModel):
 class DocEditIn(BaseModel):
     content: str
     author: str = "anonymous"
+    # The `doc_version` this edit is based on — 0 for "there is no doc yet".
+    # Required, and deliberately so: this doc is only ever written whole, so a
+    # writer with no version is a writer about to erase whatever it did not
+    # read. Everything that writes here has just read the doc.
+    expected_version: int
 
 
 class BackgroundTaskIn(BaseModel):

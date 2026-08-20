@@ -97,7 +97,7 @@
 
 **寿命**：可丢弃、可重建，随时可以从头开始。任何依赖「会话还在」的设计都是错的。
 
-**现状**：`topic.session_id`，一个话题一个，靠 `--resume` 续；容器被回收不影响它
+**现状**：`agent_sessions`，一个 (地方, 芝士) 一行，靠 `--resume` 续；容器被回收不影响它
 （transcript 挂在宿主的 `/home/node/.claude`，工作区是宿主的 jj workspace）。
 **没有主动轮换或压缩机制**——撑爆了靠 Claude Code 自己处理，平台不管。
 
@@ -172,7 +172,7 @@
 |---|---|---|---|
 | room × task | 1 : N。房间是容器，task 结束不影响房间；**task 不能跨房间** | 1 : N ✅ | task 是完整话题行而非房间里的卡片；派出去在房间时间线上无痕 |
 | room × agent | N : M。芝士被加进房间 | **1 : 1，自动派生** | 身份绑在话题上（§1.3），记忆因此跨不了房间 |
-| room × session | 房间自己不干活，但房间里的芝士要说话 ⇒ 每个 (room, agent) 一个 session | 1 : 1（`topic.session_id`） | 一个房间进了两个芝士就没地方放第二个 session |
+| room × session | 房间自己不干活，但房间里的芝士要说话 ⇒ 每个 (room, agent) 一个 session | N : M（`agent_sessions`）✅ | — |
 | task × agent | N : 1。一件事由一个芝士负责（谁做的） | 1 : 1，且是**专为它生的** | 应该是「把已有的芝士派到这件事上」，不是「为这件事造一个芝士」 |
 | task × session | 干活的上下文，task 结束即可丢 | 1 : 1 | 现状可接受；但 task 结束时 session 和记忆一起被孤立 |
 | agent × session | 1 : N。芝士在每个它所在的地方各有一份上下文 | **1 : 1** | 三者（话题／身份／会话）今天绑死成一根，这是所有偏差的同一个根 |
@@ -406,7 +406,7 @@ subagent 的返回只回到 spawner 的上下文里。
 
 **③ 它和「agent/session 先不管」直接冲突——除非走呈现层。** 真正意义上的「一个房间里多个
 行动者」需要 `session` 的 key 从 `topic_id` 变成 `(topic_id, agent_handle)`，
-而 `topic.session_id` 是一个字段，放不下第二个。
+这一步已经落了（`agent_sessions`），所以这条约束不再存在。
 **但有一条不用动 session 的路径**：数据层仍是独立话题（各自 session、各自工作区），
 **呈现层共用母房间的时间线**——派出去的活在房间里是一张卡，点开是它自己的对话。
 这恰好就是 #184 那件没做完的事（「按设计它应该是话题时间线里的一张卡片」），
@@ -663,28 +663,26 @@ Claude Code 本身支持 MCP，落点是把 `.mcp.json` 写进那个 session 的
 （每个 agent × 每件活一个），恰好是 buzz 的形状（一个进程挂多个频道的 session）。
 所以这三条构想不需要等 —— 地基已经在铺了。
 
-### 12.8 拍板：一个房间最多一个 agent，记忆存到 agent 级（@fulu 2026-08-17）
+### 12.8 记忆存到 agent 级（@fulu 2026-08-17）
 
-**这两条一起，把 session 层的改动整个消掉了。**
+记忆的单位是 agent，不是房间：一个芝士在一个项目里有一个池，它在五个房间学到的东西
+互相看得见。这条已经落了（`agent_instances`）。
 
-我在 §2.4 / §12.6 里说过「一个房间放多个 agent，就必须把 session 的 key 从 `topic_id` 换成
-`(topic_id, agent_handle)`」。**在「一个房间最多一个 agent」的约束下不需要了**：
-一个 topic 最多一个 agent ⇒ `topic_id` 已经唯一确定了「哪个 agent 在哪个地方」这一对，
-所以 `topic.session_id` 这一个字段就够，`agent × session = 1 : N` 自动成立。
+同批拍板里还有一条「一个房间最多一个 agent」，理由是它能把 session 层的改造整个省掉——
+一个 topic 最多一个 agent，`topic_id` 就唯一确定了「哪个 agent 在哪个地方」，
+一个 `topic.session_id` 字段就够。**这条不再成立**：2026-08-19 定的多 agent 设计
+（<&docs/plans/2026-08-19-multi-agent-harness-and-context-design.md> §1）要的正是
+「一个房间里 coding agent 和 ops agent 平级共处」，所以 session 的 key 就是
+`(topic_id, agent_handle)`，`agent_sessions` 已经这么建了。省下的改造重新被买回来了，
+换到的是那一档能力。
 
-顺带两个函数的语义也变干净了：
-- `resolve_agent_handle(topic_id)` 现在是「取 roster 里第一个 agent handle」——有点随意；
-  加上这条约束之后它名正言顺。（注意：**现在代码里没有这个限制**，`agent_handles()`
-  返回列表、注释还写着 "a room may host more than one 芝士"，所以约束要新加。）
-- `ensure_topic_agent_seat` 从「造一个新身份坐进去」变成「把选中的 agent 请进来」。
-
-**明确放弃了什么**：一个房间里多个 agent 并肩对话。那本来就是我建议暂缓的那一档
-（§9 第三档），拿它换掉整个 session 层的改造，这个取舍是对的。
+`resolve_agent_handle(topic_id)` 取 roster 里第一个 agent handle，在这条约束下本来
+名正言顺，现在又变回随意——**它是多 agent 的下一个收口点**：会话已经分得开，
+「这一轮是谁在说话」还没有。
 
 #### 必须回答的一个问题：task 的 agent 从哪来
 
-「一个房间最多一个 agent」约束的是 **roster 的座位数**。而 task 在数据上仍是独立的 topic
-（有自己的 roster、自己的 `session_id`），所以它也有一个座位。那么：
+task 在数据上仍是独立的 topic（有自己的 roster、自己的会话），所以它也有一个座位。那么：
 
 - **建议：task 默认继承所在房间的 agent**，需要时可以在 split 时覆盖成别的。
   这样「同一个 agent 在房间主对话 ＋ 它派出的每件活上各有一个 session」自然成立，

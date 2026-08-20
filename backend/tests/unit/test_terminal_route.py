@@ -11,15 +11,15 @@ from app.api.routes import terminal as term
 from app.core.config import settings
 
 
-def test_live_endpoint_none_under_sdk_backend(monkeypatch):
-    monkeypatch.setattr(settings, "agent_backend", "sdk")
-    # Even if ttyd_endpoint would resolve, the SDK backend gates it out first.
-    monkeypatch.setattr(term, "ttyd_endpoint", lambda _t: "127.0.0.1:55011")
+def test_live_endpoint_none_without_a_local_screen(monkeypatch):
+    """No published port means no pane to embed — the topic runs elsewhere, or
+    its box is down. There is no backend switch in front of this any more: the
+    port mapping IS the question."""
+    monkeypatch.setattr(term, "ttyd_endpoint", lambda _t: None)
     assert term._live_endpoint(uuid.uuid4()) is None
 
 
-def test_live_endpoint_resolves_under_tmux_backend(monkeypatch):
-    monkeypatch.setattr(settings, "agent_backend", "tmux")
+def test_live_endpoint_resolves_when_the_box_publishes_one(monkeypatch):
     monkeypatch.setattr(term, "ttyd_endpoint", lambda _t: "127.0.0.1:55011")
     assert term._live_endpoint(uuid.uuid4()) == "127.0.0.1:55011"
 

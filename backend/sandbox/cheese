@@ -53,8 +53,16 @@ OWNER = os.environ.get("CHEESE_OWNER", "")
 
 
 def _call(
-    method: str, path: str, body: dict | None = None, *, token: str | None = None
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    token: str | None = None,
+    tolerate: tuple[int, ...] = (),
 ) -> dict:
+    """Call the platform. Any HTTP error is fatal, except the statuses in
+    `tolerate` — those come back as ``{"ok": False, "status": ..., "error": ...}``
+    for a caller that has something better to say than the raw response."""
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -68,12 +76,68 @@ def _call(
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:400]
-        print(f"[cheese] {method} {path} 失败 HTTP {e.code}: {detail}", file=sys.stderr)
+        raw = e.read().decode(errors="replace")
+        if e.code in tolerate:
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                payload = {}
+            return {"ok": False, "status": e.code, "error": payload.get("error") or {}}
+        print(
+            f"[cheese] {method} {path} 失败 HTTP {e.code}: {raw[:400]}", file=sys.stderr
+        )
         sys.exit(1)
     except Exception as e:  # noqa: BLE001
         print(f"[cheese] {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _doc_version_path(topic: str) -> str:
+    """Where the version `cheese doc get` last showed for this topic is kept.
+
+    The living doc has no partial write: `doc set` replaces the whole thing. So
+    a write has to say which version it is replacing, and that number must be
+    EVIDENCE OF A READ rather than something the caller states. A flag would let
+    you assert a version you only heard about — the platform pushes 「文档已更新
+    到第 7 版」 into a running session — and write ten-minute-old content over it
+    claiming to be based on it, which is the exact overwrite the version exists
+    to stop.
+
+    Lives on the session mount (host-backed, survives a container rebuild) next
+    to the await logs, for the same reason: a rebuild mid-turn must not turn a
+    read the agent really did into a read the CLI has forgotten.
+    """
+    home = os.environ.get("HOME") or "/tmp"
+    session = os.path.join(home, ".claude")
+    base = (
+        os.path.join(session, "cheese-doc")
+        if os.path.isdir(session)
+        else os.path.join(home, ".cheese", "doc")
+    )
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, f"{topic}.version")
+
+
+def _remember_doc_version(topic: str, version: int) -> None:
+    try:
+        with open(_doc_version_path(topic), "w", encoding="utf-8") as f:
+            f.write(str(version))
+    except OSError:
+        # Losing the note costs a rejected `doc set` and a re-read, which is the
+        # safe direction. Failing the `doc get` over it is not.
+        pass
+
+
+def _read_doc_version(topic: str) -> int:
+    """The version this CLI last showed the agent. 0 — "I have not read it" —
+    when there is no note, which is also the only version under which `doc set`
+    may CREATE a doc. Not having read a doc that exists is exactly when a write
+    must be refused."""
+    try:
+        with open(_doc_version_path(topic), encoding="utf-8") as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
 
 
 def _port_answers(port: int, timeout: float = 1.0) -> bool:
@@ -457,9 +521,10 @@ def build_parser() -> argparse.ArgumentParser:
         "set",
         help="把文件设为本话题实况文档",
         description=(
-            "整块覆盖,没有版本历史,也没有并发控制。人在文档面板上编辑是 2.5 秒"
-            "自动保存的,你 set 上去就把人刚写的东西盖掉了、且捞不回来。"
-            "所以:改之前先 doc get 看一眼,做增量改写,别拿一份旧内容直接覆盖。"
+            "整块覆盖:写的是你这个文件的全文,不是补丁。所以写之前必须先 "
+            "doc get 读一遍——平台按你读到的那一版收这次写入,期间别人改过就"
+            "直接拒了,不会悄悄盖掉。被拒之后重新 doc get、把别人的改动合进你"
+            "的文件、再 set,别原样重试。"
         ),
     )
     pdset.add_argument(
@@ -469,7 +534,10 @@ def build_parser() -> argparse.ArgumentParser:
     pdsub.add_parser(
         "get",
         help="打印本话题实况文档",
-        description="打印当前实况文档原文。set 之前先跑一次,免得覆盖掉别人的改动。",
+        description=(
+            "打印当前实况文档原文。这一步同时决定了你接下来能写回哪一版:"
+            "没 get 过就 set,平台当你没读过,只有本话题还没有文档时才让你建。"
+        ),
     )
 
     ps = sub.add_parser(
@@ -847,11 +915,30 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         with open(a.file, encoding="utf-8") as f:
             content = f.read()
-        _call("PUT", f"/topics/{topic}/doc", {"content": content, "author": AUTHOR})
+        based_on = _read_doc_version(topic)
+        res = _call(
+            "PUT",
+            f"/topics/{topic}/doc",
+            {"content": content, "author": AUTHOR, "expected_version": based_on},
+            tolerate=(409,),
+        )
+        if res.get("ok") is False:
+            current = (res.get("error") or {}).get("data", {}).get("doc_version")
+            print(
+                f"[cheese] 没写进去：文档现在是第 {current} 版，你这份是照第 "
+                f"{based_on} 版改的。先 cheese doc get 重新读一遍，把别人的改动"
+                "合进你的文件，再 cheese doc set。直接重试会原样被拒。",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _remember_doc_version(topic, (res.get("data") or {}).get("doc_version", 0))
         print("已更新实况文档。")
     elif a.cmd == "doc" and a.doccmd == "get":
         topic = _need("CHEESE_TOPIC", TOPIC)
         d = _call("GET", f"/topics/{topic}/doc").get("data")
+        # Reading is what earns the right to write: remember the version this
+        # printed, and `doc set` writes against it.
+        _remember_doc_version(topic, (d or {}).get("doc_version", 0))
         print((d or {}).get("content", "") if d else "")
     elif a.cmd == "split":
         topic = _need("CHEESE_TOPIC", TOPIC)

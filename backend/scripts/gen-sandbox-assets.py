@@ -18,7 +18,9 @@ from pathlib import Path
 # Make `app` importable when run as a plain script (scripts/ sits next to app/).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT  # noqa: E402
+from app.domain.agent.harness.claude_code import (
+    CHEESE_HOOK_SCRIPT,  # noqa: E402
+)
 
 # The committed forwarder file the tmux image COPYs (build context = backend/sandbox).
 CHEESE_HOOK_FILE = Path(__file__).resolve().parents[1] / "sandbox" / "cheese-hook"

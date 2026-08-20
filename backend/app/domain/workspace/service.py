@@ -2796,7 +2796,7 @@ def tmux_container_name(topic_id: uuid.UUID) -> str:
     """Deterministic name of a topic's long-lived tmux-backend container — distinct
     from the SDK one so the two backends never collide. Lives here (the shared
     workspace layer) so the accept/archive reaper can free it WITHOUT importing the
-    provider; TmuxHooksProvider references this as its single source of truth."""
+    provider; TmuxChannel references this as its single source of truth."""
     return f"cheesex-tmux-{topic_id.hex[:12]}"
 
 
@@ -2813,7 +2813,9 @@ def stop_topic_container(topic_id: uuid.UUID) -> None:
     `docker rm` below is a no-op for a task precisely because the box is not
     named after it. Releasing the ROOM removes the box, siblings included, which
     is what archiving a room means."""
-    from app.domain.agent.hooks_substrate import schedule_topic_subscription_drop
+    from app.domain.agent.harness.claude_code import (
+        schedule_topic_subscription_drop,
+    )
 
     schedule_topic_subscription_drop(topic_id)
     if not sandbox_available():
@@ -2866,7 +2868,9 @@ def list_sandbox_containers() -> list[str]:
 def remove_container(name: str) -> None:
     """Remove ONE container by exact name (the idle reaper's primitive).
     Best-effort; a missing container is fine."""
-    from app.domain.agent.hooks_substrate import schedule_screen_subscription_drop
+    from app.domain.agent.harness.claude_code import (
+        schedule_screen_subscription_drop,
+    )
 
     schedule_screen_subscription_drop(name)
     if not sandbox_available():

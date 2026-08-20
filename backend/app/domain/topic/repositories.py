@@ -192,10 +192,6 @@ class TopicRepository:
         )
         return int((await self._session.scalar(stmt)) or 0)
 
-    async def set_session_id(self, topic: Topic, session_id: str) -> None:
-        topic.session_id = session_id
-        await self._session.flush()
-
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 
     async def unread_counts(

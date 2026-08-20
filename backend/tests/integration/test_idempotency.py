@@ -33,16 +33,11 @@ from sqlalchemy import func, select
 
 from app.api.deps import get_work_runner
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import (
-    AgentMessage,
-    AgentResult,
-    AgentService,
-    AgentSessionInfo,
-)
 from app.domain.block.models import Block, BlockKind
 from app.domain.idempotency.keys import action_key
 from app.domain.milestone.models import Milestone
 from app.domain.topic.models import Topic
+from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import session_auth_headers
 
 # One fixed continuation for every test here: it stands for "the interrupted
@@ -81,18 +76,20 @@ async def _count(factory, stmt) -> int:
 # --- 1. 发消息 ---------------------------------------------------------------
 
 
-class _SameMessageTwice(AgentService):
+class _SameMessageTwice(StubChannel):
     """A 芝士 that says the exact same thing on both attempts — which is what a
-    resumed turn with no memory of the first attempt does."""
+    resumed session with no memory of the first attempt does."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(model="stub")
+        super().__init__()
         self._text = text
 
-    async def stream_reply(self, **_):
-        yield AgentSessionInfo(session_id="s1")
-        yield AgentMessage(text=self._text)
-        yield AgentResult(text=self._text, session_id="s1")
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id, session_id="s1")
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, self._text)
+        self.stops(topic_id, self._text, session_id="s1")
 
 
 def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
@@ -101,7 +98,7 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
     text = "我先把这五条落到代码上逐一自查，不动手改。"
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=_SameMessageTwice(text),
+        compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -115,9 +112,13 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
             continuation_id=CONTINUATION,
         ):
             pass
+        await settle_turn(chat, uuid.UUID(tid))
 
-    asyncio.run(_turn())  # the attempt that got interrupted
-    asyncio.run(_turn())  # the auto-resume, saying the same thing again
+    async def _both() -> None:
+        await _turn()  # the attempt that got interrupted
+        await _turn()  # the auto-resume, saying the same thing again
+
+    asyncio.run(_both())
 
     said = asyncio.run(
         _count(
@@ -144,7 +145,7 @@ def test_kickoff_message_is_not_posted_twice_under_one_turn(client, tmp_path):
     text = "领到任务了，我先把仓库结构过一遍。"
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=_SameMessageTwice(text),
+        compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -154,8 +155,11 @@ def test_kickoff_message_is_not_posted_twice_under_one_turn(client, tmp_path):
         async for _ in chat.kickoff(topic_id=uuid.UUID(tid), turn_id=kickoff_turn):
             pass
 
-    asyncio.run(_turn())  # the attempt that got interrupted
-    asyncio.run(_turn())  # the auto-resume, saying the same thing again
+    async def _both() -> None:
+        await _turn()  # the attempt that got interrupted
+        await _turn()  # the auto-resume, saying the same thing again
+
+    asyncio.run(_both())
 
     said = asyncio.run(
         _count(
@@ -182,7 +186,7 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
     text = "好的"
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=_SameMessageTwice(text),
+        compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -196,9 +200,13 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
             continuation_id=cont,
         ):
             pass
+        await settle_turn(chat, uuid.UUID(tid))
 
-    asyncio.run(_turn(uuid.uuid4()))
-    asyncio.run(_turn(uuid.uuid4()))
+    async def _both() -> None:
+        await _turn(uuid.uuid4())
+        await _turn(uuid.uuid4())
+
+    asyncio.run(_both())
 
     said = asyncio.run(
         _count(

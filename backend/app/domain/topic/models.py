@@ -8,8 +8,8 @@ Lifecycle: active → archived, and ONLY a person moves it (#442 decision 1). A
 merge no longer archives anything — it stamps `accepted_by`/`accepted_at`
 ("这一次交付完成了") and leaves the topic active, because a topic is usually
 continuous and the next piece of work happens in the same room. Conversation can
-still be appended after archive. session_id holds the resumable Claude Agent
-SDK session (spec §9).
+still be appended after archive. Where each agent's conversation here got to
+lives in `agent_sessions`, one row per agent (spec §9).
 """
 
 import enum
@@ -87,26 +87,22 @@ class Topic(UuidPk, Timestamps, Base):
         Enum(TopicStatus, native_enum=False, length=16),
         default=TopicStatus.active,
     )
-    # Claude Agent SDK session id, captured after the first turn; used to resume.
-    session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # WHICH agent works here. NULL = the project's default, so a topic nobody
     # chose an agent for still resolves without carrying a copy of the default
     # around (and follows the project when the default changes).
     #
-    # Changing it drops `session_id`: the session is that agent's memory of this
-    # conversation, and handing it to a different agent produces one that
-    # remembers saying things it never said. Phase one keeps at most one agent
-    # per topic, which is why `session_id` can stay a single column.
+    # Changing it destroys nothing: a conversation is keyed by (topic, agent) in
+    # `agent_sessions`, so the new agent looks up a key with no row and starts
+    # fresh while the old one's row stays where it is.
     agent_instance_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("agent_instances.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
     # Compute pool this topic's turns run on (execution-architecture v4 会话级选择).
-    # NULL = project sticky, then the owning team's default. Once session_id is
-    # captured, this target is frozen and may no longer be changed.
-    # Switchable only while session_id IS NULL (before the first turn) — once the
-    # topic has run it is frozen, matching the device-affinity boundary.
+    # NULL = project sticky, then the owning team's default. Switchable only
+    # until the topic has run — i.e. until it has an `agent_sessions` row — after
+    # which it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # git branch backing this topic (spec §6.3); sub-topics branch from parent.
     branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)

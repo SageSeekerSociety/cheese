@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import stub_compute
+
 
 def _owner(client, handle: str = "alice") -> dict[str, str]:
     """The file routes return the source, so they need a caller with a claim on
@@ -429,7 +431,6 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
     import uuid as _uuid
 
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.service import AgentService
     from app.domain.scheduler.service import SchedulerService
     from app.domain.workspace import service as ws
 
@@ -439,9 +440,9 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
 
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=AgentService(model="stub"),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     result = await SchedulerService(chat_service=chat).sync_upstreams()
 
@@ -459,7 +460,6 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
     import uuid as _uuid
 
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.service import AgentService
     from app.domain.scheduler.service import SchedulerService
     from app.domain.workspace import service as ws
 
@@ -476,9 +476,9 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
 
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=AgentService(model="stub"),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     result = await SchedulerService(chat_service=chat).sync_upstreams()
 

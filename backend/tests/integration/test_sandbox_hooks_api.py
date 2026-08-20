@@ -3,7 +3,7 @@
 import uuid
 
 from app.core.sandbox_auth import SANDBOX_TOKEN
-from app.domain.agent.hook_events import hook_router
+from app.domain.agent.harness.claude_code.hook_events import hook_router
 
 
 def test_hook_rejected_without_valid_token(client):

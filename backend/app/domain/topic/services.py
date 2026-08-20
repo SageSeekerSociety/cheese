@@ -6,6 +6,7 @@ sub-topic's conclusion flows back to its parent (结论回流).
 """
 
 import difflib
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,7 +15,7 @@ from typing import overload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.text import markdown_preview
 from app.domain.agent import clone
 from app.domain.agent_instance.services import (
@@ -22,6 +23,7 @@ from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
 )
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.doc_tree import markdown_to_nodes
@@ -92,6 +94,18 @@ def _bind_room_branch(
     if parent_id is None or kind not in (TopicKind.task, TopicKind.subtopic):
         return
     ws.bind_branch_parent(child_id, parent_id)
+
+
+logger = logging.getLogger("cheesex.topic")
+
+
+def _doc_conflict(current_version: int) -> ConflictError:
+    """The living doc moved under a writer. The current version rides along so
+    the caller can re-read and rebase without a second round trip."""
+    return ConflictError(
+        "实况文档已经被改过了，你手上这份是旧的",
+        data={"doc_version": current_version},
+    )
 
 
 def _brief_doc(
@@ -205,15 +219,15 @@ class TopicService:
 
     async def set_agent(
         self, topic_id: uuid.UUID, instance_id: uuid.UUID | None
-    ) -> tuple[Topic, ResolvedAgent, bool]:
-        """Hand this topic to a different agent, dropping the session it had.
+    ) -> tuple[Topic, ResolvedAgent]:
+        """Hand this topic to a different agent.
 
-        The session is ONE agent's memory of this conversation. Resuming it as
-        somebody else produces an agent that remembers saying things it never
-        said — a plausible, confident, wrong participant — so the thread does not
-        survive the switch. Returned as ``session_reset`` rather than done
-        quietly: it is the real cost of the change, and the caller has to be able
-        to say so before anyone loses a conversation they wanted.
+        Nothing is destroyed. A conversation is keyed by (topic, agent) in
+        ``agent_sessions``, so the incoming agent looks up a key that has no row
+        and starts fresh, the outgoing agent's row stays exactly where it is, and
+        handing the topic back finds it again. It used to be otherwise — one
+        session column per topic meant a switch had to erase the thread, and the
+        caller had to warn about it first.
 
         Passing ``None`` hands the topic back to the project's default.
         """
@@ -227,13 +241,10 @@ class TopicService:
             else None
         )
         wanted = instance.id if instance is not None else None
-        session_reset = False
         if topic.agent_instance_id != wanted:
             topic.agent_instance_id = wanted
-            session_reset = topic.session_id is not None
-            topic.session_id = None
             await self._session.flush()
-        return topic, await self.resolve_agent(topic), session_reset
+        return topic, await self.resolve_agent(topic)
 
     async def create(
         self,
@@ -852,7 +863,15 @@ class TopicService:
             # Session dirs + workdir slugs are keyed per project; a cross-project
             # clone would point the transcript at a different repo. Keep in-project.
             raise ValidationError("只能在同一项目内克隆会话")
-        source_sid = source.session_id
+        # The agent working in the source is the one whose conversation this
+        # forks, and the agent working in the target is the one that inherits it.
+        # Both are resolved rather than assumed: a room may host several, and
+        # copying one agent's transcript onto another's key would hand it a
+        # thread it never had.
+        sessions = AgentSessionService(self._session)
+        source_agent = await self.resolve_agent(source)
+        target_agent = await self.resolve_agent(target)
+        source_sid = await sessions.resume_token(source.id, source_agent.handle)
         if not source_sid:
             raise ValidationError("源话题还没跑过（没有可克隆的会话）")
         new_sid = clone.mint_session_id()
@@ -869,7 +888,11 @@ class TopicService:
         except FileNotFoundError as exc:
             raise ValidationError("源话题的会话记录缺失或为空，无法克隆") from exc
         # Point the target at the forked session so its next turn --resume's it.
-        await self._repo.set_session_id(target, new_sid)
+        await sessions.remember(
+            topic_id=target.id,
+            agent_handle=target_agent.handle,
+            resume_token=new_sid,
+        )
         return target
 
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
@@ -892,19 +915,37 @@ class TopicService:
         return [dict(item) for item in row.items], row.updated_at
 
     async def edit_doc(
-        self, *, topic_id: uuid.UUID, content: str, author: str
+        self, *, topic_id: uuid.UUID, content: str, author: str, expected_version: int
     ) -> Block:
         """改文档即指令 (eval B2): upsert the topic's living doc and drop a
         '编辑了文档' event into the conversation. The agent reads the latest doc
-        on its next turn, so the edit acts as an instruction."""
+        on its next turn, so the edit acts as an instruction.
+
+        ``expected_version`` is the ``doc_version`` the writer read; ``0`` says
+        it expects no doc to exist yet. A write based on any other version is
+        refused, because this doc is only ever written whole — 芝士 setting back
+        a document it assembled from a ten-minute-old copy erases whatever a
+        person typed in between, with nothing left to recover it from.
+
+        The refusal comes BEFORE any of the write's effects: no node tree, no
+        '编辑了文档' event. A rejected write that still announced itself would
+        put a change in the room that is not in the document.
+        """
         topic = await self.get_or_404(topic_id)
         # 归档后文档定格 (spec §6.3): a frozen topic's doc is read-only.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，文档已定格，不能再编辑")
         doc = await self._blocks.doc_root(topic_id)
         if doc is not None:
-            doc = await self._blocks.update_content(doc, content)
+            updated = await self._blocks.set_doc_content(
+                doc, content, expected_version=expected_version
+            )
+            if updated is None:
+                raise _doc_conflict(doc.doc_version)
+            doc = updated
         else:
+            if expected_version != 0:
+                raise _doc_conflict(0)
             doc = await self._blocks.add(
                 project_id=topic.project_id,
                 topic_id=topic_id,
@@ -937,6 +978,37 @@ class TopicService:
             meta={"platform": True, "action": "doc"},
         )
         return doc
+
+    async def _append_conclusion_section(
+        self, *, topic_id: uuid.UUID, section: str, author: str
+    ) -> None:
+        """Append a section to a topic's living doc.
+
+        There is no partial write of this doc: appending means reading the whole
+        thing and setting the whole thing back, based on the version that read
+        returned. So a person saving the same doc in the same second turns this
+        into a conflict — re-read and re-append rather than let it through, and
+        rather than drop it. The 分身 that produced this conclusion is finished;
+        nothing is going to retry it by hand.
+        """
+        for _ in range(3):
+            root = await self._blocks.doc_root(topic_id)
+            existing = root.content.strip() if root and root.content else ""
+            try:
+                await self.edit_doc(
+                    topic_id=topic_id,
+                    content=f"{existing}\n\n{section}" if existing else section,
+                    author=author,
+                    expected_version=root.doc_version if root else 0,
+                )
+                return
+            except ConflictError:
+                continue
+        logger.warning(
+            "conclusion section not appended to topic %s: the living doc kept "
+            "moving under it",
+            topic_id,
+        )
 
     async def _sync_doc_nodes(self, root: Block, content: str) -> None:
         """Reconcile the living doc's node tree (B1) with `content` via a
@@ -1037,12 +1109,10 @@ class TopicService:
 
         # 2) Living doc: append the conclusion as a section (unless frozen, §6.3).
         if parent is not None and parent.status != TopicStatus.archived:
-            root = await self._blocks.doc_root(sub.parent_id)
-            section = f"## 子话题结论：{sub.title}\n{conclusion}"
-            existing = root.content.strip() if root and root.content else ""
-            new_content = f"{existing}\n\n{section}" if existing else section
-            await self.edit_doc(
-                topic_id=sub.parent_id, content=new_content, author=parent_agent
+            await self._append_conclusion_section(
+                topic_id=sub.parent_id,
+                section=f"## 子话题结论：{sub.title}\n{conclusion}",
+                author=parent_agent,
             )
 
         # 3) Notify 本体 (the coordinator) that the 分身 finished.

@@ -518,8 +518,6 @@ export interface TopicAgent {
   display_name: string
   /** true = 这个话题没自己选过，跟着项目默认走（换了默认它会跟着换） */
   inherited: boolean
-  /** 换人会丢掉这个话题的会话 —— 换之前要让人知道 */
-  session_reset: boolean
 }
 
 export function getTopicAgent(topicId: string): Promise<TopicAgent> {
@@ -978,10 +976,15 @@ export function getProgress(topicId: string): Promise<TopicProgress> {
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the
 // conversation. Returns the doc Block.
-export function putDoc(topicId: string, content: string, author: string): Promise<Block> {
+//
+// `expectedVersion` is the doc_version this edit is based on (0 = "there is no
+// doc yet"). The doc is only ever written whole, so the write is conditional on
+// it: if 芝士 set the doc in between, the backend answers 409 instead of letting
+// this save erase what it wrote.
+export function putDoc(topicId: string, content: string, author: string, expectedVersion: number): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/doc`, {
     method: 'PUT',
-    body: JSON.stringify({ content, author }),
+    body: JSON.stringify({ content, author, expected_version: expectedVersion }),
   })
 }
 

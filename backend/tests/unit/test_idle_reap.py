@@ -9,13 +9,13 @@ import pytest
 from sqlalchemy import update
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import AgentService
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.scheduler.service import SandboxReaperRunner, SchedulerService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
+from tests.conftest import stub_compute
 
 
 @pytest.mark.anyio
@@ -23,9 +23,9 @@ async def test_reap_removes_idle_and_orphan_keeps_active(client, tmp_path, monke
     factory = client.test_factory
     chat = ChatService(
         session_factory=factory,
-        agent=AgentService(model="stub"),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     svc = SchedulerService(chat_service=chat)
 
@@ -81,9 +81,9 @@ async def test_reap_releases_idle_device_screens_keeps_active(
     factory = client.test_factory
     chat = ChatService(
         session_factory=factory,
-        agent=AgentService(model="stub"),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     svc = SchedulerService(chat_service=chat)
 
@@ -179,9 +179,9 @@ async def test_a_room_with_a_busy_task_keeps_its_box(client, tmp_path, monkeypat
     factory = client.test_factory
     chat = ChatService(
         session_factory=factory,
-        agent=AgentService(model="stub"),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     svc = SchedulerService(chat_service=chat)
 
@@ -225,7 +225,7 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
     split out of, a room runs in its own, and the answer is recorded where the
     sync workspace layer can read it (`docker port` lookups have no session)."""
     from app.core.config import settings
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.tmux_provider import TmuxChannel
 
     factory = client.test_factory
     async with factory() as session:
@@ -238,7 +238,7 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
         await session.commit()
         project_id, room_id, task_id = project.id, room.id, task.id
 
-    provider = TmuxHooksProvider(image="img:test", session_factory=factory)
+    provider = TmuxChannel(image="img:test", session_factory=factory)
     old_root = settings.workspace_root
     settings.workspace_root = str(tmp_path / "rooms")
     try:

@@ -88,6 +88,9 @@ export interface Block {
   anchor_quote?: string | null
   // Render-by-type: mimeType of an artifact block (set on kind=artifact).
   mime_type?: string | null
+  // How many times the living doc has been written (kind=doc). Send it back as
+  // `expected_version` to save; the write is refused if the doc moved since.
+  doc_version?: number
   turn_id?: string | null
   refs?: string[]
   // Structured event payload (kind=event): {tool, arg, platform} — the UI
@@ -554,7 +557,7 @@ export interface MarketPools {
 
 // ---- 节点看板 (spec §9.1: where turns physically run) ----
 
-// One configured compute node (local docker / remote cheesed) with liveness.
+// One compute node this deployment runs, with liveness.
 export interface MarketNode {
   id: string
   label: string

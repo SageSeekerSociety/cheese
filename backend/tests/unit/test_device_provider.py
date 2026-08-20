@@ -1,4 +1,4 @@
-"""DeviceProvider: turn orchestration + hook→AgentEvent translation (injected hub)."""
+"""DeviceChannel: turn orchestration + hook→AgentEvent translation (injected hub)."""
 
 import asyncio
 import os
@@ -9,9 +9,12 @@ import pytest
 
 from app.core.config import settings
 from app.domain.agent.device_hub import HubScreen
-from app.domain.agent.device_launch import DEVICE_TUNNEL_PROBE
-from app.domain.agent.device_provider import DeviceProvider, tunnel_port_for_topic
-from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.device_provider import DeviceChannel, tunnel_port_for_topic
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
 from app.domain.device.repository import TopicDevice
 from app.domain.device.supply import Visibility
@@ -27,7 +30,7 @@ def _no_device_identity(monkeypatch):
     async def none(_self, _device_id):
         return ""
 
-    monkeypatch.setattr(DeviceProvider, "_device_ccproxy_upstream", none)
+    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", none)
 
 
 class FakeHub:
@@ -40,6 +43,7 @@ class FakeHub:
         self.reasserted: list[str] = []  # sids re-sent as adopt-creates
         self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
         self.files: list[tuple[str, str, bytes]] = []  # (sid, path, bytes)
+        self.keys: list[tuple[str, bytes]] = []  # raw keystrokes into a screen
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -89,21 +93,27 @@ class FakeHub:
         self.files.append((sid, path, data))
         return {"ok": True}
 
+    async def viewer_input(self, device_id, sid, data: bytes) -> None:
+        self.keys.append((sid, data))
 
-def _provider(hub: FakeHub, router: HookRouter, agent_id: uuid.UUID) -> DeviceProvider:
+
+def _provider(
+    hub: FakeHub, router: HookRouter, agent_id: uuid.UUID
+) -> ClaudeCodeRuntime:
+    """A device channel with the runtime that drives it — what the pool holds."""
+
     async def resolver(_project_id, _topic_id):
         return ("dev1", agent_id, "agent-x")
 
-    return DeviceProvider(
+    channel = DeviceChannel(
         hub=hub,  # type: ignore[arg-type]
         device_resolver=resolver,
-        router=router,
         public_base="http://test",
-        hard_ceiling_s=5,
     )
+    return ClaudeCodeRuntime(channel, router=router, hard_ceiling_s=5)
 
 
-async def _run(provider: DeviceProvider, **kw) -> list:
+async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
     events: list = []
 
     async def consume():
@@ -209,21 +219,19 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
         lambda _session: Service(),
     )
     router = HookRouter()
-    provider = DeviceProvider(
+    channel = DeviceChannel(
         hub=FakeHub(),  # type: ignore[arg-type]
-        router=router,
         session_factory=Session,  # type: ignore[arg-type]
     )
+    provider = ClaudeCodeRuntime(channel, router=router)
 
-    recovered = await provider.recover_subscriptions("dev1")
+    recovered = await provider.recover("dev1")
 
-    assert len(recovered) == 1
-    assert recovered[0].project_id == project_id
-    assert recovered[0].topic_id == topic_id
-    assert provider._subscription_devices[topic_id] == "dev1"
-    recovered[0].ready.set()
+    assert recovered == [SessionRef(project_id, topic_id)]
+    assert channel._subscription_devices[topic_id] == "dev1"
+    await provider.replay(recovered[0], known_texts=set())
     router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
-    await recovered[0].sink.queue.join()
+    await provider._subscriptions[topic_id].sink.queue.join()
 
     await provider.drop_device_subscriptions("dev1")
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
@@ -583,9 +591,11 @@ async def test_no_online_device_is_a_clean_error():
     async def resolver(_project_id, _topic_id):
         return None  # nothing online / bound
 
-    provider = DeviceProvider(
-        hub=hub,  # type: ignore[arg-type]
-        device_resolver=resolver,
+    provider = ClaudeCodeRuntime(
+        DeviceChannel(
+            hub=hub,  # type: ignore[arg-type]
+            device_resolver=resolver,
+        ),
         router=HookRouter(),
         hard_ceiling_s=5,
     )
@@ -606,7 +616,7 @@ async def test_no_online_device_is_a_clean_error():
 def test_every_device_work_dir_is_a_topic_scratch_dir():
     pid = uuid.uuid4()
     tid = uuid.uuid4()
-    prov = DeviceProvider(hub=FakeHub())
+    prov = DeviceChannel(hub=FakeHub())
     assert prov._work_dir(pid, tid) == f"$HOME/.cheese/work/{pid}/{tid}"
 
 
@@ -650,7 +660,7 @@ async def test_concurrent_topics_never_share_a_device_home():
 def test_device_hook_set_pushes_while_local_container_hook_set_does_not():
     """Every device owns a clone and pushes; the local container edits the
     backend worktree and must not also try to push it."""
-    from app.domain.agent.hooks_substrate import hooks_settings
+    from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 
     def stop_commands(settings_obj) -> list[str]:
         return [
@@ -710,7 +720,7 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
     # The production shape: behind the gateway the base carries the `/api` mount.
     base = "http://cheese.test/api"
     hub = RecordingHub()
-    provider = DeviceProvider(hub=hub, public_base=base)
+    provider = DeviceChannel(hub=hub, public_base=base)
     await provider._ensure_screen(
         device_id="dev1",
         agent_user_id=1,
@@ -718,8 +728,8 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="tok",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
 
     for key in ("CHEESE_API", "CHEESE_HOOK_URL", "CHEESE_GIT_REMOTE"):
@@ -755,7 +765,7 @@ async def test_every_device_is_told_where_to_clone_from():
 
     project, topic = uuid.uuid4(), uuid.uuid4()
     hub = RecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     await provider._ensure_screen(
         device_id="dev1",
         agent_user_id=1,
@@ -763,8 +773,8 @@ async def test_every_device_is_told_where_to_clone_from():
         project_id=project,
         topic_id=topic,
         token="tok",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
 
     assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
@@ -818,7 +828,7 @@ async def test_release_topic_closes_the_exact_screen():
     device it pinned to — the reverse lookup lands on the right (device_id, sid)."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({tid: [_screen("dev1", "s7", pid, tid)]})
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -831,7 +841,7 @@ async def test_release_topic_removes_the_devices_work_dir():
     topic removes that dir too, never anything above it."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({tid: [_screen("dev1", "s1", pid, tid)]})
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -852,7 +862,7 @@ async def test_release_topic_is_a_silent_noop_without_a_screen():
     (a reap loop must not break on one topic)."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({})  # nothing registered for this topic
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -867,7 +877,7 @@ async def test_release_topic_forgets_an_offline_screen_without_rm():
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({tid: [_screen("devX", "s1", pid, tid)]})
     hub.online = set()  # device offline
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -886,7 +896,7 @@ async def test_release_topic_swallows_a_teardown_error():
             raise RuntimeError("device channel dropped")
 
     hub = Boom({tid: [_screen("dev1", "s1", pid, tid)]})
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)  # must not raise
 
@@ -894,7 +904,7 @@ async def test_release_topic_swallows_a_teardown_error():
 @pytest.mark.anyio
 async def test_release_topic_screen_wrapper_drives_the_given_hub():
     """The module-level wrapper (what the accept path and reaper call) frees the
-    topic through DeviceProvider against the hub it is handed."""
+    topic through DeviceChannel against the hub it is handed."""
     from app.domain.agent.device_provider import release_topic_screen
 
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -957,7 +967,7 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
             return await super().open_screen(device_id, command, source, **kw)
 
     hub = RecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
 
     await provider._ensure_screen(
         device_id="dev1",
@@ -966,8 +976,8 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="scoped-token-for-this-topic",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
 
     blob = repr(hub.env)
@@ -1017,7 +1027,7 @@ async def _subscription_screen(
     env: dict | None = None,
 ) -> tuple[SubRecordingHub, uuid.UUID, uuid.UUID]:
     hub = SubRecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     project, topic = uuid.uuid4(), uuid.uuid4()
     await provider._ensure_screen(
         device_id="dev1",
@@ -1026,8 +1036,8 @@ async def _subscription_screen(
         project_id=project,
         topic_id=topic,
         token="hook-token",
-        model=None,
         env=env,
+        launch=ClaudeLaunch(system_prompt=""),
     )
     return hub, project, topic
 
@@ -1103,7 +1113,7 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     import time
 
     from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     _subscription_settings(monkeypatch, tmp_path)
     hub, _project, _topic = await _subscription_screen()
@@ -1151,7 +1161,7 @@ async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gatewa
     """Falling back to the gateway would silently swap the model — the failure
     #325 G2 exists to kill. A half-configured deployment must say what to fix."""
     from app.core.config import settings
-    from app.domain.agent.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 
     _subscription_settings(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "subscription_ca_backend_path", "")
@@ -1171,7 +1181,7 @@ async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
     monkeypatch.setattr(settings, "subscription_enabled", False)
     monkeypatch.setattr(settings, "agent_model", "glm-4.7")
     hub = SubRecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     await provider._ensure_screen(
         device_id="dev1",
         agent_user_id=1,
@@ -1179,8 +1189,8 @@ async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="scoped-tok",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
     assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
     assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-tok"
@@ -1248,17 +1258,25 @@ class ProbingHub(FakeHub):
         return {"exit": 0, "stdout": self.verdict, "stderr": "", "truncated": False}
 
 
-def test_device_splits_the_two_timeout_layers_instead_of_collapsing_them():
+def test_the_deployed_backends_split_the_two_timeout_layers():
     """The bug: one 900s value fed BOTH layers, so the only thing that ever fired
     was 'kill unconditionally at 900s' — a long-but-silent foreground command (a
-    20-minute pytest emits no interim hook) died at minute 15. The layers must now
-    be distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
-    the value AgentWorkRunner reschedules its outer wall-clock wrap to."""
-    prov = DeviceProvider(hub=FakeHub())
-    assert prov._idle_suspect_s == 300.0
-    assert prov._hard_ceiling_s == 10800.0
-    assert prov._idle_suspect_s != prov._hard_ceiling_s
-    assert prov.hard_ceiling_s == 10800.0  # what the outer wrap is told
+    20-minute pytest emits no interim hook) died at minute 15. The layers must be
+    distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
+    the value AgentWorkRunner reschedules its outer wall-clock wrap to.
+
+    Asked of the pool the deployment actually builds, because that is where the
+    policy is decided — and every backend in it must get the SAME pair, which is
+    the other half of this bug (one transport drifting from another)."""
+    from app.domain.agent.compute import build_compute_pool
+
+    pool = build_compute_pool()
+    for name in ("device", "tmux-hooks"):
+        backend = pool.select(provider_id=name)
+        assert backend._idle_suspect_s == 300.0
+        assert backend._hard_ceiling_s == 10800.0
+        assert backend._idle_suspect_s != backend._hard_ceiling_s
+        assert backend.hard_ceiling_s == 10800.0  # what the outer wrap is told
 
 
 async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
@@ -1292,8 +1310,8 @@ async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
 
     async def confirm(result=None, boom=False):
         hub = Hub(result=result, boom=boom)
-        prov = DeviceProvider(hub=hub)  # type: ignore[arg-type]
-        return await prov._confirm_alive(screen), hub
+        prov = DeviceChannel(hub=hub)  # type: ignore[arg-type]
+        return await prov.confirm_alive(screen), hub
 
     alive, hub = await confirm({"exit": 0, "stdout": "alive\n"})
     assert alive is True
@@ -1320,11 +1338,13 @@ async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop():
     async def resolver(_p, _t):
         return ("dev1", 1, "agent-x")
 
-    provider = DeviceProvider(
-        hub=hub,  # type: ignore[arg-type]
-        device_resolver=resolver,
+    provider = ClaudeCodeRuntime(
+        DeviceChannel(
+            hub=hub,  # type: ignore[arg-type]
+            device_resolver=resolver,
+            public_base="http://test",
+        ),
         router=router,
-        public_base="http://test",
         idle_suspect_s=0.05,
         hard_ceiling_s=5,
     )
@@ -1368,11 +1388,13 @@ async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
     async def resolver(_p, _t):
         return ("dev1", 1, "agent-x")
 
-    provider = DeviceProvider(
-        hub=hub,  # type: ignore[arg-type]
-        device_resolver=resolver,
+    provider = ClaudeCodeRuntime(
+        DeviceChannel(
+            hub=hub,  # type: ignore[arg-type]
+            device_resolver=resolver,
+            public_base="http://test",
+        ),
         router=router,
-        public_base="http://test",
         idle_suspect_s=0.05,
         hard_ceiling_s=100,  # would time the test out if idle-suspect didn't fire
     )
@@ -1389,7 +1411,7 @@ async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
     await asyncio.wait_for(task, timeout=3)  # ends via the probe, NOT the 100s ceiling
 
     assert isinstance(events[-1], AgentResult) and events[-1].is_error
-    assert events[-1].text == provider._timeout_message
+    assert events[-1].text == provider.channel.timeout_message
     assert hub.probe_calls >= 1
 
 
@@ -1406,7 +1428,7 @@ async def test_each_launch_ships_a_fresh_now_based_token_expiry():
     out than a session, never a reused past expiry."""
     import time
 
-    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     hub = FakeHub()
     router = HookRouter()
@@ -1500,7 +1522,7 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
 
     monkeypatch.setattr(settings, "subscription_enabled", False)
     hub = ReuseGateHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
 
     async def ensure() -> HubScreen:
@@ -1511,8 +1533,8 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
             project_id=pid,
             topic_id=tid,
             token="tok",
-            model=None,
             env=None,
+            launch=ClaudeLaunch(system_prompt=""),
         )
 
     first = await ensure()
@@ -1540,7 +1562,7 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
 
     monkeypatch.setattr(settings, "subscription_enabled", False)
     hub = ReuseGateHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
 
     async def ensure() -> HubScreen:
@@ -1551,8 +1573,8 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
             project_id=pid,
             topic_id=tid,
             token="tok",
-            model=None,
             env=None,
+            launch=ClaudeLaunch(system_prompt=""),
         )
 
     first = await ensure()
@@ -1628,7 +1650,7 @@ async def test_a_device_with_its_own_identity_gets_the_machine_ticket_signal(
     async def own_identity(_self, _device_id):
         return "m161:pw161"
 
-    monkeypatch.setattr(DeviceProvider, "_device_ccproxy_upstream", own_identity)
+    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", own_identity)
     hub, _project, _topic = await _subscription_screen()
 
     assert hub.env["CHEESE_MACHINE_TICKET"] == "1"
@@ -1669,3 +1691,32 @@ def test_tunnel_port_is_per_topic_and_stable():
     assert pa != pb, "distinct topics must not share a port"
     url = connect_transport(session_token="t", via_tunnel=True, tunnel_port=pa)
     assert url == f"http://127.0.0.1:{pa}"
+
+
+# --- interrupt: take the work away without saying anything -------------------
+
+
+@pytest.mark.anyio
+async def test_interrupt_presses_escape_rather_than_saying_something():
+    """Escape goes down the channel that carries a watching person's keystrokes
+    — NOT the rendezvous socket, which enqueues a message. A message is what
+    `send` is for; this is the platform taking the work away with nothing to
+    say about it, and the session survives it."""
+    hub = FakeHub()
+    provider = _provider(hub, HookRouter(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    screen = await hub.open_screen(
+        "dev1",
+        "claude",
+        "src",
+        agent_user_id=uuid.uuid4(),
+        agent_handle="agent-x",
+        project_id=session.project_id,
+        topic_id=session.topic_id,
+    )
+    provider._live[session.topic_id] = screen
+
+    assert await provider.interrupt(session) is True
+
+    assert hub.keys == [(screen.sid, b"\x1b")]
+    assert hub.prompts == []  # nothing was said

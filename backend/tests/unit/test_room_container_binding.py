@@ -104,7 +104,7 @@ def test_releasing_a_task_kills_its_session_and_spares_the_rooms_box(
     its tmux session."""
     monkeypatch.setattr(ws, "sandbox_available", lambda: True)
     monkeypatch.setattr(
-        "app.domain.agent.hooks_substrate.schedule_topic_subscription_drop",
+        "app.domain.agent.harness.claude_code.hooks_substrate.schedule_topic_subscription_drop",
         lambda _t: None,
     )
     room, task = uuid.uuid4(), uuid.uuid4()
@@ -129,7 +129,7 @@ def test_releasing_a_room_removes_the_box(_rooms, monkeypatch):
     intent — that is what archiving a room means."""
     monkeypatch.setattr(ws, "sandbox_available", lambda: True)
     monkeypatch.setattr(
-        "app.domain.agent.hooks_substrate.schedule_topic_subscription_drop",
+        "app.domain.agent.harness.claude_code.hooks_substrate.schedule_topic_subscription_drop",
         lambda _t: None,
     )
     room = uuid.uuid4()

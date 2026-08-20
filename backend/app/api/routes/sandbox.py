@@ -1,9 +1,13 @@
-"""Sandbox-facing endpoints for the tmux agent backend.
+"""Claude Code's way in: the hook endpoint, and the CLI a device fetches.
 
-The interactive `claude` running inside a topic's container posts Claude Code
-HTTP hooks here (settings.json `"type": "http"` hooks). This endpoint verifies a
-per-topic scoped token (same auth as the cheese CLI — app.core.sandbox_auth) and
-routes the hook payload into the topic's live screen subscription (HookRouter).
+Every screen running this harness — in a container here or on someone's enrolled
+machine — posts its hooks to this route, which verifies a per-topic scoped token
+(same auth as the cheese CLI — app.core.sandbox_auth) and hands the payload to
+that topic's live subscription (HookRouter).
+
+This is the adapter's outward edge and it is meant to be one: a harness that
+senses itself some other way brings its own ingress rather than being squeezed
+through this one.
 
 It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 /api write paths, so this route does its own token check.
@@ -19,9 +23,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
-from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
-from app.domain.agent.hook_events import hook_router
+from app.domain.agent.harness.claude_code import append_event, hook_router
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
@@ -127,7 +130,7 @@ async def receive_hook(
         claims = scoped_token_claims(x_cheese_token)
         project = str(claims.get("p") or "") if claims else ""
         try:
-            event_spool.append(
+            append_event(
                 ws.spool_dir(uuid.UUID(project), uuid.UUID(topic_id)),
                 x_cheese_event_id,
                 payload,

@@ -3,9 +3,9 @@
 // （TopicMembers）——芝士是这个房间的成员，换掉它属于「这个房间里有谁」，不属于
 // 「这条消息」，所以它不在输入区。
 //
-// 换人**要丢掉这个话题的会话**（一段由别人说过话的对话，被另一个身份接着往下
-// 说，就是它在自信地记得自己没说过的事）。所以这不是一个开关，是一个有代价的
-// 动作 —— 换之前必须让人知道，后端也把这件事写进了返回值（session_reset）。
+// 换人不丢任何东西：每个 agent 在这个房间里的对话是它自己的一行，换来的那个从头
+// 开始，换走的那个原样留着，换回来还能接上。所以这里没有确认框——一个不需要付出
+// 代价的动作弹窗问一遍，只是在教人无视弹窗。
 import type { TopicAgent } from '../api'
 import type { ProjectAgent } from '../cx_types'
 
@@ -20,7 +20,6 @@ const agents = ref<ProjectAgent[]>([])
 // 接口没上线（旧环境）就整个不显示 —— 一个点了没反应的入口比没有入口更糟。
 const unavailable = ref(false)
 const switching = ref(false)
-const confirming = ref<ProjectAgent | null>(null)
 
 async function load() {
   try {
@@ -44,13 +43,10 @@ const label = computed(() => {
 
 const others = computed(() => agents.value.filter((a) => a.id !== current.value?.instance_id))
 
-async function confirmSwitch() {
-  const target = confirming.value
-  if (!target) return
+async function swap(target: ProjectAgent) {
   switching.value = true
   try {
     current.value = await setTopicAgent(props.topicId, target.id)
-    confirming.value = null
   } finally {
     switching.value = false
   }
@@ -71,7 +67,7 @@ async function confirmSwitch() {
       </template>
       <v-list density="compact" min-width="220">
         <v-list-subheader class="t-meta">当前：{{ label }}</v-list-subheader>
-        <v-list-item v-for="a in others" :key="a.id ?? a.handle" @click="confirming = a">
+        <v-list-item v-for="a in others" :key="a.id ?? a.handle" @click="swap(a)">
           <v-list-item-title>{{ a.display_name }}</v-list-item-title>
           <template v-if="a.is_default" #append>
             <span class="t-meta c-muted">默认</span>
@@ -82,22 +78,6 @@ async function confirmSwitch() {
         </v-list-item>
       </v-list>
     </v-menu>
-
-    <!-- 代价说在前面。换完再告诉人「对话没了」，那是通知不是选择。 -->
-    <v-dialog :model-value="confirming !== null" max-width="420" @update:model-value="confirming = null">
-      <v-card>
-        <v-card-title class="t-title">换成「{{ confirming?.display_name }}」？</v-card-title>
-        <v-card-text class="t-body">
-          这个话题现在的对话会重新开始 —— 换一个队友接着说同一段对话，它会记得自己没说过的话。
-          已经写下的消息、文档和改动都还在。
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="confirming = null">取消</v-btn>
-          <v-btn color="primary" variant="flat" :loading="switching" @click="confirmSwitch">换</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
   </div>
 </template>
 

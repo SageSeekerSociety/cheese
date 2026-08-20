@@ -213,7 +213,7 @@ async def agent_socket(
     try:
         from app.api.deps import get_chat_service
 
-        await get_chat_service().recover_hook_subscriptions(device.device_id)
+        await get_chat_service().recover_sessions(device.device_id)
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception(
             "hook subscription recovery failed for device %s", device.device_id

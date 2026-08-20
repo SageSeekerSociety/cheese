@@ -82,7 +82,7 @@ def subscription_provider(
     The container holds NO real credential (hard requirement — a leaked machine
     credential is a leaked subscription). It ships a fake one, and every request
     is redirected BY NAME to the metering proxy (``--add-host`` on 443, see
-    TmuxHooksProvider), which rewrites the Authorization to the real token — that
+    TmuxChannel), which rewrites the Authorization to the real token — that
     token lives only on the backend. So the container env only has to:
 
       - trust the proxy's CA (it terminates TLS for api.anthropic.com);

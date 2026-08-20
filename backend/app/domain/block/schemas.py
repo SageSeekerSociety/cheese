@@ -43,6 +43,9 @@ class BlockOut(BaseModel):
     anchor_quote: str | None = None
     # Render-by-type: mimeType of an artifact block (set on artifact blocks).
     mime_type: str | None = None
+    # How many times the living doc has been written (kind=doc). Send it back as
+    # `expected_version` to save; the write is refused if the doc moved since.
+    doc_version: int = 1
     refs: list[str] = []
     upgraded_to_topic_id: uuid.UUID | None = None
     # The agent turn that produced this block (R4): groups a turn's blocks.

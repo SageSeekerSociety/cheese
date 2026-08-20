@@ -21,7 +21,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import device_launch
 
 # What a provisioned MicroCloud machine actually has on disk (values redacted).
 # The env block carries the image's own supply route AND the machine's ccproxy

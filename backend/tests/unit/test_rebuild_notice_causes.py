@@ -21,14 +21,14 @@ import uuid
 import pytest
 
 from app.domain.agent.sandbox_notices import REBUILD_CAUSE_TEXT, rebuild_notice
-from app.domain.agent.tmux_provider import TmuxHooksProvider
+from app.domain.agent.tmux_provider import TmuxChannel
 
 TOPIC = uuid.uuid4()
 IMAGE = "the-current-image"
 
 
-def _provider() -> TmuxHooksProvider:
-    return TmuxHooksProvider(image=IMAGE)
+def _provider() -> TmuxChannel:
+    return TmuxChannel(image=IMAGE)
 
 
 async def _false() -> bool:
@@ -66,9 +66,9 @@ def _wire(
         said.append((topic_id, cause))
 
     monkeypatch.setattr("app.domain.agent.tmux_provider._docker", _docker)
-    monkeypatch.setattr(TmuxHooksProvider, "_create_container", staticmethod(_create))
+    monkeypatch.setattr(TmuxChannel, "_create_container", staticmethod(_create))
     monkeypatch.setattr(
-        TmuxHooksProvider,
+        TmuxChannel,
         "_cli_mount_stale",
         staticmethod(lambda *a: _true() if cli_stale else _false()),
     )

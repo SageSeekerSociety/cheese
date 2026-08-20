@@ -8,74 +8,33 @@ make the layer real: it survives the turn, it survives a turn that DIES, and the
 next turn is actually told about it.
 """
 
+import uuid
+
 import pytest
 
-from app.domain.agent.service import (
-    AgentResult,
-    AgentToolUse,
-    AgentUsage,
-)
-from tests.conftest import StubAgent
+from tests.conftest import StubChannel, wait_work_idle
 from tests.integration.conftest import chat_ws_url
 
 
-class ChecklistAgent(StubAgent):
-    """Builds a 3-item checklist, finishes one, starts the next, then returns."""
+class ChecklistScreen(StubChannel):
+    """Builds a 3-item checklist, finishes one, starts the next, then stops."""
 
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        self.last_system_prompt = system_prompt
-        yield AgentToolUse(name="TaskCreate", input={"subject": "核实 issue 论断"})
-        yield AgentToolUse(name="TaskCreate", input={"subject": "写实现"})
-        yield AgentToolUse(name="TaskCreate", input={"subject": "补测试"})
-        yield AgentToolUse(
-            name="TaskUpdate", input={"taskId": "1", "status": "completed"}
-        )
-        yield AgentToolUse(
-            name="TaskUpdate", input={"taskId": "2", "status": "in_progress"}
-        )
-        yield AgentResult(
-            text="干到一半",
-            session_id="sess-progress-1",
-            usage=AgentUsage(model="stub", input_tokens=1, output_tokens=1),
-        )
-
-
-class DyingChecklistAgent(StubAgent):
-    """Records progress, then the turn dies — the machine-death case."""
-
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        self.last_system_prompt = system_prompt
-        yield AgentToolUse(name="TaskCreate", input={"subject": "跑到一半就没了"})
-        yield AgentToolUse(
-            name="TaskUpdate", input={"taskId": "1", "status": "in_progress"}
-        )
-        raise RuntimeError("host disappeared")
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.uses(topic_id, "TaskCreate", subject="核实 issue 论断")
+        self.uses(topic_id, "TaskCreate", subject="写实现")
+        self.uses(topic_id, "TaskCreate", subject="补测试")
+        self.uses(topic_id, "TaskUpdate", taskId="1", status="completed")
+        self.uses(topic_id, "TaskUpdate", taskId="2", status="in_progress")
+        self.stops(topic_id, "干到一半")
 
 
 @pytest.fixture
-def stub_agent() -> ChecklistAgent:
-    # Overrides conftest's stub_agent for this module; `client` picks it up.
-    return ChecklistAgent()
+def stub_hooks() -> ChecklistScreen:
+    # Overrides conftest's stub_hooks for this module; `client` picks it up.
+    return ChecklistScreen()
 
 
 def _topic(client) -> str:
@@ -123,16 +82,16 @@ def test_checklist_outlives_the_turn(client):
     assert data["updated_at"] is not None
 
 
-def test_next_turn_is_told_where_the_work_got_to(client, stub_agent):
+def test_next_turn_is_told_where_the_work_got_to(client, stub_hooks):
     tid = _topic(client)
     _chat(client, tid)
 
-    first_turn_prompt = stub_agent.last_system_prompt or ""
+    first_turn_prompt = stub_hooks.last_system_prompt or ""
     assert "上次的任务清单" not in first_turn_prompt  # nothing to carry yet
 
     frames = _chat(client, tid)
 
-    prompt = stub_agent.last_system_prompt or ""
+    prompt = stub_hooks.last_system_prompt or ""
     assert "上次的任务清单" in prompt
     # Status is carried as a mark, not just the text: "已完成" vs "在做" is the
     # whole reason to hand the list over rather than re-plan from scratch.
@@ -154,15 +113,27 @@ def test_next_turn_is_told_where_the_work_got_to(client, stub_agent):
     ]
 
 
-def test_progress_survives_a_turn_that_dies(client, stub_agent, monkeypatch):
+def test_progress_survives_a_turn_that_dies(client, stub_hooks, monkeypatch):
     """The case the whole layer exists for: the turn does NOT get to finish.
 
     Progress is written the moment each Task tool streams in, not batched to
     turn end — batching would lose exactly this."""
     tid = _topic(client)
-    monkeypatch.setattr(stub_agent, "stream_reply", DyingChecklistAgent().stream_reply)
 
-    _chat(client, tid)  # ends in an error frame, not done
+    def reports_then_goes_quiet(topic_id, prompt, reply):
+        del prompt, reply
+        stub_hooks.starts(topic_id)
+        stub_hooks.uses(topic_id, "TaskCreate", subject="跑到一半就没了")
+        stub_hooks.uses(topic_id, "TaskUpdate", taskId="1", status="in_progress")
+        # ...and then the host is gone. No Stop, ever — so nothing about this
+        # turn's END can be what wrote the progress down.
+
+    monkeypatch.setattr(stub_hooks, "emit_turn", reports_then_goes_quiet)
+
+    with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
+        ws.send_json({"type": "message", "content": "hi", "summon": True})
+        ws.receive_json()  # the turn is under way; it will never report done
+    wait_work_idle()
 
     data = client.get(f"/topics/{tid}/progress").json()["data"]
     assert [(i["subject"], i["status"]) for i in data["items"]] == [

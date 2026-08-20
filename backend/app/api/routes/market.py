@@ -9,7 +9,6 @@ and claiming a 赛题 lives on the Space pages.
 from dataclasses import asdict
 from typing import Annotated
 
-import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +23,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent.tmux_provider import TmuxChannel
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -52,67 +52,35 @@ async def list_pools(registry: Registry) -> dict:
 # ---- 节点看板 (spec §9.1 机构提供算力: where turns physically run) ----
 
 
-async def _probe_cheesed(url: str) -> tuple[bool, str]:
-    """Liveness of a cheesed node via its existing /health endpoint. Returns
-    (online, node_image) — image empty when unreachable/unhealthy."""
-    try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
-            resp = await client.get(f"{url.rstrip('/')}/health")
-            data = resp.json()
-    except (httpx.HTTPError, ValueError):
-        return False, ""
-    if data.get("status") != "healthy":
-        return False, ""
-    return True, str(data.get("image") or "")
-
-
 @router.get("/nodes")
 async def list_nodes(runner: Runner) -> dict:
-    """节点看板: every configured compute node (local + cheesed remote) with
-    liveness, current load (in-flight turns), and what it runs. Load is the
-    runner's active-turn count attributed to the provider turns actually run on
-    (compute_provider) — the platform runs one provider at a time today."""
+    """节点看板: the compute nodes this deployment runs, with liveness and
+    current load (in-flight turns)."""
     from app.domain.workspace import service as ws
 
     active = runner.active_work_count()
-    current = settings.compute_provider  # "local" | "remote"
-
-    local_sandboxed = settings.agent_sandbox_enabled and ws.sandbox_available()
+    online = ws.sandbox_available()
     nodes: list[dict] = [
         {
-            "id": "local-docker",
+            "id": TmuxChannel.name,
             "label": "知是本地算力",
             "kind": "local",
-            "online": True,
-            "current": current == "local",
-            "active_turns": active if current == "local" else 0,
+            "online": online,
+            "current": True,
+            "active_turns": active,
             "detail": (
-                f"沙箱镜像 {settings.sandbox_image}"
-                if local_sandboxed
-                else "无 Docker 沙箱（降级：纯模型回合）"
+                f"沙箱镜像 {settings.tmux_sandbox_image}"
+                if online
+                else "无 Docker 沙箱：本机跑不了回合"
             ),
             "description": "平台托管的容器算力（CPU 级），跑代码、文档与数据分析。",
         }
     ]
-    if settings.cheesed_url:
-        online, image = await _probe_cheesed(settings.cheesed_url)
-        nodes.append(
-            {
-                "id": "remote-cheesed",
-                "label": "远程节点（cheesed）",
-                "kind": "remote",
-                "online": online,
-                "current": current == "remote",
-                "active_turns": active if current == "remote" else 0,
-                "detail": f"沙箱镜像 {image}" if image else settings.cheesed_url,
-                "description": "自带机器上的 cheesed 节点，数据不出你的环境。",
-            }
-        )
     return ok(
         {
             "nodes": nodes,
             "active_turns_total": active,
-            "current_provider": current,
+            "current_provider": TmuxChannel.name,
         }
     )
 

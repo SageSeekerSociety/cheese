@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.domain.agent.hook_events import (
+from app.domain.agent.harness.claude_code.hook_events import (
     HookRouter,
     MessageAssembler,
     translate_hook,

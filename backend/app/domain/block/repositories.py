@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
 
-from sqlalchemy import Text, cast, func, or_, select, tuple_
+from sqlalchemy import Text, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -127,11 +127,33 @@ class BlockRepository:
         block.upgraded_to_topic_id = topic_id
         await self._session.flush()
 
-    async def update_content(self, block: Block, content: str) -> Block:
-        block.content = content
-        await self._session.flush()
-        await self._session.refresh(block)
-        return block
+    async def set_doc_content(
+        self, doc: Block, content: str, *, expected_version: int
+    ) -> Block | None:
+        """Overwrite the living doc, but only if it is still at
+        ``expected_version``. Returns the updated block, or ``None`` when
+        somebody else wrote it first.
+
+        The check is the WHERE clause, not an `if` above the write. Reading the
+        version in Python and comparing it there leaves the two writers that
+        read the same number both passing the comparison and both writing —
+        which is the bug, restated one layer up.
+        """
+        stmt = (
+            update(Block)
+            .where(Block.id == doc.id, Block.doc_version == expected_version)
+            .values(content=content, doc_version=Block.doc_version + 1)
+            # The row is re-read below; letting the ORM guess how to sync it
+            # against an expression it cannot evaluate in Python buys nothing.
+            .execution_options(synchronize_session=False)
+        )
+        # UPDATE returns a CursorResult, which has rowcount at runtime.
+        won = (await self._session.execute(stmt)).rowcount == 1  # type: ignore[attr-defined]
+        # Either way the in-memory block is now behind the row: it either just
+        # gained a version, or somebody else's write is what our WHERE missed.
+        # The caller reports the current version, so it has to be the real one.
+        await self._session.refresh(doc)
+        return doc if won else None
 
     async def mark_consumed(
         self, block_ids: list[uuid.UUID], turn_id: uuid.UUID
@@ -203,6 +225,25 @@ class BlockRepository:
     # Document-view / render-only kinds — never part of the conversation timeline.
     # Artifacts are preview pointers surfaced in the preview window, not chat.
     _NON_TIMELINE = (BlockKind.doc_node, BlockKind.comment, BlockKind.artifact)
+
+    async def ai_turn_ids(self, turn_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        """Which of these turns produced at least one AI-authored block.
+
+        One query rather than loading a topic's whole timeline to filter it in
+        Python: the caller (the orphan sweep) asks about a handful of turn ids
+        on a topic that may hold thousands of blocks.
+        """
+        if not turn_ids:
+            return set()
+        stmt = (
+            select(Block.turn_id)
+            .where(
+                Block.turn_id.in_(turn_ids),
+                Block.author_type == AuthorType.ai,
+            )
+            .distinct()
+        )
+        return {row for row in (await self._session.scalars(stmt)).all() if row}
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
         """Timeline view: blocks of a topic, oldest first (spec §5).

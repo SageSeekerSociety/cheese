@@ -9,7 +9,7 @@ failing the launch instead of falling back to typing into a terminal.
 import subprocess
 from pathlib import Path
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import device_launch
 
 TOPIC = "c43d2e12-6d4f-436d-b436-05278a879f81"
 

@@ -131,7 +131,7 @@ def test_ci_failure_lands_as_one_line_event_not_a_fake_human_message(
 
 
 def test_ci_failure_still_hands_the_agent_the_whole_instruction(
-    client, monkeypatch, stub_agent
+    client, monkeypatch, stub_hooks
 ):
     """改的是**房间里显示什么**，不是**芝士收到什么**：整段指令（日志 + 怎么读
     全文 + 该干什么）照旧作为 prompt 送到芝士手上。"""
@@ -145,7 +145,7 @@ def test_ci_failure_still_hands_the_agent_the_whole_instruction(
         _wait_for_event(client, tid, "ci_failed")
         wait_work_idle()
 
-        prompt = stub_agent.last_prompt or ""
+        prompt = stub_hooks.last_prompt or ""
         assert "pytest: 3 failed" in prompt
         # 芝士推不了 GitHub，指令必须说清楚是平台代推（2026-08-09 的回归）。
         assert "推送新 commit" not in prompt

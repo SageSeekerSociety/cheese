@@ -82,10 +82,9 @@ def _device_screen_id(topic_id: uuid.UUID) -> str | None:
 
 
 def _live_endpoint(topic_id: uuid.UUID) -> str | None:
-    """`127.0.0.1:<port>` of the topic's ttyd, or None when the terminal isn't
-    available (wrong backend, or the container is down / has no published port)."""
-    if settings.agent_backend != "tmux":
-        return None
+    """`127.0.0.1:<port>` of the topic's ttyd, or None when there is no local
+    screen to embed (the turn runs elsewhere, or the container is down / has no
+    published port)."""
     return ttyd_endpoint(topic_id)
 
 

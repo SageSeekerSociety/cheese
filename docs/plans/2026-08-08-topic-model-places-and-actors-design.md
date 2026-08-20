@@ -282,9 +282,9 @@ because it never binds git to a channel; we cannot.
 room held a container, container count would equal room count and never fall.
 Release on idle, rebuild on the next message — then container count tracks
 concurrent work instead. Which in turn requires that continuity not live in the
-tmux session: `topic.session_id`, per-topic transcript persistence, and `--resume`
-already exist and are currently used only for cloning a conversation into another
-topic. Inverting that assumption is a smaller change than it appears.
+tmux session: the `agent_sessions` resume token, per-topic transcript persistence,
+and `--resume` already exist and are currently used only for cloning a conversation
+into another topic. Inverting that assumption is a smaller change than it appears.
 
 **Anything that must outlive a turn has to leave the container.** Three exits:
 git (branch/PR), the room (messages, artifacts, previews), and memory (the API).

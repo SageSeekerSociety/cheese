@@ -6,7 +6,7 @@
 
 ## 四个问题的根因（都已定位到代码，都有实测数据）
 
-1. **「芝士 edits」「同步上游 → main」「PR 快照」不是 AI 写的**，是后端硬编码的中文模板。散在 `<&backend/app/domain/workspace/service.py>`、`<&backend/app/domain/agent/awaited_tasks.py>`、`<&backend/app/domain/agent/device_launch.py>`。
+1. **「芝士 edits」「同步上游 → main」「PR 快照」不是 AI 写的**，是后端硬编码的中文模板。散在 `<&backend/app/domain/workspace/service.py>`、`<&backend/app/domain/agent/awaited_tasks.py>`、`<&backend/app/domain/agent/harness/claude_code/device_launch.py>`。
 2. **提交关联不上 GitHub 账号**：所有提交的作者都写死成 `芝士 <cheese@zhishi.local>`，这个邮箱不属于任何 GitHub 账号，所以显示成灰色无头像的名字。
 3. **PR 关联不上账号**：当前主路径（`accept_via_pr`）用平台 GitHub App 的 token 开 PR，GitHub 就把 PR 算在 bot 名下。PR 标题直接拿话题标题（中文房间名），正文写的是「验收人/路由理由」这类平台内部信息。
 4. **一个 PR 里几十条提交，不是每轮快照，是同步上游**（@彭文博 发现）。实测：PR #488 的 40 条里 39 条是 `同步上游 upstream/main → main`；#483 是 39/42，#454 是 33/34，#422 是 27/37。本仓自己的 local `main` 比 `upstream/main` 多 **41 条**这种提交，而两边的文件树**一个字节都不差**。

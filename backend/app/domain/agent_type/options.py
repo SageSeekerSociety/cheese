@@ -21,6 +21,7 @@ render model and never reach the screen.)
 
 from dataclasses import asdict, dataclass, field
 
+from app.domain.agent.harness import DEFAULT_HARNESS, HARNESSES
 from app.domain.agent.market import (
     subscription_model_default,
     subscription_model_listings,
@@ -54,6 +55,10 @@ class FieldOptions:
 # and any future fix both point at the same thing.
 NO_CONSUMER = "noConsumerOnRunPath"
 NO_REGISTRY = "noRegistryYet"
+# The field IS read and IS honoured — there is simply one value. A picker over
+# one entry is a choice nobody has, and it stops being this the day a second
+# adapter ships, with no other change here than the list growing.
+ONLY_ONE = "onlyOneValue"
 
 
 def _model_field() -> FieldOptions:
@@ -89,12 +94,20 @@ def agent_type_options() -> dict:
             reason=NO_CONSUMER,
             note="模型自己决定思考深度，平台设了也不会生效",
         ),
-        # One harness ships today and every session launches it; a picker with
-        # one entry is a choice nobody has.
+        # The run path reads this now (`AgentInstanceService.harness`), and a
+        # type naming a harness this deployment cannot run is refused when it is
+        # saved. So the reason is no longer "nobody reads it" — it is that the
+        # registry holds exactly one entry.
         "harness": FieldOptions(
-            state="unavailable",
-            reason=NO_CONSUMER,
-            note="目前只有一种运行方式，无从选起",
+            state="unavailable" if len(HARNESSES) < 2 else "choosable",
+            choices=[
+                Choice(id=name, label=label, default=name == DEFAULT_HARNESS)
+                for name, label in sorted(HARNESSES.items())
+            ]
+            if len(HARNESSES) > 1
+            else [],
+            reason="" if len(HARNESSES) > 1 else ONLY_ONE,
+            note="" if len(HARNESSES) > 1 else "目前只有一种运行方式，无从选起",
         ),
         # The skill library is composed per scenario by the platform. It is not
         # a menu of capabilities to hand an agent, and nothing reads the list

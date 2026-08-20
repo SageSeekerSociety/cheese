@@ -26,8 +26,9 @@ from pathlib import Path
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
 from app.domain.agent import machine_tunnel
-from app.domain.agent.hooks_substrate import CHEESE_HOOK_SCRIPT, hooks_settings
-from app.domain.agent.service import CLAUDE_BASE_CMD
+from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
+from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
+from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 
 # First-launch gates (Claude Code 2.1.x) for $CLAUDE_CONFIG_DIR/.claude.json,
 # kept here as the readable statement of what the launch script writes inline.
@@ -394,7 +395,12 @@ while true; do
       --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
     case "$resp" in *'"code":200'*) rm -f "$f";; esac
   done
-  find "$CHEESE_HOOK_SPOOL" -type f -mmin +1440 -delete 2>/dev/null
+  # Retention, NOT a wildcard: `.seq` is the spool's sequence hint, and reaping
+  # it would send the next event's name back to 1 — sorting it before everything
+  # still waiting to be sent. Events and their claim files age out; bookkeeping
+  # does not.
+  find "$CHEESE_HOOK_SPOOL" -type f \\( -name '[0-9]*' -o -name '.n[0-9]*' \\) \\
+    -mmin +1440 -delete 2>/dev/null
   sleep 1
 done
 """

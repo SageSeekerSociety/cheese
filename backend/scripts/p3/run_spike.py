@@ -40,8 +40,11 @@ sys.path.insert(0, str(_BACKEND))
 from app.core.config import settings  # noqa: E402
 from app.core.sandbox_auth import mint_scoped_token  # noqa: E402
 from app.domain.agent.device_hub import device_hub  # noqa: E402
-from app.domain.agent.device_launch import build_screen_launch  # noqa: E402
-from app.domain.agent.hook_events import hook_router, translate_hook  # noqa: E402
+from app.domain.agent.harness.claude_code import (  # noqa: E402  # noqa: E402
+    build_screen_launch,
+    hook_router,
+    translate_hook,
+)
 from app.domain.agent.service import (  # noqa: E402
     AgentMessage,
     AgentResult,
