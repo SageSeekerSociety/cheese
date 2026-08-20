@@ -188,6 +188,24 @@ describe('对话栏自己的输入栏', () => {
     expect(container.querySelector('.mention-menu')!.textContent).toContain('共用芝士')
   })
 
+  // 「打一个 @ 然后回车」是这个输入框里最短的一条路，而它当时通向 @all——把整个
+  // 话题的所有人叫起来。最短的路得通向最常见的意图：交给芝士。
+  it('@ 之后直接回车，选中的是芝士，不是群播', async () => {
+    const { container } = mountPanel({}, 'topic-E')
+    await flush()
+
+    const box = composerBox(container)!
+    box.focus()
+    await fireEvent.update(box, '@')
+    await flush()
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await flush()
+
+    expect(box.value).toBe('@芝士 ')
+    // 挑完人就是接着打字的时刻——焦点不该被那次回车带走。
+    expect(document.activeElement).toBe(box)
+  })
+
   it('@ 一个人不会把芝士叫起来', async () => {
     const { container } = mountPanel({}, 'topic-B')
     await flush()
