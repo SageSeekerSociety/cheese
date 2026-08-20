@@ -140,6 +140,50 @@ async def test_runner_publishes_turn_frames_to_subscribers(db_factory):
 
 
 @pytest.mark.anyio
+async def test_a_turn_the_session_did_not_adopt_is_still_reported_finished(db_factory):
+    """开了标记就得有人关掉它——哪怕会话没有接手这一轮。
+
+    `session_lifecycle` says a live session will own this turn's ending. It does
+    not say whose ending: when a turn begins on a topic that already has one
+    running, the session reuses the activity it is already holding instead of
+    opening a second, so the newer turn never appears on its books and never
+    comes off them.
+
+    Nothing else publishes `turn_finished`, so the mark then outlives the turn
+    by the length of the process — the room keeps 正在思考 and the drain count
+    never returns to zero (#604). The turn is lost either way; the topic must
+    not be.
+    """
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+
+    class _SessionBusyWithAnEarlierTurn(_FakeChat):
+        def session_took_over(self, topic_id, turn_id):
+            del topic_id, turn_id
+            return False
+
+    chat = _SessionBusyWithAnEarlierTurn(
+        # The order production emits: the room acknowledges the request first,
+        # and only then does the handover frame arrive — which is exactly how
+        # the runner comes to hold a mark it has decided not to close.
+        [{"type": "user_block"}, {"type": "session_lifecycle"}, {"type": "done"}],
+        db_factory,
+    )
+    topic = await a_topic(db_factory)
+    async with broker.subscribe(str(topic)) as q:
+        runner.submit(chat, topic, author="u", content="hi", summon=True)
+        await _next_frame(q, "done")
+
+    for _ in range(200):
+        if not broker.active_turn_ids(str(topic)):
+            break
+        await asyncio.sleep(0.01)
+    assert broker.active_turn_ids(str(topic)) == [], (
+        "这一轮开了标记却没人关，话题会一直被报成在忙"
+    )
+
+
+@pytest.mark.anyio
 async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory, monkeypatch):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)

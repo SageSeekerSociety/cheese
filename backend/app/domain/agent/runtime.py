@@ -1568,7 +1568,30 @@ class AgentWorkRunner:
                 resume_chain=resume_chain,
             )
         finally:
-            if lifecycle["started"] and not lifecycle["session_owned"]:
+            # Close what this turn opened, unless the session took over THIS
+            # turn — asking by id rather than trusting the handover.
+            #
+            # The mark gets opened on the first frame, and the frames that
+            # arrive first are not this turn producing anything: they are the
+            # room acknowledging the request (`ack_summon`'s ✅, a system event
+            # block). `session_lifecycle` comes after them, so by the time the
+            # runner learns a session will own the ending it has already opened
+            # a mark — and used to decline to close it on the strength of that
+            # frame alone.
+            #
+            # That holds only while the session opens its activity under the
+            # SAME work id, which collapses the two into one entry. When a turn
+            # begins on a topic that already has one running, the session reuses
+            # the standing activity instead of opening a second, so the newer
+            # turn is never started on the session's books and never ended
+            # either. Nothing else publishes `turn_finished`, so the mark
+            # outlives the turn by the length of the process: the room keeps
+            # 正在思考, and `/health`'s drain count never reaches zero (#604).
+            handed_over = lifecycle["session_owned"]
+            session_ended_it = handed_over and chat_service.session_took_over(
+                topic_id, turn_id
+            )
+            if lifecycle["started"] and not session_ended_it:
                 await self._broker.publish(
                     channel, {"type": "turn_finished", "turn_id": str(turn_id)}
                 )

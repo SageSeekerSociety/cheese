@@ -1636,6 +1636,17 @@ class ChatService:
         """Whether this process currently owns live work for the topic."""
         return topic_id in self._active_turn_ids
 
+    def session_took_over(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> bool:
+        """Did the live session take responsibility for THIS turn's indicator?
+
+        The `session_lifecycle` frame says a session will own the ending; it
+        does not say which turn's. When one is already running on the topic, the
+        session reuses its activity rather than opening a second — so the newer
+        turn gets no start of its own and will get no ending either. Asking by
+        turn id is the difference between a handover and an assumption.
+        """
+        return self._active_turn_ids.get(topic_id) == turn_id
+
     async def kickoff(
         self,
         *,
