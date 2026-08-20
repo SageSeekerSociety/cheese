@@ -137,17 +137,25 @@ def test_progress_survives_a_turn_that_dies(client, stub_hooks, monkeypatch):
 
     # NOT `wait_work_idle()`: this turn is built never to finish, so waiting for
     # it to could only ever run out the clock — which it did, twice, thirty
-    # seconds each. What the test is actually waiting for is the write itself,
-    # so it waits for that and gives up far sooner, on the same assertion.
-    for _ in range(500):
+    # seconds each. What the test is waiting for is the write, so it waits for
+    # the write.
+    #
+    # The condition is the assertion itself, deliberately. Waiting for "an item
+    # exists" would let this pass on the TaskCreate and read the status before
+    # the TaskUpdate that follows it — which is not a slower machine finding a
+    # different answer, it is the test asking a question one write too early.
+    expected = [("跑到一半就没了", "in_progress")]
+
+    def progress():
         data = client.get(f"/topics/{tid}/progress").json()["data"]
-        if data["items"]:
+        return [(i["subject"], i["status"]) for i in data["items"]]
+
+    for _ in range(500):
+        if progress() == expected:
             break
         time.sleep(0.01)
 
-    assert [(i["subject"], i["status"]) for i in data["items"]] == [
-        ("跑到一半就没了", "in_progress")
-    ]
+    assert progress() == expected
     # The host is gone for good; nothing is coming. Say so, rather than leaving
     # the fixture to discover it by waiting out its own ceiling on the way out.
     retire_topic(client, tid)
