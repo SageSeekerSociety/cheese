@@ -101,6 +101,36 @@ settings.memory_backend = "db"
 settings.authz_enforce_topic_access = True
 
 
+def _stranded_topics() -> set[str]:
+    """Topics whose work can no longer move, so waiting on it is waiting forever.
+
+    A turn is only ever finished by its own subscription's consumer, running on
+    the loop that subscription was created on. Plenty of tests build their own
+    ``ChatService``, run a turn on the test's loop, and return with hooks still
+    queued — the loop closes, the consumer dies with it, and the turn stays
+    marked in flight in the process-wide broker, which outlives all of it.
+
+    That mark is indistinguishable from a real background turn by count alone,
+    which is why waiting on the count alone used to cost thirty seconds a time.
+    A closed loop is the difference: a consumer on one cannot run again, so
+    whatever it was holding is not in flight, it is abandoned.
+    """
+    from app.domain.agent.harness.claude_code.hooks_substrate import (
+        _RUNTIMES,
+        ClaudeCodeRuntime,
+    )
+
+    stranded = set()
+    for runtime in list(_RUNTIMES):
+        if not isinstance(runtime, ClaudeCodeRuntime):
+            continue
+        for topic_id, subscription in list(runtime._subscriptions.items()):
+            task = subscription.consumer_task
+            if task is not None and task.get_loop().is_closed():
+                stranded.add(str(topic_id))
+    return stranded
+
+
 def wait_work_idle() -> None:
     """Block until background turns (e.g. the 分身 kickoff a /split submits)
     finish: they run on the TestClient portal loop and write to this worker's DB —
@@ -108,16 +138,18 @@ def wait_work_idle() -> None:
     Returns as soon as they're idle; the generous ceiling only matters under heavy
     parallel/external load, when a turn can take much longer than usual.
 
-    Giving up used to be SILENT, and that hid the suite's largest single cost
-    for a long time: a test that strands a turn — most often by building its own
-    ``ChatService`` and letting its event loop go while hooks are still queued —
-    pays the whole ceiling here, and the only trace is that the run took another
-    thirty seconds. A run where several tests do it loses minutes and reports
-    nothing. So it says so now: the point is not this test, it is the count.
+    Abandoned work is skipped rather than waited out — see ``_stranded_topics``.
+    Giving up is no longer SILENT either, and between them those two hid the
+    suite's largest single cost for a long time: a test that stranded a turn paid
+    the whole ceiling here and left no trace but a slower run. The first
+    ``--durations`` report ever taken of this suite had seventeen of its twenty
+    slowest entries in teardown, every one of them at ~30.5s.
     """
     runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
-        if runner.active_work_count() == 0:
+        active = set(runner._broker.active_channels())
+        moving = len(runner._tasks) or len(active - _stranded_topics())
+        if not moving:
             return
         time.sleep(0.01)
     print(
@@ -126,6 +158,22 @@ def wait_work_idle() -> None:
         f"{dict(runner._broker._active)}",
         file=sys.stderr,
     )
+
+
+def retire_topic(client: TestClient, topic_id) -> None:
+    """Put down a turn the test left running on purpose.
+
+    A few tests drive a session that never reports Stop — that IS the scenario
+    (a host that vanished mid-turn). The turn then stays in flight, correctly,
+    and every one of them pays ``wait_work_idle``'s full ceiling on the way out
+    for a turn nobody is waiting on any more.
+
+    The subscription lives on the TestClient's portal loop, so the drop has to
+    be made there rather than on whatever loop the test itself ran on.
+    """
+    from app.domain.agent.harness.claude_code import drop_topic_subscriptions
+
+    client.portal.call(drop_topic_subscriptions, uuid.UUID(str(topic_id)))
 
 
 class StubChannel(Channel):
