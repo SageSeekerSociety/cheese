@@ -8,11 +8,12 @@ make the layer real: it survives the turn, it survives a turn that DIES, and the
 next turn is actually told about it.
 """
 
+import time
 import uuid
 
 import pytest
 
-from tests.conftest import StubChannel, wait_work_idle
+from tests.conftest import StubChannel, retire_topic
 from tests.integration.conftest import chat_ws_url
 
 
@@ -133,12 +134,31 @@ def test_progress_survives_a_turn_that_dies(client, stub_hooks, monkeypatch):
     with client.websocket_connect(chat_ws_url(tid, "user-1")) as ws:
         ws.send_json({"type": "message", "content": "hi", "summon": True})
         ws.receive_json()  # the turn is under way; it will never report done
-    wait_work_idle()
 
-    data = client.get(f"/topics/{tid}/progress").json()["data"]
-    assert [(i["subject"], i["status"]) for i in data["items"]] == [
-        ("跑到一半就没了", "in_progress")
-    ]
+    # NOT `wait_work_idle()`: this turn is built never to finish, so waiting for
+    # it to could only ever run out the clock — which it did, twice, thirty
+    # seconds each. What the test is waiting for is the write, so it waits for
+    # the write.
+    #
+    # The condition is the assertion itself, deliberately. Waiting for "an item
+    # exists" would let this pass on the TaskCreate and read the status before
+    # the TaskUpdate that follows it — which is not a slower machine finding a
+    # different answer, it is the test asking a question one write too early.
+    expected = [("跑到一半就没了", "in_progress")]
+
+    def progress():
+        data = client.get(f"/topics/{tid}/progress").json()["data"]
+        return [(i["subject"], i["status"]) for i in data["items"]]
+
+    for _ in range(500):
+        if progress() == expected:
+            break
+        time.sleep(0.01)
+
+    assert progress() == expected
+    # The host is gone for good; nothing is coming. Say so, rather than leaving
+    # the fixture to discover it by waiting out its own ceiling on the way out.
+    retire_topic(client, tid)
 
 
 def test_progress_is_per_topic(client):

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.domain.agent.harness import Opening, SessionRef
 from app.domain.agent.harness.claude_code.hook_events import HookRouter
 from app.domain.agent.harness.claude_code.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
@@ -1021,4 +1022,77 @@ async def test_prompt_redelivery_logs_each_attempt(caplog):
         str(topic_id) in r.getMessage() and "redeliver" in r.getMessage()
         for r in caplog.records
     )
+    await provider._close_topic(topic_id)
+
+
+async def test_every_turn_reported_started_is_also_reported_finished():
+    """一轮报了开始，就必须报结束——哪怕它是烂尾的。
+
+    ``bind_activity`` is how the platform knows a topic is busy: it lights the
+    room's 正在思考, it is what a redeploy drains on, and it is what stops a
+    second turn from starting on top of a live one. So an unmatched "started"
+    costs more than a frame — the topic carries that mark for the life of the
+    process, and every prompt after it is refused as 「已有工作正在运行」.
+
+    The turn here dies the way a screen dies mid-turn: the first prompt is
+    never acknowledged, and by the time the session tries again the screen is
+    gone. That is one lost turn. It must not also be a lost topic.
+    """
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+    sends: list[str] = []
+    reported: list[tuple[_uuid.UUID, bool]] = []
+
+    async def watch_activity(_project, _topic, work_id, active):
+        reported.append((work_id, active))
+
+    class _ScreenThatDiesBeforeTheRetry(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            sends.append(prompt)
+            if len(sends) == 1:
+                # Typed, never acknowledged — the session will try again.
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "CheeseDeliveryFailed",
+                        "phase": "paste",
+                        "ticks": 3,
+                    },
+                )
+                return None
+            raise ScreenSetupError("屏幕没了")
+
+    provider = ClaudeCodeRuntime(
+        _ScreenThatDiesBeforeTheRetry(),
+        router=router,
+        idle_suspect_s=1,
+        hard_ceiling_s=1,
+    )
+    provider.bind_activity(watch_activity)
+
+    await provider.send(
+        SessionRef(project_id=project_id, topic_id=topic_id),
+        "go",
+        Opening(system_prompt=""),
+        work_id=_uuid.uuid4(),
+        on_mark=lambda _work_id: None,
+    )
+
+    # The watch runs alongside the turn, so give it its own ending rather than
+    # assuming the turn's last frame was also its last act.
+    for _ in range(300):
+        if any(not active for _work, active in reported):
+            break
+        await asyncio.sleep(0.01)
+
+    started = {work for work, active in reported if active}
+    finished = {work for work, active in reported if not active}
+    assert started, "这一轮根本没报告过开始，测试没测到东西"
+    assert started == finished, f"报了开始没报结束：{started - finished}，话题从此卡住"
     await provider._close_topic(topic_id)
