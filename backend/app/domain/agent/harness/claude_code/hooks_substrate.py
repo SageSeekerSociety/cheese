@@ -1309,6 +1309,28 @@ class ClaudeCodeRuntime:
                 await self._end_session_activity(
                     subscription, activity, clear_work=True
                 )
+        except BaseException:
+            # The watch is leaving by a door it does not own. Every exit it DOES
+            # own retires this activity — a result consumed upstream, an error
+            # reported just above, the topic closed underneath it — so a watch
+            # that ends any other way leaves it standing with nobody left to
+            # take it down, and that state cannot be recovered from:
+            # `_begin_session_activity` hands the NEXT turn this same dead
+            # activity instead of starting one, ``current_work`` stays set so
+            # the topic answers every later prompt with 「已有工作正在运行」,
+            # and the room keeps its 正在思考 for the life of the process.
+            #
+            # One reachable way in, right above this: a redelivery calls
+            # `send_prompt` on a screen that has since died, and the channel
+            # raises. Losing the turn is correct. Losing the topic is not.
+            #
+            # Deliberately NOT in a `finally`: on the ordinary path the watch
+            # can reach its end before the consumer has finished handing the
+            # result to the room, and retiring here would put `turn_finished`
+            # ahead of the output it belongs after — the room would stop saying
+            # 正在思考 while its last message was still arriving.
+            await self._end_session_activity(subscription, activity, clear_work=True)
+            raise
         finally:
             if monitor_task is not None:
                 monitor_task.cancel()

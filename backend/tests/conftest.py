@@ -17,6 +17,7 @@ A stub agent keeps tests off the live model.
 import asyncio
 import os
 import re
+import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -105,12 +106,26 @@ def wait_work_idle() -> None:
     finish: they run on the TestClient portal loop and write to this worker's DB —
     if a turn is still writing when the next test truncates, the test flakes.
     Returns as soon as they're idle; the generous ceiling only matters under heavy
-    parallel/external load, when a turn can take much longer than usual."""
+    parallel/external load, when a turn can take much longer than usual.
+
+    Giving up used to be SILENT, and that hid the suite's largest single cost
+    for a long time: a test that strands a turn — most often by building its own
+    ``ChatService`` and letting its event loop go while hooks are still queued —
+    pays the whole ceiling here, and the only trace is that the run took another
+    thirty seconds. A run where several tests do it loses minutes and reports
+    nothing. So it says so now: the point is not this test, it is the count.
+    """
     runner = get_work_runner()
     for _ in range(3000):  # ~30s ceiling; returns early the instant turns drain
         if runner.active_work_count() == 0:
             return
         time.sleep(0.01)
+    print(
+        f"\n[wait_work_idle] 等满 30 秒还有 {runner.active_work_count()} 份工作没收尾，"
+        "本条测试为此付了 30 秒。留下的："
+        f"{dict(runner._broker._active)}",
+        file=sys.stderr,
+    )
 
 
 class StubChannel(Channel):
