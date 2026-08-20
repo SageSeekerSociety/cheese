@@ -100,4 +100,46 @@ describe('session activity', () => {
     await flush()
     expect(view.queryByText('芝士正在处理…')).toBeNull()
   })
+
+  // 「现场」那一格靠这个事件在开工那一刻出现。以前它等的是第一个工具帧——而一个
+  // @ 出来的 agent 可能先想上半分钟才动手，那半分钟里右边什么都没有，只有刷新
+  // 一次页面才看得见它。工具帧是干活的证据，不是干活的开始。
+  it('开工那一刻就报 working，不等第一个工具帧', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic] },
+      global: { plugins: [vuetify] },
+    })
+    await flush()
+
+    const socket = FakeWebSocket.instances.at(-1)!
+    socket.emit({ type: 'turn_started', turn_id: 'one' })
+    await flush()
+    expect(view.emitted('working')?.at(-1)).toEqual([true])
+    expect(view.emitted('tool-used')).toBeUndefined()
+
+    socket.emit({ type: 'turn_finished', turn_id: 'one' })
+    await flush()
+    expect(view.emitted('working')?.at(-1)).toEqual([false])
+  })
+
+  // 重连（掉线自动重连、切回这个话题）会重跑一次 loadTopic。上一轮早就结束了，
+  // 而房间里那句「正在处理…」是靠事件翻回去的——不报 false 的话，右边那格现场
+  // 会在一个没人干活的话题上一直亮着。
+  it('重新载入话题时把 working 报回 false', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const view = render(ChatPanel, {
+      props: { topic, topicList: [topic] },
+      global: { plugins: [vuetify] },
+    })
+    await flush()
+
+    FakeWebSocket.instances.at(-1)!.emit({ type: 'turn_started', turn_id: 'one' })
+    await flush()
+    expect(view.emitted('working')?.at(-1)).toEqual([true])
+
+    await view.rerender({ topic: { ...topic, id: 'another-topic' } as Topic, topicList: [topic] })
+    await flush()
+    expect(view.emitted('working')?.at(-1)).toEqual([false])
+  })
 })

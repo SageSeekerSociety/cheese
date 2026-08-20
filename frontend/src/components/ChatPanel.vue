@@ -149,6 +149,11 @@ const emit = defineEmits<{
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
   (e: 'turn-done'): void
+  // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
+  // turn_active 开，turn_finished / done / error 关），不是跟着第一个工具调用
+  // 走：工具帧是干活的**证据**，不是干活的**开始**，而右边那格「现场」得在开工
+  // 那一刻就在那儿——它就是用来看它在干什么的。
+  (e: 'working', working: boolean): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -242,6 +247,7 @@ const connected = ref(false)
 // 正在看… indicator from summon until every active turn explicitly finishes.
 const awaitingReply = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
+watch(awaitingReply, (v) => emit('working', v))
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
 // Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between

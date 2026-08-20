@@ -27,6 +27,8 @@ defineProps<{
 
 const emit = defineEmits<{
   (e: 'turn-done'): void
+  // 芝士 开工 / 收工。必须一路透传：右边那格「现场」靠它在开工那一刻出现。
+  (e: 'working', working: boolean): void
   (e: 'tool-used', payload: unknown): void
   (e: 'state-changed', payload: unknown): void
   (e: 'mention-click', handle: string): void
@@ -65,6 +67,7 @@ defineExpose({
       :topic-list="topicList"
       :unread-on-open="unreadOnOpen"
       @turn-done="emit('turn-done')"
+      @working="emit('working', $event)"
       @tool-used="emit('tool-used', $event)"
       @state-changed="emit('state-changed', $event)"
       @mention-click="emit('mention-click', $event)"
