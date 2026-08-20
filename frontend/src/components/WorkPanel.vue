@@ -315,7 +315,9 @@ function highlightTurn(turnId: string) {
 async function openFile(path: string) {
   setTab('changes')
   await nextTick()
-  await changesRef.value?.openFile(path)
+  // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
+  // names a place inside the file, not a file, and the tree only knows paths.
+  await changesRef.value?.openFile(path.replace(/:\d+(?:-\d+)?$/, ''))
 }
 defineExpose({ pulse, highlightTurn, openFile })
 </script>

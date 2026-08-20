@@ -477,7 +477,9 @@ function checkFidelity(md: string) {
 // 结构化 token 装饰 (spec §9.1): decorate our OWN tokens — <@handle> /
 // <#topicId> — as clickable chips in the doc, read-only and edit alike.
 // Deterministic token parsing, never NL guessing.
-const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+)>/g
+// 文件引用可以带行号（`<&src/a.ts:12-30>`）——同 renderMessage.ts 的 ESCAPED_TOKEN，
+// 两处必须认同一套语法，否则同一个 token 在对话里是 chip、在文档里是一串尖括号。
+const TOKEN_RE = /<@([\w-]+)>|<#([0-9a-fA-F-]{8,})>|<&([\w./\u4e00-\u9fff-]+(?::\d+(?:-\d+)?)?)>/g
 
 // Build the pretty chip element a token renders as. The raw token stays in the
 // document (markdown is the source of truth); the chip is display-only.
