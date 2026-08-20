@@ -1096,3 +1096,163 @@ async def test_every_turn_reported_started_is_also_reported_finished():
     assert started, "这一轮根本没报告过开始，测试没测到东西"
     assert started == finished, f"报了开始没报结束：{started - finished}，话题从此卡住"
     await provider._close_topic(topic_id)
+
+
+# --- 什么才算「会话正在干活」 -------------------------------------------------
+#
+# 房间里那句「芝士正在处理…」由一段 activity 撑着，而在正常路径上，只有会话自己
+# 的 Stop 会撤掉它。开的条件和关的条件必须对得上：任何一个钩子都能开、只有 Stop
+# 能关，就是一笔永远平不了的账。
+
+
+class _AliveScreen(Channel):
+    """A session that accepts everything and stays up — the ordinary case."""
+
+    async def ensure_ready(self, **kwargs):
+        return "screen"
+
+    async def send_prompt(self, screen, prompt):
+        return True
+
+
+async def _one_turn(provider, router, topic_key, project_id, topic_id, consumed):
+    """Send a prompt and let the session answer it, exactly once."""
+    import uuid as _uuid
+
+    await provider.send(
+        SessionRef(project_id=project_id, topic_id=topic_id),
+        "go",
+        Opening(system_prompt=""),
+        work_id=_uuid.uuid4(),
+        on_mark=lambda _work_id: None,
+    )
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "done",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if any(isinstance(e, AgentResult) for e in consumed):
+            return
+    raise AssertionError("这一轮没有结束，后面测的东西都不成立")
+
+
+def _provider_with_ledger():
+    """A runtime plus the two ledgers these cases read: activity and events."""
+    router = HookRouter()
+    reported: list[tuple[object, bool]] = []
+    consumed: list[object] = []
+
+    async def watch_activity(_project, _topic, work_id, active):
+        reported.append((work_id, active))
+
+    async def consumer(_p, _t, _work_id, event, _eid, _seen, _unsolicited):
+        consumed.append(event)
+
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(), router=router, idle_suspect_s=30, hard_ceiling_s=30
+    )
+    provider.bind_activity(watch_activity)
+    provider.bind_events(consumer)
+    return provider, router, reported, consumed
+
+
+@pytest.mark.parametrize(
+    ("label", "hook"),
+    [
+        # 每次 resume、每次自动 compact 都会再发一遍，是线上最常撞到的那个。
+        ("SessionStart", {"hook_event_name": "SessionStart", "session_id": "s1"}),
+        ("UserPromptSubmit", {"hook_event_name": "UserPromptSubmit", "prompt": "hi"}),
+        (
+            "PostToolUse",
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_response": "x",
+            },
+        ),
+    ],
+)
+async def test_a_hook_that_is_not_the_session_working_opens_nothing(label, hook):
+    """轮次结束之后飘来的钩子，不能点亮一个没人会去关的「正在处理」。
+
+    这些钩子说的都不是「会话正在答」：会话起来了、有人敲了字、一个工具在答案给完
+    之后才回来。它们后面不会跟一个 Stop，所以一旦拿它们开了 activity，那个标记就
+    一直立到三小时的硬上限——而且每有一个客户端连上来，`turn_active` 就把它重新
+    塞给对方一次。刷新页面清不掉它，因为要清的东西根本不在页面这边。
+    """
+    import uuid as _uuid
+
+    provider, router, reported, consumed = _provider_with_ledger()
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    await _one_turn(provider, router, topic_key, project_id, topic_id, consumed)
+    assert {w for w, a in reported if a} == {w for w, a in reported if not a}
+
+    router.push(topic_key, {**hook, "_eid": f"stray-{label}"})
+    for _ in range(60):
+        await asyncio.sleep(0.01)
+
+    started = {w for w, a in reported if a}
+    finished = {w for w, a in reported if not a}
+    assert started == finished, f"{label} 之后房间卡在正在处理：{started - finished}"
+    await provider._close_topic(topic_id)
+
+
+async def test_the_session_working_on_its_own_still_lights_the_room():
+    """有人直接在机器上的会话里干活，房间照样要看得见——这是上面那条规则不能顺手
+    砍掉的东西。第一个「它在产出」的钩子点亮房间，会话的 Stop 熄灭它。"""
+    import uuid as _uuid
+
+    provider, router, reported, consumed = _provider_with_ledger()
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    await _one_turn(provider, router, topic_key, project_id, topic_id, consumed)
+    before = len({w for w, a in reported if a})
+
+    router.push(
+        topic_key, {"hook_event_name": "SessionStart", "session_id": "s1", "_eid": "e1"}
+    )
+    router.push(
+        topic_key,
+        {"hook_event_name": "UserPromptSubmit", "prompt": "改一下", "_eid": "e2"},
+    )
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "_eid": "e3",
+        },
+    )
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if len({w for w, a in reported if a}) > before:
+            break
+    assert len({w for w, a in reported if a}) > before, "会话自己在干活，房间没亮"
+
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "改完了",
+            "session_id": "s1",
+            "_eid": "e4",
+        },
+    )
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if {w for w, a in reported if a} == {w for w, a in reported if not a}:
+            break
+    started = {w for w, a in reported if a}
+    finished = {w for w, a in reported if not a}
+    assert started == finished, f"会话干完了，房间还亮着：{started - finished}"
+    await provider._close_topic(topic_id)
