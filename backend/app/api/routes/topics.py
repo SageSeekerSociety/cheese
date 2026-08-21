@@ -360,6 +360,13 @@ async def list_room_tasks(
     `limit` caps EACH thread at its newest N blocks; with none, every thread
     comes back whole (agents read this to review history, and a silent default
     window would truncate them with no way to notice).
+
+    That default is inherited from `/blocks`, and it costs more here: this fans
+    out over a room's whole history of work, and a long-lived room already
+    holds close to two hundred of them. No cap is imposed because an invented
+    number truncates silently — the exact failure the neighbouring default
+    exists to avoid — but a caller rendering a room should be passing `limit`,
+    and whoever builds that view should decide what it is.
     """
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(
