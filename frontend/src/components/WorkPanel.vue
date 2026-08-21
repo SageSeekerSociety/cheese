@@ -93,6 +93,17 @@ function tabFromUrl(): TabKey | null {
   return ALL_TABS.some((t) => t.key === asked) ? (asked as TabKey) : null
 }
 
+// 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
+// 件事：阶段自动选中的那一格（比如开工时的现场）可能整个在屏幕外，屏幕上什么都
+// 没发生。选中态一变就把它带回视野里。
+const tabbarRef = ref<HTMLElement | null>(null)
+watch(active, () => {
+  void nextTick(() => {
+    const on = tabbarRef.value?.querySelector('[aria-selected="true"]')
+    on?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  })
+})
+
 // Every move the panel makes goes through here, so the address always says what
 // is on screen — 「你来看一眼这个 diff」的链接成立的前提就是这个。
 function setTab(key: TabKey) {
@@ -315,7 +326,9 @@ function highlightTurn(turnId: string) {
 async function openFile(path: string) {
   setTab('changes')
   await nextTick()
-  await changesRef.value?.openFile(path)
+  // A chip may carry the lines it was pointing at (`src/a.ts:12-30`) — that part
+  // names a place inside the file, not a file, and the tree only knows paths.
+  await changesRef.value?.openFile(path.replace(/:\d+(?:-\d+)?$/, ''))
 }
 defineExpose({ pulse, highlightTurn, openFile })
 </script>
@@ -330,7 +343,7 @@ defineExpose({ pulse, highlightTurn, openFile })
     </div>
 
     <template v-else>
-      <div v-if="showTabBar" class="tabbar" role="tablist">
+      <div v-if="showTabBar" ref="tabbarRef" class="tabbar" role="tablist">
         <button
           v-for="t in tabs"
           :key="t.key"
@@ -437,10 +450,20 @@ defineExpose({ pulse, highlightTurn, openFile })
   gap: 2px;
   padding: 0 6px;
   border-bottom: 1px solid var(--line);
+  /* 一屏放不下的时候横着滚，而不是把每一格压扁：挤压是没有边界的——tab 只会越
+     加越多，而窄屏上第一个被挤没的永远是文字，剩下一排认不出来的图标。滚动条不
+     画出来，因为这条栏本来就只有一行高，一条滚动条会占掉它三分之一。 */
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.tabbar::-webkit-scrollbar {
+  display: none;
 }
 .tabbar__tab {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 5px;
   padding: 8px 12px;
@@ -448,6 +471,7 @@ defineExpose({ pulse, highlightTurn, openFile })
   background: transparent;
   color: var(--muted);
   font-size: 13px;
+  white-space: nowrap;
   cursor: pointer;
 }
 .tabbar__tab:hover {

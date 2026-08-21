@@ -631,7 +631,9 @@ def _cheese_resource(command: str) -> str | None:
 # tokens as <&path> before injection so the prompt itself models the correct
 # form. Conservative on purpose: needs ≥1 slash + an extension; a leading "/",
 # "://" or "&" (already-wrapped / absolute / URL) disqualifies via lookbehind.
-_BARE_PATH_RE = re.compile(r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8})(?![\w/])")
+_BARE_PATH_RE = re.compile(
+    r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
+)
 
 
 def _chipify_paths(fact: str) -> str:

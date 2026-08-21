@@ -115,6 +115,7 @@ const composerReady = computed(() => !!chatColumn.value?.connected)
 // 对话那一栏在两端挂在不同位置（左栏 / tab 栏第一格），但接的是同一组事件。
 const chatEvents = {
   'turn-done': handleTurnDone,
+  working: handleWorking,
   'tool-used': handleToolUsed,
   'state-changed': handleStateChanged,
   'mention-click': handleMentionClick,
@@ -153,6 +154,20 @@ watch(
     cardPhase.value = undefined
   }
 )
+
+// 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
+// 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到第一
+// 个工具帧。一条 @芝士 开出来的 agent 可能先想上半分钟才动手，那半分钟里右边什
+// 么都没有，除非刷新一次页面。
+function handleWorking(now: boolean) {
+  if (now) {
+    if (!working.value) workingSince.value = Date.now()
+    working.value = true
+  } else {
+    working.value = false
+    workingSince.value = null
+  }
+}
 
 function handleTurnDone() {
   // The live feed's job is over — the persisted 现场 transcript is the record.
@@ -210,8 +225,6 @@ function handleMentionClick(handle: string) {
 }
 
 function handleToolUsed(name: string, input?: Record<string, unknown>) {
-  if (!working.value) workingSince.value = Date.now()
-  working.value = true
   worklog.value.push({
     label: toolLabel(name),
     text: formatToolAction(name, input),

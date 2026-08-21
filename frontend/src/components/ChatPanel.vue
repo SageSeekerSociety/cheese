@@ -149,6 +149,11 @@ const emit = defineEmits<{
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
   (e: 'turn-done'): void
+  // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
+  // turn_active 开，turn_finished / done / error 关），不是跟着第一个工具调用
+  // 走：工具帧是干活的**证据**，不是干活的**开始**，而右边那格「现场」得在开工
+  // 那一刻就在那儿——它就是用来看它在干什么的。
+  (e: 'working', working: boolean): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -242,6 +247,7 @@ const connected = ref(false)
 // 正在看… indicator from summon until every active turn explicitly finishes.
 const awaitingReply = ref(false)
 const activeTurnIds = ref<Set<string>>(new Set())
+watch(awaitingReply, (v) => emit('working', v))
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
 // Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between
@@ -1099,7 +1105,7 @@ const mentionMatches = computed<MentionItem[]>(() => {
   if (q === null) return []
   const ql = q.toLowerCase()
   const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
-  const rest: MentionItem[] = [
+  const named: MentionItem[] = [
     ...mentionPool.value.map((m) => ({
       label: m.label,
       kind: 'member' as const,
@@ -1117,10 +1123,20 @@ const mentionMatches = computed<MentionItem[]>(() => {
         agent: false,
       })),
   ].filter((i) => i.label.toLowerCase().includes(ql))
-  return [...broadcast, ...rest].slice(0, 7)
+  // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
+  // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
+  // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
+  // 它还是那两个 token。
+  const agents = named.filter((i) => i.agent)
+  const rest = named.filter((i) => !i.agent)
+  return [...agents, ...broadcast, ...rest].slice(0, 7)
 })
 function pickMention(item: MentionItem) {
   draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
+  // 挑完一个人，正是你要接着往下打字的时刻。鼠标点菜单会把焦点带到那颗按钮上，
+  // 键盘挑则让整块菜单从 DOM 里消失——两条路都可能把光标从输入框里带走，而「@
+  // 完人还要再点一次输入框」是这个面板最烦人的地方。
+  void nextTick(() => composerInput.value?.focus?.())
 }
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
@@ -2097,6 +2113,18 @@ details.sys-row > summary::-webkit-details-marker {
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: 1.5;
+}
+/* Vuetify 给输入框留的顶部内边距是「浮动标签落下来时站的地方」：plain + comfortable
+   下是 15px 的 --v-input-padding-top 再加 3.5px，而底部只有 3px。这个输入框没有
+   标签，那 15px 就只剩一个效果——第一行字被顶到盒子中间，上下差了六倍。 */
+.composer-input :deep(.v-field) {
+  --v-input-padding-top: 0px;
+}
+/* 那道遮罩是给「文字从浮动标签底下滑过去」用的渐隐。没有标签就没有要遮的东西，
+   留着它只会把第一行字的上半截淡掉——尤其在内边距刚被收窄之后。 */
+.composer-input :deep(.v-field__input) {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 /* 动作行的规矩，三条：
    1. 一行一个高度。原来是 24 / 32 / 24 / 30 四种，这是它看起来像一堆零件的主因。

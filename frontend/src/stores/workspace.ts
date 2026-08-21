@@ -18,7 +18,7 @@ import {
   unarchiveTopic,
   upgradeBlock,
 } from '@/api'
-import { refreshBlockCache } from '@/lib/blockCache'
+import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
 import { myHandle } from '@/me'
 
 // 项目级状态 (P0 架构): 话题树、成员、未读、排序、栏宽——一份，供项目框架下的
@@ -186,8 +186,14 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       // Background-refresh the timeline cache of topics whose unread grew: by
       // the time the user switches back, the reply that landed while they were
       // away is already rendered on the first frame (no late pop-in).
+      //
+      // 只预取「已经有缓存」的话题，也就是这一趟真的开过的那几个。没缓存的话题
+      // 下次打开本来就要拉一次，预取省不掉那一次，只是把它挪到了最不该发请求的
+      // 时刻：刷新页面时 unreadMap 是空的，于是**每一个**有未读的话题都算「变多
+      // 了」，一个两百多话题的项目会在同一瞬间打出几十个 GET /blocks，占满后端
+      // 的数据库连接池——被挤掉的不只是这些预取，还有用户此刻真正在等的那个请求。
       for (const [tid, n] of Object.entries(map)) {
-        if (n > (unreadMap.value[tid] ?? 0)) void refreshBlockCache(tid)
+        if (n > (unreadMap.value[tid] ?? 0) && cachedWindow(tid)) void refreshBlockCache(tid)
       }
       unreadMap.value = map
     } catch {
