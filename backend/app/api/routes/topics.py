@@ -54,6 +54,8 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.schemas import TaskOut
+from app.domain.room_task.services import TaskService
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic, TopicStatus
@@ -335,6 +337,48 @@ async def list_topic_blocks(
             "oldest_id": str(blocks[0].id) if blocks else None,
         }
     )
+
+
+@router.get("/{topic_id}/tasks")
+async def list_room_tasks(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+) -> dict:
+    """This room's threads — every piece of work in it, each with its own
+    conversation.
+
+    The room's own line is `/blocks` beside this; nothing appears in both, and
+    together they are everything said in the room. That separation is the whole
+    reason a task no longer needs a room of its own: the thread is a key on the
+    block, not a second row in `topics`.
+
+    Authorized exactly like `/blocks`, and for the same reason — this carries
+    conversation, so holding a topic id must not be enough to read it.
+
+    `limit` caps EACH thread at its newest N blocks; with none, every thread
+    comes back whole (agents read this to review history, and a silent default
+    window would truncate them with no way to notice).
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    threads = await TaskService(db).threads_for_room(topic_id, limit=limit)
+    items = [
+        {
+            **TaskOut.model_validate(task).model_dump(mode="json"),
+            "blocks": [
+                BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
+            ],
+        }
+        for task, blocks in threads
+    ]
+    return ok(page(items, len(items)))
 
 
 @router.get("/{topic_id}/transcript")
