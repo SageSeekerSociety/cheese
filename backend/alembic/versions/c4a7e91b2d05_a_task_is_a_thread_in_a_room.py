@@ -135,6 +135,20 @@ UPDATE blocks
   WHERE topic_id IN (SELECT id FROM tasks)
 """
 
+# Both sides of the map, counted after the fact. `work_topics` must equal
+# `task_rows` and `work_blocks` must equal `keyed_blocks`; `strays` must be 0.
+RECONCILE = """
+SELECT
+    (SELECT count(*) FROM topics WHERE kind IN ('task', 'subtopic')) AS work_topics,
+    (SELECT count(*) FROM tasks) AS task_rows,
+    (SELECT count(*) FROM blocks
+      WHERE topic_id IN (SELECT id FROM topics WHERE kind IN ('task', 'subtopic')))
+        AS work_blocks,
+    (SELECT count(*) FROM blocks WHERE task_id IS NOT NULL) AS keyed_blocks,
+    (SELECT count(*) FROM tasks t
+      WHERE NOT EXISTS (SELECT 1 FROM topics x WHERE x.id = t.id)) AS strays
+"""
+
 
 def upgrade() -> None:
     op.create_table(
@@ -201,6 +215,15 @@ def upgrade() -> None:
 
     op.execute(BACKFILL_TASKS)
     op.execute(BACKFILL_BLOCKS)
+
+    # Reconciliation, printed where the deploy log will keep it. A backfill that
+    # silently moved 217 of 219 rows looks exactly like one that moved all of
+    # them, and by the time anyone notices, the counts it should have been
+    # compared against are gone. `strays` is the one number that must be zero:
+    # rows in `tasks` with no `topics` row behind them would mean the identity
+    # mapping did not hold.
+    counts = op.get_bind().execute(sa.text(RECONCILE)).mappings().one()
+    print(f"a task is a thread in a room: {dict(counts)}")
 
 
 def downgrade() -> None:
