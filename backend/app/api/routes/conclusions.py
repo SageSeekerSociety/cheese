@@ -51,8 +51,8 @@ def _out(card) -> dict:
 
 @router.get("/topics/{topic_id}/conclusion-cards")
 async def list_conclusion_cards(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """Cards this topic PRODUCED (its own 回流 history), newest first."""
-    cards = await ConclusionCardRepository(db).list_for_topic(topic_id)
+    """Cards this place PRODUCED (its own 回流 history), newest first."""
+    cards = await ConclusionCardRepository(db).list_for_place(topic_id)
     return ok(page([_out(c) for c in cards], len(cards)))
 
 

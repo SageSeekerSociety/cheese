@@ -12,6 +12,7 @@ from app.domain.conclusion.models import (
     ConclusionCard,
     ConclusionStatus,
 )
+from app.domain.room_task.place import room_and_task
 
 #: 未结算 = 还欠某个话题/某一轮一个动作。`returned` 也算：子话题还得补证据。
 LIVE_STATES = (ConclusionStatus.open, ConclusionStatus.returned)
@@ -63,10 +64,22 @@ class ConclusionCardRepository:
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def list_for_topic(self, topic_id: uuid.UUID) -> list[ConclusionCard]:
+    async def list_for_place(self, place_id: uuid.UUID) -> list[ConclusionCard]:
+        """Cards produced BY this place, newest first.
+
+        A thread's own history, not its room's: both ends of a card name the
+        room now, so matching on `topic_id` alone would hand every thread the
+        conclusions of every other thread beside it.
+        """
+        room_id, task_id = await room_and_task(self._session, place_id)
         stmt = (
             select(ConclusionCard)
-            .where(ConclusionCard.topic_id == topic_id)
+            .where(
+                ConclusionCard.topic_id == room_id,
+                ConclusionCard.task_id.is_(None)
+                if task_id is None
+                else ConclusionCard.task_id == task_id,
+            )
             .order_by(ConclusionCard.created_at.desc())
         )
         return list((await self._session.scalars(stmt)).all())
