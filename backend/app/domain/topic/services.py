@@ -1,8 +1,12 @@
-"""Topic business logic, including the topic tree (spec §6, evals A1/A2/A4).
+"""Topic business logic — rooms, and the work dispatched inside them.
 
-"一件事就是一个话题，话题可以长大": a block can be upgraded into its own topic
-(讨论升级), a big topic can be split into sub-topics (从上往下拆解), and a
-sub-topic's conclusion flows back to its parent (结论回流).
+A block can be upgraded into a place of its own (讨论升级), a room can dispatch
+a piece of work as a thread (从上往下拆解), and a thread's conclusion flows back
+to the room it sits in (结论回流).
+
+The tree is one level deep now: the project root has rooms, and rooms have no
+topic children at all. What used to be a third level is a `tasks` row — see
+`app.domain.room_task.place` for how one id still addresses either.
 """
 
 import difflib

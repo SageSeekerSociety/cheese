@@ -1,8 +1,10 @@
 """Topic model.
 
-A Topic = one session = one git branch (spec §6). Topics form a tree via
-parent_id: the root topic is the project itself, children are work threads,
-grandchildren are sub-tasks where 芝士's 分身 works.
+A Topic is a ROOM: a place people talk in. The root topic is the project
+itself and its children are the project's rooms; nothing hangs below a room in
+this table any more. The work that used to live there is a `tasks` row plus a
+thread key on its blocks (`app.domain.room_task`), which is what let it stop
+paying a room's costs.
 
 Lifecycle: active → archived, and ONLY a person moves it (#442 decision 1). A
 merge no longer archives anything — it stamps `accepted_by`/`accepted_at`
@@ -40,22 +42,21 @@ class TopicStatus(enum.StrEnum):
 
 
 class TopicKind(enum.StrEnum):
-    """What a node in the tree IS — a place you talk in, or a piece of work.
+    """Which kind of ROOM this is. Both hold a roster and outlive the work in
+    them; the only difference is that one of them is the project itself.
 
-    ``root``/``topic`` are rooms: they hold a roster, they outlive the work done
-    in them, and they are what the sidebar lists. ``task`` is one piece of work
-    inside a room — it carries the branch, the accept card and the progress, it
-    ends when accepted, and the room it lives in does not end with it. The UI
-    renders a task as a card in the room's timeline rather than a tree node.
-
-    ``subtopic`` is what tasks were called when a room and a piece of work were
-    the same object. Kept so existing rows keep working; nothing new is created
-    with it.
+    ``task``/``subtopic`` were how a piece of work said it was a room, back when
+    `blocks.topic_id` was the only key a conversation could be grouped by.
+    Migration ``a9f3c7e21b04`` converted every such row into a `tasks` row and
+    deleted it, so nothing carries these values any more and nothing writes
+    them. They stay in the enum for one reason: a database restored from before
+    that migration still contains them, and an enum that cannot read its own
+    history turns a restore into a crash.
     """
 
     root = "root"  # 根话题 = 项目本身, 芝士本体
     topic = "topic"  # 二级话题 = 房间
-    task = "task"  # 一件事: 带分支/验收卡, 完成即结束, 房间照常活着
+    task = "task"  # 历史值: 一件活曾经也是一行 topics
     subtopic = "subtopic"  # 历史值: task 的前身
 
 
@@ -106,7 +107,12 @@ class Topic(UuidPk, Timestamps, Base):
     # until the topic has run — i.e. until it has an `agent_sessions` row — after
     # which it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # git branch backing this topic (spec §6.3); sub-topics branch from parent.
+    # git branch backing this room. Nothing in the app has ever written it —
+    # the branch a workspace actually sits on is derived (`branch_for_place`) —
+    # so every row is NULL and `cheese status` reported `branch: null` for the
+    # whole life of the column. A task's `branch_name` IS written, at creation;
+    # this one is the shape that column was copied from, kept because a room's
+    # branch may one day want naming and nothing depends on it being absent.
     branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
