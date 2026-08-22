@@ -263,7 +263,7 @@ def test_split_and_return_conclusion(client):
     sub = client.post(
         f"/topics/{topic['id']}/split", json={"title": "实现数据清洗"}
     ).json()["data"]
-    assert sub["parent_id"] == topic["id"]
+    assert sub["room_id"] == topic["id"]
     assert sub["kind"] == "task"
     # Let the 分身's auto-kickoff finish before writing more to the shared
     # in-memory DB (otherwise the two interleave on one SQLite connection).

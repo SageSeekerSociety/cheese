@@ -334,11 +334,15 @@ class ConclusionCardService:
                 "只剩采信或升级两条路"
             )
         self._check_evidence_anchor(card, blocking_ref)
-        sub = await self._topics.get(card.topic_id)
+        sub = (
+            None
+            if card.task_id is None
+            else await TaskRepository(self._session).get(card.task_id)
+        )
         if sub is None:
             raise NotFoundError("子话题不存在")
-        if sub.status == TopicStatus.archived:
-            raise ValidationError("子话题已归档，补不了证据了——只能采信或升级")
+        if sub.status == TaskStatus.closed:
+            raise ValidationError("这条支线已经收起，补不了证据了——只能采信或升级")
         card.returned_count += 1
         card.blocking_ref = blocking_ref
         await self._settle(
@@ -366,7 +370,11 @@ class ConclusionCardService:
             reason=reason,
             announce=True,
         )
-        sub = await self._topics.get(card.topic_id)
+        sub = (
+            None
+            if card.task_id is None
+            else await TaskRepository(self._session).get(card.task_id)
+        )
         await AlertService(self._session).create(
             project_id=card.project_id,
             level=AlertLevel.strong,
@@ -631,9 +639,13 @@ class ConclusionCardService:
         if said is None:
             return
         text, severity, whose, detail = said
+        # The verdict lands in the THREAD it is about — that is where the 分身
+        # waiting on it is looking, and where a reader who opens the work later
+        # finds out how it ended.
         await self._blocks.add(
             project_id=card.project_id,
             topic_id=card.topic_id,
+            task_id=card.task_id,
             author=card.settled_by or SYSTEM_ACTOR,
             author_type=AuthorType.system,
             content=text,
