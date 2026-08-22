@@ -132,7 +132,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **铁律**：协作模式下 AI 不能验收自己的活（必须人来）；同话题**只允许一张待处理卡**；归档话题不能重复采纳；撤销需身份（原采纳人/owner/组长）；空 `required_topic` 协议条件不再误判全员须导师验收。
 - **采纳 = git merge**：采纳时把话题分支合并回 base（best-effort，冲突不阻断归档）。
 - **实现**：`AcceptService`（`backend/app/domain/review/services.py`）；接口 `POST /api/topics/{id}/accept-card`、`/api/accept-cards/{id}/{accept|reject|reassign|revoke}`；前端 `WorkspaceView` 合并框。
-- 🟡 剩余：合并冲突时仍归档(产物未入 main)、`reviewer_role` 只认 `mentor`、子话题采纳直接合 main 未走父分支。
+- 🟡 剩余：合并冲突时仍归档(产物未入 main)、`reviewer_role` 只认 `mentor`。（「采纳直接合 main 未走父分支」那条已经不成立：一件活的结论被采信时，提交折进它所在房间的分支，见 `conclusion/services.py::fold_into_room`。）
 
 ### 3.6 记忆（项目 / 个人）  ✅ 基础 / 🟡
 
