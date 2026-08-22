@@ -132,15 +132,15 @@ def _add_project_member(client, project_id: str, handle: str) -> None:
     asyncio.run(_add())
 
 
-def _split(client, parent_id: str, *, by: str) -> str:
-    """Split the way `cheese split` does from a 分身's sandbox: no human token,
-    the acting handle only in the body."""
+def _split(client, parent_id: str, *, by: str) -> dict:
+    """Dispatch work the way `cheese split` does from a 分身's sandbox: no human
+    token, the acting handle only in the body."""
     r = client.post(
         f"/topics/{parent_id}/split",
         json={"title": "分身拆出的子任务", "created_by": by},
     )
     assert r.status_code == 200
-    return r.json()["data"]["id"]
+    return r.json()["data"]
 
 
 def _roster(client, topic_id: str) -> dict[str, str]:
@@ -179,9 +179,11 @@ def test_the_child_belongs_to_whoever_drove_the_turn(client, monkeypatch):
     _driving(monkeypatch, "bob")
     _, root = _project(client, owner="alice")
 
-    roster = _roster(client, _split(client, root, by=_agent()))
-    assert roster.get("bob") == "owner"
-    assert roster.get("alice") == "member"
+    assert _split(client, root, by=_agent())["owner_handle"] == "bob"
+    # And nothing is taken from alice by making the work bob's: the ROOM is
+    # still hers. That is the point of work having an owner instead of a roster
+    # — one answer to "whose is this" that does not disturb another.
+    assert _roster(client, root).get("alice") == "owner"
 
 
 def test_an_autonomous_split_still_inherits_the_parent_owner(client, monkeypatch):
@@ -191,7 +193,7 @@ def test_an_autonomous_split_still_inherits_the_parent_owner(client, monkeypatch
     _driving(monkeypatch, None)
     _, root = _project(client, owner="alice")
 
-    assert _roster(client, _split(client, root, by=_agent())).get("alice") == "owner"
+    assert _split(client, root, by=_agent())["owner_handle"] == "alice"
 
 
 def test_a_human_who_splits_it_themselves_still_wins(client, monkeypatch):
@@ -207,7 +209,7 @@ def test_a_human_who_splits_it_themselves_still_wins(client, monkeypatch):
         headers={"Authorization": f"Bearer {session_token('carol')}"},
     )
     assert r.status_code == 200
-    assert _roster(client, r.json()["data"]["id"]).get("carol") == "owner"
+    assert r.json()["data"]["owner_handle"] == "carol"
 
 
 def test_the_original_requester_comes_back_as_a_coauthor(client, monkeypatch):
@@ -221,7 +223,7 @@ def test_the_original_requester_comes_back_as_a_coauthor(client, monkeypatch):
     _driving(monkeypatch, "bob")
     pid, root = _project(client, owner="alice")
 
-    body = _pr_body(client, pid, _split(client, root, by=_agent()))
+    body = _pr_body(client, pid, _split(client, root, by=_agent())["id"])
     assert "Requested-by: bob" in body
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in body
 
@@ -237,7 +239,7 @@ def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
     _driving(monkeypatch, None)
     pid, root = _project(client, owner="alice")
 
-    body = _pr_body(client, pid, _split(client, root, by=_agent()))
+    body = _pr_body(client, pid, _split(client, root, by=_agent())["id"])
     assert "Requested-by: alice" in body
     assert "Co-authored-by" not in body
 
@@ -250,6 +252,6 @@ def test_an_unconnected_requester_costs_the_coauthor_nothing(client, monkeypatch
     _driving(monkeypatch, "bob")
     pid, root = _project(client, owner="alice")
 
-    body = _pr_body(client, pid, _split(client, root, by=_agent()))
+    body = _pr_body(client, pid, _split(client, root, by=_agent())["id"])
     assert "Requested-by: bob" in body
     assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in body
