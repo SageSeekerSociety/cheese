@@ -132,9 +132,7 @@ describe('房间时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z'),
-    ])
+    const { container } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
     await flush()
 
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1', 'b2'])
@@ -150,9 +148,7 @@ describe('房间时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container, emitted } = mountPanel(room(id), [
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z'),
-    ])
+    const { container, emitted } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
     await flush()
 
     const link = container.querySelector('[data-testid="dispatched-marker"] button')!
@@ -168,9 +164,7 @@ describe('房间时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z'),
-    ])
+    const { container } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
     await flush()
 
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1'])
@@ -183,9 +177,8 @@ describe('房间时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', { status: 'closed' }),
-    ])
+    const done = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', { status: 'closed' })
+    const { container } = mountPanel(room(id), [done])
     await flush()
 
     expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('这部分已完成')
@@ -220,9 +213,8 @@ describe('房间时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      work(id, 'sub-1', '单开的话题', '2026-08-11T09:04:31Z', { upgraded_from_block_id: 'b1' }),
-    ])
+    const upgraded = work(id, 'sub-1', '单开的话题', '2026-08-11T09:04:31Z', { upgraded_from_block_id: 'b1' })
+    const { container } = mountPanel(room(id), [upgraded])
     await flush()
 
     expect(container.querySelectorAll('[data-testid="dispatched-marker"]')).toHaveLength(0)
