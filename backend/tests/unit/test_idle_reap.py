@@ -194,15 +194,18 @@ async def test_a_room_with_a_busy_task_keeps_its_box(client, tmp_path, monkeypat
         for t in (room, task):
             await blocks.add(
                 project_id=project.id,
-                topic_id=t.id,
+                topic_id=t.id,  # a place id — the thread's resolves to (room, thread)
                 author="u",
                 author_type=AuthorType.human,
                 content="hi",
             )
-        # The ROOM has been silent for a month; its task spoke just now.
+        # The ROOM's own line has been silent for a month; its thread spoke just
+        # now. Aged by (room, main line) — a thread's blocks carry the room's
+        # topic_id too, so aging on topic_id alone would age the very message
+        # this test is about.
         await session.execute(
             update(Block)
-            .where(Block.topic_id == room.id)
+            .where(Block.topic_id == room.id, Block.task_id.is_(None))
             .values(created_at=datetime.now(UTC) - timedelta(days=30))
         )
         await session.commit()

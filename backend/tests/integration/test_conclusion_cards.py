@@ -180,7 +180,7 @@ def test_expired_card_is_swept_and_accepted_even_if_no_turn_ever_ran(client):
 
     async def _expire_then_sweep() -> list[uuid.UUID]:
         async with client.test_factory() as session:
-            live = await ConclusionCardRepository(session).live_for_topic(
+            live = await ConclusionCardRepository(session).live_for_task(
                 uuid.UUID(sub["id"])
             )
             assert live is not None
@@ -198,39 +198,44 @@ def test_expired_card_is_swept_and_accepted_even_if_no_turn_ever_ran(client):
     assert _topic_status(client, sub["id"]) == "closed"
 
 
-def test_sweep_survives_a_parent_and_child_card_expiring_together(client):
-    """采信上级的卡会顺手结算下级的卡（归档级联）。如果同一批过期卡里两张都在，
-    扫描器走到下级那张时它已经不是 open 了——不能因此炸掉整个 sweep，否则事务
-    回滚、这批卡永远扫不掉，30 分钟兜底就成了摆设。"""
-    p = _project(client)
-    grandparent = _topic(client, p["id"], "祖")
-    parent = _split(client, grandparent["id"], "父")
-    sub = _split(client, parent["id"], "子")
-    _file_card(client, sub["id"], "孙子的结论")  # 收方是「父」
-    _file_card(client, parent["id"], "儿子的结论")  # 收方是「祖」
+def test_sweep_survives_a_card_that_was_settled_between_expiry_and_the_sweep(client):
+    """同一批过期卡里有一张已经不是 open 了——不能因此炸掉整个 sweep，否则事务
+    回滚、这批卡永远扫不掉，30 分钟兜底就成了摆设。
 
-    async def _expire_parent_first_then_sweep() -> list[uuid.UUID]:
+    原来这个场面是级联造出来的：采信上级的卡会顺手结算下级的卡。级联没有了
+    （工作不嵌套），但这个鲁棒性还得留着：一张卡在过期和扫描之间被人手动结算掉，
+    是同样的局面，而且这条路一直都在。
+    """
+    p = _project(client)
+    room = _topic(client, p["id"], "房间")
+    one = _split(client, room["id"], "第一件")
+    two = _split(client, room["id"], "第二件")
+    _file_card(client, one["id"], "第一件的结论")
+    _file_card(client, two["id"], "第二件的结论")
+
+    async def _expire_both_then_settle_one_and_sweep() -> list[uuid.UUID]:
         now = datetime.now(UTC)
         async with client.test_factory() as session:
             repo = ConclusionCardRepository(session)
-            # 让「父」那张先被处理：它一采信就会把「子」那张一并结算。
-            upper = await repo.live_for_topic(uuid.UUID(parent["id"]))
-            lower = await repo.live_for_topic(uuid.UUID(sub["id"]))
-            assert upper is not None and lower is not None
-            upper.digest_deadline_at = now - timedelta(minutes=10)
-            lower.digest_deadline_at = now - timedelta(minutes=5)
+            first = await repo.live_for_task(uuid.UUID(one["id"]))
+            second = await repo.live_for_task(uuid.UUID(two["id"]))
+            assert first is not None and second is not None
+            first.digest_deadline_at = now - timedelta(minutes=10)
+            second.digest_deadline_at = now - timedelta(minutes=5)
+            # 有人（或另一条路径）在扫描之前就把第一张结算掉了。
+            await ConclusionCardService(session).accept(first, by="alice")
             await session.commit()
         async with client.test_factory() as session:
             settled = await ConclusionCardService(session).sweep_expired()
             await session.commit()
             return settled
 
-    asyncio.run(_expire_parent_first_then_sweep())
+    asyncio.run(_expire_both_then_settle_one_and_sweep())
 
-    assert _cards(client, parent["id"])[0]["status"] == ConclusionStatus.accepted
-    assert _cards(client, sub["id"])[0]["status"] == ConclusionStatus.accepted
-    assert _topic_status(client, parent["id"]) == "archived"
-    assert _topic_status(client, sub["id"]) == "closed"
+    # 扫描没被那张已结算的卡带崩：另一张照常结算了。
+    assert _cards(client, one["id"])[0]["status"] == ConclusionStatus.accepted
+    assert _cards(client, two["id"])[0]["status"] == ConclusionStatus.accepted
+    assert _topic_status(client, two["id"]) == "closed"
 
 
 def test_sweep_leaves_a_card_that_still_has_time(client):
