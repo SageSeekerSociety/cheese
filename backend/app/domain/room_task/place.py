@@ -88,6 +88,27 @@ class Place:
         return self.task is not None
 
 
+async def room_and_task(
+    session: AsyncSession, place_id: uuid.UUID
+) -> tuple[uuid.UUID, uuid.UUID | None]:
+    """The (room, thread) pair to STORE for a place named by one id.
+
+    The whole application keeps addressing a place by a single id — that is what
+    a per-turn token carries and what every route already has. Only the tables
+    that must hold both halves pay for the lookup, and they pay it once per
+    write, not once per row read.
+
+    An id that names nothing comes back as (itself, None). That is what the
+    foreign key would have said anyway, one statement later and with a message
+    naming the actual column — better than raising here and turning a bad id
+    into a different error than the one the schema gives it.
+    """
+    task = await session.get(Task, place_id)
+    if task is None:
+        return place_id, None
+    return task.room_id, task.id
+
+
 class PlaceResolver:
     """Turns one id back into the room + thread it names."""
 

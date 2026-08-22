@@ -289,7 +289,10 @@ class TopicService:
             created_by=created_by,
             agent_instance_id=agent_instance_id,
         )
-        _bind_room_branch(child_id=topic.id, parent_id=parent_id, kind=kind)
+        # No branch parent: this path only ever makes ROOMS now, and a room forks
+        # the base branch. Binding one to its parent would have made the project
+        # root a fork point, which nothing has ever wanted.
+        #
         # 群聊房间的地基 (fusion-design §3): seed the roster — creator = owner,
         # 芝士 joins as a member. `created_by` alone is not enough: 芝士 itself
         # creating a topic, or a caller whose token didn't resolve (anonymous

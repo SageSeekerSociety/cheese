@@ -9,6 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
+from app.domain.room_task.place import room_and_task
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,10 +58,16 @@ class AgentTurnRepository:
         resendable: bool,
         started_at: datetime,
     ) -> None:
+        # `topic_id` is the id of the PLACE this turn runs in, which may be a
+        # thread. Resolved here rather than by every caller: the runtime addresses
+        # a place by one id everywhere else, and this is one of the few tables
+        # that has to store both halves.
+        room_id, task_id = await room_and_task(self._session, topic_id)
         self._session.add(
             AgentTurn(
                 id=turn_id,
-                topic_id=topic_id,
+                topic_id=room_id,
+                task_id=task_id,
                 continuation_id=continuation_id,
                 author=author,
                 content=content,
@@ -109,10 +116,18 @@ class AgentTurnRepository:
         invisible to every future sweep — the silent death this table exists to
         end. Its own coroutine closes it by id, delivered or not.
         """
+        room_id, task_id = await room_and_task(self._session, topic_id)
         result = await self._session.execute(
             update(AgentTurn)
             .where(
-                AgentTurn.topic_id == topic_id,
+                AgentTurn.topic_id == room_id,
+                # Scoped to the THREAD when there is one. A room and each of its
+                # threads run their own sessions, so a Stop from one of them must
+                # not close the intervals of the others — which is exactly what
+                # matching on the room alone would do.
+                AgentTurn.task_id.is_(None)
+                if task_id is None
+                else AgentTurn.task_id == task_id,
                 AgentTurn.stopped_at.is_(None),
                 AgentTurn.delivered_at.is_not(None),
             )
@@ -133,7 +148,10 @@ class AgentTurnRepository:
         return [
             TurnRecord(
                 turn_id=row.id,
-                topic_id=row.topic_id,
+                # The PLACE this turn ran in — the thread when it had one. The
+                # sweep re-addresses work by this id, and re-addressing a
+                # thread's turn to its room would resume the wrong conversation.
+                topic_id=row.task_id or row.topic_id,
                 continuation_id=row.continuation_id,
                 author=row.author,
                 content=row.content,
