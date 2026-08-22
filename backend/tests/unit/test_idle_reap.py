@@ -218,10 +218,16 @@ async def test_a_room_with_a_busy_task_keeps_its_box(client, tmp_path, monkeypat
 
 
 @pytest.mark.anyio
-async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
+async def test_the_room_of_a_task_is_the_room_it_names(client, tmp_path):
     """The DB half of box placement: a task runs in the box of the room it was
-    split out of, a room runs in its own, and the answer is recorded where the
-    sync workspace layer can read it (`docker port` lookups have no session)."""
+    dispatched in, a room runs in its own, and the answer is recorded where the
+    sync workspace layer can read it (`docker port` lookups have no session).
+
+    Named for what it now does. It used to climb `topics.parent_id` to find the
+    room, and a thread is not in that table — the climb would have found nothing
+    and fallen back to "a box of its own", which is one container per piece of
+    work instead of one per room, with nothing anywhere saying so.
+    """
     from app.core.config import settings
     from app.domain.agent.tmux_provider import TmuxChannel
 
@@ -242,8 +248,8 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
         assert await provider._room_id(project_id, room_id) == room_id
         # ...and it is now readable without a DB session.
         assert ws.room_for_topic(task_id) == room_id
-        # A topic of ANOTHER project can never be pulled into this room's box,
-        # even if the ids were somehow crossed: the walk verifies the project.
+        # A place of ANOTHER project can never be pulled into this room's box,
+        # even if the ids were somehow crossed: the lookup verifies the project.
         assert await provider._room_id(uuid.uuid4(), task_id) == task_id
     finally:
         settings.workspace_root = old_root
