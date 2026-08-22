@@ -1,24 +1,26 @@
-// 「这件事已经派出去了」—— 父话题时间线上的派生标记 (issue #314)。
+// 「这件事已经派出去了」—— 房间时间线上的派生标记 (issue #314)。
 //
-// `cheese split` 建一个子话题，然后就什么都不留了：它不往父话题写任何 block，
-// 请求体里也没有任何字段指向父话题的内容 (`SplitIn` 只有 title/created_by/brief)。
-// 于是父话题的时间线上，一件活被派出去这回事是完全无痕的 —— 房间里的人（和下一
+// `cheese split` 开一条支线，然后就什么都不留了：它不往房间主线写任何 block，
+// 请求体里也没有任何字段指向房间的内容 (`SplitIn` 只有 title/created_by/brief)。
+// 于是房间的时间线上，一件活被派出去这回事是完全无痕的 —— 房间里的人（和下一
 // 个进来的人）看不出第 N 项已经归别人了，就照着自己那份清单又做一遍。
 //
-// 所以标记只能**读时派生**，不能存：唯一还在的关系是子话题的 parent_id +
+// 所以标记只能**读时派生**，不能存：唯一还在的关系是这条支线的 room_id +
 // created_at。好处是不用改 split 的行为，而且对已经发生过的 split 立刻生效。
 //
 // 派生得出的和派生不出的，界限很硬：
 //   能 —— 「这个时刻，从这个房间派出去了《X》，去那边看」。
-//   不能 —— 「以下这几条消息 / 这一项待办不归这里了」。那需要一条从子话题指回
-//           父话题某个 block 的边，数据库里没有这条边。
-import type { Block, Topic } from '../cx_types'
+//   不能 —— 「以下这几条消息 / 这一项待办不归这里了」。那需要一条从支线指回
+//           房间某个 block 的边，数据库里没有这条边。
+import type { Block, RoomTask } from '../cx_types'
 
 // 时间线上一条派生出来的「已派出」行。
 export interface SplitMarker {
-  topicId: string
+  // 这条支线自己的 id —— 平台里一个「地点」就是用一个 id 定位的，所以这个 id
+  // 既能打开它，也能拿去调任何按地点寻址的接口。
+  taskId: string
   title: string
-  // 'active' | 'archived' | ... —— 派出去的活现在到哪一步了，直接取子话题的状态。
+  // 'open' | 'closed' —— 派出去的活现在到哪一步了，直接取这条支线的状态。
   status: string
   createdAt: string
 }
@@ -50,23 +52,21 @@ function at(iso: string | null | undefined): number {
   return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
 }
 
-// 一件活，不是一个房间。后端按层级分：根话题的孩子是房间（kind=topic），房间的
-// 孩子才是一件事（kind=task，历史值 subtopic）—— 见 topic/services.py::_child_kind。
-// 只有后者是「派出去的活」；在项目根的时间线上给每个房间标一行「已派出」是噪音。
-const WORK_KINDS = new Set(['task', 'subtopic'])
-
 /**
- * 本房间派出去的活 —— 直接子话题，按派出时间排序。
+ * 本房间派出去的活，按派出时间排序。
  *
- * 由「讨论升级 / 文档 🧩」生出来的子话题排除在外：那条路径已经在源 block 上留了
- * `upgraded_to_topic_id`，前端也已经把它渲染成「已升级为话题」链接了。同一件事再
- * 标一次就是重复。
+ * 不用再按 kind 挑了：调用方传进来的就是这个房间的支线（`GET /topics/{id}/tasks`），
+ * 而支线只有一种。以前那个 `WORK_KINDS` 过滤器存在，是因为「一件活」和「一个房间」
+ * 同住在 topics 表里、只能靠一列区分。
+ *
+ * 由「讨论升级 / 文档 🧩」生出来的支线排除在外：那条路径已经在源 block 上留了
+ * `upgraded_to_task_id`，前端也已经把它渲染成「已升级」链接了。同一件事再标一次
+ * 就是重复。
  */
-export function dispatchedChildren(parentTopicId: string | null | undefined, topics: readonly Topic[]): SplitMarker[] {
-  if (!parentTopicId) return []
-  return topics
-    .filter((t) => t.parent_id === parentTopicId && WORK_KINDS.has(t.kind) && !t.upgraded_from_block_id)
-    .map((t) => ({ topicId: t.id, title: t.title, status: t.status, createdAt: t.created_at }))
+export function dispatchedTasks(tasks: readonly RoomTask[]): SplitMarker[] {
+  return tasks
+    .filter((t) => !t.upgraded_from_block_id)
+    .map((t) => ({ taskId: t.id, title: t.title, status: t.status, createdAt: t.created_at }))
     .sort((a, b) => at(a.createdAt) - at(b.createdAt))
 }
 
@@ -75,11 +75,10 @@ export function dispatchedChildren(parentTopicId: string | null | undefined, top
  * 消息」之间。
  */
 export function placeSplitMarkers(
-  parentTopicId: string | null | undefined,
-  topics: readonly Topic[],
+  tasks: readonly RoomTask[],
   timeline: TimelineWindow
 ): SplitMarkerPlacement {
-  const markers = dispatchedChildren(parentTopicId, topics)
+  const markers = dispatchedTasks(tasks)
   if (!markers.length) return empty()
 
   const { blocks, hasMore } = timeline

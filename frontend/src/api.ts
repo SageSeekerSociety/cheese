@@ -27,6 +27,7 @@ import type {
   ProjectMemberRow,
   ProjectOverview,
   ReactionAgg,
+  RoomTask,
   SandboxImageInfo,
   Topic,
   TopicComputeProfile,
@@ -489,6 +490,20 @@ export function listTopics(
   if (opts?.sort) q.set('sort', opts.sort)
   if (opts?.order) q.set('order', opts.order)
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
+}
+
+export function listRoomTasks(
+  roomId: string,
+  // 每条支线最多带回多少块对话。标记只要支线本身，所以取 1 —— 不传的话后端会把
+  // 房间里每条支线的全部历史都吐回来（它自己的 docstring 说明了为什么没有默认上限）。
+  opts?: { limit?: number }
+): Promise<ListPayload<RoomTask & { blocks: Block[] }>> {
+  const q = new URLSearchParams()
+  if (opts?.limit != null) q.set('limit', String(opts.limit))
+  const query = q.toString() ? `?${q.toString()}` : ''
+  return request<ListPayload<RoomTask & { blocks: Block[] }>>(
+    `/topics/${encodeURIComponent(roomId)}/tasks${query}`
+  )
 }
 
 export function createTopic(

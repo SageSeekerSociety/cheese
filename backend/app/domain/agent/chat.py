@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
+from app.core.work_context import current_place
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
@@ -89,6 +90,7 @@ from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.place import PlaceResolver
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -1689,14 +1691,16 @@ class ChatService:
         which is the whole point of this call: the platform says it out loud.
         Returns the block payload, or None if the topic died."""
         async with self._sessions() as session:
-            topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            topic = await topics.get(topic_id)
-            if topic is None:
+            # The place, not the room: a turn failure inside a thread belongs in
+            # that thread, next to the work it interrupted.
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None:
                 return None
             block = await blocks.add(
-                project_id=topic.project_id,
-                topic_id=topic.id,
+                project_id=place.project_id,
+                topic_id=place.room_id,
+                task_id=place.task_id,
                 author="system",
                 author_type=AuthorType.system,
                 content=content,
@@ -2222,9 +2226,14 @@ class ChatService:
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            topic = await topics.get(topic_id)
-            if topic is None:
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None:
                 raise NotFoundError("Topic not found")
+            topic = place.room
+            # Every block written below lands in the place the message was sent
+            # to, thread and all — set once here so the writes below do not each
+            # have to remember to say so.
+            current_place.set((place.id, place.room_id, place.task_id))
             created_blocks: list[Block] = []
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
@@ -3327,15 +3336,27 @@ class ChatService:
             blocks = BlockRepository(session)
             memory = memory_store(session)
 
-            topic = await topics.get(topic_id)
-            if topic is None:
+            # WHERE this turn runs: a room, plus the thread inside it when the
+            # work has one. Resolved once and parked in `current_place`, because
+            # every block this turn writes has to know the same answer and asking
+            # per block would be a query per streamed event.
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None:
                 raise NotFoundError("Topic not found")
+            topic = place.room
+            current_place.set((place.id, place.room_id, place.task_id))
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on
             # the next summon (spec §7.1 所有消息 AI 都会收到), each tagged with
             # who said it so 芝士 can tell people apart in a group topic (§8.4).
-            history = await blocks.list_for_topic(topic_id)
+            #
+            # Scoped to the PLACE: a thread's turn must not be handed the room's
+            # main line as its own backlog, and the room must not be handed every
+            # thread's chatter.
+            history = await blocks.list_for_topic(
+                place.room_id, task_id=place.task_id
+            )
             pending = _pending_human_blocks(history)
             pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
@@ -3358,7 +3379,11 @@ class ChatService:
             is_private = topic.is_private
             private_owner = topic.private_owner
             acting_agent = await self._agent_handle(session, topic.id)
-            doc_root = None if is_private else await blocks.doc_root(topic.id)
+            doc_root = (
+                None
+                if is_private
+                else await blocks.doc_root(place.room_id, task_id=place.task_id)
+            )
             doc_text = doc_root.content if doc_root else None
             # Memory is retrieved against what this turn is actually about —
             # newest message first, since a turn is usually about the thing

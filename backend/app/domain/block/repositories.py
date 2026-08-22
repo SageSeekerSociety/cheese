@@ -246,20 +246,30 @@ class BlockRepository:
         await self._session.flush()
         return block
 
-    async def doc_root(self, topic_id: uuid.UUID) -> Block | None:
-        """The topic's canonical living-doc block (markdown blob, spec §2.2)."""
+    async def doc_root(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> Block | None:
+        """This PLACE's canonical living-doc block (markdown blob, spec §2.2).
+
+        The `task_id` half is load-bearing, not decoration: a room and every
+        thread in it now carry `topic_id` of the room, so without it the room's
+        document resolves to whichever doc block happens to be oldest — which
+        after the first split is a thread's task brief.
+        """
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.doc)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.doc)
             .order_by(Block.created_at)
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def list_doc_nodes(self, topic_id: uuid.UUID) -> list[Block]:
+    async def list_doc_nodes(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
         """The living doc's structured node tree (B1), in document order."""
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.doc_node)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.doc_node)
             .order_by(Block.struct_order)
         )
         return list((await self._session.scalars(stmt)).all())
@@ -287,7 +297,9 @@ class BlockRepository:
         )
         return {row for row in (await self._session.scalars(stmt)).all() if row}
 
-    async def list_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
+    async def list_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
         """Timeline view: blocks of a topic, oldest first (spec §5).
 
         Excludes doc_node tree blocks and inline comments — those belong to the
@@ -300,14 +312,16 @@ class BlockRepository:
         stmt = (
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                *self._in_place(topic_id, task_id),
                 Block.kind.not_in(self._NON_TIMELINE),
             )
             .order_by(Block.created_at, Block.id)
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def latest_for_topic(self, topic_id: uuid.UUID) -> Block | None:
+    async def latest_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> Block | None:
         """The newest block in the topic's timeline, or None for an empty topic.
 
         Same total order and same exclusions as `list_for_topic`, so "the last
@@ -318,7 +332,7 @@ class BlockRepository:
         stmt = (
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                *self._in_place(topic_id, task_id),
                 Block.kind.not_in(self._NON_TIMELINE),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -330,6 +344,7 @@ class BlockRepository:
         self,
         topic_id: uuid.UUID,
         *,
+        task_id: uuid.UUID | None = None,
         limit: int,
         before: Block | None = None,
         kinds: Collection[BlockKind] | None = None,
@@ -347,7 +362,7 @@ class BlockRepository:
         cursor could then skip or repeat the tied rows).
         """
         stmt = select(Block).where(
-            Block.topic_id == topic_id,
+            *self._in_place(topic_id, task_id),
             Block.kind.not_in(self._NON_TIMELINE),
         )
         # 现场 wants events and nothing else; narrowing HERE rather than in the
@@ -374,33 +389,39 @@ class BlockRepository:
         rows.reverse()  # callers render oldest-first, same as list_for_topic
         return BlockPage(items=rows, has_more=has_more)
 
-    async def count_for_topic(self, topic_id: uuid.UUID) -> int:
+    async def count_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> int:
         stmt = (
             select(func.count())
             .select_from(Block)
             .where(
-                Block.topic_id == topic_id,
+                *self._in_place(topic_id, task_id),
                 Block.kind.not_in(self._NON_TIMELINE),
             )
         )
         return int((await self._session.scalar(stmt)) or 0)
 
-    async def list_comments_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
+    async def list_comments_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
         """Inline comments (B4), oldest first; each anchors to a doc node via
         reply_to."""
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.comment)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.comment)
             .order_by(Block.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def latest_artifact(self, topic_id: uuid.UUID) -> Block | None:
+    async def latest_artifact(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> Block | None:
         """The topic's current preview (spec §9.1): the most recent artifact block
         芝士 pointed at. Newest wins — re-running `cheese artifact` repoints it."""
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.artifact)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.artifact)
             .order_by(Block.created_at.desc())
         )
         return (await self._session.scalars(stmt)).first()
