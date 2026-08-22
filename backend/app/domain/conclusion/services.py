@@ -138,7 +138,7 @@ class ConclusionCardService:
                 live,
                 status=ConclusionStatus.superseded,
                 by=SYSTEM_ACTOR,
-                reason="子话题在结算前重新回流了结论，这张卡作废",
+                reason="这条支线在结算前重新回流了结论，这张卡作废",
                 announce=False,
             )
         return await self._repo.add(
@@ -177,7 +177,7 @@ class ConclusionCardService:
         settlement: a merge that has to wait (or that conflicts) leaves the card
         accepted and gets picked up by `sweep_room_merges`.
 
-        归档是这里唯一可能欠下的动作：子话题还挂着一张等人的验收卡时，采信照做、
+        收起是这里唯一可能欠下的动作：那条支线还挂着一张等人的验收卡时，采信照做、
         回流照做，只把归档推迟到卡有结果之后（`_archive_subtopic`）。
         """
         self._require_open(card)
@@ -191,17 +191,17 @@ class ConclusionCardService:
         await self._archive_subtopic(card, by=by)
         return card
 
-    # ---- 提交进母话题那一个 PR ------------------------------------------
+    # ---- 提交进房间那一个 PR --------------------------------------------
 
     async def fold_into_room(self, card: ConclusionCard) -> dict:
-        """把子话题分支上的提交并进母话题的分支 —— 一个房间一条分支一个 PR。
+        """把一件活分支上的提交并进它所在房间的分支 —— 一个房间一条分支一个 PR。
 
-        子话题不是「更小的房间」，是房间里看得见的一条 subagent 线：上下文和
-        session 跟它走，房间、容器、PR 跟母话题走。所以它的产出不该自己开一个
-        PR，而该落进母话题手上那一个。
+        一件活不是「更小的房间」，是房间里看得见的一条 subagent 线：上下文和
+        session 跟它走，房间、容器、PR 跟房间走。所以它的产出不该自己开一个
+        PR，而该落进房间手上那一个。
 
-        三种情况不合，各有各的说法，**没有一种是默默算了**：母话题在等 CI
-        （`pr_open`，合了就把 CI 打回起点）、母话题工作区有人在改（人的未提交
+        三种情况不合，各有各的说法，**没有一种是默默算了**：房间在等 CI
+        （`pr_open`，合了就把 CI 打回起点）、房间工作区有人在改（人的未提交
         编辑绝不能被机器扫掉）、两条活改到了同一处（冲突）。前两种排队等下一轮
         扫描，第三种要人解——三种都会在房间里说一句。
         """
@@ -229,7 +229,7 @@ class ConclusionCardService:
                 {
                     "merged": False,
                     "deferred": True,
-                    "reason": "母话题的验收卡正在等 CI（PR 已开），"
+                    "reason": "房间的验收卡正在等 CI（PR 已开），"
                     "现在并进去会让整条 CI 队列从头重排",
                 },
             )
@@ -271,7 +271,7 @@ class ConclusionCardService:
                 project_id=card.project_id,
                 level=AlertLevel.strong,
                 kind=AlertKind.decision_request,
-                title=f"子话题「{sub.title}」的提交并不进本房间的分支：冲突",
+                title=f"「{sub.title}」的提交并不进本房间的分支：冲突",
                 body=markdown_preview(str(result.get("reason", "")), 200),
                 topic_id=room.id,
             )
@@ -289,9 +289,9 @@ class ConclusionCardService:
         )
 
     async def sweep_room_merges(self) -> list[uuid.UUID]:
-        """还没并进母话题分支的那些采信卡，再试一次 —— 排队的出口就是这里。
+        """还没并进房间分支的那些采信卡，再试一次 —— 排队的出口就是这里。
 
-        队列是**推导出来的**，不是存下来的：「这张采信卡的提交在不在母话题分支
+        队列是**推导出来的**，不是存下来的：「这张采信卡的提交在不在房间分支
         上」git 自己答得出来，所以既不需要新列也不需要迁移。磁盘上那张备忘只是
         让扫描跳过已经干完的卡（丢了就多问几次 git，不会答错）。
         """
@@ -342,7 +342,7 @@ class ConclusionCardService:
             else await TaskService(self._session).get(card.task_id)
         )
         if sub is None:
-            raise NotFoundError("子话题不存在")
+            raise NotFoundError("这条支线不存在")
         if sub.status == TaskStatus.closed:
             raise ValidationError("这条支线已经收起，补不了证据了——只能采信或升级")
         card.returned_count += 1
@@ -381,7 +381,7 @@ class ConclusionCardService:
             project_id=card.project_id,
             level=AlertLevel.strong,
             kind=AlertKind.decision_request,
-            title=f"子话题「{sub.title if sub else '?'}」的结论需要人拍板",
+            title=f"「{sub.title if sub else '?'}」的结论需要人拍板",
             body=markdown_preview(reason, 200),
             topic_id=card.receiver_topic_id,
         )
@@ -474,7 +474,7 @@ class ConclusionCardService:
         return await AcceptService(self._session).anybody_still_waiting([task_id])
 
     async def _defer_archive(self, card: ConclusionCard, sub: Task) -> None:
-        """记下"归档欠着"，并在子话题里说明为什么它还活着。
+        """记下"收起欠着"，并在那条支线里说明为什么它还开着。
 
         结论本身照常结算、照常回流——父话题读到的东西一个字都没少，欠下的只有
         归档这一个动作。
@@ -510,7 +510,7 @@ class ConclusionCardService:
     async def sweep_deferred_archives(
         self, *, now: datetime | None = None
     ) -> list[uuid.UUID]:
-        """把欠下的归档补上 —— "不留僵尸子话题"那一条就落在这里。
+        """把欠下的收起补上 —— "不留僵尸支线"那一条就落在这里。
 
         推迟不是取消。一张被推迟的卡带着 `ARCHIVE_DEFERRED` 这个哨兵，扫描每轮
         都来看一眼它欠的归档能不能落：
@@ -521,7 +521,7 @@ class ConclusionCardService:
           就重新受保护，窗口过完还没有新卡，归档在这里落下；
         - 卡还在**等人** → 什么都不做，这正是本次修复要保住的状态。
 
-        所以一个被推迟的子话题只可能停在两处：手上有一张活卡（有人正欠它一个
+        所以一条被推迟的支线只可能停在两处：手上有一张活卡（有人正欠它一个
         决定），或者还在重新递卡的宽限里。两者都是有界的，没有第三种停法。
         """
         moment = now or datetime.now(UTC)

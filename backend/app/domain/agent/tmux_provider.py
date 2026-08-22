@@ -20,7 +20,7 @@ Per turn:
 The tmux session is per topic and REUSED across turns, so the conversation stays
 continuous inside it (no --resume needed — the session IS the continuity).
 
-One box per ROOM, not per topic. A room's母话题 and every task split out of it
+One box per ROOM, not per place. A room's own line and every thread in it
 share a container and hold one tmux session each. This is the necessary half of
 "containers are never reaped": kept forever AND one per topic, the box count only
 ever climbs and 2GB apiece exhausts memory first; kept forever and one per room,

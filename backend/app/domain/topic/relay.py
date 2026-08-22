@@ -51,6 +51,9 @@ from app.domain.topic.services import TopicService
 MAX_RELAY_CHARS = 4000
 
 #: `target` 的别名：一条支线不用知道房间叫什么就能回话。
+#:
+#: 「母话题/父话题」留着是**认输入**，不是留旧形状：分身手里可能还带着老措辞的
+#: 记忆和习惯，把它们判成「没有这个地点」只会让人以为通道坏了。
 PARENT_ALIASES = frozenset({"parent", "母话题", "父话题", "房间", "上级", "up"})
 
 
@@ -416,7 +419,7 @@ def _submit_wake(
             submit=submit,
         )
 
-    line = "母话题追加了要求" if direction == RelayDirection.TO_CHILD else "子话题来信"
+    line = "房间追加了要求" if direction == RelayDirection.TO_CHILD else "支线来信"
     do_submit = submit if submit is not None else runner.submit
     do_submit(
         chat,

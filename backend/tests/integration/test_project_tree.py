@@ -298,7 +298,7 @@ def test_split_and_return_conclusion(client):
     # C4: the conclusion is also woven into the parent's living doc …
     doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
     assert doc is not None and "数据清洗完成" in doc["content"]
-    assert "子话题结论" in doc["content"]
+    assert "支线结论" in doc["content"]
     # … and the coordinator (本体) is notified.
     notifs = client.get(f"/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any("实现数据清洗" in n["title"] for n in notifs)

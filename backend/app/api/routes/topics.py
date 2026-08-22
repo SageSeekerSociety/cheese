@@ -1362,7 +1362,7 @@ async def clone_topic_from(
     and the SOURCE (whose conversation is being read out). A token alone is
     necessary-not-sufficient — access is checked per actor on each topic (§4).
     Only meaningful on backends with real session files (tmux/device); the sdk
-    backend returns a clear 422 (degrade to a fresh 子话题)."""
+    backend returns a clear 422 (degrade to dispatching fresh work)."""
     source_raw = (body.get("source_topic_id") or "").strip()
     if not source_raw:
         raise ValidationError("source_topic_id 必填")

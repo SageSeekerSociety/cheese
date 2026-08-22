@@ -924,11 +924,11 @@ class TopicService:
         instead forks the source's full conversation state so the target resumes
         exactly where the source is. Only the interactive backends (tmux/device)
         keep a real Claude session file on disk; the sdk backend has none, so
-        clone is unsupported there (start a fresh 子话题 instead — a graceful
+        clone is unsupported there (dispatch fresh work instead — a graceful
         degrade, not a silent no-op)."""
         if settings.agent_backend not in ("tmux", "device"):
             raise ValidationError(
-                "当前后端没有独立会话文件，无法克隆会话；请改用「拆子话题」新起会话"
+                "当前后端没有独立会话文件，无法克隆会话；请改用「拆活」新起会话"
             )
         target = await self.get_or_404(target_topic_id)
         source = await self.get_or_404(source_topic_id)
@@ -1202,7 +1202,7 @@ class TopicService:
             task_id=None,
             author=room_agent,
             author_type=AuthorType.ai,
-            content=f"【子话题结论｜{sub.title}】\n{conclusion}",
+            content=f"【支线结论｜{sub.title}】\n{conclusion}",
             kind=BlockKind.message,
             refs=[str(sub.id)],
         )
@@ -1211,7 +1211,7 @@ class TopicService:
         if room.status != TopicStatus.archived:
             await self._append_conclusion_section(
                 topic_id=room.id,
-                section=f"## 子话题结论：{sub.title}\n{conclusion}",
+                section=f"## 支线结论：{sub.title}\n{conclusion}",
                 author=room_agent,
             )
 
@@ -1220,7 +1220,7 @@ class TopicService:
             project_id=sub.project_id,
             level=AlertLevel.light,
             kind=AlertKind.change_alert,
-            title=f"子话题「{sub.title}」已完成",
+            title=f"「{sub.title}」已完成",
             body=markdown_preview(conclusion, 200),
             topic_id=room.id,
         )

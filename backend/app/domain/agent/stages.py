@@ -25,7 +25,7 @@ from app.domain.review.models import AcceptStatus
 class TopicStage(enum.StrEnum):
     """话题当前所处的流程阶段。值同时是 skill 的 scenario 标签后缀。"""
 
-    # 房间（root/topic）：它自己不带分支和验收卡，它的活是拆给子话题去做。
+    # 房间：它自己不带分支和验收卡，它的活是派成支线去做。
     delegating = "delegating"
     # 一件事正在做：有分支、还没递卡（或卡被打回后回到这里）。
     working = "working"

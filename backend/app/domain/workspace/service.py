@@ -477,7 +477,7 @@ def _ensure_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     jj 自动快照其改动；并行话题互不覆盖。导出一个 git 分支（`branch_for_place`）
     供采纳/diff——分支名与工作区目录名各自独立派生，见 `_topic_dirname`。
 
-    子话题从母话题的分支长出来 (`_fork_point`)：一个房间一条分支一个 PR。"""
+    一件活的分支从它所在房间的分支长出来 (`_fork_point`)：一个房间一条分支一个 PR。"""
     main = ensure_repo(project_id)
     _ensure_base_commit(main)  # a workspace needs a base commit to fork from
     branch = branch_for_place(topic_id)
@@ -659,7 +659,7 @@ def sandbox_session_dir(topic_id: uuid.UUID) -> str:
 
 # --- which box a topic runs in ----------------------------------------------
 #
-# A sandbox box is allocated per ROOM (the母话题 and every task split out of it
+# A sandbox box is allocated per ROOM (its own line and every thread in it
 # share one), so everything that reaches into "the topic's container" has to map
 # topic → room first. That mapping lives in the DB, and this module is
 # deliberately sync and DB-free — it is called from `docker port` lookups on the
@@ -1606,7 +1606,7 @@ def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
 def merge_subtopic_into_room(
     project_id: uuid.UUID, topic_id: uuid.UUID, room_topic_id: uuid.UUID
 ) -> dict:
-    """子话题的提交进母话题那一个 PR: fold a task's branch into the room's.
+    """一件活的提交进房间那一个 PR: fold a thread's branch into the room's.
 
     Called when the task's conclusion is 采信'd. From then on the room's branch
     — the one its accept card and its PR ride — carries the task's commits, so
@@ -1634,9 +1634,9 @@ def merge_subtopic_into_room(
     branch = branch_for_place(topic_id)
     room_branch = branch_for_place(room_topic_id)
     if branch == room_branch:
-        return {"merged": False, "noop": True, "reason": "子话题和母话题是同一条分支"}
+        return {"merged": False, "noop": True, "reason": "这件活和房间是同一条分支"}
     if not _branch_exists(repo, branch):
-        return {"merged": False, "noop": True, "reason": "子话题没有分支，没有提交要并"}
+        return {"merged": False, "noop": True, "reason": "这件活没有分支，没有提交要并"}
     # Materialising the room's workspace also guarantees it HAS a branch — a
     # room whose own 芝士 never committed anything has none until now.
     room_wt = _ensure_worktree(project_id, room_topic_id)
@@ -1649,13 +1649,13 @@ def merge_subtopic_into_room(
             "merged": False,
             "noop": True,
             "workspace_stale": not settled,
-            "reason": "这些提交已经在母话题分支上",
+            "reason": "这些提交已经在房间分支上",
         }
     if _jj(room_wt, "diff", "-s").strip():
         return {
             "merged": False,
             "deferred": True,
-            "reason": "母话题工作区有未提交的改动，合并排队等它落定",
+            "reason": "房间工作区有未提交的改动，合并排队等它落定",
         }
     commits = len(
         _git(repo, "rev-list", f"{room_branch}..{branch}").strip().splitlines()

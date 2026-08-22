@@ -14,7 +14,7 @@ from app.domain.conclusion.models import (
 )
 from app.domain.room_task.place import room_and_task
 
-#: 未结算 = 还欠某个话题/某一轮一个动作。`returned` 也算：子话题还得补证据。
+#: 未结算 = 还欠某个地点/某一轮一个动作。`returned` 也算：那条支线还得补证据。
 LIVE_STATES = (ConclusionStatus.open, ConclusionStatus.returned)
 
 
@@ -123,7 +123,7 @@ class ConclusionCardRepository:
         """采信了、但归档还欠着的卡（`ARCHIVE_DEFERRED` 那个哨兵值）。
 
         跨项目一把捞：这是个兜底扫描，量极小——只有"结论已采信 + 还挂着未决
-        验收卡"的子话题才会出现在这里，而它们同时也是有人正盯着的那几个。
+        验收卡"的支线才会出现在这里，而它们同时也是有人正盯着的那几个。
         """
         stmt = (
             select(ConclusionCard)
@@ -136,9 +136,9 @@ class ConclusionCardRepository:
         return list((await self._session.scalars(stmt)).all())
 
     async def list_accepted(self, *, limit: int) -> list[ConclusionCard]:
-        """采信过的卡，最近的在前 —— 「提交并进母话题分支」那条重试队列的输入。
+        """采信过的卡，最近的在前 —— 「提交并进房间分支」那条重试队列的输入。
 
-        队列本身不存库：一张卡还欠不欠合并，git 自己答得出来（提交在不在母话题
+        队列本身不存库：一张卡还欠不欠合并，git 自己答得出来（提交在不在房间
         分支上），所以这里只负责把候选捞出来，判读在 `room_branch` 里。`limit`
         是防跑飞的护栏而不是策略——真正把这条扫描压到近乎零成本的是磁盘上那张
         「这张卡合完了」的备忘，绝大多数候选连 git 都不用问就跳过了。

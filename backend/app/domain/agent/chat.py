@@ -237,7 +237,7 @@ def _persisted_eids(blocks: list[Block]) -> set[str]:
 # plus a short preview of its most telling argument. Stored in the event block as
 # "verb\npreview" (preview omitted when empty).
 _TOOL_VERB = {
-    "create_subtopic": "拆出子话题",
+    "create_subtopic": "派出一条支线",
     "update_doc": "更新文档",
     "remember": "记入记忆",
     "notify": "发送通知",
@@ -575,7 +575,7 @@ _CHEESE_RESOURCE = {
 # whoever the author is (用户拍板: 芝士不需要专属提示行).
 _ACTION_LABEL = {
     "decision": "记录了决策",
-    "topics": "更新了子话题",
+    "topics": "更新了这个房间的活",
     "milestone": "添加了里程碑",
     "accept": "提交了验收卡",
     "notify": "发送了通知",
@@ -1079,19 +1079,19 @@ def conclusion_digest_prompt(
         card_note = (
             "\n\n---\n"
             f"这条结论挂着一张结论卡 `{card_id}`。**默认采信**：你这一轮结束时"
-            f"它就自动采信、子话题随之归档{by}，你不需要做任何事。\n"
+            f"它就自动采信、那条支线随之收起{by}，你不需要做任何事。\n"
             "只有两种情况才动它：\n"
-            "- 缺一条关键证据、而子话题的上下文还热着 → "
+            "- 缺一条关键证据、而那条支线的上下文还热着 → "
             f'`cheese conclusion need-evidence {card_id} "要补什么"`'
             "（每张卡只能打回一次）；\n"
             "- 这个结论要以某个人的名义做出去 → "
             f'`cheese conclusion escalate {card_id} "要谁拍什么板"`。'
         )
     return (
-        "一个子话题刚回流了结论（原文如下，也已织进本话题实况文档末尾）。"
+        "一条支线刚回流了结论（原文如下，也已织进本话题实况文档末尾）。"
         "请消化它：\n"
         "1. 把实况文档整理成最新状态——结论的要点合并进对应章节，"
-        "别让「子话题结论」堆在文档末尾。\n"
+        "别让「支线结论」堆在文档末尾。\n"
         "2. 判断下一步：这个结论解锁了什么？需要继续拆活就拆（split 带 --brief），"
         "需要人拍板/验收就发通知或验收卡，整件事收尾了就说明结论。\n"
         "3. 在对话里用一两句话向大家报信（结论已在文档里，别复述全文）。\n\n"
