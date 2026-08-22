@@ -1151,19 +1151,25 @@ class TopicService:
         gives 回流 a receipt, a status and idempotency. The three side effects
         above are UNCHANGED; nothing about the old flow depends on the card.
         """
-        sub = await self.get_or_404(subtopic_id)
-        if sub.parent_id is None:
-            raise ValidationError("Topic has no parent to return a conclusion to")
-        parent = await self._repo.get(sub.parent_id)
+        place = await self.place_or_404(subtopic_id)
+        sub = place.task
+        if sub is None:
+            raise ValidationError("这是房间，不是一件活——房间没有可以回流的上级")
+        room = place.room
 
-        # 1) Conversation: a message in the parent referencing the sub-topic.
-        # Authored by the PARENT room's 芝士 — the conclusion lands in that room,
+        # 1) Conversation: a message on the ROOM's main line referencing the
+        # thread. Authored by the room's 芝士 — the conclusion lands in that room,
         # and a message from someone who is not in it reads as a ghost.
-        parent_agent = await self._members.resolve_agent_handle(sub.parent_id)
+        #
+        # `task_id=None` is the load-bearing part: the whole point of concluding
+        # is that the room sees it, and writing it into the thread would leave it
+        # exactly where everyone who was not doing the work already was not looking.
+        room_agent = await self._members.resolve_agent_handle(room.id)
         block = await self._blocks.add(
             project_id=sub.project_id,
-            topic_id=sub.parent_id,
-            author=parent_agent,
+            topic_id=room.id,
+            task_id=None,
+            author=room_agent,
             author_type=AuthorType.ai,
             content=f"【子话题结论｜{sub.title}】\n{conclusion}",
             kind=BlockKind.message,
@@ -1171,11 +1177,11 @@ class TopicService:
         )
 
         # 2) Living doc: append the conclusion as a section (unless frozen, §6.3).
-        if parent is not None and parent.status != TopicStatus.archived:
+        if room.status != TopicStatus.archived:
             await self._append_conclusion_section(
-                topic_id=sub.parent_id,
+                topic_id=room.id,
                 section=f"## 子话题结论：{sub.title}\n{conclusion}",
-                author=parent_agent,
+                author=room_agent,
             )
 
         # 3) Notify 本体 (the coordinator) that the 分身 finished.
@@ -1185,15 +1191,15 @@ class TopicService:
             kind=AlertKind.change_alert,
             title=f"子话题「{sub.title}」已完成",
             body=markdown_preview(conclusion, 200),
-            topic_id=sub.parent_id,
+            topic_id=room.id,
         )
 
-        # 4) 结论卡: the receipt. Opening it can't fail the 回流 — a parent that
+        # 4) 结论卡: the receipt. Opening it can't fail the 回流 — a room that
         # was already archived has no turn left to settle a card, so it gets the
         # three side effects above and no card.
         card = None
-        if parent is not None and parent.status != TopicStatus.archived:
+        if room.status != TopicStatus.archived:
             card = await ConclusionCardService(self._session).open_for_conclusion(
-                sub=sub, parent=parent, conclusion=conclusion
+                sub=sub, room=room, conclusion=conclusion
             )
         return block, card

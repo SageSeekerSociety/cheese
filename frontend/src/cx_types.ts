@@ -99,6 +99,8 @@ export interface Block {
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
+  // 这一块被派成了哪条支线（房间里的「讨论升级」走这条）。两者只会有一个非空。
+  upgraded_to_task_id?: string | null
   created_at: string
 }
 

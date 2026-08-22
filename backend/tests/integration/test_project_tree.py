@@ -61,8 +61,10 @@ def test_upgrade_block_to_topic(client):
     assert r.status_code == 200
     _wait_work_idle()  # kickoff runs in the background; don't race its writes
     new_topic = r.json()["data"]
-    assert new_topic["parent_id"] == topic["id"]
-    assert new_topic["kind"] == "task"  # work inside a room, not a nested room
+    # Work inside the room, not a room of its own: upgrading a message in a room
+    # dispatches a thread, and a thread names its room rather than a parent in a
+    # tree — work does not nest, so there is no tree left to be in.
+    assert new_topic["room_id"] == topic["id"]
 
     # The upgraded block IS the task: preset verbatim as the new topic's doc.
     doc = client.get(f"/topics/{new_topic['id']}/doc").json()["data"]
@@ -89,9 +91,9 @@ def test_upgrade_block_to_topic(client):
 
 
 def test_upgrade_doc_node_to_subtopic(client):
-    # 自上而下拆解 (eval A2): a paragraph in the parent doc is upgraded into a
-    # nested subtopic, and the node stays in place as a live-ref (its
-    # upgraded_to_topic_id points at the new subtopic).
+    # 自上而下拆解 (eval A2): a paragraph in the room's doc is upgraded into a
+    # thread of work, and the node stays in place as a live-ref (its
+    # upgraded_to_task_id points at the new thread).
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "推荐系统"}
@@ -113,13 +115,16 @@ def test_upgrade_doc_node_to_subtopic(client):
     assert r.status_code == 200
     _wait_work_idle()
     sub = r.json()["data"]
-    assert sub["parent_id"] == topic["id"]
-    assert sub["kind"] == "task"
+    assert sub["room_id"] == topic["id"]
 
     # The doc node is now a live-ref to the subtopic, in place.
     nodes2 = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
     ref = next(n for n in nodes2 if n["id"] == target["id"])
-    assert ref["upgraded_to_topic_id"] == sub["id"]
+    # The link points at the THREAD now. Two columns rather than one holding
+    # either kind of id: both are real foreign keys, and a single untyped column
+    # would be a pointer the database cannot check into a table it cannot name.
+    assert ref["upgraded_to_task_id"] == sub["id"]
+    assert ref["upgraded_to_topic_id"] is None
     assert ref["content"] == "特征工程"  # text unchanged; only the link is added
 
 

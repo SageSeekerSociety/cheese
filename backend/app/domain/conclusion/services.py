@@ -64,7 +64,9 @@ from app.domain.conclusion.models import (
     ConclusionStatus,
 )
 from app.domain.conclusion.repositories import ConclusionCardRepository
-from app.domain.topic.models import Topic, TopicKind, TopicStatus
+from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.repositories import TaskRepository
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.workspace import service as ws
 
@@ -108,9 +110,9 @@ class ConclusionCardService:
     # ---- 开卡 ---------------------------------------------------------
 
     async def open_for_conclusion(
-        self, *, sub: Topic, parent: Topic, conclusion: str
+        self, *, sub: Task, room: Topic, conclusion: str
     ) -> ConclusionCard:
-        """Open (or re-open) the card for a sub-topic's conclusion.
+        """Open (or re-open) the card for a thread's conclusion.
 
         Three cases, and they are what gives `conclude` idempotency:
         - no live card → a fresh open card;
@@ -120,7 +122,7 @@ class ConclusionCardService:
         """
         now = datetime.now(UTC)
         deadline = now + timedelta(minutes=DIGEST_TIMEOUT_MINUTES)
-        live = await self._repo.live_for_topic(sub.id)
+        live = await self._repo.live_for_task(sub.id)
         if live is not None and live.status == ConclusionStatus.returned:
             live.conclusion = conclusion
             live.status = ConclusionStatus.open
@@ -141,8 +143,12 @@ class ConclusionCardService:
             )
         return await self._repo.add(
             project_id=sub.project_id,
-            topic_id=sub.id,
-            receiver_topic_id=parent.id,
+            # Both ends are the same room now: the thread that concluded, and the
+            # room it concluded TO. What used to be two topics is one place with
+            # a thread key.
+            topic_id=room.id,
+            task_id=sub.id,
+            receiver_topic_id=room.id,
             conclusion=conclusion,
             digest_deadline_at=deadline,
         )
@@ -199,18 +205,20 @@ class ConclusionCardService:
         编辑绝不能被机器扫掉）、两条活改到了同一处（冲突）。前两种排队等下一轮
         扫描，第三种要人解——三种都会在房间里说一句。
         """
-        sub = await self._topics.get(card.topic_id)
         room = await self._topics.get(card.receiver_topic_id)
-        if sub is None or room is None:
+        if room is None:
             return {"skipped": "话题不存在"}
-        # 只有「房间里的一件活」共用房间的分支。房间自己（root 的儿子）照旧从
-        # 基线分支长出来、照旧靠采纳并进 main —— 把它并进根话题是没有意义的。
+        # 只有「房间里的一件活」共用房间的分支。一张没有支线键的卡不是一件活的卡
+        # （房间自己的结论没有分支要并），直接记成 DONE。
         #
         # 记成 DONE 而不是直接返回：这个判断的答案永远不会变，不记的话每一轮扫描
         # 都要把它重新问一遍，而它的数量是「项目里所有房间级采信卡」，只增不减。
-        if sub.kind not in (TopicKind.task, TopicKind.subtopic):
+        if card.task_id is None:
             room_branch.write_state(card.id, room_branch.DONE)
             return {"skipped": "不是房间里的一件活"}
+        sub = await TaskRepository(self._session).get(card.task_id)
+        if sub is None:
+            return {"skipped": "话题不存在"}
         from app.domain.review.services import AcceptService  # 局部 import：避免成环
 
         if await AcceptService(self._session).pr_is_in_flight(room.id):
@@ -231,7 +239,7 @@ class ConclusionCardService:
         return await self._record_fold(card, sub, room, result)
 
     async def _record_fold(
-        self, card: ConclusionCard, sub: Topic, room: Topic, result: dict
+        self, card: ConclusionCard, sub: Task, room: Topic, result: dict
     ) -> dict:
         """Remember what happened, and say it in the room if it is news.
 
@@ -411,80 +419,51 @@ class ConclusionCardService:
 
     # ---- 归档 ---------------------------------------------------------
 
-    async def settle_descendants_before_archive(
-        self, topic_id: uuid.UUID, *, by: str
-    ) -> list[ConclusionCard]:
-        """归档是级联的：直接 archive 一个还挂着未结算下级结论卡的话题，会把孙子
-        连人带卡一起冻住（归档后实况文档定格，卡再也没人能结算）。规则是「有未结算
-        下级结论卡时先结算再归档」——这里就是那个「先结算」。"""
-        descendants = await self._descendant_ids(topic_id)
-        cards = await self._repo.list_live_under(descendants)
-        # 打回中的卡也一起收：子话题马上要被归档，没人会再来补证据了。
-        for card in cards:
-            await self._settle(
-                card,
-                status=ConclusionStatus.accepted,
-                by=by,
-                reason="上级话题归档前自动结算（默认采信）",
-                announce=True,
-            )
-        return cards
-
-    async def _descendant_ids(self, topic_id: uuid.UUID) -> list[uuid.UUID]:
-        out: list[uuid.UUID] = []
-        frontier = [topic_id]
-        while frontier:
-            current = frontier.pop()
-            for child in await self._topics.list_children(current):
-                out.append(child.id)
-                frontier.append(child.id)
-        return out
+    # 「归档前先结算孙子的卡」那一整套没有了：工作不嵌套，一条支线底下不会再挂
+    # 一条支线，所以级联归档要防的那个场面（孙子连人带卡一起被冻住）在结构上就不
+    # 存在了。留着一个只会遍历空集合的遍历，读的人会以为它还在防什么。
 
     async def _archive_subtopic(self, card: ConclusionCard, *, by: str) -> None:
-        """采信即归档 —— 除非子话题还挂着一张等人的验收卡，那就先欠着。
+        """采信即收起这条支线 —— 除非它还挂着一张等人的验收卡，那就先欠着。
 
-        为什么要欠着：归档会把非终态的验收卡一并收敛掉
-        (`review/archive.py`)，而默认采信是**平台自己**发起的（父话题那一轮
+        为什么要欠着：收起会把非终态的验收卡一并收敛掉
+        (`review/archive.py`)，而默认采信是**平台自己**发起的（房间那一轮
         结束 / 30 分钟超时），于是"分身做完 → conclude → 递卡"这个平台两头都在
-        鼓励的组合，会在验收人还没看见卡的时候把卡作废掉，工作也就断在那里
-        （归档话题递不出新卡）。真正错的不是归档收卡那条策略，而是这里：
-        采信不该在还有人要拍板的时候动手归档。
+        鼓励的组合，会在验收人还没看见卡的时候把卡作废掉，工作也就断在那里。
+        真正错的不是收卡那条策略，而是这里：采信不该在还有人要拍板的时候动手。
+
+        收起不是冻结：`status=closed` 只影响默认展开和排序，支线照常能追加对话。
+        房间归档之后都还能说话，一条支线更没有理由做得比房间更死。
         """
-        sub = await self._topics.get(card.topic_id)
-        if sub is None or sub.status == TopicStatus.archived:
+        if card.task_id is None:
+            return
+        sub = await TaskRepository(self._session).get(card.task_id)
+        if sub is None or sub.status == TaskStatus.closed:
             return
         if await self._somebody_is_still_deciding(sub.id):
             await self._defer_archive(card, sub)
             return
         await self._archive_now(sub, by=by)
 
-    async def _archive_now(self, sub: Topic, *, by: str) -> None:
-        """Import is local: TopicService opens cards, so a module-level import
-        here would be circular."""
-        from app.domain.topic.services import TopicService
+    async def _archive_now(self, sub: Task, *, by: str) -> None:
+        sub.status = TaskStatus.closed
+        sub.closed_at = datetime.now(UTC)
+        await self._session.flush()
 
-        # 顺序: 先结算下级卡, 再归档 —— 反过来孙子的卡会随级联一起冻死。
-        await self.settle_descendants_before_archive(sub.id, by=by)
-        await TopicService(self._session).archive(sub.id, by=by)
+    async def _somebody_is_still_deciding(self, task_id: uuid.UUID) -> bool:
+        """这条支线还有没有一张卡等着人决议。
 
-    async def _somebody_is_still_deciding(self, topic_id: uuid.UUID) -> bool:
-        """这个子话题、连同归档会一起带走的后代，还有没有一张卡等着人决议。
+        判据本身问的是验收卡那个领域（`AcceptService.anybody_still_waiting`）——
+        哪些状态算"还等着"是它的知识，这边自己去数状态迟早会跟收敛的那张表走散。
 
-        后代一起算：`TopicService.archive` 是级联的，孙子话题的卡会在同一次归档
-        里被收敛掉，所以孙子那张等人的卡同样构成"先别归档"的理由。判据本身问的是
-        验收卡那个领域（`AcceptService.anybody_still_waiting`）——哪些状态算"还
-        等着"是它的知识，这边自己去数状态迟早会跟归档收敛的那张表走散。
+        以前这里还要把「归档会连带走的后代」算进来。不用了：工作不嵌套，一条支线
+        没有后代。
         """
         from app.domain.review.services import AcceptService  # 局部 import：避免成环
 
-        scope = await self._archive_scope(topic_id)
-        return await AcceptService(self._session).anybody_still_waiting(scope)
+        return await AcceptService(self._session).anybody_still_waiting([task_id])
 
-    async def _archive_scope(self, topic_id: uuid.UUID) -> list[uuid.UUID]:
-        """归档这个话题会连带走的全部话题。"""
-        return [topic_id, *await self._descendant_ids(topic_id)]
-
-    async def _defer_archive(self, card: ConclusionCard, sub: Topic) -> None:
+    async def _defer_archive(self, card: ConclusionCard, sub: Task) -> None:
         """记下"归档欠着"，并在子话题里说明为什么它还活着。
 
         结论本身照常结算、照常回流——父话题读到的东西一个字都没少，欠下的只有
@@ -496,10 +475,11 @@ class ConclusionCardService:
         await self._session.flush()
         await self._blocks.add(
             project_id=card.project_id,
-            topic_id=sub.id,
+            topic_id=sub.room_id,
+            task_id=sub.id,
             author=SYSTEM_ACTOR,
             author_type=AuthorType.system,
-            content="结论已被父话题采信，这个话题暂不归档",
+            content="结论已被房间采信，这条支线暂不收起",
             kind=BlockKind.event,
             meta={
                 "platform": True,
@@ -545,17 +525,21 @@ class ConclusionCardService:
         self, card: ConclusionCard, *, now: datetime
     ) -> bool:
         """一张卡的归档待办能不能结清。True = 这一轮把话题归档了。"""
-        sub = await self._topics.get(card.topic_id)
-        if sub is None or sub.status != TopicStatus.active:
-            # 多半是验收卡被采纳了（采纳即归档），待办自己消解了。消掉哨兵，
-            # 这张卡从此退出扫描——包括人后来手动取消归档的情况：那是人的决定，
+        sub = (
+            None
+            if card.task_id is None
+            else await TaskRepository(self._session).get(card.task_id)
+        )
+        if sub is None or sub.status != TaskStatus.open:
+            # 多半是验收卡被采纳了（采纳即收起），待办自己消解了。消掉哨兵，
+            # 这张卡从此退出扫描——包括人后来手动重开它的情况：那是人的决定，
             # 平台不该拿一条早就结算完的结论把它再关一次。
             await self._settle_deferral(card)
             return False
         from app.domain.review.services import AcceptService  # 局部 import：避免成环
 
         accepts = AcceptService(self._session)
-        scope = await self._archive_scope(sub.id)
+        scope = [sub.id]
         if await accepts.anybody_still_waiting(scope):
             return False
         decided_at = await accepts.latest_decision_at(scope)

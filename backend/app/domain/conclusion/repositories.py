@@ -26,6 +26,7 @@ class ConclusionCardRepository:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
+        task_id: uuid.UUID | None = None,
         receiver_topic_id: uuid.UUID,
         conclusion: str,
         digest_deadline_at: datetime,
@@ -33,6 +34,7 @@ class ConclusionCardRepository:
         card = ConclusionCard(
             project_id=project_id,
             topic_id=topic_id,
+            task_id=task_id,
             receiver_topic_id=receiver_topic_id,
             conclusion=conclusion,
             digest_deadline_at=digest_deadline_at,
@@ -45,8 +47,8 @@ class ConclusionCardRepository:
     async def get(self, card_id: uuid.UUID) -> ConclusionCard | None:
         return await self._session.get(ConclusionCard, card_id)
 
-    async def live_for_topic(self, topic_id: uuid.UUID) -> ConclusionCard | None:
-        """The sub-topic's card that still needs something to happen to it.
+    async def live_for_task(self, task_id: uuid.UUID) -> ConclusionCard | None:
+        """This thread's card that still needs something to happen to it.
 
         At most one exists by construction (opening a new card supersedes the
         previous one), so the newest live row IS the live card.
@@ -54,7 +56,7 @@ class ConclusionCardRepository:
         stmt = (
             select(ConclusionCard)
             .where(
-                ConclusionCard.topic_id == topic_id,
+                ConclusionCard.task_id == task_id,
                 ConclusionCard.status.in_(LIVE_STATES),
             )
             .order_by(ConclusionCard.created_at.desc())
