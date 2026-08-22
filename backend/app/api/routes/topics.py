@@ -240,7 +240,13 @@ async def get_topic(
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     resolver: ActorResolverDep,
 ) -> dict:
-    """One topic's header.
+    """One place's header — a room's, or one thread's.
+
+    Answers for either, because one id is how the whole platform addresses a
+    place and a caller holding one has no way to know which kind it got. A
+    thread comes back as a task (`room_id`, `owner_handle`, `status`), a room as
+    a topic; the shapes differ because the things differ, and pretending a
+    thread has a roster or an archive state would be worse than saying so.
 
     Authorized like the routes beside it (`/comments`, `/doc`). It was not, and
     the sibling routes' having been is what made that a gap rather than a
@@ -254,13 +260,16 @@ async def get_topic(
     Every OTHER endpoint returning a TopicOut leaves them at their default.
     """
     service = TopicService(db)
-    topic = await service.get_or_404(topic_id)
+    place = await service.place_or_404(topic_id)
+    topic = place.room
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
+    if place.task is not None:
+        return ok(TaskOut.model_validate(place.task).model_dump(mode="json"))
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
     return ok(_topic_out(topic, runner.running_topic_ids(), last_activity, relevance))
@@ -1458,24 +1467,23 @@ async def return_conclusion(
     the parent to digest it (the return leg of the subagent loop: in Claude
     Code the parent resumes when the Task result arrives; here the parent 芝士
     runs a turn to weave the conclusion in and decide what's next)."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    service = TopicService(db)
+    place = await service.place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
-    service = TopicService(db)
-    topic = await service.get_or_404(topic_id)
     # Friendly "@名字/@话题名" in the conclusion → structured tokens BEFORE it
-    # lands in the parent (chips render + notifications fire there).
+    # lands in the room (chips render + notifications fire there).
     conclusion = await canonicalize_refs(
-        db, topic.project_id, body.conclusion, exclude_topic_id=topic_id
+        db, place.project_id, body.conclusion, exclude_topic_id=place.room_id
     )
     block, card = await service.return_conclusion(
         subtopic_id=topic_id, conclusion=conclusion
     )
-    parent = await service.get_or_404(block.topic_id)
+    parent = place.room
     out = BlockOut.model_validate(block).model_dump(mode="json")
     wake = parent.status != TopicStatus.archived
     # 结论卡·阶段一: the card id has to reach the digest turn, otherwise the

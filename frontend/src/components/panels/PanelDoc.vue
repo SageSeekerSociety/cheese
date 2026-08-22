@@ -319,7 +319,10 @@ const LiveRefBadges = Extension.create({
 function refreshLiveRefBadges(nodes: Block[]) {
   const next = new Map<number, string>()
   nodes.forEach((n, i) => {
-    if (n.upgraded_to_topic_id) next.set(i, n.upgraded_to_topic_id)
+    // 房间里的文档节点升级出来的是一条支线；私聊里的才是房间。取到哪个都是一个
+    // 「地点 id」，打开的方式一样。
+    const target = n.upgraded_to_task_id || n.upgraded_to_topic_id
+    if (target) next.set(i, target)
   })
   liveRefIndex = next
   const view = editor.value?.view
