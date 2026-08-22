@@ -290,24 +290,31 @@ async def list_topic_blocks(
     - `?limit=N`                  → the newest N blocks (chat is bottom-anchored)
     - `?limit=N&before=<block_id>` → the N blocks immediately older than that one
     """
-    topic = await TopicService(db).get_or_404(topic_id)
+    # The PLACE: this id may name a thread, and a thread's timeline is its own.
+    # Authorization is on the ROOM either way — a thread has no roster of its
+    # own, which is the whole difference between it and a room.
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
-    await TopicService(db).get_or_404(topic_id)
     repo = BlockRepository(db)
     cursor: Block | None = None
     if before is not None:
         cursor = await repo.get(before)
         # An unknown cursor must not silently degrade into "newest N" — that
-        # would hand the caller a duplicate page it can't distinguish.
-        if cursor is None or cursor.topic_id != topic_id:
+        # would hand the caller a duplicate page it can't distinguish. A cursor
+        # from a different THREAD is just as wrong as one from another room.
+        if (
+            cursor is None
+            or cursor.topic_id != place.room_id
+            or cursor.task_id != place.task_id
+        ):
             raise NotFoundError("游标消息不存在")
     if limit is None:
-        blocks = await repo.list_for_topic(topic_id)
+        blocks = await repo.list_for_topic(place.room_id, task_id=place.task_id)
         if cursor is not None:
             blocks = [
                 b
@@ -316,7 +323,9 @@ async def list_topic_blocks(
             ]
         has_more = False
     else:
-        page_result = await repo.page_for_topic(topic_id, limit=limit, before=cursor)
+        page_result = await repo.page_for_topic(
+            place.room_id, task_id=place.task_id, limit=limit, before=cursor
+        )
         blocks, has_more = page_result.items, page_result.has_more
     total = await repo.count_for_topic(topic_id)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
@@ -590,15 +599,16 @@ async def list_topic_docs(
 ) -> dict:
     """Document-tree view of a topic: the living doc's structured node tree
     (B1, spec §5) in document order."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
-    await TopicService(db).get_or_404(topic_id)
-    nodes = await BlockRepository(db).list_doc_nodes(topic_id)
+    nodes = await BlockRepository(db).list_doc_nodes(
+        place.room_id, task_id=place.task_id
+    )
     items = [BlockOut.model_validate(b).model_dump(mode="json") for b in nodes]
     return ok(page(items, len(items)))
 
@@ -701,12 +711,12 @@ async def get_topic_progress(
     """进度层 (#187): 芝士's checklist for this topic, as of the last turn to
     touch it. Read on topic open — between turns there is no WS stream to carry
     it, and "做到哪了" has to be visible without summoning anyone."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
     items, updated_at = await TopicService(db).get_progress(topic_id)
     return ok(
@@ -723,13 +733,18 @@ async def get_topic_doc(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The topic's single living doc (spec §2.2 docs-out)."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    """This place's single living doc (spec §2.2 docs-out).
+
+    Two levels exist and both are real: a room's document is the shared picture,
+    a thread's is that one piece of work's brief and then its status. They are
+    told apart by the id in the path.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
     doc = await TopicService(db).get_doc(topic_id)
     if doc is None:

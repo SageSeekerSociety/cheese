@@ -74,10 +74,7 @@ export function dispatchedTasks(tasks: readonly RoomTask[]): SplitMarker[] {
  * 把标记放到时间线窗口里：每条标记落在「比它早的最后一条消息」和「比它晚的第一条
  * 消息」之间。
  */
-export function placeSplitMarkers(
-  tasks: readonly RoomTask[],
-  timeline: TimelineWindow
-): SplitMarkerPlacement {
+export function placeSplitMarkers(tasks: readonly RoomTask[], timeline: TimelineWindow): SplitMarkerPlacement {
   const markers = dispatchedTasks(tasks)
   if (!markers.length) return empty()
 

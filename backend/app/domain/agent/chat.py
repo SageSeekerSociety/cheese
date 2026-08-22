@@ -90,7 +90,7 @@ from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task.place import PlaceResolver
+from app.domain.room_task.place import PlaceResolver, room_and_task
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -2532,8 +2532,11 @@ class ChatService:
         turn end would lose exactly the case this exists for (the turn dies)."""
         try:
             async with self._sessions() as session:
+                # The checklist belongs to the PLACE that is working, not to the
+                # room it hangs in — two threads in one room keep two lists.
+                room_id, task_id = await room_and_task(session, topic_id)
                 await TopicProgressRepository(session).save(
-                    topic_id, items, turn_id=turn_id
+                    room_id, items, task_id=task_id, turn_id=turn_id
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001 — never fail a turn over its checklist
@@ -3450,7 +3453,9 @@ class ChatService:
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
-            progress_row = await TopicProgressRepository(session).get(topic_id)
+            progress_row = await TopicProgressRepository(session).get(
+                place.room_id, task_id=place.task_id
+            )
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]

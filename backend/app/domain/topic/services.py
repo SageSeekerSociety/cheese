@@ -965,8 +965,10 @@ class TopicService:
         checklist and no checklist are the same thing to a reader, and making
         the caller handle a null row buys nothing.
         """
-        await self.get_or_404(topic_id)
-        row = await TopicProgressRepository(self._session).get(topic_id)
+        place = await self.place_or_404(topic_id)
+        row = await TopicProgressRepository(self._session).get(
+            place.room_id, task_id=place.task_id
+        )
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at
@@ -988,11 +990,13 @@ class TopicService:
         '编辑了文档' event. A rejected write that still announced itself would
         put a change in the room that is not in the document.
         """
-        topic = await self.get_or_404(topic_id)
-        # 归档后文档定格 (spec §6.3): a frozen topic's doc is read-only.
+        place = await self.place_or_404(topic_id)
+        topic = place.room
+        # 归档后文档定格 (spec §6.3): a frozen room's docs are read-only, its
+        # threads' included — freezing the room is what freezing the work面 means.
         if topic.status == TopicStatus.archived:
             raise ValidationError("话题已归档，文档已定格，不能再编辑")
-        doc = await self._blocks.doc_root(topic_id)
+        doc = await self._blocks.doc_root(place.room_id, task_id=place.task_id)
         if doc is not None:
             updated = await self._blocks.set_doc_content(
                 doc, content, expected_version=expected_version
@@ -1005,7 +1009,8 @@ class TopicService:
                 raise _doc_conflict(0)
             doc = await self._blocks.add(
                 project_id=topic.project_id,
-                topic_id=topic_id,
+                topic_id=place.room_id,
+                task_id=place.task_id,
                 author=author,
                 author_type=AuthorType.human,
                 content=content,
@@ -1024,7 +1029,8 @@ class TopicService:
         actor = "芝士" if looks_like_agent_handle(author) else f"<@{author}>"
         await self._blocks.add(
             project_id=topic.project_id,
-            topic_id=topic_id,
+            topic_id=place.room_id,
+            task_id=place.task_id,
             author=author,
             author_type=AuthorType.system,
             content=f"{actor} 编辑了文档",
