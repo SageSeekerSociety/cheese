@@ -302,30 +302,47 @@ class TopicRepository:
 
 
 class TopicProgressRepository:
-    """进度层 storage: the topic's checklist, one row per topic (#187)."""
+    """进度层 storage: one checklist per place — a room's main line, or a
+    thread in it (#187)."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get(self, topic_id: uuid.UUID) -> TopicProgress | None:
-        return await self._session.get(TopicProgress, topic_id)
+    async def get(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> TopicProgress | None:
+        stmt = select(TopicProgress).where(
+            TopicProgress.topic_id == topic_id,
+            TopicProgress.task_id.is_(None)
+            if task_id is None
+            else TopicProgress.task_id == task_id,
+        )
+        return (await self._session.scalars(stmt)).first()
 
     async def save(
         self,
         topic_id: uuid.UUID,
         items: list[dict],
         *,
+        task_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
     ) -> TopicProgress:
-        """Overwrite this topic's checklist (upsert).
+        """Overwrite this place's checklist (upsert).
 
         Current state, not history — the conversation timeline is where history
         lives. Callers hand over a fresh list each time; the row is rewritten so
         a reader never sees a half-applied checklist.
+
+        Looked up by (room, thread) rather than by primary key: `topic_id` used
+        to BE the key and cannot be any more, because a thread's row is
+        identified by the pair and a primary key cannot hold the NULL that means
+        "the room's own main line".
         """
-        row = await self._session.get(TopicProgress, topic_id)
+        row = await self.get(topic_id, task_id=task_id)
         if row is None:
-            row = TopicProgress(topic_id=topic_id, items=[], turn_id=turn_id)
+            row = TopicProgress(
+                topic_id=topic_id, task_id=task_id, items=[], turn_id=turn_id
+            )
             self._session.add(row)
         # Rebind rather than mutate: SQLAlchemy does not track in-place edits of
         # a plain JSON column, so an appended item would silently not be saved.

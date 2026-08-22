@@ -8,7 +8,7 @@ from sqlalchemy import Text, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.work_context import current_work_id
+from app.core.work_context import current_thread_id, current_work_id
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
@@ -41,6 +41,7 @@ class BlockRepository:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
+        task_id: uuid.UUID | None = None,
         author: str,
         author_type: AuthorType,
         content: str,
@@ -59,6 +60,12 @@ class BlockRepository:
         # ambient turn id set from the X-Cheese-Turn header (R4).
         if turn_id is None:
             turn_id = current_work_id.get()
+        # Same shape, same reason: a `cheese` command run inside a thread posts
+        # through a handler that never saw the thread key. The ambient value is
+        # set once per turn; passing `task_id` explicitly always wins, which is
+        # what lets a test build a thread's block without a turn around it.
+        if task_id is None:
+            task_id = current_thread_id.get()
         # Explicit null means "tracked and still pending". Without that marker,
         # legacy compatibility has to infer consumption from the last AI block;
         # a newer, receipted mid-turn message could then move that positional
@@ -71,6 +78,7 @@ class BlockRepository:
         block = Block(
             project_id=project_id,
             topic_id=topic_id,
+            task_id=task_id,
             author=author,
             author_type=author_type,
             content=content,
@@ -92,6 +100,22 @@ class BlockRepository:
 
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
+
+    @staticmethod
+    def _in_place(topic_id: uuid.UUID, task_id: uuid.UUID | None):
+        """Rows belonging to one place: a room's own main line, or one thread.
+
+        Every timeline query needs this and none of them needed it before, when
+        a piece of work was a room and `topic_id` alone said everything. It is a
+        helper rather than an inlined pair of predicates because forgetting the
+        `task_id` half does not fail — it quietly answers for the room's main
+        line, which for a room read is right and for a thread read is a bug that
+        renders someone else's conversation.
+        """
+        return (
+            Block.topic_id == topic_id,
+            Block.task_id.is_(None) if task_id is None else Block.task_id == task_id,
+        )
 
     async def has_eid(self, topic_id: uuid.UUID, eid: str) -> bool:
         """Whether this topic already materialized a hook event id."""
