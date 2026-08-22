@@ -1328,7 +1328,7 @@ class AcceptService:
         jj commit — local-only (no network), used to decide whether a re-push
         to the PR branch is needed before touching GitHub at all. Deliberately
         built from `workspace.service`'s existing public helpers
-        (ensure_repo/branch_for_topic/snapshot_worktree) rather than adding a
+        (ensure_repo/branch_for_place/snapshot_worktree) rather than adding a
         new one there — this feature's touch scope is review/ + oauth/ only.
         None if the repo/branch genuinely doesn't exist yet (nothing to push)."""
         import subprocess
@@ -1340,7 +1340,7 @@ class AcceptService:
         except ValidationError:
             pass  # no workspace/jj state yet — nothing pending to fold
         repo_path = ws.ensure_repo(project_id)
-        branch = ws.branch_for_topic(topic_id)
+        branch = ws.branch_for_place(topic_id)
         result = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "--verify", "-q", branch],
             capture_output=True,
@@ -2863,7 +2863,7 @@ class AcceptService:
         if tokens is None or parsed is None:
             return None, ""  # App unconfigured / upstream changed since PR opened
         client = GitHubPRClient(*parsed, tokens)
-        branch = ws.branch_for_topic(topic.id)
+        branch = ws.branch_for_place(topic.id)
 
         try:
             # Someone may have handled the PR on GitHub directly — respect it.

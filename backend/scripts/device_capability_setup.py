@@ -88,7 +88,7 @@ async def main() -> int:
     print(f"PROJECT={project.id}")
     print(f"TOPIC={topic_id}")
     print(f"TOKEN={scoped}")
-    print(f"BRANCH={ws.branch_for_topic(topic_id)}")
+    print(f"BRANCH={ws.branch_for_place(topic_id)}")
     return 0
 
 

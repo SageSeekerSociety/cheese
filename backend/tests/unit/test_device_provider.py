@@ -752,7 +752,7 @@ async def test_every_device_is_told_where_to_clone_from():
     """The launcher's clone/push block is inert without these two env vars, so the
     wiring is the thing that has to be tested — the block itself can be perfect
     and the machine still starts in an empty dir."""
-    from app.domain.workspace.service import branch_for_topic
+    from app.domain.workspace.service import branch_for_place
 
     class RecordingHub(FakeHub):
         def __init__(self) -> None:
@@ -778,7 +778,7 @@ async def test_every_device_is_told_where_to_clone_from():
     )
 
     assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
-    assert hub.env["CHEESE_GIT_BRANCH"] == branch_for_topic(topic)
+    assert hub.env["CHEESE_GIT_BRANCH"] == branch_for_place(topic)
 
 
 # --- release_topic: freeing a done topic's screen (the leak this fixes) --------

@@ -362,10 +362,10 @@ def _reset_client():
 def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
     """The REAL current head of a topic's local git branch — used by the
     repush tests below to prove the platform actually reads real git state
-    (via the same public ensure_repo/branch_for_topic helpers production code
+    (via the same public ensure_repo/branch_for_place helpers production code
     uses), not a value we made up in the test."""
     repo_path = ws.ensure_repo(project_id)
-    branch = ws.branch_for_topic(topic_id)
+    branch = ws.branch_for_place(topic_id)
     return subprocess.run(
         ["git", "-C", str(repo_path), "rev-parse", branch],
         capture_output=True,
@@ -626,7 +626,7 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
     branch (the platform's own `push_topic_branch_for_github_pr` was only
     ever called once, at PR-open time). This exercises the REAL local git
     plumbing that now detects and re-pushes it: `ensure_repo`/
-    `branch_for_topic`/`snapshot_worktree` run for real against a real
+    `branch_for_place`/`snapshot_worktree` run for real against a real
     jj-colocated repo. Only the actual network hop to github.com is faked
     (the sandbox has no route there — see docs/topics for that constraint);
     the fake still computes the pushed head_sha via a real `git rev-parse`,

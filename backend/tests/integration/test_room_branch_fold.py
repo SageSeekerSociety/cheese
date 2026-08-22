@@ -60,7 +60,7 @@ def _branch_files(pid: str, topic_id: str) -> set[str]:
             "ls-tree",
             "-r",
             "--name-only",
-            ws.branch_for_topic(uuid.UUID(topic_id)),
+            ws.branch_for_place(uuid.UUID(topic_id)),
         ],
         cwd=repo,
         capture_output=True,

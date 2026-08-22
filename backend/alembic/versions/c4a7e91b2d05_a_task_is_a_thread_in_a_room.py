@@ -32,7 +32,7 @@ keeps.
 
 `branch_name` is NOT a verbatim column copy. `topics.branch_name` has no writer
 anywhere in the app — the branch a workspace actually sits on is derived,
-`branch_for_topic(id)` → `topic/<first 8 hex>` — so copying the column would
+`branch_for_place(id)` → `topic/<first 8 hex>` — so copying the column would
 carry over a NULL for every row. This stores the value the code uses, and keeps
 an explicit column value if one was ever set.
 
