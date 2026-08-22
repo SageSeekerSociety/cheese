@@ -40,7 +40,7 @@ from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
@@ -586,6 +586,32 @@ class TopicService:
         return topic
 
     async def _archive_children(self, topic: Topic, *, by: str) -> None:
+        """Closing a place closes what is inside it.
+
+        Two kinds of inside, and they are not the same thing. Rooms nest one
+        level under the root, so the recursion below still applies there. Threads
+        do not nest and are not `topics` rows at all — closing the room closes
+        them because a piece of work with no room has no context and no way back,
+        and the cards they are still waiting on have to be settled with them
+        (an unresolved card on a frozen place is one nobody can ever act on).
+        """
+        for task in await TaskService(self._session).threads_for_room(
+            topic.id, limit=0
+        ):
+            thread = task[0]
+            if thread.status == TaskStatus.closed:
+                continue
+            thread.status = TaskStatus.closed
+            thread.closed_at = datetime.now(UTC)
+            from app.domain.review.archive import close_cards_for_archived_topic
+
+            await close_cards_for_archived_topic(
+                self._session,
+                topic_id=thread.id,
+                project_id=thread.project_id,
+                topic_title=thread.title,
+                by=by,
+            )
         children = await self._repo.list_children(topic.id)
         for child in children:
             if child.status == TopicStatus.archived:

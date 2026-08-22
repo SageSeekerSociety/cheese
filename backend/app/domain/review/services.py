@@ -60,6 +60,9 @@ from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task.models import Task
+from app.domain.room_task.place import PlaceResolver
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
@@ -559,10 +562,39 @@ class AcceptService:
         self._machines = MachineService(session)
 
     async def _topic_or_404(self, topic_id: uuid.UUID) -> Topic:
-        topic = await self._topics.get(topic_id)
-        if topic is None:
+        """The ROOM a place id names — a card is read in a room either way.
+
+        `topic_id` here is a place id and is usually a thread's: a card is what a
+        piece of work ends in. Everything this service does with the answer —
+        rendering, notifying, the branch it pushes — belongs to the room, so the
+        room is what it returns; which thread the card is FOR is on the card.
+        """
+        place = await PlaceResolver(self._session).resolve(topic_id)
+        if place is None:
             raise NotFoundError("Topic not found")
-        return topic
+        return place.room
+
+    async def _stamp_delivery(
+        self, card: AcceptCard, topic: Topic, *, by: str | None, at: datetime | None
+    ) -> None:
+        """Mark what was delivered — the THREAD when the card is a thread's.
+
+        交付完成 ≠ 这个地方结束 (#442 decision 1): this is the delivery marker and
+        nothing else; `status` is untouched and putting a place away stays a
+        person's decision.
+
+        Which row carries it matters: a room accumulates work forever, so
+        stamping the room would say "this room was delivered" every time any one
+        piece of work in it was, and the next reader cannot tell which. Passing
+        `by=None` clears it (撤回采纳).
+        """
+        target: Topic | Task = topic
+        if card.task_id is not None:
+            thread = await TaskService(self._session).get(card.task_id)
+            if thread is not None:
+                target = thread
+        target.accepted_by = by
+        target.accepted_at = at
 
     async def _card_or_404(self, card_id: uuid.UUID) -> AcceptCard:
         card = await self._repo.get(card_id)
@@ -1298,8 +1330,7 @@ class AcceptService:
 
         # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
         # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
-        topic.accepted_by = decided_by
-        topic.accepted_at = now
+        await self._stamp_delivery(card, topic, by=decided_by, at=now)
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -2474,8 +2505,7 @@ class AcceptService:
         notes.record(card, None, f"{headline}；{settled}" if headline else settled)
         await self._release_billed_compute(topic)
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
-        topic.accepted_by = by
-        topic.accepted_at = now
+        await self._stamp_delivery(card, topic, by=by, at=now)
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
@@ -3021,8 +3051,7 @@ class AcceptService:
         await self._release_billed_compute(topic)
 
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
-        topic.accepted_by = decided_by
-        topic.accepted_at = now
+        await self._stamp_delivery(card, topic, by=decided_by, at=now)
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -3080,8 +3109,7 @@ class AcceptService:
         # 撤回采纳不改写归档状态，那是人的决定（取消归档）。以前这里要把话题拉回
         # active，是因为采纳会顺手归档；采纳不再归档之后，一张卡的撤销没有理由
         # 覆盖某个人「把这个话题收起来」的动作。
-        topic.accepted_by = None
-        topic.accepted_at = None
+        await self._stamp_delivery(card, topic, by=None, at=None)
 
         await self._session.flush()
         await self._session.refresh(card)
