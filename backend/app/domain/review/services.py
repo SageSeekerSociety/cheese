@@ -844,34 +844,35 @@ class AcceptService:
         算 PR 在途」是这张状态机的知识。
         """
         return bool(
-            await self._repo.list_live_for_topics(
+            await self._repo.list_live_for_places(
                 [topic_id], statuses=(AcceptStatus.pr_open,)
             )
         )
 
-    async def anybody_still_waiting(self, topic_ids: list[uuid.UUID]) -> bool:
-        """这些话题里，还有没有一张卡等着人决议 —— 归档前必须问的那一句。
+    async def anybody_still_waiting(self, place_ids: list[uuid.UUID]) -> bool:
+        """这些地点里，还有没有一张卡等着人决议 —— 收起/归档前必须问的那一句。
 
         归档会把非终态的卡当场收敛掉（`review/archive.py`），所以任何**平台自己
         发起**的归档（结论卡默认采信就是）都得先问这一句，否则会把一张验收人还
         没看见的卡作废掉。判据（哪些状态算"还等着"）留在本领域，调用方不该自己
         去数状态——这正是 `close_cards_for_archived_topic` 收敛的那一张表。
 
-        话题是一组而不是一个：归档是级联的，孙子话题的卡会跟着一起被收掉。
+        一组而不是一个：归档一个房间会把它里面的活一起收起，那些活的卡同样会
+        被收掉，所以它们同样构成「先别动手」的理由。
         """
         return bool(
-            await self._repo.list_live_for_topics(
-                topic_ids, statuses=archive.OPEN_CARD_STATUSES
+            await self._repo.list_live_for_places(
+                place_ids, statuses=archive.OPEN_CARD_STATUSES
             )
         )
 
-    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
-        """这些话题上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
+    async def latest_decision_at(self, place_ids: list[uuid.UUID]) -> datetime | None:
+        """这些地点上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
 
         给"卡决议之后留一个重新递卡的窗口"用：驳回的意思是回去改了再来，而归档
         话题递不出新卡，所以窗口从这一刻起算。
         """
-        return await self._repo.latest_decision_at(topic_ids)
+        return await self._repo.latest_decision_at(place_ids)
 
     async def reviewer_topic_ids(
         self, topic_ids: list[uuid.UUID], reviewer_handle: str

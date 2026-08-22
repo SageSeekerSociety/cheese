@@ -308,7 +308,9 @@ class ConclusionCardService:
                 continue
             result = await self.fold_into_room(card)
             if result.get("merged"):
-                folded.append(card.topic_id)
+                # The THREAD whose commits landed — `topic_id` is the room, and
+                # a caller told "the room folded" cannot say which work did.
+                folded.append(card.task_id or card.topic_id)
         return folded
 
     async def need_evidence(
@@ -526,7 +528,7 @@ class ConclusionCardService:
         archived: list[uuid.UUID] = []
         for card in await self._repo.list_archive_deferred():
             if await self._discharge_deferred_archive(card, now=moment):
-                archived.append(card.topic_id)
+                archived.append(card.task_id or card.topic_id)
         return archived
 
     async def _discharge_deferred_archive(
