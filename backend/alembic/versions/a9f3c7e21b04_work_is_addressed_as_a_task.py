@@ -148,6 +148,19 @@ def upgrade() -> None:
     for table in _THREADED:
         _add_task_id(table)
 
+    # Where a message was dispatched INTO work. Its sibling
+    # `upgraded_to_topic_id` keeps naming the case that still makes a room:
+    # upgrading out of a private chat, which is not in the topic tree.
+    op.add_column("blocks", sa.Column("upgraded_to_task_id", sa.Uuid(), nullable=True))
+    op.create_foreign_key(
+        "fk_blocks_upgraded_to_task_id",
+        "blocks",
+        "tasks",
+        ["upgraded_to_task_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+
     # `topic_progress` and `webhook_tokens` were keyed BY the topic.
     _surrogate_key("topic_progress")
     _surrogate_key("webhook_tokens")
@@ -205,11 +218,13 @@ def upgrade() -> None:
             "WHERE t.id = alerts.topic_id"
         )
     )
-    # A block dispatched INTO work now points at the thread, not a topic row
-    # that is about to stop existing.
+    # A block dispatched INTO work points at the thread now. Moved across
+    # rather than dropped: that link is what makes the message where the work
+    # was asked for still navigate to it.
     bind.execute(
         sa.text(
-            "UPDATE blocks SET upgraded_to_topic_id = NULL "
+            "UPDATE blocks SET upgraded_to_task_id = upgraded_to_topic_id, "
+            "upgraded_to_topic_id = NULL "
             "WHERE upgraded_to_topic_id IN (SELECT id FROM tasks)"
         )
     )
@@ -279,6 +294,9 @@ def downgrade() -> None:
         op.drop_constraint(f"{table}_pkey", table, type_="primary")
         op.drop_column(table, "id")
         op.create_primary_key(f"{table}_pkey", table, ["topic_id"])
+
+    op.drop_constraint("fk_blocks_upgraded_to_task_id", "blocks", type_="foreignkey")
+    op.drop_column("blocks", "upgraded_to_task_id")
 
     for table in _THREADED:
         op.drop_index(f"ix_{table}_task_id", table_name=table)

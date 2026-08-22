@@ -1295,8 +1295,8 @@ async def split_topic(
     ):
         prior = await idem.stored_result(db, key)
         return ok(prior or {"skipped": True})
-    topic = await service.split_to_subtopic(
-        parent_topic_id=topic_id,
+    task = await service.dispatch_task(
+        place_id=topic_id,
         title=body.title,
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
@@ -1308,15 +1308,15 @@ async def split_topic(
         # behaves exactly as it did before.
         triggered_by=runner.turn_author_for(topic_id),
     )
-    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    out = TaskOut.model_validate(task).model_dump(mode="json")
     if key is not None:
         await idem.record_result(db, key, out)
     # Commit BEFORE kicking off: the 分身's first turn runs in the background
-    # with its own session and must see the sub-topic + its brief doc. The
+    # with its own session and must see the thread + its brief doc. The
     # idempotency key commits in this same transaction, so a crash between the
-    # commit and the kickoff cannot produce a SECOND child on resume.
+    # commit and the kickoff cannot produce a SECOND thread on resume.
     await db.commit()
-    runner.submit_kickoff(chat, topic.id)
+    runner.submit_kickoff(chat, task.id)
     return ok(out)
 
 
@@ -1810,18 +1810,28 @@ async def upgrade_block(
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
-    """讨论升级：upgrade a block into its own topic (eval A1).
+    """讨论升级：upgrade a block into a place of its own (eval A1).
 
-    Same mechanics as /split: the upgraded block is preset as the new topic's
+    Same mechanics as /split: the upgraded block is preset as the new place's
     task-brief doc, and its 分身 kicks off automatically (it also names the
-    topic on that first turn — upgraded topics start untitled)."""
-    topic, created = await TopicService(db).upgrade_block_to_topic(
+    place on that first turn — upgraded places start untitled).
+
+    A message in a room becomes a THREAD of work in that room; a message in a
+    private chat becomes a room, because private chats are not in the topic tree
+    and a thread there would be one nobody else could open. The response says
+    which by carrying either a task or a topic.
+    """
+    place, created = await TopicService(db).upgrade_block_to_place(
         block_id=block_id, created_by=body.created_by
     )
-    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    out = (
+        TaskOut.model_validate(place.task).model_dump(mode="json")
+        if place.task is not None
+        else TopicOut.model_validate(place.room).model_dump(mode="json")
+    )
     # Commit BEFORE kicking off (the 分身's turn uses its own session); an
     # idempotent re-upgrade (created=False) must not kick the 分身 again.
     await db.commit()
     if created:
-        get_work_runner().submit_kickoff(chat, topic.id)
+        get_work_runner().submit_kickoff(chat, place.id)
     return ok(out)

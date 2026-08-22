@@ -23,7 +23,7 @@ for those.
 
 Accountable is not the same as sole contributor. A room can change hands — one
 person opens it, it stalls, someone else picks it up and the sub-topics split out
-of THEIR turns belong to them (`TopicService.split_to_subtopic`). The person who
+of THEIR turns belong to them (`TopicService.dispatch_task`). The person who
 asked in the first place still did something, so they come back as
 `Co-authored-by:`; see `coauthor_handles`.
 
@@ -173,7 +173,7 @@ async def requester_handle(session: Any, topic: "Topic") -> str | None:
     those attributions silently degraded: the PR opened as ``cheesex-app[bot]``,
     its body said ``Requested-by: cheese-a7a0268b``, and the commits carried no
     ``Co-authored-by`` at all (PR #500, #504). The roster already knows better —
-    ``TopicService.split_to_subtopic`` walks a ladder (the splitter if human, else
+    ``TopicService.dispatch_task`` walks a ladder (the splitter if human, else
     the human whose turn the split came out of, else the parent room's owner, else
     the project's) precisely to seed a real human as the child's owner. This reads
     that answer instead of re-deriving it.

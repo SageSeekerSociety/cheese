@@ -36,6 +36,9 @@ from app.domain.membership.services import MemberService
 from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
+from app.domain.room_task.models import Task
+from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.room_task.repositories import TaskRepository
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import (
     SortOrder,
@@ -70,28 +73,31 @@ def _as_utc(when: datetime | None) -> datetime | None:
     return when.replace(tzinfo=UTC)
 
 
-def _child_kind(parent: Topic) -> TopicKind:
-    """A child of the root is a room; anything below a room is a piece of work.
+def _require_room(parent: Topic) -> None:
+    """Rooms nest exactly one level: only the root has rooms under it.
 
-    Rooms nest exactly one level. Work does not nest at all — a task cannot be
-    split into sub-tasks, which is the same call Claude Code's agent teams make
-    (a teammate cannot spawn teammates). Splitting work further means another
-    task in the same room, not a deeper tree.
+    What used to be below a room is not a `topics` row at all any more — it is a
+    thread (`dispatch_task`). So there is no longer a kind to derive here, only
+    a placement to refuse: a room under a room would be a place with no way to
+    end and nothing that ends in it.
     """
-    return TopicKind.topic if parent.kind == TopicKind.root else TopicKind.task
+    if parent.kind != TopicKind.root:
+        raise ValidationError("房间之下是「一件活」，不是另一个房间——用拆活")
 
 
-def _bind_room_branch(
-    *, child_id: uuid.UUID, parent_id: uuid.UUID | None, kind: TopicKind
-) -> None:
+def _bind_room_branch(*, child_id: uuid.UUID, parent_id: uuid.UUID | None) -> None:
     """一个房间一条分支：一件活的分支从它所在房间的分支长出来，采信时再并回去。
 
     Rooms are unaffected — they fork the base branch and reach main through
     采纳, as they always did. Recorded the instant the row is created, because
     the fork point is chosen once, when the jj workspace is materialised
     (`workspace.service._ensure_worktree`), and nothing can move it afterwards.
+
+    No kind check any more: the only caller is the one that opens a thread, so
+    the question "is this child a piece of work" is answered by which function
+    you are in rather than by re-deriving it from a column.
     """
-    if parent_id is None or kind not in (TopicKind.task, TopicKind.subtopic):
+    if parent_id is None:
         return
     ws.bind_branch_parent(child_id, parent_id)
 
@@ -267,7 +273,7 @@ class TopicService:
             parent = await self._repo.get(parent_id)
             if parent is None:
                 raise NotFoundError("Parent topic not found")
-            kind = _child_kind(parent)
+            _require_room(parent)
         # An explicit agent is checked to be this project's; NULL means "the
         # project's default", which follows the project if that default changes
         # later — a copy taken now would silently stop following it.
@@ -290,8 +296,8 @@ class TopicService:
         # Phase-0), would leave the room OWNERLESS — seed() deliberately skips
         # "cheese"/None as owner — and then nobody can manage its roster, and
         # every sub-topic split beneath it inherits the same emptiness
-        # (split_to_subtopic falls back to the PARENT's owner). Nearly the same
-        # ladder as split_to_subtopic, which has one rung this does not: a split
+        # (dispatch_task falls back to the PARENT's owner). Nearly the same
+        # ladder as dispatch_task, which has one rung this does not: a split
         # happens DURING somebody's turn, so it can ask who is driving. Creating a
         # topic is a standalone act with nobody to ask.
         await self._members.seed(
@@ -331,7 +337,7 @@ class TopicService:
         "Is the creator 芝士" spans the whole agent handle namespace, not the bare
         ``cheese`` string: each 分身 creates under its own ``cheese-<topic hex>``
         handle, and a string match would make the 分身 the room's owner — the one
-        thing this chain exists to prevent (same rule as split_to_subtopic)."""
+        thing this chain exists to prevent (same rule as dispatch_task)."""
         if created_by and not looks_like_agent_handle(created_by):
             return created_by
         if parent_id is not None:
@@ -641,99 +647,132 @@ class TopicService:
         await self._session.flush()
         return topic
 
-    async def upgrade_block_to_topic(
+    async def upgrade_block_to_place(
         self, *, block_id: uuid.UUID, created_by: str | None = None
-    ) -> tuple[Topic, bool]:
-        """讨论升级 (eval A1): turn a block into its own topic; the original
+    ) -> tuple[Place, bool]:
+        """讨论升级 (eval A1): turn a block into a place of its own; the original
         position becomes a live link. The upgraded block itself is the task
-        statement, preset (with a parent-doc snapshot) as the new topic's
-        living doc; the 分身's auto-kickoff writes its own opening — same
-        mechanics as split, no canned template.
+        statement, preset (with a room-doc snapshot) as the new place's living
+        doc; the 分身's auto-kickoff writes its own opening — same mechanics as
+        dispatch, no canned template.
 
-        Returns (topic, created): created=False on an idempotent re-upgrade,
-        so the caller doesn't kick the 分身 off twice."""
+        WHICH place depends on where the block is, and the two answers are not
+        interchangeable:
+
+        - in a room, the message becomes a piece of WORK — a thread in the same
+          room. That is what upgrading a message has always meant in practice
+          ("this needs doing"), and it no longer costs a room to say it.
+        - in a private chat, it becomes a real room under the project root.
+          Private chats are not in the topic tree (`list_for_project` hides
+          them), so a thread there would be a thread nobody but its owner could
+          ever open.
+
+        Returns (place, created): created=False on an idempotent re-upgrade, so
+        the caller doesn't kick the 分身 off twice."""
         block = await self._blocks.get(block_id)
         if block is None:
             raise NotFoundError("Block not found")
-        # Idempotent: a second 升级 on the same block just returns the topic it
+        places = PlaceResolver(self._session)
+        # Idempotent: a second 升级 on the same block just returns the place it
         # already created (so a double-click navigates instead of erroring).
-        if block.upgraded_to_topic_id is not None:
-            existing = await self._repo.get(block.upgraded_to_topic_id)
+        for existing_id in (block.upgraded_to_task_id, block.upgraded_to_topic_id):
+            if existing_id is None:
+                continue
+            existing = await places.resolve(existing_id)
             if existing is not None:
                 return existing, False
         parent = await self._repo.get(block.topic_id)
         if parent is None:
             raise NotFoundError("Parent topic not found")
-        # 归档后工作面冻结 (spec §6.3) — consistent with split/edit_doc.
+        # 归档后工作面冻结 (spec §6.3) — consistent with dispatch/edit_doc.
         if parent.status == TopicStatus.archived:
             raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
 
-        # 私聊不是话题树的父节点 (spec §1): upgrading a block out of a private
-        # chat lands a real topic under the project root, not under the chat
-        # (which list_for_project hides → would be an invisible orphan).
         project = await self._projects.get(block.project_id)
-        parent_id = parent.id
-        kind = _child_kind(parent)
-        if parent.is_private:
-            root_id = project.root_topic_id if project else None
-            if root_id is not None:
-                parent_id = root_id
-                kind = TopicKind.topic
+        # Parent doc snapshot only from a real room — never copy a private
+        # chat's doc into a public place.
+        parent_doc = (
+            None if parent.is_private else await self._blocks.doc_root(parent.id)
+        )
+        brief = _brief_doc(
+            child_title=PLACEHOLDER_TITLE,
+            parent_title=parent.title,
+            brief=None,
+            parent_doc=parent_doc.content if parent_doc else None,
+            created_by=created_by,
+            source_block=block.content,
+        )
 
-        new_topic = await self._repo.add(
+        if not parent.is_private:
+            task = await TaskRepository(self._session).add(
+                project_id=block.project_id,
+                room_id=parent.id,
+                title=PLACEHOLDER_TITLE,
+                owner_handle=await self._resolve_owner(
+                    created_by,
+                    project_id=block.project_id,
+                    parent_id=parent.id,
+                    project_owner=project.owner_handle if project else None,
+                ),
+                created_by=created_by,
+                # Same agent as the room the block came out of — 升级 continues a
+                # conversation that already had one, and handing it to a
+                # different agent would file what it learns in a pool the
+                # original never reads.
+                agent_instance_id=parent.agent_instance_id,
+            )
+            task.upgraded_from_block_id = block.id
+            _bind_room_branch(child_id=task.id, parent_id=parent.id)
+            await self._blocks.set_upgraded_to_place(block, task_id=task.id)
+            await self._seed_brief_doc(parent, brief, task_id=task.id)
+            return Place(room=parent, task=task), True
+
+        # 私聊不是话题树的父节点 (spec §1).
+        root_id = project.root_topic_id if project else None
+        new_room = await self._repo.add(
             project_id=block.project_id,
             title=PLACEHOLDER_TITLE,
-            parent_id=parent_id,
-            kind=kind,
+            parent_id=root_id,
+            kind=TopicKind.topic,
             created_by=created_by,
             upgraded_from_block_id=block.id,
-            # Same agent as the room the block came out of — 升级 continues a
-            # conversation that already had one, and handing it to a different
-            # agent would file what it learns in a pool the original never reads.
             agent_instance_id=parent.agent_instance_id,
         )
-        _bind_room_branch(child_id=new_topic.id, parent_id=parent_id, kind=kind)
-        # Same fallback ladder as create()/split_to_subtopic — 升级 is usually the
+        # Same fallback ladder as create()/dispatch_task — 升级 is usually the
         # 分身's own suggestion, and this route does not resolve an actor at all
         # (it trusts body.created_by, which the web UI leaves empty when its
         # session token is missing). Passing that straight to seed() — which drops
         # None and every agent handle — was the last path still minting ownerless
-        # rooms after create()/split were fixed.
+        # rooms after create()/dispatch were fixed.
         await self._members.seed(
-            new_topic.id,
+            new_room.id,
             owner_handle=await self._resolve_owner(
                 created_by,
                 project_id=block.project_id,
-                parent_id=parent_id,
+                parent_id=root_id,
                 project_owner=project.owner_handle if project else None,
             ),
         )
-        await self._blocks.set_upgraded_to_topic(block, new_topic.id)
-        # Parent doc snapshot only from a real topic — never copy a private
-        # chat's doc into a public topic.
-        parent_doc = (
-            None if parent.is_private else await self._blocks.doc_root(parent.id)
-        )
-        await self._seed_brief_doc(
-            new_topic,
-            _brief_doc(
-                child_title=PLACEHOLDER_TITLE,
-                parent_title=parent.title,
-                brief=None,
-                parent_doc=parent_doc.content if parent_doc else None,
-                created_by=created_by,
-                source_block=block.content,
-            ),
-        )
-        return new_topic, True
+        await self._blocks.set_upgraded_to_place(block, topic_id=new_room.id)
+        await self._seed_brief_doc(new_room, brief)
+        return Place(room=new_room), True
 
-    async def _seed_brief_doc(self, topic: Topic, content: str) -> None:
-        """Preset a newborn topic's living doc with its task brief. Author is
+    async def _seed_brief_doc(
+        self, topic: Topic, content: str, *, task_id: uuid.UUID | None = None
+    ) -> None:
+        """Preset a newborn place's living doc with its task brief. Author is
         `system`: the platform assembled it from existing text — nothing here
-        speaks as 芝士 (the 分身's kickoff turn writes the real opening)."""
+        speaks as 芝士 (the 分身's kickoff turn writes the real opening).
+
+        `task_id` is what makes this the THREAD's document rather than a second
+        document in the room. Both levels exist on purpose — the room's is the
+        shared picture, the thread's is this one piece of work's brief and then
+        its status — and they are told apart by exactly this key.
+        """
         doc = await self._blocks.add(
             project_id=topic.project_id,
             topic_id=topic.id,
+            task_id=task_id,
             author="system",
             author_type=AuthorType.system,
             content=content,
@@ -741,55 +780,45 @@ class TopicService:
         )
         await self._sync_doc_nodes(doc, content)
 
-    async def split_to_subtopic(
+    async def dispatch_task(
         self,
         *,
-        parent_topic_id: uuid.UUID,
+        place_id: uuid.UUID,
         title: str,
         created_by: str | None = None,
         brief: str | None = None,
         triggered_by: str | None = None,
-    ) -> Topic:
-        """从上往下拆解 (eval A2): split a todo into a sub-topic under a topic.
+    ) -> Task:
+        """从上往下拆解 (eval A2): open a new thread of work in a room.
 
-        The child is born with a TASK BRIEF as its living doc (分身靠文档保持
+        The thread is born with a TASK BRIEF as its living doc (分身靠文档保持
         一致, spec §8.4): the splitter's `brief` plus a verbatim snapshot of the
-        parent's living doc. No canned opening message anymore — the 分身's
+        ROOM's living doc. No canned opening message anymore — the 分身's
         auto-kickoff first turn (routes/topics.py) writes its own opening
         (复述确认), because 语义内容必须由 AI 生成 (see CLAUDE.md).
 
+        `place_id` is wherever the splitter was standing, which may itself be a
+        thread: 芝士 working on one piece of work often finds a second. Work does
+        not nest, so the new thread hangs in the same ROOM either way — the same
+        answer `_child_kind` used to give by refusing to look at whether a parent
+        was itself work, except now it is stated rather than accidental.
+
         `triggered_by` is the human whose turn asked for this split, which the
         caller reads off the runner (`AgentWorkRunner.turn_author_for`) — see the
-        ownership ladder below for why it outranks the parent room's owner."""
-        parent = await self.get_or_404(parent_topic_id)
-        # 归档后工作面冻结 (spec §6.3): no new sub-topics under a frozen topic —
+        ownership ladder below for why it outranks the room's owner."""
+        place = await PlaceResolver(self._session).resolve(place_id)
+        if place is None:
+            raise NotFoundError("话题不存在")
+        room = place.room
+        # 归档后工作面冻结 (spec §6.3): no new work in a frozen room —
         # follow-up work starts a new topic from the conclusion (升级), not here.
-        if parent.status == TopicStatus.archived:
+        if room.status == TopicStatus.archived:
             raise ValidationError("话题已归档（工作面冻结），请从结论升级成新话题")
-        kind = _child_kind(parent)
-        new_topic = await self._repo.add(
-            project_id=parent.project_id,
-            title=title,
-            parent_id=parent.id,
-            kind=kind,
-            created_by=created_by,
-            # The work goes out under the SAME agent the room runs — which is
-            # what closes the loop the split exists for: whatever the 分身 learns
-            # doing it lands in that agent's pool, so the room has it afterwards.
-            # Copied rather than left NULL because the parent's own choice may be
-            # a pin; NULL here would mean "the project's default", which is a
-            # different agent and a different memory.
-            agent_instance_id=parent.agent_instance_id,
-        )
-        # 一个房间一条分支一个 PR: this task's branch forks the room's and folds
-        # back into it when its conclusion is 采信'd, instead of opening a PR of
-        # its own. Written here, before anything can materialise the workspace.
-        _bind_room_branch(child_id=new_topic.id, parent_id=parent.id, kind=kind)
-        # Inherit the parent's roster (not just the requested owner): a 分身-
-        # initiated split otherwise leaves every human off the child's roster
-        # (owner_handle="cheese" is skipped by seed()), which is the bug this
-        # whole path exists to close — see seed_split's docstring.
-        parent_members, _ = await self._members.list_for_topic(parent.id)
+        # The roster is read for the ownership ladder below and for nothing else.
+        # A thread does NOT get one: 唯一的主 is the whole difference between a
+        # piece of work and the room it happens in, and copying the room's roster
+        # onto it would be re-buying the cost this design exists to drop.
+        parent_members, _ = await self._members.list_for_topic(room.id)
         parent_owner = next(
             (m.member_handle for m in parent_members if m.role == TopicRole.owner),
             None,
@@ -809,11 +838,11 @@ class TopicService:
         #    to whoever opened the parent room months ago strands it a second time.
         #    GitHub credit for the original requester is not lost — they come back
         #    as `Co-authored-by:` (`workspace.identity.coauthor_handles`).
-        # 3. The parent room's owner, then the project's — an autonomous 分身 split
+        # 3. The room's owner, then the project's — an autonomous 分身 split
         #    and a platform-initiated turn identify no person at all, and a room
         #    born before any of this has no owner to inherit, so the emptiness
         #    stops cascading down the tree here.
-        project = await self._projects.get(parent.project_id)
+        project = await self._projects.get(room.project_id)
         owner_handle = (
             created_by
             if names_a_person(created_by)
@@ -821,23 +850,36 @@ class TopicService:
             if names_a_person(triggered_by)
             else parent_owner or (project.owner_handle if project else None)
         )
-        await self._members.seed_split(
-            new_topic.id,
+        task = await TaskRepository(self._session).add(
+            project_id=room.project_id,
+            room_id=room.id,
+            title=title,
             owner_handle=owner_handle,
-            member_handles=[m.member_handle for m in parent_members],
+            created_by=created_by,
+            # The work goes out under the SAME agent the room runs — which is
+            # what closes the loop the split exists for: whatever the 分身 learns
+            # doing it lands in that agent's pool, so the room has it afterwards.
+            # Copied rather than left NULL because the room's own choice may be
+            # a pin; NULL here would mean "the project's default", which is a
+            # different agent and a different memory.
+            agent_instance_id=room.agent_instance_id,
         )
-        parent_doc = await self._blocks.doc_root(parent.id)
+        # 一个房间一条分支一个 PR: this task's branch forks the room's. Written
+        # here, before anything can materialise the workspace.
+        _bind_room_branch(child_id=task.id, parent_id=room.id)
+        room_doc = await self._blocks.doc_root(room.id)
         await self._seed_brief_doc(
-            new_topic,
+            room,
             _brief_doc(
                 child_title=title,
-                parent_title=parent.title,
+                parent_title=room.title,
                 brief=brief,
-                parent_doc=parent_doc.content if parent_doc else None,
+                parent_doc=room_doc.content if room_doc else None,
                 created_by=created_by,
             ),
+            task_id=task.id,
         )
-        return new_topic
+        return task
 
     async def clone_from(
         self, *, target_topic_id: uuid.UUID, source_topic_id: uuid.UUID
@@ -845,7 +887,7 @@ class TopicService:
         """Deep-copy the source topic's Claude conversation onto the target topic
         (transcript-fork, fusion-design §6 clone — distinct from 分身/split).
 
-        分身 (split_to_subtopic) starts a FRESH session with a task brief; clone
+        分身 (dispatch_task) starts a FRESH session with a task brief; clone
         instead forks the source's full conversation state so the target resumes
         exactly where the source is. Only the interactive backends (tmux/device)
         keep a real Claude session file on disk; the sdk backend has none, so

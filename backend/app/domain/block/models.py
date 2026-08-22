@@ -200,6 +200,14 @@ class Block(UuidPk, Timestamps, Base):
     upgraded_to_topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
+    # …and if it was dispatched into a piece of work instead, which is what
+    # upgrading a message inside a room now does. Two columns rather than one
+    # holding either kind of id: both are real foreign keys, and a single
+    # untyped column would be a pointer the database cannot check into a table
+    # it cannot name.
+    upgraded_to_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class BlockReaction(UuidPk, Base):
