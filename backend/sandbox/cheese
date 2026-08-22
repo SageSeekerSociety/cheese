@@ -12,14 +12,14 @@
 例:
   cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
   cheese doc get                   # 打印本话题实况文档
-  cheese split "数据清洗"           # 拆出子话题
+  cheese split "数据清洗"           # 派出一条支线
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
-  cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
-  cheese tell "数据清洗" "口径改了,按新的来"    # 给正在跑的子话题追加要求(会叫醒它)
+  cheese conclude "原型完成,Recall@10=0.18"  # 支线结论回流房间
+  cheese tell "数据清洗" "口径改了,按新的来"    # 给正在跑的支线追加要求(会叫醒它)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
@@ -542,9 +542,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser(
         "split",
-        help="拆出子话题（分身自动开工）",
+        help="派出一条支线（分身自动开工）",
         description=(
-            "拆出一个子话题,平台立刻起一个分身去做它。\n"
+            "在这个房间里派出一条支线,平台立刻起一个分身去做它。\n"
             "\n"
             "分身开工时能看到的只有两样东西,都来自本命令:\n"
             "  1. --brief 的原文(标题为「拆分意图」)\n"
@@ -562,14 +562,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ps.add_argument("title", help="子话题标题,≤12 字最好")
+    ps.add_argument("title", help="这条支线的标题,≤12 字最好")
     ps.add_argument(
         "--brief",
         default=None,
         help=(
             "任务简报,分身的全部起点:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
             "验收标准(做到什么程度算完)、已知但未核实的事实要标出来。"
-            "不用重复父话题实况文档(平台会自动附快照)。"
+            "不用重复房间的实况文档(平台会自动附快照)。"
             "不填的话分身只有标题和那份快照,基本等于让它自己猜。"
         ),
     )
@@ -742,9 +742,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     pc = sub.add_parser(
         "conclude",
-        help="子话题结论回流父话题",
+        help="支线结论回流它所在的房间",
         description=(
-            "子话题做完了,把结论回流父话题。父话题读到的就只有这段话——"
+            "这条支线做完了,把结论回流到它所在的房间。房间读到的就只有这段话——"
             "写摘要,不写流水账。\n"
             "\n"
             "值钱的三样:做了什么、**查出来但故意没做的(以及为什么)**、"
@@ -752,14 +752,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pc.add_argument("conclusion", help="结论摘要,给父话题看的")
+    pc.add_argument("conclusion", help="结论摘要,给房间看的")
 
     pt = sub.add_parser(
         "tell",
-        help="给正在跑的直接子话题(或你的母话题)传一句话,并叫醒它",
+        help="给正在跑的支线(或你所在的房间)传一句话,并叫醒它",
         description=(
             "往父子这条边上传一句话,**并且真的叫醒对方**。只有两个方向通:\n"
-            "  父 → 它的直接子话题    子 → 它的母话题\n"
+            "  房间 → 它派出的支线    支线 → 它所在的房间\n"
             "没有父子关系的两个话题之间发不通——那等于放弃话题级隔离。\n"
             "\n"
             "它解决的是:任务简报是一次性的、写完就改不了。发现简报写错了、"
@@ -771,21 +771,21 @@ def build_parser() -> argparse.ArgumentParser:
             "走的是哪一种。\n"
             "长的东西写进实况文档(两边都读得到),这里只发「一条追加要求」。\n"
             "\n"
-            "对方是谁:话题 id、`<#id>`、或者标题都行(只在你的子话题+母话题里认)。\n"
+            "对方是谁:地点 id、`<#id>`、或者标题都行(只在你派出的支线+你所在的房间里认)。\n"
             "回母话题可以直接写 `parent`,不用去查它叫什么: cheese tell parent \"...\""
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pt.add_argument("target", help="收方: 子话题/母话题的 id、<#id> 或标题")
+    pt.add_argument("target", help="收方: 支线/房间的 id、<#id> 或标题")
     pt.add_argument("message", help="要说的话")
 
     pcc = sub.add_parser(
         "conclusion",
-        help="结算子话题回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
+        help="结算支线回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
         description=(
-            "结算子话题回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
+            "结算支线回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
             "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
-            "只有你要改变默认结果时才用它: need-evidence 让子话题补一条证据"
+            "只有你要改变默认结果时才用它: need-evidence 让那条支线补一条证据"
             "(要付一整轮,且每张卡最多打回 1 次), escalate 是要人拍板。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -793,7 +793,7 @@ def build_parser() -> argparse.ArgumentParser:
     pcc.add_argument(
         "action",
         choices=["accept", "need-evidence", "escalate"],
-        help="accept=采信(可不做,默认就会采信) / need-evidence=让子话题补一条证据 / escalate=要人拍板",
+        help="accept=采信(可不做,默认就会采信) / need-evidence=让那条支线补一条证据 / escalate=要人拍板",
     )
     pcc.add_argument("card", help="结论卡 id（消化提示里带着）")
     pcc.add_argument(
@@ -946,7 +946,7 @@ def main() -> None:
         if a.brief:
             body["brief"] = a.brief
         r = _call("POST", f"/topics/{topic}/split", body)
-        print(f"已拆出子话题：{r['data']['title']}（id={r['data']['id']}），分身已带简报自动开工")
+        print(f"已派出支线：{r['data']['title']}（id={r['data']['id']}），分身已带简报自动开工")
     elif a.cmd == "await":
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":
@@ -1053,8 +1053,8 @@ def main() -> None:
         _call("POST", f"/topics/{topic}/conclusion-cards/{a.card}/{a.action}", body)
         print(
             {
-                "accept": "已采信该结论，子话题归档。",
-                "need-evidence": "已让子话题补证据（它会被叫醒一轮）。",
+                "accept": "已采信该结论，那条支线收起。",
+                "need-evidence": "已让那条支线补证据（它会被叫醒一轮）。",
                 "escalate": "已升级，等人拍板。",
             }[a.action]
         )
