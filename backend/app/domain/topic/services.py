@@ -1120,7 +1120,7 @@ class TopicService:
                 )
 
     async def add_relay_block(
-        self, *, target: Topic, sender: Topic, label: str, text: str
+        self, *, target: Place, sender: Place, label: str, text: str
     ) -> Block:
         """母子传话's message block (see `app.domain.topic.relay`).
 
@@ -1131,10 +1131,11 @@ class TopicService:
         芝士 is the author, because a message from someone who is not on that
         roster reads as a ghost; `refs` links back to the sender.
         """
-        author = await self._members.resolve_agent_handle(target.id)
+        author = await self._members.resolve_agent_handle(target.room_id)
         return await self._blocks.add(
             project_id=target.project_id,
-            topic_id=target.id,
+            topic_id=target.room_id,
+            task_id=target.task_id,
             author=author,
             author_type=AuthorType.ai,
             content=f"【{label}｜{sender.title}】\n{text}",

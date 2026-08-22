@@ -1402,17 +1402,18 @@ async def tell_topic(
     side (`cheese tell`). See `app.domain.topic.relay` for why the comments
     endpoint could not be this channel and why only this one edge is open.
 
-    `topic_id` is the SENDER — the topic whose turn is speaking, which is what
+    `topic_id` is the SENDER — the place whose turn is speaking, which is what
     the per-turn token in `_CHEESE_WRITE_PATHS` is scoped to. The receiver rides
-    in the body and is resolved against sender's parent + direct children only:
-    a topic id in the URL says "who is talking", never "which resource is this".
+    in the body and is resolved against what the sender can reach (its room, or
+    the threads it dispatched): an id in the URL says "who is talking", never
+    "which resource is this".
     """
-    sender = await TopicService(db).get_or_404(topic_id)
+    sender = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=sender.project_id
+        fallback_handle=None, topic_id=sender.room_id, project_id=sender.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=sender.project_id, topic_id=topic_id
+        actor, project_id=sender.project_id, topic_id=sender.room_id
     )
     service = TopicRelayService(db)
     target = await service.resolve_target(sender=sender, target=body.target)
@@ -1428,8 +1429,10 @@ async def tell_topic(
     # Commit BEFORE waking: the woken turn runs on its own session and has to be
     # able to read the message it is being woken about.
     await db.commit()
+    # The room is where a person is watching; a thread's message shows up there
+    # too, under its thread.
     await get_broker().publish(
-        str(target.id), {"type": "assistant_block", "block": out}
+        str(target.room_id), {"type": "assistant_block", "block": out}
     )
     delivery = await deliver_or_wake(
         chat=chat,
