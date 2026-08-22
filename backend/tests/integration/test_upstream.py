@@ -358,9 +358,14 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     assert d["dispatched"]["files"] == ["hello.txt"]
     tid = d["dispatched"]["topic_id"]
 
-    # The task is real, carries the conflict in its workspace, and hangs under
-    # the caller's 1:1 room rather than polluting the project's topic list.
-    t = client.get(f"/topics/{tid}").json()["data"]
+    # The work is real, carries the conflict in its workspace, and hangs in the
+    # caller's 1:1 room rather than polluting the project's topic list.
+    #
+    # Read AS alice: it is a thread in a private room, and reading a thread is
+    # authorized against the room it lives in — which is the point of a private
+    # room. An anonymous read used to pass because the work was its own topic
+    # and the private-ness stopped at the parent.
+    t = client.get(f"/topics/{tid}", headers=_owner(client, "alice")).json()["data"]
     assert t["title"] == "解决同步上游冲突"
     body = (ws.topic_worktree(puid, _uuid.UUID(tid)) / "hello.txt").read_text()
     assert "<<<<<<<" in body
