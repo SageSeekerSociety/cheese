@@ -42,7 +42,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import (
     SortOrder,
@@ -711,7 +711,7 @@ class TopicService:
         )
 
         if not parent.is_private:
-            task = await TaskRepository(self._session).add(
+            task = await TaskService(self._session).open_thread(
                 project_id=block.project_id,
                 room_id=parent.id,
                 title=PLACEHOLDER_TITLE,
@@ -857,7 +857,7 @@ class TopicService:
             if names_a_person(triggered_by)
             else parent_owner or (project.owner_handle if project else None)
         )
-        task = await TaskRepository(self._session).add(
+        task = await TaskService(self._session).open_thread(
             project_id=room.project_id,
             room_id=room.id,
             title=title,

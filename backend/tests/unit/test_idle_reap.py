@@ -189,9 +189,7 @@ async def test_a_room_with_a_busy_task_keeps_its_box(client, tmp_path, monkeypat
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         room = await topics.create(project_id=project.id, title="R", created_by="u")
-        task = await topics.split_to_subtopic(
-            parent_topic_id=room.id, title="T", created_by="u"
-        )
+        task = await topics.dispatch_task(place_id=room.id, title="T", created_by="u")
         blocks = BlockRepository(session)
         for t in (room, task):
             await blocks.add(
@@ -232,9 +230,7 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         room = await topics.create(project_id=project.id, title="R", created_by="u")
-        task = await topics.split_to_subtopic(
-            parent_topic_id=room.id, title="T", created_by="u"
-        )
+        task = await topics.dispatch_task(place_id=room.id, title="T", created_by="u")
         await session.commit()
         project_id, room_id, task_id = project.id, room.id, task.id
 

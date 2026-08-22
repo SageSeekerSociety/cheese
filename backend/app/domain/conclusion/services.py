@@ -65,7 +65,7 @@ from app.domain.conclusion.models import (
 )
 from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.workspace import service as ws
@@ -216,7 +216,7 @@ class ConclusionCardService:
         if card.task_id is None:
             room_branch.write_state(card.id, room_branch.DONE)
             return {"skipped": "不是房间里的一件活"}
-        sub = await TaskRepository(self._session).get(card.task_id)
+        sub = await TaskService(self._session).get(card.task_id)
         if sub is None:
             return {"skipped": "话题不存在"}
         from app.domain.review.services import AcceptService  # 局部 import：避免成环
@@ -337,7 +337,7 @@ class ConclusionCardService:
         sub = (
             None
             if card.task_id is None
-            else await TaskRepository(self._session).get(card.task_id)
+            else await TaskService(self._session).get(card.task_id)
         )
         if sub is None:
             raise NotFoundError("子话题不存在")
@@ -373,7 +373,7 @@ class ConclusionCardService:
         sub = (
             None
             if card.task_id is None
-            else await TaskRepository(self._session).get(card.task_id)
+            else await TaskService(self._session).get(card.task_id)
         )
         await AlertService(self._session).create(
             project_id=card.project_id,
@@ -445,7 +445,7 @@ class ConclusionCardService:
         """
         if card.task_id is None:
             return
-        sub = await TaskRepository(self._session).get(card.task_id)
+        sub = await TaskService(self._session).get(card.task_id)
         if sub is None or sub.status == TaskStatus.closed:
             return
         if await self._somebody_is_still_deciding(sub.id):
@@ -536,7 +536,7 @@ class ConclusionCardService:
         sub = (
             None
             if card.task_id is None
-            else await TaskRepository(self._session).get(card.task_id)
+            else await TaskService(self._session).get(card.task_id)
         )
         if sub is None or sub.status != TaskStatus.open:
             # 多半是验收卡被采纳了（采纳即收起），待办自己消解了。消掉哨兵，

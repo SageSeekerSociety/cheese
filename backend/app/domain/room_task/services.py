@@ -13,6 +13,34 @@ class TaskService:
     def __init__(self, session: AsyncSession):
         self._repo = TaskRepository(session)
 
+    async def get(self, task_id: uuid.UUID) -> Task | None:
+        return await self._repo.get(task_id)
+
+    async def open_thread(
+        self,
+        *,
+        project_id: uuid.UUID,
+        room_id: uuid.UUID,
+        title: str,
+        owner_handle: str | None,
+        created_by: str | None,
+        agent_instance_id: uuid.UUID | None,
+    ) -> Task:
+        """Open a new thread of work in a room.
+
+        A service, not the repository, because the callers are in other domains
+        (dispatch and 讨论升级 both live in `topic`), and a domain reaching into
+        another's repository is what the import guard forbids.
+        """
+        return await self._repo.add(
+            project_id=project_id,
+            room_id=room_id,
+            title=title,
+            owner_handle=owner_handle,
+            created_by=created_by,
+            agent_instance_id=agent_instance_id,
+        )
+
     async def threads_for_room(
         self, room_id: uuid.UUID, *, limit: int | None = None
     ) -> list[tuple[Task, list[Block]]]:

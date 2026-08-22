@@ -26,9 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.work_context import current_place
 from app.domain.room_task.models import Task
-from app.domain.room_task.repositories import TaskRepository
 from app.domain.topic.models import Topic
-from app.domain.topic.repositories import TopicRepository
 
 
 @dataclass(frozen=True)
@@ -122,8 +120,11 @@ class PlaceResolver:
     """Turns one id back into the room + thread it names."""
 
     def __init__(self, session: AsyncSession):
-        self._tasks = TaskRepository(session)
-        self._topics = TopicRepository(session)
+        # Primary-key `session.get` on two models rather than the two domains'
+        # repositories: resolving a place is not a query anyone gets to shape,
+        # and reaching into `topic.repositories` from here would be exactly the
+        # cross-domain coupling `test_domain_import_guard` exists to stop.
+        self._session = session
 
     async def resolve(self, place_id: uuid.UUID) -> Place | None:
         """The place *place_id* names, or None if it names nothing.
@@ -133,12 +134,12 @@ class PlaceResolver:
         migration deleted — so the order is a cost decision, not a correctness
         one: work is what gets addressed, rooms are what get opened.
         """
-        task = await self._tasks.get(place_id)
+        task = await self._session.get(Task, place_id)
         if task is not None:
-            room = await self._topics.get(task.room_id)
+            room = await self._session.get(Topic, task.room_id)
             # A task whose room is gone cannot be rendered anywhere. Returning
             # None says that plainly instead of handing back half a place that
             # every caller would then have to check.
             return Place(room=room, task=task) if room is not None else None
-        topic = await self._topics.get(place_id)
+        topic = await self._session.get(Topic, place_id)
         return Place(room=topic) if topic is not None else None
