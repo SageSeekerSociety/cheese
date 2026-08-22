@@ -176,6 +176,11 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
+    # 一条支线还要知道它站在哪儿：房间的实况文档，和房间最近在聊什么。房间自己跑的
+    # 一轮这两项都是空的——它读的本来就是自己那份。
+    room_doc_text: str | None
+    room_backdrop: str | None
+    room_backdrop_dropped: int
     memories: RecallResult
     prior_progress: list[dict]
     open_cards: list[AcceptCard]
@@ -353,6 +358,47 @@ def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
 # the room needs is enough to tell "it answered the question" from "it went off
 # the rails", which is the whole point of making it visible.
 _SUBAGENT_RESULT_MAX = 500
+
+# 一条支线的上下文 = 房间实况文档 + 任务简报 + 房间最近若干条消息。这两个数是那个
+# 「若干」。
+#
+# 按**字符预算**截，不按条数：条数上限会被一条长消息吃光，所以「最近 20 条」在一个
+# 有人贴过日志的房间里等于「最近 1 条」。条数上限仍然存在，但它只是查询的止损，不是
+# 语义——真正决定装多少的是预算。
+#
+# 4000 字符大约是房间里最近半天的对话，而一条支线通常只需要知道「我被派出去的时候，
+# 房间在聊什么」。给多了会把任务简报挤到 prompt 的角落里。
+_ROOM_BACKDROP_BUDGET_CHARS = 4000
+_ROOM_BACKDROP_MAX_BLOCKS = 60
+_ROOM_BACKDROP_PER_MESSAGE_CHARS = 400
+
+
+def _room_backdrop(blocks: list[Block], budget: int) -> tuple[str, int]:
+    """房间主线最近说了什么，装到预算为止；返回（正文，被截掉的条数）。
+
+    从最新往回装，装满就停——一条支线要知道的是「现在房间在聊什么」，不是房间的开头。
+    渲染时再翻回时间顺序，因为读的人是从上往下读的。
+
+    被截掉的条数是返回值的一部分，不是日志：**没进来的必须说出来**。一个读者分不清
+    「房间没说过话」和「房间说了很多但没给我」的时候，他会停止相信这段上下文。
+    """
+    taken: list[str] = []
+    used = 0
+    dropped = 0
+    for block in reversed(blocks):
+        if block.kind != BlockKind.message or not (block.content or "").strip():
+            continue
+        text = block.content.strip()
+        if len(text) > _ROOM_BACKDROP_PER_MESSAGE_CHARS:
+            text = text[:_ROOM_BACKDROP_PER_MESSAGE_CHARS] + "…"
+        line = f"- {block.author}：{text}"
+        if used + len(line) > budget and taken:
+            dropped += 1
+            continue
+        used += len(line)
+        taken.append(line)
+    taken.reverse()
+    return "\n".join(taken), dropped
 
 
 def _subagent_event_text(description: str, result: str) -> str:
@@ -815,6 +861,12 @@ def _build_system_prompt(
     memories_omitted: int = 0,
     memories_core: int = 0,
     memories_core_omitted: int = 0,
+    # Keyword-only, and last: three call sites hand the first four arguments
+    # positionally, so anything inserted above `role` silently lands in the
+    # wrong slot.
+    room_doc: str | None = None,
+    room_backdrop: str | None = None,
+    room_backdrop_dropped: int = 0,
 ) -> str:
     parts = [base]
     if untitled:
@@ -863,6 +915,24 @@ def _build_system_prompt(
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
             "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
+        )
+    if room_doc:
+        # 房间那一份在前，支线那一份在后：房间的是共识（这个地方在干什么、定了什么），
+        # 支线的是这一件活。顺序就是读的顺序——先知道自己站在哪儿，再看自己要做什么。
+        parts.append(
+            "## 这个房间的实况文档（房间级共识，不是你这件活的文档）\n" + room_doc
+        )
+    if room_backdrop:
+        note = (
+            f"（只给了最近的一段，更早的 {room_backdrop_dropped} 条没放进来）"
+            if room_backdrop_dropped
+            else ""
+        )
+        parts.append(
+            f"## 这个房间最近在聊什么{note}\n"
+            "这是房间主线，不是你这条支线的对话——你说的话不会出现在这里，"
+            "这里的人也不一定知道你在做什么。要让房间知道，用结论回流。\n"
+            + room_backdrop
         )
     if doc:
         parts.append(
@@ -3385,6 +3455,23 @@ class ChatService:
                 if is_private
                 else await blocks.doc_root(place.room_id, task_id=place.task_id)
             )
+            # 一条支线的上下文 = 房间实况文档 + 任务简报 + 房间最近若干条消息。
+            # 上面那份是任务简报（这条支线自己的文档）；房间那两样在这里取。
+            #
+            # 房间自己跑的一轮不取：它本来就在读自己的文档、自己的时间线，再取一遍
+            # 等于把同样的内容在 prompt 里写两遍。
+            room_doc_text: str | None = None
+            room_backdrop = ""
+            room_backdrop_dropped = 0
+            if place.is_thread and not is_private:
+                room_doc_block = await blocks.doc_root(place.room_id, task_id=None)
+                room_doc_text = room_doc_block.content if room_doc_block else None
+                room_line = await blocks.page_for_topic(
+                    place.room_id, task_id=None, limit=_ROOM_BACKDROP_MAX_BLOCKS
+                )
+                room_backdrop, room_backdrop_dropped = _room_backdrop(
+                    room_line.items, _ROOM_BACKDROP_BUDGET_CHARS
+                )
             doc_text = doc_root.content if doc_root else None
             # Memory is retrieved against what this turn is actually about —
             # newest message first, since a turn is usually about the thing
@@ -3614,6 +3701,9 @@ class ChatService:
             agent=agent,
             agent_pool=agent_pool,
             doc_text=doc_text,
+            room_doc_text=room_doc_text,
+            room_backdrop=room_backdrop or None,
+            room_backdrop_dropped=room_backdrop_dropped,
             is_private=is_private,
             memories=memories,
             open_cards=open_cards,
@@ -3667,6 +3757,9 @@ class ChatService:
         acting_agent = prepared.acting_agent
         agent_pool = prepared.agent_pool
         doc_text = prepared.doc_text
+        room_doc_text = prepared.room_doc_text
+        room_backdrop = prepared.room_backdrop
+        room_backdrop_dropped = prepared.room_backdrop_dropped
         is_private = prepared.is_private
         memories = prepared.memories
         open_cards = prepared.open_cards
@@ -3718,6 +3811,9 @@ class ChatService:
                 if topic_stage is not None
                 else None
             ),
+            room_doc=room_doc_text,
+            room_backdrop=room_backdrop,
+            room_backdrop_dropped=room_backdrop_dropped,
         )
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
