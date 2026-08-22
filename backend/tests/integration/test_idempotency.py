@@ -36,7 +36,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block, BlockKind
 from app.domain.idempotency.keys import action_key
 from app.domain.milestone.models import Milestone
-from app.domain.topic.models import Topic
+from app.domain.room_task.models import Task
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import session_auth_headers
 
@@ -248,11 +248,11 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
         _count(
             client.test_factory,
             select(func.count())
-            .select_from(Topic)
-            .where(Topic.parent_id == uuid.UUID(tid)),
+            .select_from(Task)
+            .where(Task.room_id == uuid.UUID(tid)),
         )
     )
-    assert children == 1, "续跑拆出了第二个子话题"
+    assert children == 1, "续跑派出了第二条支线"
     assert len(kickoffs) == 1, "第二个分身被叫起来干活了"
     # The replay gets the FIRST child back, not an error: a resumed 芝士 asking
     # again should learn what already exists.
@@ -412,8 +412,8 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
         _count(
             client.test_factory,
             select(func.count())
-            .select_from(Topic)
-            .where(Topic.parent_id == uuid.UUID(tid)),
+            .select_from(Task)
+            .where(Task.room_id == uuid.UUID(tid)),
         )
     )
     assert (decisions, milestones, children) == (2, 2, 2)

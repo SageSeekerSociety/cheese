@@ -174,14 +174,18 @@ async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | 
     `cheese-<hex12>` handle, which matches no account, so this returned None and
     every such PR opened as `cheesex-app[bot]`."""
     from app.domain.oauth.services import get_github_user_token_for_handle
-    from app.domain.topic.repositories import TopicRepository
+    from app.domain.room_task.place import PlaceResolver
     from app.domain.workspace import identity
 
     try:
-        topic = await TopicRepository(session).get(topic_id)
-        if topic is None:
+        # `topic_id` is a place id: a card is usually a thread's, and the human
+        # it belongs to is on the thread, not on the room's roster.
+        place = await PlaceResolver(session).resolve(topic_id)
+        if place is None:
             return None
-        handle = await identity.requester_handle(session, topic)
+        handle = await identity.requester_handle(
+            session, place.room, task_id=place.task_id
+        )
         if not handle:
             return None
         return await get_github_user_token_for_handle(session, handle)
@@ -211,14 +215,15 @@ async def _pr_text(
     wanted to know what changed and why."""
     from app.domain.review import pr_text
     from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.topic.repositories import TopicRepository
+    from app.domain.room_task.place import PlaceResolver
     from app.domain.workspace import identity
 
-    topic = await TopicRepository(session).get(topic_id)
+    place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)
-    if topic is None:
+    if place is None:
         return branch, f"Cheese-Topic: {topic_id}"
-    who = await identity.attribution(session, topic)
+    topic = place.room
+    who = await identity.attribution(session, topic, task_id=place.task_id)
     # No approver yet — the PR opens when the card is FILED, and 采纳 is what
     # merges it. `Reviewed-by` is written onto the squash commit at merge time,
     # by whoever actually clicks.

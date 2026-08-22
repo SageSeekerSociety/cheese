@@ -1605,7 +1605,7 @@ class AcceptService:
         )
         base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         client = github_pr.default_client()
-        who = await identity.attribution(self._session, topic)
+        who = await identity.attribution(self._session, topic, task_id=card.task_id)
         pr = await client.open_pull_request(
             owner=owner,
             repo=repo,
@@ -2010,7 +2010,7 @@ class AcceptService:
         # Green → merge now. Trailers go on the merge commit too, not just
         # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
         # squash that means the body field, with the title passed separately.
-        who = await identity.attribution(self._session, topic)
+        who = await identity.attribution(self._session, topic, task_id=card.task_id)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2935,7 +2935,7 @@ class AcceptService:
             # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
             # body — the branch it came from and who clicked, but nothing at
             # all about what changed.
-            who = await identity.attribution(self._session, topic)
+            who = await identity.attribution(self._session, topic, task_id=card.task_id)
             await client.merge_pr(
                 number,
                 title=pr_text.merge_commit_title(card, topic, number),
@@ -3192,7 +3192,7 @@ class AcceptService:
         verdict = _force_merge_verdict(state)
 
         number = card.pr_number
-        who = await identity.attribution(self._session, topic)
+        who = await identity.attribution(self._session, topic, task_id=card.task_id)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,

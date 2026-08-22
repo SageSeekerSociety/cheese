@@ -3531,7 +3531,7 @@ class ChatService:
             # first topic, and topics that predate this have no record at all.
             # Best-effort by construction — see workspace/identity.py.
             if not is_private:
-                await ws_identity.sync_for_topic(session, topic)
+                await ws_identity.sync_for_topic(session, topic, task_id=place.task_id)
             # This agent's thread here, not the room's: a room may host several
             # and each resumes its own (agent_session/models.py).
             resume_session_id = await AgentSessionService(session).resume_token(
