@@ -501,9 +501,7 @@ export function listRoomTasks(
   const q = new URLSearchParams()
   if (opts?.limit != null) q.set('limit', String(opts.limit))
   const query = q.toString() ? `?${q.toString()}` : ''
-  return request<ListPayload<RoomTask & { blocks: Block[] }>>(
-    `/topics/${encodeURIComponent(roomId)}/tasks${query}`
-  )
+  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
 }
 
 export function createTopic(

@@ -3354,9 +3354,7 @@ class ChatService:
             # Scoped to the PLACE: a thread's turn must not be handed the room's
             # main line as its own backlog, and the room must not be handed every
             # thread's chatter.
-            history = await blocks.list_for_topic(
-                place.room_id, task_id=place.task_id
-            )
+            history = await blocks.list_for_topic(place.room_id, task_id=place.task_id)
             pending = _pending_human_blocks(history)
             pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:

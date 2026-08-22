@@ -940,9 +940,21 @@ class TopicService:
         )
         return target
 
+    async def place_or_404(self, place_id: uuid.UUID) -> Place:
+        """The room + thread this id names, or 404.
+
+        The route-level counterpart of `get_or_404`. Routes are addressed by one
+        id and that id may now be a thread's, so a handler that only knows how
+        to find a `topics` row answers 404 for work that plainly exists.
+        """
+        place = await PlaceResolver(self._session).resolve(place_id)
+        if place is None:
+            raise NotFoundError("Topic not found")
+        return place
+
     async def get_doc(self, topic_id: uuid.UUID) -> Block | None:
-        await self.get_or_404(topic_id)
-        return await self._blocks.doc_root(topic_id)
+        place = await self.place_or_404(topic_id)
+        return await self._blocks.doc_root(place.room_id, task_id=place.task_id)
 
     async def get_progress(
         self, topic_id: uuid.UUID
