@@ -17,8 +17,9 @@ export const TOPIC_KIND: Record<string, string> = {
   root: '全局',
   topic: '话题',
   // 一件事：带分支和验收卡，完成即结束，所在话题照常活着。
+  // 历史值：一件活曾经也是一行 topics（迁移 a9f3c7e21b04 之后没有行再带它们）。
   task: '任务',
-  subtopic: '分身', // 历史值：task 的前身
+  subtopic: '分身',
 }
 
 export const AI_MODE: Record<string, string> = {

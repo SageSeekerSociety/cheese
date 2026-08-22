@@ -1,4 +1,4 @@
-// 左侧话题列表的两件纯逻辑：**分组**（按"与我相关"切成两组）和**折叠**（有子话题
+// 左侧房间列表的两件纯逻辑：**分组**（按"与我相关"切成两组）和**折叠**（有下级
 // 的行可以收起来，「其他话题」整组也可以收起来）。
 //
 // TopicSidebar 的树是**拍平**的（`{topic, depth}` 的数组，DFS 顺序），折叠因此
@@ -36,7 +36,7 @@ export interface FlatRow<T extends TopicNodeLike = TopicNodeLike> {
 
 /** 一行渲染所需的全部信息（折叠开关、收起来的条数、要显示的未读总数）。 */
 export interface VisibleRow<T extends TopicNodeLike = TopicNodeLike> extends FlatRow<T> {
-  /** 这行在当前（未归档）列表里有没有子话题——没有就不画折叠开关。 */
+  /** 这行在当前（未归档）列表里有没有下级——没有就不画折叠开关。 */
   hasChildren: boolean
   /** 用户把这行收起来了。 */
   collapsed: boolean
