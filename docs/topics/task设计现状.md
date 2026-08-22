@@ -6,9 +6,12 @@
 
 - **改造前**：task 是「一个会终止的房间」——一整行 `topics`，连带名册、未读游标、归档决策、侧栏一行。
 - **要改成**：task 是**房间里的一条支线**（thread，不是新 channel）。
-- **现在**：改造在 **PR #609** 上进行中。地基已经抢救回来并跑过 CI；切换（split / 搬键 / 迁移）已经写完并在真库上验过；
-  正在重写那批断言旧形状的测试。**PR 里有一个故意失败的测试挡着自动合并**
-  （<&backend/tests/unit/test_switch_is_still_in_progress.py>），改造做完时删掉它，那一刻才是可以合的时刻。
+- **现在**：改造在 **PR #609** 上进行中（<@wangchangxin> 拍板：不拆活，全做在一个 PR 里，这样 CI 一直在跑）。
+  地基抢救回来并跑过 CI；切换（split / upgrade / 搬键 / 迁移）写完并在真库上验过；一轮已经跑在「地点」上；
+  结论回流、路由层、用量、前端标记都跟过来了；**上下文装配（房间文档 + 任务简报 + 房间最近消息）已落地并有测试**。
+  剩下的是收尾：几个断言旧形状的测试、D1（任务自己交付）、以及清理债。
+  **PR 里有一个故意失败的测试挡着自动合并**（<&backend/tests/unit/test_switch_is_still_in_progress.py>），
+  改造做完时删掉它，那一刻才是可以合的时刻。
 
 ## 一、设计（<@wangchangxin> 2026-08-20）
 
@@ -68,15 +71,32 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
 **`GET /topics/{支线id}/members` 返回 404**、房间名册没动。新增
 `test_a_thread_does_not_get_a_roster_of_its_own` 钉住这条。
 
+## 二·五、后来补上的（都在 PR #609 上）
+
+- **一轮跑在「地点」上**：`chat.py` 三处按 id 取 Topic 的地方改成解析 `Place`。切换前，split 出一条支线之后
+  分身的开工轮次会直接死掉（`Topic not found`）。
+- **上下文装配**：支线的 prompt = 房间实况文档 + 房间最近若干条消息 + 自己的任务简报。
+  按**字符预算**截不按条数（一条长消息会吃光按条数的窗口），**截掉了要说出来**，
+  并明说「房间主线不是你这条支线的对话，要让房间知道用结论回流」。房间自己跑的一轮不重复注入。
+  测试见 <&backend/tests/unit/test_thread_context.py>。
+- **结论回流**：消息和文档 section 落在**房间主线**（`task_id=None`）——回流的全部意义就是让房间看见；
+  结论卡两端都是房间 + 一个支线键；`need-evidence` 叫醒的是**支线**不是房间。
+- **级联归档整套删掉**：工作不嵌套，一条支线没有后代，它防的场面在结构上不存在了。
+  采信从「归档」变成「收起」（`status=closed`），**收起不冻结**，支线照常能追加对话。
+- **路由层**：`/blocks`、`/doc`、`/docs`、`/progress`、`/return-conclusion`、`GET /topics/{id}` 都解析地点；
+  鉴权永远落在房间上（支线没有名册）；分页游标要连支线一起比，否则翻页会静默串线。
+- **用量**：`resource_usage` 直接吃地点 id 会违反外键（响的）；订阅入账的 work index 拿地点 id 匹配 block
+  会一条都匹配不上、让那条支线的用量静默变成无法归属（不响的）。两处都改了。
+- **前端**：`splitMarkers` 改读 `GET /topics/{id}/tasks`；`upgraded_to_task_id` 在 `ChatPanel` 和 `PanelDoc`
+  两处都渲染；组件测试与 spec 都按新行为重写。
+
 ## 三、还没改的
 
-1. **上下文装配**（<&backend/app/domain/agent/chat.py>）：今天只取一份 `doc_root(topic.id)`；要变成
-   房间文档 + 任务简报 + 房间最近若干条消息。**这是「支线到底值不值」的兑现处**——干净上下文是拆子房间四个理由里的第一个。
-2. **前端**：<&frontend/src/lib/splitMarkers.ts> 的 `WORK_KINDS` 依赖「task 出现在话题列表里」，这个前提没了；
-   `ChatPanel.vue:1000` 在用它渲染房间时间线上的「已派出」标记，不改会**静悄悄消失**。
-3. **剩下的测试**：约 23 个断言旧形状的（已改完 7 个）。
-4. **D1 落地 + 清理债**：删 `fold_into_room` / `sweep_room_merges` / `TopicKind.task`、以及所有还在写
+1. **剩下的测试**：`test_conclusion_cards` 还有 2 个（定时扫描那两条）、`test_project_tree` 1 个，
+   以及全量跑之后才会暴露的其它文件。
+2. **D1 落地 + 清理债**：删 `fold_into_room` / `sweep_room_merges` / `TopicKind.task`、以及所有还在写
    「task 是一个会终止的房间」的散文。
+3. **最后一步**：删掉 <&backend/tests/unit/test_switch_is_still_in_progress.py>。
 
 **两个漏了不会报错、只会变难用的点**（已记，改的时候要各钉一条测试）：
 - `topic/repositories.py:39` 的 `last_activity_at` **要**算上支线（房间里有活在跑就是活的），
