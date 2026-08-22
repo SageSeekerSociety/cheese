@@ -1412,11 +1412,11 @@ onBeforeUnmount(() => {
               以下是新消息
             </TimelineMark>
             <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
-               这一行是按子话题的 parent_id + created_at 现算出来的，插在它被拆出
-               去的那个时刻上。它不是消息，但会像 event 一样把消息分组打断。 -->
+               这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
+               上。它不是消息，但会像 event 一样把消息分组打断。 -->
             <DispatchedMarker
               v-for="marker in splitMarkers.before.get(m.id) ?? []"
-              :key="marker.topicId"
+              :key="marker.taskId"
               :marker="marker"
               @open="emit('open-topic', $event)"
             />
@@ -1662,11 +1662,11 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚拆出去、之后房间里还
-             没人说过话的那些子话题。 -->
+          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还
+             没人说过话的那些支线。 -->
           <DispatchedMarker
             v-for="marker in splitMarkers.tail"
-            :key="marker.topicId"
+            :key="marker.taskId"
             :marker="marker"
             @open="emit('open-topic', $event)"
           />

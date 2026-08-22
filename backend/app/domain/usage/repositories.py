@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.room_task.place import room_and_task
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 
 
@@ -38,9 +39,18 @@ class UsageRepository:
         which model, which is the difference between "we do not know how much"
         and "we do not know anything".
         """
+        # `topic_id` names the PLACE the spend happened in, which is usually a
+        # thread — spend is what WORK does. Split here so "what did this task
+        # cost" stays answerable, which a room-level total cannot answer.
+        room_id, task_id = (
+            (None, None)
+            if topic_id is None
+            else await room_and_task(self._session, topic_id)
+        )
         row = ResourceUsage(
             project_id=project_id,
-            topic_id=topic_id,
+            topic_id=room_id,
+            task_id=task_id,
             turn_id=turn_id,
             model=model,
             input_tokens=input_tokens,
