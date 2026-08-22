@@ -90,13 +90,43 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
 - **前端**：`splitMarkers` 改读 `GET /topics/{id}/tasks`；`upgraded_to_task_id` 在 `ChatPanel` 和 `PanelDoc`
   两处都渲染；组件测试与 spec 都按新行为重写。
 
+## 二·六、全量测试清出来的（每一条都是真 bug，不是断言过时）
+
+第一次干净的全量：`60 failed / 5209 passed`。清的过程中挖出的**不报错**的问题：
+
+1. **验收卡还等着人拍板时，支线被收起**——`anybody_still_waiting` 只按 `topic_id` 查卡，
+   而支线的卡存的是 `topic_id=房间 + task_id=支线`，于是对每条支线都回答「没有卡」，
+   而这个「没有」会去把那张验收人还没看见的卡作废掉。**和 2026-08-16 那次事故同形。**
+2. **PR 的归属署名丢了**——`requester_handle` 读名册，支线没有名册，于是一个房间里所有的活
+   都会被署到「谁开的这个房间」名下。改成读 `tasks.owner_handle`，git identity 的 sidecar 也改成按地点存
+   （工作区本来就是按地点分的）。
+3. **`cheese tell` 整条哑掉**——它靠 `topics.parent_id` 找收方，切换后房间叫不出自己派出的支线、
+   支线也回不了房间。而它正是「简报写错了怎么追过去」的唯一通道。
+4. **每条支线一个容器**——容器归属靠爬 `topics.parent_id` 找房间，爬不到就退回「用自己的 id」。
+5. **分身被告知去「拆活」而不是干活**——`resolve_stage` 读 `topics.kind`，而每一行 `topics` 现在都说自己是房间。
+6. **私聊里的冲突解决可以被匿名读**——它以前是私聊房间底下一个**独立话题**，而私密性停在父节点。
+   改成支线之后鉴权落在房间上，这个洞自己关上了。
+7. **用量静默无法归属**——订阅入账的 work index 拿地点 id 匹配 block，一条都匹配不上。
+
+顺带的**简化**（删掉的比加的多）：级联归档整套、`_MAX_ROOM_WALK` 那个爬树刹车、
+闲置容器回收里的 parent 遍历——一条支线的 block 本来就带着房间的 `topic_id`，一个谓词全覆盖。
+
 ## 三、还没改的
 
-1. **剩下的测试**：`test_conclusion_cards` 还有 2 个（定时扫描那两条）、`test_project_tree` 1 个，
-   以及全量跑之后才会暴露的其它文件。
-2. **D1 落地 + 清理债**：删 `fold_into_room` / `sweep_room_merges` / `TopicKind.task`、以及所有还在写
-   「task 是一个会终止的房间」的散文。
+1. **剩下的测试**：第二轮全量在跑，前一轮的 60 已清到个位数。
+2. **D1 那一半**：`accepted_by`/`accepted_at` 已经搬到 task 上了；**「谁开 PR」还没定**——
+   见下面的待拍板。
 3. **最后一步**：删掉 <&backend/tests/unit/test_switch_is_still_in_progress.py>。
+
+## 三·五、要 <@wangchangxin> 拍板的一件事（D1）
+
+之前我说按设计图走 A（任务自己开 PR、删掉 `fold_into_room`）。做到一半发现一个当时没算的代价：
+
+> **A 会让 PR 数量按「一件活一个」翻上去，而本项目 CI 队列约 1.7 小时。**
+
+现在（B）是「一个房间一条分支一个 PR」，活的结论采信时把提交折进房间分支，攒到房间递卡一起走。
+设计图点名的 `branch_name`/`accepted_at` **已经在 task 上了**，所以剩下的分歧只是「谁开 PR」。
+我不擅自删 `fold_into_room`——它是一套有明确论证、正在正常工作的机制，删了不好退。
 
 **两个漏了不会报错、只会变难用的点**（已记，改的时候要各钉一条测试）：
 - `topic/repositories.py:39` 的 `last_activity_at` **要**算上支线（房间里有活在跑就是活的），

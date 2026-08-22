@@ -118,20 +118,21 @@ class SchedulerService:
         cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
         reaped = 0
         async with self._sessions() as session:
-            rows = (await session.execute(select(Topic.id, Topic.parent_id))).all()
+            rows = (await session.execute(select(Topic.id))).all()
             by_hex = {row.id.hex[:12]: row.id for row in rows}
-            children: dict[uuid.UUID, list[uuid.UUID]] = {}
-            for row in rows:
-                if row.parent_id is not None:
-                    children.setdefault(row.parent_id, []).append(row.id)
             for name in names:
                 topic_id = by_hex.get(name.rsplit("-", 1)[-1])
                 if topic_id is not None:
-                    scope = [topic_id, *children.get(topic_id, [])]
+                    # One predicate covers the room AND every thread in it: a
+                    # thread's blocks carry the room's `topic_id`. This used to
+                    # walk `topics.parent_id` to collect the work, and the walk
+                    # would now find nothing — the room would look idle the
+                    # moment its own line went quiet, which is exactly the
+                    # normal state of a room whose work has been dispatched.
                     last = (
                         await session.execute(
                             select(func.max(Block.created_at)).where(
-                                Block.topic_id.in_(scope)
+                                Block.topic_id == topic_id
                             )
                         )
                     ).scalar()
