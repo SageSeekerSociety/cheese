@@ -33,6 +33,12 @@ def _last_activity() -> ColumnElement[datetime]:
     A topic with no blocks yet falls back to its own creation — "nothing has
     happened since it was made" is the truth for a room nobody has spoken in,
     and it keeps the value non-null so sorting and filtering stay total.
+
+    Threads COUNT here, and that is deliberate: a room whose work is running is
+    alive, and the normal state of such a room is that its own line is quiet.
+    Note this is the opposite call from `unread_counts` below — same join, same
+    two tables, opposite answer, because "is this place alive" and "is there
+    something here for me to read" are different questions.
     """
     newest_block = (
         select(func.max(Block.created_at))
@@ -199,10 +205,17 @@ class TopicRepository:
     ) -> dict[uuid.UUID, int]:
         """Unread message count per topic for one user, in one query.
 
-        Unread = message blocks authored by OTHERS, created after the user's
-        read cursor (no cursor = all of them). Only kind=message counts —
-        doc edits / events / decisions have their own surfaces. Other
-        people's private chats are excluded.
+        Unread = message blocks authored by OTHERS on the room's OWN line,
+        created after the user's read cursor (no cursor = all of them). Only
+        kind=message counts — doc edits / events / decisions have their own
+        surfaces. Other people's private chats are excluded.
+
+        Threads are excluded (`task_id IS NULL`), and that is the opposite call
+        from `last_activity_at` one screen over, which DOES count them. The two
+        answer different questions: a room with work running in it is alive and
+        should sort up, but a badge that lights every time any 分身 says anything
+        is a badge people learn to ignore. Reading the room does not mean you
+        read every thread in it either — the cursor is the room's.
         """
         stmt = (
             select(Block.topic_id, func.count())
@@ -222,6 +235,7 @@ class TopicRepository:
                     Topic.private_peer == user_handle,
                 ),
                 Block.kind == BlockKind.message,
+                Block.task_id.is_(None),
                 Block.author != user_handle,
                 or_(
                     TopicReadState.last_read_at.is_(None),
@@ -264,6 +278,10 @@ class TopicRepository:
                     Topic.private_peer == user_handle,
                 ),
                 Block.kind == BlockKind.message,
+                # A private room has threads too — resolving an upstream
+                # conflict opens one there — and the same rule applies: the
+                # badge is about the room's own line.
+                Block.task_id.is_(None),
                 Block.author != user_handle,
                 or_(
                     TopicReadState.last_read_at.is_(None),
