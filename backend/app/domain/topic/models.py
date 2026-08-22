@@ -21,9 +21,11 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     String,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -160,7 +162,7 @@ class TopicReadState(UuidPk, Timestamps, Base):
     last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class TopicProgress(Timestamps, Base):
+class TopicProgress(UuidPk, Timestamps, Base):
     """进度层: what this topic's work has gotten through, so far (#187).
 
     芝士's checklist (the Task tools' working log) used to live only in the
@@ -170,8 +172,9 @@ class TopicProgress(Timestamps, Base):
 
     This row is that missing layer, and it is deliberately NOT memory: memory is
     stable facts injected into every prompt, and a running checklist would both
-    bloat it and go stale. One row per topic, overwritten in place — the current
-    state of the work, not its history (the timeline already keeps history).
+    bloat it and go stale. One row per PLACE — a room's own main line, or one
+    thread in it — overwritten in place: the current state of the work, not its
+    history (the timeline already keeps history).
 
     ``items`` is the checklist as the UI renders it: ``[{"id", "subject",
     "status"}]``, status ∈ pending/in_progress/completed. Written the moment a
@@ -180,11 +183,32 @@ class TopicProgress(Timestamps, Base):
     """
 
     __tablename__ = "topic_progress"
+    # `topic_id` used to BE the primary key. It cannot be any more: a thread's
+    # row is identified by (room, thread), and a primary key cannot hold the
+    # NULL that says "the room's own main line". The pair of partial unique
+    # indexes says what the old primary key said, once per half — one wider
+    # index over (topic_id, task_id) would not, because NULL is not equal to
+    # NULL in a unique index and every room row would stop being exclusive.
+    __table_args__ = (
+        Index(
+            "uq_topic_progress_room",
+            "topic_id",
+            unique=True,
+            postgresql_where=text("task_id IS NULL"),
+        ),
+        Index(
+            "uq_topic_progress_thread",
+            "task_id",
+            unique=True,
+            postgresql_where=text("task_id IS NOT NULL"),
+        ),
+    )
 
-    # PK, not a UuidPk surrogate: exactly one progress row per topic, and the
-    # upsert path wants the topic id to BE the conflict target.
     topic_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
     )
     items: Mapped[list[dict]] = mapped_column(JSON, default=list)
     # The turn that last wrote this, for telling "left over from a turn that

@@ -87,11 +87,18 @@ class ConclusionCard(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # The sub-topic that produced the conclusion (分身).
+    # The room this conclusion happened in — the same room on both ends now
+    # that work is a thread rather than a room of its own.
     topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
-    # 收方是话题不是人 —— the parent (本体) that settles this card.
+    # The thread that produced the conclusion (分身). NULL would mean the room
+    # concluded to itself, which is not a thing — but the column stays nullable
+    # so historical cards filed before work was a thread still load.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # 收方是话题不是人 —— the room (本体) that settles this card.
     receiver_topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
     )
