@@ -13,6 +13,19 @@ current_work_id: ContextVar[uuid.UUID | None] = ContextVar(
     "current_work_id", default=None
 )
 
+# The place this turn/request is speaking in, already split into its two halves:
+# ``(place_id, room_id, task_id)``.
+#
+# A resolution memo, not a source of truth. A turn writes dozens of blocks and
+# every one of them has to know which room and which thread it belongs to;
+# asking the database once per block for an answer that cannot change during the
+# turn is the kind of cost that only shows up under load. Keyed by `place_id` so
+# a memo left behind by an earlier turn can only fail to match — never answer
+# for somewhere else.
+current_place: ContextVar[tuple[uuid.UUID, uuid.UUID, uuid.UUID | None] | None] = (
+    ContextVar("current_place", default=None)
+)
+
 # Which thread the current request is speaking in, when it is speaking in one.
 #
 # Same problem as `current_work_id`, one level over: a `cheese` command run

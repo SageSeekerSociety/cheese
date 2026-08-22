@@ -24,6 +24,7 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.work_context import current_place
 from app.domain.room_task.models import Task
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.topic.models import Topic
@@ -95,14 +96,22 @@ async def room_and_task(
 
     The whole application keeps addressing a place by a single id — that is what
     a per-turn token carries and what every route already has. Only the tables
-    that must hold both halves pay for the lookup, and they pay it once per
-    write, not once per row read.
+    that must hold both halves pay for the lookup.
+
+    A turn writes dozens of blocks and every one of them would ask this same
+    question, so the answer for the place a turn is running in is resolved once
+    and parked in `current_place`; the lookup below is the path for everything
+    else. The memo is checked by id, so a stale one cannot answer for a
+    different place — it can only fail to help.
 
     An id that names nothing comes back as (itself, None). That is what the
     foreign key would have said anyway, one statement later and with a message
     naming the actual column — better than raising here and turning a bad id
     into a different error than the one the schema gives it.
     """
+    memo = current_place.get()
+    if memo is not None and memo[0] == place_id:
+        return memo[1], memo[2]
     task = await session.get(Task, place_id)
     if task is None:
         return place_id, None

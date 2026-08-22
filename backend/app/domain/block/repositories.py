@@ -8,7 +8,7 @@ from sqlalchemy import Text, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.work_context import current_thread_id, current_work_id
+from app.core.work_context import current_work_id
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     PROMPT_ATTEMPTS_META_KEY,
@@ -18,6 +18,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
+from app.domain.room_task.place import room_and_task
 
 
 @dataclass(frozen=True)
@@ -60,12 +61,15 @@ class BlockRepository:
         # ambient turn id set from the X-Cheese-Turn header (R4).
         if turn_id is None:
             turn_id = current_work_id.get()
-        # Same shape, same reason: a `cheese` command run inside a thread posts
-        # through a handler that never saw the thread key. The ambient value is
-        # set once per turn; passing `task_id` explicitly always wins, which is
-        # what lets a test build a thread's block without a turn around it.
+        # `topic_id` names a PLACE, which may be a thread — that is how the rest
+        # of the platform addresses one, and asking 36 call sites to start
+        # passing a pair would be 36 chances to pass the room and silently write
+        # a thread's message where everyone can see it. Resolved here instead;
+        # an explicit `task_id` still wins, which is what lets the dispatcher
+        # seed a thread's brief onto a room it names directly.
+        room_id, resolved_task = await room_and_task(self._session, topic_id)
         if task_id is None:
-            task_id = current_thread_id.get()
+            task_id = resolved_task
         # Explicit null means "tracked and still pending". Without that marker,
         # legacy compatibility has to infer consumption from the last AI block;
         # a newer, receipted mid-turn message could then move that positional
@@ -77,7 +81,7 @@ class BlockRepository:
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
         block = Block(
             project_id=project_id,
-            topic_id=topic_id,
+            topic_id=room_id,
             task_id=task_id,
             author=author,
             author_type=author_type,
