@@ -1284,24 +1284,28 @@ async def split_topic(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
-    """从上往下拆解：split a todo into a sub-topic (eval A2).
+    """从上往下拆解：dispatch a todo as a thread of work in this room (eval A2).
 
-    The child is seeded with a task-brief living doc, then its 分身 is kicked
-    off automatically (spec §8.4 分身异步工作): without this, a freshly split
-    sub-topic just sits idle until a human wanders in and posts a message."""
+    The thread is seeded with a task-brief living doc, then its 分身 is kicked
+    off automatically (spec §8.4 分身异步工作): without this, freshly dispatched
+    work just sits idle until a human wanders in and posts a message.
+
+    `topic_id` may be a thread's — 芝士 working on one piece of work often finds
+    a second. Work does not nest, so the new thread hangs in the same ROOM
+    either way."""
     service = TopicService(db)
-    parent = await service.get_or_404(topic_id)
+    parent_place = await service.place_or_404(topic_id)
     # actor 在信任边界注入 (同 edit_topic_doc): prefer the verified token, fall
     # back to body.created_by, and require the caller actually have access to
-    # the PARENT topic — a body-trusted `created_by` let anyone split anyone
-    # else's topic and mint an arbitrary roster owner.
+    # the ROOM — a body-trusted `created_by` let anyone dispatch work in anyone
+    # else's room and name an arbitrary owner.
     actor = await resolver.resolve(
         fallback_handle=body.created_by,
-        topic_id=topic_id,
-        project_id=parent.project_id,
+        topic_id=parent_place.room_id,
+        project_id=parent_place.project_id,
     )
     await resolver.authorize_topic(
-        actor, project_id=parent.project_id, topic_id=topic_id
+        actor, project_id=parent_place.project_id, topic_id=parent_place.room_id
     )
     # 自动续跑幂等 (④) — the costliest of the five to repeat: a duplicate split
     # does not just write a row, it spawns a second 分身 that starts working.
