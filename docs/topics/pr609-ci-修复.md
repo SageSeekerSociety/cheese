@@ -2,54 +2,55 @@
 
 ## 目标
 
-把 @task 设计现状 的 PR #609（`feat(tasks): re-deliver the foundation #608 merged as an empty PR`）的红色 CI 修绿。CI 的 `test` job 报 31 个失败。
+把 @task 设计现状 的 PR #609（`feat(tasks): re-deliver the foundation #608 merged as an empty PR`）修到能合。起点是 CI 的 `test` job 报 31 个失败。
+
+@wangchangxin 中途定了两件事：切换真做完了再一起交；以及既然芝士推不到 GitHub，就把 609 的内容挪过来、从本话题开一份新 PR。
 
 ## 现在的状态
 
-**31 个失败已修掉 30 个**，本地全量 **5271 passed / 1 failed / 0 errors**，ruff format + check 全过。剩的那 1 个是分支自己设的红闸门（见下）。
+**本地全量绿**，`ruff format` + `ruff check` 全过。改动全部落在本话题分支 `topic/155c6916` 上：609 的 48 个提交已合并进来，加上 7 个我的提交。
 
-4 个提交已推到平台 git 的 `topic/d5b859e4`（头 `ec91bb01d`）。**GitHub 上的 PR #609 还没收到**——见「卡在哪」。
+**下一步是递验收卡开新 PR**——这条路能走通，因为采纳流程会用批准人的 GitHub 身份推分支，绕开芝士自己 `push: false` 的限制。
 
-## 修了什么
+## 做完的三件事
 
-### 两个真 bug（改了生产代码）
+### 一、CI 报的 31 个失败
 
-1. **支线里说的话会落到房间主线上**。<&backend/app/domain/agent/chat.py> 的 `post_user_message` 解析出了 place，却把**房间的 id** 传给 `blocks.add`；`add` 会自己把 place id 拆成 (房间, 支线)，拿到房间 id 就静默地当成"房间主线"。后果：支线里的每一句话整个房间都能读到，而且每说一句就点亮房间的未读角标——恰恰是角标文档里写明不该做的事。
+修掉 30 个，其中挖出**两个真 bug**：
 
-2. **三条路由对支线 id 返回 404**。13 条路由已经换成 `place_or_404`，`comments`（读+写）、`GET /agent`、以及项目级 memory 的两条没换到。memory 那两条最要命：`cheese remember` 就是干活的人在跑，而干活的人现在是一条支线。
+1. **支线里说的话会落到房间主线上**。<&backend/app/domain/agent/chat.py> 的 `post_user_message` 解析出了 place，却把房间 id 传给 `blocks.add`；`add` 是自己拆 place id 的，拿到房间 id 就静默当成"房间主线"。后果：支线里每一句话整个房间都能读到，且每句都点亮房间未读角标——正是角标文档写明不该做的事。
+2. **`comments`（读+写）、`GET /agent`、项目级 memory 的两条路由对支线 id 返回 404**。13 条路由已换成 `place_or_404`，这几条漏了。
 
-   顺带修正了这里的一个陷阱：**identity 和 access 要用两个不同的 id**。per-turn token 是按 place 签的，所以身份校验要拿 place id（拿房间 id 会把支线自己的 token 判成越权，结果不是拒绝而是把作者抹成匿名）；而权限查的是**房间**的 roster，因为支线没有自己的 roster。
+剩下 30 个是测试没跟上重构（假对象缺 `Place`/`task_id`、房间之下不能再套房间、房间叫 `archived` 而支线叫 `closed`）。
 
-3. 附带补了一个缺口：房间归档时里面的支线被静默关掉，**支线里不留任何记录**（房间自己有一条）。人打开那条支线只会看到活干到一半断了，哪儿都查不到原因。
+### 二、补完芝士 CLI 在支线里的整套能力
 
-### 测试跟上重构（30 个失败里的绝大多数）
+这是"切换有没有做完"的真正验收面。线程容器里的 `CHEESE_TOPIC` 就是**线程 id**（<&backend/app/domain/agent/tmux_provider.py> 就这么设的），而 CLI 把它直接拼进 `/topics/{id}/…`。**7 条路由只认房间**，等于分身失去这些命令：
 
-- `wake_target` 现在收 `Place`、`AcceptCard` 多了 `task_id`、`_topic_or_404` 改走 `PlaceResolver`——假对象一个都没跟上。
-- 房间之下不能再套房间了（422），拆活出来的是 task 不是子话题，所以 `children` 是错的列表、`kind` 不是 task 有的字段。
-- 房间收尾叫 `archived`、支线收尾叫 `closed`，是故意分开的两个词。
-- `test_room_activity_vs_unread` 从来没跑通过，两半都是错的：它用评论说话（评论压根不算未读），又从话题列表里读角标（列表不带这个字段）。
-- 删掉 `review.pr_publish → topic.repositories` 这条已经还清的豁免。
+`ask`、`decision`、`PUT doc`（`cheese doc set`）、`artifact`、`status`、`background-task`（`cheese await`）、`webhook-token`，外加 `preview`。
 
-## 剩下的那 1 个红：不是 bug，是闸门
+其中 **`title` 最危险**：它不报 404。一条支线给自己起名字，改的是**整个房间的名字**，两边都没有任何提示——而 `cheese title` 是分身被要求开工第一个跑的命令。
 
-<&backend/tests/unit/test_switch_is_still_in_progress.py> 整个文件就是一句 `pytest.fail()`。它写明：这个分支的迁移把所有 work 的 `topics` 行删了、对话搬到房间上，在「创建 work 的代码也指向 tasks」之前合并它，等于**数据库历史搬走了、应用还在旁边写旧形状**。
+改的时候有三个地方必须分开，合并任何一个都是新 bug：
 
-**删掉这个文件 = 宣布切换完成。** 而实测说明切换**没**完成：
+- **身份查 place，权限查房间**。per-turn token 按 place 签；roster 只有房间有。搞反了，支线自己的 token 会被判越权——而结果不是拒绝，是把作者抹成匿名。
+- **`resolve_agent_handle` 读房间的 roster，但回落必须是支线自己的 handle**——那是它沙箱 token 铸出来的名字。合并的话，一个分身会有两个名字，记忆存进两个池子。
+- **房间的盒子是房间的**。预览去敲哪个端口、算力档位允不允许预览，即使是支线在问，答案也是房间的。
 
-- 创建 work 的四条路径确实都指向 tasks 了（`POST /topics` 只建房间、`split` → task、消息升级 → task、`upstream_conflict` → `dispatch_task`）。
-- **但还有 25 条 `/topics/{id}/*` 路由只认房间**，支线 id 打过去就是 404。其中这几条是芝士 CLI 每轮都在调的：`/ask`、`/decision`、`/title`、`PUT /doc`、`/artifact`、`/webhook-token`、`/background-task`。
-- 而线程容器里的 `CHEESE_TOPIC` 就是**线程 id**（<&backend/app/domain/agent/tmux_provider.py> 写死 `"CHEESE_TOPIC": str(topic_id)`），CLI 打的正是 `/topics/$CHEESE_TOPIC/ask`。
+顺带修了 `stall_signal`：它从整个房间读"最后一条 block"，于是一条死掉的支线，只要房间里还有别的支线在说话，就会被报成活着——正好是这个判定存在的意义。
 
-**结论：现在一条支线里的分身用不了 `cheese ask`、`cheese decision`、`cheese title`、`cheese doc set`、`cheese artifact`。** 那个闸门是对的，现在不该拆。
+### 三、删掉哨兵测试
 
-（顺带一提，那个文件里写着「它是唯一失败的东西」——提交时实际有 31 个失败，这句话当时就不准。）
+<&backend/tests/unit/test_switch_is_still_in_progress.py>（整个文件就是一句 `pytest.fail()`）已删。依据是它自己写的条件：**创建 work 的代码必须指向 `tasks`**，否则就是"数据库历史搬走了、应用还在旁边写旧形状"。这个条件现在成立——`POST /topics` 只建房间、`split` / 讨论升级 / upstream-conflict 三条路都开支线——而且分身实际要跑的命令都能到达支线，有 11 条测试钉着。
 
-## 卡在哪：需要人推一把
+## 知道但没做的（如实记账）
 
-改动在平台 git 上，**推不到 GitHub**：芝士的 `cheese gh-token` 权限是 `{"push": false}`（只有 actions/checks/metadata 只读）。平台代推只发生在验收卡处于 `pr_open` 的轮询循环里，而 @task 设计现状 这个话题**没有验收卡**，所以没有任何轮询器会去推它。
+`GET /{topic_id}/usage` 和 `GET /{topic_id}/transcript` 仍然只认房间。
 
-需要 @wangchangxin 拍板走哪条路，见对话里的选项。
+**没顺手改的原因**：两者的数据层**已经**按 (房间, 支线) 两列存了，所以不存在"还在写旧形状"；缺的是读路径。而补它要先定一件产品上的事——**一个房间的用量，该不该含它派出去的支线花的钱**。这个分支不该悄悄替人定，所以留着。
+
+其余只认房间的路由（`members`、`children`、`tasks`、`read`、`archive`、`unarchive`、`PUT agent`、`compute-profile`）是**设计如此**：这些问题本来就只有房间才答得上来。
 
 ## 环境备注
 
-跑 integration 用的临时库是我起的独立容器 `cheese-pr609-testpg`（端口 127.0.0.1:15433），没碰任何现有容器。用完请提醒我删，或直接 `docker rm -f cheese-pr609-testpg`。
+跑 integration 用的临时库是我起的独立容器 `cheese-pr609-testpg`（绑 `127.0.0.1:15433`），没碰机器上任何现有容器。合并后可以删。
