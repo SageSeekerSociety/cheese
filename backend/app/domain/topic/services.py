@@ -220,8 +220,13 @@ class TopicService:
         """Return one topic for cross-domain service callers."""
         return await self._repo.get(topic_id)
 
-    async def resolve_agent(self, topic: Topic) -> ResolvedAgent:
-        """Which agent works in this topic — its own, else the project's."""
+    async def resolve_agent(self, topic: Topic | Task) -> ResolvedAgent:
+        """Which agent works in this place — its own, else the project's.
+
+        A room and one thread inside it answer this the same way, so both are
+        taken: a thread is handed the room's agent when the work goes out, and
+        it carries that on its own row from then on.
+        """
         project = await self._projects.get(topic.project_id)
         if project is None:
             return IMPLICIT_DEFAULT
@@ -603,6 +608,18 @@ class TopicService:
                 continue
             thread.status = TaskStatus.closed
             thread.closed_at = datetime.now(UTC)
+            # Why it stopped has to be readable IN the thread that stopped: the
+            # room's own archive note lands on the room, and whoever opens the
+            # thread later sees work that simply ended mid-sentence.
+            await self._blocks.add(
+                project_id=thread.project_id,
+                topic_id=thread.id,
+                author=by,
+                author_type=AuthorType.system,
+                content=f"随父话题「{topic.title}」一同归档",
+                kind=BlockKind.event,
+                meta={"platform": True},
+            )
             from app.domain.review.archive import close_cards_for_archived_topic
 
             await close_cards_for_archived_topic(
