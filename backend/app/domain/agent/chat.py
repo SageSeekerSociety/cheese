@@ -2347,7 +2347,10 @@ class ChatService:
                     content = expand_mention_names(content, roster, topic_refs)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=topic.id,
+                    # The PLACE this was sent to, not the room around it: `add`
+                    # splits it, and the room's id would put a thread's message
+                    # on the room's own line, where everyone reads it.
+                    topic_id=place.id,
                     author=author,
                     author_type=AuthorType.human,
                     content=content,
@@ -2379,7 +2382,7 @@ class ChatService:
             for att in attachments or []:
                 att_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=topic.id,
+                    topic_id=place.id,  # the place, as above
                     author=author,
                     author_type=AuthorType.human,
                     content=str(att.get("path") or ""),
