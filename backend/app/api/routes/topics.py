@@ -54,6 +54,7 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.models import Task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.team.repositories import TeamRepository
@@ -115,17 +116,26 @@ async def get_topic_agent(
     ``inherited`` is what a settings screen needs to render honestly: a topic
     that never picked one is not "using 芝士", it is *following the project*, and
     changing the project's default will move it.
+
+    Answers for a thread as readily as for a room — asking who is doing a piece
+    of work is the same question, and the work is what has an id to ask about.
     """
     service = TopicService(db)
-    topic = await service.get_or_404(topic_id)
+    place = await service.place_or_404(topic_id)
+    # Identity is checked against the PLACE a per-turn token was minted for;
+    # access is the ROOM's roster, which is the only roster there is.
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
-    agent = await service.resolve_agent(topic)
-    return ok(_topic_agent_payload(topic, agent))
+    # The thread's own row when there is one: it was handed the room's agent
+    # when the work went out, so reading the room here would be right by
+    # accident and wrong the moment the two differ.
+    owner = place.task if place.task is not None else place.room
+    agent = await service.resolve_agent(owner)
+    return ok(_topic_agent_payload(owner, agent))
 
 
 @router.put("/{topic_id}/agent")
@@ -152,7 +162,7 @@ async def set_topic_agent(
     return ok(_topic_agent_payload(topic, agent))
 
 
-def _topic_agent_payload(topic: Topic, agent: ResolvedAgent) -> dict:
+def _topic_agent_payload(topic: Topic | Task, agent: ResolvedAgent) -> dict:
     return {
         "topic_id": str(topic.id),
         "instance_id": str(agent.instance_id) if agent.instance_id else None,
@@ -630,15 +640,16 @@ async def list_comments(
 ) -> dict:
     """段落评论 (eval B4): inline comments, each anchored to a doc node via
     reply_to."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
-    await TopicService(db).get_or_404(topic_id)
-    comments = await BlockRepository(db).list_comments_for_topic(topic_id)
+    comments = await BlockRepository(db).list_comments_for_topic(
+        place.room_id, task_id=place.task_id
+    )
     items = [BlockOut.model_validate(c).model_dump(mode="json") for c in comments]
     return ok(page(items, len(items)))
 
@@ -654,7 +665,7 @@ async def add_comment(
 ) -> dict:
     """Add an inline comment anchored to a doc node (eval B4). Dual-use like the
     doc panel — a human selects text and comments; not cheese-gated."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     anchor = (body.get("anchor") or "").strip()
     content = (body.get("content") or "").strip()
     if not content:
@@ -663,7 +674,13 @@ async def add_comment(
     reply_to: uuid.UUID | None = None
     if anchor:
         node = await repo.get(uuid.UUID(anchor))
-        if node is None or node.topic_id != topic_id:
+        # Both halves: a room and a thread inside it share `topic_id`, so
+        # checking only that would let a comment anchor onto the other one's doc.
+        if (
+            node is None
+            or node.topic_id != place.room_id
+            or node.task_id != place.task_id
+        ):
             raise ValidationError("锚点不是本话题的文档块")
         reply_to = node.id
     # B4 Feishu-style: the exact selected span, kept for display next to the
@@ -673,15 +690,17 @@ async def add_comment(
         quote = quote[:500]
     actor = await resolver.resolve(
         fallback_handle=body.get("author"),
-        topic_id=topic_id,
-        project_id=topic.project_id,
+        topic_id=place.id,
+        project_id=place.project_id,
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
     author = actor.handle
     comment = await repo.add(
-        project_id=topic.project_id,
+        project_id=place.project_id,
+        # The place id, not the room's: `add` splits it, and handing it the room
+        # would post a thread's comment onto the room for everyone to read.
         topic_id=topic_id,
         author=author,
         author_type=AuthorType.ai if actor.is_agent else AuthorType.human,
