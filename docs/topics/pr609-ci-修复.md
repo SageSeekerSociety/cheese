@@ -8,9 +8,37 @@
 
 ## 现在的状态
 
-**本地全量绿**，`ruff format` + `ruff check` 全过。改动全部落在本话题分支 `topic/155c6916` 上：609 的 48 个提交已合并进来，加上 7 个我的提交。
+代码全部做完，**本地全量 5282 passed / 0 failed**，ruff 全过。改动在平台 git 的 `topic/155c6916` 上（`f642d3aa4`，比 main 多 **118 files / +4676**）。
 
-**下一步是递验收卡开新 PR**——这条路能走通，因为采纳流程会用批准人的 GitHub 身份推分支，绕开芝士自己 `push: false` 的限制。
+**卡在最后一步：递不出卡了。** 见下面「死锁」。
+
+## 出过一次事故：PR #611 空合并
+
+第一次递卡时 PR #611 被采纳合并，但它的 diff 是 **0 files**——什么都没交付，main 只多了一个空提交 `97b53d67`。和 #608 是同一类事故。
+
+机制：递卡那一刻平台把话题分支重置成「base + 一个空提交」并拿它开 PR；而平台的自动快照只 commit 工作区改动、**从不 push**。所以本地有全部内容、远端是空的、PR 自然也是空的。
+
+**教训（已写进项目记忆）**：递卡前必须自己 `git push origin HEAD:refs/heads/topic/<自己的话题id>`；推被拒时用 **merge** 把远端那个空提交并进来（**绝不能 rebase**，平台用的是普通 push）；递卡后立刻查 PR 的 `changed_files` 非 0，再叫人采纳。
+
+## 死锁：这个话题现在永久递不出卡
+
+PR #611 合并后 GitHub 自动删掉了 `topic/155c6916` 分支。而：
+
+- 平台推分支用 `git push --force-with-lease`，lease 取自它自己的 remote-tracking ref，那个 ref 还停在 `d8cceda99`；
+- 远端实际已无此分支 → lease 判定 stale → 推送被拒（`! [rejected] (stale info)`）；
+- 平台的定时同步跑的是 `git fetch upstream`，**不带 `--prune`**（<&backend/app/domain/workspace/service.py> 的 1830 与 1909 行），所以那个过期 ref 永远不会自己消失。
+
+**这是平台的真缺陷**：任何话题只要 PR 合并过一次、GitHub 删过分支，就会永久卡在这里。
+
+**解锁需要一个有写权限的人跑一条命令**（芝士的 token 是 `push: false`）：
+
+```bash
+gh api -X POST repos/SageSeekerSociety/cheese/git/refs \
+  -f ref=refs/heads/topic/155c6916 \
+  -f sha=d8cceda99de9cfe83dfb851532a590ee068c6755
+```
+
+跑完再点一次卡片上的采纳（那张 pending 的卡会重试）。`d8cceda99` 这个 commit 在 GitHub 上仍然存在，已核实。
 
 ## 做完的三件事
 
