@@ -20,7 +20,7 @@ Per turn:
 The tmux session is per topic and REUSED across turns, so the conversation stays
 continuous inside it (no --resume needed — the session IS the continuity).
 
-One box per ROOM, not per topic. A room's母话题 and every task split out of it
+One box per ROOM, not per place. A room's own line and every thread in it
 share a container and hold one tmux session each. This is the necessary half of
 "containers are never reaped": kept forever AND one per topic, the box count only
 ever climbs and 2GB apiece exhausts memory first; kept forever and one per room,
@@ -102,7 +102,6 @@ _MAX_ENTERS = 5
 # created today (a task's parent IS a room); the margin covers legacy `subtopic`
 # rows, and the bound itself makes a cycle in the tree a degraded box placement
 # rather than a hung turn.
-_MAX_ROOM_WALK = 8
 
 logger = logging.getLogger(__name__)
 
@@ -1318,48 +1317,51 @@ class TmuxChannel(Channel):
         return merged
 
     async def _room_id(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> uuid.UUID:
-        """Which room's box this topic runs in — itself when it IS a room.
+        """Which room's box this place runs in — itself when it IS a room.
 
-        Rooms are `root`/`topic`; a `task` belongs to the room it was split out
-        of. Tasks do not nest (topic/services.py `_child_kind`), so one hop up is
-        the whole walk — but the loop follows `parent_id` until it reaches a room
-        anyway, because the legacy `subtopic` kind predates that rule and rows
-        with it still exist.
+        `topic_id` is a PLACE id: a room's, or one thread's. A thread names its
+        room directly (`tasks.room_id`), so this is one lookup and no walk. It
+        used to climb `topics.parent_id` because a piece of work was a row in
+        that table; asking that table about a thread now finds nothing, and the
+        fallback below would hand every thread a box of its own — one container
+        per piece of work instead of one per room, silently.
 
         The answer is recorded with `ws.bind_room` so the sync, DB-free side of
         the workspace layer (`docker port` lookups on the request path) can find
-        the box too. Any failure falls back to the topic's own id, which is the
-        one-box-per-topic behaviour — a degraded answer, never a wrong box.
+        the box too. Any failure falls back to the place's own id, which is the
+        one-box-per-place behaviour — a degraded answer, never a wrong box.
         """
         if not settings.sandbox_share_room_container:
             return topic_id
         try:
             from sqlalchemy import select
 
-            from app.domain.topic.models import Topic, TopicKind
+            from app.domain.room_task.models import Task
+            from app.domain.topic.models import Topic
 
             factory = self._session_factory
             if factory is None:
                 from app.core.db import async_session_factory
 
                 factory = async_session_factory
-            rooms = (TopicKind.root, TopicKind.topic)
             async with factory() as session:
-                current = topic_id
-                for _ in range(_MAX_ROOM_WALK):
-                    row = (
-                        await session.execute(
-                            select(Topic.kind, Topic.parent_id, Topic.project_id).where(
-                                Topic.id == current
-                            )
-                        )
-                    ).first()
-                    if row is None or row.project_id != project_id:
+                task = (
+                    await session.execute(
+                        select(Task.room_id, Task.project_id).where(Task.id == topic_id)
+                    )
+                ).first()
+                if task is not None:
+                    if task.project_id != project_id:
                         return topic_id
-                    if row.kind in rooms or row.parent_id is None:
-                        ws.bind_room(topic_id, current)
-                        return current
-                    current = row.parent_id
+                    ws.bind_room(topic_id, task.room_id)
+                    return task.room_id
+                room = (
+                    await session.execute(
+                        select(Topic.project_id).where(Topic.id == topic_id)
+                    )
+                ).first()
+                if room is not None and room.project_id == project_id:
+                    return topic_id
         except Exception:  # noqa: BLE001 — never fail a turn over box placement
             logger.warning("could not resolve the room of %s", topic_id, exc_info=True)
         return topic_id

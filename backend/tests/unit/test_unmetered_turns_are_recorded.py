@@ -26,6 +26,14 @@ class _Session:
     async def flush(self) -> None:
         return None
 
+    async def get(self, _model, _pk):
+        """No such task — spend attributed to a room's own main line.
+
+        The repository resolves the place id it is handed into (room, thread),
+        and a place that is not a task IS the room. Returning None says that.
+        """
+        return None
+
 
 async def test_an_unmetered_turn_is_still_written():
     session = _Session()

@@ -57,7 +57,7 @@ async def main() -> int:
     seen = 0
     if MARKER and project_id is not None:
         result = subprocess.run(
-            ["git", "show", f"{ws.branch_for_topic(TOPIC_ID)}:DEVICE_PROBE.txt"],
+            ["git", "show", f"{ws.branch_for_place(TOPIC_ID)}:DEVICE_PROBE.txt"],
             cwd=ws.ensure_repo(project_id),
             capture_output=True,
             text=True,

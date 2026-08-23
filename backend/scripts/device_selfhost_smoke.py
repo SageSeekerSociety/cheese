@@ -133,7 +133,7 @@ async def main() -> int:
         )["data"]["id"]
     )
     repo = ws.ensure_repo(project_id)
-    branch = ws.branch_for_topic(topic_id)
+    branch = ws.branch_for_place(topic_id)
 
     def branch_head() -> str:
         return subprocess.run(

@@ -172,7 +172,7 @@ class TopicMemberService:
         member_handles: list[str],
     ) -> None:
         """Seed a split-off sub-topic's roster: whoever the caller resolved as the
-        person driving this work becomes owner (`TopicService.split_to_subtopic`
+        person driving this work becomes owner (`TopicService.dispatch_task`
         walks that ladder — the splitter, else the human whose turn the split came
         out of, else inherited), and the parent topic's members (typically its
         human roster) join as plain members — otherwise a 分身-initiated split
@@ -232,7 +232,7 @@ class TopicMemberService:
         under its own ``cheese-<hex12>`` handle, so on every split topic
         ``created_by`` names a robot. Seeding already walked the ladder that
         finds the real human — :meth:`seed`/:meth:`seed_split` skip 芝士 as owner,
-        and ``TopicService.split_to_subtopic`` falls back to the person driving
+        and ``TopicService.dispatch_task`` falls back to the person driving
         the turn the split came out of, then the parent room's owner, then the
         project's — so this just reads what that ladder wrote.
 
@@ -323,17 +323,25 @@ class TopicMemberService:
         await self.ensure_topic_agent_seat(topic_id)
         await self._repo.delete(legacy)
 
-    async def resolve_agent_handle(self, topic_id: uuid.UUID) -> str:
-        """The handle 芝士 acts under in this topic — for authoring blocks and
+    async def resolve_agent_handle(
+        self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
+    ) -> str:
+        """The handle 芝士 acts under in this place — for authoring blocks and
         keying its memory. Read-only.
 
         The roster decides: a room hosting some other agent attributes to that
-        one. With no agent seated at all, fall back to the handle this topic's
-        sandbox token names (``cheese-<topic hex>``) — a turn still has to answer
+        one. With no agent seated at all, fall back to the handle this place's
+        sandbox token names (``cheese-<place hex>``) — a turn still has to answer
         "who am I", and answering with the shared account would put the collapsed
         identity back into the audit trail.
+
+        Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
+        the room's (threads do not have one), but the fallback has to stay the
+        thread's own, because that is the handle its sandbox was started with.
+        Collapsing the two would give one 分身 two names — one on the blocks it
+        writes, another on the token it writes them with.
         """
-        handles = await self.agent_handles(topic_id)
+        handles = await self.agent_handles(room_id or topic_id)
         return handles[0] if handles else topic_agent_handle(topic_id)
 
     async def add(

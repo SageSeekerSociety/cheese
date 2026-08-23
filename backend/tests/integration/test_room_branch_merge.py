@@ -88,7 +88,7 @@ def test_accepted_task_commits_land_on_the_room_branch(client):
 
     assert result["merged"] is True
     assert result["commits"] >= 1
-    room_branch = ws.branch_for_topic(room)
+    room_branch = ws.branch_for_place(room)
     assert "task.txt" in _branch_files(pid, room_branch)
     # The base branch is untouched: the work reaches main through the ROOM's
     # accept card, not through the task.
@@ -145,7 +145,7 @@ def test_conflict_names_the_files_instead_of_failing_silently(client):
     assert (
         "first task's version"
         in subprocess.run(
-            ["git", "show", f"{ws.branch_for_topic(room)}:shared.txt"],
+            ["git", "show", f"{ws.branch_for_place(room)}:shared.txt"],
             cwd=repo,
             capture_output=True,
             text=True,
@@ -171,12 +171,12 @@ def test_uncommitted_edits_in_the_room_are_never_swept_away(client):
     assert result["merged"] is False
     assert result["deferred"] is True
     assert (room_wt / "room.txt").read_text() == "a human is mid-edit\n"
-    assert "task.txt" not in _branch_files(pid, ws.branch_for_topic(room))
+    assert "task.txt" not in _branch_files(pid, ws.branch_for_place(room))
 
     # Once that edit is committed, the queued merge goes through.
     ws.snapshot_worktree(pid, room)
     assert ws.merge_subtopic_into_room(pid, task, room)["merged"] is True
-    assert "task.txt" in _branch_files(pid, ws.branch_for_topic(room))
+    assert "task.txt" in _branch_files(pid, ws.branch_for_place(room))
 
 
 def test_a_tasks_diff_shows_its_own_work_not_the_rooms(client):

@@ -190,9 +190,13 @@ def test_root_topic_cannot_be_archived(client):
     assert r.status_code == 422
 
 
-def test_archive_cascades_to_subtopics(client):
-    """归档整件事：a topic's active subtopics (and theirs) archive with it —
-    orphan 分身 without their parent context are meaningless."""
+def test_archive_cascades_to_the_work_in_the_room(client):
+    """归档整件事：putting a room away closes the work still open inside it —
+    a thread left running with its room gone has nobody left to report to.
+
+    Room and thread end in different words on purpose: a room is `archived`
+    (a person put it away) and a thread is `closed` (its work stopped).
+    """
     pr = client.post("/projects", json={"name": "P"})
     pid = pr.json()["data"]["id"]
     t = client.post("/topics", json={"project_id": pid, "title": "父"})
@@ -215,8 +219,11 @@ def test_archive_cascades_to_subtopics(client):
 
     r = client.post(f"/topics/{parent}/archive", json={"by": "u"})
     assert r.status_code == 200
-    for tid in (parent, c1, c2, g):
-        assert client.get(f"/topics/{tid}").json()["data"]["status"] == "archived", tid
-    # The cascaded child records why it went.
+    assert client.get(f"/topics/{parent}").json()["data"]["status"] == "archived"
+    # 孙 was split from inside 子1, which opens a SIBLING thread in the same
+    # room — so all three are the room's, and all three go when it does.
+    for tid in (c1, c2, g):
+        assert client.get(f"/topics/{tid}").json()["data"]["status"] == "closed", tid
+    # The cascaded thread records why it went.
     blocks = client.get(f"/topics/{c1}/blocks").json()["data"]["data"]
     assert any("随父话题" in (b.get("content") or "") for b in blocks)

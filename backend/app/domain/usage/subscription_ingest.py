@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
+from app.domain.room_task.place import room_and_task
 from app.domain.usage.credits import tokens_to_credits
 from app.domain.usage.models import IngestCheckpoint
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
@@ -148,9 +149,19 @@ class WorkIndex:
     async def _load(
         self, session: AsyncSession, topic_id: uuid.UUID
     ) -> list[tuple[datetime, uuid.UUID]]:
+        # `topic_id` is a place id and may name a thread, whose blocks carry the
+        # ROOM's topic_id. Matching on it raw would find nothing and quietly
+        # leave every one of that thread's rows unattributed.
+        room_id, task_id = await room_and_task(session, topic_id)
         stmt = (
             select(Block.turn_id, func.min(Block.created_at))
-            .where(Block.topic_id == topic_id, Block.turn_id.is_not(None))
+            .where(
+                Block.topic_id == room_id,
+                Block.task_id.is_(None)
+                if task_id is None
+                else Block.task_id == task_id,
+                Block.turn_id.is_not(None),
+            )
             .group_by(Block.turn_id)
             .order_by(func.min(Block.created_at))
         )

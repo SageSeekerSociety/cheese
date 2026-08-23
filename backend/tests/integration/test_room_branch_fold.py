@@ -60,7 +60,7 @@ def _branch_files(pid: str, topic_id: str) -> set[str]:
             "ls-tree",
             "-r",
             "--name-only",
-            ws.branch_for_topic(uuid.UUID(topic_id)),
+            ws.branch_for_place(uuid.UUID(topic_id)),
         ],
         cwd=repo,
         capture_output=True,
@@ -151,7 +151,7 @@ def _room_text(client, room_id: str) -> str:
 def _card_status(client, sub_id: str) -> str:
     async def _run() -> str:
         async with client.test_factory() as session:
-            cards = await ConclusionCardRepository(session).list_for_topic(
+            cards = await ConclusionCardRepository(session).list_for_place(
                 uuid.UUID(sub_id)
             )
             return cards[0].status
@@ -190,16 +190,24 @@ def test_accepting_a_conclusion_folds_the_commits_into_the_room(client):
     assert "并入本房间的分支" in _room_text(client, room["id"])
 
 
-def test_a_rooms_own_conclusion_does_not_fold_into_the_root_topic(client):
-    """房间照旧靠采纳并进 main —— 把它并进根话题是没有意义的。"""
+def test_a_room_has_nothing_to_conclude_to(client):
+    """房间照旧靠采纳并进 main —— 把它并进根话题是没有意义的。
+
+    以前这是「结论卡开得出来，但折叠那一步会跳过」；现在它在更早的地方就说不
+    通了：结论是**一件活**回流给它所在的房间，而房间上面没有这样一个地方。
+    与其让它开出一张永远折不进去的卡，不如当场说清楚。
+    """
     p = _project(client)
     room = _room(client, p["id"])
     _native_edit(p["id"], room["id"], "room.txt", "room work\n")
     root_id = p["root_topic_id"]
 
-    _file_conclusion(client, room["id"], "房间这一阶段做完了")
-    _settle_by_turn_end(client, root_id)
-
+    r = client.post(
+        f"/topics/{room['id']}/return-conclusion",
+        json={"conclusion": "房间这一阶段做完了"},
+    )
+    assert r.status_code == 422
+    assert "房间" in r.json()["message"]
     assert "room.txt" not in _branch_files(p["id"], root_id)
 
 

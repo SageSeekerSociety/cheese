@@ -209,20 +209,24 @@ def test_archiving_revokes_a_pending_card(client):
     assert card["decided_by"] == "bob"
 
 
-def test_cascade_archive_also_closes_a_subtopic_card(client):
-    """归档是级联的（父话题带走子话题），卡的收敛必须跟着一起级联。"""
+def test_cascade_archive_also_closes_a_threads_card(client):
+    """归档是级联的（房间带走里面的活），卡的收敛必须跟着一起级联。
+
+    卡挂在支线上而不是房间上，所以只关支线、不收卡的话，留下的是一张没人能
+    再动的孤儿卡——它所在的地方已经冻住了。
+    """
     pid = _make_project(client)
-    parent = _make_topic(client, pid, "父")
-    child = client.post(
-        "/topics", json={"project_id": pid, "title": "子", "parent_id": parent}
-    ).json()["data"]["id"]
-    _make_card(client, child)
-    assert _cards(client, child)[0]["status"] == "pending"
+    room = _make_topic(client, pid, "房间")
+    thread = client.post(f"/topics/{room}/split", json={"title": "一件活"}).json()[
+        "data"
+    ]["id"]
+    _make_card(client, thread)
+    assert _cards(client, thread)[0]["status"] == "pending"
 
-    _archive(client, parent, by="bob")
+    _archive(client, room, by="bob")
 
-    assert _topic(client, child)["status"] == "archived"
-    assert _cards(client, child)[0]["status"] == "revoked"
+    assert _topic(client, thread)["status"] == "closed"
+    assert _cards(client, thread)[0]["status"] == "revoked"
 
 
 def test_archiving_does_not_touch_already_settled_cards(client):

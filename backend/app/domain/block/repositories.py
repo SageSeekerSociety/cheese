@@ -18,6 +18,7 @@ from app.domain.block.models import (
     BlockReaction,
     prompt_attempts,
 )
+from app.domain.room_task.place import room_and_task
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class BlockRepository:
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
+        task_id: uuid.UUID | None = None,
         author: str,
         author_type: AuthorType,
         content: str,
@@ -59,6 +61,15 @@ class BlockRepository:
         # ambient turn id set from the X-Cheese-Turn header (R4).
         if turn_id is None:
             turn_id = current_work_id.get()
+        # `topic_id` names a PLACE, which may be a thread — that is how the rest
+        # of the platform addresses one, and asking 36 call sites to start
+        # passing a pair would be 36 chances to pass the room and silently write
+        # a thread's message where everyone can see it. Resolved here instead;
+        # an explicit `task_id` still wins, which is what lets the dispatcher
+        # seed a thread's brief onto a room it names directly.
+        room_id, resolved_task = await room_and_task(self._session, topic_id)
+        if task_id is None:
+            task_id = resolved_task
         # Explicit null means "tracked and still pending". Without that marker,
         # legacy compatibility has to infer consumption from the last AI block;
         # a newer, receipted mid-turn message could then move that positional
@@ -70,7 +81,8 @@ class BlockRepository:
             meta = {CONSUMED_TURN_META_KEY: None, **(meta or {})}
         block = Block(
             project_id=project_id,
-            topic_id=topic_id,
+            topic_id=room_id,
+            task_id=task_id,
             author=author,
             author_type=author_type,
             content=content,
@@ -92,6 +104,22 @@ class BlockRepository:
 
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
+
+    @staticmethod
+    def _in_place(topic_id: uuid.UUID, task_id: uuid.UUID | None):
+        """Rows belonging to one place: a room's own main line, or one thread.
+
+        Every timeline query needs this and none of them needed it before, when
+        a piece of work was a room and `topic_id` alone said everything. It is a
+        helper rather than an inlined pair of predicates because forgetting the
+        `task_id` half does not fail — it quietly answers for the room's main
+        line, which for a room read is right and for a thread read is a bug that
+        renders someone else's conversation.
+        """
+        return (
+            Block.topic_id == topic_id,
+            Block.task_id.is_(None) if task_id is None else Block.task_id == task_id,
+        )
 
     async def has_eid(self, topic_id: uuid.UUID, eid: str) -> bool:
         """Whether this topic already materialized a hook event id."""
@@ -123,8 +151,22 @@ class BlockRepository:
         await self._session.delete(block)
         await self._session.flush()
 
-    async def set_upgraded_to_topic(self, block: Block, topic_id: uuid.UUID) -> None:
+    async def set_upgraded_to_place(
+        self,
+        block: Block,
+        *,
+        topic_id: uuid.UUID | None = None,
+        task_id: uuid.UUID | None = None,
+    ) -> None:
+        """Point this block's position at the place it became.
+
+        Exactly one of the two: upgrading inside a room dispatches work
+        (`task_id`), upgrading out of a private chat opens a room
+        (`topic_id`). Both are real foreign keys, which is why this is a pair
+        of nullable columns rather than one column holding either.
+        """
         block.upgraded_to_topic_id = topic_id
+        block.upgraded_to_task_id = task_id
         await self._session.flush()
 
     async def set_doc_content(
@@ -204,20 +246,30 @@ class BlockRepository:
         await self._session.flush()
         return block
 
-    async def doc_root(self, topic_id: uuid.UUID) -> Block | None:
-        """The topic's canonical living-doc block (markdown blob, spec §2.2)."""
+    async def doc_root(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> Block | None:
+        """This PLACE's canonical living-doc block (markdown blob, spec §2.2).
+
+        The `task_id` half is load-bearing, not decoration: a room and every
+        thread in it now carry `topic_id` of the room, so without it the room's
+        document resolves to whichever doc block happens to be oldest — which
+        after the first split is a thread's task brief.
+        """
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.doc)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.doc)
             .order_by(Block.created_at)
         )
         return (await self._session.scalars(stmt)).first()
 
-    async def list_doc_nodes(self, topic_id: uuid.UUID) -> list[Block]:
+    async def list_doc_nodes(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
         """The living doc's structured node tree (B1), in document order."""
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.doc_node)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.doc_node)
             .order_by(Block.struct_order)
         )
         return list((await self._session.scalars(stmt)).all())
@@ -245,7 +297,9 @@ class BlockRepository:
         )
         return {row for row in (await self._session.scalars(stmt)).all() if row}
 
-    async def list_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
+    async def list_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
         """Timeline view: blocks of a topic, oldest first (spec §5).
 
         Excludes doc_node tree blocks and inline comments — those belong to the
@@ -258,14 +312,16 @@ class BlockRepository:
         stmt = (
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                *self._in_place(topic_id, task_id),
                 Block.kind.not_in(self._NON_TIMELINE),
             )
             .order_by(Block.created_at, Block.id)
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def latest_for_topic(self, topic_id: uuid.UUID) -> Block | None:
+    async def latest_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> Block | None:
         """The newest block in the topic's timeline, or None for an empty topic.
 
         Same total order and same exclusions as `list_for_topic`, so "the last
@@ -276,7 +332,7 @@ class BlockRepository:
         stmt = (
             select(Block)
             .where(
-                Block.topic_id == topic_id,
+                *self._in_place(topic_id, task_id),
                 Block.kind.not_in(self._NON_TIMELINE),
             )
             .order_by(Block.created_at.desc(), Block.id.desc())
@@ -288,6 +344,7 @@ class BlockRepository:
         self,
         topic_id: uuid.UUID,
         *,
+        task_id: uuid.UUID | None = None,
         limit: int,
         before: Block | None = None,
         kinds: Collection[BlockKind] | None = None,
@@ -305,7 +362,7 @@ class BlockRepository:
         cursor could then skip or repeat the tied rows).
         """
         stmt = select(Block).where(
-            Block.topic_id == topic_id,
+            *self._in_place(topic_id, task_id),
             Block.kind.not_in(self._NON_TIMELINE),
         )
         # 现场 wants events and nothing else; narrowing HERE rather than in the
@@ -332,33 +389,39 @@ class BlockRepository:
         rows.reverse()  # callers render oldest-first, same as list_for_topic
         return BlockPage(items=rows, has_more=has_more)
 
-    async def count_for_topic(self, topic_id: uuid.UUID) -> int:
+    async def count_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> int:
         stmt = (
             select(func.count())
             .select_from(Block)
             .where(
-                Block.topic_id == topic_id,
+                *self._in_place(topic_id, task_id),
                 Block.kind.not_in(self._NON_TIMELINE),
             )
         )
         return int((await self._session.scalar(stmt)) or 0)
 
-    async def list_comments_for_topic(self, topic_id: uuid.UUID) -> list[Block]:
+    async def list_comments_for_topic(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> list[Block]:
         """Inline comments (B4), oldest first; each anchors to a doc node via
         reply_to."""
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.comment)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.comment)
             .order_by(Block.created_at)
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def latest_artifact(self, topic_id: uuid.UUID) -> Block | None:
+    async def latest_artifact(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> Block | None:
         """The topic's current preview (spec §9.1): the most recent artifact block
         芝士 pointed at. Newest wins — re-running `cheese artifact` repoints it."""
         stmt = (
             select(Block)
-            .where(Block.topic_id == topic_id, Block.kind == BlockKind.artifact)
+            .where(*self._in_place(topic_id, task_id), Block.kind == BlockKind.artifact)
             .order_by(Block.created_at.desc())
         )
         return (await self._session.scalars(stmt)).first()

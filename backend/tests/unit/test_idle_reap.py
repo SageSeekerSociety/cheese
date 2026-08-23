@@ -189,22 +189,23 @@ async def test_a_room_with_a_busy_task_keeps_its_box(client, tmp_path, monkeypat
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         room = await topics.create(project_id=project.id, title="R", created_by="u")
-        task = await topics.split_to_subtopic(
-            parent_topic_id=room.id, title="T", created_by="u"
-        )
+        task = await topics.dispatch_task(place_id=room.id, title="T", created_by="u")
         blocks = BlockRepository(session)
         for t in (room, task):
             await blocks.add(
                 project_id=project.id,
-                topic_id=t.id,
+                topic_id=t.id,  # a place id — the thread's resolves to (room, thread)
                 author="u",
                 author_type=AuthorType.human,
                 content="hi",
             )
-        # The ROOM has been silent for a month; its task spoke just now.
+        # The ROOM's own line has been silent for a month; its thread spoke just
+        # now. Aged by (room, main line) — a thread's blocks carry the room's
+        # topic_id too, so aging on topic_id alone would age the very message
+        # this test is about.
         await session.execute(
             update(Block)
-            .where(Block.topic_id == room.id)
+            .where(Block.topic_id == room.id, Block.task_id.is_(None))
             .values(created_at=datetime.now(UTC) - timedelta(days=30))
         )
         await session.commit()
@@ -220,10 +221,16 @@ async def test_a_room_with_a_busy_task_keeps_its_box(client, tmp_path, monkeypat
 
 
 @pytest.mark.anyio
-async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
+async def test_the_room_of_a_task_is_the_room_it_names(client, tmp_path):
     """The DB half of box placement: a task runs in the box of the room it was
-    split out of, a room runs in its own, and the answer is recorded where the
-    sync workspace layer can read it (`docker port` lookups have no session)."""
+    dispatched in, a room runs in its own, and the answer is recorded where the
+    sync workspace layer can read it (`docker port` lookups have no session).
+
+    Named for what it now does. It used to climb `topics.parent_id` to find the
+    room, and a thread is not in that table — the climb would have found nothing
+    and fallen back to "a box of its own", which is one container per piece of
+    work instead of one per room, with nothing anywhere saying so.
+    """
     from app.core.config import settings
     from app.domain.agent.tmux_provider import TmuxChannel
 
@@ -232,9 +239,7 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
         project = await ProjectService(session).create(name="P", owner_handle="u")
         topics = TopicService(session)
         room = await topics.create(project_id=project.id, title="R", created_by="u")
-        task = await topics.split_to_subtopic(
-            parent_topic_id=room.id, title="T", created_by="u"
-        )
+        task = await topics.dispatch_task(place_id=room.id, title="T", created_by="u")
         await session.commit()
         project_id, room_id, task_id = project.id, room.id, task.id
 
@@ -246,8 +251,8 @@ async def test_the_room_of_a_task_is_resolved_from_the_tree(client, tmp_path):
         assert await provider._room_id(project_id, room_id) == room_id
         # ...and it is now readable without a DB session.
         assert ws.room_for_topic(task_id) == room_id
-        # A topic of ANOTHER project can never be pulled into this room's box,
-        # even if the ids were somehow crossed: the walk verifies the project.
+        # A place of ANOTHER project can never be pulled into this room's box,
+        # even if the ids were somehow crossed: the lookup verifies the project.
         assert await provider._room_id(uuid.uuid4(), task_id) == task_id
     finally:
         settings.workspace_root = old_root

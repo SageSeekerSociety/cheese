@@ -99,6 +99,8 @@ export interface Block {
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
+  // 这一块被派成了哪条支线（房间里的「讨论升级」走这条）。两者只会有一个非空。
+  upgraded_to_task_id?: string | null
   created_at: string
 }
 
@@ -127,6 +129,28 @@ export interface TodoItem {
 
 // 进度层 (#187): the stored checklist for a topic. `updated_at` is null when the
 // topic has never had one (items is then []).
+// 一件活 —— 房间里的一条支线，不是话题树上的一个节点。房间有名册，一件活只有
+// 唯一的主（`owner_handle`），那个差别就是它不再是房间的全部理由。
+export interface RoomTask {
+  id: string
+  project_id: string
+  // 它挂在哪个房间里。永远是房间——活不嵌套。
+  room_id: string
+  title: string
+  status: string
+  owner_handle?: string | null
+  created_by?: string | null
+  agent_instance_id?: string | null
+  branch_name?: string | null
+  // 交付，和 `status` 不是同一个问题：活可以已交付但还开着，也可以关掉却什么都没交付。
+  accepted_by?: string | null
+  accepted_at?: string | null
+  closed_at?: string | null
+  upgraded_from_block_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface TopicProgress {
   items: TodoItem[]
   updated_at: string | null

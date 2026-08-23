@@ -26,6 +26,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.memory.models import MemoryScope, agent_project_scope_id
 from app.domain.project.models import Project
+from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 
 # An instance handle keys a memory pool (``{project}:{handle}``), so it may not
@@ -94,8 +95,12 @@ class AgentInstanceService:
         instance = await self._repo.get(project.default_agent_instance_id)
         return self.resolved(instance) if instance else IMPLICIT_DEFAULT
 
-    async def for_topic(self, topic: Topic, project: Project) -> ResolvedAgent:
-        """The agent acting in *topic* — its own, else the project's default."""
+    async def for_topic(self, topic: Topic | Task, project: Project) -> ResolvedAgent:
+        """The agent acting in *topic* — its own, else the project's default.
+
+        Takes a thread as readily as a room: both carry the pick on their own
+        row, and a thread is given the room's when the work goes out.
+        """
         if topic.agent_instance_id is not None:
             instance = await self._repo.get(topic.agent_instance_id)
             if instance is not None:

@@ -92,18 +92,24 @@ def test_sort_defaults_to_created_order_when_unspecified(client):
 
 def test_sort_does_not_break_parent_child_structure(client):
     # Sorting must not disturb parent_id linkage — the tree is rebuilt
-    # client-side from parent_id, regardless of list order.
+    # client-side from parent_id, regardless of list order. Rooms nest exactly
+    # one level (root > room), so that is the whole tree there is to disturb.
     pid = _make_project(client)
-    parent = _make_topic(client, pid, "Zeta parent")
-    child = _make_topic(client, pid, "Alpha child", parent_id=parent)
+    zeta = _make_topic(client, pid, "Zeta room")
+    alpha = _make_topic(client, pid, "Alpha room")
 
     r = client.get(
         "/topics", params={"project_id": pid, "sort": "title", "order": "asc"}
     )
     assert r.status_code == 200
-    by_id = {t["id"]: t for t in r.json()["data"]["data"]}
-    # "Alpha child" sorts before "Zeta parent" by title, but parent_id linkage
+    rows = r.json()["data"]["data"]
+    by_id = {t["id"]: t for t in rows}
+    # "Alpha room" sorts before "Zeta room" by title, but parent_id linkage
     # (what the frontend rebuilds the tree from) must be untouched by that.
-    assert by_id[child]["parent_id"] == parent
+    assert [t["title"] for t in rows if t["kind"] != "root"] == [
+        "Alpha room",
+        "Zeta room",
+    ]
     root = next(t for t in by_id.values() if t["kind"] == "root")
-    assert by_id[parent]["parent_id"] == root["id"]
+    assert by_id[alpha]["parent_id"] == root["id"]
+    assert by_id[zeta]["parent_id"] == root["id"]

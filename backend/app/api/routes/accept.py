@@ -128,7 +128,7 @@ async def _pr_checks_payload(topic_id: uuid.UUID, db: AsyncSession) -> dict:
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
-        checks = await client.check_runs(head_sha or ws.branch_for_topic(topic_id))
+        checks = await client.check_runs(head_sha or ws.branch_for_place(topic_id))
     except GitHubPRError as exc:
         return {"available": False, "reason": str(exc)[:200]}
     return {

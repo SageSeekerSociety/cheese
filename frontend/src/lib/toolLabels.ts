@@ -4,7 +4,7 @@
 
 export const TOOL_LABELS: Record<string, string> = {
   // cheese platform actions
-  create_subtopic: '拆出子话题',
+  create_subtopic: '派出一条支线',
   update_doc: '更新文档',
   remember: '记入项目记忆',
   notify: '发送通知',

@@ -34,7 +34,8 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.topic.models import TopicStatus
+from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
@@ -76,17 +77,20 @@ async def dispatch(
         )
         # Pressing 同步上游 again while a resolution is already open must NOT
         # start a second one: re-materializing would overwrite whatever 芝士 has
-        # resolved so far, and the room would fill with identical dead tasks.
+        # resolved so far, and the room would fill with identical dead threads.
         # Point back at the live one and leave its turn alone.
-        for child in await topics.list_children(room.id):
-            if child.title == RESOLUTION_TITLE and child.status == TopicStatus.active:
-                return {"topic_id": str(child.id), "files": [], "reused": True}
-        # A child of a room is a `task`: it carries the branch, the workspace
-        # and the accept card, which is exactly what resolving needs.
-        task = await topics.create(
-            project_id=project_id,
+        for open_one, _ in await TaskService(db).threads_for_room(room.id, limit=0):
+            if (
+                open_one.title == RESOLUTION_TITLE
+                and open_one.status == TaskStatus.open
+            ):
+                return {"topic_id": str(open_one.id), "files": [], "reused": True}
+        # A thread carries the branch, the workspace and the accept card, which
+        # is exactly what resolving a conflict needs — and it does not cost the
+        # private room a second room to hold it.
+        task = await topics.dispatch_task(
+            place_id=room.id,
             title=RESOLUTION_TITLE,
-            parent_id=room.id,
             created_by=requested_by,
         )
         await db.flush()

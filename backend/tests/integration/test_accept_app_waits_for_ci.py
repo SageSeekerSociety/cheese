@@ -163,7 +163,7 @@ def app_world(monkeypatch):
     monkeypatch.setattr(ws, "sync_upstream", lambda pid: {"synced": True, "commits": 1})
 
     def _push(pid, tid, token):
-        branch = ws.branch_for_topic(tid)
+        branch = ws.branch_for_place(tid)
         recorded["pushes"].append({"topic": tid, "token": token, "branch": branch})
         return branch
 

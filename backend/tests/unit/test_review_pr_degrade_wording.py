@@ -45,6 +45,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     card = SimpleNamespace(
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
+        # The card is the room's own main line, not one thread's — delivery
+        # therefore gets stamped on the room.
+        task_id=None,
         status=AcceptStatus.pending,
         reviewer_handle="alice",
         decided_by=None,
@@ -78,6 +81,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._repo.list_approver_handles.return_value = []
     service._topics = AsyncMock()
     service._topics.get.return_value = topic
+    # A card is addressed by a PLACE id and resolved to the room around it,
+    # which needs a real session to walk — hand the answer over directly.
+    service._topic_or_404 = AsyncMock(return_value=topic)
     service._projects = AsyncMock()
     service._projects.get.return_value = project
     service._machines = AsyncMock()
