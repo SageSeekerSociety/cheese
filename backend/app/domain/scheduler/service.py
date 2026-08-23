@@ -276,7 +276,32 @@ class SchedulerService:
                     await session.rollback()
                     errors.append(f"{card_id}: {exc}")
                     logger.exception("poll_open_prs failed for card %s", card_id)
+                    await self._note_card_poll_crashed(card_id, exc)
         return {"cards_checked": checked, "errors": errors}
+
+    async def _note_card_poll_crashed(
+        self, card_id: uuid.UUID, exc: BaseException
+    ) -> None:
+        """Leave the crash on the card, in its own transaction.
+
+        The rollback above throws away everything the failed tick wrote — which
+        is right for the state machine and wrong for the reader: the card keeps
+        showing whatever it said before, usually 「等 CI」, while every tick dies
+        the same way. A person watching a green PR that never merges has no way
+        to tell that apart from slow checks. So the explanation is written by a
+        SEPARATE session that the rollback cannot take with it.
+
+        Best-effort by construction: if even this write fails, the log line
+        above is still there and the poll loop keeps going.
+        """
+        from app.domain.review.services import AcceptService
+
+        try:
+            async with self._sessions() as session:
+                await AcceptService(session).note_poll_crashed(card_id, exc)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — never let the explanation kill the loop
+            logger.exception("could not record poll failure on card %s", card_id)
 
     async def sweep_abandoned_gates(self) -> dict:
         """闸门孤儿卡扫底 (2026-08-11): condemn `pending_gate` cards whose gate

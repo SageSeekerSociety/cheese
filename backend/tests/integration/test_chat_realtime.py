@@ -32,10 +32,7 @@ class SlowScreen(StubChannel):
         self.delivered: list[str] = []
         self._answering: set[asyncio.Task] = set()
 
-    async def send_prompt(
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-    ) -> bool:
-        del images
+    async def send_prompt(self, screen: uuid.UUID, prompt: str) -> bool:
         if self._answering:
             # A write into a session that is already working: the transport
             # cannot tell it from the one that opened the turn, and neither can
@@ -403,14 +400,12 @@ async def test_failed_live_delivery_reports_error_then_queues_work(client, tmp_p
             # still working or it does not happen at all.
             self.tried = asyncio.Event()
 
-        async def send_prompt(
-            self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
-        ) -> bool:
+        async def send_prompt(self, screen: uuid.UUID, prompt: str) -> bool:
             if self._answering:
                 self.delivered.append(prompt)
                 self.tried.set()
                 raise ScreenSetupError("屏幕没了")
-            return await super().send_prompt(screen, prompt, images=images)
+            return await super().send_prompt(screen, prompt)
 
     provider = _NoScreen()
     svc = ChatService(

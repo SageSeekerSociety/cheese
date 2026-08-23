@@ -4,6 +4,7 @@ cheese-hook forwarder, and the drain loop. Tested without Docker or a device."""
 
 import asyncio
 import contextlib
+import uuid as _uuid
 from pathlib import Path
 
 import pytest
@@ -1256,3 +1257,102 @@ async def test_the_session_working_on_its_own_still_lights_the_room():
     finished = {w for w, a in reported if not a}
     assert started == finished, f"会话干完了，房间还亮着：{started - finished}"
     await provider._close_topic(topic_id)
+
+
+# --- 图片输入: an image that cannot be staged costs the image, not the message ---
+#
+# The bytes live in the backend's worktree. A screen on another machine can only
+# open them once they have been copied across, and that copy can fail for
+# reasons that have nothing to do with the message: a connector too old to know
+# the file frame (measured 2026-08-23 — the deployed binary predated `file.put`
+# by a day, so every frame was dropped unanswered and the send timed out), a
+# wedged machine, bytes that are no longer there. When staging lived inside the
+# send, that failure took the whole message with it: the room showed nothing at
+# all, while plain-text messages around it arrived normally.
+
+
+class _StagingChannel(Channel):
+    """A screen whose machine refuses the images it is offered."""
+
+    name = "staging"
+
+    def __init__(self, *, refuse: bool) -> None:
+        self._refuse = refuse
+        self.prompts: list[str] = []
+
+    async def ensure_ready(self, **kwargs):
+        return "screen"
+
+    async def stage_images(self, screen, images):
+        if self._refuse:
+            return [], list(images)
+        return list(images), []
+
+    async def send_prompt(self, screen, prompt):
+        self.prompts.append(prompt)
+        return True
+
+
+async def _deliver_one_image(channel: _StagingChannel) -> str | None:
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    project_id = _uuid.uuid4()
+    router.subscribe(str(topic_id))
+    runtime = ClaudeCodeRuntime(channel, router=router)
+    subscription = await runtime.ensure_subscription(project_id, topic_id)
+    subscription.current_work = WorkAttribution(
+        work_id=_uuid.uuid4(), queue=asyncio.Queue()
+    )
+    runtime._live[topic_id] = "screen"
+    delivered = await runtime.deliver(
+        topic_id,
+        "[fulu] 看看这张截图",
+        images=[{"path": "uploads/img-1.png", "media_type": "image/png"}],
+    )
+    return channel.prompts[0] if delivered else None
+
+
+async def test_an_image_that_cannot_be_staged_still_delivers_the_words():
+    channel = _StagingChannel(refuse=True)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None, "the message must arrive even when the image does not"
+    assert "[fulu] 看看这张截图" in prompt
+
+
+async def test_an_unstaged_image_is_declared_rather_than_mentioned():
+    """Naming a path that is not on the machine produces silence — Claude Code
+    resolves the mention to nothing — and 芝士 answers about a picture it was
+    never shown. Say what happened instead."""
+    channel = _StagingChannel(refuse=True)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None
+    assert "@uploads/img-1.png" not in prompt
+    assert "没能送到" in prompt
+    assert "不要猜图里是什么" in prompt
+
+
+async def test_a_staged_image_is_mentioned_and_nothing_is_declared_missing():
+    channel = _StagingChannel(refuse=False)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None
+    assert "@uploads/img-1.png" in prompt
+    assert "没能送到" not in prompt
+
+
+async def test_a_channel_that_raises_while_staging_does_not_lose_the_message():
+    """A channel is expected to report losses rather than raise, but it talks to
+    a machine over a network. The runtime picks the message over the picture."""
+
+    class _Exploding(_StagingChannel):
+        async def stage_images(self, screen, images):
+            raise RuntimeError("connector went away mid-write")
+
+    channel = _Exploding(refuse=False)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None
+    assert "[fulu] 看看这张截图" in prompt
+    assert "没能送到" in prompt

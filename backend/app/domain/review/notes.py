@@ -68,6 +68,8 @@ class NoteCode(enum.StrEnum):
     gate_abandoned = "gate_abandoned"
     #: 两阶段采纳没走成，这次采纳落回了本地合并。
     pr_skipped = "pr_skipped"
+    #: 轮询这张卡时打 GitHub 报错，卡没往前走。
+    poll_failed = "poll_failed"
 
     # —— 还在走，或只是留痕 ——
 
@@ -99,6 +101,7 @@ _STUCK = frozenset(
         NoteCode.merge_conflict,
         NoteCode.gate_abandoned,
         NoteCode.pr_skipped,
+        NoteCode.poll_failed,
     }
 )
 

@@ -986,9 +986,7 @@ class TmuxChannel(Channel):
         result = await control.send("send-keys", "-t", screen.session, "Escape")
         return bool(result.ok)
 
-    async def send_prompt(
-        self, screen: TmuxScreen, prompt: str, images: list[dict] | None = None
-    ) -> None:
+    async def send_prompt(self, screen: TmuxScreen, prompt: str) -> None:
         """Inject the prompt as one atomic paste, then a SEPARATE Enter (spike:
         bracketed paste + independent Enter, so the prompt isn't split) — and
         confirm EACH half against the screen before moving on (the device
@@ -1010,7 +1008,6 @@ class TmuxChannel(Channel):
         nudges Enter. The UserPromptSubmit hook stays the delivery authority —
         this loop exists so the 25s verdict stops firing on a swallowed
         keystroke."""
-        del images  # files already live in the shared topic worktree
         try:
             control = await self._control(screen)
             if await control.pane_dead():

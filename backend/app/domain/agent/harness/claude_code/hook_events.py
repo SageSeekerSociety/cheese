@@ -24,6 +24,7 @@ Event mapping:
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 from app.domain.agent.service import (
@@ -37,6 +38,20 @@ from app.domain.agent.service import (
     AgentUsage,
 )
 from app.domain.usage.tokens import input_output_tokens
+
+#: Key a caller may stamp on a hook payload to say when the harness actually
+#: recorded it. The live path leaves it off — the hook is being handled as it
+#: arrives, so "now" IS the time. A spool reconcile pass sets it, because there
+#: the events are minutes or hours old and "now" would file every recovered
+#: message at the bottom of a conversation it belongs in the middle of.
+RECORDED_AT_KEY = "_at"
+
+
+def _flush_time(hook: dict) -> datetime:
+    """When this hook payload happened."""
+    stamped = hook.get(RECORDED_AT_KEY)
+    return stamped if isinstance(stamped, datetime) else datetime.now(UTC)
+
 
 # The tools whose RETURN value the room needs (see AgentToolResult): a subagent
 # reports only to whoever spawned it, so without this the timeline shows the
@@ -204,6 +219,12 @@ class _PendingMessage:
     deltas: dict[int, str] = field(default_factory=dict)
     eids: dict[int, str | None] = field(default_factory=dict)
     final_index: int | None = None
+    #: When the first flush of this message arrived — the moment 芝士 started
+    #: saying it, which is where it belongs in the timeline. Assembly finishes
+    #: later (a message is only known to be whole once something after it
+    #: arrives), so the completion time would file it after events it actually
+    #: preceded.
+    started_at: datetime | None = None
 
 
 class MessageAssembler:
@@ -255,6 +276,7 @@ class MessageAssembler:
         message_id = hook.get("message_id")
         final = hook.get("final")
         index = hook.get("index")
+        at = _flush_time(hook)
         if (
             not isinstance(message_id, str)
             or not isinstance(final, bool)
@@ -262,7 +284,7 @@ class MessageAssembler:
         ):
             if not text.strip():
                 return None
-            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else ())
+            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else (), at=at)
         if message_id in self._done:
             return None
         pending = self._pending.setdefault(message_id, _PendingMessage())
@@ -270,6 +292,11 @@ class MessageAssembler:
             return None
         pending.deltas[index] = text
         pending.eids[index] = eid
+        # Earliest wins: flushes can arrive out of order (a retried spool file
+        # lands after later ones), and what this records is when the message
+        # STARTED, not which flush happened to be handled first.
+        if pending.started_at is None or at < pending.started_at:
+            pending.started_at = at
         if final:
             pending.final_index = index
         last = pending.final_index
@@ -330,7 +357,12 @@ class MessageAssembler:
         if not text.strip():
             return None
         eids = tuple(eid for i in indices if (eid := pending.eids[i]) is not None)
-        return AgentMessage(text=text, eid=eids[0] if eids else None, eids=eids)
+        return AgentMessage(
+            text=text,
+            eid=eids[0] if eids else None,
+            eids=eids,
+            at=pending.started_at,
+        )
 
 
 @dataclass(eq=False)
