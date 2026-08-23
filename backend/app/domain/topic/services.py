@@ -518,14 +518,19 @@ class TopicService:
            system event; neither counts as stalled, because in both cases the
            topic already says what happened.
         """
-        await self.get_or_404(topic_id)
+        # By place: the turn that may have died runs in one, and a thread is
+        # where most of them run.
+        place = await self.place_or_404(topic_id)
         if threshold_s is None:
             threshold_s = settings.turn_stall_signal_s
         heartbeat_s = None if live_turn is None else live_turn.get("silent_for_s")
         alive = live_turn is not None and (
             heartbeat_s is not None and heartbeat_s <= threshold_s
         )
-        last = await self._blocks.latest_for_topic(topic_id)
+        # The silence that matters is the one in the place being asked about:
+        # a room full of other threads' chatter would report a dead thread as
+        # alive, which is the exact failure this verdict exists to catch.
+        last = await self._blocks.latest_for_topic(place.room_id, task_id=place.task_id)
         silent_for_s = (
             None
             if last is None

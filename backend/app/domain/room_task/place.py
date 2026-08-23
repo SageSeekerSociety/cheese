@@ -83,6 +83,16 @@ class Place:
         return self.room.agent_instance_id
 
     @property
+    def branch_name(self) -> str | None:
+        """The branch this place's work is on — the thread's when it is one.
+
+        一个房间一条分支, and a thread forks the room's, so these are never the
+        same string; reporting the room's for a thread would point whoever read
+        it at a branch the work is not on.
+        """
+        return self.task.branch_name if self.task is not None else self.room.branch_name
+
+    @property
     def is_thread(self) -> bool:
         return self.task is not None
 

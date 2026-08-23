@@ -547,17 +547,20 @@ async def topic_status(
     die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
     so it is empty after a restart and says `running` about a turn killed with
     the process. See ``TopicService.stall_signal``."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    topics = TopicService(db)
+    place = await topics.place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
-    topics = TopicService(db)
-    topic = await topics.get_or_404(topic_id)
+    # 盲飞防护 is asked BY whoever is flying, and that is usually a thread —
+    # so the snapshot has to describe the place asked about, not the room it
+    # happens to sit in. Turn state, background tasks and cards are all keyed
+    # by place already; only this handler could not name one.
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
-    credits = await ComputeGrantRepository(db).summary(topic.project_id)
+    credits = await ComputeGrantRepository(db).summary(place.project_id)
     turn = runner.topic_work(topic_id)
     if turn is not None and turn.get("status") == "running":
         turn["activity"] = chat_service.tmux_activity_status(topic_id)
@@ -570,10 +573,15 @@ async def topic_status(
     return ok(
         {
             "topic": {
-                "id": str(topic.id),
-                "title": topic.title,
-                "status": str(topic.status),
-                "branch": topic.branch_name,
+                "id": str(place.id),
+                "title": place.title,
+                # A room is archived/active; a thread is open/closed. Reporting
+                # the room's word for a thread would say "active" about work
+                # that finished.
+                "status": str(
+                    place.task.status if place.task is not None else place.room.status
+                ),
+                "branch": place.branch_name,
             },
             "turn": turn,
             "stall": stall,
@@ -581,7 +589,7 @@ async def topic_status(
             "background": background,
             "platform": {
                 "active_turns": runner.active_work_count(),
-                "queued_turns": runner.project_queue_depth(topic.project_id),
+                "queued_turns": runner.project_queue_depth(place.project_id),
                 "disk": _disk_snapshot(settings.workspace_root),
                 "credits": {
                     "unlimited": credits["unlimited"],
@@ -801,26 +809,31 @@ async def edit_topic_doc(
     back. What gets pushed is the version number and a line about what moved,
     never the text: the doc is one `cheese doc get` away, and a document
     injected mid-turn displaces the work instead of informing it."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    # A thread has a doc of its own — its brief, and then how the work is
+    # going — and `edit_doc` has always written by place. Only this handler
+    # still refused to name one, so `cheese doc set` 404ed for every 分身 doing
+    # the work while `cheese doc get` right above answered fine.
+    place = await TopicService(db).place_or_404(topic_id)
     # actor 在信任边界注入: prefer the verified token, fall back to body.author.
+    # The token is scoped to the place; the roster is the room's.
     actor = await resolver.resolve(
         fallback_handle=body.author,
-        topic_id=topic_id,
-        project_id=topic.project_id,
+        topic_id=place.id,
+        project_id=place.project_id,
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
     # Same backstop as chat replies: friendly "@名字 / @话题名" → structured
     # token, so refs in the doc render as clickable chips (docs used to skip
     # this and stayed plain text).
     content = await canonicalize_refs(
-        db, topic.project_id, body.content, exclude_topic_id=topic_id
+        db, place.project_id, body.content, exclude_topic_id=place.room_id
     )
     # Read before the write, for the summary. Not a race: a doc that moved in
     # between is exactly what `expected_version` refuses, so the version this
     # read saw is the version the accepted write replaced.
-    previous = await BlockRepository(db).doc_root(topic_id)
+    previous = await BlockRepository(db).doc_root(place.room_id, task_id=place.task_id)
     was = previous.content if previous else ""
     doc = await TopicService(db).edit_doc(
         topic_id=topic_id,
@@ -1004,7 +1017,7 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     """芝士 asks an option question IN the chat (cheese ask): a message block
     whose meta.options renders as one-click buttons. Structured interaction —
     the answer comes back as data, never parsed from prose (spec §14.5)."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     question = (body.get("question") or "").strip()
     options = [str(o).strip() for o in (body.get("options") or []) if str(o).strip()]
     if not question:
@@ -1012,9 +1025,13 @@ async def ask_options(topic_id: uuid.UUID, body: dict, db: DbSession) -> dict:
     if not 2 <= len(options) <= 4:
         raise ValidationError("需要 2-4 个选项")
     blk = await BlockRepository(db).add(
-        project_id=topic.project_id,
+        project_id=place.project_id,
+        # The place id: `add` splits it, so a thread's question is asked in the
+        # thread rather than shouted into the room around it.
         topic_id=topic_id,
-        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
+        author=await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        ),
         author_type=AuthorType.ai,
         content=question,
         kind=BlockKind.message,
@@ -1087,13 +1104,15 @@ async def answer_options(
 
 @router.post("/{topic_id}/webhook-token")
 async def mint_webhook_token(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """Mint (or rotate) this topic's webhook credential — used by the `cheese`
+    """Mint (or rotate) this place's webhook credential — used by the `cheese`
     CLI to hand a caller a token for POST /webhooks/{topic_id}. Rotating
-    invalidates every previously-minted token for this topic; the raw value is
+    invalidates every previously-minted token for this place; the raw value is
     returned once and never recoverable afterwards."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
+    # Scoped to the place, because the webhook wakes the place: a thread's
+    # credential minted against the room would deliver into the room instead.
     token = await webhook_service.mint(
-        db, topic_id=topic_id, project_id=topic.project_id
+        db, topic_id=topic_id, project_id=place.project_id
     )
     await db.commit()
     return ok({"token": token})
@@ -1109,11 +1128,14 @@ async def register_background_task(
     CHEESE_TOKEN (1h) — these tasks routinely run longer than that, and a result
     that 401s at the finish line is exactly the frozen topic this path exists to
     prevent."""
-    topic = await TopicService(db).get_or_404(topic_id)
-    if topic.status == TopicStatus.archived:
+    place = await TopicService(db).place_or_404(topic_id)
+    # 归档后工作面定格: freezing the room freezes the threads in it, so a
+    # thread's long command is refused with the room it belongs to.
+    if place.room.status == TopicStatus.archived:
         raise ValidationError("话题已归档，不再受理后台任务")
     task = awaited_tasks.register(
-        project_id=topic.project_id,
+        project_id=place.project_id,
+        # The place, so the result wakes whoever is waiting on it.
         topic_id=topic_id,
         command=body.command,
         label=body.label,
@@ -1124,7 +1146,7 @@ async def register_background_task(
         {
             "task_id": str(task.id),
             "wake_token": mint_scoped_token(
-                project_id=str(topic.project_id),
+                project_id=str(place.project_id),
                 topic_id=str(topic_id),
                 # Cover the whole run plus an hour of slack for a slow report.
                 ttl_s=task.timeout_s + 3600,
@@ -1169,18 +1191,18 @@ async def record_decision(
     resolver: ActorResolverDep,
 ) -> dict:
     """记录关键决策到决策记录 (spec §7.1) — used by the `cheese decision` CLI."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
     decision = (body.get("decision") or "").strip()
     if not decision:
         raise ValidationError("decision 不能为空")
     decision = await canonicalize_refs(
-        db, topic.project_id, decision, exclude_topic_id=topic_id
+        db, place.project_id, decision, exclude_topic_id=place.room_id
     )
     # 自动续跑幂等 (④): inside an automatic turn, the same decision text is the
     # same decision — a resumed 芝士 re-recording it must not stack a second
@@ -1194,9 +1216,11 @@ async def record_decision(
         prior = await idem.stored_result(db, key)
         return ok(prior or {"skipped": True})
     block = await BlockRepository(db).add(
-        project_id=topic.project_id,
-        topic_id=topic_id,
-        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
+        project_id=place.project_id,
+        topic_id=topic_id,  # the place; `add` splits it
+        author=await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        ),
         author_type=AuthorType.ai,
         content=decision,
         kind=BlockKind.decision,
@@ -1212,21 +1236,30 @@ async def record_decision(
 async def set_title(
     topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """给话题起/改标题 — used by both `cheese title` (AI-generated, naming an
-    untitled topic) and the frontend sidebar rename UI (dual-use, like doc/split)."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    """给这个地方起/改标题 — used by both `cheese title` (AI-generated, naming an
+    untitled place) and the frontend sidebar rename UI (dual-use, like doc/split).
+
+    Names the THREAD when the id is a thread's. Resolving only rooms did not
+    fail here, which is what made it dangerous: a 分身 naming the piece of work
+    it had just been handed would have renamed the whole room around it.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=body.get("by"), topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=body.get("by"), topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
     title = (body.get("title") or "").strip()
     if not title:
         raise ValidationError("title 不能为空")
-    topic.title = title[:80]
+    if place.task is not None:
+        place.task.title = title[:80]
+        await db.flush()
+        return ok(TaskOut.model_validate(place.task).model_dump(mode="json"))
+    place.room.title = title[:80]
     await db.flush()
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    return ok(TopicOut.model_validate(place.room).model_dump(mode="json"))
 
 
 @router.post("/{topic_id}/read")
@@ -1598,20 +1631,22 @@ async def set_artifact(
     resolver: ActorResolverDep,
 ) -> dict:
     """芝士 marks a worktree file as a renderable artifact (spec §9.1) — used by
-    `cheese artifact`. With no anchor it becomes the topic's current preview."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    `cheese artifact`. With no anchor it becomes this place's current preview."""
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
     as_ = (body.get("as") or "html").strip().lower()
     # An app artifact points at the running server, not a file — the stored
     # content is a human note ("Vue dev server"), not a path.
     if as_ == "app":
         path = (body.get("path") or "app").strip()[:120]
-        await _reject_unreachable_app(topic_id, topic.compute_profile)
+        # The box is the ROOM's — threads run in it — so the profile that
+        # decides which ports exist is the room's too.
+        await _reject_unreachable_app(place.room_id, place.room.compute_profile)
     else:
         path = _clean_artifact_path(body.get("path") or "")
     mime = _ARTIFACT_MIME.get(as_)
@@ -1619,9 +1654,11 @@ async def set_artifact(
         allowed = "、".join(_ARTIFACT_MIME)
         raise ValidationError(f"暂不支持的类型 {as_!r}（可选：{allowed}）")
     block = await BlockRepository(db).add(
-        project_id=topic.project_id,
-        topic_id=topic_id,
-        author=await TopicMemberService(db).resolve_agent_handle(topic_id),
+        project_id=place.project_id,
+        topic_id=topic_id,  # the place; `add` splits it
+        author=await TopicMemberService(db).resolve_agent_handle(
+            topic_id, room_id=place.room_id
+        ),
         author_type=AuthorType.ai,
         content=path,
         kind=BlockKind.artifact,
@@ -1637,18 +1674,23 @@ async def get_preview(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """The topic's current preview (spec §7.1): the artifact 芝士 last pointed at,
+    """This place's current preview (spec §7.1): the artifact 芝士 last pointed at,
     as {path, mime}. Null when none is set — the client may fall back to scanning
-    the worktree. Content is fetched separately via the guarded file reader."""
-    topic = await TopicService(db).get_or_404(topic_id)
+    the worktree. Content is fetched separately via the guarded file reader.
+
+    Per place, matching `cheese artifact`: each thread previews its own result,
+    and the room's stays the room's rather than being overwritten by whichever
+    thread pointed at something most recently."""
+    place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=place.room_id
     )
-    await TopicService(db).get_or_404(topic_id)
-    art = await BlockRepository(db).latest_artifact(topic_id)
+    art = await BlockRepository(db).latest_artifact(
+        place.room_id, task_id=place.task_id
+    )
     if art is None:
         return ok(None)
     if art.mime_type == _ARTIFACT_MIME["app"]:
@@ -1664,7 +1706,9 @@ async def get_preview(
         # to publish anything, so `container_up` is False for a box that is alive
         # and well. Reported separately so the panel stops telling those users to
         # @ 芝士 again — there is nothing 芝士 can do from inside that machine.
-        endpoint = ws.app_endpoint(topic_id)
+        # The box belongs to the ROOM — threads run inside it — so the port to
+        # knock on is the room's, whichever thread pointed at the app.
+        endpoint = ws.app_endpoint(place.room_id)
         alive = endpoint is not None and await proxy.probe(endpoint)
         return ok(
             {
@@ -1675,7 +1719,7 @@ async def get_preview(
                 # browser. NOT the container's 127.0.0.1 host port (server-local).
                 "url": f"/api/topics/{topic_id}/app/" if alive else None,
                 "container_up": endpoint is not None,
-                "supported": app_preview_reachable(topic.compute_profile),
+                "supported": app_preview_reachable(place.room.compute_profile),
                 "artifact_id": str(art.id),
             }
         )

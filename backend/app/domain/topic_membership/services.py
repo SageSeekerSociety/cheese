@@ -323,17 +323,25 @@ class TopicMemberService:
         await self.ensure_topic_agent_seat(topic_id)
         await self._repo.delete(legacy)
 
-    async def resolve_agent_handle(self, topic_id: uuid.UUID) -> str:
-        """The handle 芝士 acts under in this topic — for authoring blocks and
+    async def resolve_agent_handle(
+        self, topic_id: uuid.UUID, *, room_id: uuid.UUID | None = None
+    ) -> str:
+        """The handle 芝士 acts under in this place — for authoring blocks and
         keying its memory. Read-only.
 
         The roster decides: a room hosting some other agent attributes to that
-        one. With no agent seated at all, fall back to the handle this topic's
-        sandbox token names (``cheese-<topic hex>``) — a turn still has to answer
+        one. With no agent seated at all, fall back to the handle this place's
+        sandbox token names (``cheese-<place hex>``) — a turn still has to answer
         "who am I", and answering with the shared account would put the collapsed
         identity back into the audit trail.
+
+        Pass ``room_id`` when ``topic_id`` is a THREAD's: the roster to read is
+        the room's (threads do not have one), but the fallback has to stay the
+        thread's own, because that is the handle its sandbox was started with.
+        Collapsing the two would give one 分身 two names — one on the blocks it
+        writes, another on the token it writes them with.
         """
-        handles = await self.agent_handles(topic_id)
+        handles = await self.agent_handles(room_id or topic_id)
         return handles[0] if handles else topic_agent_handle(topic_id)
 
     async def add(
