@@ -60,6 +60,9 @@ from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.room_task.models import Task
+from app.domain.room_task.place import PlaceResolver
+from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
@@ -559,10 +562,39 @@ class AcceptService:
         self._machines = MachineService(session)
 
     async def _topic_or_404(self, topic_id: uuid.UUID) -> Topic:
-        topic = await self._topics.get(topic_id)
-        if topic is None:
+        """The ROOM a place id names — a card is read in a room either way.
+
+        `topic_id` here is a place id and is usually a thread's: a card is what a
+        piece of work ends in. Everything this service does with the answer —
+        rendering, notifying, the branch it pushes — belongs to the room, so the
+        room is what it returns; which thread the card is FOR is on the card.
+        """
+        place = await PlaceResolver(self._session).resolve(topic_id)
+        if place is None:
             raise NotFoundError("Topic not found")
-        return topic
+        return place.room
+
+    async def _stamp_delivery(
+        self, card: AcceptCard, topic: Topic, *, by: str | None, at: datetime | None
+    ) -> None:
+        """Mark what was delivered — the THREAD when the card is a thread's.
+
+        交付完成 ≠ 这个地方结束 (#442 decision 1): this is the delivery marker and
+        nothing else; `status` is untouched and putting a place away stays a
+        person's decision.
+
+        Which row carries it matters: a room accumulates work forever, so
+        stamping the room would say "this room was delivered" every time any one
+        piece of work in it was, and the next reader cannot tell which. Passing
+        `by=None` clears it (撤回采纳).
+        """
+        target: Topic | Task = topic
+        if card.task_id is not None:
+            thread = await TaskService(self._session).get(card.task_id)
+            if thread is not None:
+                target = thread
+        target.accepted_by = by
+        target.accepted_at = at
 
     async def _card_or_404(self, card_id: uuid.UUID) -> AcceptCard:
         card = await self._repo.get(card_id)
@@ -806,40 +838,41 @@ class AcceptService:
     async def pr_is_in_flight(self, topic_id: uuid.UUID) -> bool:
         """这个话题手上有没有一张已经开出 PR、还在等 CI 的卡。
 
-        问这一句的是「把子话题的提交并进母话题分支」：`pr_open` 期间轮询每 60 秒
+        问这一句的是「把一件活的提交并进房间分支」：`pr_open` 期间轮询每 60 秒
         把工作区改动折成提交推上去，分支一动 CI 就从头重排（本项目这条队列以小时
         计），所以这个窗口里合并必须排队而不是硬合。判据留在本领域——「哪个状态
         算 PR 在途」是这张状态机的知识。
         """
         return bool(
-            await self._repo.list_live_for_topics(
+            await self._repo.list_live_for_places(
                 [topic_id], statuses=(AcceptStatus.pr_open,)
             )
         )
 
-    async def anybody_still_waiting(self, topic_ids: list[uuid.UUID]) -> bool:
-        """这些话题里，还有没有一张卡等着人决议 —— 归档前必须问的那一句。
+    async def anybody_still_waiting(self, place_ids: list[uuid.UUID]) -> bool:
+        """这些地点里，还有没有一张卡等着人决议 —— 收起/归档前必须问的那一句。
 
         归档会把非终态的卡当场收敛掉（`review/archive.py`），所以任何**平台自己
         发起**的归档（结论卡默认采信就是）都得先问这一句，否则会把一张验收人还
         没看见的卡作废掉。判据（哪些状态算"还等着"）留在本领域，调用方不该自己
         去数状态——这正是 `close_cards_for_archived_topic` 收敛的那一张表。
 
-        话题是一组而不是一个：归档是级联的，孙子话题的卡会跟着一起被收掉。
+        一组而不是一个：归档一个房间会把它里面的活一起收起，那些活的卡同样会
+        被收掉，所以它们同样构成「先别动手」的理由。
         """
         return bool(
-            await self._repo.list_live_for_topics(
-                topic_ids, statuses=archive.OPEN_CARD_STATUSES
+            await self._repo.list_live_for_places(
+                place_ids, statuses=archive.OPEN_CARD_STATUSES
             )
         )
 
-    async def latest_decision_at(self, topic_ids: list[uuid.UUID]) -> datetime | None:
-        """这些话题上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
+    async def latest_decision_at(self, place_ids: list[uuid.UUID]) -> datetime | None:
+        """这些地点上最后一张卡是什么时候有结果的 —— None = 从来没有过卡。
 
         给"卡决议之后留一个重新递卡的窗口"用：驳回的意思是回去改了再来，而归档
         话题递不出新卡，所以窗口从这一刻起算。
         """
-        return await self._repo.latest_decision_at(topic_ids)
+        return await self._repo.latest_decision_at(place_ids)
 
     async def reviewer_topic_ids(
         self, topic_ids: list[uuid.UUID], reviewer_handle: str
@@ -1298,8 +1331,7 @@ class AcceptService:
 
         # 交付完成 ≠ 话题结束 (#442 decision 1). accepted_by/accepted_at 是这一刻
         # 自动打上的交付标记；status 不动，归档只由人来做（POST /topics/{id}/archive）。
-        topic.accepted_by = decided_by
-        topic.accepted_at = now
+        await self._stamp_delivery(card, topic, by=decided_by, at=now)
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -1328,7 +1360,7 @@ class AcceptService:
         jj commit — local-only (no network), used to decide whether a re-push
         to the PR branch is needed before touching GitHub at all. Deliberately
         built from `workspace.service`'s existing public helpers
-        (ensure_repo/branch_for_topic/snapshot_worktree) rather than adding a
+        (ensure_repo/branch_for_place/snapshot_worktree) rather than adding a
         new one there — this feature's touch scope is review/ + oauth/ only.
         None if the repo/branch genuinely doesn't exist yet (nothing to push)."""
         import subprocess
@@ -1340,7 +1372,7 @@ class AcceptService:
         except ValidationError:
             pass  # no workspace/jj state yet — nothing pending to fold
         repo_path = ws.ensure_repo(project_id)
-        branch = ws.branch_for_topic(topic_id)
+        branch = ws.branch_for_place(topic_id)
         result = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "--verify", "-q", branch],
             capture_output=True,
@@ -1573,7 +1605,7 @@ class AcceptService:
         )
         base = await asyncio.to_thread(ws.pr_base_branch, topic.project_id)
         client = github_pr.default_client()
-        who = await identity.attribution(self._session, topic)
+        who = await identity.attribution(self._session, topic, task_id=card.task_id)
         pr = await client.open_pull_request(
             owner=owner,
             repo=repo,
@@ -1978,7 +2010,7 @@ class AcceptService:
         # Green → merge now. Trailers go on the merge commit too, not just
         # the PR description (2026-08-09 设计要点5: 标清芝士代表谁) — under
         # squash that means the body field, with the title passed separately.
-        who = await identity.attribution(self._session, topic)
+        who = await identity.attribution(self._session, topic, task_id=card.task_id)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,
@@ -2474,8 +2506,7 @@ class AcceptService:
         notes.record(card, None, f"{headline}；{settled}" if headline else settled)
         await self._release_billed_compute(topic)
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
-        topic.accepted_by = by
-        topic.accepted_at = now
+        await self._stamp_delivery(card, topic, by=by, at=now)
         await self._session.flush()
         await self._session.refresh(card)
         self._notify_merge_result(
@@ -2863,7 +2894,7 @@ class AcceptService:
         if tokens is None or parsed is None:
             return None, ""  # App unconfigured / upstream changed since PR opened
         client = GitHubPRClient(*parsed, tokens)
-        branch = ws.branch_for_topic(topic.id)
+        branch = ws.branch_for_place(topic.id)
 
         try:
             # Someone may have handled the PR on GitHub directly — respect it.
@@ -2904,7 +2935,7 @@ class AcceptService:
             # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
             # body — the branch it came from and who clicked, but nothing at
             # all about what changed.
-            who = await identity.attribution(self._session, topic)
+            who = await identity.attribution(self._session, topic, task_id=card.task_id)
             await client.merge_pr(
                 number,
                 title=pr_text.merge_commit_title(card, topic, number),
@@ -3021,8 +3052,7 @@ class AcceptService:
         await self._release_billed_compute(topic)
 
         # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
-        topic.accepted_by = decided_by
-        topic.accepted_at = now
+        await self._stamp_delivery(card, topic, by=decided_by, at=now)
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -3080,8 +3110,7 @@ class AcceptService:
         # 撤回采纳不改写归档状态，那是人的决定（取消归档）。以前这里要把话题拉回
         # active，是因为采纳会顺手归档；采纳不再归档之后，一张卡的撤销没有理由
         # 覆盖某个人「把这个话题收起来」的动作。
-        topic.accepted_by = None
-        topic.accepted_at = None
+        await self._stamp_delivery(card, topic, by=None, at=None)
 
         await self._session.flush()
         await self._session.refresh(card)
@@ -3163,7 +3192,7 @@ class AcceptService:
         verdict = _force_merge_verdict(state)
 
         number = card.pr_number
-        who = await identity.attribution(self._session, topic)
+        who = await identity.attribution(self._session, topic, task_id=card.task_id)
         result = await client.merge_pull_request(
             owner=owner,
             repo=repo,

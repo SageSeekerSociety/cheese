@@ -148,9 +148,17 @@ def _repo(project_id: uuid.UUID) -> Path:
     return (Path(settings.workspace_root) / str(project_id)).resolve()
 
 
-def branch_for_topic(topic_id: uuid.UUID) -> str:
-    """话题 = git 分支 (spec §6.3). Deterministic from the topic id."""
-    return f"topic/{topic_id.hex[:8]}"
+def branch_for_place(place_id: uuid.UUID) -> str:
+    """一个地点 = 一条 git 分支. Deterministic from the place's id.
+
+    A place is a room or one thread in it, and the id is whichever of the two
+    the work belongs to. The `topic/` prefix stays even though most places that
+    carry a branch are now threads: a task keeps the id of the `topics` row it
+    replaced, so the derived name is byte-for-byte what every existing branch,
+    worktree and container path is already called. Renaming the prefix would
+    rename all of them for nothing.
+    """
+    return f"topic/{place_id.hex[:8]}"
 
 
 def _git(
@@ -421,7 +429,7 @@ def _base_branch(repo: Path) -> str:
 def _topic_dirname(topic_id: uuid.UUID) -> str:
     """On-disk (and in-container) name of a topic's workspace directory.
 
-    Derived from the topic id ALONE — deliberately not from `branch_for_topic`,
+    Derived from the topic id ALONE — deliberately not from `branch_for_place`,
     even though the two agree today (`topic/<hex8>` → `topic_<hex8>`). The
     directory name is baked into things that survive a rename and cannot be
     migrated cheaply: the jj workspace name, the relative `.jj/repo` pointer
@@ -455,7 +463,7 @@ def _fork_point(repo: Path, topic_id: uuid.UUID) -> str | None:
     parent = branch_parent_for_topic(topic_id)
     if parent is None:
         return None
-    branch = branch_for_topic(parent)
+    branch = branch_for_place(parent)
     # The room's branch may have been moved by a plain git ref update (an
     # accept's CAS, a push) that jj has not seen yet — import before asking, or
     # the fork would start from a stale bookmark.
@@ -466,13 +474,13 @@ def _fork_point(repo: Path, topic_id: uuid.UUID) -> str | None:
 
 def _ensure_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """每话题一个独立 jj workspace（沙箱地基）：分身在自己的工作目录里干活，
-    jj 自动快照其改动；并行话题互不覆盖。导出一个 git 分支（`branch_for_topic`）
+    jj 自动快照其改动；并行话题互不覆盖。导出一个 git 分支（`branch_for_place`）
     供采纳/diff——分支名与工作区目录名各自独立派生，见 `_topic_dirname`。
 
-    子话题从母话题的分支长出来 (`_fork_point`)：一个房间一条分支一个 PR。"""
+    一件活的分支从它所在房间的分支长出来 (`_fork_point`)：一个房间一条分支一个 PR。"""
     main = ensure_repo(project_id)
     _ensure_base_commit(main)  # a workspace needs a base commit to fork from
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     wt = _worktree_path(project_id, topic_id)
     if (wt / ".jj").exists():  # already a jj workspace
         return wt
@@ -651,7 +659,7 @@ def sandbox_session_dir(topic_id: uuid.UUID) -> str:
 
 # --- which box a topic runs in ----------------------------------------------
 #
-# A sandbox box is allocated per ROOM (the母话题 and every task split out of it
+# A sandbox box is allocated per ROOM (its own line and every thread in it
 # share one), so everything that reaches into "the topic's container" has to map
 # topic → room first. That mapping lives in the DB, and this module is
 # deliberately sync and DB-free — it is called from `docker port` lookups on the
@@ -877,7 +885,7 @@ def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
     if topic_id is None:
         return ensure_repo(project_id)
     wt = _ensure_worktree(project_id, topic_id)
-    _catch_up_with_branch(project_id, wt, branch_for_topic(topic_id))
+    _catch_up_with_branch(project_id, wt, branch_for_place(topic_id))
     return wt
 
 
@@ -1110,7 +1118,7 @@ def git_log(
     if not _git(repo, "rev-list", "-n", "1", "--all").strip():
         return []
     if topic_id is not None:
-        branch = branch_for_topic(topic_id)
+        branch = branch_for_place(topic_id)
         if not _branch_exists(repo, branch):
             return []
         base = _base_branch(repo)
@@ -1159,7 +1167,7 @@ def _diff_base(repo: Path, topic_id: uuid.UUID) -> str:
     """
     parent = branch_parent_for_topic(topic_id)
     if parent is not None:
-        parent_branch = branch_for_topic(parent)
+        parent_branch = branch_for_place(parent)
         if _branch_exists(repo, parent_branch):
             return parent_branch
     return _base_branch(repo)
@@ -1168,7 +1176,7 @@ def _diff_base(repo: Path, topic_id: uuid.UUID) -> str:
 def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     """Full diff of a topic's branch vs what it grew out of (`_diff_base`)."""
     repo = ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         return ""
     return _git(repo, "diff", f"{_diff_base(repo, topic_id)}...{branch}")
@@ -1188,7 +1196,7 @@ def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]
     topic that has never written anything changes nothing.
     """
     repo = ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         return []
     out = _git(repo, "diff", "--name-only", f"{_diff_base(repo, topic_id)}...{branch}")
@@ -1208,7 +1216,7 @@ def topic_added_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     has not written anything cannot collide with anything.
     """
     repo = ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         return []
     base = _base_branch(repo)
@@ -1568,7 +1576,7 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
         snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_ACCEPT)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         return {"merged": False, "noop": True, "reason": "no topic branch"}
     base = _base_branch(repo)
@@ -1598,7 +1606,7 @@ def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
 def merge_subtopic_into_room(
     project_id: uuid.UUID, topic_id: uuid.UUID, room_topic_id: uuid.UUID
 ) -> dict:
-    """子话题的提交进母话题那一个 PR: fold a task's branch into the room's.
+    """一件活的提交进房间那一个 PR: fold a thread's branch into the room's.
 
     Called when the task's conclusion is 采信'd. From then on the room's branch
     — the one its accept card and its PR ride — carries the task's commits, so
@@ -1623,12 +1631,12 @@ def merge_subtopic_into_room(
     failure: a research task that wrote no code is the normal case.
     """
     repo = ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
-    room_branch = branch_for_topic(room_topic_id)
+    branch = branch_for_place(topic_id)
+    room_branch = branch_for_place(room_topic_id)
     if branch == room_branch:
-        return {"merged": False, "noop": True, "reason": "子话题和母话题是同一条分支"}
+        return {"merged": False, "noop": True, "reason": "这件活和房间是同一条分支"}
     if not _branch_exists(repo, branch):
-        return {"merged": False, "noop": True, "reason": "子话题没有分支，没有提交要并"}
+        return {"merged": False, "noop": True, "reason": "这件活没有分支，没有提交要并"}
     # Materialising the room's workspace also guarantees it HAS a branch — a
     # room whose own 芝士 never committed anything has none until now.
     room_wt = _ensure_worktree(project_id, room_topic_id)
@@ -1641,13 +1649,13 @@ def merge_subtopic_into_room(
             "merged": False,
             "noop": True,
             "workspace_stale": not settled,
-            "reason": "这些提交已经在母话题分支上",
+            "reason": "这些提交已经在房间分支上",
         }
     if _jj(room_wt, "diff", "-s").strip():
         return {
             "merged": False,
             "deferred": True,
-            "reason": "母话题工作区有未提交的改动，合并排队等它落定",
+            "reason": "房间工作区有未提交的改动，合并排队等它落定",
         }
     commits = len(
         _git(repo, "rev-list", f"{room_branch}..{branch}").strip().splitlines()
@@ -1858,7 +1866,7 @@ def prepare_conflict_resolution(
     """采纳冲突 → 派芝士解决的前置：在话题的 jj workspace 里创建 branch×base 的
     合并提交，冲突以标记形式materialize 在文件里；返回冲突文件列表。芝士改完文件、
     平台照常快照（merge commit 连同解决一起入 bookmark），重试采纳即可干净合并。"""
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     wt = _ensure_worktree(project_id, topic_id)
     base = _base_branch(ensure_repo(project_id))
     # The workspace's jj view lags the git side — pull the base branch's latest
@@ -1901,7 +1909,7 @@ def prepare_upstream_conflict_resolution(
     _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
     upstream_sha = _git(repo, "rev-parse", _upstream_ref(repo)).strip()
     base = _base_branch(repo)
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     wt = _ensure_worktree(project_id, topic_id)
     # The workspace's jj view lags the git side — import first, or the merge
     # would run against a stale base (and possibly see no conflict at all).
@@ -2060,7 +2068,7 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
         snapshot_worktree(project_id, topic_id, SNAPSHOT_FOR_PR)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         raise ValidationError("话题没有分支，无法推送")
     _git(
@@ -2095,7 +2103,7 @@ def has_undelivered_commits(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     nothing to deliver, and the caller's refusal reads the same either way.
     """
     repo = ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     base = _base_branch(repo)
     if not _branch_exists(repo, branch) or not _branch_exists(repo, base):
         return False
@@ -2110,7 +2118,7 @@ def topic_branch_exists(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     never grow one — for them the PR path is NOT APPLICABLE (accept merges
     nothing and archives), which callers must distinguish from a push/API
     FAILURE (where accept must stop rather than silently direct-merge)."""
-    return _branch_exists(ensure_repo(project_id), branch_for_topic(topic_id))
+    return _branch_exists(ensure_repo(project_id), branch_for_place(topic_id))
 
 
 def _github_push_url(owner: str, repo: str) -> str:
@@ -2326,7 +2334,7 @@ def push_topic_branch_for_github_pr(
         snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_TWO_PHASE)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
     url = _github_push_url(owner, repo)
@@ -2517,7 +2525,7 @@ def snapshot_worktree(
     glued onto it would blow past 72 chars and read as part of the change."""
     from app.domain.agent import awaited_tasks  # local: it imports this module
 
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     wt = _ensure_worktree(project_id, topic_id)
     if not _jj(wt, "diff", "-s").strip():
         return  # nothing changed this turn

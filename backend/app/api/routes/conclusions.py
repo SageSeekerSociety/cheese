@@ -51,8 +51,8 @@ def _out(card) -> dict:
 
 @router.get("/topics/{topic_id}/conclusion-cards")
 async def list_conclusion_cards(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """Cards this topic PRODUCED (its own 回流 history), newest first."""
-    cards = await ConclusionCardRepository(db).list_for_topic(topic_id)
+    """Cards this place PRODUCED (its own 回流 history), newest first."""
+    cards = await ConclusionCardRepository(db).list_for_place(topic_id)
     return ok(page([_out(c) for c in cards], len(cards)))
 
 
@@ -93,8 +93,11 @@ async def need_evidence(
     )
     out = _out(card)
     prompt = need_evidence_prompt(card)
-    sub_id = card.topic_id
-    # Commit BEFORE waking: the sub-topic's turn runs on its own session and
+    # The THREAD that produced the conclusion, not the room it hangs in. Waking
+    # the room would put "go get more evidence" in front of everyone except the
+    # 分身 the instruction is for.
+    sub_id = card.task_id or card.topic_id
+    # Commit BEFORE waking: the thread's turn runs on its own session and
     # must see the card already in `returned`.
     await db.commit()
     runner.submit_kickoff(chat, sub_id, prompt=prompt)

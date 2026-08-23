@@ -101,6 +101,9 @@ def _conclusion_cards(client, topic_id: str) -> list[dict]:
 
 
 def _topic_status(client, topic_id: str) -> str:
+    """A place's status. A thread says open/closed; a room says active/archived —
+    two vocabularies because they are two different endings (work finished vs a
+    person put the place away)."""
     return client.get(f"/topics/{topic_id}").json()["data"]["status"]
 
 
@@ -123,7 +126,7 @@ def _settle_by_timeout(client, sub_id: str) -> None:
 
     async def _run() -> None:
         async with client.test_factory() as session:
-            live = await ConclusionCardRepository(session).live_for_topic(
+            live = await ConclusionCardRepository(session).live_for_task(
                 uuid.UUID(sub_id)
             )
             assert live is not None
@@ -191,7 +194,7 @@ def _assert_card_survived(client, sub_id: str, card_id: str) -> None:
     accept_card = _accept_cards(client, sub_id)[0]
     assert accept_card["id"] == card_id
     assert accept_card["status"] == AcceptStatus.pending, "验收卡被采信连带作废了"
-    assert _topic_status(client, sub_id) == "active", "子话题被连带归档了"
+    assert _topic_status(client, sub_id) == "open", "这条支线被连带收起了"
 
     conclusion = _conclusion_cards(client, sub_id)[0]
     assert conclusion["status"] == ConclusionStatus.accepted, "结论没照常采信"
@@ -240,7 +243,7 @@ def test_the_subtopic_says_why_it_is_still_alive(client):
     _settle_by_turn_end(client, parent["id"])
 
     blocks = client.get(f"/topics/{sub_id}/blocks").json()["data"]["data"]
-    assert any("暂不归档" in b["content"] for b in blocks)
+    assert any("暂不收起" in b["content"] for b in blocks)
 
 
 # --- 7: pr_open 的卡（PR 开着等 CI）同样受保护 -------------------------------
@@ -255,28 +258,37 @@ def test_a_pr_open_card_is_protected_too(client):
     _settle_by_turn_end(client, parent["id"])
 
     assert _accept_cards(client, sub_id)[0]["status"] == AcceptStatus.pr_open
-    assert _topic_status(client, sub_id) == "active"
+    assert _topic_status(client, sub_id) == "open"
 
 
-# --- 归档级联：孙子话题上等人的卡也算 ----------------------------------------
+# --- 保护的边界：只保护这条支线自己 ------------------------------------------
 
 
-def test_a_grandchilds_pending_card_protects_the_subtopic(client):
-    """归档是级联的：归档子话题会把孙子话题的卡一起收掉，所以孙子那张等人的卡
-    同样构成"先别归档"的理由。"""
+def test_a_siblings_pending_card_does_not_hold_this_thread_open(client):
+    """保护的范围就是这条支线，不多也不少。
+
+    这里原本测的是「孙子话题上等人的卡也保护它的父亲」——归档级联把孙子的卡一起
+    收掉，所以那张卡构成「先别归档」的理由。级联没有了：工作不嵌套，从一件活里
+    再拆得到的是同一个房间里的兄弟，收起 A 碰不到 B 的卡。
+
+    留着这个用例是因为反过来会错得很安静：把保护范围扩到兄弟，一个房间里只要有
+    任何一件活挂着卡，所有别的活就都收不起来了。
+    """
     p = _project(client)
     parent = _topic(client, p["id"])
-    sub = _split(client, parent["id"], "中间那层")
-    grandchild = _split(client, sub["id"], "再拆一层")
-    _file_conclusion(client, sub["id"], "中间那层做完了")
-    grandchild_card = _file_accept_card(client, grandchild["id"])
+    mine = _split(client, parent["id"], "我这件")
+    sibling = _split(client, parent["id"], "旁边那件")
+    _file_conclusion(client, mine["id"], "我这件做完了")
+    sibling_card = _file_accept_card(client, sibling["id"])
 
     _settle_by_turn_end(client, parent["id"])
 
-    assert _accept_cards(client, grandchild["id"])[0]["id"] == grandchild_card
-    assert _accept_cards(client, grandchild["id"])[0]["status"] == AcceptStatus.pending
-    assert _topic_status(client, sub["id"]) == "active"
-    assert _topic_status(client, grandchild["id"]) == "active"
+    # 旁边那件的卡一个字没动……
+    assert _accept_cards(client, sibling["id"])[0]["id"] == sibling_card
+    assert _accept_cards(client, sibling["id"])[0]["status"] == AcceptStatus.pending
+    assert _topic_status(client, sibling["id"]) == "open"
+    # ……而我这件照常收起，它自己没有等着人的卡。
+    assert _topic_status(client, mine["id"]) == "closed"
 
 
 # --- 5/6: 没有卡 / 已经归档 —— 行为一个字都不变 ------------------------------
@@ -291,24 +303,29 @@ def test_a_subtopic_without_an_accept_card_is_archived_as_before(client):
 
     _settle_by_turn_end(client, parent["id"])
 
-    assert _topic_status(client, sub["id"]) == "archived"
+    assert _topic_status(client, sub["id"]) == "closed"
     card = _conclusion_cards(client, sub["id"])[0]
     assert card["status"] == ConclusionStatus.accepted
     assert card["settle_reason"] == "", "没欠归档就不该留标记"
     assert _sweep_deferred(client, after_minutes=PAST_GRACE) == []
 
 
-def test_an_already_archived_subtopic_is_untouched(client):
-    """已经归档的子话题：采信照常结算，归档状态不变，也不留任何待办。"""
+def test_a_thread_in_an_archived_room_is_untouched(client):
+    """房间已经归档：采信照常结算，支线照常是收起的，也不留任何待办。
+
+    收起支线的路只有平台自己走（采信、或者房间被归档带走）——没有
+    `POST /topics/{id}/archive` 那样的按钮，因为一件活不是人「收进抽屉」的东西，
+    它是干完的。所以这里通过归档房间来造出「已经收起」的局面。
+    """
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "早就收工了")
     _file_conclusion(client, sub["id"], "结论")
-    assert client.post(f"/topics/{sub['id']}/archive", json={}).status_code == 200
+    assert client.post(f"/topics/{parent['id']}/archive", json={}).status_code == 200
 
     _settle_by_turn_end(client, parent["id"])
 
-    assert _topic_status(client, sub["id"]) == "archived"
+    assert _topic_status(client, sub["id"]) == "closed"
     card = _conclusion_cards(client, sub["id"])[0]
     assert card["status"] == ConclusionStatus.accepted
     assert card["settle_reason"] == ""
@@ -330,7 +347,7 @@ def test_a_rejected_card_lets_the_deferred_archive_land(client):
     assert r.status_code == 200, r.text
 
     assert _sweep_deferred(client, after_minutes=PAST_GRACE) == [sub_id]
-    assert _topic_status(client, sub_id) == "archived"
+    assert _topic_status(client, sub_id) == "closed"
     assert _conclusion_cards(client, sub_id)[0]["settle_reason"] == (
         ARCHIVE_DEFERRED_DONE
     )
@@ -350,7 +367,7 @@ def test_a_voided_card_lets_the_deferred_archive_land(client):
     assert r.status_code == 200, r.text
 
     assert _sweep_deferred(client, after_minutes=PAST_GRACE) == [sub_id]
-    assert _topic_status(client, sub_id) == "archived"
+    assert _topic_status(client, sub_id) == "closed"
 
 
 def test_the_refile_window_is_respected(client):
@@ -365,7 +382,7 @@ def test_the_refile_window_is_respected(client):
     )
 
     assert _sweep_deferred(client) == [], "宽限还没过就归档了"
-    assert _topic_status(client, sub_id) == "active"
+    assert _topic_status(client, sub_id) == "open"
 
 
 def test_refiling_a_card_re_protects_the_subtopic(client):
@@ -380,7 +397,7 @@ def test_refiling_a_card_re_protects_the_subtopic(client):
     second = _file_accept_card(client, sub_id, "bob")
 
     assert _sweep_deferred(client, after_minutes=PAST_GRACE) == []
-    assert _topic_status(client, sub_id) == "active"
+    assert _topic_status(client, sub_id) == "open"
     assert _accept_cards(client, sub_id)[0]["id"] == second
     assert _accept_cards(client, sub_id)[0]["status"] == AcceptStatus.pending
 
@@ -407,13 +424,13 @@ def test_accepting_the_card_pays_the_deferred_archive_back_via_the_sweep(client)
 
     assert _accept_cards(client, sub_id)[0]["status"] == AcceptStatus.accepted
     # 采纳只打交付标记，话题照常活着。
-    assert _topic_status(client, sub_id) == "active"
+    assert _topic_status(client, sub_id) == "open"
     # 宽限还没过：欠着的归档也还不落。
     assert _sweep_deferred(client) == []
-    assert _topic_status(client, sub_id) == "active"
+    assert _topic_status(client, sub_id) == "open"
 
     assert _sweep_deferred(client, after_minutes=PAST_GRACE) == [sub_id]
-    assert _topic_status(client, sub_id) == "archived"
+    assert _topic_status(client, sub_id) == "closed"
     assert _conclusion_cards(client, sub_id)[0]["settle_reason"] == (
         ARCHIVE_DEFERRED_DONE
     )
@@ -445,12 +462,11 @@ def test_the_platform_sweep_is_actually_wired_to_pay_it_back(client, tmp_path):
     result = asyncio.run(_tick())
     assert result["archived"] == 1, result
     assert result["errors"] == []
-    assert _topic_status(client, sub_id) == "archived"
+    assert _topic_status(client, sub_id) == "closed"
 
 
 def test_the_deferred_archive_only_ever_fires_once(client):
-    """待办是一次性的：人后来手动取消归档，平台不能拿一条早就结算完的结论
-    再把它关一次。"""
+    """待办是一次性的：欠下的那次收起落完就销号，扫描不会再回来关第二次。"""
     _, parent, sub_id, card_id = _concluded_with_a_card_waiting(client)
     _settle_by_turn_end(client, parent["id"])
     client.post(
@@ -459,7 +475,7 @@ def test_the_deferred_archive_only_ever_fires_once(client):
         headers=session_auth_headers("alice"),
     )
     assert _sweep_deferred(client, after_minutes=PAST_GRACE) == [sub_id]
+    assert _topic_status(client, sub_id) == "closed"
 
-    assert client.post(f"/topics/{sub_id}/unarchive", json={}).status_code == 200
+    # 再扫一次：这张卡已经销号，不该再被拿出来处理一遍。
     assert _sweep_deferred(client, after_minutes=10 * PAST_GRACE) == []
-    assert _topic_status(client, sub_id) == "active"

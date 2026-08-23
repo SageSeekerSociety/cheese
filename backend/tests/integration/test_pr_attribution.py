@@ -188,9 +188,13 @@ def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
 def test_the_commit_author_sidecar_names_the_human_too(client, monkeypatch, tmp_path):
     """验收 3: the commits themselves. `sync_for_topic` runs once per turn and
     writes the git identity the snapshot path commits under — fed `created_by`
-    it resolved a `cheese-…` handle to nothing, so every 分身 room kept
-    committing as `芝士 <cheese@zhishi.local>` and `coauthored_by()` was None."""
-    from app.domain.topic.repositories import TopicRepository
+    it resolved a `cheese-…` handle to nothing, so every dispatched thread kept
+    committing as `芝士 <cheese@zhishi.local>` and `coauthored_by()` was None.
+
+    The sidecar is keyed by the PLACE, which is what the worktree is keyed by:
+    two threads in one room commit as two different people when they belong to
+    two different people."""
+    from app.domain.room_task.place import PlaceResolver
     from app.domain.workspace import identity
 
     monkeypatch.setattr(identity.settings, "workspace_root", str(tmp_path))
@@ -211,9 +215,9 @@ def test_the_commit_author_sidecar_names_the_human_too(client, monkeypatch, tmp_
 
     async def _sync() -> None:
         async with client.test_factory() as s:
-            topic = await TopicRepository(s).get(uuid.UUID(tid))
-            assert topic is not None
-            await identity.sync_for_topic(s, topic)
+            place = await PlaceResolver(s).resolve(uuid.UUID(tid))
+            assert place is not None
+            await identity.sync_for_topic(s, place.room, task_id=place.task_id)
 
     asyncio.run(_sync())
 

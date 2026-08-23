@@ -1,4 +1,4 @@
-"""一个房间一条分支：把子话题的提交并进母话题那一个 PR 的**判读**部分。
+"""一个房间一条分支：把一件活的提交并进房间那一个 PR 的**判读**部分。
 
 `workspace.service.merge_subtopic_into_room` does the git; this decides what its
 answer MEANS — whether the job is finished, whether it has to be retried, and
@@ -32,13 +32,13 @@ from app.domain.agent.platform_notices import (
 
 logger = logging.getLogger("cheesex.conclusion.room_branch")
 
-#: 干完了 —— 提交在母话题分支上，母话题工作区也跟上了。扫描不再看这张卡。
+#: 干完了 —— 提交在房间分支上，房间工作区也跟上了。扫描不再看这张卡。
 DONE = "done"
-#: 排队 —— 现在不能合（母话题在等 CI / 工作区有人在改），条件解除后自动再试。
+#: 排队 —— 现在不能合（房间在等 CI / 工作区有人在改），条件解除后自动再试。
 DEFERRED = "deferred"
 #: 冲突 —— 两条活改了同一处，要人解。扫描照样重试（解完就能过），但只播报一次。
 CONFLICT = "conflict"
-#: 合了但母话题工作区没跟上 —— 下一次快照会把分支带回去，所以还没完，继续重试。
+#: 合了但房间工作区没跟上 —— 下一次快照会把分支带回去，所以还没完，继续重试。
 STALE = "stale"
 
 _NOTICES_DIRNAME = ".room-merges"
@@ -92,7 +92,7 @@ def state_of(result: dict) -> str:
 def merged_notice(*, title: str, result: dict) -> tuple[str, dict]:
     commits = result.get("commits") or 0
     return (
-        f"子话题《{title}》的 {commits} 个提交已并入本房间的分支",
+        f"《{title}》的 {commits} 个提交已并入本房间的分支",
         notice(
             EVENT_ROOM_MERGE,
             severity=SEVERITY_INFO,
@@ -108,7 +108,7 @@ def merged_notice(*, title: str, result: dict) -> tuple[str, dict]:
 
 def deferred_notice(*, title: str, reason: str) -> tuple[str, dict]:
     return (
-        f"子话题《{title}》的提交先排队",
+        f"《{title}》的提交先排队",
         notice(
             EVENT_ROOM_MERGE,
             severity=SEVERITY_INFO,
@@ -126,7 +126,7 @@ def conflict_notice(*, title: str, result: dict) -> tuple[str, dict]:
     conflicts = result.get("conflicts") or []
     where = "、".join(conflicts[:20]) if conflicts else "（见原因）"
     return (
-        f"子话题《{title}》的提交并进本房间分支时冲突",
+        f"《{title}》的提交并进本房间分支时冲突",
         notice(
             EVENT_ROOM_MERGE,
             severity=SEVERITY_ERROR,

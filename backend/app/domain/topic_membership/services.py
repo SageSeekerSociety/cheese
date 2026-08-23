@@ -172,7 +172,7 @@ class TopicMemberService:
         member_handles: list[str],
     ) -> None:
         """Seed a split-off sub-topic's roster: whoever the caller resolved as the
-        person driving this work becomes owner (`TopicService.split_to_subtopic`
+        person driving this work becomes owner (`TopicService.dispatch_task`
         walks that ladder — the splitter, else the human whose turn the split came
         out of, else inherited), and the parent topic's members (typically its
         human roster) join as plain members — otherwise a 分身-initiated split
@@ -232,7 +232,7 @@ class TopicMemberService:
         under its own ``cheese-<hex12>`` handle, so on every split topic
         ``created_by`` names a robot. Seeding already walked the ladder that
         finds the real human — :meth:`seed`/:meth:`seed_split` skip 芝士 as owner,
-        and ``TopicService.split_to_subtopic`` falls back to the person driving
+        and ``TopicService.dispatch_task`` falls back to the person driving
         the turn the split came out of, then the parent room's owner, then the
         project's — so this just reads what that ladder wrote.
 

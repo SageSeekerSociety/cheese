@@ -202,9 +202,13 @@ def test_a_room_with_nobody_to_inherit_from_is_still_created(client):
     assert roster.get(topic_agent_handle(uuid.UUID(topic["id"]))) == "member"
 
 
-def test_subtopic_under_agent_created_room_is_not_ownerless(client):
-    """The cascade: an ownerless room used to make every sub-topic under it
-    ownerless too, because the child's owner defaults to the parent's."""
+def test_work_dispatched_in_an_agent_created_room_is_not_ownerless(client):
+    """The cascade: an ownerless room used to make every piece of work in it
+    ownerless too, because the work's owner defaults to the room's.
+
+    A thread answers this with `owner_handle`, not a roster — 唯一的主 is the
+    whole difference between a piece of work and the room it happens in.
+    """
     p = _project(client, owner="alice")
     room = _create_topic(client, p["id"], json={"created_by": "cheese"})
 
@@ -213,7 +217,7 @@ def test_subtopic_under_agent_created_room_is_not_ownerless(client):
         json={"title": "分身拆出的子任务", "created_by": "cheese"},
     ).json()["data"]
 
-    assert _roster(client, child["id"]).get("alice") == "owner"
+    assert child["owner_handle"] == "alice"
 
 
 def _insert_block(client, project_id: str, topic_id: str, content: str) -> str:
@@ -255,7 +259,8 @@ def test_upgraded_block_falls_back_to_project_owner(client):
     ).json()["data"]
     _wait_work_idle()  # kickoff runs in the background; don't race its writes
 
-    assert _roster(client, upgraded["id"]).get("alice") == "owner"
+    # Upgrading inside a room dispatches WORK, and work names one owner.
+    assert upgraded["owner_handle"] == "alice"
 
 
 def test_upgraded_block_without_a_creator_is_not_ownerless(client):
@@ -268,7 +273,7 @@ def test_upgraded_block_without_a_creator_is_not_ownerless(client):
     upgraded = client.post(f"/blocks/{block_id}/upgrade", json={}).json()["data"]
     _wait_work_idle()
 
-    assert _roster(client, upgraded["id"]).get("alice") == "owner"
+    assert upgraded["owner_handle"] == "alice"
 
 
 def test_owner_can_manage_roster_of_an_agent_created_topic(client):

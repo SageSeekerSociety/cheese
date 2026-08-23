@@ -64,7 +64,7 @@ def test_snapshot_is_authored_by_the_human_behind_the_topic(project):
         "log",
         "-1",
         "--format=%an <%ae>",
-        ws.branch_for_topic(topic_id),
+        ws.branch_for_place(topic_id),
     ).strip()
     assert exported == "octocat <583231+octocat@users.noreply.github.com>"
 

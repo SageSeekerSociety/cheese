@@ -1,9 +1,10 @@
 """A room outlives the work done in it.
 
 A 话题 used to be a room, a task, a workspace and a session at once, so the
-shortest lifetime won: accepting the work took the room with it. Work is now its
-own kind (``task``) inside a room, which is what lets the room stay open for the
-next piece of work — and for anything delivered into it later.
+shortest lifetime won: accepting the work took the room with it. Work is now a
+THREAD in a room — a `tasks` row, not a `topics` row — which is what lets the
+room stay open for the next piece of work, and for anything delivered into it
+later.
 """
 
 from tests.integration.conftest import session_auth_headers
@@ -24,17 +25,13 @@ def _room(client, project_id: str, title: str = "运维") -> str:
 
 
 def _task(client, project_id: str, room_id: str, title: str) -> dict:
-    """A child of a room — one piece of work."""
-    r = client.post(
-        "/topics",
-        json={
-            "project_id": project_id,
-            "title": title,
-            "parent_id": room_id,
-            "created_by": "alice",
-        },
-    )
-    assert r.status_code == 200
+    """One piece of work, dispatched into a room.
+
+    Through `/split`, because that is the only way to make one: `POST /topics`
+    under a room is refused now — a room's inside is work, not another room.
+    """
+    r = client.post(f"/topics/{room_id}/split", json={"title": title})
+    assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
@@ -59,11 +56,19 @@ def _status(client, topic_id: str) -> str:
     return client.get(f"/topics/{topic_id}").json()["data"]["status"]
 
 
-def test_work_inside_a_room_is_a_task_not_a_nested_room(client):
+def test_work_inside_a_room_is_a_thread_not_a_nested_room(client):
     project_id = _project(client)
     room_id = _room(client, project_id)
     assert client.get(f"/topics/{room_id}").json()["data"]["kind"] == "topic"
-    assert _task(client, project_id, room_id, "修登录")["kind"] == "task"
+
+    task = _task(client, project_id, room_id, "修登录")
+    assert task["room_id"] == room_id
+    # And a room under a room is refused outright rather than quietly made.
+    refused = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "第二个房间", "parent_id": room_id},
+    )
+    assert refused.status_code == 422
 
 
 def test_accepting_a_task_leaves_its_room_open(client):
@@ -84,7 +89,7 @@ def test_accepting_a_task_leaves_its_room_open(client):
     _accept(client, task["id"])
 
     delivered = client.get(f"/topics/{task['id']}").json()["data"]
-    assert delivered["status"] == "active"
+    assert delivered["status"] == "open"
     assert delivered["accepted_at"] is not None
     assert _status(client, room_id) == "active"
 
@@ -99,15 +104,18 @@ def test_a_room_takes_a_second_task_after_the_first_is_accepted(client):
     _accept(client, first["id"])
     second = _task(client, project_id, room_id, "加导出")
 
-    assert second["kind"] == "task"
-    assert second["parent_id"] == room_id
-    assert _status(client, second["id"]) == "active"
+    assert second["room_id"] == room_id
+    assert _status(client, second["id"]) == "open"
     assert _status(client, room_id) == "active"
 
 
 def test_archiving_the_room_still_takes_its_tasks(client):
     """Cascade downward is unchanged: closing the place closes the work in it —
-    an orphaned task with no room has no context and no way back."""
+    a piece of work with no room has no context and no way back.
+
+    The two ends use different words on purpose: a room is `archived` (a person
+    put it away and its work面 froze); a thread is `closed` (its work ended).
+    """
     project_id = _project(client)
     room_id = _room(client, project_id)
     task = _task(client, project_id, room_id, "修登录")
@@ -116,4 +124,4 @@ def test_archiving_the_room_still_takes_its_tasks(client):
     assert r.status_code == 200
 
     assert _status(client, room_id) == "archived"
-    assert _status(client, task["id"]) == "archived"
+    assert _status(client, task["id"]) == "closed"

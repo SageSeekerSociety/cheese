@@ -45,6 +45,7 @@ import type {
   ChatAttachment,
   ProjectMemberRow,
   ReactionAgg,
+  RoomTask,
   TodoItem,
   Topic,
   TopicMemberRow,
@@ -61,6 +62,7 @@ import {
   chatWsUrl,
   getProgress,
   listBlocks,
+  listRoomTasks,
   listTopicMembers,
   toggleReaction as apiToggleReaction,
 } from '../api'
@@ -993,12 +995,30 @@ function placeUnreadAnchor() {
   unreadAnchorId.value = oldest?.block.id ?? null
 }
 
-// 「已派出」标记 (issue #314): 本房间拆出去的子话题，在时间线上它被拆出去的那个
-// 时刻标一行，点进去就是那边。库里没有这行 —— split 不往父话题写任何 block，所以
-// 位置只能由子话题的 parent_id + created_at 现算（lib/splitMarkers.ts 说明了它能
-// 标什么、标不了什么）。topicList 是本项目的全部话题，子话题已经在里面了。
+// 「已派出」标记 (issue #314): 本房间派出去的活，在时间线上它被派出去的那个时刻
+// 标一行，点进去就是那条支线。库里没有这行 —— split 不往房间主线写任何 block，所
+// 以位置只能由支线的 created_at 现算（lib/splitMarkers.ts 说明了它能标什么、标不
+// 了什么）。
+//
+// 单独拉一次而不是从 topicList 里挑：一件活不再是话题树上的一个节点，话题列表里
+// 根本没有它了。`limit: 1` 是因为标记只要支线本身，不要它们的对话。
+const roomTasks = ref<RoomTask[]>([])
+watch(
+  () => props.topic?.id,
+  async (id) => {
+    roomTasks.value = []
+    if (!id) return
+    try {
+      roomTasks.value = (await listRoomTasks(id, { limit: 1 })).data
+    } catch {
+      // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
+    }
+  },
+  { immediate: true }
+)
+
 const splitMarkers = computed(() =>
-  placeSplitMarkers(props.topic?.id, props.topicList, {
+  placeSplitMarkers(roomTasks.value, {
     blocks: visible.value,
     hasMore: hasMore.value,
   })
@@ -1392,11 +1412,11 @@ onBeforeUnmount(() => {
               以下是新消息
             </TimelineMark>
             <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
-               这一行是按子话题的 parent_id + created_at 现算出来的，插在它被拆出
-               去的那个时刻上。它不是消息，但会像 event 一样把消息分组打断。 -->
+               这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
+               上。它不是消息，但会像 event 一样把消息分组打断。 -->
             <DispatchedMarker
               v-for="marker in splitMarkers.before.get(m.id) ?? []"
-              :key="marker.topicId"
+              :key="marker.taskId"
               :marker="marker"
               @open="emit('open-topic', $event)"
             />
@@ -1586,12 +1606,14 @@ onBeforeUnmount(() => {
                     {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
                   </div>
                 </div>
-                <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
+                <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
+                   升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
+                   一张表，同时只会有一个非空。 -->
                 <button
-                  v-if="m.upgraded_to_topic_id"
+                  v-if="m.upgraded_to_task_id || m.upgraded_to_topic_id"
                   type="button"
                   class="im-upgraded"
-                  @click="emit('open-topic', m.upgraded_to_topic_id)"
+                  @click="emit('open-topic', (m.upgraded_to_task_id || m.upgraded_to_topic_id)!)"
                 >
                   <v-icon size="13">mdi-arrow-top-right</v-icon>
                   已升级为话题，点击查看
@@ -1642,11 +1664,11 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚拆出去、之后房间里还
-             没人说过话的那些子话题。 -->
+          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还
+             没人说过话的那些支线。 -->
           <DispatchedMarker
             v-for="marker in splitMarkers.tail"
-            :key="marker.topicId"
+            :key="marker.taskId"
             :marker="marker"
             @open="emit('open-topic', $event)"
           />

@@ -25,6 +25,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -103,13 +104,32 @@ class Block(UuidPk, Timestamps, Base):
     # question: the timeline pages, and the MAX(created_at) behind a topic's
     # 最后活动时间 — which the sidebar sorts on, so it runs once per listed topic
     # and must not degrade into reading the whole topic's history.
-    __table_args__ = (Index("ix_blocks_topic_id_created_at", "topic_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_blocks_topic_id_created_at", "topic_id", "created_at"),
+        # The same shape one level down: a thread's conversation, oldest-first.
+        # Partial, because most blocks are the room's own line and carry no
+        # task — indexing those NULLs would double the index for no reader.
+        Index(
+            "ix_blocks_task_id_created_at",
+            "task_id",
+            "created_at",
+            postgresql_where=text("task_id IS NOT NULL"),
+        ),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    # WHICH thread this block is in. NULL = the room's own line; set = the
+    # conversation of that one piece of work. This is the key that makes a task
+    # a thread instead of a room: before it, the only way to give work its own
+    # conversation was to give it its own row in `topics`, because `topic_id`
+    # was the sole grouping key.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
     )
 
     kind: Mapped[BlockKind] = mapped_column(
@@ -179,6 +199,14 @@ class Block(UuidPk, Timestamps, Base):
     # position becomes a live link to the new topic.
     upgraded_to_topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    )
+    # …and if it was dispatched into a piece of work instead, which is what
+    # upgrading a message inside a room now does. Two columns rather than one
+    # holding either kind of id: both are real foreign keys, and a single
+    # untyped column would be a pointer the database cannot check into a table
+    # it cannot name.
+    upgraded_to_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
     )
 
 

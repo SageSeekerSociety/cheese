@@ -70,8 +70,13 @@ class GateOutcome(enum.StrEnum):
 class AcceptCard(UuidPk, Timestamps, Base):
     __tablename__ = "accept_cards"
 
+    # The room the card is read in. A card filed for a piece of work names its
+    # thread below; a card filed for the room itself leaves that NULL.
     topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
     )
     # Routed reviewer (spec C5): the specific person asked to accept.
     reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)

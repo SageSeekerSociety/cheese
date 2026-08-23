@@ -82,7 +82,7 @@ EVENT_SANDBOX_REBUILT: Final = "sandbox_rebuilt"
 EVENT_DEPLOY_DONE: Final = "deploy_done"
 #: 采纳后触发的部署没跑完 / 回滚了 / 结果不明。
 EVENT_DEPLOY_FAILED: Final = "deploy_failed"
-#: 子话题的提交并进了母话题分支 / 先排队 / 冲突了。
+#: 一件活的提交并进了房间的分支 / 先排队 / 冲突了。
 EVENT_ROOM_MERGE: Final = "room_merge"
 #: 一张采信卡有结果了：被采信 / 要补证据 / 升级等人拍板。
 EVENT_CONCLUSION_SETTLED: Final = "conclusion_settled"

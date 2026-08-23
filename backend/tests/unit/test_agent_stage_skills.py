@@ -16,29 +16,32 @@ from app.domain.agent.skills import (
 )
 from app.domain.agent.stages import TopicStage, resolve_stage, stage_scenario
 from app.domain.review.models import AcceptStatus
-from app.domain.topic.models import TopicKind, TopicStatus
 
 
-def _stage(kind=TopicKind.task, status=TopicStatus.active, cards=()) -> TopicStage:
-    return resolve_stage(kind=kind, status=status, card_statuses=cards)
+def _stage(is_room=False, finished=False, cards=()) -> TopicStage:
+    return resolve_stage(is_room=is_room, finished=finished, card_statuses=cards)
 
 
 # --- 阶段判定 ---------------------------------------------------------------
 
 
 def test_room_without_cards_is_delegating():
-    assert _stage(kind=TopicKind.topic) is TopicStage.delegating
-    assert _stage(kind=TopicKind.root) is TopicStage.delegating
+    assert _stage(is_room=True) is TopicStage.delegating
 
 
-def test_task_without_cards_is_working():
-    assert _stage(kind=TopicKind.task) is TopicStage.working
-    # `subtopic` is task's historical value — same stage, not a hole.
-    assert _stage(kind=TopicKind.subtopic) is TopicStage.working
+def test_work_without_cards_is_working():
+    """The question is room-or-work, and `topics.kind` stopped answering it.
+
+    A piece of work is a thread now, so every `topics` row says "room". Deriving
+    the stage from that column would hand every 分身 the 拆活 guide and send it
+    to split the work it was dispatched to do — silently, since nothing about a
+    wrong prompt section raises.
+    """
+    assert _stage(is_room=False) is TopicStage.working
 
 
-def test_archived_task_is_merged():
-    assert _stage(status=TopicStatus.archived) is TopicStage.merged
+def test_finished_work_is_merged():
+    assert _stage(finished=True) is TopicStage.merged
 
 
 @pytest.mark.parametrize(
@@ -57,9 +60,7 @@ def test_open_card_drives_the_stage(card_status, expected):
 
 def test_a_room_holding_an_open_card_reports_the_card_stage():
     """卡状态比话题形态更具体：房间里真有一张活卡时，说卡的事。"""
-    assert _stage(kind=TopicKind.topic, cards=[AcceptStatus.pr_open]) is (
-        TopicStage.pr_open
-    )
+    assert _stage(is_room=True, cards=[AcceptStatus.pr_open]) is TopicStage.pr_open
 
 
 def test_needs_my_hands_wins_over_waiting_on_a_human():

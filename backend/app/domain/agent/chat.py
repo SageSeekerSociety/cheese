@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.config import settings
 from app.core.errors import GatewayUnavailableError, NotFoundError
 from app.core.text import markdown_preview
+from app.core.work_context import current_place
 from app.domain.agent.compute import ComputePool, ComputeProvider
 from app.domain.agent.gateway import LlmGateway, drain_new_usage
 from app.domain.agent.harness import Opening, SessionRef, runtime_for
@@ -89,6 +90,8 @@ from app.domain.milestone.repositories import MilestoneRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.place import PlaceResolver, room_and_task
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -174,6 +177,11 @@ class _TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
+    # 一条支线还要知道它站在哪儿：房间的实况文档，和房间最近在聊什么。房间自己跑的
+    # 一轮这两项都是空的——它读的本来就是自己那份。
+    room_doc_text: str | None
+    room_backdrop: str | None
+    room_backdrop_dropped: int
     memories: RecallResult
     prior_progress: list[dict]
     open_cards: list[AcceptCard]
@@ -229,7 +237,7 @@ def _persisted_eids(blocks: list[Block]) -> set[str]:
 # plus a short preview of its most telling argument. Stored in the event block as
 # "verb\npreview" (preview omitted when empty).
 _TOOL_VERB = {
-    "create_subtopic": "拆出子话题",
+    "create_subtopic": "派出一条支线",
     "update_doc": "更新文档",
     "remember": "记入记忆",
     "notify": "发送通知",
@@ -351,6 +359,47 @@ def _tool_event_meta(name: str, args: dict, *, platform: bool) -> dict:
 # the room needs is enough to tell "it answered the question" from "it went off
 # the rails", which is the whole point of making it visible.
 _SUBAGENT_RESULT_MAX = 500
+
+# 一条支线的上下文 = 房间实况文档 + 任务简报 + 房间最近若干条消息。这两个数是那个
+# 「若干」。
+#
+# 按**字符预算**截，不按条数：条数上限会被一条长消息吃光，所以「最近 20 条」在一个
+# 有人贴过日志的房间里等于「最近 1 条」。条数上限仍然存在，但它只是查询的止损，不是
+# 语义——真正决定装多少的是预算。
+#
+# 4000 字符大约是房间里最近半天的对话，而一条支线通常只需要知道「我被派出去的时候，
+# 房间在聊什么」。给多了会把任务简报挤到 prompt 的角落里。
+_ROOM_BACKDROP_BUDGET_CHARS = 4000
+_ROOM_BACKDROP_MAX_BLOCKS = 60
+_ROOM_BACKDROP_PER_MESSAGE_CHARS = 400
+
+
+def _room_backdrop(blocks: list[Block], budget: int) -> tuple[str, int]:
+    """房间主线最近说了什么，装到预算为止；返回（正文，被截掉的条数）。
+
+    从最新往回装，装满就停——一条支线要知道的是「现在房间在聊什么」，不是房间的开头。
+    渲染时再翻回时间顺序，因为读的人是从上往下读的。
+
+    被截掉的条数是返回值的一部分，不是日志：**没进来的必须说出来**。一个读者分不清
+    「房间没说过话」和「房间说了很多但没给我」的时候，他会停止相信这段上下文。
+    """
+    taken: list[str] = []
+    used = 0
+    dropped = 0
+    for block in reversed(blocks):
+        if block.kind != BlockKind.message or not (block.content or "").strip():
+            continue
+        text = block.content.strip()
+        if len(text) > _ROOM_BACKDROP_PER_MESSAGE_CHARS:
+            text = text[:_ROOM_BACKDROP_PER_MESSAGE_CHARS] + "…"
+        line = f"- {block.author}：{text}"
+        if used + len(line) > budget and taken:
+            dropped += 1
+            continue
+        used += len(line)
+        taken.append(line)
+    taken.reverse()
+    return "\n".join(taken), dropped
 
 
 def _subagent_event_text(description: str, result: str) -> str:
@@ -526,7 +575,7 @@ _CHEESE_RESOURCE = {
 # whoever the author is (用户拍板: 芝士不需要专属提示行).
 _ACTION_LABEL = {
     "decision": "记录了决策",
-    "topics": "更新了子话题",
+    "topics": "更新了这个房间的活",
     "milestone": "添加了里程碑",
     "accept": "提交了验收卡",
     "notify": "发送了通知",
@@ -813,6 +862,12 @@ def _build_system_prompt(
     memories_omitted: int = 0,
     memories_core: int = 0,
     memories_core_omitted: int = 0,
+    # Keyword-only, and last: three call sites hand the first four arguments
+    # positionally, so anything inserted above `role` silently lands in the
+    # wrong slot.
+    room_doc: str | None = None,
+    room_backdrop: str | None = None,
+    room_backdrop_dropped: int = 0,
 ) -> str:
     parts = [base]
     if untitled:
@@ -861,6 +916,24 @@ def _build_system_prompt(
             "要让某人去做事/通知到他，**在他名字前加 @**（如 `@张衡`，名字用下表"
             "准确值）——平台会把它变成可点的「@张衡」链接并给他**强提醒**。"
             "只写名字而不加 @ 只是普通文字，不会通知。\n" + lines
+        )
+    if room_doc:
+        # 房间那一份在前，支线那一份在后：房间的是共识（这个地方在干什么、定了什么），
+        # 支线的是这一件活。顺序就是读的顺序——先知道自己站在哪儿，再看自己要做什么。
+        parts.append(
+            "## 这个房间的实况文档（房间级共识，不是你这件活的文档）\n" + room_doc
+        )
+    if room_backdrop:
+        note = (
+            f"（只给了最近的一段，更早的 {room_backdrop_dropped} 条没放进来）"
+            if room_backdrop_dropped
+            else ""
+        )
+        parts.append(
+            f"## 这个房间最近在聊什么{note}\n"
+            "这是房间主线，不是你这条支线的对话——你说的话不会出现在这里，"
+            "这里的人也不一定知道你在做什么。要让房间知道，用结论回流。\n"
+            + room_backdrop
         )
     if doc:
         parts.append(
@@ -1006,19 +1079,19 @@ def conclusion_digest_prompt(
         card_note = (
             "\n\n---\n"
             f"这条结论挂着一张结论卡 `{card_id}`。**默认采信**：你这一轮结束时"
-            f"它就自动采信、子话题随之归档{by}，你不需要做任何事。\n"
+            f"它就自动采信、那条支线随之收起{by}，你不需要做任何事。\n"
             "只有两种情况才动它：\n"
-            "- 缺一条关键证据、而子话题的上下文还热着 → "
+            "- 缺一条关键证据、而那条支线的上下文还热着 → "
             f'`cheese conclusion need-evidence {card_id} "要补什么"`'
             "（每张卡只能打回一次）；\n"
             "- 这个结论要以某个人的名义做出去 → "
             f'`cheese conclusion escalate {card_id} "要谁拍什么板"`。'
         )
     return (
-        "一个子话题刚回流了结论（原文如下，也已织进本话题实况文档末尾）。"
+        "一条支线刚回流了结论（原文如下，也已织进本话题实况文档末尾）。"
         "请消化它：\n"
         "1. 把实况文档整理成最新状态——结论的要点合并进对应章节，"
-        "别让「子话题结论」堆在文档末尾。\n"
+        "别让「支线结论」堆在文档末尾。\n"
         "2. 判断下一步：这个结论解锁了什么？需要继续拆活就拆（split 带 --brief），"
         "需要人拍板/验收就发通知或验收卡，整件事收尾了就说明结论。\n"
         "3. 在对话里用一两句话向大家报信（结论已在文档里，别复述全文）。\n\n"
@@ -1689,14 +1762,16 @@ class ChatService:
         which is the whole point of this call: the platform says it out loud.
         Returns the block payload, or None if the topic died."""
         async with self._sessions() as session:
-            topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            topic = await topics.get(topic_id)
-            if topic is None:
+            # The place, not the room: a turn failure inside a thread belongs in
+            # that thread, next to the work it interrupted.
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None:
                 return None
             block = await blocks.add(
-                project_id=topic.project_id,
-                topic_id=topic.id,
+                project_id=place.project_id,
+                topic_id=place.room_id,
+                task_id=place.task_id,
                 author="system",
                 author_type=AuthorType.system,
                 content=content,
@@ -2222,9 +2297,14 @@ class ChatService:
         async with self._sessions() as session:
             topics = TopicRepository(session)
             blocks = BlockRepository(session)
-            topic = await topics.get(topic_id)
-            if topic is None:
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None:
                 raise NotFoundError("Topic not found")
+            topic = place.room
+            # Every block written below lands in the place the message was sent
+            # to, thread and all — set once here so the writes below do not each
+            # have to remember to say so.
+            current_place.set((place.id, place.room_id, place.task_id))
             created_blocks: list[Block] = []
             anchor_id: uuid.UUID | None = None
             attribution_id = turn_id
@@ -2267,7 +2347,10 @@ class ChatService:
                     content = expand_mention_names(content, roster, topic_refs)
                 user_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=topic.id,
+                    # The PLACE this was sent to, not the room around it: `add`
+                    # splits it, and the room's id would put a thread's message
+                    # on the room's own line, where everyone reads it.
+                    topic_id=place.id,
                     author=author,
                     author_type=AuthorType.human,
                     content=content,
@@ -2299,7 +2382,7 @@ class ChatService:
             for att in attachments or []:
                 att_block = await blocks.add(
                     project_id=topic.project_id,
-                    topic_id=topic.id,
+                    topic_id=place.id,  # the place, as above
                     author=author,
                     author_type=AuthorType.human,
                     content=str(att.get("path") or ""),
@@ -2523,8 +2606,11 @@ class ChatService:
         turn end would lose exactly the case this exists for (the turn dies)."""
         try:
             async with self._sessions() as session:
+                # The checklist belongs to the PLACE that is working, not to the
+                # room it hangs in — two threads in one room keep two lists.
+                room_id, task_id = await room_and_task(session, topic_id)
                 await TopicProgressRepository(session).save(
-                    topic_id, items, turn_id=turn_id
+                    room_id, items, task_id=task_id, turn_id=turn_id
                 )
                 await session.commit()
         except Exception:  # noqa: BLE001 — never fail a turn over its checklist
@@ -3327,15 +3413,25 @@ class ChatService:
             blocks = BlockRepository(session)
             memory = memory_store(session)
 
-            topic = await topics.get(topic_id)
-            if topic is None:
+            # WHERE this turn runs: a room, plus the thread inside it when the
+            # work has one. Resolved once and parked in `current_place`, because
+            # every block this turn writes has to know the same answer and asking
+            # per block would be a query per streamed event.
+            place = await PlaceResolver(session).resolve(topic_id)
+            if place is None:
                 raise NotFoundError("Topic not found")
+            topic = place.room
+            current_place.set((place.id, place.room_id, place.task_id))
 
             # Speaker-labelled prompt covering every human message 芝士 hasn't
             # been handed yet — so messages posted without @芝士 are still seen on
             # the next summon (spec §7.1 所有消息 AI 都会收到), each tagged with
             # who said it so 芝士 can tell people apart in a group topic (§8.4).
-            history = await blocks.list_for_topic(topic_id)
+            #
+            # Scoped to the PLACE: a thread's turn must not be handed the room's
+            # main line as its own backlog, and the room must not be handed every
+            # thread's chatter.
+            history = await blocks.list_for_topic(place.room_id, task_id=place.task_id)
             pending = _pending_human_blocks(history)
             pending_ids = [b.id for b in pending]
             if not pending and user_block_id is not None:
@@ -3358,7 +3454,28 @@ class ChatService:
             is_private = topic.is_private
             private_owner = topic.private_owner
             acting_agent = await self._agent_handle(session, topic.id)
-            doc_root = None if is_private else await blocks.doc_root(topic.id)
+            doc_root = (
+                None
+                if is_private
+                else await blocks.doc_root(place.room_id, task_id=place.task_id)
+            )
+            # 一条支线的上下文 = 房间实况文档 + 任务简报 + 房间最近若干条消息。
+            # 上面那份是任务简报（这条支线自己的文档）；房间那两样在这里取。
+            #
+            # 房间自己跑的一轮不取：它本来就在读自己的文档、自己的时间线，再取一遍
+            # 等于把同样的内容在 prompt 里写两遍。
+            room_doc_text: str | None = None
+            room_backdrop = ""
+            room_backdrop_dropped = 0
+            if place.is_thread and not is_private:
+                room_doc_block = await blocks.doc_root(place.room_id, task_id=None)
+                room_doc_text = room_doc_block.content if room_doc_block else None
+                room_line = await blocks.page_for_topic(
+                    place.room_id, task_id=None, limit=_ROOM_BACKDROP_MAX_BLOCKS
+                )
+                room_backdrop, room_backdrop_dropped = _room_backdrop(
+                    room_line.items, _ROOM_BACKDROP_BUDGET_CHARS
+                )
             doc_text = doc_root.content if doc_root else None
             # Memory is retrieved against what this turn is actually about —
             # newest message first, since a turn is usually about the thing
@@ -3417,7 +3534,7 @@ class ChatService:
             # first topic, and topics that predate this have no record at all.
             # Best-effort by construction — see workspace/identity.py.
             if not is_private:
-                await ws_identity.sync_for_topic(session, topic)
+                await ws_identity.sync_for_topic(session, topic, task_id=place.task_id)
             # This agent's thread here, not the room's: a room may host several
             # and each resumes its own (agent_session/models.py).
             resume_session_id = await AgentSessionService(session).resume_token(
@@ -3427,7 +3544,9 @@ class ChatService:
             # 进度层 (#187): the checklist the last turn left behind. Read inside
             # tx1 with everything else the prompt is built from, so no extra
             # round trip; empty list when this topic has never had one.
-            progress_row = await TopicProgressRepository(session).get(topic_id)
+            progress_row = await TopicProgressRepository(session).get(
+                place.room_id, task_id=place.task_id
+            )
             prior_progress = [
                 dict(item) for item in (progress_row.items if progress_row else [])
             ]
@@ -3450,8 +3569,14 @@ class ChatService:
                 None
                 if is_private
                 else resolve_stage(
-                    kind=topic.kind,
-                    status=topic.status,
+                    is_room=not place.is_thread,
+                    # 完事了 = 这条支线被收起，或者这个房间被人归档。两种「结束」
+                    # 各有各的词，但对「该给哪段说明」来说是同一件事。
+                    finished=(
+                        place.task.status == TaskStatus.closed
+                        if place.task is not None
+                        else topic.status == TopicStatus.archived
+                    ),
                     card_statuses=[c.status for c in open_cards],
                 )
             )
@@ -3586,6 +3711,9 @@ class ChatService:
             agent=agent,
             agent_pool=agent_pool,
             doc_text=doc_text,
+            room_doc_text=room_doc_text,
+            room_backdrop=room_backdrop or None,
+            room_backdrop_dropped=room_backdrop_dropped,
             is_private=is_private,
             memories=memories,
             open_cards=open_cards,
@@ -3639,6 +3767,9 @@ class ChatService:
         acting_agent = prepared.acting_agent
         agent_pool = prepared.agent_pool
         doc_text = prepared.doc_text
+        room_doc_text = prepared.room_doc_text
+        room_backdrop = prepared.room_backdrop
+        room_backdrop_dropped = prepared.room_backdrop_dropped
         is_private = prepared.is_private
         memories = prepared.memories
         open_cards = prepared.open_cards
@@ -3690,6 +3821,9 @@ class ChatService:
                 if topic_stage is not None
                 else None
             ),
+            room_doc=room_doc_text,
+            room_backdrop=room_backdrop,
+            room_backdrop_dropped=room_backdrop_dropped,
         )
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
