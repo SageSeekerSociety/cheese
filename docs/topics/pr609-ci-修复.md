@@ -40,6 +40,16 @@ gh api -X POST repos/SageSeekerSociety/cheese/git/refs \
 
 跑完再点一次卡片上的采纳（那张 pending 的卡会重试）。`d8cceda99` 这个 commit 在 GitHub 上仍然存在，已核实。
 
+## 绕开死锁：拆一条支线去交付
+
+房间分支既然永久推不上去，交付就换一条从没在 GitHub 上出现过的分支走。
+
+已拆出支线 @交付支线地基（`c67b321e`）。它的分支是 `topic/c67b321e`——GitHub 上没有同名 ref，所以没有过期 lease 可判；而它 fork 自房间分支（<&backend/app/domain/workspace/service.py> 的 `_fork_point`），带着完整的 118 个文件。
+
+注意：`cheese split --help` 里写的「工作区是从 main 新建的」**已经过时**，代码实际是从所在房间的分支长出来的。这一条如果信错了，整个方案就不成立，所以是核对过代码才动手的。
+
+简报里写死的硬边界：不改任何代码、不重跑测试（结果直接给它了）、**先 push 再递卡**、**绝不 rebase**、递完必须用命令确认 `changed_files` 非 0。
+
 ## 做完的三件事
 
 ### 一、CI 报的 31 个失败
