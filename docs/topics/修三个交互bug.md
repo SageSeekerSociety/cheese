@@ -76,9 +76,31 @@ Resource not accessible by integration
 `No space left on device`——`/tmp` 是 32G tmpfs，4 个并行 worker 各起一个
 Postgres 把它撑爆。换到真实磁盘上重跑就干净了。
 
+## 交付
+
+PR **#613**，验收卡已递给 @fulu。分支 `topic/9fb0c47e`，22 个文件 +879/−68。
+
+### ⚠️ 采纳前必须先确认 PR 不是空的
+
+递卡那一刻平台把分支**强推回了它自己的快照**，PR 一度只剩两张图片
+（`changed_files=2, additions=0`）。原因是 `snapshot_worktree` 快照的是**后端
+自己那份 worktree**，而本话题跑在托管机器上、活是通过 git push 回来的——后端那
+份里除了 uploads/ 的聊天图片什么都没有，于是它拿那个空快照覆盖了分支。
+
+我已经把平台那个快照 merge 回来并重新推上去了。但 GitHub 上的 PR 要等卡片进入
+`pr_open`（也就是有人点采纳）平台才会代推。**采纳前先跑一遍：**
+
+```
+gh api repos/SageSeekerSociety/cheese/pulls/613 --jq '.changed_files, .additions'
+```
+
+不是 20 出头、additions 不是几百，就别采纳——那会空合并，什么都不交付。
+
+这算这次翻出来的第五个缺陷，没有修（它在采纳流程里，不在本次四条的范围内）。
+
 ## 待办
 
-- 全套跑完 → 开 PR
 - 有权限的人更新 dev 机器的连接器二进制（见 ①）——不更新的话图片仍到不了芝士，
   只是不再连带把整条消息弄丢
 - 轮次内的消息/卡片交错（见 ③）需要单独一件活：给块加轮次内显式序号
+- device 话题的快照覆盖分支（见上）值得单独一张卡
