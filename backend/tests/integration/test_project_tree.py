@@ -263,15 +263,18 @@ def test_split_and_return_conclusion(client):
     sub = client.post(
         f"/topics/{topic['id']}/split", json={"title": "实现数据清洗"}
     ).json()["data"]
+    # A thread in the room, not a room of its own: it names the room it hangs
+    # in, and it opens as work that is still going.
     assert sub["room_id"] == topic["id"]
-    assert sub["kind"] == "task"
+    assert sub["status"] == "open"
     # Let the 分身's auto-kickoff finish before writing more to the shared
     # in-memory DB (otherwise the two interleave on one SQLite connection).
     _wait_work_idle()
 
-    # Sub-topic shows up under children.
-    children = client.get(f"/topics/{topic['id']}/children").json()["data"]["data"]
-    assert any(c["id"] == sub["id"] for c in children)
+    # It shows up in the room's task list — `children` is rooms under rooms,
+    # which is exactly what a thread is not.
+    tasks = client.get(f"/topics/{topic['id']}/tasks").json()["data"]["data"]
+    assert any(t["id"] == sub["id"] for t in tasks)
 
     # Conclusion flows back to the parent topic.
     r = client.post(

@@ -101,7 +101,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.archive", "app.domain.block.repositories"),
         ("app.domain.review.gate_sweep", "app.domain.block.repositories"),
         ("app.domain.review.gate_sweep", "app.domain.topic.repositories"),
-        ("app.domain.review.pr_publish", "app.domain.topic.repositories"),
         ("app.domain.review.services", "app.domain.block.repositories"),
         ("app.domain.review.services", "app.domain.membership.repositories"),
         ("app.domain.review.services", "app.domain.project.repositories"),
