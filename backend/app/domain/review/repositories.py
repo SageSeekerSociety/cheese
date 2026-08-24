@@ -83,6 +83,31 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def latest_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        """The newest card on each of these threads, in ONE query.
+
+        Batched on purpose. The rail shows every thread with the PR it rides
+        on, and asking per thread is the N+1 that turns one sidebar into one
+        request per piece of work ever dispatched. Newest wins because a thread
+        can file again after a rejection, and the current card is the one that
+        says where the work stands.
+        """
+        if not task_ids:
+            return {}
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.task_id.in_(task_ids))
+            .order_by(AcceptCard.created_at, AcceptCard.id)
+        )
+        latest: dict[uuid.UUID, AcceptCard] = {}
+        for card in (await self._session.scalars(stmt)).all():
+            # Ordered oldest-first, so the last write per key is the newest.
+            if card.task_id is not None:
+                latest[card.task_id] = card
+        return latest
+
     async def list_live_for_places(
         self, place_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
     ) -> list[AcceptCard]:

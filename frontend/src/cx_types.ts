@@ -47,6 +47,9 @@ export interface Topic {
   // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
   // 所以换了项目默认，这个话题也跟着换。
   agent_instance_id?: string | null
+  // 只有 kind='thread' 的地点有：这件活当前骑的那张验收卡 / PR。房间的交付是
+  // 整条分支一张卡，不挂在这里。
+  card?: ThreadCard | null
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -149,6 +152,16 @@ export interface RoomTask {
   upgraded_from_block_id?: string | null
   created_at: string
   updated_at: string
+  // 只有项目级那条列表带它（`GET /projects/{id}/tasks`）——房间级的不带。
+  card?: ThreadCard | null
+}
+
+/** 一条支线绑着的验收卡，窄到只剩一行侧栏放得下的东西：活到哪一步、骑在哪个 PR 上。 */
+export interface ThreadCard {
+  id: string
+  status: string
+  pr_number?: number | null
+  pr_url?: string | null
 }
 
 export interface TopicProgress {

@@ -10,6 +10,7 @@ import { usePageTitle } from '@/composables/usePageTitle'
 
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
+import { isThread, roomIdOf } from '@/lib/place'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
 import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -46,7 +47,21 @@ function onPanelTab(key: string) {
 
 const AUTHOR = myHandle()
 
-const selectedTopic = computed<Topic | null>(() => store.topics.find((t) => t.id === props.topicId) ?? null)
+// URL 里的这个 id 指向一个「地点」——房间，或者房间里的一条支线 (lib/place.ts)。
+//
+// 这里以前只在 `store.topics` 里找，而那张表来自 `GET /topics?project_id=`，只查
+// topics 表：**支线永远不在里面**。于是点房间时间线上那条「已派出《X》」，或者刚
+// 把一条消息升级成一件活，跳过去看到的是「这个话题不存在」——一个完全好使的 id，
+// 一个空状态。
+//
+// 修的方向不是把支线塞进那张表（侧栏只列房间是设计，塞进去等于每条支线在侧栏长
+// 一行，正是这次改造要省掉的成本），而是：**在列表里找不到就直接去问这个 id**。
+const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId))
+const room = computed<Topic | null>(() => {
+  const place = selectedTopic.value
+  if (!place || !isThread(place)) return null
+  return store.topics.find((t) => t.id === roomIdOf(place)) ?? null
+})
 
 // 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
@@ -60,8 +75,13 @@ watch(
   { immediate: true }
 )
 onUnmounted(() => clearDynamicTitle('workspace-topic'))
-// The list is still on its way, so "not found" is not yet a fact.
-const resolving = computed(() => !selectedTopic.value && (store.loadingTopics || store.topics.length === 0))
+// The list is still on its way, so "not found" is not yet a fact. Neither is it
+// one while this id is being asked about directly — that is the path a thread
+// always takes, so without the third clause opening one flashes 「不存在」 first.
+const resolving = computed(
+  () =>
+    !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || store.isResolvingPlace(props.topicId))
+)
 
 function openTopic(topicId: string) {
   if (topicId === props.topicId) return
@@ -252,14 +272,17 @@ async function handleUpgradeMessage(messageId: string) {
 const unreadOnOpen = ref(0)
 watch(
   () => props.topicId,
-  (id) => {
+  async (id) => {
     worklog.value = []
     working.value = false
     workingSince.value = null
-    if (id) {
-      unreadOnOpen.value = store.unreadMap[id] ?? 0
-      store.markRead(id)
-    }
+    if (!id) return
+    unreadOnOpen.value = store.unreadMap[id] ?? 0
+    // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
+    // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
+    // 等于对每一条支线都白打一次会 404 的请求。
+    await store.loadPlace(id)
+    store.markRead(id)
   },
   { immediate: true }
 )
@@ -279,12 +302,14 @@ watch(
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
+        :room="room"
         :phase="phase"
         :members="store.members"
         :me="AUTHOR"
         :connected="composerReady"
         :focus="focusMode"
         @toggle-focus="focusMode = !focusMode"
+        @open-topic="openTopic"
       />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
