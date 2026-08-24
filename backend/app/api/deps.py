@@ -98,8 +98,9 @@ async def _replace_topic_cloud(topic_id: uuid.UUID, session: AsyncSession) -> No
 
 @lru_cache
 def get_chat_service() -> ChatService:
-    # Gateway admin client (docs/llm-gateway.md L1/L2): only when the pool routes
-    # through the self-hosted gateway AND admin creds are configured.
+    # Gateway admin client (L1/L2 — defined in `app.domain.agent.gateway`): only
+    # when the pool routes through the self-hosted gateway AND admin creds are
+    # configured.
     gateway = None
     if settings.llm_gateway_admin_base and settings.llm_gateway_admin_key:
         gateway = LlmGateway(
