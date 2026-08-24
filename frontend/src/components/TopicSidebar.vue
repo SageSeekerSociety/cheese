@@ -148,16 +148,39 @@ function inferKind(t: Topic): string {
   return t.parent_id ? 'topic' : 'root'
 }
 
-// 这条边栏列的是**房间**，只有这两种。一件活是 `tasks` 表的一行，它显示在房间的
-// 时间线上和工作面板的「任务」那一格里，不在这里占一行——那正是把活从话题里拆
-// 出来省下的东西。「任务」「分身」两个标签在那之前有意义，现在永远取不到。
+// 边栏画的是「房间 → 房间里派出去的活」这棵树。活是 `tasks` 表的一行，不是话题，
+// 但它照样要看得见——一件活看不见，房间就会照着自己那份清单把它又做一遍。
+// 「分身」是改造前的残留标签，现在永远取不到了。
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
+  thread: '任务',
 }
 
 function kindLabel(t: Topic): string {
   return KIND_BADGE[inferKind(t)] ?? '话题'
+}
+
+/** 这一行是一件活，不是一个房间。 */
+function isThreadRow(t: Topic): boolean {
+  return t.kind === 'thread'
+}
+
+/** 一件活现在骑在哪个 PR 上 —— 「交付」这一段在树上唯一看得见的东西。 */
+function prLabel(t: Topic): string | null {
+  const n = t.card?.pr_number
+  return typeof n === 'number' ? `#${n}` : null
+}
+
+/** 一件活的交付走到哪了。没有卡 = 还在做，什么都不显示。 */
+function cardLabel(t: Topic): string | null {
+  const status = t.card?.status
+  if (!status) return null
+  if (status === 'pending') return '待验收'
+  if (status === 'pr_open') return '等 CI'
+  if (status === 'accepted') return '已采纳'
+  if (status === 'rejected') return '被打回'
+  return null
 }
 
 // Status: only show when notable (archived / draft); active is implicit. Shown
@@ -165,6 +188,9 @@ function kindLabel(t: Topic): string {
 function statusBadge(status: string): string | null {
   if (status === 'archived') return '已归档'
   if (status === 'draft') return '草稿'
+  // 支线只有 open / closed。收工了要说出来，不然一条做完的活在树上和在跑的
+  // 长得一模一样。
+  if (status === 'closed') return '已完成'
   return null
 }
 
@@ -669,6 +695,12 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                     <span v-else-if="row.topic.running" class="row-slot">
                       <span class="running-dot" title="芝士正在这个话题里工作" />
                     </span>
+                    <!-- 一件活不是一个地方。缩进说的是「它在这个房间里」，这颗
+                         记号说的是「这一行是一件活」——两者缺一，树上就分不出
+                         「房间」和「房间里在做的事」。 -->
+                    <span v-else-if="isThreadRow(row.topic)" class="row-slot">
+                      <v-icon size="13" class="thread-mark">mdi-call-split</v-icon>
+                    </span>
                     <span v-else class="row-slot" />
                   </template>
                   <v-list-item-title class="d-flex align-center topic-title">
@@ -703,6 +735,14 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       >
                         <span class="status-dot status-dot--warn" />
                         {{ statusBadge(row.topic.status) }}
+                      </span>
+                      <!-- 交付：这件活骑在哪个 PR 上，走到哪一步了。房间的交付是整条
+                           分支一张卡，不在树上；一件活的卡才挂在它自己这一行。 -->
+                      <span v-if="prLabel(row.topic)" class="thread-pr ms-2" :title="cardLabel(row.topic) ?? '已开 PR'">
+                        {{ prLabel(row.topic) }}
+                      </span>
+                      <span v-else-if="cardLabel(row.topic)" class="thread-card ms-2">
+                        {{ cardLabel(row.topic) }}
                       </span>
                     </template>
                   </v-list-item-title>
@@ -1082,6 +1122,17 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
   color: var(--muted) !important;
 }
 
+/* 一件活骑的 PR。数字本身就是它要说的全部，所以是最轻的一档字，不抢标题。 */
+.thread-pr,
+.thread-card {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.thread-mark {
+  color: var(--faint);
+}
 .topic-status {
   font-size: 11.5px;
 }

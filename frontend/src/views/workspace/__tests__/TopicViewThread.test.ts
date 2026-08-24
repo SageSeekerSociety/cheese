@@ -35,9 +35,9 @@ vi.mock('@/api', async () => {
   }
 })
 
-import { useWorkspaceStore } from '@/stores/workspace'
-
 import TopicView from '../TopicView.vue'
+
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const View = TopicView as unknown as Component
 

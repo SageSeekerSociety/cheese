@@ -46,6 +46,8 @@ export function threadAsPlace(thread: RoomTask): Topic {
     accepted_at: thread.accepted_at ?? null,
     upgraded_from_block_id: thread.upgraded_from_block_id ?? null,
     agent_instance_id: thread.agent_instance_id ?? null,
+    // 只有项目级那条列表带得回来；房间级的接口不带，那时它就是 undefined。
+    card: thread.card ?? null,
   }
 }
 

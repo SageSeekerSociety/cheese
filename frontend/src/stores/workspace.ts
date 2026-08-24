@@ -11,6 +11,7 @@ import {
   getTopicUnread,
   listProjectMembers,
   listProjects,
+  listProjectTasks,
   listTopics,
   markTopicRead,
   setTopicTitle,
@@ -145,6 +146,32 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   function isResolvingPlace(placeId: string): boolean {
     return !!resolvingPlaces.value[placeId]
   }
+
+  /** 整个项目的支线，一次拉齐 —— 侧栏要画的是「房间 → 它派出去的活」整棵树。
+   *
+   * 按房间问是一个房间一个请求（这个项目有一百七十多个房间），所以走项目级那条
+   * 接口：两个批查询答完整棵树，每条支线还带着它当前骑的那张验收卡/PR。
+   */
+  async function refreshProjectTasks() {
+    const pid = projectId.value
+    if (!pid) return
+    try {
+      const payload = await listProjectTasks(pid)
+      if (projectId.value !== pid) return
+      const next: Record<string, Topic> = {}
+      for (const task of payload.data) next[task.id] = threadAsPlace(task)
+      threads.value = next
+    } catch {
+      // 拉不到就少画几行支线，不该让整条侧栏红掉。
+    }
+  }
+
+  /** 侧栏画的那棵树：房间，加上房间里派出去的活。
+   *
+   * 和 `topics` 分开是有意的：`topics` 是「房间」，@话题 补全、文档里的 <#id>
+   * 解析都读它，把支线混进去会顺带改掉那些地方的含义。这一份只给侧栏。
+   */
+  const tree = computed<Topic[]>(() => [...topics.value, ...Object.values(threads.value)])
   const projectName = computed<string>(() => projects.value.find((p) => p.id === projectId.value)?.name ?? '')
 
   async function refreshProjects() {
@@ -174,6 +201,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     try {
       const payload = await listTopics(pid, TOPIC_SORT)
       if (projectId.value === pid) topics.value = payload.data
+      void refreshProjectTasks()
     } catch {
       // Best-effort background refresh; ignore.
     }
@@ -205,6 +233,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
       const payload = await listTopics(id, TOPIC_SORT)
       if (projectId.value !== id) return
       topics.value = payload.data
+      void refreshProjectTasks()
     } catch (e) {
       reportError(e, '加载话题失败')
     } finally {
@@ -399,6 +428,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     refreshProjects,
     refreshMembers,
     refreshTopics,
+    refreshProjectTasks,
+    tree,
     refreshUnread,
     refreshTopicRow,
     loadPlace,

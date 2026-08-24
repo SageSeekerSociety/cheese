@@ -494,6 +494,12 @@ export function listTopics(
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
+// 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
+// → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
+export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
+  return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
+}
+
 export function listRoomTasks(
   roomId: string,
   // 每条支线最多带回多少块对话。标记只要支线本身，所以取 1 —— 不传的话后端会把
