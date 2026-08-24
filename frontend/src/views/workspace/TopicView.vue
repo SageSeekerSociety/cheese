@@ -79,7 +79,8 @@ onUnmounted(() => clearDynamicTitle('workspace-topic'))
 // one while this id is being asked about directly — that is the path a thread
 // always takes, so without the third clause opening one flashes 「不存在」 first.
 const resolving = computed(
-  () => !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || store.isResolvingPlace(props.topicId))
+  () =>
+    !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || store.isResolvingPlace(props.topicId))
 )
 
 function openTopic(topicId: string) {

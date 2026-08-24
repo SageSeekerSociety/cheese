@@ -40,7 +40,6 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
-
 import type { PlacePayload } from './lib/place'
 
 import { isThreadPayload } from './lib/place'

@@ -66,5 +66,5 @@ export function isThread(place: Topic): boolean {
  * 房间的房间就是它自己。
  */
 export function roomIdOf(place: Topic): string {
-  return isThread(place) ? (place.parent_id ?? place.id) : place.id
+  return isThread(place) ? place.parent_id ?? place.id : place.id
 }

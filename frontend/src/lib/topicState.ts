@@ -29,14 +29,7 @@ export type CardPhase = 'gate' | 'pending' | 'delivering' | null
 
 /** Where a topic stands right now — its status, its turn, and its accept card
  * folded into the one answer the header states and the panel opens on. */
-export type TopicPhase =
-  | 'archived'
-  | 'closed'
-  | 'draft'
-  | 'working'
-  | 'delivering'
-  | 'reviewing'
-  | 'open'
+export type TopicPhase = 'archived' | 'closed' | 'draft' | 'working' | 'delivering' | 'reviewing' | 'open'
 
 export interface TopicPhaseInput {
   status?: string | null
