@@ -105,7 +105,17 @@ class UsageRepository:
         }
 
     async def for_topic(self, topic_id: uuid.UUID) -> dict:
+        """A room's TOTAL — its own main line and every thread dispatched in it.
+
+        Threads are included by construction rather than by a union: `add`
+        stores the room in `topic_id` whichever half of the place the spend
+        happened in, so this one predicate already reaches all of it.
+        """
         return await self._agg(ResourceUsage.topic_id, topic_id)
+
+    async def for_task(self, task_id: uuid.UUID) -> dict:
+        """One thread's own spend, and nothing of the room around it."""
+        return await self._agg(ResourceUsage.task_id, task_id)
 
     async def for_project(self, project_id: uuid.UUID) -> dict:
         return await self._agg(ResourceUsage.project_id, project_id)
