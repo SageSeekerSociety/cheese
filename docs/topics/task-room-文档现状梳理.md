@@ -181,10 +181,55 @@ const selectedTopic = computed(() => store.topics.find((t) => t.id === props.top
 4. **`branch_name` 在 `topics` 上是死列**：没有任何代码写过它，每一行都是 NULL（分支名是派生的）。
    task 上的 `branch_name` 才是真写的。
 
+## 7. 进行中：两条支线已派出（2026-08-23）
+
+@wangchangxin 说「都行，你做就行了」，三条待办打包成两条支线派出去了：
+
+| 支线 | 干什么 | 边界 |
+|---|---|---|
+| **支线在界面上能打开** | 修 §4.5 那个 bug（点开支线 = 「这个话题不存在」）+ `/usage` `/transcript` 改成解析 Place | `frontend/` 全部 + `routes/topics.py` + `domain/usage/` 归它 |
+| **清过期设计文档** | 删掉三份 room/task 设计文档里被推翻的句子 + 清 4 处指向不存在文件的引用 | 只动 `.md` 和注释；不碰 frontend、不碰上面那两个后端文件 |
+
+两条都被明确要求**用 `cheese conclude` 回流、不要递验收卡**——原因见下。
+
+## 8. ⚠️ 两个挡路的平台问题（都不在上面两条支线范围里）
+
+### 8.1 质量闸门指着一个不存在的脚本
+
+`GET /projects/{id}/quality-gate` 返回 `check_command: "bash .claude/scripts/check.sh --no-tests"`，
+而 **`git ls-files` 里没有 `.claude/scripts/check.sh`**（`.claude/` 是被跟踪的，同目录下
+`check-repo-rules.sh` 等五个脚本都在，就是没有 check.sh）。
+所以**现在这个项目里谁递验收卡都会以 127 当场被打回**。要么改闸门配置，要么把脚本补回来。
+
+### 8.2 main 上有三个空合并，其中一个的内容彻底丢了
+
+查 main 最近 20 个提交，**三个是零文件改动的空合并**：
+
+| 提交 | 是什么 | 内容找回来了吗 |
+|---|---|---|
+| `97b53d673` (#611) | feat(tasks): make a thread a place an agent can work in | ✅ 被 `3a5c86211`(#612, 118 文件) 重新交付 |
+| `ffec6799a` | feat(tasks): give work a thread in a room | ✅ 同上 |
+| `f38c03282` (#610) | docs: make every document declare whether it is current or a record | ❌ **从未补回** |
+
+**#610 整份没了**。它要做的事——给每份文档加上「我是现状 / 我是记录」的声明、加一个 `check-docs.py`
+来判定、把 149 份无索引文档收进索引——**一行都不在 main 里**。
+
+证据：`check-docs.py` 不存在；`docs/llm-gateway.md` 不存在，而这四处仍在引用它：
+`backend/app/api/deps.py:101`、`backend/app/core/config.py:100`、
+`backend/app/domain/agent/chat.py:1353`、`backend/app/domain/agent/gateway.py:1`（模块 docstring 第一行）。
+
+**体检命令**（值得定期跑）：
+```
+for c in $(git log --format=%h -20); do echo "$c $(git diff --name-only $c^ $c | wc -l)"; done
+```
+
+**要 @wangchangxin 定的**：#610 那一整套要不要重做？（清那 4 处引用已经派给「清过期设计文档」那条支线了，
+但「每份文档声明自己是现状还是记录」+ check-docs.py 是一整个 PR 的量，我没擅自派。）
+
 ## 待办
 
 - [x] 用量/记录要不要把支线算进房间 —— **@wangchangxin 2026-08-23 拍板：算进来**（见 §5.5）。
-- [ ] **修「点开支线 = 这个话题不存在」**（§4.5）——支线现在等于没有界面，优先级排在用量前面。
-- [ ] `/usage` 和 `/transcript` 改成解析 Place（§5.5）。
-- [ ] 清掉 docs/topics 下两份已过期的设计文档中被推翻的段落，以及 `TopicSidebar.vue` 里
-      `task`/`subtopic` 两个永远取不到的 kind 标签。
+- [~] 修「点开支线 = 这个话题不存在」+ `/usage` `/transcript` 解析 Place —— **已派给支线「支线在界面上能打开」**。
+- [~] 清过期设计文档 + 4 处死引用 —— **已派给支线「清过期设计文档」**。
+- [ ] **质量闸门指着不存在的 check.sh**（§8.1）—— 谁都递不出验收卡，要人处理。
+- [ ] **#610 整份丢了，要不要重做**（§8.2）—— 等 @wangchangxin 定。
