@@ -294,8 +294,9 @@ const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
   if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
-  if (t.key === 'tasks' && threads.total) {
-    return threads.open ? `${t.label}（${threads.total} 件，${threads.open} 件进行中）` : `${t.label}（${threads.total} 件）`
+  if (t.key === 'tasks' && threads.value.total) {
+    const { total, open } = threads.value
+    return open ? `${t.label}（${total} 件，${open} 件进行中）` : `${t.label}（${total} 件）`
   }
   if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
   if (t.key === 'changes' && summary.value.changedFiles.length) {
