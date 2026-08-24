@@ -273,7 +273,7 @@ async def get_topic(
     place = await service.place_or_404(topic_id)
     topic = place.room
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -314,7 +314,7 @@ async def list_topic_blocks(
     # own, which is the whole difference between it and a room.
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -628,7 +628,7 @@ async def list_topic_docs(
     (B1, spec §5) in document order."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -749,7 +749,7 @@ async def get_topic_progress(
     it, and "做到哪了" has to be visible without summoning anyone."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -777,7 +777,7 @@ async def get_topic_doc(
     """
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
@@ -810,9 +810,9 @@ async def edit_topic_doc(
     never the text: the doc is one `cheese doc get` away, and a document
     injected mid-turn displaces the work instead of informing it."""
     # A thread has a doc of its own — its brief, and then how the work is
-    # going — and `edit_doc` has always written by place. Only this handler
-    # still refused to name one, so `cheese doc set` 404ed for every 分身 doing
-    # the work while `cheese doc get` right above answered fine.
+    # going — and `edit_doc` has always written by place. This handler once
+    # refused to name one, so `cheese doc set` 404ed for every 分身 doing the
+    # work.
     place = await TopicService(db).place_or_404(topic_id)
     # actor 在信任边界注入: prefer the verified token, fall back to body.author.
     # The token is scoped to the place; the roster is the room's.
@@ -1529,7 +1529,7 @@ async def return_conclusion(
     service = TopicService(db)
     place = await service.place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=place.room_id, project_id=place.project_id
+        fallback_handle=None, topic_id=place.id, project_id=place.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
