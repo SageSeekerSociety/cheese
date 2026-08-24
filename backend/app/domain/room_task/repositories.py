@@ -73,6 +73,21 @@ class TaskRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_for_project(self, project_id: uuid.UUID) -> list[Task]:
+        """Every thread in the project, oldest first — the whole tree at once.
+
+        The rail draws rooms AND the work in them, and a project here already
+        holds ~170 rooms: asking each room for its threads is 170 round trips to
+        paint one sidebar. Same total order as `list_for_room` so a room's
+        threads read identically whichever call produced them.
+        """
+        stmt = (
+            select(Task)
+            .where(Task.project_id == project_id)
+            .order_by(Task.created_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def conversations_for_tasks(
         self, task_ids: list[uuid.UUID]
     ) -> dict[uuid.UUID, list[Block]]:
