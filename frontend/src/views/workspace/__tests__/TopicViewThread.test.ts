@@ -12,6 +12,7 @@
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 
+import { createI18n } from 'vue-i18n'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -32,6 +33,7 @@ vi.mock('@/api', async () => {
     getTopicUnread: vi.fn().mockResolvedValue({}),
     getPrivateUnread: vi.fn().mockResolvedValue({}),
     markTopicRead: vi.fn().mockResolvedValue({}),
+    listProjectTasks: vi.fn().mockResolvedValue({ data: [] }),
   }
 })
 
@@ -63,6 +65,9 @@ const THREAD: RoomTask = {
 }
 
 let vuetify: ReturnType<typeof createVuetify>
+// 页面标题那个 composable 用 t()，所以挂载必须带一个 i18n —— 和这一份要钉的
+// 东西无关，给个空的就行。
+const i18n = createI18n({ legacy: false, locale: 'zh', messages: { zh: {} } })
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
@@ -89,7 +94,7 @@ function mount(topicId: string) {
   return render(View, {
     props: { projectId: 'p1', topicId },
     global: {
-      plugins: [vuetify],
+      plugins: [vuetify, i18n],
       // 这一份只关心「打开的是哪个地点」，下面那两栏各自会连 WS、建编辑器。
       stubs: { TopicChatColumn: true, WorkPanel: true },
       mocks: { $route: { query: {} } },
