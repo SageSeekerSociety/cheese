@@ -1353,7 +1353,7 @@ async def split_topic(
     # else's room and name an arbitrary owner.
     actor = await resolver.resolve(
         fallback_handle=body.created_by,
-        topic_id=parent_place.room_id,
+        topic_id=parent_place.id,
         project_id=parent_place.project_id,
     )
     await resolver.authorize_topic(

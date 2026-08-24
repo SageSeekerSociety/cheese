@@ -354,6 +354,22 @@ def test_a_thread_tells_its_room_with_its_own_token(client):
     assert any("这条路能通" in c for c in _contents(client, room))
 
 
+def test_a_thread_can_dispatch_more_work(client):
+    """`cheese split` 从支线里发得出去——这条路由的说明本来就写着 topic_id 可以
+    是支线的（干一件活时常常发现第二件）。活不嵌套，新的那条挂在同一个房间下。"""
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/split",
+        json={"title": "顺手发现的第二件活"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+    assert r.json()["data"]["room_id"] == room
+
+
 # --- cheese notify ---------------------------------------------------------
 
 
