@@ -120,6 +120,14 @@ class FakeGitHubPrClient:
         self.check_names_by_sha: dict[str, set[str]] = {}
         self.update_branch_calls: list[int] = []
         self.update_branch_result: bool = True
+        # Which credential each Update-branch was made with. It matters on the
+        # App lane the same way `check_state_tokens` does, in the opposite
+        # direction: this call PUSHES a merge of main onto the PR branch, so the
+        # read mint answers 403 and the poller retries forever.
+        self.update_branch_tokens: list[str] = []
+        # A GitHub failure to raise out of `check_state`, for the "the poll
+        # cannot read GitHub at all" case.
+        self.check_state_error: Exception | None = None
         # run id → 那次运行的 job 列表。默认（未登记的 run）给一个真的部署过的
         # job，因为绝大多数测试关心的不是这一层；「跳过了部署」和「挂在哪个
         # job 上」的用例自己登记。
@@ -232,6 +240,8 @@ class FakeGitHubPrClient:
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
         self.check_state_tokens.append(token)
+        if self.check_state_error is not None:
+            raise self.check_state_error
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
 
     async def compare_files(
@@ -281,6 +291,7 @@ class FakeGitHubPrClient:
 
     async def update_branch(self, *, owner, repo, number, token) -> bool:
         self.update_branch_calls.append(number)
+        self.update_branch_tokens.append(token)
         if self.update_branch_result:
             # GitHub's Update branch MERGES base into head, so it creates a
             # commit and the PR's head moves. Modelling that is what makes the

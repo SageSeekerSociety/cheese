@@ -3,6 +3,7 @@
 import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
+from datetime import datetime
 
 from sqlalchemy import Text, cast, func, or_, select, tuple_, update
 from sqlalchemy.dialects.postgresql import JSONB, array
@@ -56,6 +57,7 @@ class BlockRepository:
         anchor_quote: str | None = None,
         mime_type: str | None = None,
         meta: dict | None = None,
+        created_at: datetime | None = None,
     ) -> Block:
         # Cheese-side handlers don't pass turn_id explicitly; fall back to the
         # ambient turn id set from the X-Cheese-Turn header (R4).
@@ -97,6 +99,14 @@ class BlockRepository:
             mime_type=mime_type,
             meta=meta,
         )
+        # Timeline order is `created_at`, so a caller that knows WHEN the thing
+        # happened must be able to say so. The default (now) is right for
+        # anything written as it happens and wrong for anything reassembled
+        # after the fact — a 芝士 message is only known to be complete once the
+        # event after it arrives, so left to default it files itself behind the
+        # tool call it actually preceded.
+        if created_at is not None:
+            block.created_at = created_at
         self._session.add(block)
         await self._session.flush()
         await self._session.refresh(block)

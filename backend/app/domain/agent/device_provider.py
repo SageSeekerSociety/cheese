@@ -303,6 +303,14 @@ _CREDENTIAL_EXPIRY_MARGIN_S = 300
 # milliseconds; this ceiling only ever costs anything on the first turn.
 _PROMPT_DELIVERY_TIMEOUT_S = 180
 
+# How long to wait for a staged file's ack. Much shorter than the prompt's
+# budget, deliberately: staging is a write to an already-connected machine, so a
+# healthy one answers in milliseconds, and the case actually worth optimising
+# for is a connector that will NEVER answer because it does not know this frame.
+# The message rides on without the image once this expires, so the cost of the
+# wait is paid by the reader — keep it short enough that they do not feel it.
+_FILE_STAGE_TIMEOUT_S = 20
+
 
 def _credential_expiry(token: str) -> int:
     """The UNIX expiry the device screen stamps for the model credential it is
@@ -864,9 +872,57 @@ class DeviceChannel(Channel):
         await self._hub.viewer_input(screen.device_id, screen.sid, b"\x1b")
         return True
 
-    async def send_prompt(
-        self, screen: HubScreen, prompt: str, images: list[dict] | None = None
-    ) -> bool | None:
+    async def stage_images(
+        self, screen: HubScreen, images: list[dict]
+    ) -> tuple[list[dict], list[dict]]:
+        """Copy each uploaded image onto the machine this screen runs on.
+
+        The upload landed in the backend's own worktree; a device is a different
+        filesystem, so without this the prompt's `@uploads/x.png` points at
+        nothing and 芝士 is handed a mention that resolves to no image.
+
+        Per image, and never fatal. One that cannot be staged — the connector
+        predates the file frame (this is real: the binary deployed on the dev
+        box was built the day before `file.put` existed, so every frame was
+        dropped unanswered and the send timed out), the machine is wedged, the
+        bytes are gone — comes back in the second list and the turn says so.
+        Before this, the failure propagated out of `send_prompt` and the whole
+        message vanished silently.
+        """
+        if screen.project_id is None or screen.topic_id is None:
+            # A screen adopted without its coordinates cannot be told which
+            # worktree the file came from. Say so rather than send a mention
+            # that resolves to nothing.
+            return [], list(images)
+        staged: list[dict] = []
+        lost: list[dict] = []
+        for image in images:
+            path = str(image.get("path") or "")
+            try:
+                data = ws.read_file_bytes(
+                    screen.project_id, path, topic_id=screen.topic_id
+                )
+                await self._hub.put_file(
+                    screen.device_id,
+                    screen.sid,
+                    path,
+                    data,
+                    timeout=_FILE_STAGE_TIMEOUT_S,
+                )
+            except Exception as exc:  # noqa: BLE001 — an image is not the message
+                logger.warning(
+                    "could not stage image %s onto device %s (topic=%s): %s",
+                    path,
+                    screen.device_id,
+                    screen.topic_id,
+                    exc,
+                )
+                lost.append(image)
+            else:
+                staged.append(image)
+        return staged, lost
+
+    async def send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
         """Deliver the prompt over the screen's rendezvous socket, where Claude
         Code enqueues it as `origin: {kind:"human"}` — the same place a keystroke
         lands, with none of a keystroke's blindness.
@@ -878,19 +934,6 @@ class DeviceChannel(Channel):
         session refused the frame — instead of a driver silently re-pasting into
         a composer nobody was reading (2026-08-16)."""
         try:
-            if images and screen.project_id is not None and screen.topic_id is not None:
-                for image in images:
-                    path = str(image.get("path") or "")
-                    data = ws.read_file_bytes(
-                        screen.project_id, path, topic_id=screen.topic_id
-                    )
-                    await self._hub.put_file(
-                        screen.device_id,
-                        screen.sid,
-                        path,
-                        data,
-                        timeout=_PROMPT_DELIVERY_TIMEOUT_S,
-                    )
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
             )

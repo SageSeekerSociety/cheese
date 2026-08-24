@@ -12,6 +12,7 @@ Key SDK facts (verified against installed claude-agent-sdk 0.2.x):
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 
@@ -33,6 +34,14 @@ class AgentMessage:
     # dedup (live and reconcile) recognizes any constituent flush. Holds eid
     # too when set. Empty off the hooks path (sdk backend).
     eids: tuple[str, ...] = ()
+    # When 芝士 STARTED saying this — the arrival of its first flush, not the
+    # moment assembly finished. The two differ by however long the message took
+    # to stream, and the timeline is sorted on this: a message is only complete
+    # once the event AFTER it arrives, so stamping completion time files every
+    # message that precedes a tool call *behind* that tool call. Measured: the
+    # room showed 「先看代码链路。」 between the two greps it introduced.
+    # None off the hooks path, where the persist time is already the right one.
+    at: datetime | None = None
 
 
 @dataclass

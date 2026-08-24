@@ -1079,3 +1079,79 @@ def test_current_base_and_full_roster_still_merge(client, app_world):
     # 交付完成 ≠ 话题结束 (#442 decision 1).
     assert delivered["status"] == "active"
     assert delivered["accepted_at"] is not None
+
+
+# --- 读不到 GitHub 的那一轮，必须在卡上留下痕迹 -------------------------------
+#
+# 2026-08-23: PR #575 和 #582 都全绿、都没合并，卡上的 note 一个字没变。根因是
+# Update branch 用了只读 mint，GitHub 回 403，异常被吞成一条 logger.warning。
+# 两件事都要修：钥匙拿错了，以及拿错钥匙这件事在卡面上完全看不见——「轮询每次都
+# 失败」和「CI 还在跑」长得一模一样，而那条旧的等待 note 还在自顾自读秒。
+
+
+def test_update_branch_pushes_with_the_write_credential(client, app_world):
+    """Update branch MERGES main into the PR branch — it is a push, not a read.
+
+    The App lane mints two tokens because they carry different permissions, and
+    handing this one the read mint is a 403 on every single poll, forever.
+    """
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "绿，但绿在旧基上")
+    fake.compare_status_by_pair[("main", head_sha)] = "behind"
+    _poll(client)
+
+    assert fake.update_branch_calls == [number]
+    assert fake.update_branch_tokens == ["ghs_app_write"]
+
+
+def test_a_poll_that_cannot_read_github_says_so_on_the_card(client, app_world):
+    """否则 pr_open 上停着的卡看起来就是「CI 还在跑」，而它其实每一轮都在报错。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_error = github_pr.GitHubPrError(
+        "GitHub 拒绝更新 PR 的分支（HTTP 403）：Resource not accessible by integration"
+    )
+    _poll(client)
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pr_open"
+    assert "读不到这个 PR 的状态" in card["note"]
+    assert "403" in card["note"]
+    assert fake.merge_calls == []
+
+
+def test_the_poll_failure_note_clears_once_github_answers_again(client, app_world):
+    """自愈：下一轮读通了就换回真实状态，而不是让一条过期的错误挡在前面。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_error = github_pr.GitHubPrError("GitHub 抽风了")
+    _poll(client)
+    assert "读不到这个 PR 的状态" in _cards(client, tid)[0]["note"]
+
+    fake.check_state_error = None
+    fake.check_state_by_sha[head_sha] = ("success", "全部检查通过")
+    _poll(client)
+
+    assert "读不到这个 PR 的状态" not in (_cards(client, tid)[0]["note"] or "")
+    assert fake.merge_calls != []
+
+
+def test_a_poll_failure_does_not_bury_a_note_that_matters_more(client, app_world):
+    """检查未通过说的是读者必须动手的事。一次读不到 GitHub 是暂时的，绝不能把它
+    顶掉——顶掉之后那条真正的状态就再也没有别的地方可看了。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
+    _poll(client)
+    red = _cards(client, tid)[0]["note"]
+    assert "检查未通过" in red
+
+    fake.check_state_error = github_pr.GitHubPrError("GitHub 抽风了")
+    _poll(client)
+
+    assert _cards(client, tid)[0]["note"] == red

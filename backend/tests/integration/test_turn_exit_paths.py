@@ -172,7 +172,7 @@ _CHILD = textwrap.dedent(
     DSN, TOPIC, MARKER, WS, SID = sys.argv[1:6]
 
     class A(StubChannel):
-        async def send_prompt(self, screen, prompt, images=None):
+        async def send_prompt(self, screen, prompt):
             self.starts(screen, session_id=SID)
             return True
 

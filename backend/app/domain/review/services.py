@@ -1766,7 +1766,7 @@ class AcceptService:
         # failure (which is how "轮询暂停" used to swallow CI 失败 notifications
         # — see _nudge_pr_fix). Only this exact prefix is cleared; 重推失败 /
         # 拒绝合并 / 检查未通过 notes describe live conditions and stay put.
-        if card.note_code is notes.NoteCode.poll_paused:
+        if card.note_code in (notes.NoteCode.poll_paused, notes.NoteCode.poll_failed):
             notes.clear(card)
             await self._session.flush()
 
@@ -1793,6 +1793,51 @@ class AcceptService:
                 card.id,
                 exc,
             )
+            # And say it on the CARD. A log line is only readable by whoever has
+            # a shell on the host, and the person waiting is looking at a card
+            # whose note still says 「等 CI」 — so a poll that fails every tick
+            # forever is indistinguishable from checks that are simply slow.
+            # That is how #575/#582 sat green-but-unmerged with nothing on
+            # screen to explain it. Same treatment the credential branch above
+            # already gets, for the same reason.
+            self._note_poll_failed(card, exc)
+            await self._session.flush()
+
+    async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:
+        """Same explanation as `_note_poll_failed`, for a poll that died on
+        something other than a GitHub error (the scheduler's own catch-all).
+
+        Its caller rolled the failed tick back, so this runs on a fresh session
+        and is a no-op for a card that has since left `pr_open`.
+        """
+        card = await AcceptCardRepository(self._session).get(card_id)
+        if card is None or card.status != AcceptStatus.pr_open:
+            return
+        self._note_poll_failed(card, exc)
+        await self._session.flush()
+
+    def _note_poll_failed(self, card: AcceptCard, exc: BaseException) -> None:
+        """Record that this tick could not read GitHub, without burying a note
+        that describes something worse.
+
+        Only overwrites a note this same failure wrote, or an ordinary 「等 CI」
+        line. A 检查未通过 / 拒绝合并 / 需要人来看 note names a live condition the
+        reader has to act on; a transient poll error must not push it off the
+        card. The next successful poll re-derives the real state and replaces
+        this line, so it is self-healing the same way `poll_paused` is.
+        """
+        if card.note_code not in (
+            None,
+            notes.NoteCode.waiting_checks,
+            notes.NoteCode.poll_failed,
+        ):
+            return
+        detail = " ".join(str(exc).split())[:200] or exc.__class__.__name__
+        notes.record(
+            card,
+            notes.NoteCode.poll_failed,
+            f"读不到这个 PR 的状态，卡暂时推不动（下一轮还会重试）：{detail}",
+        )
 
     async def _advance_pr_checks(
         self,
@@ -1976,8 +2021,15 @@ class AcceptService:
                 )
                 await self._session.flush()
                 return
+            # `write`, not `read` — this PUSHES a merge of main onto the PR
+            # branch. The read mint has no `contents:write`, so GitHub answers
+            # 403 "Resource not accessible by integration", which raises out of
+            # here and used to leave the card frozen at `pr_open` with its old
+            # waiting note still counting up (2026-08-23: PR #575 and #582 both
+            # stuck on exactly this). `_GitHubCredentials` states the rule —
+            # GET 用 read，推分支和合并用 write — and this call is a push.
             updated = await client.update_branch(
-                owner=owner, repo=repo, number=card.pr_number or 0, token=creds.read
+                owner=owner, repo=repo, number=card.pr_number or 0, token=creds.write
             )
             outcome = (
                 "已自动更新分支，等新一轮 CI。"

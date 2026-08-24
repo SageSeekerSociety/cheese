@@ -2015,6 +2015,11 @@ class ChatService:
 
         broker = get_broker()
         frame: dict | None = None
+        # A second frame some events carry: "this panel is now out of date".
+        # Separate from `frame` because it is not the record of what happened
+        # (that is the event block) — it is the instruction to go re-read a
+        # panel, and both have to go out.
+        refresh_frame: dict | None = None
         state = self._hook_work.get((topic_id, turn_id))
         if isinstance(event, AgentSessionInfo):
             await self._save_session_pointer(topic_id, event.session_id)
@@ -2035,6 +2040,7 @@ class ChatService:
                 eids=event.eids,
                 platform_unsolicited=platform_unsolicited,
                 continuation_id=(state.continuation_id if state is not None else None),
+                at=event.at,
             )
             if payload is not None:
                 if state is not None:
@@ -2063,10 +2069,25 @@ class ChatService:
                 )
                 if payload is not None:
                     frame = {"type": "event_block", "block": payload}
-                if state is not None and name == "Bash":
+                if name == "Bash":
                     resource = _cheese_resource(str(args.get("command", "")))
-                    if resource in _ACTION_LABEL and resource not in state.actions:
-                        state.actions.append(resource)
+                    if resource is not None:
+                        # Tell the room a panel just went stale, the moment it
+                        # did. Without this the verdict of `cheese accept-request`
+                        # / `cheese doc set` only reaches the screen when the
+                        # reader switches topics or reloads — a card filed while
+                        # someone is watching the conversation simply does not
+                        # appear. The frontend has handled this frame all along
+                        # (ChatPanel `case 'state'` → TopicView.handleStateChanged);
+                        # it was the sender that went missing when cheese moved
+                        # from a tool call to a Bash command.
+                        refresh_frame = {"type": "state", "resource": resource}
+                        if (
+                            state is not None
+                            and resource in _ACTION_LABEL
+                            and resource not in state.actions
+                        ):
+                            state.actions.append(resource)
         elif isinstance(event, AgentToolResult):
             payload = await self._persist_subagent_result(
                 project_id=project_id,
@@ -2132,6 +2153,8 @@ class ChatService:
                 get_work_runner().note_session_output(
                     turn_id, tool=isinstance(event, AgentToolUse)
                 )
+        if refresh_frame is not None:
+            await broker.publish(str(topic_id), refresh_frame)
         if isinstance(event, AgentResult):
             # 投喂 → Stop is the interval. Closing it HERE, rather than where the
             # turn's own coroutine ends, is what lets a turn survive the backend
@@ -2504,6 +2527,7 @@ class ChatService:
         backfilled: bool = False,
         platform_unsolicited: bool = False,
         continuation_id: uuid.UUID | None = None,
+        at: datetime | None = None,
     ) -> dict | None:
         """Persist ONE discrete 芝士 message (Slack-style): committed the moment
         the SDK reports the AssistantMessage complete, so a turn lands as
@@ -2531,6 +2555,22 @@ class ChatService:
         async with self._sessions() as session:
             blocks = BlockRepository(session)
             if known_ids and await blocks.has_any_eid(topic_id, known_ids):
+                return None
+            # `has_any_eid` alone is a SELECT followed by an INSERT, and the same
+            # hook event reaches this method from two places at once — the turn's
+            # own attribution and the platform-unsolicited path. Both read "not
+            # there", both write, and the room gets the message twice ~15ms
+            # apart, the two rows carrying the SAME eid (measured across the
+            # dev database: every duplicated 芝士 message has this shape).
+            # ON CONFLICT DO NOTHING is what actually decides; the read above
+            # stays because it also catches a copy landed by an earlier turn,
+            # which no claim of ours would.
+            if known_ids and not await idem.claim(
+                session,
+                action_key(topic_id, "block-eid", *sorted(known_ids)),
+                action="message",
+                scope_id=str(topic_id),
+            ):
                 return None
             # Claim BEFORE writing, in the SAME session: the key and the block
             # commit together, so "key present" and "message posted" cannot
@@ -2565,6 +2605,7 @@ class ChatService:
                 reply_to=reply_to,
                 turn_id=turn_id,
                 meta=meta,
+                created_at=at,
             )
             # <@handle> mentions in 芝士's message → strong notify (the token is
             # the single source of truth: what's shown = who's notified).
@@ -2924,6 +2965,7 @@ class ChatService:
                     eid=message.eid or fallback_eid,
                     eids=message.eids,
                     backfilled=True,
+                    at=message.at,
                 )
                 seen.add(fallback_eid)
                 seen.update(message.eids)

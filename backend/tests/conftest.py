@@ -223,9 +223,8 @@ class StubChannel(Channel):
         return topic_id
 
     async def send_prompt(  # type: ignore[override]
-        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+        self, screen: uuid.UUID, prompt: str
     ) -> bool:
-        del images
         self.last_prompt = prompt
         if self.on_start is not None:
             self.on_start()

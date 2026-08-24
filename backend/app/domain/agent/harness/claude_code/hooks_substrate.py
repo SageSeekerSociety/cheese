@@ -27,6 +27,7 @@ import uuid
 import weakref
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.core.sandbox_auth import mint_scoped_token
@@ -42,6 +43,7 @@ from app.domain.agent.harness import (
 )
 from app.domain.agent.harness.claude_code import event_spool
 from app.domain.agent.harness.claude_code.hook_events import (
+    RECORDED_AT_KEY,
     HookRouter,
     HookSink,
     MessageAssembler,
@@ -492,19 +494,45 @@ class ScreenSetupError(Exception):
         self.failure_code = failure_code
 
 
-def _prompt_with_native_images(prompt: str, images: list[dict] | None) -> str:
-    """Use Claude Code's own @path attachment path for interactive sessions."""
-    paths = list(
+def _image_paths(images: list[dict] | None) -> list[str]:
+    return list(
         dict.fromkeys(
             str(image.get("path") or "").strip()
             for image in images or []
             if str(image.get("path") or "").strip()
         )
     )
-    if not paths:
-        return prompt
-    mentions = "\n".join(f"@{path}" for path in paths)
-    return f"{prompt}\n\n{mentions}" if prompt else mentions
+
+
+def _prompt_with_native_images(
+    prompt: str, images: list[dict] | None, missing: list[dict] | None = None
+) -> str:
+    """Use Claude Code's own @path attachment path for interactive sessions.
+
+    Verified end to end on 2.1.224: a bracketed paste containing `@uploads/x.png`
+    collapses into a `[Pasted text]` widget, and submitting it still resolves the
+    mention — the request that goes out carries a real image block. So the
+    mention is the delivery, and it only works for a file that is actually on
+    the machine the screen is running on.
+
+    ``missing`` is for the ones that are not. They get a sentence instead of a
+    mention, because the alternative shapes are both worse: @-mentioning a path
+    that is not there produces nothing at all, and saying nothing leaves 芝士
+    answering a question about a picture it was never shown, with no way to know
+    that is what it is doing.
+    """
+    paths = _image_paths(images)
+    lost = _image_paths(missing)
+    parts = [prompt] if prompt else []
+    if paths:
+        parts.append("\n".join(f"@{path}" for path in paths))
+    if lost:
+        named = "、".join(lost)
+        parts.append(
+            f"【平台】本轮有 {len(lost)} 张图片没能送到这台机器上（{named}），"
+            "你手上没有它们的内容。回复时直说没收到图，不要猜图里是什么。"
+        )
+    return "\n\n".join(parts)
 
 
 class SpoolBacklog:
@@ -536,6 +564,12 @@ class SpoolBacklog:
             return []
         payload = dict(entry.record)
         payload["_eid"] = entry.eid
+        # What was said WHEN it was said. A backfill pass runs long after the
+        # fact, so without this every recovered message would be stamped "now"
+        # and sort to the bottom of a conversation it belongs in the middle of.
+        payload[RECORDED_AT_KEY] = datetime.now(UTC) - timedelta(
+            seconds=max(entry.age_s, 0.0)
+        )
         return self._assembler.translate(payload)
 
     def unfinished(self) -> set[str]:
@@ -578,6 +612,26 @@ class Channel:
     # holds MUST say False rather than let the prompt promise an image 芝士
     # cannot see.
     embeds_images: bool = True
+
+    async def stage_images(
+        self, screen: object, images: list[dict]
+    ) -> tuple[list[dict], list[dict]]:
+        """Put these images where the screen can open them, as
+        ``(reachable, unreachable)``.
+
+        The default answers for every transport whose screen already shares the
+        worktree the upload was written to: all of them, nothing lost.
+
+        Splitting this out of ``send_prompt`` is the point. When staging lived
+        inside the send, a transport that could not stage — an older connector
+        that does not know the file frame, a machine that is briefly
+        unreachable — raised out of the send and took the ENTIRE message with
+        it, text included. Measured 2026-08-23: a message with one screenshot
+        left no trace in the room at all, while plain-text messages around it
+        arrived normally. An image that cannot be delivered must cost the image.
+        """
+        del screen
+        return list(images), []
 
     # Does a turn here have to wait for a machine to be created first? The turn
     # path branches on it (``ChatService`` shows 「机器正在创建」 and holds the
@@ -684,9 +738,7 @@ class Channel:
         the plan matters only on the call that turns out to be a cold start."""
         raise NotImplementedError
 
-    async def send_prompt(
-        self, screen: object, prompt: str, images: list[dict] | None = None
-    ) -> bool | None:
+    async def send_prompt(self, screen: object, prompt: str) -> bool | None:
         """Deliver the turn's prompt to the ready screen.
 
         Returns the driver's readiness at delivery time when the transport can
@@ -802,6 +854,25 @@ class ClaudeCodeRuntime:
     def embeds_images(self) -> bool:
         return self._channel.embeds_images
 
+    async def _stage(
+        self, screen: object, images: list[dict] | None
+    ) -> tuple[list[dict], list[dict]]:
+        """Ask the channel to put this turn's images where the screen can open
+        them, and never let that question fail the send.
+
+        A channel is expected to report per-image losses rather than raise, but
+        it talks to a machine over a network and this is the last place that can
+        still choose between "the message arrives without its picture" and "the
+        message does not arrive". It is the first every time.
+        """
+        if not images:
+            return [], []
+        try:
+            return await self._channel.stage_images(screen, images)
+        except Exception:  # noqa: BLE001 — an image is never worth the message
+            logger.exception("staging this turn's images failed")
+            return [], list(images)
+
     @property
     def sandbox_memory_mb(self) -> int | None:
         return self._channel.sandbox_memory_mb
@@ -879,14 +950,10 @@ class ClaudeCodeRuntime:
                     subscription is not None and subscription.current_work is not None,
                 )
                 return False
-            delivered_text = _prompt_with_native_images(text, images)
+            staged, lost = await self._stage(screen, images)
+            delivered_text = _prompt_with_native_images(text, staged, lost)
             try:
-                if images:
-                    await self._channel.send_prompt(
-                        screen, delivered_text, images=images
-                    )
-                else:
-                    await self._channel.send_prompt(screen, delivered_text)
+                await self._channel.send_prompt(screen, delivered_text)
             except ScreenSetupError as exc:
                 logger.warning(
                     "mid-turn delivery failed at screen setup (topic=%s): %s",
@@ -1436,8 +1503,9 @@ class ClaudeCodeRuntime:
         they leave when a turn stops being how work is tracked.
         """
         topic_id = session.topic_id
-        prompt = _prompt_with_native_images(message, images)
         screen, subscription = await self.ensure(session, opening, work_id=work_id)
+        staged, lost = await self._stage(screen, images)
+        prompt = _prompt_with_native_images(message, staged, lost)
         attribution = subscription.current_work
         if attribution is None:
             attribution = WorkAttribution(
@@ -1458,10 +1526,7 @@ class ClaudeCodeRuntime:
             start_task=False,
         )
         try:
-            if images:
-                ready = await self._channel.send_prompt(screen, prompt, images=images)
-            else:
-                ready = await self._channel.send_prompt(screen, prompt)
+            ready = await self._channel.send_prompt(screen, prompt)
         except BaseException:
             if starts_activity:
                 await self._end_session_activity(
@@ -1499,8 +1564,6 @@ class ClaudeCodeRuntime:
                 is_error=True,
             )
             return
-
-        prompt = _prompt_with_native_images(prompt, images)
 
         # Fail fast before screen setup: a run that cannot start must not create
         # a subscription with no live screen behind it.
@@ -1546,12 +1609,10 @@ class ClaudeCodeRuntime:
                     work_id=turn_id or uuid.uuid4(), queue=asyncio.Queue()
                 )
                 subscription.current_work = attribution
-                if images:
-                    ready = await self._channel.send_prompt(
-                        screen, prompt, images=images
-                    )
-                else:
-                    ready = await self._channel.send_prompt(screen, prompt)
+                staged, lost = await self._stage(screen, images)
+                ready = await self._channel.send_prompt(
+                    screen, _prompt_with_native_images(prompt, staged, lost)
+                )
             except ScreenSetupError as exc:
                 yield AgentResult(
                     text=str(exc),
