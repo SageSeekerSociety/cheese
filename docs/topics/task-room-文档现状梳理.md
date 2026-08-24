@@ -246,16 +246,57 @@ Room 房间（长期场所，不自动归档）
 4. **`branch_name` 在 `topics` 上是死列**：没有任何代码写过它，每一行都是 NULL（分支名是派生的）。
    task 上的 `branch_name` 才是真写的。
 
-## 7. 进行中：两条支线已派出（2026-08-23）
+## 7. 现在：全部收回房间，串行做（@wangchangxin 2026-08-24：「还是你这边串行吧，其他地方我看不到」）
 
-@wangchangxin 说「都行，你做就行了」，三条待办打包成两条支线派出去了：
+先前派出去四条支线。@wangchangxin 指出**支线在界面上看不见**，所以后续改成在房间里串行做。
+四条支线全部叫停，产出用 git 直接合进房间分支 `topic/b795cab5`。
 
-| 支线 | 干什么 | 边界 |
+### 为什么不能等它们 `conclude`
+
+**支线在机制上回流不了。** 支线用自己的 per-turn token 调 `return_conclusion` 会 403
+（详见 §7.1），所以四条支线到现在状态全是 `open`、一张结论卡都没有。
+`fold_into_room` 那条正路走不通，只能我手工 merge。
+
+### 已合进房间分支的（35 个文件，+2649 −726）
+
+| 来源 | 内容 | 量 |
 |---|---|---|
-| **支线在界面上能打开** | 修 §4.5 那个 bug（点开支线 = 「这个话题不存在」）+ `/usage` `/transcript` 改成解析 Place | `frontend/` 全部 + `routes/topics.py` + `domain/usage/` 归它 |
-| **清过期设计文档** | 删掉三份 room/task 设计文档里被推翻的句子 + 清 4 处指向不存在文件的引用 | 只动 `.md` 和注释；不碰 frontend、不碰上面那两个后端文件 |
+| `topic/dec0b271` | 支线自己的 token 能打到支线自己的路由（修 §7.1 那个 403） | 3 文件 |
+| `topic/acf795a0` | 清掉被改造推翻的三份设计文档 + 四处 `docs/llm-gateway.md` 死引用 | 7 文件 |
+| `topic/c07af2a1` | **可视化**：边栏里房间下挂它的活、每行带 PR；支线能打开；新增 `PanelTasks.vue` | 26 文件 |
 
-两条都被明确要求**用 `cheese conclude` 回流、不要递验收卡**——原因见下。
+合 `c07af2a1` 时在 `routes/topics.py` 撞了 7 处冲突——两条支线各自修了同一个 403 bug。
+取了把它抽成 `_actor_in_place(resolver, place)` 辅助函数的那一版（注释写得更清楚，
+且 16 处调用点统一），核过无残留。
+
+### 合进来的行为（读它写的测试，不是读提交信息）
+
+边栏 `TopicSidebarThreads.test.ts`：一件活在树上有自己的一行 · 它骑的那个 PR 就写在这一行上 ·
+还没递卡的活不硬造交付状态 · 做完的活不跟在跑的长一个样。
+
+打开支线 `TopicViewThread.test.ts`：侧栏列表里没有它照样打得开 · 头部说得出它属于哪个房间 ·
+房间还是照旧从列表拿不多打请求 · id 真不存在时才说不存在 · 取的过程中不先闪一下「不存在」·
+支线不记已读。
+
+### 还没合的
+
+`topic/18d1fceb`（重做文档声明规范）**在 origin 上没有任何分支** —— 它刚开工就被叫停，
+手上是空的。**那份活要在房间里从头做。**
+
+## 7.1 支线回流通道全断：7 条路由对支线 403（已修，在房间分支上）
+
+支线用自己的 per-turn token 调这 7 条会被拒（「这个 token 属于别的话题」）：
+`get_topic` · `list_topic_blocks` · `list_topic_docs` · `get_topic_progress` · `get_topic_doc` ·
+**`tell_topic`** · **`return_conclusion`** —— 后两条正是支线仅有的两条回报通道，
+也就是 `cheese tell` 和 `cheese conclude` 全断。反方向没事（房间 → 支线正常）。
+
+**根因**：`ActorResolver._reject_out_of_scope_token`（`backend/app/api/auth.py:292`）
+拿 token 的 `t` claim 比对传进来的 `topic_id`。支线的 token 带的是**支线自己的 id**，
+而这 7 条路由传的是 `place.room_id`，两者不等。房间不受影响，因为房间的 `place.id == room_id`
+——**所以这个 bug 只在支线上显形，而支线正是没人测的那一半。**
+
+正确写法：`resolve` 传 `place.id`（身份/作用域），`authorize_topic` 传 `place.room_id`（名册）。
+修复已合进房间分支，带 `backend/tests/integration/test_cli_works_in_a_thread.py` 钉住。
 
 ## 8. ⚠️ 两个挡路的平台问题（都不在上面两条支线范围里）
 
@@ -324,5 +365,8 @@ PR 在 GitHub 上显示已合并，不等于内容进了 main。
 - [~] 清过期设计文档 + 4 处死引用 —— **已派给支线「清过期设计文档」**。
 - [x] ~~质量闸门挡着递卡~~ —— **我核错了，已收回**（§8.1）：机器闸门早已退役，没有任何东西挡着递卡。
 - [ ] **两条支线回流后由我递验收卡**（§9），递完核 `changed_files != 0` 再交给 @wangchangxin 采纳。
-- [~] **#610 重做** —— @wangchangxin 2026-08-24 拍板：重做。diff 已确认不可恢复（见 §8.2），改用 PR 正文当规格，已派支线。
-- [~] **可视化（边栏 + task 绑 PR）**（§4.7）—— 已 tell 给支线「支线在界面上能打开」。
+- [x] **可视化（边栏 + task 绑 PR）**（§4.7）—— 已合进房间分支，见 §7。
+- [x] **支线 403 修复**（§7.1）—— 已合进房间分支。
+- [x] **清过期文档 + 4 处死引用** —— 已合进房间分支。
+- [ ] **跑完测试 → 递验收卡开 PR → 核 changed_files != 0 → 交 @wangchangxin 采纳**。
+- [ ] **#610 重做**（§8.2）—— 支线被叫停时手上是空的，要在房间里从头做。规格用 PR 正文。
