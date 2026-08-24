@@ -1,17 +1,13 @@
 > <@wangchangxin> 问「现在 cheese 上 task 是怎么设计的」，随后给了最新设计（2026-08-20 三张图），
 > 2026-08-22 拍板：**不拆活，全做在一个 PR 里**（<@wangchangxin>：「你就在这一个PR上做就行了，这样你才能一直跑CI」）。
-> 本文档：**现在到哪了** → **设计** → **已改的** → **还没改的** → **顺带挖出来的平台毛病**。
+> 改造已经合进 main（#611 → #612 → #613）。本文档：**设计** → **改了什么** → **顺带挖出来的平台毛病**。
+> 现状部分最后一次对着 main 核实是 2026-08-23（`3e945077c`）。
 
 ## 一句话
 
 - **改造前**：task 是「一个会终止的房间」——一整行 `topics`，连带名册、未读游标、归档决策、侧栏一行。
-- **要改成**：task 是**房间里的一条支线**（thread，不是新 channel）。
-- **现在**：改造在 **PR #609** 上进行中（<@wangchangxin> 拍板：不拆活，全做在一个 PR 里，这样 CI 一直在跑）。
-  地基抢救回来并跑过 CI；切换（split / upgrade / 搬键 / 迁移）写完并在真库上验过；一轮已经跑在「地点」上；
-  结论回流、路由层、用量、前端标记都跟过来了；**上下文装配（房间文档 + 任务简报 + 房间最近消息）已落地并有测试**。
-  剩下的是收尾：几个断言旧形状的测试、D1（任务自己交付）、以及清理债。
-  **PR 里有一个故意失败的测试挡着自动合并**（<&backend/tests/unit/test_switch_is_still_in_progress.py>），
-  改造做完时删掉它，那一刻才是可以合的时刻。
+- **现在**：task 是**房间里的一条支线**（thread，不是新 channel）——`tasks` 表一行 ＋ `blocks.task_id`
+  这个线索键。房间仍是 `topics`，但 `kind` 只剩 `root`（项目本身）和 `topic`（房间）两个值在用。
 
 ## 一、设计（<@wangchangxin> 2026-08-20）
 
@@ -27,14 +23,19 @@ Room 房间（长期场所，不自动归档）
       └ 交付：PR / 验收卡
 ```
 
-**已定的三条**（我定的，反对随时说）：
-1. **D1 走 A**：`branch_name` / `accepted_at` 在 task 上，任务自己交付。理由不是「图上这么画」，而是
-   **房间不会结束**（`#442 decision 1`：只有人能归档）**而 PR 必须结束**，把交付挂在一个永不结束的东西上，
-   就永远要回答「这房间的 PR 什么时候算完」。`fold_into_room` 那套与之冲突，一并删。**这条还没动手，排在最后。**
+**已定的三条**：
+
+1. **交付挂在房间上，不挂在活上（D1 走 B）**：一个房间一条分支一个 PR，
+   活的结论被采信时把它的提交折进房间分支（`fold_into_room`，
+   <&backend/app/domain/conclusion/services.py>），攒到房间递卡一起走。
+   设计图上原本画的是 A（每件活自己开 PR），做到一半发现它会让 PR 数量按「一件活一个」翻上去，
+   而本项目 CI 队列约 1.7 小时。`accepted_by`/`accepted_at` 在 task 上**也有一份**
+   （一件活自己的交付记录），但**开 PR 的是房间**。
 2. **任务结束是折叠不是冻结**：房间归档后都还能追加对话，支线更没理由冻——不然改一行就得开新支线，历史被切两半。
+   采信把支线从「归档」变成「收起」（`status=closed`），收起不冻结。
 3. **「最近若干条房间消息」按字符预算截、不按条数截**，截掉了要在 prompt 里说出来（按条数截会被一条长消息吃光）。
 
-## 二、已经改完的（都在 PR #609 上，本地跑过）
+## 二、改了什么
 
 ### 迁移 `a9f3c7e21b04`（<&backend/alembic/versions/a9f3c7e21b04_work_is_addressed_as_a_task.py>）
 
@@ -50,6 +51,9 @@ webhook/用量/turn/结论卡/名册。结果：嵌套那件的 `room_id` 走到
 NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过，**它故意不重建被删的话题行**（嵌套的活在迁移时
 被重新挂到房间上，硬造回去会产生一棵从没存在过的树）。
 
+`TopicKind` 里的 `task`/`subtopic` 两个值**留在枚举里但不再有任何行携带**——一个读不了自己历史的枚举
+会把「从迁移之前的备份恢复」变成一次崩溃。models.py 里的 docstring 就是这么写的。
+
 ### 代码
 
 - **`Place(room, task)` + `PlaceResolver`**（<&backend/app/domain/room_task/place.py>）：一个 id 仍然能定位一个地点，
@@ -59,6 +63,8 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
 - **`_child_kind` 删掉**：它回答「房间底下该建哪种话题」，而底下已经不是话题了。换成 `_require_room`，
   房间之下再建房间直接拒绝。
 - `branch_for_topic` → `branch_for_place`（派生值逐字节不变，没有任何分支/工作区/容器路径移动）。
+  一件活的工作区不再从 main 长出来，而是从**它所在房间的分支**长出来（`_ensure_worktree` 的 `_fork_point`）——
+  这是「一个房间一条分支一个 PR」的前提。
 - `agent_sessions` / `agent_turns` / `accept_cards` / `topic_progress` / `webhook_tokens` 按 (房间, 支线) 读写。
 
 **一个权衡**：`blocks.add` 有 36 个调用点，没让它们全改成传一对，而是让它自己解析「地点 id」。
@@ -71,7 +77,7 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
 **`GET /topics/{支线id}/members` 返回 404**、房间名册没动。新增
 `test_a_thread_does_not_get_a_roster_of_its_own` 钉住这条。
 
-## 二·五、后来补上的（都在 PR #609 上）
+## 二·五、后来补上的
 
 - **一轮跑在「地点」上**：`chat.py` 三处按 id 取 Topic 的地方改成解析 `Place`。切换前，split 出一条支线之后
   分身的开工轮次会直接死掉（`Topic not found`）。
@@ -82,13 +88,12 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
 - **结论回流**：消息和文档 section 落在**房间主线**（`task_id=None`）——回流的全部意义就是让房间看见；
   结论卡两端都是房间 + 一个支线键；`need-evidence` 叫醒的是**支线**不是房间。
 - **级联归档整套删掉**：工作不嵌套，一条支线没有后代，它防的场面在结构上不存在了。
-  采信从「归档」变成「收起」（`status=closed`），**收起不冻结**，支线照常能追加对话。
 - **路由层**：`/blocks`、`/doc`、`/docs`、`/progress`、`/return-conclusion`、`GET /topics/{id}` 都解析地点；
   鉴权永远落在房间上（支线没有名册）；分页游标要连支线一起比，否则翻页会静默串线。
 - **用量**：`resource_usage` 直接吃地点 id 会违反外键（响的）；订阅入账的 work index 拿地点 id 匹配 block
   会一条都匹配不上、让那条支线的用量静默变成无法归属（不响的）。两处都改了。
-- **前端**：`splitMarkers` 改读 `GET /topics/{id}/tasks`；`upgraded_to_task_id` 在 `ChatPanel` 和 `PanelDoc`
-  两处都渲染；组件测试与 spec 都按新行为重写。
+- **前端**：`splitMarkers` 改读 `GET /topics/{id}/tasks`（标记按支线的 `room_id + created_at` 读时派生）；
+  `upgraded_to_task_id` 在 `ChatPanel` 和 `PanelDoc` 两处都渲染；组件测试与 spec 都按新行为重写。
 
 ## 二·六、全量测试清出来的（每一条都是真 bug，不是断言过时）
 
@@ -111,42 +116,17 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
 顺带的**简化**（删掉的比加的多）：级联归档整套、`_MAX_ROOM_WALK` 那个爬树刹车、
 闲置容器回收里的 parent 遍历——一条支线的 block 本来就带着房间的 `topic_id`，一个谓词全覆盖。
 
-## 三、还没改的
-
-1. **剩下的测试**：第二轮全量在跑，前一轮的 60 已清到个位数。
-2. **D1 那一半**：`accepted_by`/`accepted_at` 已经搬到 task 上了；**「谁开 PR」还没定**——
-   见下面的待拍板。
-3. **最后一步**：删掉 <&backend/tests/unit/test_switch_is_still_in_progress.py>。
-
-## 三·五、要 <@wangchangxin> 拍板的一件事（D1）
-
-之前我说按设计图走 A（任务自己开 PR、删掉 `fold_into_room`）。做到一半发现一个当时没算的代价：
-
-> **A 会让 PR 数量按「一件活一个」翻上去，而本项目 CI 队列约 1.7 小时。**
-
-现在（B）是「一个房间一条分支一个 PR」，活的结论采信时把提交折进房间分支，攒到房间递卡一起走。
-设计图点名的 `branch_name`/`accepted_at` **已经在 task 上了**，所以剩下的分歧只是「谁开 PR」。
-我不擅自删 `fold_into_room`——它是一套有明确论证、正在正常工作的机制，删了不好退。
-
-**两个漏了不会报错、只会变难用的点**（已记，改的时候要各钉一条测试）：
-- `topic/repositories.py:39` 的 `last_activity_at` **要**算上支线（房间里有活在跑就是活的），
-  而 `:251` 那条未读计数**不能**算（每条支线说句话就把房间标未读，红点立刻变噪音）。两处相邻、写法相似、结论相反。
-- `doc_root` 必须带 `task_id IS NULL`，否则房间的实况文档会解析成某条支线的简报。
-
-## 四、顺带挖出来的平台毛病（都不在这个 PR 范围里）
+## 三、顺带挖出来的平台毛病（都不在这个 PR 范围里）
 
 1. **`cheese-sync` 钩子漏推**（<&backend/app/domain/agent/harness/claude_code/device_launch.py>）：
    判据是「有没有未提交改动」而不是「有没有未推送的提交」，`git diff --cached --quiet && exit 0` 挡在 push 前面。
    **分身自己 commit 过就永不推送——越守规矩丢得越干净。** PR #608 整整 1010 行就是这么丢的
-   （`additions=0` 合进 main）。已有的 <&backend/tests/unit/test_device_sync_reports_failure.py> 两个用例
+   （`additions=0` 合进 main）。后来补上的只是**失败会留痕**（push 结果通过 `cheese-hook` 回报），
+   那一行提前退出还在。已有的 <&backend/tests/unit/test_device_sync_reports_failure.py> 两个用例
    都只造「有未提交改动」的仓库，所以这条路从没被测到。
-2. **后端自己那棵 worktree 会把分支倒推**：开 PR 时从它那棵树打快照，`_catch_up_with_branch` 遇到该树有未提交文件
-   （比如贴进话题的图片）就拒绝跟上，于是快照从旧树打、把分支倒推回你推的提交之前。函数自己的 docstring 早写明了这个
-   后果，只是没人对那个 `False` 做处理。**解法**：把平台自己那个快照提交 merge 进来，让分支重新成为它的后代。
-3. **`PrPollRunner`（60 秒一轮）没在转**：15:46 全绿到 16:11 一次都没推进；手动打
-   `POST /admin/scheduler/poll-open-prs` 立刻就推。那个接口 30.5 秒返回 `{"cards_checked":4}`，
-   而 `cheese api` 的读超时正好 30 秒，**所以它每次都在终点线前一步被客户端掐断，看起来像挂了——它没挂**。
-   现在每次推代码我手动踢一次。
+2. **`PrPollRunner` 看起来像挂了，其实没挂**：手动打 `POST /admin/scheduler/poll-open-prs` 立刻就推，
+   而那个接口 30.5 秒返回 `{"cards_checked":4}`，`cheese api` 的读超时正好 30 秒——
+   **它每次都在终点线前一步被客户端掐断**。排查这条路时别把「客户端超时」读成「调度器没转」。
 
 **已核实是虚惊的**：`4ecbeea2` 和 `b5074534` 两个工作区不存在滞留的活（前者一个提交都没落下，
 后者那个 `feat(memory)` 已随 #589 进 main，内容逐字节相同）。**真正丢过活的只有 `94dad87f` 一个。**
