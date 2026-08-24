@@ -334,6 +334,26 @@ def test_a_thread_returns_its_conclusion_with_its_own_token(client):
     assert any("分页少返一行" in c for c in _contents(client, room))
 
 
+def test_a_thread_tells_its_room_with_its_own_token(client):
+    """`cheese tell` 是 conclude 之外那条「说句话就走」的路。
+
+    两条一起断的时候，房间还会建议分身「回话用 cheese tell」——而那正是坏的
+    那条，于是建议本身把人引进死胡同。
+    """
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/tell",
+        json={"target": room, "content": "先说一声：这条路能通。"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    assert any("这条路能通" in c for c in _contents(client, room))
+
+
 # --- cheese notify ---------------------------------------------------------
 
 

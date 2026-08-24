@@ -1466,7 +1466,7 @@ async def tell_topic(
     """
     sender = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=sender.room_id, project_id=sender.project_id
+        fallback_handle=None, topic_id=sender.id, project_id=sender.project_id
     )
     await resolver.authorize_topic(
         actor, project_id=sender.project_id, topic_id=sender.room_id
