@@ -290,7 +290,8 @@ function startDm(handle: string) {
   emit('select-peer-dm', handle)
 }
 
-// ---- 子话题折叠 ----
+// ---- 折叠 ----
+// 一个房间下面挂的是**它派出去的活**，不是子话题——房间之下不能再建房间。
 // 范式跟底部的「已归档」分组一致（一个 chevron 收起一堆行），只是这里的开关
 // 长在每一个有子话题的行上。行的可见性/未读聚合是纯逻辑，住在 lib/topicTree.ts
 // 里（有单测），这里只管状态和落盘。
@@ -403,10 +404,10 @@ function rowRunning(row: VisibleRow<Topic>): boolean {
   return row.topic.running === true || row.hiddenRunning
 }
 function toggleTitle(row: VisibleRow<Topic>): string {
-  if (!row.collapsed) return '收起子话题'
-  if (row.hiddenAwaits) return '展开子话题：里面有事等你处理'
-  if (row.hiddenRunning) return '展开子话题：芝士正在里面工作'
-  return '展开子话题'
+  if (!row.collapsed) return '收起'
+  if (row.hiddenAwaits) return '展开：里面有事等你处理'
+  if (row.hiddenRunning) return '展开：芝士正在里面工作'
+  return '展开'
 }
 
 function toggleCollapse(id: string) {
@@ -726,7 +727,7 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       <span
                         v-if="row.collapsed && row.hiddenCount > 0"
                         class="subtree-count ms-2"
-                        :title="`收起了 ${row.hiddenCount} 个子话题`"
+                        :title="`收起了 ${row.hiddenCount} 项`"
                         >{{ countLabel(row.hiddenCount) }}</span
                       >
                       <span
