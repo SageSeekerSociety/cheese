@@ -8,6 +8,7 @@ import { useDisplay } from 'vuetify'
 import ChatPanel from '@/components/ChatPanel.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicComputePicker from '@/components/TopicComputePicker.vue'
+import { isThread } from '@/lib/place'
 
 // 话题的对话那一半：时间线 + 输入框 + 末尾的采纳框 + 输入框旁边的 chips。
 //
@@ -16,7 +17,7 @@ import TopicComputePicker from '@/components/TopicComputePicker.vue'
 // 同一份接线写两遍是这两处早晚长歪的原因，所以它只写一遍。
 defineOptions({ name: 'TopicChatColumn' })
 
-defineProps<{
+const props = defineProps<{
   topic: Topic
   members: ProjectMemberRow[]
   topicList: Topic[]
@@ -45,6 +46,8 @@ const emit = defineEmits<{
 }>()
 
 const { mdAndUp } = useDisplay()
+// 算力是**房间**的选择，首轮就锁死；一条支线既改不了它，问它也 404。
+const isThreadPlace = computed(() => isThread(props.topic))
 const chatRef = ref<{ connected: boolean } | null>(null)
 const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
 
@@ -100,7 +103,7 @@ defineExpose({
     <!-- 手机上算力浮在对话上方：它是"这个话题在哪跑"，要一直看得见（整机权限
          尤其不能藏），但一行的高度在 390px 上太贵，所以它不占布局的高度。
          桌面上这块地方够宽，它长在话题头那一行里（TopicHeader）。 -->
-    <div v-if="!mdAndUp" class="compute-float">
+    <div v-if="!mdAndUp && !isThreadPlace" class="compute-float">
       <TopicComputePicker :key="topic.id" :topic-id="topic.id" />
     </div>
   </div>

@@ -142,23 +142,18 @@ interface TreeRow {
 }
 
 function inferKind(t: Topic): string {
-  // Backend may already supply `kind`; otherwise derive it from the shape:
-  // a root (no parent) is 本体, a child is 分身, top-level non-root is 话题.
+  // Backend may already supply `kind`; otherwise derive it from the shape.
   const explicit = (t as Topic & { kind?: string }).kind
   if (typeof explicit === 'string' && explicit) return explicit
-  if (!t.parent_id) return 'root'
-  return 'subtopic'
+  return t.parent_id ? 'topic' : 'root'
 }
 
+// 这条边栏列的是**房间**，只有这两种。一件活是 `tasks` 表的一行，它显示在房间的
+// 时间线上和工作面板的「任务」那一格里，不在这里占一行——那正是把活从话题里拆
+// 出来省下的东西。「任务」「分身」两个标签在那之前有意义，现在永远取不到。
 const KIND_BADGE: Record<string, string> = {
   root: '全局',
   topic: '话题',
-  // A task is one piece of work inside a room. It still shows in the rail for
-  // now — moving it into the room's timeline as a card is a UI change of its
-  // own, and dropping the row before that lands would make split-out work
-  // unreachable.
-  task: '任务',
-  subtopic: '分身', // legacy rows, created before work had its own kind
 }
 
 function kindLabel(t: Topic): string {
