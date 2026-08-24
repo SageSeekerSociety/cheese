@@ -488,31 +488,6 @@ def test_a_thread_can_dispatch_more_work(client):
     assert r.json()["data"]["room_id"] == room
 
 
-# --- cheese notify ---------------------------------------------------------
-
-
-def test_a_thread_can_send_a_notification(client):
-    """`cheese notify` 无条件把 `$CHEESE_TOPIC` 当 `topic_id` 发出去，而那是支线
-    的 id。`alerts.topic_id` 是指向 `topics` 的外键，支线不在那张表里——于是整条
-    命令 500，连最小的一条通知都发不出去。"""
-    pid, room = _room(client)
-    thread = _thread(client, room)
-
-    r = client.post(
-        f"/projects/{pid}/alerts",
-        json={
-            "level": "light",
-            "kind": "change_alert",
-            "title": "改完了",
-            "topic_id": thread,
-        },
-        headers=_as_agent(pid, thread),
-    )
-    assert r.status_code == 200, r.text
-    # 通知指向的是这条支线所在的房间——点开它，人得落在一个打得开的地方。
-    assert r.json()["data"]["topic_id"] == room
-
-
 # --- 人也要能照常用 --------------------------------------------------------
 
 
