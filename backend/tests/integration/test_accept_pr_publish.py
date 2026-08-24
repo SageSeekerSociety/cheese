@@ -6,6 +6,11 @@ a local conflict; GitHub being down falls back to the local path; a PR-less
 card never touches GitHub. GitHub itself is a fake client class — the tests
 assert what the accept path DOES with it, not HTTP details (unit-tested
 separately in tests/unit/test_github_pr.py).
+
+App forge 的采纳不在这里：它已经不合并了（App 采纳等 CI 再合）——采纳把卡送进
+`pr_open`，轮询器等 CI 全绿才合。完整行为见
+tests/integration/test_accept_app_waits_for_ci.py。这个文件覆盖的是
+`_accept_via_pr` 这条仍在合并的路，以及不进 PR 的两种形状。
 """
 
 import asyncio
@@ -18,23 +23,25 @@ from tests.integration.conftest import session_auth_headers
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
@@ -88,7 +95,15 @@ class _FakeClient:
             raise type(self).merge_error
         return {"merged": True, "sha": "deadbeef"}
 
-    async def open_pr(self, *, head: str, base: str, title: str, body: str) -> dict:
+    async def open_pr(
+        self,
+        *,
+        head: str,
+        base: str,
+        title: str,
+        body: str,
+        as_user_token: str | None = None,
+    ) -> dict:
         type(self).calls.append(("open_pr", head, base, title))
         number = type(self).open_pr_number
         return {
@@ -177,7 +192,7 @@ def test_pr_card_is_accepted_by_merging_the_pr(client, pr_world):
     _give_card_a_pr(client, cid, number=7)
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -190,14 +205,19 @@ def test_pr_card_is_accepted_by_merging_the_pr(client, pr_world):
     merges = [c for c in _FakeClient.calls if c[0] == "merge"]
     assert len(merges) == 1
     assert merges[0][1] == 7
-    assert "采纳 topic/" in merges[0][2]  # commit title keeps the platform shape
-    assert "验收人：alice" in merges[0][3]
+    # The squash commit that lands on main: a Conventional Commits subject with
+    # the PR number, and trailers instead of "验收人：alice".
+    assert merges[0][2].endswith(" (#7)")
+    assert merges[0][2].startswith("chore(test): ")
+    assert "Reviewed-by: alice" in merges[0][3]
     assert pr_world["local_merges"] == []
     assert len(pr_world["pushes"]) == 1  # last-minute edits re-pushed pre-merge
     assert len(pr_world["syncs"]) == 1
 
-    # 采纳即归档.
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    # 交付完成 ≠ 话题结束 (#442 decision 1)：打交付标记，话题不归档。
+    topic = client.get(f"/topics/{tid}").json()["data"]
+    assert topic["status"] == "active"
+    assert topic["accepted_by"] == "alice"
 
 
 def test_pr_merge_refusal_lands_in_the_conflict_flow(client, pr_world):
@@ -208,7 +228,7 @@ def test_pr_merge_refusal_lands_in_the_conflict_flow(client, pr_world):
     _FakeClient.merge_error = GitHubPRMergeBlocked("PR #8 is not mergeable")
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -217,20 +237,20 @@ def test_pr_merge_refusal_lands_in_the_conflict_flow(client, pr_world):
     assert card["status"] == "conflict"
     assert "PR #8" in card["note"]
     # Not archived — same contract as a local merge conflict; 芝士 goes to fix.
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
     # The local base was synced so the materialized conflict matches GitHub's.
     assert len(pr_world["syncs"]) == 1
 
     # After the fix, retry succeeds (the branch is re-pushed and merged).
     _FakeClient.merge_error = None
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "accepted"
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 def test_github_down_falls_back_to_the_local_path(client, pr_world):
@@ -244,7 +264,7 @@ def test_github_down_falls_back_to_the_local_path(client, pr_world):
     _FakeClient.view = GitHubPRError("GitHub unreachable")
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -253,7 +273,7 @@ def test_github_down_falls_back_to_the_local_path(client, pr_world):
     card = r.json()["data"]
     assert card["status"] == "accepted"
     assert pr_world["local_merges"] != []
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
     # 可见性: 之前这个降级只有 logger.exception，卡片上完全看不出走过 PR
     # 路径又失败了——现在原因(哪个PR、GitHub报了什么)必须留在 note 上。
     assert "未走 PR 采纳" in card["note"]
@@ -273,7 +293,7 @@ def test_pr_closed_unmerged_falls_back_with_visible_reason(client, pr_world):
     _FakeClient.view = {"merged": False, "state": "closed"}
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -309,7 +329,7 @@ def test_pr_conflict_sync_upstream_failure_visible_in_note(
     _FakeClient.merge_error = GitHubPRMergeBlocked("PR #12 is not mergeable")
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -321,7 +341,7 @@ def test_pr_conflict_sync_upstream_failure_visible_in_note(
     assert "同步上游失败" in card["note"]
     assert "network unreachable" in card["note"]
     # Same contract as any other merge conflict — topic stays active either way.
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
 def test_pr_already_merged_on_github_is_respected(client, pr_world):
@@ -332,7 +352,7 @@ def test_pr_already_merged_on_github_is_respected(client, pr_world):
     _FakeClient.view = {"merged": True, "state": "closed"}
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -402,7 +422,7 @@ def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=7)
 
-    r = client.get(f"/api/topics/{tid}/pr-checks")
+    r = client.get(f"/topics/{tid}/pr-checks")
     assert r.status_code == 200
     data = r.json()["data"]
     assert data["available"] is True
@@ -421,6 +441,94 @@ def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
     assert _Client.checked_ref == "abc123"
 
 
+def test_pr_checks_answers_available_false_when_github_is_unreachable(
+    client, monkeypatch
+):
+    """/pr-checks is polled on a timer, so an exception escaping it is not one
+    500 — it is a 500 every few seconds, each posting a traceback into the room
+    (2026-08-17: `httpx.ConnectError` out of `pr_view`, TLS handshake). The
+    endpoint's contract is "never error"; the reason travels in the payload."""
+    import httpx
+
+    from app.api.routes import accept as accept_routes
+    from app.domain.workspace import service as ws
+
+    class _Tokens:
+        async def readonly_token(self) -> tuple[str, str]:
+            return "ghs_read", "2099-01-01T00:00:00+00:00"
+
+        async def write_token(self) -> tuple[str, str]:
+            return "ghs_write", "2099-01-01T00:00:00+00:00"
+
+    class _UnreachableClient:
+        def __init__(self, owner: str, repo: str, tokens, **_):
+            pass
+
+        async def pr_view(self, number: int) -> dict:
+            raise httpx.ConnectError("TLS handshake failed")
+
+        async def check_runs(self, ref: str) -> list[dict]:
+            raise AssertionError("never reached")
+
+    async def _tokens_for_project(_project_id, _session):
+        return _Tokens()
+
+    monkeypatch.setattr(
+        accept_routes, "github_app_tokens_for_project", _tokens_for_project
+    )
+    monkeypatch.setattr(accept_routes, "GitHubPRClient", _UnreachableClient)
+    monkeypatch.setattr(
+        ws, "get_upstream", lambda pid: "https://github.com/acme/widgets"
+    )
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=7)
+
+    r = client.get(f"/topics/{tid}/pr-checks")
+
+    assert r.status_code == 200
+    data = r.json()["data"]
+    assert data["available"] is False
+    assert "ConnectError" in data["reason"]
+
+
+def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypatch):
+    """The old guard only wrapped the two GitHub calls; everything before them
+    (token mint, upstream read) could still 500. Same contract applies."""
+    from app.api.routes import accept as accept_routes
+    from app.domain.workspace import service as ws
+
+    class _Tokens:
+        async def readonly_token(self) -> tuple[str, str]:
+            return "ghs_read", "2099-01-01T00:00:00+00:00"
+
+        async def write_token(self) -> tuple[str, str]:
+            return "ghs_write", "2099-01-01T00:00:00+00:00"
+
+    async def _tokens_for_project(_project_id, _session):
+        return _Tokens()
+
+    def _boom(_pid):
+        raise OSError("workspace unavailable")
+
+    monkeypatch.setattr(
+        accept_routes, "github_app_tokens_for_project", _tokens_for_project
+    )
+    monkeypatch.setattr(ws, "get_upstream", _boom)
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=7)
+
+    r = client.get(f"/topics/{tid}/pr-checks")
+
+    assert r.status_code == 200
+    assert r.json()["data"]["available"] is False
+
+
 def test_prless_card_never_touches_github(client, pr_world):
     """App 机制关着（默认测试世界）：无 PR 卡照旧走本地合并，不碰 GitHub。"""
     pid = _make_project(client)
@@ -428,7 +536,7 @@ def test_prless_card_never_touches_github(client, pr_world):
     cid = _make_card(client, tid)  # no PR seeded
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -438,13 +546,13 @@ def test_prless_card_never_touches_github(client, pr_world):
     assert pr_world["local_merges"] != []  # old path, unchanged
 
 
-# ---- 存量无 PR 卡的采纳 (#296 stage 1 生产回归修复) --------------------------
+# ---- App forge 的边角：没有分支可进 PR，以及根本没接 GitHub -----------------
 #
-# #328 上线后 dev 的 main 收到了没有对应 PR 的采纳 merge commit 直推
-# （c33cfabf、8f9b9d94）：这些卡在 accept_via_pr 部署之前就 pending，身上没有
-# App 开的 PR，共存守卫又跳过了个人 token 路径，于是掉进本地合并直推。下面的
-# 测试钉住修复后的行为：采纳现场补开 App PR 并合并那个 PR；开不出来就停下亮
-# 警告，绝不静默直推。
+# App forge 上「采纳」本身已经不在这个文件里了：它不再合并，而是授权，然后由
+# 轮询器等 CI 全绿才合（App 采纳等 CI 再合）。那条路的完整行为在
+# tests/integration/test_accept_app_waits_for_ci.py 里。留在这里的是两种
+# **不进 PR** 的形状，它们的采纳语义没有变：讨论型话题（没有分支，本地合并
+# no-op），和未接 GitHub 的项目（#363：平台自己就是 forge）。
 
 
 def _enable_app_pr(monkeypatch) -> None:
@@ -478,104 +586,6 @@ def _enable_app_pr(monkeypatch) -> None:
     monkeypatch.setattr(ws, "upstream_default_branch", lambda repo: "main")
 
 
-def test_legacy_prless_card_gets_its_pr_opened_at_accept(client, pr_world, monkeypatch):
-    """存量无 PR 卡采纳 = 现场补开 App PR + 合并那个 PR。main 不再收到无 PR 的
-    直推。这条同时覆盖改 .github/workflows/ 的卡的成功侧：App 自 2026-08-12 起
-    持有 workflows:write，推送在这个 seam 上与普通卡无异，mock GitHub 接受。"""
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)  # filed while the App path was still off
-    _enable_app_pr(monkeypatch)  # the deploy lands after the card was filed
-
-    r = client.post(
-        f"/api/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert card["pr_number"] == 21
-    assert "PR #21" in card["note"]
-
-    # The PR was opened, then merged — and the local merge NEVER ran.
-    opens = [c for c in _FakeClient.calls if c[0] == "open_pr"]
-    assert len(opens) == 1
-    merges = [c for c in _FakeClient.calls if c[0] == "merge"]
-    assert len(merges) == 1
-    assert merges[0][1] == 21
-    assert pr_world["local_merges"] == []
-    # Two pushes: the publish's own, then _accept_via_pr's pre-merge re-push.
-    assert len(pr_world["pushes"]) == 2
-
-    # 采纳即归档.
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
-
-
-def test_pr_open_failure_stops_the_accept_and_lands_on_the_card(
-    client, pr_world, monkeypatch
-):
-    """开 PR 失败（这里：推分支被拒，含 workflows 权限拒绝这种老理由）→ 采纳
-    停下（422），失败原因亮在卡片上，卡保持 pending，main 一个直推都收不到。
-    人处理后重试采纳，同一张卡走 PR 路走通。"""
-    from app.core.errors import ValidationError
-    from app.domain.workspace import service as ws
-
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    _enable_app_pr(monkeypatch)
-
-    def _rejected_push(pid_, tid_, token):
-        raise ValidationError(
-            "git push failed: ! [remote rejected] topic/abcd -> topic/abcd "
-            "(refusing to allow a GitHub App to create or update workflow "
-            "`.github/workflows/build.yml` without `workflows` permission)"
-        )
-
-    monkeypatch.setattr(ws, "push_topic_branch", _rejected_push)
-
-    r = client.post(
-        f"/api/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 422
-    assert "无法为这张卡开 PR" in r.json()["message"]
-
-    # The failure is ON THE CARD (persisted despite the accept's rollback),
-    # the card is still pending (retryable), and nothing was direct-pushed.
-    card = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"][0]
-    assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 采纳未完成：无法为这张卡开 PR")
-    assert "refusing to allow" in card["note"]
-    assert "ℹ️" not in card["note"]  # no calm "known limitation" wording
-    assert pr_world["local_merges"] == []
-    assert [c for c in _FakeClient.calls if c[0] == "merge"] == []
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
-
-    # A human looked, the cause is gone (permission granted / network back) —
-    # the SAME card now accepts through its PR.
-    monkeypatch.setattr(
-        ws,
-        "push_topic_branch",
-        lambda pid_, tid_, token: (
-            pr_world["pushes"].append((tid_, token)) or f"topic/{tid_.hex[:8]}"
-        ),
-    )
-    r = client.post(
-        f"/api/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert "PR #21" in card["note"]
-    assert pr_world["local_merges"] == []
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
-
-
 def test_discussion_topic_on_bound_project_accepts_without_forge_label(
     client, pr_world, monkeypatch
 ):
@@ -590,7 +600,7 @@ def test_discussion_topic_on_bound_project_accepts_without_forge_label(
     monkeypatch.setattr(ws, "topic_branch_exists", lambda pid_, tid_: False)
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -600,7 +610,7 @@ def test_discussion_topic_on_bound_project_accepts_without_forge_label(
     assert "未接 GitHub" not in (card["note"] or "")
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # noop merge — nothing bypassed
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 @pytest.mark.parametrize("missing", ["upstream", "installation"])
@@ -627,7 +637,7 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
         monkeypatch.setattr(github_app, "github_app_tokens_for_project", _no_tokens)
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -638,73 +648,7 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     assert "⚠️" not in card["note"]
     assert [c for c in _FakeClient.calls if c[0] in ("open_pr", "merge")] == []
     assert pr_world["local_merges"] != []  # the only accept such a project has
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "archived"
-
-
-def test_bound_project_github_down_stops_the_accept(client, pr_world, monkeypatch):
-    """绑定 GitHub 的项目 (#363)：GitHub 不可达时采纳停下（可重试），永不落
-    local merge——「可用性不回退」在绑定项目上让位给「不绕过 PR 和 CI」。"""
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    _give_card_a_pr(client, cid, number=17)
-    _enable_app_pr(monkeypatch)
-    _FakeClient.view = GitHubPRError("GitHub unreachable")
-
-    r = client.post(
-        f"/api/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 422
-    assert "PR 未能合并" in r.json()["message"]
-    card = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"][0]
-    assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 采纳未完成：PR 未能合并")
-    assert "GitHub unreachable" in card["note"]
-    assert pr_world["local_merges"] == []
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
-
-    # GitHub is back → the same card accepts through its PR.
-    _FakeClient.view = {
-        "merged": False,
-        "state": "open",
-        "base": {"ref": "main"},
-        "head": {"sha": "abc123"},
-    }
-    r = client.post(
-        f"/api/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200
-    assert r.json()["data"]["status"] == "accepted"
-    assert pr_world["local_merges"] == []
-
-
-def test_bound_project_closed_pr_stops_the_accept(client, pr_world, monkeypatch):
-    """绑定 GitHub 的项目：PR 在 GitHub 被关闭未合并——forge 说了不。采纳停下
-    亮出来（重开 PR 或作废卡，由人决定），绝不把被否掉的改动本地合并直推。"""
-    pid = _make_project(client)
-    tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)
-    _give_card_a_pr(client, cid, number=18)
-    _enable_app_pr(monkeypatch)
-    _FakeClient.view = {"merged": False, "state": "closed"}
-
-    r = client.post(
-        f"/api/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 422
-    card = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"][0]
-    assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 采纳未完成：PR 未能合并")
-    assert "关闭" in card["note"]
-    assert pr_world["local_merges"] == []
-    assert [c for c in _FakeClient.calls if c[0] == "merge"] == []
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
 # ---- CI 镜像与 405 如实转译 (#362, 对齐 GitHub) ------------------------------
@@ -727,7 +671,7 @@ def test_red_checks_do_not_block_but_are_mirrored(client, pr_world):
     ]
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -752,7 +696,7 @@ def test_absent_checks_are_mirrored(client, pr_world):
     _FakeClient.checks = []
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -771,7 +715,7 @@ def test_checks_read_failure_does_not_block_the_merge(client, pr_world):
     _FakeClient.checks = GitHubPRError("check-runs read failed (HTTP 500)")
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -782,43 +726,41 @@ def test_checks_read_failure_does_not_block_the_merge(client, pr_world):
     assert [c for c in _FakeClient.calls if c[0] == "merge"] != []
 
 
-def test_merge_405_non_conflict_surfaces_githubs_reason(client, pr_world, monkeypatch):
+def test_merge_405_non_conflict_surfaces_githubs_reason(client, pr_world):
     """405 不再一律写成「合并冲突、已派芝士解决」：GitHub 拒绝合并的真实原因
     （这里：draft）原样呈现，卡保持 pending 由人处理——芝士不会被派去解一个
-    不存在的冲突。顺带钉住采纳现场补开的 PR 是事务外持久化的：这次失败回滚
-    后 PR 仍在卡上，重试直接走它、不再重开。"""
+    不存在的冲突。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _make_card(client, tid)  # no PR — the accept opens it on the spot
-    _enable_app_pr(monkeypatch)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=21)
     _FakeClient.merge_error = GitHubPRMergeBlocked(
         'PR #21 is not mergeable: {"message":"Draft pull requests cannot be '
         'merged","documentation_url":"https://docs.github.com/rest"}'
     )
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 422
     assert "Draft pull requests cannot be merged" in r.json()["message"]
 
-    card = client.get(f"/api/topics/{tid}/accept-card").json()["data"]["data"][0]
+    card = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"][0]
     assert card["status"] == "pending"  # not conflict — 芝士 stays out of it
-    assert card["pr_number"] == 21  # durable record survived the rollback
+    assert card["pr_number"] == 21
     assert pr_world["local_merges"] == []
-    assert client.get(f"/api/topics/{tid}").json()["data"]["status"] == "active"
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
     # Someone marked the PR ready on GitHub — retry merges the SAME PR.
     _FakeClient.merge_error = None
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     assert r.json()["data"]["status"] == "accepted"
-    assert len([c for c in _FakeClient.calls if c[0] == "open_pr"]) == 1
     merges = [c for c in _FakeClient.calls if c[0] == "merge"]
     assert [m[1] for m in merges] == [21, 21]

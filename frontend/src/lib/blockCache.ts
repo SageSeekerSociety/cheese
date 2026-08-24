@@ -38,7 +38,30 @@ export function setCachedWindow(topicId: string, window: { blocks: Block[]; hasM
   blockHasMore.set(topicId, window.hasMore)
 }
 
+// 后台预取是「顺手做的事」，不是「必须做完的事」。刷新页面时未读话题可能有几十
+// 个，一次性把它们全发出去会在同一瞬间占满后端的数据库连接池——被挤出去的不只是
+// 这些预取，还有同一时刻用户真正在等的那个请求。所以这条队列一次只放两个进去，
+// 剩下的排队，没有人在等它们。
+const PREFETCH_LANES = 2
+let prefetchRunning = 0
+const prefetchQueue: (() => void)[] = []
+
+function acquireLane(): Promise<void> {
+  if (prefetchRunning < PREFETCH_LANES) {
+    prefetchRunning += 1
+    return Promise.resolve()
+  }
+  return new Promise<void>((resolve) => prefetchQueue.push(resolve))
+}
+
+function releaseLane(): void {
+  const next = prefetchQueue.shift()
+  if (next) next()
+  else prefetchRunning -= 1
+}
+
 export async function refreshBlockCache(topicId: string): Promise<Block[] | null> {
+  await acquireLane()
   try {
     // Only the newest page — this runs for every topic whose unread count grew,
     // and refetching 2.1 MB per topic in the background is what we are fixing.
@@ -52,5 +75,7 @@ export async function refreshBlockCache(topicId: string): Promise<Block[] | null
     return merged.blocks
   } catch {
     return null // best-effort: the cache just stays as it was
+  } finally {
+    releaseLane()
   }
 }

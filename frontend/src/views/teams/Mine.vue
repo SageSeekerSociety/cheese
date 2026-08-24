@@ -30,8 +30,8 @@
 
             <!-- 空状态 -->
             <div v-else-if="!myTeams.length" class="d-flex flex-column align-center py-5">
-              <v-avatar size="50" class="mb-3 bg-grey-lighten-4">
-                <v-icon icon="mdi-account-group" size="large" color="grey-darken-1"></v-icon>
+              <v-avatar size="50" class="mb-3 bg-surface-light">
+                <v-icon icon="mdi-account-group" size="large" color="on-surface-variant"></v-icon>
               </v-avatar>
               <p class="text-subtitle-1 font-weight-medium text-center mb-1">还没有加入小队</p>
               <p class="text-body-2 text-center text-medium-emphasis">创建一个新的小队，或者加入一个现有的小队</p>
@@ -56,7 +56,7 @@
                   <v-chip v-if="team.personal" size="x-small" variant="tonal" color="primary" class="mr-2">
                     个人
                   </v-chip>
-                  <v-icon icon="mdi-chevron-right" color="grey-darken-1"></v-icon>
+                  <v-icon icon="mdi-chevron-right" color="on-surface-variant"></v-icon>
                 </template>
               </v-list-item>
             </v-list>

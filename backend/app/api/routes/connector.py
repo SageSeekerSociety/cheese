@@ -20,6 +20,7 @@ the existing ``/sandbox/hooks/{topic_id}`` endpoint (scoped-token auth + shared
 """
 
 import json
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -50,6 +51,7 @@ from app.domain.team.repositories import TeamRepository
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 
 router = APIRouter(prefix="/connector", tags=["connector"])
+logger = logging.getLogger(__name__)
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -81,13 +83,6 @@ class ConnectRequest(BaseModel):
     # cli proposed at device-flow start, avoiding an "unnamed" node).
     device_name: str | None = None
     project_id: uuid.UUID | None = None
-    # #282 §四 / #358 · the honest UI line 「让它看到整台机器（能操作这台机器上的服务
-    # 和其他房间）」. Whole-machine (visibility=host) is 申请制: OFF by default, so a
-    # human enrolling their own persistent box never grants it whole-machine access
-    # by omission. The approval page ticks this only when the approver deliberately
-    # wants the agent to operate the whole host. Left False → isolated (the boxed
-    # default; its per-room-container transport lands in #358 step 2).
-    whole_machine: bool = False
 
 
 # --- device flow ---------------------------------------------------------------
@@ -155,11 +150,9 @@ async def device_connect(
         # only stop using it. A CONSTANT here, the mirror of the MicroCloud
         # enrolment sweep's `Supply.cloud`.
         supply=Supply.self_hosted,
-        # #358: whole-machine visibility is an explicit opt-in, never the default.
-        # Only when the approver ticked 「让它看到整台机器」 does this box become
-        # host-visible (bare-on-host, sees every room + the host's services);
-        # otherwise it enrols as the boxed default (isolated).
-        visibility=Visibility.host if body.whole_machine else Visibility.isolated,
+        # Additive dual-read window: keep writing the old column's safe value, but
+        # hosted access is now chosen per topic in device_topic.visibility.
+        visibility=Visibility.isolated,
         name=body.device_name,
     )
     if body.project_id is not None:
@@ -217,6 +210,14 @@ async def agent_socket(
     await websocket.accept()
     transport = _WebSocketDeviceTransport(websocket)
     await device_hub.attach_device(device.device_id, transport)  # sends welcome{v}
+    try:
+        from app.api.deps import get_chat_service
+
+        await get_chat_service().recover_sessions(device.device_id)
+    except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
+        logger.exception(
+            "hook subscription recovery failed for device %s", device.device_id
+        )
     try:
         while True:
             message = await websocket.receive_json()
@@ -457,13 +458,13 @@ async def register_device_for_team(
     team they belong to, so every project of that team can run on it. Owner-only, and
     the owner must be a member of the target team."""
     user_id = await _require_user(resolver)
-    device = await service.get_device(device_id)
+    device = await service.get_hosted_device(device_id)
     if device is None or device.owner_user_id != user_id:
         raise NotFoundError("设备不存在或不属于你")
     if not await TeamRepository(db).is_team_member(body.team_id, user_id):
         raise ForbiddenError("你不是该团队成员，不能把设备注册给它")
     await service.assign_to_team(device_id, body.team_id, actor_user_id=user_id)
-    device = await service.get_device(device_id)
+    device = await service.get_hosted_device(device_id)
     return _device_view(device)  # type: ignore[arg-type]
 
 
@@ -494,7 +495,7 @@ async def unregister_device_from_team(
     """Unbind a machine the caller owns from a team (为自己 / 换团队). Owner-only."""
     user_id = await _require_user(resolver)
     await service.unassign_from_team(device_id, team_id, actor_user_id=user_id)
-    device = await service.get_device(device_id)
+    device = await service.get_hosted_device(device_id)
     if device is None:
         raise NotFoundError("设备不存在")
     return _device_view(device)

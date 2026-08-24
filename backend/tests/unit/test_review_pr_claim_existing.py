@@ -44,6 +44,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     card = SimpleNamespace(
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
+        # The card is the room's own main line, not one thread's — delivery
+        # therefore gets stamped on the room.
+        task_id=None,
         status=AcceptStatus.pending,
         reviewer_handle="alice",
         routing_reason="最懂",
@@ -59,6 +62,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     topic = SimpleNamespace(
         id=card.topic_id,
         project_id=uuid.uuid4(),
+        parent_id=None,
         title="做一个东西",
         status=TopicStatus.active,
         created_by="cheese",
@@ -75,12 +79,21 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._repo.list_approver_handles.return_value = []
     service._topics = AsyncMock()
     service._topics.get.return_value = topic
+    # A card is addressed by a PLACE id and resolved to the room around it,
+    # which needs a real session to walk — hand the answer over directly.
+    service._topic_or_404 = AsyncMock(return_value=topic)
     service._projects = AsyncMock()
     service._projects.get.return_value = project
+    service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
     service._resolve_pr_prerequisites = AsyncMock(
         return_value=(("gho_token", "acme", "widgets"), "")
     )
+    # Who the change is credited to. Reads the topic's roster, so on an
+    # AsyncMock session it resolves to nothing anyway — stubbed rather than
+    # left to fail silently, which leaks an un-awaited coroutine into every
+    # test in this file. Attribution is not what these assert.
+    service._attribution = AsyncMock(return_value=(None, None))
     return service, card, topic
 
 
@@ -116,8 +129,9 @@ def _wire(monkeypatch, client) -> list[str]:
     """Common stubs; returns the list room messages accumulate into."""
     posted: list[str] = []
 
-    async def fake_post(_factory, *, project_id, topic_id, content, source):
-        posted.append(content)
+    async def fake_post(_factory, *, project_id, topic_id, content, source, meta=None):
+        # 房间那一行 + 展开区：说了什么、和没说什么，两边都要看。
+        posted.append(f"{content}\n{(meta or {}).get('detail') or ''}")
         return True
 
     monkeypatch.setattr(webhook_service, "post_with_retries", fake_post)
@@ -158,8 +172,9 @@ async def test_claimed_pr_puts_the_card_on_the_pr_path(monkeypatch):
     assert card.pr_repo == "acme/widgets"
     assert card.pr_head_sha == PUSHED_SHA
     assert card.pr_merged_at is None
-    # 归档卡在部署成功那一步，不是采纳这一步 — a claimed PR is no different.
+    # 采纳只是授权，卡还在 pr_open 等 CI —— 交付标记要等合并才落。
     assert topic.status == TopicStatus.active
+    assert topic.accepted_at is None
     assert topic.archived_at is None
     # No degrade happened, so no degrade wording leaked onto the note.
     assert "未走 PR 采纳" not in card.note
@@ -181,12 +196,11 @@ async def test_claim_emits_only_the_pr_message_never_the_archive_one(monkeypatch
     assert len(posted) == 1
     (message,) = posted
     assert "已认领该分支上已存在的 PR #234" in message
-    assert "话题保持 active" in message
-    # The message that contradicted it in the incident ("✅ 话题已被 alice
-    # 采纳并合并。"). Note this one legitimately ends "…部署也成功后才会归档" —
-    # a promise about later, not a claim that it happened.
+    assert "话题保持活跃" in message
+    # The message that contradicted it in the incident ("话题已被 alice 采纳并
+    # 合并") — this lane has NOT merged anything yet, and must not say so.
     assert "采纳并合并" not in message
-    assert "✅" not in message
+    assert "已合并" not in message
 
 
 @pytest.mark.anyio
@@ -210,13 +224,16 @@ async def test_other_github_failures_still_degrade_and_say_so(monkeypatch):
 
     assert card.status == AcceptStatus.accepted
     assert card.pr_number is None
-    assert card.note.startswith("⚠️ 未走 PR 采纳（GitHub 侧调用失败：")
+    assert card.note.startswith("未走 PR 采纳（GitHub 侧调用失败：")
     assert "已合并并推送到上游 origin/main" in card.note
-    assert topic.status == TopicStatus.archived
+    # 交付完成 ≠ 话题结束 (#442 decision 1)：本地合并这条路同样不归档。
+    assert topic.status == TopicStatus.active
+    assert topic.accepted_at is not None
+    assert topic.archived_at is None
 
     assert len(posted) == 1
     (message,) = posted
-    assert "采纳并合并" in message
+    assert "采纳了这次改动，已合并" in message
     assert "已开 PR" not in message
     assert "已认领" not in message
 

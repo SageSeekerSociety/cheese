@@ -124,7 +124,7 @@ async def test_merge_pr_sends_the_configured_merge_method():
         return httpx.Response(200, json={"merged": True, "sha": "abc"})
 
     result = await _client(handler).merge_pr(
-        7, title="采纳 topic/abcd1234 → main (#7)", message="验收人：alice"
+        7, title="fix: stop the crash (#7)", message="Reviewed-by: alice"
     )
 
     assert result["merged"] is True
@@ -132,8 +132,8 @@ async def test_merge_pr_sends_the_configured_merge_method():
     assert request.url.path == "/repos/acme/widgets/pulls/7/merge"
     assert json.loads(request.content) == {
         "merge_method": settings.accept_pr_merge_method,
-        "commit_title": "采纳 topic/abcd1234 → main (#7)",
-        "commit_message": "验收人：alice",
+        "commit_title": "fix: stop the crash (#7)",
+        "commit_message": "Reviewed-by: alice",
     }
     assert settings.accept_pr_merge_method == "squash"  # the repo's policy
 
@@ -193,3 +193,111 @@ async def test_check_runs_use_the_readonly_token_and_simplify():
     # Display path rides the sandbox-grade read-only mint, not the write one.
     assert request.headers["authorization"] == "Bearer ghs_read"
     assert request.url.path == "/repos/acme/widgets/commits/abc123/check-runs"
+
+
+# ---- open_pr: whose PR is it (2026-08-16) -----------------------------------
+#
+# GitHub attributes a PR to whoever's credential created it, so opening every
+# PR with the App's token made every PR on the platform belong to the bot —
+# no avatar, no "opened by you", no filter-by-author for the person whose work
+# it is. An App cannot impersonate a user; their own token is the only way.
+
+
+def _pull_recorder(*, user_status: int = 201, app_status: int = 201):
+    seen: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        seen.append((request.method, token))
+        if request.method != "POST":
+            return httpx.Response(200, json=[{"number": 9}])
+        status = user_status if token == "ghu_alice" else app_status
+        if status == 201:
+            return httpx.Response(201, json={"number": 42})
+        return httpx.Response(status, json={"message": "already exist"})
+
+    return handler, seen
+
+
+@pytest.mark.anyio
+async def test_open_pr_uses_the_requester_s_own_token():
+    handler, seen = _pull_recorder()
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
+    )
+
+    assert pr["number"] == 42
+    assert seen == [("POST", "ghu_alice")]  # the App token never gets a turn
+
+
+@pytest.mark.anyio
+async def test_open_pr_falls_back_to_the_app_when_the_user_cannot():
+    """Their authorization may be revoked, or they may have left the org. A PR
+    under the wrong name beats no PR at all — the accept depends on it."""
+    handler, seen = _pull_recorder(user_status=403)
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
+    )
+
+    assert pr["number"] == 42
+    assert seen == [("POST", "ghu_alice"), ("POST", "ghs_write")]
+
+
+@pytest.mark.anyio
+async def test_open_pr_adopts_an_existing_pr_without_a_second_create():
+    """Re-filing a card for the same topic hits "a pull request already exists"
+    — the existing PR IS this topic's PR. Retrying the create with the App
+    token would just earn the same 422."""
+    handler, seen = _pull_recorder(user_status=422)
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body="", as_user_token="ghu_alice"
+    )
+
+    assert pr["number"] == 9
+    assert [method for method, _ in seen] == ["POST", "GET"]
+
+
+@pytest.mark.anyio
+async def test_open_pr_still_works_with_no_user_token_at_all():
+    handler, seen = _pull_recorder()
+
+    pr = await _client(handler).open_pr(
+        head="topic/1", base="main", title="fix: x", body=""
+    )
+
+    assert pr["number"] == 42
+    assert seen == [("POST", "ghs_write")]
+
+
+# ---- unreachable GitHub ------------------------------------------------------
+
+
+def _unreachable(request: httpx.Request) -> httpx.Response:
+    """api.github.com resolved but the TLS handshake never completed — the
+    real 2026-08-17 failure, verbatim from the traceback."""
+    raise httpx.ConnectError("[Errno -3] Temporary failure in name resolution")
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda c: c.pr_view(7),
+        lambda c: c.check_runs("abc123"),
+        lambda c: c.merge_pr(7, title="t", message="m"),
+        lambda c: c.open_pr(head="topic/1", base="main", title="t", body=""),
+    ],
+)
+async def test_network_failure_surfaces_as_a_github_pr_error(call):
+    """Not reaching GitHub is the same thing to every caller as GitHub saying
+    no — both mean "I could not learn the PR's state". Leaking httpx's own
+    exception instead skipped every `except GitHubPRError` in the codebase and
+    became a 500 out of /pr-checks, which polls on a timer."""
+    with pytest.raises(GitHubPRError) as excinfo:
+        await call(_client(_unreachable))
+
+    assert "unreachable" in str(excinfo.value)
+    assert "ConnectError" in str(excinfo.value)

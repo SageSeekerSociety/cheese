@@ -1,33 +1,36 @@
-"""DeviceProvider: turn orchestration + hook→AgentEvent translation (injected hub)."""
+"""DeviceChannel: turn orchestration + hook→AgentEvent translation (injected hub)."""
 
 import asyncio
+import os
 import uuid
-from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
+from app.core.config import settings
 from app.domain.agent.device_hub import HubScreen
-from app.domain.agent.device_provider import DeviceProvider
-from app.domain.agent.hook_events import HookRouter
+from app.domain.agent.device_provider import DeviceChannel, tunnel_port_for_topic
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.service import AgentMessage, AgentResult, AgentSessionInfo
-from app.domain.device.repository import Device
-from app.domain.device.supply import Supply
+from app.domain.device.repository import TopicDevice
+from app.domain.device.supply import Visibility
 
 
 @pytest.fixture(autouse=True)
 def _no_device_identity(monkeypatch):
     """Default every test to a device that brings no ccproxy identity.
 
-    `_device_ccproxy_upstream` hits the database exactly like `_is_co_located`
-    does, and these tests run without one — but unlike `_is_co_located` it is
-    called on one specific branch, so leaving it unpatched fails only the six
-    subscription-path tests and looks like their bug. Tests about the
-    machine-ticket signal override this with a real value."""
+    `_device_ccproxy_upstream` hits the database, and these tests run without
+    one. Tests about the machine-ticket signal override this with a real value."""
 
     async def none(_self, _device_id):
         return ""
 
-    monkeypatch.setattr(DeviceProvider, "_device_ccproxy_upstream", none)
+    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", none)
 
 
 class FakeHub:
@@ -39,6 +42,8 @@ class FakeHub:
         self.prompts: list[list] = []
         self.reasserted: list[str] = []  # sids re-sent as adopt-creates
         self.execs: list[tuple[list, str | None]] = []  # (argv, stdin)
+        self.files: list[tuple[str, str, bytes]] = []  # (sid, path, bytes)
+        self.keys: list[tuple[str, bytes]] = []  # raw keystrokes into a screen
 
     def online_device_ids(self) -> list[str]:
         return ["dev1"]
@@ -84,21 +89,31 @@ class FakeHub:
     async def await_call(self, device_id, call_id, timeout=30):
         return {"ok": True}
 
+    async def put_file(self, device_id, sid, path, data, timeout=30):
+        self.files.append((sid, path, data))
+        return {"ok": True}
 
-def _provider(hub: FakeHub, router: HookRouter, agent_id: uuid.UUID) -> DeviceProvider:
+    async def viewer_input(self, device_id, sid, data: bytes) -> None:
+        self.keys.append((sid, data))
+
+
+def _provider(
+    hub: FakeHub, router: HookRouter, agent_id: uuid.UUID
+) -> ClaudeCodeRuntime:
+    """A device channel with the runtime that drives it — what the pool holds."""
+
     async def resolver(_project_id, _topic_id):
         return ("dev1", agent_id, "agent-x")
 
-    return DeviceProvider(
+    channel = DeviceChannel(
         hub=hub,  # type: ignore[arg-type]
         device_resolver=resolver,
-        router=router,
         public_base="http://test",
-        hard_ceiling_s=5,
     )
+    return ClaudeCodeRuntime(channel, router=router, hard_ceiling_s=5)
 
 
-async def _run(provider: DeviceProvider, **kw) -> list:
+async def _run(provider: ClaudeCodeRuntime, **kw) -> list:
     events: list = []
 
     async def consume():
@@ -140,6 +155,124 @@ async def test_turn_streams_hook_events_until_stop():
     assert isinstance(events[0], AgentSessionInfo)
     assert isinstance(events[1], AgentMessage) and events[1].text == "2"
     assert isinstance(events[2], AgentResult) and events[2].text == "2"
+
+
+async def test_every_device_image_is_staged_before_rendezvous_prompt(monkeypatch):
+    hub = FakeHub()
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.ws.read_file_bytes",
+        lambda project, path, topic_id=None: b"exact-image-bytes",
+    )
+
+    events, task = await _run(
+        provider,
+        project_id=project_id,
+        topic_id=topic_id,
+        prompt="[u] sent an image",
+        system_prompt="",
+        resume_session_id=None,
+        images=[{"path": "uploads/img-a.png", "media_type": "image/png"}],
+    )
+    await asyncio.sleep(0.05)
+
+    assert hub.files == [("s1", "uploads/img-a.png", b"exact-image-bytes")]
+    assert hub.prompts == [["[u] sent an image\n\n@uploads/img-a.png"]]
+    router.push(
+        str(topic_id), {"hook_event_name": "Stop", "last_assistant_message": "ok"}
+    )
+    await asyncio.wait_for(task, timeout=5)
+    assert events[-1].text == "ok"
+
+
+async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, _model, key):
+            if key == topic_id:
+                return SimpleNamespace(id=topic_id, project_id=project_id)
+            return None
+
+    class Service:
+        async def list_topic_bindings(self, device_id):
+            assert device_id == "dev1"
+            return [
+                TopicDevice(
+                    topic_id=topic_id,
+                    device_id=device_id,
+                    visibility=Visibility.host,
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.sql_device_service",
+        lambda _session: Service(),
+    )
+    router = HookRouter()
+    channel = DeviceChannel(
+        hub=FakeHub(),  # type: ignore[arg-type]
+        session_factory=Session,  # type: ignore[arg-type]
+    )
+    provider = ClaudeCodeRuntime(channel, router=router)
+
+    recovered = await provider.recover("dev1")
+
+    assert recovered == [SessionRef(project_id, topic_id)]
+    assert channel._subscription_devices[topic_id] == "dev1"
+    await provider.replay(recovered[0], known_texts=set())
+    router.push(str(topic_id), {"hook_event_name": "PostToolUse"})
+    await provider._subscriptions[topic_id].sink.queue.join()
+
+    await provider.drop_device_subscriptions("dev1")
+    assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
+
+
+async def test_a_reported_delivery_failure_is_resent_immediately():
+    """#445: the cheeselet's give-up (surfaced as a CheeseDeliveryFailed hook)
+    must trigger an immediate re-send of the prompt plus a visible message —
+    not leave the room waiting out the 300s no-output bound."""
+    hub = FakeHub()
+    router = HookRouter()
+    agent_id = uuid.uuid4()
+    provider = _provider(hub, router, agent_id)
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    events, task = await _run(
+        provider,
+        project_id=project_id,
+        topic_id=topic_id,
+        prompt="1+1?",
+        system_prompt="",
+        resume_session_id=None,
+    )
+    await asyncio.sleep(0.05)
+    assert hub.prompts == [["1+1?"]]
+
+    key = str(topic_id)
+    router.push(
+        key, {"hook_event_name": "CheeseDeliveryFailed", "phase": "paste", "ticks": 41}
+    )
+    await asyncio.sleep(0.05)
+    assert hub.prompts == [["1+1?"], ["1+1?"]], "the prompt was not re-sent"
+
+    router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "2"})
+    await asyncio.wait_for(task, timeout=5)
+
+    texts = [getattr(e, "text", "") for e in events]
+    assert any("重投" in t for t in texts), f"no visible re-send notice: {texts}"
+    assert not any(type(e).__name__ == "AgentDeliveryFailure" for e in events), (
+        "the internal delivery-failure event leaked to the chat layer"
+    )
 
 
 async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry():
@@ -249,6 +382,157 @@ async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
     assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
 
 
+class DeadTunnelHub(DeadClaudeHub):
+    """A device whose `claude` is ALIVE and whose machine-local tunnel helper is
+    GONE — the state a data-plane swap leaves behind. Answers the two probes
+    independently so the tunnel gate can be told apart from the liveness gate."""
+
+    def __init__(self, tunnel_verdict: str = "down", tunnel_exit: int = 0) -> None:
+        super().__init__()
+        self.tunnel_verdict = tunnel_verdict
+        self.tunnel_exit = tunnel_exit
+        self.probed_ports: list[str] = []
+
+    async def exec(
+        self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
+    ) -> dict:
+        self.execs.append((argv, stdin))
+        if env and "CHEESE_TUNNEL_PROBE_PORT" in env:
+            self.probed_ports.append(env["CHEESE_TUNNEL_PROBE_PORT"])
+            return {
+                "stdout": self.tunnel_verdict,
+                "stderr": "",
+                "exit": self.tunnel_exit,
+                "truncated": False,
+            }
+        if env and "CHEESE_ALIVE_TOPIC" in env:
+            return {"stdout": "alive", "stderr": "", "exit": 0, "truncated": False}
+        return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
+
+
+async def _two_turns(provider, router, project_id, topic_id):
+    router_key = str(topic_id)
+    for turn in range(2):
+        _events, task = await _run(
+            provider,
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt=f"turn {turn}",
+            system_prompt="",
+            resume_session_id=None,
+        )
+        await asyncio.sleep(0.05)
+        router.push(
+            router_key, {"hook_event_name": "Stop", "last_assistant_message": "ok"}
+        )
+        await asyncio.wait_for(task, timeout=5)
+
+
+async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatch):
+    """`claude` dials a machine-local tunnel helper it was handed at startup and
+    never re-reads. That helper is brought up ONLY by the launcher's prefix, and a
+    reused screen is reasserted (a cheeselet hot-reload) rather than relaunched —
+    so when the helper dies under a still-running `claude`, nothing on either side
+    restores it and every turn after that dies with ConnectionRefused while the
+    process-tree probe still answers `alive`.
+
+    Observed 2026-08-18: a standing data-plane swap left five screens in exactly
+    this state, one replaying the same 28-message batch for the 30th time. The
+    reuse gate must therefore retire such a screen so a FRESH launch runs the
+    prefix again — the same treatment a dead credential already gets."""
+    monkeypatch.setattr(
+        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
+    )
+    hub = DeadTunnelHub(tunnel_verdict="down")
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    await _two_turns(provider, router, project_id, topic_id)
+
+    assert hub.reasserted == []  # never reasserted onto the dead helper …
+    assert hub.closed == ["s1"]  # … the screen was retired …
+    assert [s.sid for s in hub.opened] == ["s2"]  # … and relaunched fresh
+    assert hub.prompts == [["turn 0"], ["turn 1"]]  # both turns still delivered
+    # The port probed is the topic's own, so concurrent topics on one machine are
+    # judged independently rather than sharing one verdict.
+    assert hub.probed_ports == [str(tunnel_port_for_topic(topic_id))]
+
+
+@pytest.mark.parametrize(
+    ("verdict", "exit_code"),
+    [("up", 0), ("unknown", 0), ("down", 1), ("", 0)],
+)
+async def test_only_an_explicit_down_retires_a_screen(monkeypatch, verdict, exit_code):
+    """The gate throws away a live screen and the work in flight behind it, so it
+    fires only on proof. A helper that is up, a box with no /proc or no awk
+    (`unknown`), a probe that failed to run (non-zero exit), and an empty answer
+    must all leave the screen alone — otherwise a hiccup on the probe path costs
+    a working agent its session."""
+    monkeypatch.setattr(
+        settings, "subscription_tunnel_url", "wss://gateway.example/llm/tunnel"
+    )
+    hub = DeadTunnelHub(tunnel_verdict=verdict, tunnel_exit=exit_code)
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    await _two_turns(provider, router, project_id, topic_id)
+
+    assert hub.closed == []  # the screen survived …
+    assert hub.reasserted == ["s1"]  # … and the second turn reused it
+
+
+async def test_no_tunnel_deployment_pays_nothing_for_the_gate(monkeypatch):
+    """Where no tunnel is configured the device dials the meter directly and there
+    is no helper to lose, so the gate must not cost an extra round trip to every
+    box on every turn."""
+    monkeypatch.setattr(settings, "subscription_tunnel_url", "")
+    hub = DeadTunnelHub(tunnel_verdict="down")
+    router = HookRouter()
+    provider = _provider(hub, router, uuid.uuid4())
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+
+    await _two_turns(provider, router, project_id, topic_id)
+
+    assert hub.probed_ports == []  # never asked
+    assert hub.closed == []  # and nothing retired on a verdict it never got
+
+
+def test_the_tunnel_probe_reads_a_real_listening_socket():
+    """The probe is a shell script parsing /proc/net/tcp, which is exactly the kind
+    of thing that passes review and is wrong on the box. Run it for real: against a
+    port this test is actually listening on it must say `up`, and against one
+    nothing holds it must say `down`. A port is used rather than the helper's pid
+    because ConnectionRefused — what `claude` reports — is precisely 'nothing is
+    listening', and a lingering helper that still holds the port is not this bug."""
+    import socket
+    import subprocess
+
+    if not os.access("/proc/net/tcp", os.R_OK):
+        pytest.skip("no readable /proc/net/tcp on this platform")
+
+    def verdict(port: int) -> str:
+        return subprocess.run(
+            ["sh", "-c", DEVICE_TUNNEL_PROBE],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "CHEESE_TUNNEL_PROBE_PORT": str(port)},
+            timeout=30,
+        ).stdout.strip()
+
+    with socket.socket() as live:
+        live.bind(("127.0.0.1", 0))
+        live.listen(1)
+        listening = live.getsockname()[1]
+        assert verdict(listening) == "up"
+
+    with socket.socket() as probe:  # bound, then released → nothing listening
+        probe.bind(("127.0.0.1", 0))
+        free = probe.getsockname()[1]
+    assert verdict(free) == "down"
+
+
 async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     """The frozen cli hands the screen command to `tmux new-session`, whose packed
     command tops out around 16KB — a launcher carrying the assembled system prompt
@@ -307,9 +591,11 @@ async def test_no_online_device_is_a_clean_error():
     async def resolver(_project_id, _topic_id):
         return None  # nothing online / bound
 
-    provider = DeviceProvider(
-        hub=hub,  # type: ignore[arg-type]
-        device_resolver=resolver,
+    provider = ClaudeCodeRuntime(
+        DeviceChannel(
+            hub=hub,  # type: ignore[arg-type]
+            device_resolver=resolver,
+        ),
         router=HookRouter(),
         hard_ceiling_s=5,
     )
@@ -327,42 +613,11 @@ async def test_no_online_device_is_a_clean_error():
     assert events[0].is_error
 
 
-def test_work_dir_colocated_translates_to_host_worktree(monkeypatch, tmp_path):
-    """A co-located device (device_shared_workspace_host_root set) gets the topic's
-    REAL worktree, its container path translated to the host root the device sees —
-    not an empty scratch dir."""
-    from app.core.config import settings
-    from app.domain.agent import device_provider as dp
-
+def test_every_device_work_dir_is_a_topic_scratch_dir():
     pid = uuid.uuid4()
     tid = uuid.uuid4()
-    container_root = tmp_path / "app" / ".workspaces"
-    wt = container_root / ".worktrees" / str(pid) / "topic-abc"
-    wt.mkdir(parents=True)
-
-    monkeypatch.setattr(settings, "workspace_root", str(container_root))
-    monkeypatch.setattr(
-        settings, "device_shared_workspace_host_root", "/home/dev/cheese-workspaces"
-    )
-    monkeypatch.setattr(dp.ws, "topic_worktree", lambda p, t: wt)
-
-    prov = DeviceProvider(hub=FakeHub())
-    got = prov._work_dir(pid, tid, co_located=True)
-    assert got == f"/home/dev/cheese-workspaces/.worktrees/{pid}/topic-abc"
-
-
-def test_work_dir_remote_uses_scratch(monkeypatch):
-    """With no shared host root (remote device), the work dir stays a per-topic
-    scratch the launcher creates — the co-located path is opt-in."""
-    from app.core.config import settings
-
-    pid = uuid.uuid4()
-    tid = uuid.uuid4()
-    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
-    prov = DeviceProvider(hub=FakeHub())
-    assert (
-        prov._work_dir(pid, tid, co_located=True) == f"$HOME/.cheese/work/{pid}/{tid}"
-    )
+    prov = DeviceChannel(hub=FakeHub())
+    assert prov._work_dir(pid, tid) == f"$HOME/.cheese/work/{pid}/{tid}"
 
 
 @pytest.mark.anyio
@@ -402,122 +657,10 @@ async def test_concurrent_topics_never_share_a_device_home():
     assert homes[0] != homes[1]
 
 
-@pytest.mark.anyio
-async def test_a_provisioned_machine_is_never_treated_as_co_located(monkeypatch):
-    """A MicroCloud machine is on its own host, whatever the deployment says.
-
-    Getting this wrong is silent, not loud: the launcher `mkdir -p`s whatever
-    path it is handed, so a turn would open in an EMPTY directory instead of the
-    topic's worktree — the agent would find no code and no one would see an error.
-    """
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
-        "/home/box/cheese-workspaces",
-    )
-
-    # Reads `device.supply` (#282 决定 2). This used to fake
-    # `ProjectMachineRepository.is_provisioned_device` — 「machine 表里有没有一行
-    # 指向这个 device」— which is precisely the reverse lookup #282 replaced.
-    def _device(device_id: str, supply: Supply) -> Device:
-        return Device(
-            device_id=device_id,
-            name=device_id,
-            token="t",
-            owner_user_id=1,
-            created_at=datetime(2026, 8, 12, tzinfo=UTC),
-            supply=supply,
-        )
-
-    known = {
-        "microcloud-machine": _device("microcloud-machine", Supply.cloud),
-        "the-box-itself": _device("the-box-itself", Supply.self_hosted),
-    }
-
-    class Service:
-        def __init__(self, session):
-            self._session = session
-
-        async def get_device(self, device_id):
-            return known.get(device_id)
-
-    class Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-    # Goes through `device.wiring` — the sanctioned seam. Reaching into
-    # `device.sql_repository` from the agent domain is what
-    # tests/unit/test_domain_import_guard.py exists to stop.
-    monkeypatch.setattr("app.domain.agent.device_provider.sql_device_service", Service)
-    provider = DeviceProvider(session_factory=Session)
-
-    assert await provider._is_co_located("microcloud-machine") is False
-    assert await provider._is_co_located("the-box-itself") is True
-    # A device nobody has a row for keeps the old reading rather than silently
-    # flipping: the deployments that set a shared root are single-box ones.
-    assert await provider._is_co_located("never-seen") is True
-
-
-@pytest.mark.anyio
-async def test_co_location_is_off_when_the_deployment_shares_nothing(monkeypatch):
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
-        "",
-    )
-    provider = DeviceProvider()
-    assert await provider._is_co_located("anything") is False
-
-
-def test_a_remote_device_gets_a_scratch_dir_not_the_boxs_path(monkeypatch):
-
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
-        "/home/box/cheese-workspaces",
-    )
-    provider = DeviceProvider()
-    project, topic = uuid.uuid4(), uuid.uuid4()
-
-    remote = provider._work_dir(project, topic, co_located=False)
-    assert remote.startswith("$HOME/.cheese/work/")
-    assert "/home/box/" not in remote
-
-
-@pytest.mark.anyio
-async def test_checkpoint_does_not_snapshot_for_a_remote_machine(monkeypatch):
-    """The snapshot decision must follow the DEVICE, not the deployment switch.
-
-    On a box that also hosts local containers the switch is on, so a remote
-    machine's turn used to snapshot the backend's untouched worktree — recording
-    an empty commit as if it were the agent's work, while the real edits sat on
-    the machine. Silent and wrong in the direction that loses work.
-    """
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.settings.device_shared_workspace_host_root",
-        "/home/box/cheese-workspaces",
-    )
-    snapshots: list[tuple] = []
-    monkeypatch.setattr(
-        "app.domain.agent.device_provider.ws.snapshot_worktree",
-        lambda p, t: snapshots.append((p, t)),
-    )
-    provider = DeviceProvider(hub=FakeHub())
-    project, topic = uuid.uuid4(), uuid.uuid4()
-
-    provider._co_located_at[(project, topic)] = False
-    provider.checkpoint(project, topic)
-    assert snapshots == []
-
-    provider._co_located_at[(project, topic)] = True
-    provider.checkpoint(project, topic)
-    assert snapshots == [(project, topic)]
-
-
-def test_only_a_machine_that_owns_its_tree_gets_the_push_hook():
-    """cheese-sync hands work back over git; the local container edits the real
-    worktree and must not also try to push it."""
-    from app.domain.agent.hooks_substrate import hooks_settings
+def test_device_hook_set_pushes_while_local_container_hook_set_does_not():
+    """Every device owns a clone and pushes; the local container edits the
+    backend worktree and must not also try to push it."""
+    from app.domain.agent.harness.claude_code.session_launch import hooks_settings
 
     def stop_commands(settings_obj) -> list[str]:
         return [
@@ -534,11 +677,82 @@ def test_only_a_machine_that_owns_its_tree_gets_the_push_hook():
 
 
 @pytest.mark.anyio
-async def test_a_remote_machine_is_told_where_to_clone_from(monkeypatch):
+async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
+    """Each URL handed to a device must be `{public_base}/<a real backend path>`.
+
+    That is the contract `settings.connector_public_base` states — the base maps
+    1:1 onto the backend ROOT — and it is a contract precisely because nothing
+    downstream reports a violation: an extra path segment makes the CLI 404 with
+    「话题不存在」 and makes a hook POST land on the SPA, which answers 200 and
+    drops the event. Both look like the agent doing nothing.
+
+    It broke exactly that way. These URLs used to be built with an extra `/api`
+    because the 2.0 routes carried one; #370 step 2 made every route bare and
+    the extra segment turned `<origin>/api` into `<origin>/api/api`. So the
+    assertion is not "the string looks right" — it asks the live router whether
+    the remainder is a path this app actually serves.
+    """
+    from starlette.routing import Match
+
+    from app.main import app
+
+    def served(path: str) -> bool:
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "root_path": "",
+            "headers": [],
+        }
+        # PARTIAL = right path, wrong method — the path exists, which is the
+        # only thing under test here.
+        return any(r.matches(scope)[0] is not Match.NONE for r in app.routes)
+
+    class RecordingHub(FakeHub):
+        def __init__(self) -> None:
+            super().__init__()
+            self.env: dict = {}
+
+        async def open_screen(self, device_id, command, source, **kw):
+            self.env = kw.get("env") or {}
+            return await super().open_screen(device_id, command, source, **kw)
+
+    # The production shape: behind the gateway the base carries the `/api` mount.
+    base = "http://cheese.test/api"
+    hub = RecordingHub()
+    provider = DeviceChannel(hub=hub, public_base=base)
+    await provider._ensure_screen(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=uuid.uuid4(),
+        topic_id=uuid.uuid4(),
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt=""),
+    )
+
+    for key in ("CHEESE_API", "CHEESE_HOOK_URL", "CHEESE_GIT_REMOTE"):
+        url = hub.env[key]
+        assert url.startswith(base), f"{key}={url} does not extend {base}"
+        remainder = url[len(base) :]
+        if not remainder:  # CHEESE_API is the base itself
+            continue
+        # The git remote is a PREFIX — git appends the dumb/smart-HTTP paths
+        # itself — so ask about the one it fetches first.
+        if key == "CHEESE_GIT_REMOTE":
+            remainder += "/info/refs"
+        assert served(remainder), (
+            f"{key}={url} leaves {remainder!r}, which this app does not serve"
+        )
+
+
+@pytest.mark.anyio
+async def test_every_device_is_told_where_to_clone_from():
     """The launcher's clone/push block is inert without these two env vars, so the
     wiring is the thing that has to be tested — the block itself can be perfect
     and the machine still starts in an empty dir."""
-    from app.domain.workspace.service import branch_for_topic
+    from app.domain.workspace.service import branch_for_place
 
     class RecordingHub(FakeHub):
         def __init__(self) -> None:
@@ -550,37 +764,21 @@ async def test_a_remote_machine_is_told_where_to_clone_from(monkeypatch):
             return await super().open_screen(device_id, command, source, **kw)
 
     project, topic = uuid.uuid4(), uuid.uuid4()
-
-    async def ensure(co_located: bool) -> dict:
-        hub = RecordingHub()
-        provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
-        monkeypatch.setattr(
-            provider, "_is_co_located", lambda _d: _async_value(co_located)
-        )
-        await provider._ensure_screen(
-            device_id="dev1",
-            agent_user_id=1,
-            agent_handle="cheese",
-            project_id=project,
-            topic_id=topic,
-            token="tok",
-            model=None,
-            env=None,
-        )
-        return hub.env
-
-    remote = await ensure(False)
-    assert remote["CHEESE_GIT_REMOTE"] == (
-        f"http://cheese.test/api/projects/{project}/git"
+    hub = RecordingHub()
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
+    await provider._ensure_screen(
+        device_id="dev1",
+        agent_user_id=1,
+        agent_handle="cheese",
+        project_id=project,
+        topic_id=topic,
+        token="tok",
+        env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
-    assert remote["CHEESE_GIT_BRANCH"] == branch_for_topic(topic)
 
-    # A co-located device edits the real worktree; cloning over it would be wrong.
-    assert "CHEESE_GIT_REMOTE" not in await ensure(True)
-
-
-async def _async_value(value):
-    return value
+    assert hub.env["CHEESE_GIT_REMOTE"] == f"http://cheese.test/projects/{project}/git"
+    assert hub.env["CHEESE_GIT_BRANCH"] == branch_for_place(topic)
 
 
 # --- release_topic: freeing a done topic's screen (the leak this fixes) --------
@@ -625,13 +823,12 @@ def _screen(device_id: str, sid: str, project_id, topic_id) -> HubScreen:
 
 
 @pytest.mark.anyio
-async def test_release_topic_closes_the_exact_screen(monkeypatch):
+async def test_release_topic_closes_the_exact_screen():
     """Archiving a topic that ran on a device must close THAT topic's screen on the
     device it pinned to — the reverse lookup lands on the right (device_id, sid)."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({tid: [_screen("dev1", "s7", pid, tid)]})
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -639,17 +836,12 @@ async def test_release_topic_closes_the_exact_screen(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_release_topic_removes_only_a_remote_devices_work_dir(monkeypatch):
-    """A REMOTE device owns its own clone under a per-topic scratch dir, so releasing
-    the topic removes that dir too — and the delete target is that scratch path,
-    never anything above it."""
-    from app.core.config import settings
-
+async def test_release_topic_removes_the_devices_work_dir():
+    """A device owns its clone under a per-topic scratch dir, so releasing the
+    topic removes that dir too, never anything above it."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({tid: [_screen("dev1", "s1", pid, tid)]})
-    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -664,29 +856,13 @@ async def test_release_topic_removes_only_a_remote_devices_work_dir(monkeypatch)
 
 
 @pytest.mark.anyio
-async def test_release_topic_never_touches_a_co_located_tree(monkeypatch):
-    """A CO-LOCATED device edited the backend's REAL worktree, so releasing the
-    topic closes its screen but must NEVER delete a work dir — deleting the shared
-    tree would destroy the topic's branch."""
-    pid, tid = uuid.uuid4(), uuid.uuid4()
-    hub = ReleaseHub({tid: [_screen("dev1", "s1", pid, tid)]})
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(True))
-
-    await provider.release_topic(pid, tid)
-
-    assert hub.closed == [("dev1", "s1")]
-    assert hub.execs == []  # the backend's real worktree is never rm'd
-
-
-@pytest.mark.anyio
 async def test_release_topic_is_a_silent_noop_without_a_screen():
     """The machine may be offline (its screen already gone) or the topic may never
     have run on a device — either way release is a successful no-op, never raising
     (a reap loop must not break on one topic)."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({})  # nothing registered for this topic
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -694,15 +870,14 @@ async def test_release_topic_is_a_silent_noop_without_a_screen():
 
 
 @pytest.mark.anyio
-async def test_release_topic_forgets_an_offline_screen_without_a_remote_rm(monkeypatch):
+async def test_release_topic_forgets_an_offline_screen_without_rm():
     """An offline device is unreachable — its work dir can't be removed now — but its
     screen is still forgotten here, so an archived topic leaves no stale registry
     entry to re-surface if the machine reconnects."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({tid: [_screen("devX", "s1", pid, tid)]})
     hub.online = set()  # device offline
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)
 
@@ -711,7 +886,7 @@ async def test_release_topic_forgets_an_offline_screen_without_a_remote_rm(monke
 
 
 @pytest.mark.anyio
-async def test_release_topic_swallows_a_teardown_error(monkeypatch):
+async def test_release_topic_swallows_a_teardown_error():
     """A dropped device channel mid-teardown must not propagate — the idle reaper
     walks many topics and one failure can't be allowed to abort the rest."""
     pid, tid = uuid.uuid4(), uuid.uuid4()
@@ -721,32 +896,27 @@ async def test_release_topic_swallows_a_teardown_error(monkeypatch):
             raise RuntimeError("device channel dropped")
 
     hub = Boom({tid: [_screen("dev1", "s1", pid, tid)]})
-    provider = DeviceProvider(hub=hub)  # type: ignore[arg-type]
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    provider = DeviceChannel(hub=hub)  # type: ignore[arg-type]
 
     await provider.release_topic(pid, tid)  # must not raise
 
 
 @pytest.mark.anyio
-async def test_release_topic_screen_wrapper_drives_the_given_hub(monkeypatch):
+async def test_release_topic_screen_wrapper_drives_the_given_hub():
     """The module-level wrapper (what the accept path and reaper call) frees the
-    topic through DeviceProvider against the hub it is handed."""
-    from app.core.config import settings
+    topic through DeviceChannel against the hub it is handed."""
     from app.domain.agent.device_provider import release_topic_screen
 
     pid, tid = uuid.uuid4(), uuid.uuid4()
     hub = ReleaseHub({tid: [_screen("dev1", "s1", pid, tid)]})
-    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")  # remote
 
     await release_topic_screen(pid, tid, hub=hub)  # type: ignore[arg-type]
 
     assert hub.closed == [("dev1", "s1")]
-    assert len(hub.execs) == 1  # remote → its scratch dir removed
+    assert len(hub.execs) == 1  # its scratch dir was removed
 
 
-def test_a_remote_device_is_warned_about_a_box_local_model_endpoint(
-    monkeypatch, caplog
-):
+def test_a_device_is_warned_about_a_box_local_model_endpoint(monkeypatch, caplog):
     """Routing the box's turns through the local gateway is what makes spend
     visible — but the same URL means nothing on a machine elsewhere, and the
     failure there is a connection error with no hint why."""
@@ -797,8 +967,7 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
             return await super().open_screen(device_id, command, source, **kw)
 
     hub = RecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
 
     await provider._ensure_screen(
         device_id="dev1",
@@ -807,8 +976,8 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="scoped-token-for-this-topic",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
 
     blob = repr(hub.env)
@@ -855,11 +1024,10 @@ def _subscription_settings(monkeypatch, tmp_path) -> str:
 
 
 async def _subscription_screen(
-    monkeypatch, co_located: bool, env: dict | None = None
+    env: dict | None = None,
 ) -> tuple[SubRecordingHub, uuid.UUID, uuid.UUID]:
     hub = SubRecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(co_located))
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     project, topic = uuid.uuid4(), uuid.uuid4()
     await provider._ensure_screen(
         device_id="dev1",
@@ -868,8 +1036,8 @@ async def _subscription_screen(
         project_id=project,
         topic_id=topic,
         token="hook-token",
-        model=None,
         env=env,
+        launch=ClaudeLaunch(system_prompt=""),
     )
     return hub, project, topic
 
@@ -883,7 +1051,7 @@ async def test_subscription_screen_env_has_no_gateway_and_no_real_credential(
 
     monkeypatch.setattr(settings, "anthropic_auth_token", "UPSTREAM-PROVIDER-KEY")
     _subscription_settings(monkeypatch, tmp_path)
-    hub, project, topic = await _subscription_screen(monkeypatch, co_located=False)
+    hub, project, topic = await _subscription_screen()
 
     env = hub.env
     # No BASE_URL (it flips the CLI into API-key mode), no gateway key, no
@@ -907,7 +1075,7 @@ async def test_subscription_screen_reaches_the_meter_by_connect_proxy(
     the meter's CONNECT listener, with the scoped token as the proxy password —
     and NO_PROXY keeps the platform's own wiring (hooks, git, CLI) out of it."""
     _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=False)
+    hub, _project, _topic = await _subscription_screen()
 
     env = hub.env
     token = env["CLAUDE_CODE_OAUTH_TOKEN"]
@@ -925,7 +1093,7 @@ async def test_subscription_ca_travels_in_the_launcher_not_as_a_host_path(
     shipped launch script, which writes them under the screen's isolated home
     and exports NODE_EXTRA_CA_CERTS itself."""
     ca = _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=False)
+    hub, _project, _topic = await _subscription_screen()
 
     script = next(s for _a, s in hub.execs if s and "CHEESECA" in s)
     assert "METERCA" in script and ca.strip() in script
@@ -945,10 +1113,10 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
     import time
 
     from app.core.sandbox_auth import scoped_token_claims
-    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=False)
+    hub, _project, _topic = await _subscription_screen()
 
     env = hub.env
     # The Bearer and the CONNECT credential are one and the same token …
@@ -964,36 +1132,6 @@ async def test_subscription_proxy_token_lives_for_the_session_not_one_hour(
 
 
 @pytest.mark.anyio
-async def test_subscription_env_is_identical_for_co_located_and_remote(
-    monkeypatch, tmp_path
-):
-    """#325 G2: co-located and remote are one path. The machine never holds a
-    credential either way, so nothing about the supply may differ — only the
-    worktree wiring (clone vs shared tree) does."""
-    _subscription_settings(monkeypatch, tmp_path)
-    co_hub, _p1, _t1 = await _subscription_screen(monkeypatch, co_located=True)
-    re_hub, _p2, _t2 = await _subscription_screen(monkeypatch, co_located=False)
-
-    supply_keys = {
-        "ANTHROPIC_AUTH_TOKEN",
-        "NODE_EXTRA_CA_CERTS",
-        "HTTPS_PROXY",
-        "NO_PROXY",
-        "no_proxy",
-    }
-    for key in supply_keys:
-        co, remote = co_hub.env[key], re_hub.env[key]
-        if key == "HTTPS_PROXY":
-            # Same shape; only the embedded per-session token differs.
-            co = co.split("@")[-1]
-            remote = remote.split("@")[-1]
-        assert co == remote, key
-    for env in (co_hub.env, re_hub.env):
-        assert "ANTHROPIC_BASE_URL" not in env
-        assert env["CLAUDE_CODE_OAUTH_TOKEN"]
-
-
-@pytest.mark.anyio
 async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     monkeypatch, tmp_path
 ):
@@ -1002,8 +1140,6 @@ async def test_subscription_drops_gateway_pins_a_caller_env_carries(
     does not serve — dropped, not overridden (mirrors the tmux provider)."""
     _subscription_settings(monkeypatch, tmp_path)
     hub, _p, _t = await _subscription_screen(
-        monkeypatch,
-        co_located=False,
         env={
             "ANTHROPIC_BASE_URL": "http://cheese.test/llm",
             "CLAUDE_MODEL": "deepseek-chat",
@@ -1025,13 +1161,13 @@ async def test_subscription_without_a_readable_ca_fails_loud_not_into_the_gatewa
     """Falling back to the gateway would silently swap the model — the failure
     #325 G2 exists to kill. A half-configured deployment must say what to fix."""
     from app.core.config import settings
-    from app.domain.agent.hooks_substrate import ScreenSetupError
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 
     _subscription_settings(monkeypatch, tmp_path)
     monkeypatch.setattr(settings, "subscription_ca_backend_path", "")
 
     with pytest.raises(ScreenSetupError, match="SUBSCRIPTION_CA_BACKEND_PATH"):
-        await _subscription_screen(monkeypatch, co_located=True)
+        await _subscription_screen()
 
 
 @pytest.mark.anyio
@@ -1045,8 +1181,7 @@ async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
     monkeypatch.setattr(settings, "subscription_enabled", False)
     monkeypatch.setattr(settings, "agent_model", "glm-4.7")
     hub = SubRecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
-    monkeypatch.setattr(provider, "_is_co_located", lambda _d: _async_value(False))
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     await provider._ensure_screen(
         device_id="dev1",
         agent_user_id=1,
@@ -1054,8 +1189,8 @@ async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="scoped-tok",
-        model=None,
         env=None,
+        launch=ClaudeLaunch(system_prompt=""),
     )
     assert hub.env["ANTHROPIC_BASE_URL"] == "http://cheese.test/llm"
     assert hub.env["ANTHROPIC_AUTH_TOKEN"] == "scoped-tok"
@@ -1063,7 +1198,7 @@ async def test_gateway_route_is_unchanged_when_no_subscription_is_deployed(
     assert "HTTPS_PROXY" not in hub.env
 
 
-def test_a_remote_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
+def test_a_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
     """The subscription's analogue of the box-local gateway URL: HTTPS_PROXY at
     the docker bridge names nothing on a machine elsewhere."""
     import logging
@@ -1084,9 +1219,20 @@ def test_a_remote_device_is_warned_about_a_box_local_proxy(monkeypatch, caplog):
         )
     assert not caplog.records, "a reachable proxy must not be flagged"
 
+    caplog.clear()
+    with caplog.at_level(logging.ERROR, logger="app.domain.agent.device_provider"):
+        _warn_if_model_endpoint_is_box_local(
+            {
+                "HTTPS_PROXY": "http://127.0.0.1:8445",
+                "CHEESE_TUNNEL_URL": "wss://gateway.example/llm/tunnel",
+            },
+            "machine-1",
+        )
+    assert not caplog.records, "the device-local tunnel helper must not be flagged"
+
 
 # --- turn 活跃度检测 (the device half): two-layer timeout + liveness probe -------
-# The shared two-layer loop (`run_hooks_turn` idle-suspect / hard-ceiling +
+# The shared two-layer loop (`monitor_session_activity` idle-suspect / hard-ceiling +
 # `confirm_alive`) is exercised in test_hooks_substrate.py; these cover what is
 # device-SPECIFIC: the two layers are no longer collapsed into one deadline, the
 # device's own `_confirm_alive` maps a process-tree probe to a liveness verdict,
@@ -1112,17 +1258,25 @@ class ProbingHub(FakeHub):
         return {"exit": 0, "stdout": self.verdict, "stderr": "", "truncated": False}
 
 
-def test_device_splits_the_two_timeout_layers_instead_of_collapsing_them():
+def test_the_deployed_backends_split_the_two_timeout_layers():
     """The bug: one 900s value fed BOTH layers, so the only thing that ever fired
     was 'kill unconditionally at 900s' — a long-but-silent foreground command (a
-    20-minute pytest emits no interim hook) died at minute 15. The layers must now
-    be distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
-    the value TurnRunner reschedules its outer wall-clock wrap to."""
-    prov = DeviceProvider(hub=FakeHub())
-    assert prov._idle_suspect_s == 300.0
-    assert prov._hard_ceiling_s == 10800.0
-    assert prov._idle_suspect_s != prov._hard_ceiling_s
-    assert prov.hard_ceiling_s == 10800.0  # what the outer wrap is told
+    20-minute pytest emits no interim hook) died at minute 15. The layers must be
+    distinct, idle-suspect well below the hard ceiling, and the hard ceiling is
+    the value AgentWorkRunner reschedules its outer wall-clock wrap to.
+
+    Asked of the pool the deployment actually builds, because that is where the
+    policy is decided — and every backend in it must get the SAME pair, which is
+    the other half of this bug (one transport drifting from another)."""
+    from app.domain.agent.compute import build_compute_pool
+
+    pool = build_compute_pool()
+    for name in ("device", "tmux-hooks"):
+        backend = pool.select(provider_id=name)
+        assert backend._idle_suspect_s == 300.0
+        assert backend._hard_ceiling_s == 10800.0
+        assert backend._idle_suspect_s != backend._hard_ceiling_s
+        assert backend.hard_ceiling_s == 10800.0  # what the outer wrap is told
 
 
 async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
@@ -1130,8 +1284,7 @@ async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
     still carries THIS topic. ONLY an explicit `dead` ends the turn; alive, unknown,
     a non-zero exit, or an exec that raised are all read as alive, so a link hiccup
     never false-kills a turn that is really still working. The probe is per-topic
-    and targets the screen's own device — the SAME path for a co-located device and
-    a remote one (it never branches on co-location)."""
+    and targets the screen's own device."""
     topic = uuid.uuid4()
     screen = HubScreen(
         sid="s1",
@@ -1157,8 +1310,8 @@ async def test_confirm_alive_maps_the_probe_result_to_a_liveness_verdict():
 
     async def confirm(result=None, boom=False):
         hub = Hub(result=result, boom=boom)
-        prov = DeviceProvider(hub=hub)  # type: ignore[arg-type]
-        return await prov._confirm_alive(screen), hub
+        prov = DeviceChannel(hub=hub)  # type: ignore[arg-type]
+        return await prov.confirm_alive(screen), hub
 
     alive, hub = await confirm({"exit": 0, "stdout": "alive\n"})
     assert alive is True
@@ -1185,11 +1338,13 @@ async def test_a_silent_but_alive_turn_survives_idle_suspect_and_ends_on_stop():
     async def resolver(_p, _t):
         return ("dev1", 1, "agent-x")
 
-    provider = DeviceProvider(
-        hub=hub,  # type: ignore[arg-type]
-        device_resolver=resolver,
+    provider = ClaudeCodeRuntime(
+        DeviceChannel(
+            hub=hub,  # type: ignore[arg-type]
+            device_resolver=resolver,
+            public_base="http://test",
+        ),
         router=router,
-        public_base="http://test",
         idle_suspect_s=0.05,
         hard_ceiling_s=5,
     )
@@ -1233,11 +1388,13 @@ async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
     async def resolver(_p, _t):
         return ("dev1", 1, "agent-x")
 
-    provider = DeviceProvider(
-        hub=hub,  # type: ignore[arg-type]
-        device_resolver=resolver,
+    provider = ClaudeCodeRuntime(
+        DeviceChannel(
+            hub=hub,  # type: ignore[arg-type]
+            device_resolver=resolver,
+            public_base="http://test",
+        ),
         router=router,
-        public_base="http://test",
         idle_suspect_s=0.05,
         hard_ceiling_s=100,  # would time the test out if idle-suspect didn't fire
     )
@@ -1254,7 +1411,7 @@ async def test_a_dead_screen_is_caught_by_the_probe_before_the_hard_ceiling():
     await asyncio.wait_for(task, timeout=3)  # ends via the probe, NOT the 100s ceiling
 
     assert isinstance(events[-1], AgentResult) and events[-1].is_error
-    assert events[-1].text == provider._timeout_message
+    assert events[-1].text == provider.channel.timeout_message
     assert hub.probe_calls >= 1
 
 
@@ -1271,7 +1428,7 @@ async def test_each_launch_ships_a_fresh_now_based_token_expiry():
     out than a session, never a reused past expiry."""
     import time
 
-    from app.domain.agent.hooks_substrate import SESSION_TOKEN_TTL_S
+    from app.domain.agent.harness.claude_code.hooks_substrate import SESSION_TOKEN_TTL_S
 
     hub = FakeHub()
     router = HookRouter()
@@ -1364,9 +1521,8 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "subscription_enabled", False)
-    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
     hub = ReuseGateHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
 
     async def ensure() -> HubScreen:
@@ -1377,8 +1533,8 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
             project_id=pid,
             topic_id=tid,
             token="tok",
-            model=None,
             env=None,
+            launch=ClaudeLaunch(system_prompt=""),
         )
 
     first = await ensure()
@@ -1405,9 +1561,8 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "subscription_enabled", False)
-    monkeypatch.setattr(settings, "device_shared_workspace_host_root", "")
     hub = ReuseGateHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
     pid, tid = uuid.uuid4(), uuid.uuid4()
 
     async def ensure() -> HubScreen:
@@ -1418,8 +1573,8 @@ async def test_a_reused_screen_with_a_live_credential_is_adopted(monkeypatch):
             project_id=pid,
             topic_id=tid,
             token="tok",
-            model=None,
             env=None,
+            launch=ClaudeLaunch(system_prompt=""),
         )
 
     first = await ensure()
@@ -1485,8 +1640,8 @@ def test_topic_credential_expiry_reads_the_live_screens_stamp():
 async def test_a_device_with_its_own_identity_gets_the_machine_ticket_signal(
     monkeypatch, tmp_path
 ):
-    """The dev box's shape: co-located, no tunnel, but it brings a ccproxy
-    identity on its device row. The launcher must be told to hand claude the
+    """A device can run without a tunnel while bringing a ccproxy identity on its
+    device row. The launcher must be told to hand claude the
     DEVICE's ticket (CHEESE_MACHINE_TICKET) — without the signal the reconcile
     injects our scoped token and every turn dies upstream as
     `401 Invalid bearer token` (measured on the box, 2026-08-15)."""
@@ -1495,8 +1650,8 @@ async def test_a_device_with_its_own_identity_gets_the_machine_ticket_signal(
     async def own_identity(_self, _device_id):
         return "m161:pw161"
 
-    monkeypatch.setattr(DeviceProvider, "_device_ccproxy_upstream", own_identity)
-    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=True)
+    monkeypatch.setattr(DeviceChannel, "_device_ccproxy_upstream", own_identity)
+    hub, _project, _topic = await _subscription_screen()
 
     assert hub.env["CHEESE_MACHINE_TICKET"] == "1"
     # The identity itself must NOT travel: the machine authenticates the meter
@@ -1510,6 +1665,58 @@ async def test_a_device_without_identity_keeps_the_swap_path(monkeypatch, tmp_pa
     which the meter swaps for the platform credential — today's behaviour for
     every laptop-class device."""
     _subscription_settings(monkeypatch, tmp_path)
-    hub, _project, _topic = await _subscription_screen(monkeypatch, co_located=True)
+    hub, _project, _topic = await _subscription_screen()
 
     assert "CHEESE_MACHINE_TICKET" not in hub.env
+
+
+def test_tunnel_port_is_per_topic_and_stable():
+    """#425: one fixed helper port made two concurrent topics on one remote
+    machine race for the same bind. The port must differ across topics and be
+    stable for one topic (claude bakes its HTTPS_PROXY at launch, #385, so a
+    reused screen must re-derive the same value)."""
+    from app.domain.agent.device_provider import (
+        connect_transport,
+        tunnel_port_for_topic,
+    )
+
+    # FIXED ids, not uuid4(): the port space is 2000 wide (base + sha1 % 2000),
+    # so two random topics collide on ~1 run in 2000 and the assertion below has
+    # no way to tell that apart from the bug it guards. It flaked exactly that
+    # way on CI (both drew 10339). These two are checked to land apart.
+    a = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    b = uuid.UUID("22222222-2222-4222-8222-222222222222")
+    pa, pb = tunnel_port_for_topic(a), tunnel_port_for_topic(b)
+    assert pa == tunnel_port_for_topic(a), "not stable for the same topic"
+    assert pa != pb, "distinct topics must not share a port"
+    url = connect_transport(session_token="t", via_tunnel=True, tunnel_port=pa)
+    assert url == f"http://127.0.0.1:{pa}"
+
+
+# --- interrupt: take the work away without saying anything -------------------
+
+
+@pytest.mark.anyio
+async def test_interrupt_presses_escape_rather_than_saying_something():
+    """Escape goes down the channel that carries a watching person's keystrokes
+    — NOT the rendezvous socket, which enqueues a message. A message is what
+    `send` is for; this is the platform taking the work away with nothing to
+    say about it, and the session survives it."""
+    hub = FakeHub()
+    provider = _provider(hub, HookRouter(), uuid.uuid4())
+    session = SessionRef(uuid.uuid4(), uuid.uuid4())
+    screen = await hub.open_screen(
+        "dev1",
+        "claude",
+        "src",
+        agent_user_id=uuid.uuid4(),
+        agent_handle="agent-x",
+        project_id=session.project_id,
+        topic_id=session.topic_id,
+    )
+    provider._live[session.topic_id] = screen
+
+    assert await provider.interrupt(session) is True
+
+    assert hub.keys == [(screen.sid, b"\x1b")]
+    assert hub.prompts == []  # nothing was said

@@ -8,11 +8,18 @@ answering, a machine that vanished, and the cross-project addressing guard.
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.errors import ForbiddenError, NotFoundError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.domain.device.supply import Supply
+from app.domain.identity.actor import Actor
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import AiStatus, MachineStatus
 from app.domain.machine.services import MachineService, customer_ref, derive_hostname
@@ -121,12 +128,33 @@ class FakeRepo:
 
     async def add(self, **kwargs):
         kwargs.setdefault("last_seen_at", None)
+        kwargs.setdefault("released_at", None)
         row = SimpleNamespace(id=uuid.uuid4(), device_id=None, **kwargs)
         self.rows.append(row)
         return row
 
     async def get(self, row_id):
         return next((r for r in self.rows if r.id == row_id), None)
+
+    async def lock_topic(self, _topic_id):
+        return None
+
+    async def lock_provisioning(self, _project_id, _topic_id):
+        return None
+
+    async def get_active_for_topic(self, topic_id):
+        return next(
+            (
+                row
+                for row in self.rows
+                if row.topic_id == topic_id and row.released_at is None
+            ),
+            None,
+        )
+
+    async def mark_released(self, machine, *, when):
+        machine.released_at = when
+        return machine
 
     async def list_for_project(self, project_id):
         return [r for r in self.rows if r.project_id == project_id]
@@ -169,6 +197,9 @@ class FakeDevices:
 
     async def get_device(self, device_id):
         return self.devices.get(device_id)
+
+    async def topic_binding(self, _topic_id):
+        return None
 
     async def delete_owned(self, device_id, *, actor_user_id):
         device = self.devices[device_id]
@@ -232,6 +263,150 @@ async def test_provision_bills_the_project_not_the_person():
 
     assert customer_ref(project_id) in client.customers
     assert client.topups, "a fresh account must be funded before it is charged"
+
+
+async def test_topic_release_deletes_once_and_stamps_the_lease():
+    client = FakeMicroCloud()
+    service = build_service(client)
+    topic_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=uuid.uuid4(), topic_id=topic_id, requested_by="owner"
+    )
+
+    released = await service.release_topic_machine(topic_id)
+    repeated = await service.release_topic_machine(topic_id)
+
+    assert client.deleted == [machine.machine_id]
+    assert released is machine and released.released_at is not None
+    assert repeated is None
+
+
+async def test_ensure_topic_machine_reuses_the_active_lease(monkeypatch):
+    from app.domain.topic.models import TopicStatus
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    topic = SimpleNamespace(
+        id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        created_by="owner",
+        status=TopicStatus.active,
+    )
+
+    class _Session:
+        async def refresh(self, _row):
+            return None
+
+    class _Identities:
+        def __init__(self, _session):
+            pass
+
+        async def ensure_topic_agent_user(self, _topic_id):
+            return SimpleNamespace(id=41)
+
+    class _Topics:
+        def __init__(self, _session):
+            pass
+
+        async def get_or_404(self, _topic_id):
+            return topic
+
+    service._session = _Session()
+    # The topic is reached through its SERVICE (the cross-domain repository guard
+    # only exempts pre-existing debt), and imported inside the method, so patch it
+    # where it is defined rather than on the machine module.
+    monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
+    monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
+    authority = AsyncMock()
+    monkeypatch.setattr(service, "require_create_authority", authority)
+    actor = Actor(handle="owner", user_id=1, is_agent=False, via="token")
+
+    first = await service.ensure_topic_machine(topic.id, actor=actor)
+    second = await service.ensure_topic_machine(topic.id)
+
+    assert first is second
+    assert first.topic_id == topic.id
+    assert len(client.created) == 1
+    authority.assert_awaited_once_with(topic.project_id, actor)
+
+
+async def test_ensure_topic_machine_without_authority_provisions_nothing(monkeypatch):
+    from app.domain.topic.models import TopicStatus
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    topic = SimpleNamespace(
+        id=uuid.uuid4(), project_id=uuid.uuid4(), status=TopicStatus.active
+    )
+
+    class _Session:
+        async def refresh(self, _row):
+            return None
+
+    class _Topics:
+        def __init__(self, _session):
+            pass
+
+        async def get_or_404(self, _topic_id):
+            return topic
+
+    service._session = _Session()
+    monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
+
+    with pytest.raises(AuthenticationRequiredError):
+        await service.ensure_topic_machine(topic.id)
+    assert client.created == []
+    assert client.customers == {}
+
+
+async def test_topic_machines_share_the_project_quota(monkeypatch):
+    from app.core.config import settings
+    from app.domain.topic.models import TopicStatus
+
+    client = FakeMicroCloud()
+    project_id = uuid.uuid4()
+    service = build_service(
+        client,
+        project=SimpleNamespace(id=project_id, name="Quota", team_id=None),
+    )
+    topics = {
+        topic_id: SimpleNamespace(
+            id=topic_id, project_id=project_id, status=TopicStatus.active
+        )
+        for topic_id in (uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
+    }
+
+    class _Session:
+        async def refresh(self, _row):
+            return None
+
+    class _Topics:
+        def __init__(self, _session):
+            pass
+
+        async def get_or_404(self, topic_id):
+            return topics[topic_id]
+
+    class _Identities:
+        def __init__(self, _session):
+            pass
+
+        async def ensure_topic_agent_user(self, _topic_id):
+            return SimpleNamespace(id=41)
+
+    service._session = _Session()
+    monkeypatch.setattr(settings, "microcloud_max_machines_per_project", 2)
+    monkeypatch.setattr("app.domain.topic.services.TopicService", _Topics)
+    monkeypatch.setattr("app.domain.machine.services.IdentityService", _Identities)
+    monkeypatch.setattr(service, "require_create_authority", AsyncMock())
+    actor = Actor("owner", 1, False, "token")
+
+    for topic_id in list(topics)[:2]:
+        await service.ensure_topic_machine(topic_id, actor=actor)
+    with pytest.raises(ValidationError, match="already has 2 machine"):
+        await service.ensure_topic_machine(list(topics)[2], actor=actor)
+
+    assert len(client.created) == 2
 
 
 async def test_provision_reuses_the_projects_existing_account():
@@ -656,3 +831,35 @@ async def test_reconcile_is_off_without_a_desired_mode(monkeypatch):
 
     assert await service.reconcile_ai_mode() == 0
     assert client.ai_switches == []
+
+
+async def test_forgetting_waits_when_ccproxy_revocation_is_unconfirmed(caplog):
+    """#420: `forget` fires from a GET, so an unconfirmed ticket revocation must
+    neither wedge the listing nor reap the machine row — the row is what brings
+    the sweep back to retry once ccproxy answers again."""
+    from unittest.mock import AsyncMock
+
+    from app.domain.device.ccproxy_tenant import CcproxyTenantError
+
+    client = FakeMicroCloud()
+    service = build_service(client)
+    project_id = uuid.uuid4()
+    machine = await service.provision(
+        project_id=project_id, requested_by="andy", owner_user_id=42
+    )
+    machine.device_id = "ticketed-device"
+    service._devices.devices[machine.device_id] = SimpleNamespace(
+        owner_user_id=42, supply=Supply.cloud
+    )
+    service._devices.delete_platform_provisioned = AsyncMock(
+        side_effect=CcproxyTenantError("engine unreachable", status=502)
+    )
+
+    client.machines.clear()
+    listed = await service.list_for_project(project_id)
+
+    assert listed == []  # the vanished machine is not shown...
+    assert "ticketed-device" in service._devices.devices
+    # ...but its row survives for the retry.
+    assert machine in await service._repo.list_for_project(project_id)
+    assert any("revocation" in r.getMessage() for r in caplog.records)

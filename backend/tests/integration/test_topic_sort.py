@@ -8,7 +8,7 @@ from app.domain.topic.models import Topic
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -19,7 +19,7 @@ def _make_topic(
     body = {"project_id": project_id, "title": title}
     if parent_id:
         body["parent_id"] = parent_id
-    r = client.post("/api/topics", json=body)
+    r = client.post("/topics", json=body)
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -38,7 +38,7 @@ def _titles(client, project_id: str, **params) -> list[str]:
     # project_id must ride in `params` too: httpx REPLACES a URL's existing
     # query string with `params=` instead of merging, so putting it in the URL
     # silently dropped it and every request 400ed on the missing field.
-    r = client.get("/api/topics", params={"project_id": project_id, **params})
+    r = client.get("/topics", params={"project_id": project_id, **params})
     assert r.status_code == 200
     # Exclude the auto-created root topic — this test only cares about the
     # work topics it seeded, in the order it seeded checkable titles for.
@@ -92,18 +92,24 @@ def test_sort_defaults_to_created_order_when_unspecified(client):
 
 def test_sort_does_not_break_parent_child_structure(client):
     # Sorting must not disturb parent_id linkage — the tree is rebuilt
-    # client-side from parent_id, regardless of list order.
+    # client-side from parent_id, regardless of list order. Rooms nest exactly
+    # one level (root > room), so that is the whole tree there is to disturb.
     pid = _make_project(client)
-    parent = _make_topic(client, pid, "Zeta parent")
-    child = _make_topic(client, pid, "Alpha child", parent_id=parent)
+    zeta = _make_topic(client, pid, "Zeta room")
+    alpha = _make_topic(client, pid, "Alpha room")
 
     r = client.get(
-        "/api/topics", params={"project_id": pid, "sort": "title", "order": "asc"}
+        "/topics", params={"project_id": pid, "sort": "title", "order": "asc"}
     )
     assert r.status_code == 200
-    by_id = {t["id"]: t for t in r.json()["data"]["data"]}
-    # "Alpha child" sorts before "Zeta parent" by title, but parent_id linkage
+    rows = r.json()["data"]["data"]
+    by_id = {t["id"]: t for t in rows}
+    # "Alpha room" sorts before "Zeta room" by title, but parent_id linkage
     # (what the frontend rebuilds the tree from) must be untouched by that.
-    assert by_id[child]["parent_id"] == parent
+    assert [t["title"] for t in rows if t["kind"] != "root"] == [
+        "Alpha room",
+        "Zeta room",
+    ]
     root = next(t for t in by_id.values() if t["kind"] == "root")
-    assert by_id[parent]["parent_id"] == root["id"]
+    assert by_id[alpha]["parent_id"] == root["id"]
+    assert by_id[zeta]["parent_id"] == root["id"]

@@ -22,7 +22,8 @@
 
         <div v-else-if="joinedTeams.length === 0" class="text-center py-8 px-4">
           <v-avatar color="info" class="mb-4" size="64">
-            <v-icon icon="mdi-information-outline" color="white" size="36"></v-icon>
+            <!-- info 底上的反白图标：深色下 info 是 #9CA2AB，白色只有 2.3:1 -->
+            <v-icon icon="mdi-information-outline" color="surface" size="36"></v-icon>
           </v-avatar>
           <div class="text-h6 font-weight-medium mb-2">没有已参与的小队</div>
           <div class="text-body-1 text-medium-emphasis max-width-400 mx-auto">您目前没有代表任何小队参与此赛题</div>

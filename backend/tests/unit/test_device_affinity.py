@@ -4,7 +4,7 @@ A topic's work tree + resumable claude session live on ONE self-hosted machine, 
 topic freezes to the device its first turn ran on and every later turn returns to the
 SAME device — it must NEVER drift to another online device (that would start from an
 empty tree and corrupt session resume: the original PR-#46 bug).
-``resolve_pinned_device`` is the pure resolution ``DeviceProvider`` runs each turn;
+``resolve_pinned_device`` is the pure resolution ``DeviceChannel`` runs each turn;
 these test it directly with the in-memory repo (no DB, no hub).
 """
 
@@ -13,7 +13,8 @@ import uuid
 import pytest
 
 from app.domain.agent.device_provider import resolve_pinned_device
-from app.domain.agent.hooks_substrate import ScreenSetupError
+from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
 from app.domain.device.memory_repository import InMemoryDeviceRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply, Visibility
@@ -30,13 +31,14 @@ async def _device_on_project(
     project_id: uuid.UUID,
     name: str,
     visibility: Visibility = Visibility.host,
+    supply: Supply = Supply.self_hosted,
 ) -> str:
     # Affinity resolution only ever PINS a device the transport can run today, so
     # these enrol as whole-machine (host) by default; a test that wants to prove an
     # `isolated` device is skipped passes it explicitly.
     code = await service.start(name)
     device = await service.approve(
-        code, owner_user_id=OWNER, supply=Supply.self_hosted, visibility=visibility
+        code, owner_user_id=OWNER, supply=supply, visibility=visibility
     )
     await service.assign_to_project(device.device_id, project_id, actor_user_id=OWNER)
     return device.device_id
@@ -47,15 +49,19 @@ def _online(*ids: str):
     return lambda device_id: device_id in live
 
 
-async def test_first_turn_pins_to_an_online_device():
+async def test_system_choice_pins_the_first_healthy_device_on_the_first_turn():
     service = _service()
     project, topic = uuid.uuid4(), uuid.uuid4()
-    dev = await _device_on_project(service, project, "box")
+    first = await _device_on_project(service, project, "first")
+    second = await _device_on_project(service, project, "second")
 
-    picked = await resolve_pinned_device(service, _online(dev), project, topic)
-    assert picked == dev
+    picked = await resolve_pinned_device(
+        service, _online(first, second), project, topic
+    )
+    assert picked == first
     # the pin is now durable — recorded on the topic
-    assert await service.topic_device(topic) == dev
+    assert await service.topic_device(topic) == first
+    assert (await service.topic_binding(topic)).visibility is Visibility.host
 
 
 async def test_later_turns_return_to_the_pinned_device_never_drift():
@@ -71,6 +77,42 @@ async def test_later_turns_return_to_the_pinned_device_never_drift():
         await resolve_pinned_device(service, _online(dev_a, dev_b), project, topic)
         == dev_a
     )
+
+
+async def test_named_machine_is_used_without_consulting_automatic_selection(
+    monkeypatch,
+):
+    service = _service()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    first = await _device_on_project(service, project, "first")
+    named = await _device_on_project(service, project, "named")
+    await service.bind_topic_device(topic, named, Visibility.host)
+
+    async def automatic_selection_must_not_run(*_args, **_kwargs):
+        pytest.fail("a named machine must bypass automatic healthy-device selection")
+
+    monkeypatch.setattr(
+        service, "healthy_devices_for_project", automatic_selection_must_not_run
+    )
+
+    assert (
+        await resolve_pinned_device(service, _online(first, named), project, topic)
+        == named
+    )
+    assert await service.topic_device(topic) == named
+
+
+async def test_named_machine_waits_when_offline_instead_of_using_online_peer():
+    service = _service()
+    project, topic = uuid.uuid4(), uuid.uuid4()
+    online_peer = await _device_on_project(service, project, "online peer")
+    named_offline = await _device_on_project(service, project, "named offline")
+    await service.bind_topic_device(topic, named_offline, Visibility.host)
+
+    with pytest.raises(ScreenSetupError) as excinfo:
+        await resolve_pinned_device(service, _online(online_peer), project, topic)
+    assert str(excinfo.value) == DEVICE_OFFLINE_MESSAGE
+    assert await service.topic_device(topic) == named_offline
 
 
 async def test_pinned_device_offline_raises_and_does_not_drift():
@@ -97,49 +139,8 @@ async def test_no_online_device_returns_none_and_pins_nothing():
     assert await service.topic_device(topic) is None
 
 
-async def test_an_isolated_device_is_never_pinned_on_the_first_turn():
-    """#358 gate at the PIN: a machine enrolled as the boxed `isolated` 档 has no
-    transport yet, so a fresh topic must NOT freeze to it. With only an isolated
-    device online, resolution yields nothing (a clean "no runnable device") rather
-    than pinning a topic to a machine that can never run it."""
-    service = _service()
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    await _device_on_project(service, project, "boxed", visibility=Visibility.isolated)
-
-    dev = await service.list_devices_for_project(project)
-    resolved = await resolve_pinned_device(
-        service, _online(dev[0].device_id), project, topic
-    )
-    assert resolved is None
-    # ...and nothing was pinned, so the topic is free to land on a whole-machine
-    # device later instead of being bricked on the isolated one.
-    assert await service.topic_device(topic) is None
-
-
-async def test_first_turn_pins_the_whole_machine_device_and_skips_the_isolated_one():
-    """A mixed project (one `isolated`, one `host`) pins to the whole-machine device
-    — the only kind that can run today — never the boxed one."""
-    service = _service()
-    project, topic = uuid.uuid4(), uuid.uuid4()
-    boxed = await _device_on_project(
-        service, project, "boxed", visibility=Visibility.isolated
-    )
-    machine = await _device_on_project(
-        service, project, "machine", visibility=Visibility.host
-    )
-
-    picked = await resolve_pinned_device(
-        service, _online(boxed, machine), project, topic
-    )
-    assert picked == machine
-    assert await service.topic_device(topic) == machine
-
-
-async def test_a_pin_flipped_to_isolated_refuses_rather_than_running_bare():
-    """The already-pinned half of the gate: if a topic's pinned machine is later
-    re-enrolled as `isolated`, the turn REFUSES (a clear #358 「尚未实现」 error)
-    instead of silently launching bare-on-host — the exact whole-machine exposure
-    the gate exists to prevent. The pin itself never moves."""
+async def test_an_isolated_binding_refuses_rather_than_running_bare():
+    """An isolated topic binding refuses until #358's transport exists."""
     from app.domain.agent.device_provider import DEVICE_ISOLATED_UNSUPPORTED_MESSAGE
 
     service = _service()
@@ -147,19 +148,29 @@ async def test_a_pin_flipped_to_isolated_refuses_rather_than_running_bare():
     machine = await _device_on_project(
         service, project, "machine", visibility=Visibility.host
     )
-    # Freeze the topic to it while it is whole-machine...
-    pinned = await resolve_pinned_device(service, _online(machine), project, topic)
-    assert pinned == machine
-    # ...then its owner flips it to the boxed 档.
-    device = await service.get_device(machine)
-    assert device is not None
-    device.visibility = Visibility.isolated
+    await service.bind_topic_device(topic, machine, Visibility.isolated)
 
     with pytest.raises(ScreenSetupError) as excinfo:
         await resolve_pinned_device(service, _online(machine), project, topic)
     assert str(excinfo.value) == DEVICE_ISOLATED_UNSUPPORTED_MESSAGE
     # The pin is unchanged — the gate refuses, it does not drift.
     assert await service.topic_device(topic) == machine
+
+
+async def test_the_hosted_picker_never_places_a_topic_on_cloud():
+    """The hosted resolver rejects cloud for both pinned and fresh topics."""
+    service = _service()
+    project, pinned_topic, fresh_topic = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    cloud = await _device_on_project(service, project, "cloud", supply=Supply.cloud)
+    await service.bind_topic_device(pinned_topic, cloud, Visibility.host)
+
+    with pytest.raises(ScreenSetupError):
+        await resolve_pinned_device(service, _online(cloud), project, pinned_topic)
+    assert (
+        await resolve_pinned_device(service, _online(cloud), project, fresh_topic)
+        is None
+    )
+    assert await service.project_has_online_device(project, _online(cloud)) is False
 
 
 async def test_project_device_online_is_scoped_to_the_project_context():

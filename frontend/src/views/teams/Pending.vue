@@ -13,8 +13,8 @@
 
     <!-- 我发起的申请 - 空状态 -->
     <div v-else-if="!myRequests.length" class="d-flex flex-column align-center py-4">
-      <v-avatar size="48" class="bg-grey-lighten-4 mb-3">
-        <v-icon icon="mdi-account-arrow-right" size="large" color="grey-darken-1"></v-icon>
+      <v-avatar size="48" class="bg-surface-light mb-3">
+        <v-icon icon="mdi-account-arrow-right" size="large" color="on-surface-variant"></v-icon>
       </v-avatar>
       <p class="text-subtitle-2 font-weight-medium text-center mb-1">暂无申请记录</p>
       <p class="text-caption text-center text-medium-emphasis">您还没有申请加入任何小队</p>
@@ -68,8 +68,8 @@
 
     <!-- 收到的邀请 - 空状态 -->
     <div v-else-if="!myInvitations.length" class="d-flex flex-column align-center py-4">
-      <v-avatar size="48" class="bg-grey-lighten-4 mb-3">
-        <v-icon icon="mdi-email-outline" size="large" color="grey-darken-1"></v-icon>
+      <v-avatar size="48" class="bg-surface-light mb-3">
+        <v-icon icon="mdi-email-outline" size="large" color="on-surface-variant"></v-icon>
       </v-avatar>
       <p class="text-subtitle-2 font-weight-medium text-center mb-1">暂无邀请</p>
       <p class="text-caption text-center text-medium-emphasis">您暂时没有收到小队邀请</p>

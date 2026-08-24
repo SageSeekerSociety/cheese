@@ -60,7 +60,7 @@
 
       <!-- 知识库内容 -->
       <div v-if="knowledges.length === 0" class="empty-knowledge-state text-center py-12">
-        <v-icon icon="mdi-book-open-page-variant" size="64" color="grey-lighten-2" class="mb-4"></v-icon>
+        <v-icon icon="mdi-book-open-page-variant" size="64" class="mb-4 empty-state-icon"></v-icon>
         <h3 class="text-h6 font-weight-medium mb-2">知识库暂无内容</h3>
         <p v-if="hasFilters" class="text-body-2 text-medium-emphasis mb-4">
           没有找到匹配当前筛选条件的资料，请尝试调整筛选条件
@@ -129,7 +129,7 @@
 
               <!-- 底部信息 -->
               <v-card-actions class="pa-4 pt-0">
-                <v-avatar size="24" color="grey-lighten-2">
+                <v-avatar size="24" color="surface-variant">
                   <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
                 </v-avatar>
                 <span class="text-caption ml-2">{{ resource.creator.nickname }}</span>
@@ -184,7 +184,7 @@
             <td>{{ getResourceTypeName(resource.type, resource.material?.type) }}</td>
             <td>
               <div class="d-flex align-center">
-                <v-avatar size="24" color="grey-lighten-2" class="mr-2">
+                <v-avatar size="24" color="surface-variant" class="mr-2">
                   <v-img :src="getAvatarUrl(resource.creator.avatarId)"></v-img>
                 </v-avatar>
                 <span>{{ resource.creator.nickname }}</span>
@@ -288,7 +288,7 @@
             <!-- 文档预览 -->
             <v-sheet
               v-else-if="selectedResource.type === 'MATERIAL' && selectedResource.material?.type === 'file'"
-              color="grey-lighten-4"
+              color="surface-light"
               class="pa-4 document-preview rounded-lg"
             >
               <v-icon
@@ -321,7 +321,7 @@
             <!-- 链接预览 -->
             <v-sheet
               v-else-if="selectedResource.type === 'LINK'"
-              color="grey-lighten-4"
+              color="surface-light"
               class="pa-4 link-preview rounded-lg"
             >
               <div class="d-flex flex-column flex-md-row">
@@ -349,7 +349,7 @@
             <!-- 代码片段预览 -->
             <v-sheet
               v-else-if="selectedResource.type === 'CODE'"
-              color="grey-lighten-4"
+              color="surface-light"
               class="pa-4 code-preview rounded-lg"
             >
               <div class="d-flex align-center mb-2">
@@ -358,7 +358,9 @@
                   {{ selectedResourceContent.language }}
                 </v-chip>
               </div>
-              <v-sheet color="grey-darken-4" class="pa-4 rounded-lg code-block">
+              <!-- 底色不写在这里：代码块是【故意反色】的元素，两个主题要两套值，
+                   见 <style> 里的 .code-block -->
+              <v-sheet class="pa-4 rounded-lg code-block">
                 <pre
                   class="language-{{ selectedResourceContent.language || 'javascript' }}"
                 ><code>{{ selectedResourceContent.code }}</code></pre>
@@ -375,7 +377,7 @@
           </div>
 
           <!-- 资料信息 -->
-          <v-sheet color="grey-lighten-4" rounded="lg" class="pa-4 mb-4">
+          <v-sheet color="surface-light" rounded="lg" class="pa-4 mb-4">
             <div class="text-subtitle-1 font-weight-medium mb-2">资料信息</div>
             <div class="d-flex resource-info-row">
               <div class="resource-info-label">类型</div>
@@ -399,7 +401,7 @@
             <div class="d-flex resource-info-row">
               <div class="resource-info-label">添加者</div>
               <div class="d-flex align-center">
-                <v-avatar size="24" color="grey-lighten-2" class="mr-2">
+                <v-avatar size="24" color="surface-variant" class="mr-2">
                   <v-img :src="getAvatarUrl(selectedResource.creator.avatarId)"></v-img>
                 </v-avatar>
                 <span>{{ selectedResource.creator.nickname }}</span>
@@ -434,11 +436,11 @@
           </v-sheet>
 
           <!-- 原始讨论上下文 -->
-          <v-sheet color="grey-lighten-4" rounded="lg" class="pa-4">
+          <v-sheet color="surface-light" rounded="lg" class="pa-4">
             <div class="text-subtitle-1 font-weight-medium mb-2">原始讨论</div>
             <div v-if="selectedResource.originalMessage" class="original-message-context">
               <div class="d-flex">
-                <v-avatar size="36" color="grey-lighten-2" class="mt-1">
+                <v-avatar size="36" color="surface-variant" class="mt-1">
                   <v-img :src="getAvatarUrl(selectedResource.originalMessage.sender.avatarId)"></v-img>
                 </v-avatar>
                 <div class="ml-3">
@@ -547,7 +549,10 @@
                     class="rounded-lg mb-2"
                     cover
                   ></v-img>
-                  <div v-else class="d-flex align-center justify-center py-3 grey-lighten-5 rounded-lg">
+                  <!-- 原来这里挂着一个裸的 `grey-lighten-5` class：Vuetify 3 不生成这种
+                       无前缀的调色板类（v2 才有），所以它一直是死代码、没有任何底色。
+                       删掉它，免得下一个人"顺手修好"成 bg-grey-lighten-5 反而钉死颜色。 -->
+                  <div v-else class="d-flex align-center justify-center py-3 rounded-lg">
                     <v-icon :icon="getFileTypeIcon(uploadData.file)" size="36" color="primary" class="mr-2"></v-icon>
                     <span class="text-body-2">{{ uploadData.file.name }}</span>
                   </div>
@@ -1221,19 +1226,26 @@ onMounted(async () => {
 }
 
 .empty-knowledge-state {
-  border: 1px dashed rgba(0, 0, 0, 0.1);
-  border-radius: 16px;
-  background-color: rgba(0, 0, 0, 0.01);
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius-lg);
+  background-color: var(--fill);
+}
+
+/* 空状态插图：元信息级别的装饰，两个主题下都该"看得见但不抢戏"。
+   --line-2 浅色是 #E2E3E6（和原来的 grey-lighten-2 #E0E0E0 几乎同值），
+   深色是 #3A3E45（在 #141517 的页面上仍是一块看得出的形状）。 */
+.empty-state-icon {
+  color: var(--line-2);
 }
 
 .resource-card {
   transition: all 0.3s ease;
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
   overflow: hidden;
 
   &.card-hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--shadow-1);
   }
 }
 
@@ -1242,8 +1254,13 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--fill);
 
+  /* 下面四种是【分类色】不是状态色：蓝=资料 / 绿=文本 / 橙=链接 / 青=代码，
+     色相本身就是这条信息，所以两个主题下必须是同一个色相，不能换成会翻转的
+     token。它们是 8% 的淡色叠加（不是实心填充），压在深色卡片上仍然成立，只是
+     更淡。设计系统目前没有"分类色"这一档 —— 要不要新增是 token 层的决定，
+     属于父话题，这里先原样保留（已在存量基线里）。 */
   &.resource-type-material {
     background-color: rgba(63, 81, 181, 0.08);
   }
@@ -1282,7 +1299,7 @@ onMounted(async () => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  color: rgba(0, 0, 0, 0.6);
+  color: var(--muted);
   line-height: 1.4;
   min-height: 2.8em;
 }
@@ -1299,7 +1316,7 @@ onMounted(async () => {
 }
 
 .resource-table {
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
 }
 
 .resource-row {
@@ -1307,7 +1324,7 @@ onMounted(async () => {
   transition: background-color 0.2s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
   }
 }
 
@@ -1321,7 +1338,7 @@ onMounted(async () => {
 
 .resource-info-label {
   min-width: 80px;
-  color: rgba(0, 0, 0, 0.6);
+  color: var(--muted);
   margin-right: 16px;
 }
 
@@ -1334,9 +1351,20 @@ onMounted(async () => {
   justify-content: center;
 }
 
+/* 代码块是【故意反色】的元素：浅色主题下它是深底浅字，这是设计意图，不是漏掉的
+   token 化。但深色主题下不能照抄 —— #212121 压在 --surface(#1B1D20) 上只有
+   1.1:1，整块会糊进卡片里。所以深色分支往上提一档，用比 surface 更亮的
+   --fill-2(#282C31)，文字用 --text(#D3D6DB)，9.6:1。
+   做法照抄波次 1.5 在 RailItem 悬浮提示上的处理：组件内局部变量 + 一个真正站得住
+   的 [data-theme='dark'] 分支（这个元素要反转两次，不是选错了 token）。
+   浅色的两个值只能写死：设计系统里没有"在浅色主题下也是深色"的 token。 */
 .code-block {
+  --code-bg: #212121;
+  --code-ink: #e0e0e0; /* 13.8:1 on #212121 */
+
   overflow-x: auto;
-  color: #e0e0e0;
+  color: var(--code-ink);
+  background-color: var(--code-bg);
   font-family: 'Fira Code', monospace;
   font-size: 0.9rem;
   line-height: 1.5;
@@ -1344,6 +1372,11 @@ onMounted(async () => {
   pre {
     margin: 0;
   }
+}
+
+:root[data-theme='dark'] .code-block {
+  --code-bg: var(--fill-2);
+  --code-ink: var(--text);
 }
 
 .rich-text-preview :deep(.tiptap-editor) {
@@ -1397,11 +1430,11 @@ onMounted(async () => {
   border-radius: 12px;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  background-color: rgba(0, 0, 0, 0.02);
+  background-color: var(--fill);
   border: 1px solid transparent;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.04);
+    background-color: var(--fill-2);
     transform: translateY(-2px);
   }
 
@@ -1411,7 +1444,8 @@ onMounted(async () => {
 
     .type-icon-wrapper {
       background-color: rgb(var(--v-theme-primary));
-      color: white;
+      /* 琥珀底上的反白图标：深色主题的琥珀是 #FFA733，纯白只有 1.9:1 */
+      color: var(--surface);
     }
 
     .type-label {
@@ -1428,7 +1462,7 @@ onMounted(async () => {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: var(--fill-2);
   transition: all 0.2s ease;
 }
 

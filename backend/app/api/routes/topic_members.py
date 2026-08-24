@@ -1,11 +1,5 @@
 """Topic membership routes (nested under /api/topics) — the group-room roster
-(fusion-design §3).
-
-No auth dependency exists yet (agent-as-user is P1): the acting user's handle
-is passed explicitly (`actor` in the body, or the `actor` query param on
-DELETE) and the service authorizes against their topic role — owner/admin may
-manage the roster, plain members may not.
-"""
+(fusion-design §3)."""
 
 import uuid
 from typing import Annotated
@@ -16,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.response import ok, page
 from app.core.db import get_db
+from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import (
     TopicMemberCreate,
     TopicMemberOut,
@@ -23,16 +18,25 @@ from app.domain.topic_membership.schemas import (
 )
 from app.domain.topic_membership.services import TopicMemberService
 
-router = APIRouter(prefix="/api/topics", tags=["topic-members"])
+router = APIRouter(prefix="/topics", tags=["topic-members"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.get("/{topic_id}/members")
-async def list_topic_members(topic_id: uuid.UUID, db: DbSession) -> dict:
+async def list_topic_members(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     from app.domain.identity.repositories import AgentBindingRepository
     from app.domain.user.repositories import UserProfileRepository, UserRepository
 
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
     members, total = await TopicMemberService(db).list_for_topic(topic_id)
     # Attach display names so the UI can label 头像 without a second round-trip.
     users = UserRepository(db)

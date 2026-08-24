@@ -1,5 +1,6 @@
 """Application configuration loaded from environment / .env."""
 
+import hashlib
 from functools import lru_cache
 
 from pydantic import Field, model_validator
@@ -17,6 +18,20 @@ class Settings(BaseSettings):
     # TEST_PG_BASE), so running the suite never disturbs your dev data.
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cheese"
     db_echo: bool = False
+    # How many database connections one backend process may hold. SQLAlchemy's
+    # own defaults (5 + 10) size a pool for a thread-per-request server; this is
+    # one asyncio process where every in-flight request holds a connection at
+    # the same time, so the ceiling is 「同时在飞的请求数」, not 「worker 数」. A
+    # single page load fans out dozens of them, and a request that cannot get a
+    # connection within `db_pool_timeout_s` raises TimeoutError — a 500 on a
+    # perfectly healthy database.
+    db_pool_size: int = 20
+    db_max_overflow: int = 30
+    db_pool_timeout_s: float = 30.0
+    # Hand out a connection only after checking it is still alive: a pooled
+    # asyncpg connection that the database (or anything in between) closed while
+    # idle otherwise fails the first statement of whoever checks it out next.
+    db_pool_pre_ping: bool = True
 
     # --- Migration timeouts (#356) ---
     # Bound how long a migration waits on a lock / runs, applied by alembic's
@@ -49,6 +64,14 @@ class Settings(BaseSettings):
     # canonical identity. jwt_secret signs/verifies the product's access tokens.
     redis_url: str = "redis://localhost:6379/0"
     environment: str = "development"
+    # "This process was started by the deploy compose file" — a fact that does NOT
+    # travel through the box's env file (#439). It is a literal in the compose
+    # `environment:` block, beside STORAGE_LOCAL_PATH and HOME, so it survives the
+    # one failure `environment` cannot report: when the env file does not apply,
+    # `environment` falls back to "development" and every deployment check that
+    # trusts it silently switches itself off. Never set this by hand; nothing but
+    # the compose file may claim it.
+    deployed_via_compose: bool = False
     frontend_url: str = "http://localhost:5200"
     # OAuth browser-flow landing pages (must match the frontend router).
     frontend_oauth_success_path: str = "/account/oauth/success"
@@ -126,7 +149,7 @@ class Settings(BaseSettings):
     # minutes), not a normal-case limit — on timeout the turn is cancelled, which
     # releases the lock and tears down the in-container claude process.
     #
-    # Still governs: TurnRunner's outer transport-independent wrap for the SDK
+    # Still governs: AgentWorkRunner's outer transport-independent wrap for the SDK
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
     # backends — LOCAL tmux AND remote device — no longer use this for their
@@ -156,18 +179,12 @@ class Settings(BaseSettings):
     # retrying forever, a genuine infinite loop that keeps printing).
     agent_turn_hard_ceiling_s: float = 10800.0
 
-    # Agent compute backend (design: two execution paths behind ComputeProvider):
-    # "sdk"  → the default LocalDockerProvider: runs the Claude Agent SDK
-    #          (stream-json over the cli_path shim) in a per-topic container.
-    # "tmux" → TmuxHooksProvider: an interactive `claude` lives in a tmux session
-    #          inside the container and is driven by tmux send-keys; structured
-    #          events come back via Claude Code HTTP hooks (POST /sandbox/hooks).
-    # Defaults to "sdk" so a broken tmux path never affects existing turns.
-    agent_backend: str = "sdk"
-    # "device" → DeviceProvider: the turn runs on a user's own enrolled machine
-    #          (self-hosted / BYO compute, P3). An interactive `claude` lives in a
-    #          screen the platform opens over the frozen link.Msg control channel;
-    #          structured events come back via Claude Code hooks (same as tmux).
+    # Where a turn lands when nothing chose: "tmux" keeps it on this box (an
+    # interactive `claude` in a per-topic tmux session inside a container),
+    # "device" sends it to the user's own enrolled machine over the frozen
+    # link.Msg channel. Both are the same turn flow — events come back through
+    # Claude Code hooks either way — so this picks a machine, not a mechanism.
+    agent_backend: str = "tmux"
     # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
     # first-launch gates). Independent of sandbox_image (the SDK path's image).
     tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
@@ -201,17 +218,16 @@ class Settings(BaseSettings):
     # needs a listener that speaks CONNECT, which reverse mode does not.
     subscription_proxy_connect_port: int = 8444
     # Host a DEVICE reaches the CONNECT listener at. Empty = subscription_proxy_host,
-    # which is right for a co-located device (the box's own bridge address). A
-    # REMOTE device needs an address that resolves from its network — until one is
-    # published, remote subscription turns fail on connect (loud, not silent).
+    # which must resolve from every enrolled device's network. Otherwise configure
+    # a tunnel; an unreachable direct address fails on connect (loud, not silent).
     subscription_device_proxy_host: str = ""
-    # Where a REMOTE machine reaches the tunnel (`wss://…/llm/tunnel`), when it
+    # Where a device reaches the tunnel (`wss://…/llm/tunnel`), when it
     # cannot reach the CONNECT listener directly. On the ghg network it cannot:
     # measured 2026-08-14, packets to the box's listener port never reach its NIC,
     # dropped at a hypervisor bridge the box can neither see nor change — while
     # the gateway path those machines already use for the connector works and
-    # carries websockets. Set this to that path and remote subscription turns ride
-    # it instead. Empty = no tunnel, and a remote machine falls back to dialling
+    # carries websockets. Set this to that path and device subscription turns ride
+    # it instead. Empty = no tunnel, and a device falls back to dialling
     # `subscription_device_proxy_host` directly (right for a flat network, and the
     # behaviour every deployment has today).
     subscription_tunnel_url: str = ""
@@ -258,13 +274,6 @@ class Settings(BaseSettings):
     # lands on the SPA, which answers 200/405 and drops every agent event
     # silently (dev, 2026-08-08: the machine worked, the platform saw nothing).
     connector_public_base: str = "http://localhost:8099"
-    # Single-box self-hosting (fusion §5): the host path where enrolled devices see
-    # this backend's `workspace_root`. When set, a device screen runs directly in the
-    # topic's REAL worktree (the container worktree path translated to this host root)
-    # instead of an empty scratch dir — so device edits flow through the normal
-    # snapshot/accept path, no clone/sync and no out-of-band writes. Leave empty when
-    # devices are remote (they own their own tree; a clone/sync path is separate).
-    device_shared_workspace_host_root: str = ""
     # Optional per-install-origin override for the device's persistent control
     # channel, keyed by the origin install.sh was fetched from and mapping to a
     # plain http(s) origin that CAN carry WebSockets, e.g.
@@ -317,28 +326,18 @@ class Settings(BaseSettings):
     # budget on 定期巡检 and ships off, and machines must not depend on it.
     machine_enroll_interval_seconds: int = 60
 
+    # --- ccproxy tenant realm: one revocable ticket per device (#420) ---
+    # Cheese is one ccproxy tenant (micro-teams/ccproxy). Registering a device
+    # there mints it a machine identity whose fake ticket ccproxy alone can
+    # swap for real credentials — so removing the device revokes exactly that
+    # device, instead of rotating a credential every box shares. Empty secret =
+    # the feature reports itself unavailable; devices keep whatever
+    # `ccproxy_upstream` an admin set by hand.
+    ccproxy_tenant_base_url: str = ""
+    ccproxy_tenant_secret: str = ""
+    ccproxy_tenant_timeout_s: float = 30.0
+
     # --- Agent sandbox (spec §9.1: 每话题在隔离容器里跑 claude + 原生工具) ---
-    # When on, the interactive turn runs `claude` INSIDE a per-topic Docker
-    # container (native Bash/Read/Write jailed there) via the cli_path shim, and
-    # platform actions go through the `cheese` CLI → REST. Requires Docker.
-    agent_sandbox_enabled: bool = False
-    # Compute plane (design v3 ComputePool): "local" runs turns in a local Docker
-    # sandbox; "remote" ships each turn to a cheesed node at cheesed_url. The node's
-    # container calls cheese back to cheesed_cheese_api (the backend's address that's
-    # reachable FROM the node — host.docker.internal works when the node is local).
-    compute_provider: str = "local"
-    cheesed_url: str = "http://localhost:8100"
-    cheesed_cheese_api: str = "http://host.docker.internal:8099/api"
-    # Whether the built-in "local-docker" compute pool may be picked for a NEW
-    # topic/project (#22 收敛 to self-hosted device compute; #218 model-supply, #358
-    # device visibility). Turning this OFF retires local-docker from selection ONLY:
-    # `compute_selectable` stops offering it, so no new topic can pin to it — while
-    # it stays in `compute_listings` (a topic already frozen on it keeps a readable
-    # label), stays registered in the ComputePool (execution never consults this
-    # flag, so existing pins still run), and remains the always-on runtime fallback
-    # (`compute_default_name`). Default True preserves today's behavior; a deployment
-    # whose projects all run on enrolled devices (dogfood) flips it to converge.
-    compute_local_docker_selectable: bool = True
     sandbox_image: str = "cheesex-agent-sandbox:latest"
     # Machine quality gates use a disposable sibling container and never the
     # backend process. Keep this explicit so operators can ship a test-toolchain
@@ -347,13 +346,84 @@ class Settings(BaseSettings):
     quality_gate_memory_mb: int = 2048
     quality_gate_cpus: float = 2.0
     quality_gate_pids_limit: int = 512
-    sandbox_shim: str = "./sandbox/claude-sbx"
     # Base URL the in-container `cheese` CLI calls back to (host → backend).
-    sandbox_api_base: str = "http://host.docker.internal:8099/api"
+    # The app ROOT, with no `/api`. The in-container `cheese` CLI reaches the
+    # backend port DIRECTLY (no gateway, so nothing strips a prefix), and since
+    # #370 step 2 the platform routes are bare — `{base}/projects/…`.
+    #
+    # A box whose .env still carries the old `…/api` value keeps working:
+    # `agent_api_base()` strips one trailing `/api` and the boot warning names
+    # the box so it can be cleaned up. Silently 404ing every `cheese` call would
+    # look exactly like an agent that decided not to use its tools.
+    sandbox_api_base: str = "http://host.docker.internal:8099"
     # Shared secret the sandbox `cheese` CLI sends (X-Cheese-Token) so the
-    # cheese write-API isn't open on the bind address. Empty → generated per
-    # process (fine for a single worker; pin it for multi-worker deployments).
+    # cheese write-API isn't open on the bind address. Empty → derived from
+    # `jwt_secret` (see `sandbox_signing_secret`); pin it to rotate the two
+    # independently, or to share one secret across multiple backend hosts.
     sandbox_token: str = ""
+
+    @property
+    def sandbox_signing_secret(self) -> str:
+        """The HMAC secret behind every scoped sandbox token.
+
+        `sandbox_token` when pinned; otherwise DERIVED from `jwt_secret` rather
+        than randomised per process. That fallback used to be
+        `secrets.token_hex(24)`, and the cost was not theoretical: a box's hook
+        token is baked into the environment of the long-running `claude` at
+        launch and never refreshed, so a fresh per-process secret invalidated
+        every existing box's token the instant the backend restarted. The whole
+        deployment went deaf at once — hooks 401ing into nothing, turns running
+        to their ceiling reporting `tools: 0` while the agent inside worked
+        perfectly — recovering only by destroying each box (and with it the tmux
+        session that IS that topic's conversational continuity).
+
+        Deriving instead of randomising makes the secret stable across restarts
+        with no deploy change, and `jwt_secret` is the right root because a
+        deployment is already forced to pin a real one
+        (`_require_real_jwt_secret_on_deployment`). Hashed with a domain
+        separator so this value can never be replayed as a session JWT key, and
+        so a future rotation of one does not silently rotate the other.
+        """
+        pinned = self.sandbox_token.strip()
+        if pinned:
+            return pinned
+        return hashlib.sha256(
+            b"cheesex:sandbox-signing-secret:v1:" + self.jwt_secret.encode()
+        ).hexdigest()
+
+    # --- tmux sandbox: one box per ROOM, not per topic ---
+    # A room's box hosts the room's own tmux session plus one per task split out
+    # of it, so the quota is a ROOM budget now, not a topic's. Sized from what
+    # this repo actually needs: `pnpm run build` alone OOMs a 2g box (exit 134,
+    # measured), and a room routinely has a build, a test run and an idle
+    # session in flight at once. Operator-tunable because the right number is a
+    # property of the deployment's projects, not of this code.
+    sandbox_memory_gb: float = 6.0
+    sandbox_cpus: float = 4.0
+    sandbox_pids_limit: int = 2048
+    # How many topics of one room may hold a published app/ttyd port. Ports are
+    # published as a RANGE at container creation and can never be extended
+    # afterwards, so this is a hard ceiling on 运行环境预览 + 现场终端 slots per
+    # room — beyond it a session still runs, it just gets no published port.
+    sandbox_room_port_slots: int = 16
+    # Escape hatch: False puts every topic back in its own box (the pre-room
+    # behaviour). Here because room sharing merges a room's fault domain — one
+    # topic OOMing the box takes its siblings down — and an operator hitting
+    # that needs a way out that is not a redeploy.
+    sandbox_share_room_container: bool = True
+
+    def agent_api_base(self) -> str:
+        """`sandbox_api_base` with a stale trailing `/api` removed.
+
+        The CLI talks to the backend port directly, so its base is the app root.
+        It used to be the root plus `/api`, because the platform routes carried
+        that prefix; #370 step 2 flattened them. Normalising here means a box
+        that has not updated its .env keeps working instead of having every
+        platform action 404 — a failure that reads as "the agent chose not to
+        use its tools", which is the worst possible way to learn about it.
+        """
+        base = self.sandbox_api_base.rstrip("/")
+        return base[: -len("/api")] if base.endswith("/api") else base
 
     def agent_env(self) -> dict[str, str]:
         """Env vars passed to the SDK/CLI to select the model provider."""
@@ -391,16 +461,23 @@ class Settings(BaseSettings):
     # should track work in flight, and a box whose room nobody has touched
     # since yesterday is paying rent for a conversation that will resume from
     # its transcript anyway.
+    #
+    # 8 hours holds even though one box now serves a whole room (2026-08-17
+    # decision). What changed is not the threshold but what "idle" MEASURES:
+    # `reap_idle_containers` takes the room's last activity AND its tasks'.
+    # Judging the room alone would destroy a box with live work in it the
+    # moment the room's own timeline went quiet — and a room whose work has
+    # been split out is quiet by design, so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
-    # Seconds between orphan sweeps (TurnRunner.sweep_orphans). On by default,
+    # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,
     # unlike the heartbeat above: it consumes no model calls unless it actually
     # finds a killed turn, and its whole purpose is catching the case where
     # nothing else will ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
     # How long a registered turn may produce nothing — no block, no frame —
     # before the sweep calls it wedged and tears it down. See
-    # TurnRunner.SILENT_TURN_S for why 30 minutes and not less.
+    # AgentWorkRunner.SILENT_TURN_S for why 30 minutes and not less.
     turn_silence_timeout_s: float = 1800.0
     # How long a topic may sit on a mid-turn block before `/topics/{id}/status`
     # calls it stalled. Lower than the sweep's ceiling above on purpose: this
@@ -468,6 +545,28 @@ class Settings(BaseSettings):
     # card's stored pr_number, so flipping this never strands a card, and a
     # deployment can still switch it off via .env (dev override) if needed.
     accept_via_pr: bool = True
+    # Tier-2 semantics for the accept poller (#468): check names that must have
+    # APPEARED (and be green) before the poller may merge. Absence is pending,
+    # never pass — #465 merged on a run where `test` was never triggered and
+    # everything visible was skipped/green. Comma-separated; empty disables.
+    #
+    # Each entry may carry the diff scope that makes it required:
+    # `name:glob;glob` (globs are GitHub's path-filter syntax — `**` crosses
+    # directories, `*` does not). A bare name is required unconditionally.
+    # **Mirror the workflow's own `paths:` filter here.** `test` lives in
+    # .github/workflows/test.yml, which only triggers on `backend/**` — so on a
+    # frontend-only PR that check never appears, and demanding it unconditionally
+    # is an infinite wait, not a safety valve (2026-08-16: #483/#485/#486 sat
+    # fully green until a human merged them by hand). Getting the scope too
+    # NARROW is the mild failure: a check that does run still has to go green,
+    # because `check_state` sees it — only the not-yet-created window reopens.
+    accept_required_check_names: str = "test:backend/**;.github/workflows/test.yml"
+    # Backstop for the roster above: how long a required check may stay MISSING
+    # before the card stops waiting and asks a human. Waiting with no timeout is
+    # how a renamed/disabled workflow — or an Actions billing lapse, which this
+    # org had on 2026-08-13 — turns into a card that hangs forever with nobody
+    # told. The exit is 交给人, never an auto-merge. 0 disables (wait forever).
+    accept_required_check_grace_minutes: int = 30
 
     # --- 闸门孤儿卡扫底 (2026-08-11) ---
     # How often to look for `pending_gate` cards nobody will ever settle (the
@@ -660,35 +759,68 @@ class Settings(BaseSettings):
           logged anywhere (24/24 401 in #342), recovering only as tokens expire.
 
         So a deployment MUST provide a real secret; there is no deployment where
-        the default is acceptable. "Deployment" is the same line the rest of the
-        app already draws — ``environment`` outside dev/test (secure cookies, the
-        X-User-Id gate). Local dev and the test suite keep the default and never
-        trip this, which is why fail-closed does not take the suite down.
+        the default is acceptable. "Deployment" is answered by TWO independent
+        signals, and needing two is the point (#439):
+
+        - ``deployed_via_compose`` — a literal in the deploy compose file, which
+          does not travel through the box's env file. This is the authority,
+          because it is the only one that survives the env-not-applied window
+          described above. Under it, ``environment`` saying "development" is
+          evidence the env file failed, not evidence this is a dev box.
+        - ``environment`` outside dev/test — the line the rest of the app already
+          draws (secure cookies, the X-User-Id gate). Still checked, for any
+          deployment that does not run through this compose file.
+
+        Local dev and the test suite set neither, keep the default secret and
+        never trip this, which is why fail-closed does not take the suite down.
 
         Mirrors #338's treatment of SANDBOX_TOKEN — make the empty/default case a
         loud, boot-time event rather than a silent runtime one — but crashes the
         boot instead of only warning: an unpinned SANDBOX_TOKEN is benign on an
         app-only box, whereas an insecure JWT_SECRET is wrong on every deployment.
         """
+        if self.jwt_secret.strip() and self.jwt_secret != "dev-secret":
+            return self
+
+        # RuntimeError, not ValueError, in both branches below: a ValueError here
+        # is wrapped by pydantic into a ValidationError whose repr dumps the whole
+        # input dict — which on a real deployment carries the DB password, API
+        # tokens and other live secrets straight into the crash log. A plain
+        # RuntimeError propagates unwrapped, so the boot dies on this one message
+        # and nothing else. (#338: keys never go into logs.)
+        generate = 'python -c "import secrets; print(secrets.token_urlsafe(48))"'
+
+        # #439: `deployed_via_compose` is checked BEFORE `environment`, and this
+        # ordering is the whole fix. Both `ENVIRONMENT` and `JWT_SECRET` come from
+        # the box's env file, so the env-not-applied window this guard exists for
+        # takes out both at once: the secret falls back to `dev-secret` and
+        # `environment` falls back to `development`, whereupon the check below
+        # would wave it through — the fuse and the line it protects running off one
+        # supply. The compose literal cannot fall back, so when it is set we know
+        # this is a deployment no matter what `environment` claims.
+        if self.deployed_via_compose:
+            raise RuntimeError(
+                "JWT_SECRET is missing, empty, or the built-in 'dev-secret' "
+                "default, in a process started by the deploy compose file "
+                f"(ENVIRONMENT reads '{self.environment}'). If that says "
+                "'development' on a deployed box, the env file did not apply and "
+                "this is exactly the #342 window: booting on the default silently "
+                "invalidates every session on the next restart that loads the real "
+                "secret, logging every user out with no error. Fix the env file "
+                f"rather than this check. Generate a secret with: {generate}"
+            )
+
         if self.environment in ("development", "test"):
             return self
-        if not self.jwt_secret.strip() or self.jwt_secret == "dev-secret":
-            # RuntimeError, not ValueError: a ValueError here is wrapped by
-            # pydantic into a ValidationError whose repr dumps the whole input
-            # dict — which on a real deployment carries the DB password, API
-            # tokens and other live secrets straight into the crash log. A plain
-            # RuntimeError propagates unwrapped, so the boot dies on this one
-            # message and nothing else. (#338: keys never go into logs.)
-            raise RuntimeError(
-                "JWT_SECRET must be set to a real secret when ENVIRONMENT is "
-                f"'{self.environment}' (i.e. not development/test); it is "
-                "currently missing, empty, or the built-in 'dev-secret' default. "
-                "Booting on the default silently invalidates every session on the "
-                "next restart that loads the real secret — every user is logged "
-                "out with no error (#342). Generate one with: "
-                'python -c "import secrets; print(secrets.token_urlsafe(48))"'
-            )
-        return self
+
+        raise RuntimeError(
+            "JWT_SECRET must be set to a real secret when ENVIRONMENT is "
+            f"'{self.environment}' (i.e. not development/test); it is "
+            "currently missing, empty, or the built-in 'dev-secret' default. "
+            "Booting on the default silently invalidates every session on the "
+            "next restart that loads the real secret — every user is logged "
+            f"out with no error (#342). Generate one with: {generate}"
+        )
 
 
 @lru_cache

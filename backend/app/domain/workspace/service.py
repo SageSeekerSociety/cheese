@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import subprocess
-import tempfile
 import time
 import uuid
 from collections.abc import Iterator
@@ -21,7 +20,14 @@ from pathlib import Path
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
+from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
+from app.domain.workspace.identity import (
+    CHEESE_EMAIL,
+    CHEESE_IDENTITY,
+    CHEESE_NAME,
+    GitIdentity,
+)
 from app.domain.workspace.textfile import (
     MAX_TEXT_BYTES,
     content_version,
@@ -142,9 +148,17 @@ def _repo(project_id: uuid.UUID) -> Path:
     return (Path(settings.workspace_root) / str(project_id)).resolve()
 
 
-def branch_for_topic(topic_id: uuid.UUID) -> str:
-    """话题 = git 分支 (spec §6.3). Deterministic from the topic id."""
-    return f"topic/{topic_id.hex[:8]}"
+def branch_for_place(place_id: uuid.UUID) -> str:
+    """一个地点 = 一条 git 分支. Deterministic from the place's id.
+
+    A place is a room or one thread in it, and the id is whichever of the two
+    the work belongs to. The `topic/` prefix stays even though most places that
+    carry a branch are now threads: a task keeps the id of the `topics` row it
+    replaced, so the derived name is byte-for-byte what every existing branch,
+    worktree and container path is already called. Renaming the prefix would
+    rename all of them for nothing.
+    """
+    return f"topic/{place_id.hex[:8]}"
 
 
 def _git(
@@ -255,8 +269,8 @@ def _share_jj_modes(repo: Path, since: float = 0.0) -> None:
         pass
 
 
-JJ_USER_NAME = "芝士"
-JJ_USER_EMAIL = "cheese@zhishi.local"
+JJ_USER_NAME = CHEESE_NAME
+JJ_USER_EMAIL = CHEESE_EMAIL
 
 
 def _drop_repo_config_id(store: Path) -> None:
@@ -312,7 +326,12 @@ def _jj_failure_message(command: str, detail: str, repo: Path) -> str:
     return f"jj {command} failed: {detail}"
 
 
-def _jj(repo: Path, *args: str) -> str:
+def _jj(repo: Path, *args: str, identity: GitIdentity | None = None) -> str:
+    """`identity` overrides who the commit belongs to — see workspace/identity.py.
+    jj has one identity knob (JJ_USER/JJ_EMAIL sets author AND committer; 0.43
+    has no `--author`), so an overridden call attributes the commit wholly to
+    that person. Only the topic snapshot passes one; everything the platform
+    does on its own behalf (base commit, upstream merge) stays 芝士."""
     started = time.time() - 1  # -1s: filesystem mtime vs clock granularity slack
     # Before every call, not once at setup: a jj run by any other uid (an agent
     # in a sandbox) recreates config-id and locks the backend out mid-flight.
@@ -325,7 +344,11 @@ def _jj(repo: Path, *args: str) -> str:
         timeout=30,
         # Identity per call rather than as per-repo config: setting it with
         # `--repo` is the one thing that creates config-id in the first place.
-        env={**os.environ, "JJ_USER": JJ_USER_NAME, "JJ_EMAIL": JJ_USER_EMAIL},
+        env={
+            **os.environ,
+            "JJ_USER": (identity or CHEESE_IDENTITY).name,
+            "JJ_EMAIL": (identity or CHEESE_IDENTITY).email,
+        },
     )
     # Before the returncode check: a FAILED jj call still writes operations, and
     # those unreadable files break the sandbox just as thoroughly.
@@ -389,7 +412,7 @@ def _ensure_base_commit(repo: Path) -> None:
             "--allow-empty",
             "-q",
             "-m",
-            "init",
+            "chore: initialize project repository",
         )
 
 
@@ -403,19 +426,62 @@ def _base_branch(repo: Path) -> str:
     return _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() or DEFAULT_BRANCH
 
 
-def _worktree_path(project_id: uuid.UUID, branch: str) -> Path:
-    safe = branch.replace("/", "_")
+def _topic_dirname(topic_id: uuid.UUID) -> str:
+    """On-disk (and in-container) name of a topic's workspace directory.
+
+    Derived from the topic id ALONE — deliberately not from `branch_for_place`,
+    even though the two agree today (`topic/<hex8>` → `topic_<hex8>`). The
+    directory name is baked into things that survive a rename and cannot be
+    migrated cheaply: the jj workspace name, the relative `.jj/repo` pointer
+    inside every worktree (whose depth `sandbox_vcs_mounts` reproduces), the
+    container workdir, and — through that workdir — the tmux session name the
+    device backend hashes, so a changed path retires a live claude session and
+    drops its context. Naming the branch is a git-side decision; it must not be
+    able to move anyone's files.
+    """
+    return f"topic_{topic_id.hex[:8]}"
+
+
+def _worktree_path(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     return (
-        Path(settings.workspace_root) / ".worktrees" / str(project_id) / safe
+        Path(settings.workspace_root)
+        / ".worktrees"
+        / str(project_id)
+        / _topic_dirname(topic_id)
     ).resolve()
 
 
-def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
+def _fork_point(repo: Path, topic_id: uuid.UUID) -> str | None:
+    """The revision a topic's brand-new workspace starts from: its room's branch
+    when it has one, None for jj's own default (the base branch).
+
+    None covers three cases that all want the same answer — a room (nothing to
+    fork), a topic split before branches were shared (no marker), and a room
+    that has never committed anything (no branch yet, so the base branch IS its
+    content). Chosen once, at creation: `jj workspace add` is the only moment a
+    fork point exists to pick."""
+    parent = branch_parent_for_topic(topic_id)
+    if parent is None:
+        return None
+    branch = branch_for_place(parent)
+    # The room's branch may have been moved by a plain git ref update (an
+    # accept's CAS, a push) that jj has not seen yet — import before asking, or
+    # the fork would start from a stale bookmark.
+    with contextlib.suppress(ValidationError):
+        _jj(repo, "git", "import")
+    return branch if _branch_exists(repo, branch) else None
+
+
+def _ensure_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """每话题一个独立 jj workspace（沙箱地基）：分身在自己的工作目录里干活，
-    jj 自动快照其改动；并行话题互不覆盖。导出一个同名 git 分支供采纳/diff。"""
+    jj 自动快照其改动；并行话题互不覆盖。导出一个 git 分支（`branch_for_place`）
+    供采纳/diff——分支名与工作区目录名各自独立派生，见 `_topic_dirname`。
+
+    一件活的分支从它所在房间的分支长出来 (`_fork_point`)：一个房间一条分支一个 PR。"""
     main = ensure_repo(project_id)
     _ensure_base_commit(main)  # a workspace needs a base commit to fork from
-    wt = _worktree_path(project_id, branch)
+    branch = branch_for_place(topic_id)
+    wt = _worktree_path(project_id, topic_id)
     if (wt / ".jj").exists():  # already a jj workspace
         return wt
     # Migrate a stale git worktree left by the pre-jj design.
@@ -426,7 +492,11 @@ def _ensure_worktree(project_id: uuid.UUID, branch: str) -> Path:
             pass
         shutil.rmtree(wt, ignore_errors=True)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    _jj(main, "workspace", "add", "--name", branch.replace("/", "_"), str(wt))
+    add_args = ["workspace", "add", "--name", _topic_dirname(topic_id)]
+    fork_point = _fork_point(main, topic_id)
+    if fork_point is not None:
+        add_args += ["-r", fork_point]
+    _jj(main, *add_args, str(wt))
     # Export a git branch (= jj bookmark) for this topic so merge/diff use git.
     _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
     _jj(wt, "git", "export")
@@ -440,14 +510,17 @@ SANDBOX_WORKDIR = "/work"
 
 
 def sandbox_vcs_mounts(
-    project_id: uuid.UUID, branch: str, *, container_workdir: str = SANDBOX_WORKDIR
+    project_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    *,
+    container_workdir: str = SANDBOX_WORKDIR,
 ) -> list[str]:
     """Extra `docker run -v` args so a topic's jj workspace resolves inside its
     sandbox container.
 
     `jj workspace add` (_ensure_worktree above) writes `<worktree>/.jj/repo` as
     a path *relative to the real host directory nesting* between the worktree
-    (workspace_root/.worktrees/<project>/<branch>) and the project's shared
+    (workspace_root/.worktrees/<project>/topic_<hex8>) and the project's shared
     main repo (workspace_root/<project>) — e.g. `../../../../<project_id>/.jj
     /repo`. A sandbox container only ever gets the worktree, remapped to
     SANDBOX_WORKDIR (much shallower than the host tree), so that relative
@@ -463,7 +536,7 @@ def sandbox_vcs_mounts(
     (backend catch-up/diff/log, outside any container) is untouched — only the
     container's extra mounts change."""
     main = _repo(project_id)
-    wt = _worktree_path(project_id, branch)
+    wt = _worktree_path(project_id, topic_id)
     # Full (since=0) repair right before the store is handed to a container:
     # _jj's per-call repair only covers what THAT call wrote, so a repo whose
     # metadata predates this behaviour — every repo already on disk — would stay
@@ -539,11 +612,154 @@ _SANDBOX_STORES = (
 )
 
 
-def sandbox_topic_workdir(branch: str) -> str:
+def sandbox_topic_workdir(topic_id: uuid.UUID) -> str:
     """A topic's worktree path inside the tmux sandbox — its REAL path under the
     project-tree mount (not a per-topic remap), so hardlinks to the shared
     stores on the same mount work."""
-    return f"{SANDBOX_TOPICS_ROOT}/{branch.replace('/', '_')}"
+    return f"{SANDBOX_TOPICS_ROOT}/{_topic_dirname(topic_id)}"
+
+
+# Container mount point of a project's whole `.sessions/<project>` tree — the
+# session-dir counterpart of SANDBOX_TOPICS_ROOT, and it exists for the same
+# reason the topics tree is one mount: a box now hosts a whole ROOM, so it needs
+# every one of that room's topics' `~/.claude` dirs, and a container's mounts are
+# fixed at creation while a room keeps gaining tasks. One mount of the parent
+# covers topics that do not exist yet.
+#
+# Each topic's `claude` is pointed at its own subdirectory with a per-tmux-session
+# `CLAUDE_CONFIG_DIR` (see tmux_provider._session_env) rather than by remapping
+# the mount, because there is only one mount and many sessions.
+SANDBOX_SESSIONS_ROOT = "/sessions"
+
+
+def sessions_root(project_id: uuid.UUID) -> Path:
+    """Host dir holding every topic's session dir for a project — the parent of
+    `session_dir`, and the source of the SANDBOX_SESSIONS_ROOT mount.
+
+    Also stages the `cheese` CLI here, at the same `bin/cheese` relative path a
+    single topic's session dir uses. The CLI mount is one per BOX and a box now
+    serves a room, so it cannot come out of any one topic's dir — but it must
+    still come from a freshly-staged copy rather than the image's baked one (a
+    box outlives many deploys; the stale baked copy once wrote every agent's
+    memories into the wrong pool). The project's sessions root is the nearest
+    thing all of a room's topics share."""
+    root = (Path(settings.workspace_root) / ".sessions" / str(project_id)).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    _loosen(str(root), 0o777)
+    _stage_cheese_cli(root)
+    return root
+
+
+def sandbox_session_dir(topic_id: uuid.UUID) -> str:
+    """A topic's `~/.claude` INSIDE the sandbox — its real path under the sessions
+    mount. Must agree with `session_dir`'s host layout (both name the directory
+    `topic_id.hex[:8]`); the tmux session exports this as CLAUDE_CONFIG_DIR."""
+    return f"{SANDBOX_SESSIONS_ROOT}/{topic_id.hex[:8]}"
+
+
+# --- which box a topic runs in ----------------------------------------------
+#
+# A sandbox box is allocated per ROOM (its own line and every thread in it
+# share one), so everything that reaches into "the topic's container" has to map
+# topic → room first. That mapping lives in the DB, and this module is
+# deliberately sync and DB-free — it is called from `docker port` lookups on the
+# request path. So the provider, which does have a session, writes the answer
+# here as a marker file when it starts a box, and readers here fall back to
+# "the topic is its own room", which is exactly the pre-room behaviour.
+_ROOMS_DIRNAME = ".rooms"
+
+
+def _rooms_dir() -> Path:
+    return Path(settings.workspace_root) / _ROOMS_DIRNAME
+
+
+def _write_marker(path: Path, value: str, what: str) -> None:
+    """Record one small DB-derived fact on disk, idempotently and atomically.
+
+    Write-then-replace: a reader must never see a half-written value, and two
+    concurrent turns of one room both write here. Best-effort by design — every
+    caller's fact is a cache of something the DB owns, so losing the file costs
+    a fallback, not correctness."""
+    try:
+        if path.read_text().strip() == value:
+            return
+    except OSError:
+        pass
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(value)
+        tmp.replace(path)
+    except OSError:
+        logger.warning("could not record %s for %s", what, path.name, exc_info=True)
+
+
+def bind_room(topic_id: uuid.UUID, room_id: uuid.UUID) -> None:
+    """Record which room's box a topic runs in. Idempotent, best-effort: the
+    mapping is a cache of a DB fact, so losing it costs a fallback, not
+    correctness."""
+    _write_marker(_rooms_dir() / topic_id.hex, room_id.hex, "room binding")
+
+
+def room_for_topic(topic_id: uuid.UUID) -> uuid.UUID:
+    """The room whose box hosts this topic — itself when unknown.
+
+    Unknown is the honest answer for a topic that has never started a box, and
+    also the SAFE one: falling back to the topic's own id reproduces the
+    one-box-per-topic behaviour rather than pointing at some other room's box."""
+    if not settings.sandbox_share_room_container:
+        return topic_id
+    try:
+        return uuid.UUID(hex=(_rooms_dir() / topic_id.hex).read_text().strip())
+    except (OSError, ValueError):
+        return topic_id
+
+
+def forget_room(topic_id: uuid.UUID) -> None:
+    """Drop a topic's room binding (its box no longer hosts it)."""
+    with contextlib.suppress(OSError):
+        (_rooms_dir() / topic_id.hex).unlink()
+
+
+# --- which branch a topic's own branch grows out of --------------------------
+#
+# A piece of work split out of a room is not a fork of the base branch: it forks
+# THE ROOM, and its commits flow back into the room's branch when its conclusion
+# is 采信'd (`merge_subtopic_into_room`). One room, one branch, one PR — the
+# room's accept card ships everything its tasks produced, instead of every task
+# opening a PR of its own.
+#
+# Which topic a branch forks from is a DB fact (the topic tree plus `kind`), and
+# this module is deliberately sync and DB-free, so the topic layer writes the
+# answer here the moment it splits — exactly the shape `bind_room` uses. No
+# marker means "fork the base branch", which is what a room itself does and what
+# every topic did before this existed: a degraded answer, never a wrong one.
+_BRANCH_PARENTS_DIRNAME = ".branch-parents"
+
+
+def _branch_parents_dir() -> Path:
+    return Path(settings.workspace_root) / _BRANCH_PARENTS_DIRNAME
+
+
+def bind_branch_parent(topic_id: uuid.UUID, parent_topic_id: uuid.UUID) -> None:
+    """Record that `topic_id`'s branch belongs to `parent_topic_id`'s.
+
+    Must be written before anything can materialise the topic's workspace — the
+    fork point is chosen once, when the jj workspace is created, and no later
+    call can move it."""
+    _write_marker(
+        _branch_parents_dir() / topic_id.hex, parent_topic_id.hex, "branch parent"
+    )
+
+
+def branch_parent_for_topic(topic_id: uuid.UUID) -> uuid.UUID | None:
+    """The topic whose branch this one forks from and merges back into, or None
+    when it stands on the base branch (every room, and every topic created
+    before branches were shared)."""
+    try:
+        return uuid.UUID(hex=(_branch_parents_dir() / topic_id.hex).read_text().strip())
+    except (OSError, ValueError):
+        return None
 
 
 def gate_workdir_for(worktree: Path) -> str:
@@ -552,9 +768,9 @@ def gate_workdir_for(worktree: Path) -> str:
     Not a free choice: it has to be the SAME absolute path the agent's own
     sandbox used, because that is the path baked into every console script the
     agent's `uv sync` created. `_worktree_path` names the directory
-    ``branch.replace("/", "_")`` and `sandbox_topic_workdir` builds the
+    ``_topic_dirname(topic_id)`` and `sandbox_topic_workdir` builds the
     container path from exactly that, so the host directory's own name is
-    enough — a gate needs no branch argument to agree with the sandbox.
+    enough — a gate needs no topic argument to agree with the sandbox.
     """
     return f"{SANDBOX_TOPICS_ROOT}/{worktree.name}"
 
@@ -580,7 +796,7 @@ def sandbox_store_env(root: Path) -> list[str]:
     return env_args
 
 
-def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
+def sandbox_project_mounts(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     """`docker run` args mounting the project's `.worktrees` tree (topics +
     shared stores, one mount — see SANDBOX_TOPICS_ROOT) plus the jj/git store
     mounts anchored to the topic's in-container workdir, plus the store env.
@@ -594,15 +810,15 @@ def sandbox_project_mounts(project_id: uuid.UUID, branch: str) -> list[str]:
     containers already share the project's writable `.jj`/`.git` stores, so
     same-project topics were never isolated from each other; cross-project
     isolation is unchanged."""
-    root = _worktree_path(project_id, branch).parent
+    root = _worktree_path(project_id, topic_id).parent
     root.mkdir(parents=True, exist_ok=True)
     env_args = sandbox_store_env(root)
-    workdir = sandbox_topic_workdir(branch)
+    workdir = sandbox_topic_workdir(topic_id)
     return [
         "-v",
         f"{root}:{SANDBOX_TOPICS_ROOT}",
         *env_args,
-        *sandbox_vcs_mounts(project_id, branch, container_workdir=workdir),
+        *sandbox_vcs_mounts(project_id, topic_id, container_workdir=workdir),
     ]
 
 
@@ -668,13 +884,12 @@ def _tree(project_id: uuid.UUID, topic_id: uuid.UUID | None) -> Path:
     for project-level (no topic)."""
     if topic_id is None:
         return ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
-    _catch_up_with_branch(project_id, wt, branch)
+    wt = _ensure_worktree(project_id, topic_id)
+    _catch_up_with_branch(project_id, wt, branch_for_place(topic_id))
     return wt
 
 
-def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
+def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> bool:
     """Materialise commits that reached the branch without going through here.
 
     A machine that owns its tree pushes straight to the ref. The workspace is the
@@ -686,19 +901,25 @@ def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
     a human's uncommitted edit here must never be swept aside by a machine's
     push. When both sides have moved, the workspace wins and stays put — its
     changes are the ones a person is looking at.
+
+    Returns whether the workspace now sits on the branch tip. False is not an
+    error — it is "the workspace declined, it holds something a person cares
+    about" — but a caller that just MOVED the branch has to know, because the
+    next `snapshot_worktree` sets the bookmark from this workspace and would
+    carry the branch back off whatever it missed.
     """
     repo = ensure_repo(project_id)
     try:
         tip = _git(repo, "rev-parse", branch).strip()
     except ValidationError:
-        return  # branch not created yet — nothing to catch up to
+        return False  # branch not created yet — nothing to catch up to
     if not tip:
-        return
+        return False
     if _jj(wt, "diff", "-s").strip():
-        return  # pending local edits: leave them alone
+        return False  # pending local edits: leave them alone
     current = _jj(wt, "log", "-r", "@-", "--no-graph", "-T", "commit_id").strip()
     if current == tip:
-        return
+        return True
     # Fast-forward only: move only when the workspace has nothing the branch lacks.
     ancestor = subprocess.run(
         ["git", "merge-base", "--is-ancestor", current, tip],
@@ -707,9 +928,10 @@ def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> None:
         timeout=20,
     )
     if current and ancestor.returncode != 0:
-        return
+        return False
     _jj(wt, "git", "import")
     _jj(wt, "new", branch)
+    return True
 
 
 def _safe_path(repo: Path, rel: str) -> Path:
@@ -896,7 +1118,7 @@ def git_log(
     if not _git(repo, "rev-list", "-n", "1", "--all").strip():
         return []
     if topic_id is not None:
-        branch = branch_for_topic(topic_id)
+        branch = branch_for_place(topic_id)
         if not _branch_exists(repo, branch):
             return []
         base = _base_branch(repo)
@@ -933,14 +1155,52 @@ def git_diff(project_id: uuid.UUID, ref: str | None = None) -> str:
     return _git(repo, "diff")
 
 
+def _diff_base(repo: Path, topic_id: uuid.UUID) -> str:
+    """What a topic's changes are measured AGAINST: its room's branch when it
+    forked one, the project's base branch otherwise.
+
+    A task's branch grows out of its room (`_fork_point`), so measuring it
+    against main would report the room's whole diff as the task's own — every
+    file the room had already changed showing up in the 改动 tab of a task that
+    never touched them. The question the panel asks is "what did THIS piece of
+    work change", and the answer is relative to where it started.
+    """
+    parent = branch_parent_for_topic(topic_id)
+    if parent is not None:
+        parent_branch = branch_for_place(parent)
+        if _branch_exists(repo, parent_branch):
+            return parent_branch
+    return _base_branch(repo)
+
+
 def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
-    """Full diff of a topic's branch vs the base (what 采纳 would merge)."""
+    """Full diff of a topic's branch vs what it grew out of (`_diff_base`)."""
     repo = ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         return ""
-    base = _base_branch(repo)
-    return _git(repo, "diff", f"{base}...{branch}")
+    return _git(repo, "diff", f"{_diff_base(repo, topic_id)}...{branch}")
+
+
+def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
+    """Paths a topic's branch changes relative to what it grew out of — the same
+    range :func:`topic_diff` renders, named only.
+
+    It exists so the panel can answer "is there anything to review, and how
+    much" WITHOUT fetching the diff. The 改动 tab has to be right while it is
+    closed (whether it is offered at all, and the count on it), and pulling a
+    whole diff on every turn boundary to arrive at one integer is the shape that
+    got the 资源 drawer's 20-second poll deleted.
+
+    Empty when the branch doesn't exist yet, matching :func:`topic_diff`: a
+    topic that has never written anything changes nothing.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_place(topic_id)
+    if not _branch_exists(repo, branch):
+        return []
+    out = _git(repo, "diff", "--name-only", f"{_diff_base(repo, topic_id)}...{branch}")
+    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 def topic_added_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
@@ -956,7 +1216,7 @@ def topic_added_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     has not written anything cannot collide with anything.
     """
     repo = ensure_repo(project_id)
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         return []
     base = _base_branch(repo)
@@ -1209,6 +1469,7 @@ def _merge_ref_into_base(
     message: str,
     *,
     allow_unrelated_histories: bool = False,
+    sync_checkout: bool = True,
 ) -> dict:
     """Merge `merge_ref` into `base` without ever running the merge itself in
     the project's shared working directory. The merge happens in a throwaway
@@ -1218,6 +1479,14 @@ def _merge_ref_into_base(
     (`update-ref old new`) — if another accept landed on `base` in the
     meantime, this retries against the new tip rather than clobbering it or
     silently merging on top of a stale base.
+
+    `sync_checkout=False` for a `base` that is NOT the project's base branch —
+    a room's branch taking in one of its tasks (`merge_subtopic_into_room`).
+    The shared directory mirrors the base tip and nothing else; pointing it at a
+    room's branch would hand every project-level reader (list_files/read_file/
+    exec_in_sandbox with topic_id=None) one room's in-progress work as if it
+    were the project. Those readers are already correct here — the base branch
+    did not move — so the sync is not merely unnecessary, it is the bug.
 
     Never raises for an ordinary merge failure (conflict, or retries
     exhausted) — always returns a dict with a `merged` key, same contract as
@@ -1271,6 +1540,8 @@ def _merge_ref_into_base(
         # is NOT a failed merge. Letting it raise told the user "采纳未完成：
         # 合并出错" about work that was already on the base branch, and invited a
         # re-accept of an already-merged topic (observed 2026-08-11).
+        if not sync_checkout:
+            return {"merged": True, "branch": merge_ref, "into": base}
         try:
             _sync_shared_checkout(repo, base, new_sha)
         except ValidationError as exc:
@@ -1302,10 +1573,10 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     # have edited files (人改文件即指令) with no agent turn afterwards to
     # snapshot them — accepting must deliver what the reviewer actually saw.
     try:
-        snapshot_worktree(project_id, topic_id, "采纳前快照")
+        snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_ACCEPT)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         return {"merged": False, "noop": True, "reason": "no topic branch"}
     base = _base_branch(repo)
@@ -1316,8 +1587,103 @@ def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
             "reason": "topic is the base branch",
         }
     return _merge_ref_into_base(
-        project_id, repo, base, branch, f"采纳 {branch} → {base}"
+        project_id, repo, base, branch, f"chore: merge {branch} into {base}"
     )
+
+
+def _is_ancestor(repo: Path, ref: str, of: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ref, of],
+            cwd=repo,
+            capture_output=True,
+            timeout=20,
+        ).returncode
+        == 0
+    )
+
+
+def merge_subtopic_into_room(
+    project_id: uuid.UUID, topic_id: uuid.UUID, room_topic_id: uuid.UUID
+) -> dict:
+    """一件活的提交进房间那一个 PR: fold a thread's branch into the room's.
+
+    Called when the task's conclusion is 采信'd. From then on the room's branch
+    — the one its accept card and its PR ride — carries the task's commits, so
+    the work reaches GitHub through the room instead of a PR of its own.
+
+    Three things can stop it, and none of them may fail silently:
+
+    - **conflict** — two tasks in one room touched the same lines. Merging into
+      the room is what surfaces it, days before it would have surfaced between
+      two PRs; the conflicting paths come back in `conflicts` for the caller to
+      say so out loud.
+    - **the room's workspace has uncommitted edits** — somebody is editing in
+      there right now. 人的未提交编辑绝不能被机器扫掉, so the merge is refused
+      and queued (`deferred`), never forced.
+    - **the room's workspace could not follow the branch** — it went dirty
+      between the check and the ref move. The merge itself is durable, but the
+      next `snapshot_worktree` would set the bookmark from that stale workspace
+      and carry the branch back off these commits, so it reports
+      `workspace_stale` and the caller leaves the card queued for a retry.
+
+    "It has nothing to add" (no branch, or already merged) is `noop`, not a
+    failure: a research task that wrote no code is the normal case.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_place(topic_id)
+    room_branch = branch_for_place(room_topic_id)
+    if branch == room_branch:
+        return {"merged": False, "noop": True, "reason": "这件活和房间是同一条分支"}
+    if not _branch_exists(repo, branch):
+        return {"merged": False, "noop": True, "reason": "这件活没有分支，没有提交要并"}
+    # Materialising the room's workspace also guarantees it HAS a branch — a
+    # room whose own 芝士 never committed anything has none until now.
+    room_wt = _ensure_worktree(project_id, room_topic_id)
+    if _is_ancestor(repo, branch, room_branch):
+        # Already on the branch — but not finished until the room's workspace
+        # holds it too, for the `workspace_stale` reason below. A retry that
+        # stopped here would mark the job done while the rewind was still armed.
+        settled = _catch_up_with_branch(project_id, room_wt, room_branch)
+        return {
+            "merged": False,
+            "noop": True,
+            "workspace_stale": not settled,
+            "reason": "这些提交已经在房间分支上",
+        }
+    if _jj(room_wt, "diff", "-s").strip():
+        return {
+            "merged": False,
+            "deferred": True,
+            "reason": "房间工作区有未提交的改动，合并排队等它落定",
+        }
+    commits = len(
+        _git(repo, "rev-list", f"{room_branch}..{branch}").strip().splitlines()
+    )
+    result = _merge_ref_into_base(
+        project_id,
+        repo,
+        room_branch,
+        branch,
+        f"chore: merge {branch} into {room_branch}",
+        sync_checkout=False,
+    )
+    if not result["merged"]:
+        return result
+    if not _catch_up_with_branch(project_id, room_wt, room_branch):
+        return {
+            "merged": True,
+            "workspace_stale": True,
+            "commits": commits,
+            "branch": branch,
+            "into": room_branch,
+        }
+    return {
+        "merged": True,
+        "commits": commits,
+        "branch": branch,
+        "into": room_branch,
+    }
 
 
 # ---- 上游仓库 (spec §6.3): 关联已有 repo + 同步上游 ----------------------------
@@ -1381,11 +1747,82 @@ def _upstream_ref(repo: Path) -> str:
     raise ValidationError("上游仓库没有 main/master 分支")
 
 
+def _base_adds_nothing(repo: Path, ref: str, base: str) -> bool:
+    """Whether `base` contributes any CONTENT the upstream doesn't already have.
+
+    Not `rev-list --count ref..base`: after a merge-based sync the base is ahead
+    by a merge commit that changes not one byte. What decides whether the base
+    may simply be pointed at the upstream is the tree, so that is what gets
+    asked — is `base` identical in content to the last commit the two histories
+    share? Unrelated histories (a fresh repo whose only commit is the platform's
+    synthetic one) have no merge base at all, and answer no."""
+    try:
+        common = _git(repo, "merge-base", ref, base).strip()
+    except ValidationError:
+        return False  # unrelated histories — a real join is needed
+    if not common:
+        return False
+    result = subprocess.run(
+        ["git", "diff", "--quiet", common, base],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _fast_forward_base(project_id: uuid.UUID, repo: Path, base: str, ref: str) -> dict:
+    """Point `base` straight at `ref` — no merge commit, nothing to conflict.
+
+    Same two steps as the tail of `_merge_ref_into_base` (CAS the ref, then sync
+    the shared checkout) and the same rule about them: once the CAS lands the
+    sync is durable, and a stale shared directory afterwards is loud
+    housekeeping, not a failed sync."""
+    for _attempt in range(_MERGE_RETRY_LIMIT):
+        old_sha = _git(repo, "rev-parse", base).strip()
+        new_sha = _git(repo, "rev-parse", ref).strip()
+        if old_sha == new_sha:
+            return {"synced": True, "commits": 0, "reason": "已是最新"}
+        try:
+            _git(repo, "update-ref", f"refs/heads/{base}", new_sha, old_sha)
+        except ValidationError:
+            continue  # base moved under us — re-read and retry
+        try:
+            _sync_shared_checkout(repo, base, new_sha)
+        except ValidationError as exc:
+            logger.exception(
+                "%s advanced to %s but the shared checkout could not be synced",
+                base,
+                new_sha,
+            )
+            return {"synced": True, "fast_forward": True, "sync_failed": str(exc)}
+        return {"synced": True, "fast_forward": True}
+    return {
+        "synced": False,
+        "reason": f"同步失败：{base} 分支并发更新冲突过多，请重试",
+    }
+
+
 def sync_upstream(project_id: uuid.UUID) -> dict:
-    """同步上游: fetch the upstream remote and merge its default branch into the
-    project's base branch. The first sync of a seeded/fresh repo is an
-    unrelated-histories merge; a conflict aborts cleanly (never half-merges) and
-    reports back — same contract as merge_topic."""
+    """同步上游: bring the project's base branch up to the upstream's default
+    branch.
+
+    **For a bound project the base branch is a MIRROR of the upstream's default
+    branch, not a branch of its own.** That is the whole design, and getting it
+    wrong is what produced the mess this replaces: the sync used to be an
+    unconditional `merge --no-ff`, so every tick minted a merge commit that
+    existed only locally. Nothing ever removed them, every topic branch was cut
+    from a base carrying the whole pile, and each one showed up as a "new"
+    commit in that topic's PR — 39 of PR #488's 40 commits were
+    `同步上游 upstream/main → main`, and this repo's own base was 41 such commits
+    ahead of upstream while its tree was byte-identical (verified 2026-08-16).
+
+    So: fast-forward whenever the base has no content of its own, which after
+    采纳即合并 (#296) is always — a bound project never commits to its base
+    locally. A real merge is reserved for the case that genuinely needs one: a
+    base that HAS local content the upstream lacks (a project seeded with work
+    before it was bound), where a fast-forward would silently discard it.
+    Conflicts there abort cleanly and report, same contract as merge_topic."""
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         return {"synced": False, "reason": "未关联上游仓库"}
@@ -1396,6 +1833,14 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         return {"synced": False, "reason": str(exc)}
     base = _base_branch(repo)
     behind = int(_git(repo, "rev-list", "--count", f"{base}..{ref}").strip() or "0")
+    if _base_adds_nothing(repo, ref, base):
+        # Covers "simply behind" AND "ahead only by contentless merges left by
+        # the old implementation" — the second is why this is not just
+        # `merge --ff-only`, which would refuse and mint merge #42.
+        result = _fast_forward_base(project_id, repo, base, ref)
+        if result.get("synced"):
+            result.setdefault("commits", behind)
+        return result
     if behind == 0:
         return {"synced": True, "commits": 0, "reason": "已是最新"}
     result = _merge_ref_into_base(
@@ -1403,7 +1848,7 @@ def sync_upstream(project_id: uuid.UUID) -> dict:
         repo,
         base,
         ref,
-        f"同步上游 {ref} → {base}",
+        f"chore: merge upstream {ref} into {base}",
         allow_unrelated_histories=True,
     )
     if not result["merged"]:
@@ -1421,8 +1866,8 @@ def prepare_conflict_resolution(
     """采纳冲突 → 派芝士解决的前置：在话题的 jj workspace 里创建 branch×base 的
     合并提交，冲突以标记形式materialize 在文件里；返回冲突文件列表。芝士改完文件、
     平台照常快照（merge commit 连同解决一起入 bookmark），重试采纳即可干净合并。"""
-    branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
+    branch = branch_for_place(topic_id)
+    wt = _ensure_worktree(project_id, topic_id)
     base = _base_branch(ensure_repo(project_id))
     # The workspace's jj view lags the git side — pull the base branch's latest
     # commits in first, or the merge would use a stale bookmark (and possibly
@@ -1464,8 +1909,8 @@ def prepare_upstream_conflict_resolution(
     _git(repo, "fetch", UPSTREAM_REMOTE, timeout=120)
     upstream_sha = _git(repo, "rev-parse", _upstream_ref(repo)).strip()
     base = _base_branch(repo)
-    branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
+    branch = branch_for_place(topic_id)
+    wt = _ensure_worktree(project_id, topic_id)
     # The workspace's jj view lags the git side — import first, or the merge
     # would run against a stale base (and possibly see no conflict at all).
     try:
@@ -1620,10 +2065,10 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     if get_upstream(project_id) is None:
         raise ValidationError("未关联上游仓库，无法推分支")
     try:
-        snapshot_worktree(project_id, topic_id, "PR 快照")
+        snapshot_worktree(project_id, topic_id, SNAPSHOT_FOR_PR)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo, branch):
         raise ValidationError("话题没有分支，无法推送")
     _git(
@@ -1644,12 +2089,36 @@ def pr_base_branch(project_id: uuid.UUID) -> str:
     return _base_branch(ensure_repo(project_id))
 
 
+def has_undelivered_commits(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
+    """Does this topic's branch hold anything the base branch does not?
+
+    This is the fact behind "can this room deliver again". A room outlives the
+    work done in it (#536), so it files a card, that card merges, and then work
+    continues — the next task's commits land on the same branch and are, right
+    then, undelivered. Answering from history instead ("has a card ever been
+    accepted?") freezes the room after its first delivery, which is the whole
+    of 一个 task 完成了可以再新开 task.
+
+    False also covers the branch that never existed: nothing to deliver is
+    nothing to deliver, and the caller's refusal reads the same either way.
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_place(topic_id)
+    base = _base_branch(repo)
+    if not _branch_exists(repo, branch) or not _branch_exists(repo, base):
+        return False
+    # Ahead-ness, not equality: the base moves under a long-lived room branch
+    # all the time, and a room that is merely behind main still has its own
+    # commits to deliver.
+    return not _is_ancestor(repo, branch, base)
+
+
 def topic_branch_exists(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     """Does this topic have a branch a PR could carry? Discussion-only topics
     never grow one — for them the PR path is NOT APPLICABLE (accept merges
     nothing and archives), which callers must distinguish from a push/API
     FAILURE (where accept must stop rather than silently direct-merge)."""
-    return _branch_exists(ensure_repo(project_id), branch_for_topic(topic_id))
+    return _branch_exists(ensure_repo(project_id), branch_for_place(topic_id))
 
 
 def _github_push_url(owner: str, repo: str) -> str:
@@ -1700,6 +2169,7 @@ def _remote_default_branch(repo: Path, url: str, env: dict[str, str]) -> str | N
 def _sync_remote_base_into_topic_branch(
     project_id: uuid.UUID,
     repo: Path,
+    topic_id: uuid.UUID,
     branch: str,
     *,
     url: str,
@@ -1767,7 +2237,7 @@ def _sync_remote_base_into_topic_branch(
                 "--no-ff",
                 "-q",
                 "-m",
-                f"同步 GitHub {default} → {branch}（推 PR 分支前）",
+                f"chore: merge {default} into {branch} before pushing the PR branch",
                 base_ref,
             )
         except ValidationError as exc:
@@ -1795,11 +2265,13 @@ def _sync_remote_base_into_topic_branch(
         _git(repo, "update-ref", f"refs/heads/{branch}", new_sha, old_sha)
     except ValidationError:
         return {"synced": False, "reason": "话题分支被并发更新，本次未同步"}
-    _catch_up_topic_workspace(project_id, branch)
+    _catch_up_topic_workspace(project_id, topic_id, branch)
     return {"synced": True, "base": default, "head": new_sha}
 
 
-def _catch_up_topic_workspace(project_id: uuid.UUID, branch: str) -> None:
+def _catch_up_topic_workspace(
+    project_id: uuid.UUID, topic_id: uuid.UUID, branch: str
+) -> None:
     """Let the topic's jj workspace see a commit that reached its git branch
     from outside (here: the sync merge above).
 
@@ -1809,7 +2281,7 @@ def _catch_up_topic_workspace(project_id: uuid.UUID, branch: str) -> None:
     and turning the following re-push into a rejected non-fast-forward. Purely
     best-effort: the git ref is what gets pushed, so a jj hiccup must not fail
     the push."""
-    wt = _worktree_path(project_id, branch)
+    wt = _worktree_path(project_id, topic_id)
     if not (wt / ".jj").exists():
         return  # no workspace yet — nothing to catch up
     try:
@@ -1859,10 +2331,10 @@ def push_topic_branch_for_github_pr(
     60s re-push poll) exactly as cheap as it was — no fetch, no extra commit."""
     repo_path = ensure_repo(project_id)
     try:
-        snapshot_worktree(project_id, topic_id, "两阶段采纳前快照")
+        snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_TWO_PHASE)
     except ValidationError:
         pass  # no workspace/jj state yet — nothing pending to fold
-    branch = branch_for_topic(topic_id)
+    branch = branch_for_place(topic_id)
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
     url = _github_push_url(owner, repo)
@@ -1874,7 +2346,7 @@ def push_topic_branch_for_github_pr(
         if not _is_workflow_permission_rejection(str(exc)):
             raise
         synced = _sync_remote_base_into_topic_branch(
-            project_id, repo_path, branch, url=url, env=env
+            project_id, repo_path, topic_id, branch, url=url, env=env
         )
         if not synced.get("synced"):
             raise ValidationError(
@@ -1891,7 +2363,7 @@ def push_topic_branch_for_github_pr(
 def topic_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     """Host path of a topic's git worktree (created on demand), world-writable so
     the sandbox container's non-root `node` user can write into the mount."""
-    wt = _ensure_worktree(project_id, branch_for_topic(topic_id))
+    wt = _ensure_worktree(project_id, topic_id)
     import os
 
     os.chmod(wt, 0o777)
@@ -1993,13 +2465,7 @@ def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     here via CHEESE_HOOK_SPOOL=/home/node/.claude/cheese-spool (the session dir
     mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
     session_dir's base so both sides agree on ONE location."""
-    return (
-        Path(settings.workspace_root)
-        / ".sessions"
-        / str(project_id)
-        / topic_id.hex[:8]
-        / "cheese-spool"
-    ).resolve()
+    return identity_mod.session_dir(project_id, topic_id) / "cheese-spool"
 
 
 def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
@@ -2008,53 +2474,122 @@ def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     mounts to /home/node/.claude), so the output of a command that runs for hours
     survives the container being rebuilt under it. Mirrors spool_dir's base so
     both sides agree on ONE location."""
-    return (
-        Path(settings.workspace_root)
-        / ".sessions"
-        / str(project_id)
-        / topic_id.hex[:8]
-        / "cheese-await"
-    ).resolve()
+    return identity_mod.session_dir(project_id, topic_id) / "cheese-await"
 
 
 def has_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
     """Whether this topic already has a jj workspace on disk. Read-only probe:
     unlike `_ensure_worktree` it creates nothing, so a caller that only wants to
     snapshot existing work can ask without conjuring a repo as a side effect."""
-    return (_worktree_path(project_id, branch_for_topic(topic_id)) / ".jj").exists()
+    return (_worktree_path(project_id, topic_id) / ".jj").exists()
+
+
+# ---- Automatic commit messages ---------------------------------------------
+#
+# These are commits nobody wrote by hand, and they end up in the history a human
+# reads. They used to be Chinese in-house jargon ("芝士 edits（后台任务「…」结束后
+# 的最终态）") — unreadable to anyone outside the platform, and nothing a git tool
+# can parse. Conventional Commits, English, imperative, subject under 72 chars:
+# the same rule the agent itself is held to (CLAUDE.md 的「提交与 PR 规范」).
+#
+# `chore` is the honest type: a snapshot is not itself a feature or a fix, it is
+# the platform preserving whatever state the workspace is in. What the change
+# actually IS gets said once, in the squash commit that lands on main
+# (review/services.py 的 `_pr_merge_commit_title`).
+SNAPSHOT_MESSAGE = "chore: snapshot workspace after agent turn"
+SNAPSHOT_BEFORE_ACCEPT = "chore: snapshot workspace before accept"
+SNAPSHOT_FOR_PR = "chore: snapshot workspace for pull request"
+SNAPSHOT_BEFORE_TWO_PHASE = "chore: snapshot workspace before two-phase accept"
+SNAPSHOT_BEFORE_CI_POLL = "chore: snapshot workspace before CI poll"
 
 
 def snapshot_worktree(
-    project_id: uuid.UUID, topic_id: uuid.UUID, message: str = "芝士 edits"
+    project_id: uuid.UUID, topic_id: uuid.UUID, message: str = SNAPSHOT_MESSAGE
 ) -> None:
     """Snapshot whatever the agent changed in the topic's workspace this turn as a
     jj commit, so native Bash/Write/Edit edits become version history (no manual
     commit needed). The topic's git branch (bookmark) is moved to the new commit
     so 采纳/diff still work via git.
 
+    Authored by the human the topic belongs to when they have a linked GitHub
+    account (`workspace/identity.py`), 芝士 otherwise — an unlinkable address is
+    why these commits showed up on GitHub as a grey name with no avatar.
+
     A snapshot taken while `cheese await` has a command in flight can only catch a
     half-written worktree, so the automatic post-turn one is HELD instead
     (`awaited_tasks.checkpoint_worktree`). What still reaches here during a hold
-    are the paths a human is waiting on — 采纳前快照, PR 快照 — where refusing
+    are the paths a human is waiting on — before-accept, PR — where refusing
     would wedge the accept. Those commit, but say so in the message rather than
-    passing a mid-command tree off as a settled one."""
+    passing a mid-command tree off as a settled one. It goes in the BODY: the
+    subject line is a Conventional Commits subject and a parenthetical warning
+    glued onto it would blow past 72 chars and read as part of the change."""
     from app.domain.agent import awaited_tasks  # local: it imports this module
 
-    branch = branch_for_topic(topic_id)
-    wt = _ensure_worktree(project_id, branch)
+    branch = branch_for_place(topic_id)
+    wt = _ensure_worktree(project_id, topic_id)
     if not _jj(wt, "diff", "-s").strip():
         return  # nothing changed this turn
     held = awaited_tasks.snapshot_hold(topic_id)
     if held is not None:
-        message = f"{message}（⚠️ 后台任务「{held.label}」运行中，可能是中间态）"
+        message = (
+            f"{message}\n\n"
+            f"Taken while the background task {held.label!r} was still running, "
+            "so this tree may be a mid-command state."
+        )
     _jj(wt, "commit", "-m", message)
     # The just-committed work is @- (jj commit started a fresh empty @).
+    #
+    # Authorship is a SECOND step, not an env var on the commit above: jj stamps
+    # the author when the working-copy commit is CREATED — which happened at the
+    # end of the previous turn — so JJ_USER at `jj commit` time changes nothing.
+    # `metaedit --update-author` rewrites it afterwards, and the bookmark is set
+    # after that so it lands on the rewritten commit rather than the discarded
+    # one.
+    author = identity_mod.read(project_id, topic_id)
+    if author is not None:
+        _jj(wt, "metaedit", "--update-author", "-r", "@-", identity=author)
     _jj(wt, "bookmark", "set", branch, "-r", "@-", "--allow-backwards")
     _jj(wt, "git", "export")
 
 
-def sandbox_available() -> bool:
+# `docker info` costs ~50ms, and the answer changes only when someone starts or
+# stops the daemon — so it is cached for this long rather than paid per call.
+_SANDBOX_PROBE_TTL_S = 30.0
+_sandbox_probe: tuple[float, bool] | None = None
+
+
+def docker_installed() -> bool:
+    """The binary is on PATH. Says nothing about whether it can be used."""
     return shutil.which("docker") is not None
+
+
+def sandbox_available() -> bool:
+    """The sandbox can actually run something — the binary exists AND its daemon
+    answers.
+
+    The binary alone used to be the whole check, which is wrong in the one case
+    that happens most: docker installed, daemon not started. Callers then took
+    the "yes" and failed inside `docker run`, and the message they printed said
+    docker was not FOUND — naming the one problem the host did not have."""
+    global _sandbox_probe
+    if not docker_installed():
+        return False
+    now = time.monotonic()
+    if _sandbox_probe is not None and now - _sandbox_probe[0] < _SANDBOX_PROBE_TTL_S:
+        return _sandbox_probe[1]
+    try:
+        ok = (
+            subprocess.run(  # noqa: S603 — fixed argv, no shell
+                ["docker", "info", "--format", "{{.ServerVersion}}"],
+                capture_output=True,
+                timeout=5,
+            ).returncode
+            == 0
+        )
+    except (OSError, subprocess.SubprocessError):
+        ok = False
+    _sandbox_probe = (now, ok)
+    return ok
 
 
 def exec_in_sandbox(
@@ -2072,15 +2607,17 @@ def exec_in_sandbox(
         return {
             "exit_code": -1,
             "stdout": "",
-            "stderr": "sandbox 不可用：未找到 docker（需要 Docker 在运行）",
+            "stderr": (
+                "sandbox 不可用：未找到 docker"
+                if not docker_installed()
+                else "sandbox 不可用：docker 已安装但守护进程没有响应"
+            ),
         }
     # A topic's tree is a jj workspace whose .jj/repo pointer only resolves
     # with the main repo's store mounted too (see sandbox_vcs_mounts); the
     # project-level tree (topic_id=None) IS the main repo, no extra mount needed.
     vcs_mounts = (
-        sandbox_vcs_mounts(project_id, branch_for_topic(topic_id))
-        if topic_id is not None
-        else []
+        sandbox_vcs_mounts(project_id, topic_id) if topic_id is not None else []
     )
     try:
         result = subprocess.run(
@@ -2128,6 +2665,45 @@ def exec_in_sandbox(
 # the project needs on 0.0.0.0:$CHEESE_APP_PORT and declares it (cheese serve).
 APP_PORT = 3000
 
+# 现场终端: the in-container ttyd (read-only pane mirror) base port.
+TTYD_PORT = 7681
+
+
+# --- per-topic port slots ----------------------------------------------------
+#
+# A room's box hosts several topics, and each wants its OWN app port (运行环境
+# 预览) and its OWN ttyd (现场终端) — two topics of one room cannot share :3000.
+# Published ports are fixed at container creation and a room keeps gaining
+# tasks, so the box publishes a fixed BLOCK of slots up front and each topic's
+# tmux session is handed one (see tmux_provider._allocate_port_slot). The slot
+# index is stored in the session's own environment, which makes the tmux server
+# the single registry — no host-side bookkeeping to drift out of sync with the
+# sessions that actually exist.
+
+
+def app_port_for_slot(slot: int) -> int:
+    return APP_PORT + slot
+
+
+def ttyd_port_for_slot(slot: int) -> int:
+    return TTYD_PORT + slot
+
+
+def port_slots() -> int:
+    """How many topics of one room get published ports. At least 1 — a zero here
+    would silently leave every box with no 运行环境预览 at all."""
+    return max(1, settings.sandbox_room_port_slots)
+
+
+def tmux_session_name(topic_id: uuid.UUID) -> str:
+    """The topic's tmux session inside its room's box. Per topic, because one box
+    now hosts a whole room; `LEGACY_TMUX_SESSION` is what a box created before
+    that (one box, one topic, one session) called it."""
+    return f"cheese-{topic_id.hex[:8]}"
+
+
+LEGACY_TMUX_SESSION = "cheese"
+
 
 def published_endpoint(container: str, port: int) -> str | None:
     """`127.0.0.1:<host-port>` a container publishes an in-container port to, or
@@ -2146,6 +2722,47 @@ def published_endpoint(container: str, port: int) -> str | None:
     return f"127.0.0.1:{host_port}" if host_port.isdigit() else None
 
 
+def session_env_var(container: str, session: str, key: str) -> str | None:
+    """One variable out of a tmux session's own environment, or None.
+
+    The session env is where a shared box keeps everything that differs BETWEEN
+    the topics it hosts (which port slot, which config dir, which topic id) — see
+    tmux_provider._session_env. Reading it back is how the host learns what a
+    session was given without keeping a second copy that can go stale."""
+    result = subprocess.run(
+        ["docker", "exec", container, "tmux", "show-environment", "-t", session, key],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    # "KEY=value" when set; "-KEY" when explicitly unset.
+    name, separator, value = result.stdout.strip().partition("=")
+    return value if separator and name == key else None
+
+
+def topic_port_slot(topic_id: uuid.UUID) -> int:
+    """The port slot the topic's live tmux session holds, or 0.
+
+    0 is the honest fallback for "no live session to ask", and it is also the
+    slot the first topic in a box gets — so a box that predates slots keeps
+    answering on the conventional ports.
+
+    That fallback is why there is deliberately NO lookup against the legacy
+    session name here. `tmux show-environment -t cheese` falls back to PREFIX
+    matching, and ``cheese`` is a prefix of every per-topic session name, so on
+    a box that has any live topic it would answer with a SIBLING's slot — a
+    wrong preview port rather than a missing one. A legacy session carries no
+    slot variable anyway, so the only value such a lookup could ever return
+    correctly is the 0 this already returns."""
+    raw = session_env_var(
+        tmux_container_name(room_for_topic(topic_id)),
+        tmux_session_name(topic_id),
+        "CHEESE_PORT_SLOT",
+    )
+    return int(raw) if raw is not None and raw.isdigit() else 0
+
+
 def app_endpoint(topic_id: uuid.UUID) -> str | None:
     """`127.0.0.1:<host-port>` of the topic's app port, or None when no container
     publishes it.
@@ -2154,14 +2771,20 @@ def app_endpoint(topic_id: uuid.UUID) -> str | None:
     behavior) meant 运行环境预览 was dead for every tmux-backed topic — which is
     all of them under ``AGENT_BACKEND=tmux`` — because 3000 is published by
     ``cheesex-tmux-*`` while the lookup went to ``cheesex-sbx-*``.
+
+    The tmux box belongs to the topic's ROOM and publishes one app port per slot,
+    so the topic's own slot decides which of them is its preview. The SDK box is
+    still per topic and still publishes the bare APP_PORT.
     """
     if not sandbox_available():
         return None
-    for name in (tmux_container_name(topic_id), container_name(topic_id)):
-        endpoint = published_endpoint(name, APP_PORT)
-        if endpoint is not None:
-            return endpoint
-    return None
+    tmux_box = tmux_container_name(room_for_topic(topic_id))
+    endpoint = published_endpoint(
+        tmux_box, app_port_for_slot(topic_port_slot(topic_id))
+    )
+    if endpoint is not None:
+        return endpoint
+    return published_endpoint(container_name(topic_id), APP_PORT)
 
 
 # NOTE: there is deliberately no `app_preview_url` here any more. It returned
@@ -2181,18 +2804,46 @@ def tmux_container_name(topic_id: uuid.UUID) -> str:
     """Deterministic name of a topic's long-lived tmux-backend container — distinct
     from the SDK one so the two backends never collide. Lives here (the shared
     workspace layer) so the accept/archive reaper can free it WITHOUT importing the
-    provider; TmuxHooksProvider references this as its single source of truth."""
+    provider; TmuxChannel references this as its single source of truth."""
     return f"cheesex-tmux-{topic_id.hex[:12]}"
 
 
 def stop_topic_container(topic_id: uuid.UUID) -> None:
-    """Remove a topic's long-lived sandbox container(s) — BOTH the SDK and tmux
-    backends' boxes — e.g. when the topic is merged/archived or its worktree is
-    recreated. Best-effort: a missing container is fine. Freeing BOTH matters
-    because a topic may have run on either backend and each leaves its own box;
-    reaping only the SDK one (the old behavior) leaked every tmux container forever."""
+    """Release a topic's long-lived compute — BOTH the SDK and tmux backends —
+    e.g. when the topic is merged/archived or its worktree is recreated.
+    Best-effort: a missing container is fine. Freeing BOTH matters because a
+    topic may have run on either backend and each leaves its own box; reaping
+    only the SDK one (the old behavior) leaked every tmux container forever.
+
+    The tmux box belongs to a ROOM, so what "release" means depends on which the
+    topic is. Releasing a TASK must kill its tmux session and nothing else —
+    removing the box would take its still-working siblings down with it, and the
+    `docker rm` below is a no-op for a task precisely because the box is not
+    named after it. Releasing the ROOM removes the box, siblings included, which
+    is what archiving a room means."""
+    from app.domain.agent.harness.claude_code import (
+        schedule_topic_subscription_drop,
+    )
+
+    schedule_topic_subscription_drop(topic_id)
     if not sandbox_available():
         return
+    room = room_for_topic(topic_id)
+    if room != topic_id:
+        subprocess.run(
+            [
+                "docker",
+                "exec",
+                tmux_container_name(room),
+                "tmux",
+                "kill-session",
+                "-t",
+                tmux_session_name(topic_id),
+            ],
+            capture_output=True,
+            text=True,
+        )
+    forget_room(topic_id)
     for name in (container_name(topic_id), tmux_container_name(topic_id)):
         subprocess.run(
             ["docker", "rm", "-f", name],
@@ -2225,157 +2876,17 @@ def list_sandbox_containers() -> list[str]:
 def remove_container(name: str) -> None:
     """Remove ONE container by exact name (the idle reaper's primitive).
     Best-effort; a missing container is fine."""
+    from app.domain.agent.harness.claude_code import (
+        schedule_screen_subscription_drop,
+    )
+
+    schedule_screen_subscription_drop(name)
     if not sandbox_available():
         return
     subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
 
 
 GATE_TAIL_CHARS = 4000
-
-
-def run_check_command(
-    cwd: Path,
-    command: str,
-    *,
-    timeout: int = 600,
-    log_path: Path | None = None,
-) -> dict:
-    """Run a machine gate in a disposable, resource-limited Docker container.
-
-    The command is *data* in Docker's argv; no host shell ever parses it. The
-    container receives only the topic worktree, no Docker socket, no backend
-    environment/secrets, and no network. Failure to start Docker fails the gate
-    closed -- there is intentionally no host-execution fallback.
-
-    The worktree is mounted at the SAME path the agent's own sandbox uses --
-    ``gate_workdir_for(cwd)``, which reproduces ``sandbox_topic_workdir``. This
-    is not cosmetic: uv/pip console scripts (pyright, pytest, alembic) bake the
-    absolute path of their venv into their shebang, so a worktree the agent
-    built at one path and the gate mounts at another has a .venv whose tools
-    cannot execute. With no network in here, nothing can be reinstalled to
-    repair that -- which is exactly how the gate ended up running lint only and
-    reporting a green card.
-
-    This used to say ``/work`` and mount there, and that was true right up
-    until the sandbox moved to the topic's REAL path under the ``/topics``
-    mount (tmux_provider: "not a /work remap" -- hardlinks cannot cross bind
-    mounts). Nothing failed loudly at that moment: the gate kept starting, ruff
-    kept passing (a native binary, no shebang), and every other check went
-    BLOCKED, so under CHECK_STRICT every card came back "检查没能跑起来" with a
-    DNS error from check.sh trying to `uv sync` a replacement venv it could
-    never download. `test_gate_workdir.py` pins the two paths together so the
-    next move of either side is a red test rather than a dead gate.
-
-    ``CHECK_STRICT=1`` tells a check command that this is a gate and not a
-    developer's laptop: a check that can't run must not be reported as passed
-    (.claude/scripts/check.sh turns that into exit code 2 -> gate_blocked).
-
-    Full output goes to ``log_path`` while the returned tail remains bounded.
-    """
-    from datetime import UTC, datetime
-
-    resolved_cwd = cwd.resolve(strict=True)
-    gate_workdir = gate_workdir_for(resolved_cwd)
-    container_name = f"cheesex-gate-{uuid.uuid4().hex[:12]}"
-    temporary_log = log_path is None
-    if temporary_log:
-        fd, raw_path = tempfile.mkstemp(prefix="cheesex-gate-", suffix=".log")
-        os.close(fd)
-        output_path = Path(raw_path)
-    else:
-        output_path = log_path
-        assert output_path is not None
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    docker_argv = [
-        "docker",
-        "run",
-        "--rm",
-        "--init",
-        "--name",
-        container_name,
-        "--label",
-        "cheesex-gate=1",
-        "--network",
-        "none",
-        "--cap-drop",
-        "ALL",
-        "--security-opt",
-        "no-new-privileges",
-        "--pids-limit",
-        str(settings.quality_gate_pids_limit),
-        # No GB-scale core files into the bind-mounted workspace on a crash.
-        "--ulimit",
-        "core=0",
-        "--memory",
-        f"{settings.quality_gate_memory_mb}m",
-        "--cpus",
-        str(settings.quality_gate_cpus),
-        "--user",
-        "1000:1000",
-        "--tmpfs",
-        "/tmp:rw,exec,nosuid,nodev,size=512m",
-        "--env",
-        "HOME=/tmp/home",
-        "--env",
-        "TMPDIR=/tmp",
-        "--env",
-        "PYTHONDONTWRITEBYTECODE=1",
-        "--env",
-        "CHECK_STRICT=1",
-        "--mount",
-        f"type=bind,source={resolved_cwd},target={gate_workdir}",
-        "--workdir",
-        gate_workdir,
-        settings.quality_gate_image,
-        "sh",
-        "-lc",
-        'exec sh -lc "$1"',
-        "cheesex-gate",
-        command,
-    ]
-
-    exit_code = -1
-    try:
-        with output_path.open("w", encoding="utf-8") as stream:
-            stream.write(f"[{datetime.now(UTC).isoformat()}] $ {command}\n")
-            stream.write(f"(workspace: {resolved_cwd}, container: {container_name})\n")
-            stream.flush()
-            process = subprocess.Popen(  # noqa: S603 -- fixed Docker argv boundary
-                docker_argv,
-                stdin=subprocess.DEVNULL,
-                stdout=stream,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env={"PATH": os.environ.get("PATH", "")},
-            )
-            try:
-                exit_code = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                # Killing the Docker client alone can leave the daemon-side
-                # container running. Remove only the exact random name.
-                subprocess.run(
-                    ["docker", "rm", "-f", container_name],
-                    stdin=subprocess.DEVNULL,
-                    stdout=stream,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    timeout=20,
-                    check=False,
-                    env={"PATH": os.environ.get("PATH", "")},
-                )
-                process.kill()
-                process.wait(timeout=5)
-                exit_code = 124
-                stream.write(f"\n检查超时（>{timeout}s），容器已强制移除。\n")
-            stream.write(f"\n(exit: {exit_code})\n")
-    finally:
-        try:
-            output = output_path.read_text(encoding="utf-8", errors="replace")
-        finally:
-            if temporary_log:
-                output_path.unlink(missing_ok=True)
-    return {"exit_code": exit_code, "tail": output[-GATE_TAIL_CHARS:]}
 
 
 def reap_sandbox_containers() -> int:

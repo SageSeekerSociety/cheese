@@ -51,22 +51,12 @@ function statusDotClass(status: string): string {
   return 'status-dot--warn'
 }
 
-// 返回 goes back to wherever you came from (工作台 / 收件箱 / another member
-// page), not always the overview. Vue Router records the previous in-app location
-// in history.state.back; when it's absent (a deep link / fresh tab) we fall back
-// to the project overview so the button never dead-ends.
-function goBack() {
-  if (window.history.state?.back != null) router.back()
-  else router.push({ name: 'overview', params: { projectId: props.projectId } })
-}
-
-// Clicking a topic opens the 工作台 with that topic pre-selected (?topic=).
-// Without the query, WorkspaceView falls back to the root topic.
+// Clicking a topic opens it in the project frame — this page is inside that
+// frame, so it is a content-area change, not a jump somewhere else.
 function openTopic(topicId: string) {
   router.push({
-    name: 'workspace-project',
-    params: { projectId: props.projectId },
-    query: { topic: topicId },
+    name: 'workspace-topic',
+    params: { projectId: props.projectId, topicId },
   })
 }
 
@@ -107,7 +97,7 @@ onMounted(load)
 
 <template>
   <div class="member-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 920px">
+    <v-container class="py-6 page-container">
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
@@ -116,10 +106,6 @@ onMounted(load)
       </v-alert>
 
       <template v-else>
-        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="mb-3 px-1" @click="goBack">
-          返回
-        </v-btn>
-
         <!-- Profile header band (cover + large avatar) -->
         <v-card class="mb-6 overflow-hidden">
           <div class="profile-cover" />
@@ -175,10 +161,10 @@ onMounted(load)
             </div>
             <div v-else class="empty-state">
               <v-icon size="30" class="empty-state__icon">mdi-account-question-outline</v-icon>
-              <span class="t-body c-muted">芝士还在了解 TA</span>
+              <span class="t-body c-muted">暂无观察记录</span>
             </div>
             <div class="t-meta mt-3" style="line-height: 1.5">
-              这些理解来自芝士在协作中的持续观察，会随着一起做事不断加深。
+              这些理解来自芝士在协作中的持续观察，会随着一起做事不断加深
             </div>
           </v-card-text>
         </v-card>
@@ -236,7 +222,7 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="(member.topics_active ?? []).length === 0" class="c-faint t-body">当前没有在忙的话题</div>
+                  <div v-if="(member.topics_active ?? []).length === 0" class="c-faint t-body">暂无进行中的话题</div>
                   <v-list v-else density="comfortable" class="py-0">
                     <v-list-item
                       v-for="t in member.topics_active ?? []"
@@ -264,7 +250,7 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="member.topics_started.length === 0" class="c-faint t-body">还没有发起过话题</div>
+                  <div v-if="member.topics_started.length === 0" class="c-faint t-body">暂无发起的话题</div>
                   <v-list v-else density="comfortable" class="py-0">
                     <v-list-item v-for="t in member.topics_started" :key="t.id" class="px-0" @click="openTopic(t.id)">
                       <v-list-item-title>{{ t.title }}</v-list-item-title>
@@ -290,7 +276,7 @@ onMounted(load)
                   </span>
                 </v-card-title>
                 <v-card-text>
-                  <div v-if="member.waiting_on_you.length === 0" class="c-faint t-body">没有待处理的事</div>
+                  <div v-if="member.waiting_on_you.length === 0" class="c-faint t-body">暂无待处理的事</div>
                   <v-list v-else density="comfortable" class="py-0">
                     <v-list-item v-for="t in member.waiting_on_you" :key="t.id" class="px-0">
                       <template #prepend>
@@ -321,15 +307,17 @@ onMounted(load)
   height: 88px;
   background: var(--fill);
 }
-/* Profile avatar — large rounded-square, solid ink + white initial. */
+/* Profile avatar — large rounded-square, solid ink + reversed-out initial. */
 .profile-avatar {
   width: 96px;
   height: 96px;
   margin-top: -48px;
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   border: 4px solid var(--surface);
   background: var(--ink);
-  color: #fff;
+  /* 底色是 --ink（浅色近黑 / 深色近白），所以字必须是它的反面 —— 写死的白
+     在深色下就是白底白字。--surface 正好是 --ink 的对面：17.4:1 / 15.4:1。 */
+  color: var(--surface);
   font-size: 38px;
   font-weight: 600;
   display: inline-flex;
@@ -359,13 +347,14 @@ onMounted(load)
 /* Contribution bar per project — neutral ink, not amber. */
 .contrib-track {
   height: 6px;
-  border-radius: 3px;
+  /* 6px 高的进度条，两端本来就该是半圆 → --radius-pill（原来是 3px，不在阶梯上）。 */
+  border-radius: var(--radius-pill);
   background: var(--fill-2);
   overflow: hidden;
 }
 .contrib-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   background: var(--ink);
 }
 </style>

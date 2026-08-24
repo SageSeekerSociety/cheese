@@ -13,12 +13,12 @@ import pytest
 from sqlalchemy import update
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import AgentService
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
 from app.domain.scheduler.service import SchedulerService
 from app.domain.topic.services import TopicService
+from tests.conftest import stub_compute
 
 
 @pytest.mark.anyio
@@ -27,9 +27,9 @@ async def test_last_block_at_reports_the_newest_block_per_topic(client, tmp_path
     svc = SchedulerService(
         chat_service=ChatService(
             session_factory=factory,
-            agent=AgentService(model="stub"),
             base_system_prompt="你是芝士。",
             workspace_root=str(tmp_path / "ws"),
+            compute=stub_compute(),
         )
     )
 
@@ -79,9 +79,9 @@ async def test_last_block_at_is_empty_for_no_topics(client, tmp_path):
     svc = SchedulerService(
         chat_service=ChatService(
             session_factory=client.test_factory,
-            agent=AgentService(model="stub"),
             base_system_prompt="你是芝士。",
             workspace_root=str(tmp_path / "ws"),
+            compute=stub_compute(),
         )
     )
     assert await svc.last_block_at(set()) == {}

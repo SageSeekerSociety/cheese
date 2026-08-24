@@ -188,8 +188,8 @@ def test_detail_renders_one_line_and_parks_the_stack_in_meta() -> None:
     err = _err(where="POST /api/topics/x/chat", stack=STACK, request_id="abc123")
     content = event_content(err)
     assert "\n" not in content
-    assert "💥" in content
     assert "ValueError" in content and "boom" in content
+    # 这是不是一条报错，读码，不读开头那个字符。
     meta = event_meta(err, BackendErrorIntake().admit("p", "fp", now=1.0))
     assert meta["event_type"] == "backend_error"
     assert meta["stack"] == STACK
@@ -259,12 +259,12 @@ def test_from_exception_scrubs_credentials_out_of_the_traceback() -> None:
 
 def test_room_from_path_reads_topic_and_project() -> None:
     tid, pid = uuid.uuid4(), uuid.uuid4()
-    assert room_from_path(f"/api/topics/{tid}/blocks") == (None, tid)
-    assert room_from_path(f"/api/projects/{pid}/memory") == (pid, None)
-    assert room_from_path(f"/api/projects/{pid}/topics/{tid}") == (pid, tid)
+    assert room_from_path(f"/topics/{tid}/blocks") == (None, tid)
+    assert room_from_path(f"/projects/{pid}/memory") == (pid, None)
+    assert room_from_path(f"/projects/{pid}/topics/{tid}") == (pid, tid)
 
 
 def test_room_from_path_ignores_paths_that_name_no_room() -> None:
-    assert room_from_path("/api/users/me") == (None, None)
-    assert room_from_path("/api/projects/by-task/abc") == (None, None)
+    assert room_from_path("/users/me") == (None, None)
+    assert room_from_path("/projects/by-task/abc") == (None, None)
     assert room_from_path("/health") == (None, None)

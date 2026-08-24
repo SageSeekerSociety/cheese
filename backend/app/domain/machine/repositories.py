@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.device.models import DeviceRow, DeviceTopicRow
@@ -26,6 +26,7 @@ class ProjectMachineRepository:
         self,
         *,
         project_id: uuid.UUID,
+        topic_id: uuid.UUID | None = None,
         machine_id: int,
         customer_id: int,
         account_id: int,
@@ -45,6 +46,7 @@ class ProjectMachineRepository:
     ) -> ProjectMachine:
         machine = ProjectMachine(
             project_id=project_id,
+            topic_id=topic_id,
             machine_id=machine_id,
             customer_id=customer_id,
             account_id=account_id,
@@ -69,6 +71,59 @@ class ProjectMachineRepository:
 
     async def get(self, machine_row_id: uuid.UUID) -> ProjectMachine | None:
         return await self._session.get(ProjectMachine, machine_row_id)
+
+    async def lock_provisioning(
+        self, project_id: uuid.UUID, topic_id: uuid.UUID
+    ) -> None:
+        """Serialize paid creates for a project before calling MicroCloud.
+
+        The partial unique index is the durable invariant for one active row per
+        topic. This transaction lock closes the earlier external side-effect race:
+        two requests must not both create a VM and only then discover the index.
+        Project scope also makes the existing per-project quota concurrency-safe.
+        """
+        await self._session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
+            ),
+            {"key": f"cloud-project:{project_id}"},
+        )
+        await self._session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
+            ),
+            {"key": f"cloud-topic:{topic_id}"},
+        )
+
+    async def lock_topic(self, topic_id: uuid.UUID) -> None:
+        await self._session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(hashtextextended(CAST(:key AS text), 0))"
+            ),
+            {"key": f"cloud-topic:{topic_id}"},
+        )
+
+    async def get_active_for_topic(self, topic_id: uuid.UUID) -> ProjectMachine | None:
+        result = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.topic_id == topic_id,
+                ProjectMachine.released_at.is_(None),
+            )
+        )
+        return result.scalars().one_or_none()
+
+    async def list_ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
+        """Cloud leases whose two provider lifecycles and enrolment have settled."""
+        rows = await self._session.execute(
+            select(ProjectMachine.topic_id, ProjectMachine.device_id).where(
+                ProjectMachine.topic_id.is_not(None),
+                ProjectMachine.released_at.is_(None),
+                ProjectMachine.status == MachineStatus.running,
+                ProjectMachine.ai_status == AiStatus.ready,
+                ProjectMachine.device_id.is_not(None),
+            )
+        )
+        return [(topic_id, device_id) for topic_id, device_id in rows.all()]
 
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         result = await self._session.execute(
@@ -126,6 +181,13 @@ class ProjectMachineRepository:
     async def delete(self, machine: ProjectMachine) -> None:
         await self._session.delete(machine)
         await self._session.flush()
+
+    async def mark_released(
+        self, machine: ProjectMachine, *, when: datetime
+    ) -> ProjectMachine:
+        machine.released_at = when
+        await self._session.flush()
+        return machine
 
     async def mark_enrolled(
         self,

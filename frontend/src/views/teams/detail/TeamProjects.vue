@@ -79,7 +79,7 @@ watch(teamId, load)
     </v-alert>
 
     <div v-else-if="projects.length === 0" class="text-center py-12">
-      <v-icon icon="mdi-rocket-launch-outline" size="56" color="grey-lighten-2" class="mb-3" />
+      <v-icon icon="mdi-rocket-launch-outline" size="56" class="mb-3 empty-state-icon" />
       <h3 class="text-subtitle-1 font-weight-medium mb-1">还没有项目</h3>
       <p class="text-body-2 text-medium-emphasis mb-4">点「新建项目」直接开一个，进去就能和芝士开工。</p>
       <v-btn color="primary" variant="flat" prepend-icon="mdi-plus" :loading="creating" @click="newProject">
@@ -103,6 +103,11 @@ watch(teamId, load)
 </template>
 
 <style scoped>
+/* 空状态插图：元信息级别的装饰，--line-2 在浅色下 ≈ 原来的 grey-lighten-2，
+   深色下是 #3A3E45，仍看得出形状。 */
+.empty-state-icon {
+  color: var(--line-2);
+}
 .project-card {
   cursor: pointer;
   transition:

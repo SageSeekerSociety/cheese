@@ -23,22 +23,20 @@ def _authed(client):
 
 def _make_project(client) -> str:
     _authed(client)
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _set_gate(client, project_id: str, command: str) -> None:
     r = client.put(
-        f"/api/projects/{project_id}/quality-gate",
+        f"/projects/{project_id}/quality-gate",
         json={"check_command": command},
     )
     assert r.status_code == 200
@@ -46,15 +44,19 @@ def _set_gate(client, project_id: str, command: str) -> None:
 
 def _file_card(client, topic_id: str, reviewer: str = "alice") -> dict:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]
 
 
 def _latest_card(client, topic_id: str) -> dict:
-    cards = client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
+    cards = client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
     assert cards
     return cards[0]
 
@@ -106,9 +108,7 @@ def test_a_pending_card_with_a_check_command_is_acceptable_immediately(client):
     card = _file_card(client, tid)
     assert card["status"] == "pending"
 
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
-    )
+    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
     assert r.status_code == 200, r.text
     assert r.json()["data"]["status"] == "accepted"
 
@@ -124,8 +124,12 @@ def test_second_card_still_blocked_while_first_is_pending(client):
     assert first["status"] == "pending"
 
     r = client.post(
-        f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "bob", "routing_reason": "x"},
+        f"/topics/{tid}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "bob",
+            "routing_reason": "x",
+        },
     )
     assert r.status_code == 422
     assert "改验收人" in r.json()["message"]
@@ -138,25 +142,25 @@ def test_second_card_still_blocked_while_first_is_pending(client):
 
 def test_quality_gate_settings_roundtrip(client):
     pid = _make_project(client)
-    r = client.get(f"/api/projects/{pid}/quality-gate")
+    r = client.get(f"/projects/{pid}/quality-gate")
     assert r.json()["data"] == {"check_command": "", "approvals_required": 1}
 
     _set_gate(client, pid, "echo hi")
-    r = client.put(f"/api/projects/{pid}/quality-gate", json={"approvals_required": 3})
+    r = client.put(f"/projects/{pid}/quality-gate", json={"approvals_required": 3})
     assert r.status_code == 200
-    r = client.get(f"/api/projects/{pid}/quality-gate")
+    r = client.get(f"/projects/{pid}/quality-gate")
     assert r.json()["data"] == {"check_command": "echo hi", "approvals_required": 3}
 
     # Clearing the command removes it; approvals stay.
-    r = client.put(f"/api/projects/{pid}/quality-gate", json={"check_command": ""})
+    r = client.put(f"/projects/{pid}/quality-gate", json={"check_command": ""})
     assert r.status_code == 200
-    r = client.get(f"/api/projects/{pid}/quality-gate")
+    r = client.get(f"/projects/{pid}/quality-gate")
     assert r.json()["data"] == {"check_command": "", "approvals_required": 3}
 
 
 def test_quality_gate_rejects_bad_approvals(client):
     pid = _make_project(client)
-    r = client.put(f"/api/projects/{pid}/quality-gate", json={"approvals_required": 0})
+    r = client.put(f"/projects/{pid}/quality-gate", json={"approvals_required": 0})
     assert r.status_code == 422
 
 
@@ -164,15 +168,11 @@ def test_quality_gate_update_requires_human_project_admin(client):
     pid = _make_project(client)
 
     client.headers.pop("Authorization")
-    r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"check_command": "echo bad"}
-    )
+    r = client.put(f"/projects/{pid}/quality-gate", json={"check_command": "echo bad"})
     assert r.status_code == 404
 
     client.headers.update(session_auth_headers("mallory"))
-    r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"check_command": "echo bad"}
-    )
+    r = client.put(f"/projects/{pid}/quality-gate", json={"check_command": "echo bad"})
     assert r.status_code == 404
 
 
@@ -180,32 +180,26 @@ def test_quality_gate_update_allows_project_lead_not_ordinary_member(client):
     pid = _make_project(client)
     for handle, role in (("lead-user", "lead"), ("member-user", "member")):
         r = client.post(
-            f"/api/projects/{pid}/members",
+            f"/projects/{pid}/members",
             json={"user_handle": handle, "role": role},
         )
         assert r.status_code == 200
 
     client.headers.update(session_auth_headers("lead-user"))
-    r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"check_command": "echo safe"}
-    )
+    r = client.put(f"/projects/{pid}/quality-gate", json={"check_command": "echo safe"})
     assert r.status_code == 200
 
     client.headers.update(session_auth_headers("member-user"))
-    r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"check_command": "echo bad"}
-    )
+    r = client.put(f"/projects/{pid}/quality-gate", json={"check_command": "echo bad"})
     assert r.status_code == 404
 
 
 def test_quality_gate_rejects_oversized_or_nul_command(client):
     pid = _make_project(client)
-    r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"check_command": "x" * 4097}
-    )
+    r = client.put(f"/projects/{pid}/quality-gate", json={"check_command": "x" * 4097})
     assert r.status_code == 422
     r = client.put(
-        f"/api/projects/{pid}/quality-gate", json={"check_command": "echo\x00bad"}
+        f"/projects/{pid}/quality-gate", json={"check_command": "echo\x00bad"}
     )
     assert r.status_code == 422
 
@@ -219,13 +213,11 @@ def test_an_accepted_card_still_cannot_be_rejected(client):
     card = _file_card(client, tid)
     assert card["status"] == "pending"
 
-    r = client.post(
-        f"/api/accept-cards/{card['id']}/accept", json={"decided_by": "alice"}
-    )
+    r = client.post(f"/accept-cards/{card['id']}/accept", json={"decided_by": "alice"})
     assert r.status_code == 200, r.text
 
     r = client.post(
-        f"/api/accept-cards/{card['id']}/reject",
+        f"/accept-cards/{card['id']}/reject",
         json={"decided_by": "alice", "note": "x"},
     )
     assert r.status_code == 422

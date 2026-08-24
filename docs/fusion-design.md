@@ -32,7 +32,7 @@
 
 - 他们 `cheeselets/claude.js`：正则匹配屏幕尾部推断 busy/idle/choices，注释满是
   "verified against real v2.1.x screens"——TUI 改版即碎。
-- 我们 tmux/hooks 后端（已建，`TmuxHooksProvider`）：Claude Code hooks 吐结构化 JSON
+- 我们 tmux/hooks 后端（已建，`ClaudeCodeRuntime` + `TmuxChannel`）：Claude Code hooks 吐结构化 JSON
   （SessionStart/PreToolUse/MessageDisplay/Stop → AgentEvent），连控制态都不猜。
 - **融合时用我们的 hooks 感知替换他们的读屏**，消除他们最大脆弱点。这也让 self-hosted 更稳
   （hooks 在任何机器一致，读屏依赖具体 TUI 版本）。
@@ -162,36 +162,60 @@ block_ref）、改文档=下指令、人验收才算数——同源 spec。
    走设备流；本地/远程只差入册，不两套 provider。
 3. **拆旧路**：统一底座（1+2）跑通并验证后，拆掉烤入镜像的 `cheese-hook` 第二路 + 冗余 provider，
    一次切换。
-4. **SDK 后端**：作为正交产品形态保留（见 §5，「怎么跟 cc 说话」的另一选项），不在本次收敛范围。
+4. **SDK 后端**：已删除（2026-08-19）。它是「起一个子进程、流式读完、退出」那一种形状，
+   而拿着迭代器的人就拥有那一轮——平台里每一件打捞机器都是从这条性质长出来的。留下的
+   是可以重连的那一种。
 
 **触及面（我们自己改）**：`claude_min.js`（最小 driver：启动 cc + 过 `❯` ready-gate）→ 改造成
 cli js 暴露面 + 服务端下发 cheeselet；hook 接线（SessionStart/PreToolUse/Stop → 结构化事件 →
 后端）＋ 现场 screen relay 随之统一。客户端 frozen、hook 逻辑随服务端更新而**不重装**。
 
 **进度**：
-- ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/hooks_substrate.py`—— turn drain 循环
+- ✅ **增量 1（完成、行为不变）**：抽出共享底座 `agent/harness/claude_code/hooks_substrate.py`—— turn drain 循环
   `run_hooks_turn`、`hooks_settings()`、`cheese-hook` forwarder、session token TTL。
-- ✅ **增量 2（完成、行为不变、479 测试绿）**：把两个 provider 的**整段 turn 流程**收敛进基类
-  `HooksTurnProvider[ScreenT]`（模板方法）——check topic → mint token → register 队列 →
-  `_ensure_ready` + `_send_prompt`（子类 transport）→ drain → unregister，**一套流程**。
-  `TmuxHooksProvider`（本地 docker/tmux，`ScreenT=str`）与 `DeviceProvider`（远程 link.Msg，
-  `ScreenT=HubScreen`）只实现 `_ensure_ready`/`_send_prompt` 两个 transport 钩子 +
-  `name`/超时文案。`ScreenSetupError` 是 setup 失败→错误结果的**唯一**出口。
+- ✅ **增量 2（完成、行为不变）**：把两个 transport 的**整段 turn 流程**收敛成一份——
+  check topic → mint token → register 队列 → `ensure_ready` + `send_prompt`（transport）→
+  drain → unregister。`ScreenSetupError` 是 setup 失败→错误结果的**唯一**出口。
+- ✅ **组合替代继承**：那一份流程现在住在 `ClaudeCodeRuntime` 里，它**持有**一条
+  `Channel`（`TmuxChannel` 本地 docker/tmux、`DeviceChannel` 远程 link.Msg、
+  `CloudChannel` 租来的机器）。channel 只答两件事：把屏幕开起来、把字送进去；订阅、
+  活跃度、spool、收据全在缝的上面写一次。原来是基类，于是每条传输各带一份，第二个
+  harness 得按传输数写 M×N 份；现在是 M+N。
+- ✅ **launch 也过了缝**：`session_launch.build_session_launch` 交出一份 `LaunchSpec`
+  ——跑哪条命令、claude 自己读哪几个 env、开机前盘上得有哪三个文件（hooks settings、
+  首启闸门、system prompt）。tmux channel 给路径、拿结果、按自己的方式落地（写进
+  mount、`-e` 传 env、`new-session` 跑命令），不再自己拼 `--append-system-prompt-file`
+  / `--resume` / `--model`。和 device 那边 `build_screen_launch` 对称。
+  故意**不**和 `build_launch_script` 合并：装到别人机器上的启动脚本和隔壁容器里的一条
+  命令本来就不是一回事，要消掉的 M×N 是订阅/活跃度/spool/收据那套机器，不是 launch 细节。
+- ✅ **复用策略也过了缝**：`ensure_claude` 决定「一块屏幕上什么时候还能接着用原来那个
+  claude」——在的就复用（它就是对话本身），但只在它还报得回来的前提下；报不回来的一律
+  退役重开；两条路都要等到输入框（❯）出现才算就绪。tmux channel 只提供六个动词
+  （`session_exists` / `session_deaf` / `retire_session` / `start_session` /
+  `reclaim_session` / `capture_session`），一句 claude 的事都不知道。
+  device 侧**不**并进来：它的三道闸（凭据过期 / claude 死了 / 隧道助手没了）是另一种
+  机器的另一组问题，硬套一份编排正是要避免的过度统一。
+- ✅ **池子长出第二个轴，平台不再说 Claude Code 的话**：`ComputePool` 从「按机器」变成
+  「按 (机器, harness)」——机器选不到会退回默认，harness 选不到**直接拒绝**（跑成别的
+  agent 比不跑更糟）。`bind_*` / `holds` / `recover` / `replay` / `backlog` 都进了
+  `AgentRuntime` 契约，池子不再靠 `isinstance` 认人。
+  最要紧的是 `backlog`：崩溃恢复和 spool 补录原来是 chat.py 自己调 `read_log` +
+  `MessageAssembler`，认得 Claude Code 的事件形状；现在它拿到的是拼好的 `AgentEvent`，
+  落库发帧还是它的活，翻译不是。**`test_harness_boundary` 的账本里 chat.py 整行没有了。**
+  会话启动时打 `CHEESE_HARNESS` 标记，重启恢复只认自己的——一台机器上并存两个 harness
+  时，谁也别去认领别人的屏幕。device 通道今天报不出这个标记（绑定表只记话题不记
+  harness），所以那条传输暂时一台机器一个 harness，这一点写在 `discover` 的契约里。
 - ✅ **单一来源 forwarder**：`cheese-hook` 由 `scripts/gen-sandbox-assets.py` 从
   `CHEESE_HOOK_SCRIPT` 生成为 `sandbox/cheese-hook`，tmux 镜像 `COPY` 它（不再 inline printf）；
   `test_hooks_substrate.py` 断言二者一致 → **漂移即测试失败**。device launcher 运行时写的是同一
   常量。烤入镜像与远程运行时两条路的 forwarder 由此**同源**。
 
-**为什么用模板方法基类而非 `HooksScreenProvider(hub)` 组合**：组合要重写两个 provider 的构造 +
-测试的 monkeypatch 点；模板方法零改测试、行为可逐一比对，对执行核心更稳。二者架构等价（策略 vs
-模板），选了低风险的那个。
-
 - ✅ **三方并行 review + 修复（收官）**：安全/正确性/行为保持三个独立 reviewer 过了整个 diff。
   结论：无安全回归、无新 bug；行为保持发现 2 个窄差异，已修——(a) tmux `_wait_ready`/
-  `_send_prompt` 的 docker-exec OS 级失败原会以裸异常逃出 generator，现包进 `ScreenSetupError`
-  （旧行为=干净错误结果）；(b) 新增 `_precheck` seam：早失败（无 Docker / 无在线设备）在
+  `send_prompt` 的 docker-exec OS 级失败原会以裸异常逃出 generator，现包进 `ScreenSetupError`
+  （旧行为=干净错误结果）；(b) 新增 `precheck` seam：早失败（无 Docker / 无在线设备）在
   mint token + 占用 hook 队列**之前**发生（恢复重构前顺序，杜绝"跑不了的 turn 驱逐活 turn 队列/
-  扩大陈旧 hook 窗口"），device 的设备解析也在此完成并传递给 `_ensure_ready`（不解析两次）。
+  扩大陈旧 hook 窗口"），device 的设备解析也在此完成并传递给 `ensure_ready`（不解析两次）。
   +1 单测锁定"precheck 失败绝不碰 router"。review 另记 3 个**重构前就存在**的原有隐患
   （tmux 送 prompt 不查 rc→静默挂到超时；setup 失败被当 transient 重试 3 次；`images` 参数
   两个 hooks 后端都静默忽略）——非回归，留待后续。

@@ -16,8 +16,8 @@ turn 内的 `run_hooks_turn` 消费，或（找不到监听队列时）落 serve
    `ChatService.converse` 现有的 frame → `TurnRunner` → `Broker.publish` → WS 通道，
    和实时路径完全同一条链路，不是新开的旁路。
 
-2. **迟到的 Stop 不能提前结束新 turn**（`backend/app/domain/agent/hook_events.py` +
-   `backend/app/domain/agent/hooks_substrate.py`）
+2. **迟到的 Stop 不能提前结束新 turn**（`backend/app/domain/agent/harness/claude_code/hook_events.py` +
+   `backend/app/domain/agent/harness/claude_code/hooks_substrate.py`）
    根因不是"注册覆盖"本身（这已经被 per-topic 锁很好地序列化了），而是：
    `register()` 必须在 `_ensure_ready`（等 screen/CLI 就绪，可能要等上一轮那个被判超时
    但仍在跑的 `claude` 进程真正收尾）**之前**发生（不能漏收早到的 hook）——这就给了
@@ -234,7 +234,7 @@ venv（比如第一次跑）时兜底回退到 `uv run --no-sync`。本地用只
 
 采纳时把主分支合了进来，两个文件出现 jj 冲突标记：
 
-- **`backend/app/domain/agent/hooks_substrate.py`**：不是真冲突，只是两处改动位置
+- **`backend/app/domain/agent/harness/claude_code/hooks_substrate.py`**：不是真冲突，只是两处改动位置
   相邻。我这边加了 `_park_stale_hook()` 辅助函数（迟到 Stop 修复用），主分支给
   `hooks_settings()` 加了 `extra_stop` 参数（给远程设备在 turn 结束时"交作业"用的
   额外 Stop hook）。两者互不影响，直接都保留：函数定义 + 新增参数签名都留下。

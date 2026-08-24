@@ -7,16 +7,16 @@
           <span class="text-h6">{{ oauthState ? getInitials(oauthState.userInfo.name) : '' }}</span>
         </v-avatar>
         <div>
-          <h1 class="text-h3 font-weight-light mb-1" style="color: #212121; line-height: 1.2">
+          <h1 class="text-h3 font-weight-light mb-1" style="color: var(--ink); line-height: 1.2">
             欢迎，{{ oauthState?.userInfo.name || '用户' }}
           </h1>
-          <p class="text-body-1" style="color: #757575; line-height: 1.5">
+          <p class="text-body-1" style="color: var(--muted); line-height: 1.5">
             您已通过 {{ providerDisplayName }} 授权，请选择如何继续
           </p>
         </div>
       </div>
       <div v-if="oauthState?.userInfo.email || oauthState?.userInfo.preferredUsername" class="ml-16">
-        <p class="text-body-2" style="color: #9e9e9e">
+        <p class="text-body-2" style="color: var(--faint)">
           {{ oauthState.userInfo.email || oauthState.userInfo.preferredUsername }}
         </p>
       </div>
@@ -91,10 +91,10 @@
             <div class="mb-4">
               <v-checkbox v-model="setPassword" density="compact" hide-details>
                 <template #label>
-                  <span class="text-body-2" style="color: #616161">为账户设置密码（推荐）</span>
+                  <span class="text-body-2" style="color: var(--muted)">为账户设置密码（推荐）</span>
                 </template>
               </v-checkbox>
-              <p class="text-body-2 mt-2" style="color: #9e9e9e">
+              <p class="text-body-2 mt-2" style="color: var(--faint)">
                 设置密码后可以使用用户名密码登录，不设置则只能通过第三方登录
               </p>
             </div>
@@ -182,7 +182,7 @@
       </div>
 
       <!-- 底部链接 -->
-      <p class="text-body-2 text-center" style="color: #757575">
+      <p class="text-body-2 text-center" style="color: var(--muted)">
         遇到问题？<v-btn
           variant="text"
           color="primary"
@@ -448,7 +448,7 @@ onMounted(() => {
 .option-card:hover {
   border-color: rgb(var(--v-theme-primary));
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-1);
 }
 
 .selected-card {

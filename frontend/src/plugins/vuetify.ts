@@ -2,7 +2,10 @@
  * plugins/vuetify.ts
  *
  * Vuetify setup for CheeseX 知是. Theme colors mirror the design tokens in
- * src/style.css (:root) so hand-rolled CSS and components agree.
+ * src/style.css — `light` mirrors `:root`, `dark` mirrors
+ * `:root[data-theme='dark']` — so hand-rolled CSS and components agree in
+ * either theme. Two pipes, one palette: docs/design-system.md is the source of
+ * truth for the values and for which token means what.
  *
  * THE ONE PRINCIPLE: ~95% neutral. `primary` is amber (#F57F17) but is reserved
  * for the ONE primary action button, the active nav indicator, and the brand
@@ -19,10 +22,16 @@ import 'vuetify/styles'
 import { createVuetify } from 'vuetify'
 import { aliases, mdi } from 'vuetify/iconsets/mdi'
 
+import { resolveInitialTheme } from '@/theme'
+
 export default createVuetify({
   theme: {
-    // Light-only product — force light regardless of OS scheme.
-    defaultTheme: 'light',
+    // Which theme to boot with is resolved from the persisted preference (or
+    // the OS, when the user has never chosen) — the SAME logic the inline boot
+    // script in index.html already ran to stamp `<html data-theme>`. Hardcoding
+    // 'light' here would leave Vuetify's components light for one frame on top
+    // of an already-dark page. src/theme.ts owns the runtime switching.
+    defaultTheme: resolveInitialTheme(),
     themes: {
       light: {
         colors: {
@@ -45,6 +54,14 @@ export default createVuetify({
           // Neutral ink for text.
           'on-surface': '#36383C', // --text
           'on-background': '#36383C',
+          // Brand glow. These two were REFERENCED by styles/common.scss
+          // (`rgba(var(--v-theme-logo-secondary), .08)`) but never defined, and
+          // because `background` is a shorthand, one invalid layer voided the
+          // whole declaration — so the header's three-layer warm gradient and
+          // its 12s flow animation rendered nothing at all. Defining them here
+          // is what makes .header-corner-glow-flow visible.
+          'logo-primary': '#F9B233',
+          'logo-secondary': '#E85D2C',
         },
         variables: {
           'border-color': '#36383C',
@@ -52,6 +69,45 @@ export default createVuetify({
           'high-emphasis-opacity': 0.92,
           'medium-emphasis-opacity': 0.62,
           'theme-on-surface': '#36383C',
+        },
+      },
+      // Mirrors the `:root[data-theme='dark']` block in src/style.css. When you
+      // change a value there, change it here — these are the same design token
+      // reaching components through a second pipe, not an independent palette.
+      dark: {
+        dark: true,
+        colors: {
+          primary: '#FFA733', // --accent (lightened: #F57F17 is 3.1:1 here)
+          secondary: '#9CA2AB', // --muted
+          background: '#141517', // --canvas
+          surface: '#1B1D20', // --surface
+          'surface-light': '#212429', // --fill
+          'surface-bright': '#282C31', // --fill-2 (brighter than surface, not white)
+          'surface-variant': '#282C31', // --fill-2
+          'on-surface-variant': '#9CA2AB',
+          'page-background': '#141517',
+          success: '#3FBF7F', // --ok
+          warning: '#F0A94A', // --warn
+          error: '#F0625C', // --danger
+          info: '#9CA2AB',
+          'on-surface': '#D3D6DB', // --text
+          'on-background': '#D3D6DB',
+          'logo-primary': '#F9B233',
+          'logo-secondary': '#E85D2C',
+        },
+        variables: {
+          // Borders are drawn as rgba(border-color, border-opacity), so on dark
+          // the colour has to flip to the light end of the ramp — reusing the
+          // light theme's #36383C would paint hairlines DARKER than the surface
+          // and they would vanish. 0.08 reproduces --line (#2B2E33) on
+          // --surface (#1B1D20).
+          'border-color': '#F3F4F6',
+          'border-opacity': 0.08,
+          'high-emphasis-opacity': 0.92,
+          // Slightly higher than light's 0.62: the same opacity reads fainter
+          // against a dark background than a light one.
+          'medium-emphasis-opacity': 0.68,
+          'theme-on-surface': '#D3D6DB',
         },
       },
     },

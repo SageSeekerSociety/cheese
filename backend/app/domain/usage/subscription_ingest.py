@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
+from app.domain.room_task.place import room_and_task
 from app.domain.usage.credits import tokens_to_credits
 from app.domain.usage.models import IngestCheckpoint
 from app.domain.usage.repositories import ComputeGrantRepository, UsageRepository
@@ -106,28 +107,25 @@ def _uuid_or_none(value: object) -> uuid.UUID | None:
         return None
 
 
-# How long after its first block a turn may still claim proxy traffic. Agent
-# turns run long (tool loops of tens of minutes are normal), so the window is
-# generous — but not unbounded: without it, a stray line logged days later would
-# silently glom onto whatever turn happened to be the topic's last one. Past the
-# window the honest answer is "we cannot say which turn", i.e. NULL.
-_TURN_ATTRIBUTION_WINDOW_S = 6 * 3600
+# How long after its first block an attributed unit may still claim proxy
+# traffic. Agent work can run for tens of minutes, so the window is generous but
+# bounded: a stray line days later must not attach to the topic's last work id.
+_WORK_ATTRIBUTION_WINDOW_S = 6 * 3600
 
 
-class TurnIndex:
-    """Timestamp → the turn that was running in a topic at that moment.
+class WorkIndex:
+    """Timestamp → the work id active in a topic at that moment.
 
     The metering proxy logs one line per ``/v1/messages`` response and knows
-    nothing about turns; the platform knows turn boundaries from the blocks it
-    wrote. Joining the two is what makes 轮次 count turns instead of HTTP calls
-    (a 3-turn topic read 43). Turn starts are loaded once per topic per pass and
-    kept in memory — a batch is thousands of lines over a handful of topics.
+    nothing about platform attribution; blocks carry the originating message or
+    work id. Joining the two makes the aggregate count attributed work instead
+    of HTTP calls. Starts are loaded once per topic per ingestion pass.
     """
 
     def __init__(self) -> None:
         self._starts: dict[uuid.UUID, list[tuple[datetime, uuid.UUID]]] = {}
 
-    async def turn_at(
+    async def work_at(
         self, session: AsyncSession, topic_id: uuid.UUID | None, ts: object
     ) -> uuid.UUID | None:
         if topic_id is None:
@@ -143,25 +141,35 @@ class TurnIndex:
         idx = bisect_right([s for s, _ in starts], moment) - 1
         if idx < 0:
             return None
-        started_at, turn_id = starts[idx]
-        if (moment - started_at).total_seconds() > _TURN_ATTRIBUTION_WINDOW_S:
+        started_at, work_id = starts[idx]
+        if (moment - started_at).total_seconds() > _WORK_ATTRIBUTION_WINDOW_S:
             return None
-        return turn_id
+        return work_id
 
     async def _load(
         self, session: AsyncSession, topic_id: uuid.UUID
     ) -> list[tuple[datetime, uuid.UUID]]:
+        # `topic_id` is a place id and may name a thread, whose blocks carry the
+        # ROOM's topic_id. Matching on it raw would find nothing and quietly
+        # leave every one of that thread's rows unattributed.
+        room_id, task_id = await room_and_task(session, topic_id)
         stmt = (
             select(Block.turn_id, func.min(Block.created_at))
-            .where(Block.topic_id == topic_id, Block.turn_id.is_not(None))
+            .where(
+                Block.topic_id == room_id,
+                Block.task_id.is_(None)
+                if task_id is None
+                else Block.task_id == task_id,
+                Block.turn_id.is_not(None),
+            )
             .group_by(Block.turn_id)
             .order_by(func.min(Block.created_at))
         )
         rows = (await session.execute(stmt)).all()
-        return [(started, turn) for turn, started in rows if turn and started]
+        return [(started, work_id) for work_id, started in rows if work_id and started]
 
 
-async def _land_row(session: AsyncSession, row: dict, turns: TurnIndex) -> bool:
+async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> bool:
     """One proxy record → one usage row + credit deduction. False = skipped
     (unattributable or unknown project) — the numbers still exist in the log,
     but nothing here can say whose books they belong in."""
@@ -172,7 +180,7 @@ async def _land_row(session: AsyncSession, row: dict, turns: TurnIndex) -> bool:
         return False
     topic_id = _uuid_or_none(row.get("topic_id"))
     # Cache reads fold into the input count — AgentUsage has no cache field,
-    # and leaving them out would under-report a turn by more than it reports.
+    # and leaving them out would under-report work by more than it reports.
     input_tokens, output_tokens = input_output_tokens(row)
     if input_tokens + output_tokens <= 0:
         return False
@@ -188,10 +196,9 @@ async def _land_row(session: AsyncSession, row: dict, turns: TurnIndex) -> bool:
         # say 未知 instead of printing $0.0000 over 2.28M tokens.
         cost_usd=0.0,
         route="subscription",
-        # The proxy log has no turn id — one line per /v1/messages response, and
-        # a turn makes many. Attribute by timestamp to the turn that was running
-        # in this topic, so 轮次 counts turns instead of HTTP calls.
-        turn_id=await turns.turn_at(session, topic_id, row.get("ts")),
+        # The proxy log has no work id and one attributed unit can make many
+        # /v1/messages calls. Use the nearest block-carried id by timestamp.
+        turn_id=await work_index.work_at(session, topic_id, row.get("ts")),
     )
     total = int(row.get("total_tokens") or 0) or (input_tokens + output_tokens)
     await ComputeGrantRepository(session).consume(project_id, tokens_to_credits(total))
@@ -218,9 +225,9 @@ async def ingest_once(
             # Same head but shorter than we consumed: truncated in place.
             offset = 0
         rows, new_offset = read_new_lines(path, offset)
-        turns = TurnIndex()
+        work_index = WorkIndex()
         for row in rows:
-            if await _land_row(session, row, turns):
+            if await _land_row(session, row, work_index):
                 landed += 1
             else:
                 skipped += 1

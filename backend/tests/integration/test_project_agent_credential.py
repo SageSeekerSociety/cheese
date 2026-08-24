@@ -16,7 +16,7 @@ member has, and refused where a member is refused.
 import uuid
 
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
-from app.domain.identity.handles import CHEESE_HANDLE
+from app.domain.identity.handles import looks_like_agent_handle, topic_agent_handle
 from tests.conftest import seed_user
 
 # --- helpers ------------------------------------------------------------------
@@ -29,14 +29,14 @@ def _steward(client, handle: str) -> dict[str, str]:
 
 
 def _project(client, owner: str) -> str:
-    r = client.post("/api/projects", json={"name": "P", "owner_handle": owner})
+    r = client.post("/projects", json={"name": "P", "owner_handle": owner})
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
 
 def _topic(client, project_id: str, *, title: str, by: str) -> str:
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": title, "created_by": by},
     )
     assert r.status_code == 200, r.text
@@ -45,7 +45,7 @@ def _topic(client, project_id: str, *, title: str, by: str) -> str:
 
 def _issue(client, project_id: str, headers: dict[str, str], **body) -> dict:
     return client.post(
-        f"/api/projects/{project_id}/agent-credential", json=body, headers=headers
+        f"/projects/{project_id}/agent-credential", json=body, headers=headers
     )
 
 
@@ -62,13 +62,22 @@ def _cred(token: str) -> dict[str, str]:
 
 
 def _write_doc(client, topic_id: str, token: str, content: str = "# 芝士写的"):
+    """Set the living doc, based on whatever version it is at right now — these
+    tests are about who the write is attributed to, not about the doc moving
+    under anyone."""
+    current = client.get(f"/topics/{topic_id}/doc").json()["data"]
     return client.put(
-        f"/api/topics/{topic_id}/doc", json={"content": content}, headers=_cred(token)
+        f"/topics/{topic_id}/doc",
+        json={
+            "content": content,
+            "expected_version": current["doc_version"] if current else 0,
+        },
+        headers=_cred(token),
     )
 
 
 def _blocks(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
 
 
 def _acts_as_cheese(client, project_id: str, token: str) -> bool:
@@ -80,7 +89,8 @@ def _acts_as_cheese(client, project_id: str, token: str) -> bool:
     working long after it stopped.
     """
     tid = _topic(client, project_id, title="probe", by="alice")
-    return _write_doc(client, tid, token).json()["data"]["author"] == CHEESE_HANDLE
+    author = _write_doc(client, tid, token).json()["data"]["author"]
+    return author == topic_agent_handle(uuid.UUID(tid))
 
 
 # --- 签发 ----------------------------------------------------------------------
@@ -97,7 +107,7 @@ def test_the_secret_is_returned_once_and_nowhere_else(client):
     token = issued.json()["data"]["token"]
     assert token.startswith("cxpa_")
 
-    status = client.get(f"/api/projects/{pid}/agent-credential", headers=headers)
+    status = client.get(f"/projects/{pid}/agent-credential", headers=headers)
     assert status.status_code == 200
     assert "token" not in status.json()["data"]
     assert token not in status.text
@@ -112,7 +122,7 @@ def test_only_the_owner_or_a_lead_may_issue(client):
 
     for handle, role in (("bob", "member"), ("carol", "lead")):
         added = client.post(
-            f"/api/projects/{pid}/members",
+            f"/projects/{pid}/members",
             json={"user_handle": handle, "role": role},
             headers=owner,
         )
@@ -129,9 +139,7 @@ def test_an_agent_credential_cannot_issue_another_one(client):
     previous key on a keyring the agent still holds."""
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
-    r = client.post(
-        f"/api/projects/{pid}/agent-credential", json={}, headers=_cred(token)
-    )
+    r = client.post(f"/projects/{pid}/agent-credential", json={}, headers=_cred(token))
     assert r.status_code == 401
 
 
@@ -158,7 +166,9 @@ def test_one_credential_works_in_every_topic_of_its_project(client):
     for tid in (first, second):
         r = _write_doc(client, tid, token, content=f"# doc {tid}")
         assert r.status_code == 200, r.text
-        assert r.json()["data"]["author"] == CHEESE_HANDLE
+        # One credential, but each write is attributed to the room it landed in
+        # — the credential names no 分身, so the room says who acted.
+        assert r.json()["data"]["author"] == topic_agent_handle(uuid.UUID(tid))
 
 
 def test_a_credential_is_refused_in_another_project(client):
@@ -184,9 +194,11 @@ def test_a_forged_credential_is_not_a_credential(client):
 
     # Not authenticated at all: the write falls back to the pre-token path and
     # never lands as 芝士.
-    assert _write_doc(client, tid, forged).json()["data"]["author"] != CHEESE_HANDLE
+    author = _write_doc(client, tid, forged).json()["data"]["author"]
+    assert author != topic_agent_handle(uuid.UUID(tid))
+    assert not looks_like_agent_handle(author)
     gated = client.post(
-        f"/api/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(forged)
+        f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(forged)
     )
     assert gated.status_code == 401
 
@@ -205,13 +217,13 @@ def test_revoking_stops_it_on_the_very_next_request(client):
 
     assert _acts_as_cheese(client, pid, token)
 
-    revoked = client.delete(f"/api/projects/{pid}/agent-credential", headers=headers)
+    revoked = client.delete(f"/projects/{pid}/agent-credential", headers=headers)
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["data"]["epoch"] == 1
 
     assert not _acts_as_cheese(client, pid, token)
     gated = client.post(
-        f"/api/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(token)
+        f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(token)
     )
     assert gated.status_code == 401
 
@@ -224,7 +236,7 @@ def test_revoking_retires_every_credential_at_once(client):
     older = _issued_token(client, pid)
     newer = _issued_token(client, pid)
 
-    client.delete(f"/api/projects/{pid}/agent-credential", headers=headers)
+    client.delete(f"/projects/{pid}/agent-credential", headers=headers)
 
     assert not _acts_as_cheese(client, pid, older)
     assert not _acts_as_cheese(client, pid, newer)
@@ -237,14 +249,14 @@ def test_an_expired_credential_is_refused(client):
     pid = _project(client, "alice")
     headers = _steward(client, "alice")
     tid = _topic(client, pid, title="T", by="alice")
-    epoch = client.get(f"/api/projects/{pid}/agent-credential", headers=headers).json()[
+    epoch = client.get(f"/projects/{pid}/agent-credential", headers=headers).json()[
         "data"
     ]["epoch"]
     expired = mint_project_agent_credential(project_id=pid, epoch=epoch, ttl_s=-1)
 
     assert not _acts_as_cheese(client, pid, expired)
     gated = client.post(
-        f"/api/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(expired)
+        f"/topics/{tid}/decision", json={"decision": "x"}, headers=_cred(expired)
     )
     assert gated.status_code == 401
 
@@ -264,7 +276,7 @@ def test_it_reaches_the_cheese_write_surface_in_every_topic(client):
 
     for tid in (first, second):
         r = client.post(
-            f"/api/topics/{tid}/decision",
+            f"/topics/{tid}/decision",
             json={"decision": "改用 asyncpg"},
             headers=_cred(token),
         )
@@ -278,12 +290,12 @@ def test_it_reaches_the_project_level_write_surface(client):
     token = _issued_token(client, pid)
 
     r = client.post(
-        f"/api/projects/{pid}/milestones",
+        f"/projects/{pid}/milestones",
         json={"title": "内测上线"},
         headers=_cred(token),
     )
     assert r.status_code == 200, r.text
-    listed = client.get(f"/api/projects/{pid}/milestones").json()["data"]["data"]
+    listed = client.get(f"/projects/{pid}/milestones").json()["data"]["data"]
     assert [m["title"] for m in listed] == ["内测上线"]
 
 
@@ -297,14 +309,14 @@ def test_the_gate_still_refuses_another_project_s_credential(client):
     their_topic = _topic(client, theirs, title="T", by="bob")
 
     topic_level = client.post(
-        f"/api/topics/{their_topic}/decision",
+        f"/topics/{their_topic}/decision",
         json={"decision": "x"},
         headers=_cred(token),
     )
     assert topic_level.status_code == 401
 
     project_level = client.post(
-        f"/api/projects/{theirs}/milestones",
+        f"/projects/{theirs}/milestones",
         json={"title": "别人的里程碑"},
         headers=_cred(token),
     )
@@ -319,7 +331,7 @@ def test_it_is_a_member_not_a_lead(client):
     token = _issued_token(client, pid)
 
     r = client.post(
-        f"/api/projects/{pid}/members",
+        f"/projects/{pid}/members",
         json={"user_handle": "mallory", "role": "lead"},
         headers=_cred(token),
     )
@@ -329,9 +341,15 @@ def test_it_is_a_member_not_a_lead(client):
 # --- 留痕 ----------------------------------------------------------------------
 
 
-def test_what_it_writes_is_filed_under_cheese(client):
-    """Not under the person who issued it, and not under ``anonymous``. The
-    conversation event the platform emits alongside says 芝士 rather than a
+def test_what_it_writes_is_filed_under_the_rooms_own_agent(client):
+    """Not under the person who issued it, not under ``anonymous``, and not
+    under the platform-wide ``cheese`` — that handle now names ONE agent, the
+    project's default, which owns a memory pool. Filing every credential write
+    there would put work the default agent never did under its name. A
+    project-wide credential names no 分身 of its own, so the ROOM answers: the
+    same 分身 a per-turn token in that room would have named.
+
+    The conversation event the platform emits alongside says 芝士 rather than a
     mention chip, because the writer is recognised as the agent it is.
 
     ``author_type`` stays the route's structural value (a doc edit is ``human``,
@@ -341,20 +359,21 @@ def test_what_it_writes_is_filed_under_cheese(client):
     pid = _project(client, "alice")
     token = _issued_token(client, pid)
     tid = _topic(client, pid, title="T", by="alice")
+    room_agent = topic_agent_handle(uuid.UUID(tid))
 
     doc = _write_doc(client, tid, token)
     assert doc.status_code == 200, doc.text
-    assert doc.json()["data"]["author"] == CHEESE_HANDLE
+    assert doc.json()["data"]["author"] == room_agent
     assert doc.json()["data"]["author_type"] == "human"
 
     events = [b for b in _blocks(client, tid) if b["kind"] == "event"]
     edit_events = [b for b in events if "编辑了文档" in b["content"]]
     assert edit_events, _blocks(client, tid)
-    assert edit_events[-1]["author"] == CHEESE_HANDLE
+    assert edit_events[-1]["author"] == room_agent
     assert edit_events[-1]["content"] == "芝士 编辑了文档"
 
     decision = client.post(
-        f"/api/topics/{tid}/decision",
+        f"/topics/{tid}/decision",
         json={"decision": "记一笔"},
         headers=_cred(token),
     )

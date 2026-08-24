@@ -1,25 +1,22 @@
-"""DeviceProvider — the self-hosted / BYO-compute backend (AGENT_BACKEND=device, P3).
+"""DeviceChannel — the self-hosted / BYO-compute channel (AGENT_BACKEND=device, P3).
 
-Symmetric to ``TmuxHooksProvider`` but the interactive ``claude`` runs on a *user's
-own enrolled machine* instead of a platform container. The platform opens a screen on
-the device over the frozen ``link.Msg`` channel (``DeviceHub``); the screen runs
-``claude`` with our hooks (``device_launch``), so structured events come back through
-the SAME Claude Code hook path (``/sandbox/hooks/{topic}`` → ``hook_router`` →
-``translate_hook``) the tmux backend proved. The prompt is delivered by the minimal
-cheeselet's ``prompt`` function — not by reading/writing the screen from the backend.
+Symmetric to ``TmuxChannel`` but the screen lives on a *user's own enrolled
+machine* instead of a platform container. The platform opens it over the frozen
+``link.Msg`` channel (``DeviceHub``) and the device runs ``claude`` with our
+hooks (``device_launch``), so events come back through the SAME hook path
+(``/sandbox/hooks/{topic}`` → ``hook_router`` → ``translate_hook``) the tmux
+channel uses. The prompt is delivered by the minimal cheeselet's ``prompt``
+function — not by reading/writing the screen from the backend.
 
-Per turn (``run_turn``):
+Per request:
   1. resolve an online device bound to the project + its agent identity (DB),
   2. ensure a screen for the topic on that device (open via ``DeviceHub`` if absent),
-  3. register the topic's hook queue, then call the cheeselet ``prompt`` with the turn,
+  3. register the topic's hook queue, then deliver the prompt over rendezvous,
   4. drain the hook queue, translating each hook to an ``AgentEvent`` (reused verbatim),
-  5. on the ``Stop`` hook (→ ``AgentResult``) end the turn stream.
-
-``checkpoint`` snapshots the topic worktree when the device is CO-LOCATED (it edited
-the backend's real tree); for a remote device it is a no-op (the device owns its own
-tree and pushes it back over git smart-HTTP instead).
+  5. let the device commit and push its own worktree back over git smart-HTTP.
 """
 
+import hashlib
 import logging
 import time
 import uuid
@@ -31,20 +28,30 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
-from app.domain.agent import awaited_tasks, provider_env
+from app.domain.agent import provider_env
 from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
-from app.domain.agent.device_launch import DEVICE_ALIVE_PROBE, build_screen_launch
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import (
+from app.domain.agent.harness.claude_code import (
+    DEVICE_ALIVE_PROBE,
+    DEVICE_TUNNEL_PROBE,
     SESSION_TOKEN_TTL_S,
-    HooksTurnProvider,
+    Channel,
     ScreenSetupError,
+    build_screen_launch,
+    drop_topic_subscriptions,
 )
-from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
+from app.domain.agent.harness.launch import LaunchPlan
+from app.domain.agent.platform_failures import (
+    DEVICE_OFFLINE_MESSAGE,
+    HOST_UNREACHABLE_CODE,
+)
 from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply, Visibility
+from app.domain.device.supply import (
+    default_visibility,
+    has_runnable_transport,
+)
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
+from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
 
 # Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
@@ -56,6 +63,17 @@ DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
 ]
 
+
+def _git_author(project_id: uuid.UUID, topic_id: uuid.UUID) -> tuple[str, str] | None:
+    """Who this topic's commits belong to, for a machine that owns its own tree
+    and commits with plain git (the in-repo path reads the same sidecar in
+    `ws.snapshot_worktree`). None → the launcher's 芝士 default."""
+    from app.domain.workspace import identity as ws_identity
+
+    found = ws_identity.read(project_id, topic_id)
+    return None if found is None else (found.name, found.email)
+
+
 # #358 · what a turn gets when its only/pinned machine is enrolled as the boxed
 # `isolated` 档: a clean, actionable refusal, NOT a silent bare-on-host launch. It
 # is deliberately NOT one of platform_failures' host-scoped classifications — an
@@ -63,9 +81,14 @@ DeviceResolver = Callable[
 # 「该档尚未实现」 turn error the owner resolves by opting the machine into
 # whole-machine (Hosted Machine), or by waiting for the sandbox transport (step 2).
 DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = (
-    "话题绑定的机器登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
+    "话题与机器的绑定登记为『沙盒』档（visibility=isolated），但按房间隔离的容器传输"
     "尚未实现（#358 第二步）；平台拒绝以裸跑代替——那等于静默把整台机器暴露给这个"
     "房间。请把这台机器改登记为『整台机器（Hosted Machine）』后再继续。"
+)
+
+DEVICE_NOT_HOSTED_MESSAGE = (
+    "话题当前绑定的是云端连接器，不是 Hosted 机器；Hosted 解析器拒绝把云端端点"
+    "当作人的机器运行。"
 )
 
 
@@ -78,15 +101,18 @@ async def resolve_pinned_device(
     """The device this topic's turn must run on (execution-architecture v4 §affinity).
 
     A topic's work tree + resumable claude session live on ONE machine. So:
-      * already pinned → return it **iff online AND still whole-machine**; an offline
-        pinned device raises (queue/retry) and an `isolated` pinned device raises the
-        #358 「尚未实现」 error — NEVER fall back to another device, which would start
-        from an empty tree and corrupt session resume (the original drift bug);
-      * not yet pinned (first turn) → pick an online, **non-quarantined**,
-        **whole-machine** device serving the project and **pin it** (write-once), so
-        every later turn returns to the same machine. Quarantined = judged unhealthy
-        by ``device.health`` (#186); a topic that is already pinned is only ever
-        moved by the explicit ``agent.host_swap`` flow, never from here.
+      * an existing binding — either a machine named before the first turn or the
+        machine frozen by an earlier automatic choice — takes precedence over
+        automatic selection. Return it **iff hosted, online, and runnable**; an
+        offline binding raises
+        (queue/retry) and an `isolated` binding raises the #358 「尚未实现」 error.
+        NEVER fall back to another device, which would break an explicit choice or
+        start a resumed topic from an empty tree;
+      * no binding means 「系统挑一台」 on the first turn: pick the first online,
+        **non-quarantined** hosted device serving the project and create a runnable
+        ``host`` binding (write-once), so every later turn returns to it. Quarantined
+        = judged unhealthy by ``device.health`` (#186); a topic that is already
+        bound is only ever moved by the explicit ``agent.host_swap`` flow, never here.
 
     The #358 visibility gate lives entirely here (the one resolution point every
     production turn passes through), so an `isolated` device — whose per-room
@@ -96,38 +122,39 @@ async def resolve_pinned_device(
 
     Returns the device id, or ``None`` when no runnable bound device is online at all
     (the caller turns that into a clean "no online device" turn error)."""
-    pinned = await service.topic_device(topic_id)
-    if pinned is not None:
-        if not is_online(pinned):
-            raise ScreenSetupError(DEVICE_OFFLINE_MESSAGE)
-        # An ALREADY-pinned device that has since been re-enrolled as `isolated`
-        # (its owner flipped it) must refuse rather than run bare — the pin does not
+    # The compute-profile route records a named machine by writing this binding
+    # before the first turn. Consequently only a NULL binding means the user chose
+    # 「系统挑一台」; do not consult the healthy-device pool when a binding exists.
+    chosen = await service.topic_binding(topic_id)
+    if chosen is not None:
+        device_id = chosen.device_id
+        if await service.get_hosted_device(device_id) is None:
+            raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
+        if not is_online(device_id):
+            raise ScreenSetupError(
+                DEVICE_OFFLINE_MESSAGE, failure_code=HOST_UNREACHABLE_CODE
+            )
+        # An isolated binding must refuse rather than run bare — the pin does not
         # move, but the turn will not silently expose the whole machine either.
-        pinned_device = await service.get_device(pinned)
-        if (
-            pinned_device is not None
-            and pinned_device.visibility is not Visibility.host
-        ):
+        if not has_runnable_transport(chosen.visibility):
             raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
-        return pinned
-    # First turn: pick from the machines that are online AND not quarantined. A
-    # quarantined machine just failed two turns in a row for a reason that belongs
-    # to the box (#186), so pinning a fresh topic to it would hand the next person
-    # the failure we already diagnosed. Note this filter applies to the FIRST pin
-    # only — moving an ALREADY-pinned topic never happens here, it goes through the
-    # explicit, room-visible path in ``agent.host_swap``, because a pin that the
-    # resolver can quietly change is the original drift bug.
+        return device_id
+    # 「系统挑一台」 on the first turn: pick from machines that are online AND not
+    # quarantined. A quarantined machine just failed two turns in a row for a reason
+    # that belongs to the box (#186), so pinning a fresh topic to it would hand the
+    # next person the failure we already diagnosed. Note this filter applies to the
+    # FIRST pin only. This resolver never moves an ALREADY-pinned topic; movement
+    # goes through the explicit, room-visible path in ``agent.host_swap``, because a
+    # pin that the resolver can quietly change is the original drift bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
-        # #358 gate at the PIN: only whole-machine (`host`) devices have a transport
-        # today. An `isolated` device's per-room-container transport is #358 step 2;
-        # until it lands such a device cannot run a turn, so it must never be pinned
-        # — the pin is write-once, and a topic frozen to an unrunnable device would
-        # be bricked with no way to move it. Skipping it here (rather than pinning
-        # and failing at launch) keeps it out of the affinity freeze entirely.
-        if device.visibility is not Visibility.host:
-            continue
-        await service.bind_topic_device(topic_id, device.device_id)
+        # The same fact the market catalogue publishes as `default=True`, read from
+        # one place so the picker can never advertise a 档 the resolver does not
+        # bind. Today that resolves to `host`, because `isolated` has no transport;
+        # when #358 step 2 supplies one, this and the catalogue move together.
+        await service.bind_topic_device(
+            topic_id, device.device_id, visibility=default_visibility()
+        )
         return device.device_id
     return None
 
@@ -140,22 +167,37 @@ async def resolve_pinned_device(
 _BOX_LOCAL_HOSTS = ("localhost", "127.0.0.1", "172.17.0.1", "172.18.0.1", "litellm")
 
 
-def uses_tunnel(*, co_located: bool, tunnel_url: str) -> bool:
+def uses_tunnel(*, tunnel_url: str) -> bool:
     """Whether this screen's CONNECT traffic rides the tunnel.
 
-    Only a REMOTE machine ever needs it: a co-located screen shares the box's
-    network and reaches the listener's bridge address directly, so tunnelling it
-    would add a hop and a failure mode for nothing.
-
-    No tunnel configured means no tunnel — a remote machine then dials
+    Device execution never assumes access to the backend host's private network.
+    When a tunnel is configured every device uses it; otherwise the device dials
     ``subscription_device_proxy_host`` as it does today. That is right for a flat
     network and wrong for this one, which is exactly why it is a setting rather
     than a guess: the deployment knows whether its machines can reach the box.
     """
-    return bool(tunnel_url.strip()) and not co_located
+    return bool(tunnel_url.strip())
 
 
-def connect_transport(*, session_token: str, via_tunnel: bool) -> str:
+def tunnel_port_for_topic(topic_id: uuid.UUID) -> int:
+    """The tunnel helper's loopback port for THIS topic — derived, not fixed.
+
+    One fixed port (#425) meant two concurrent topics on one remote machine
+    raced for the same bind: the second helper failed and its turns died
+    looking like a dead model. Deriving from the topic id keeps the port
+    stable across screen reuse/reassert (claude bakes its HTTPS_PROXY at
+    launch and never re-reads it, #385) while giving concurrent topics
+    distinct listeners. Collisions inside the 2000-port window are possible
+    but loud: the second helper's bind fails and the launch surfaces a
+    visible setup error instead of a silent share.
+    """
+    base = settings.subscription_tunnel_local_port
+    return base + (int(hashlib.sha1(str(topic_id).encode()).hexdigest(), 16) % 2000)
+
+
+def connect_transport(
+    *, session_token: str, via_tunnel: bool, tunnel_port: int | None = None
+) -> str:
     """The ``HTTPS_PROXY`` value that steers this screen to the meter.
 
     Through the tunnel the address is loopback and carries NO credential: the
@@ -168,7 +210,8 @@ def connect_transport(*, session_token: str, via_tunnel: bool) -> str:
     exposed listener relaying for anyone who cannot prove which project to bill.
     """
     if via_tunnel:
-        return f"http://127.0.0.1:{settings.subscription_tunnel_local_port}"
+        port = tunnel_port or settings.subscription_tunnel_local_port
+        return f"http://127.0.0.1:{port}"
     host = (
         settings.subscription_device_proxy_host.strip()
         or settings.subscription_proxy_host
@@ -182,6 +225,9 @@ def connect_transport(*, session_token: str, via_tunnel: bool) -> str:
 # Where the launch script writes the metering proxy's CA on the device (under the
 # screen's ISOLATED home) and exports NODE_EXTRA_CA_CERTS to point. The env value
 # built here carries the literal placeholder; only the script knows the real home.
+# The `.claude` in it is the launcher's config dir, so this string and
+# `device_launch` have to agree — it is written down twice today, once on each
+# side of the seam.
 _DEVICE_PROXY_CA_PATH = "$HOME/.claude/proxy-ca.pem"
 
 
@@ -191,13 +237,17 @@ def _warn_if_model_endpoint_is_box_local(env: dict[str, str], device_id: str) ->
     # address fails identically off-box.
     for key in ("ANTHROPIC_BASE_URL", "HTTPS_PROXY"):
         value = env.get(key, "")
+        # A configured tunnel intentionally points HTTPS_PROXY at the helper on
+        # the device's own loopback; that address is not a backend-host leak.
+        if key == "HTTPS_PROXY" and env.get("CHEESE_TUNNEL_URL"):
+            continue
         if any(h in value for h in _BOX_LOCAL_HOSTS):
             logger.error(
-                "device %s is remote but its %s is %s, which only "
+                "device %s received %s=%s, which only "
                 "resolves on the backend's own host — its turns will fail to "
-                "reach a model. Set a publicly reachable address "
-                "(subscription_device_proxy_host for the metering proxy), or "
-                "point remote devices back at the upstream.",
+                "reach a model. Give devices a reachable address "
+                "(subscription_device_proxy_host for the metering proxy) or "
+                "configure subscription_tunnel_url.",
                 device_id,
                 key,
                 value,
@@ -234,7 +284,7 @@ def _read_proxy_ca() -> str:
 # How long the idle-suspect liveness probe (DEVICE_ALIVE_PROBE over the link
 # `exec`) may take. Short by design — well under hooks_substrate's CONFIRM_POLL_S
 # (15s) so a suspected-wedged turn re-probes on cadence — and a timeout/hiccup is
-# read as alive, never as death (see `_confirm_alive`).
+# read as alive, never as death (see `confirm_alive`).
 _ALIVE_PROBE_TIMEOUT_S = 8.0
 
 # Retire-and-reopen a reused screen whose baked credential is within this many
@@ -244,6 +294,22 @@ _ALIVE_PROBE_TIMEOUT_S = 8.0
 # never a healthy one, so a short-lived token (the gateway path's hour) is
 # re-minted at most once per margin rather than on every turn.
 _CREDENTIAL_EXPIRY_MARGIN_S = 300
+
+# How long to wait for the connector's delivery verdict. It must exceed the
+# connector's own budget for a COLD screen — dial the socket a booting claude has
+# not bound yet (120s) plus the launcher's token file (20s) — or the backend
+# gives up first and reports a failure while delivery is still in flight, which
+# is a false alarm indistinguishable from a real one. Warm screens answer in
+# milliseconds; this ceiling only ever costs anything on the first turn.
+_PROMPT_DELIVERY_TIMEOUT_S = 180
+
+# How long to wait for a staged file's ack. Much shorter than the prompt's
+# budget, deliberately: staging is a write to an already-connected machine, so a
+# healthy one answers in milliseconds, and the case actually worth optimising
+# for is a connector that will NEVER answer because it does not know this frame.
+# The message rides on without the image once this expires, so the cost of the
+# wait is paid by the reader — keep it short enough that they do not feel it.
+_FILE_STAGE_TIMEOUT_S = 20
 
 
 def _credential_expiry(token: str) -> int:
@@ -264,16 +330,17 @@ def _credential_expiry(token: str) -> int:
     return int(time.time()) + SESSION_TOKEN_TTL_S
 
 
-class DeviceProvider(HooksTurnProvider[HubScreen]):
-    """The REMOTE hooks backend: runs interactive `claude` on a user's enrolled
-    machine over the frozen link.Msg channel (DeviceHub), streaming AgentEvents
-    from Claude Code hooks. Transport = link.Msg + a device screen; the shared
-    turn flow lives in the base (HooksTurnProvider) — this class implements only
-    the transport seam. The screen ctx is a HubScreen."""
+class DeviceChannel(Channel):
+    """The REMOTE channel: a screen on a user's enrolled machine, opened over
+    the frozen link.Msg link (DeviceHub). The screen is a ``HubScreen``.
+
+    Enrollment, device resolution, rendezvous and the launcher shipped to the
+    machine are what this file is about; what runs on the screen is
+    ``ClaudeCodeRuntime``."""
 
     name = "device"
-    _needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
-    _timeout_message = "device 轮次超时"
+    needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
+    timeout_message = "device 轮次超时"
 
     def __init__(
         self,
@@ -281,40 +348,74 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         hub: DeviceHub | None = None,
         session_factory: async_sessionmaker | None = None,
         device_resolver: DeviceResolver | None = None,
-        router: HookRouter | None = None,
         public_base: str | None = None,
-        idle_suspect_s: float = 300.0,
-        hard_ceiling_s: float = 10800.0,
     ) -> None:
-        # Two-layer turn timeout, symmetric with the local tmux backend (turn 活跃度
-        # 检测). Below `idle_suspect_s` of no hook AND no liveness evidence a turn is
-        # normal; past it it is only SUSPECTED wedged and `_confirm_alive` (the
-        # process-tree probe below) is polled until it confirms the screen is
-        # actually dead; `hard_ceiling_s` is the unconditional backstop. The old
-        # single value collapsed both layers into one 900s deadline that killed a
-        # long-but-silent foreground command (a 20-minute pytest emits no interim
-        # hook) at minute 15. Defaults mirror the tmux backend
-        # (settings.agent_idle_suspect_s / agent_turn_hard_ceiling_s), so the local
-        # and remote hooks backends share ONE timeout policy.
-        super().__init__(
-            router=router,
-            idle_suspect_s=idle_suspect_s,
-            hard_ceiling_s=hard_ceiling_s,
-        )
         self._hub = hub or device_hub
         self._session_factory = session_factory
         # A resolver may be injected (tests / future routing); otherwise the DB-backed
         # resolver is used lazily (keeps this module importable without a DB).
         self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
-        # (project, topic) → was that turn's device co-located? Written when a
-        # turn resolves its device, read by checkpoint() afterwards.
-        self._co_located_at: dict[tuple[uuid.UUID, uuid.UUID], bool] = {}
+        # Recovered subscriptions have no surviving HubScreen object in this
+        # process. Keep their device relation so disconnect still tears them down.
+        self._subscription_devices: dict[uuid.UUID, str] = {}
 
     def available(self) -> bool:
         """Whether any device is currently connected (online). Project-level checks
-        happen per turn in ``run_turn``."""
+        happen per turn, in ``precheck``."""
         return bool(self._hub.online_device_ids())
+
+    async def discover(
+        self, device_id: str | None = None
+    ) -> list[tuple[uuid.UUID, uuid.UUID, object | None, str | None]]:
+        """Topics durably pinned to currently connected devices.
+
+        No screen comes back with them: the ``HubScreen`` that was open before
+        the restart is gone from this process, and the device reattaches on the
+        topic's next turn. What survives is the PIN, which is enough to start
+        listening again."""
+        online = set(self._hub.online_device_ids())
+        device_ids = [device_id] if device_id in online else []
+        if device_id is None:
+            device_ids = sorted(online)
+        if not device_ids:
+            return []
+
+        factory = self._session_factory
+        if factory is None:
+            from app.core.db import async_session_factory
+
+            factory = async_session_factory
+        scopes: list[tuple[uuid.UUID, uuid.UUID, str]] = []
+        async with factory() as session:
+            devices = sql_device_service(session)
+            topics = TopicService(session)
+            for connected_device_id in device_ids:
+                bindings = await devices.list_topic_bindings(connected_device_id)
+                for binding in bindings:
+                    topic = await topics.get(binding.topic_id)
+                    if topic is not None:
+                        scopes.append((topic.project_id, topic.id, connected_device_id))
+
+        for _, topic_id, connected_device_id in scopes:
+            self._subscription_devices[topic_id] = connected_device_id
+        # No harness tag: the pin records WHICH TOPIC is bound to which device,
+        # not what we started on it, and the screen itself is gone from this
+        # process. Running two harnesses on one enrolled machine needs the
+        # binding to record which — until then this transport hosts one.
+        return [
+            (project_id, topic_id, None, None) for project_id, topic_id, _ in scopes
+        ]
+
+    def topics_on_device(self, device_id: str) -> list[uuid.UUID]:
+        return [
+            topic_id
+            for topic_id, subscribed_device_id in self._subscription_devices.items()
+            if subscribed_device_id == device_id
+        ]
+
+    def forget_topic(self, topic_id: uuid.UUID) -> None:
+        self._subscription_devices.pop(topic_id, None)
 
     # --- device / screen resolution ----------------------------------------
 
@@ -367,37 +468,6 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 return screen
         return None
 
-    async def _is_co_located(self, device_id: str) -> bool:
-        """Whether this device shares the backend's filesystem.
-
-        ``device_shared_workspace_host_root`` is deployment-wide, but a deployment
-        can host BOTH kinds of device at once: the box cheese itself runs on, and
-        machines it provisioned from MicroCloud. A platform-provisioned machine is
-        on its own host and shares nothing — and getting this wrong fails SILENTLY:
-        the launcher `mkdir -p`s whatever path it is given, so the agent would open
-        a turn in an empty directory instead of the topic's worktree.
-
-        Reads ``device.supply`` (#282 决定 2). This used to ask the machine table
-        「有没有一行指向这个 device」 — the reverse lookup #282 is about. Same
-        answer, but now the fact is stored where it is used, so a `cloud` device
-        that never got a ``project_machines`` row (a future provisioning path)
-        cannot silently read as co-located and open a turn in an empty directory.
-
-        An unknown device keeps the previous reading (co-located when the shared
-        root is set): the same behaviour this had for any device with no machine
-        row, and the deployments that set that root are single-box ones.
-        """
-        if not settings.device_shared_workspace_host_root.strip():
-            return False
-        factory = self._session_factory
-        if factory is None:
-            from app.core.db import async_session_factory
-
-            factory = async_session_factory
-        async with factory() as session:
-            device = await sql_device_service(session).get_device(device_id)
-        return device is None or device.supply is not Supply.cloud
-
     async def _device_ccproxy_upstream(self, device_id: str) -> str:
         """The ccproxy identity this DEVICE brings, '' when it brings none.
 
@@ -405,9 +475,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         carries the device's own ccproxy ticket and the meter relays it over
         this identity — the same credential shape as an enrolled MicroCloud
         machine (whose identity lives on `ProjectMachine` and whose launches are
-        already steered by CHEESE_TUNNEL_URL). Kept separate from
-        `_is_co_located` on purpose: the two facts change independently, and
-        that method is monkeypatched all over the tests."""
+        already steered by CHEESE_TUNNEL_URL)."""
         factory = self._session_factory
         if factory is None:
             from app.core.db import async_session_factory
@@ -425,26 +493,13 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # miss (2026-08-15).
         return (device.ccproxy_upstream or "").strip()
 
-    def _work_dir(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID, *, co_located: bool
-    ) -> str:
-        """The screen's cwd. For a CO-LOCATED device (one sharing this backend's
-        filesystem, ``device_shared_workspace_host_root`` set) this is the topic's
-        REAL worktree, translated from the container path to the host root the device
-        sees — so device edits land in the topic branch and checkpoint/accept work
-        with no clone/sync. Otherwise a per-topic scratch dir the launcher creates."""
-        host_root = settings.device_shared_workspace_host_root.strip()
-        if co_located and host_root:
-            wt = ws.topic_worktree(
-                project_id, topic_id
-            ).resolve()  # materializes + chmods
-            container_root = Path(settings.workspace_root).resolve()
-            try:
-                return str(Path(host_root) / wt.relative_to(container_root))
-            except ValueError:
-                # worktree outside workspace_root (shouldn't happen) — fall through
-                # to a scratch dir rather than hand the device an unrelated host path.
-                pass
+    def _work_dir(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
+        """The screen's cwd on the device.
+
+        Every device owns an independent checkout. Physical host placement never
+        changes this boundary: files cross it through git or `file.put`, never by
+        translating a backend path into the device's namespace.
+        """
         return f"$HOME/.cheese/work/{project_id}/{topic_id}"
 
     def _hook_url(self, topic_id: uuid.UUID) -> str:
@@ -502,9 +557,8 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         token: str,
-        model: str | None,
         env: dict[str, str] | None,
-        system_prompt: str = "",
+        launch: LaunchPlan,
     ) -> HubScreen:
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
@@ -522,7 +576,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         it cannot respawn one whose `claude` died while the connector kept running,
         because the connector still holds the sid and merely hot-reloads into the
         dead pane. So a reused screen is first probed for a live `claude`
-        (``_confirm_alive``); an explicitly dead one is closed and reopened under a
+        (``confirm_alive``); an explicitly dead one is closed and reopened under a
         fresh sid the connector must Spawn, rather than reasserted into a corpse."""
         existing = self._existing_screen(device_id, topic_id)
         if existing is not None and self._credential_is_stale(existing):
@@ -543,7 +597,7 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             # the next summon instead of an unrunnable screen being reused forever.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
-        if existing is not None and not await self._confirm_alive(existing):
+        if existing is not None and not await self.confirm_alive(existing):
             # The hub still has a screen for this topic, but the `claude` behind it
             # is GONE — its tmux session was killed out from under a STILL-RUNNING
             # connector (an orphan sweep, a `tmux kill-server`, a crash). Reasserting
@@ -555,13 +609,35 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             # cannot rebuild one whose `claude` died while the connector lived. The
             # turn would then prompt a dead pane and die in the 25s
             # "会话没有任何反应" delivery timeout, reaching no model — which on a
-            # subscription deployment is a co-located device that silently never
+            # subscription deployment silently never
             # bills a turn (#325 G2). Drop the stale screen (session.close makes the
             # connector forget the sid too) so the code below OPENS a fresh one under
             # a NEW sid the connector cannot short-circuit and must Spawn: the
             # launcher runs, `claude` restarts, hooks flow. Only an explicit `dead`
-            # reading forces this (see `_confirm_alive`) — an alive, `unknown`, or
+            # reading forces this (see `confirm_alive`) — an alive, `unknown`, or
             # probe-hiccup screen is still reasserted, exactly as before.
+            await self._hub.close_screen(existing.device_id, existing.sid)
+            existing = None
+        if existing is not None and await self._tunnel_helper_is_down(existing):
+            # The third way a reused screen can be alive and unusable, and the one
+            # that had no gate: its `claude` runs, its credential is fresh, and the
+            # machine-local tunnel helper its HTTPS_PROXY points at is GONE. That
+            # helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
+            # launcher's prefix — and reuse reasserts (hot-reloads the cheeselet)
+            # instead of relaunching, so nothing on either side ever restarts it.
+            # `claude` read that HTTPS_PROXY once at startup and never re-reads it,
+            # so every turn from then on dies with `API Error: Unable to connect to
+            # API (ConnectionRefused)` while `confirm_alive` keeps answering
+            # `alive` — the same "live process + dead dependency" shape the
+            # credential gate above exists for, on the other dependency.
+            #
+            # Measured 2026-08-18: the dev box's standing data plane was swapped
+            # (#573) under five still-running screens. Every subsequent turn failed,
+            # one topic replayed the same 28-message batch 30 times at ~3 minutes a
+            # try, and no re-@ could ever have fixed it — the only cure was a fresh
+            # launch, which nothing was able to ask for. Retire the screen here so
+            # the OPEN below Spawns one whose launcher runs `cheese-tunnel-up`
+            # again.
             await self._hub.close_screen(existing.device_id, existing.sid)
             existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
@@ -575,16 +651,11 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         # last: its topic swallows every screen's events while the other topics'
         # turns show zero output.
         home_dir = f"$HOME/.cheese/home/{project_id}/{topic_id}"
-        co_located = await self._is_co_located(device_id)
-        # checkpoint() runs after the turn, from a caller that has no device in
-        # hand — remember what this device is, or the snapshot decision falls back
-        # to the deployment-wide switch and is wrong for every remote machine.
-        self._co_located_at[(project_id, topic_id)] = co_located
-        work_dir = self._work_dir(project_id, topic_id, co_located=co_located)
+        work_dir = self._work_dir(project_id, topic_id)
         ca_pem = ""
         if settings.subscription_enabled:
-            # Subscription deployment: EVERY device turn — co-located and remote
-            # alike — runs on the subscription through the metering proxy, the
+            # Every device request runs on the subscription through the metering
+            # proxy, the
             # same path the local tmux container takes (#325 G2). The machine
             # holds no real credential either way: the env ships a scoped cheese
             # token as the fake login, the proxy verifies it and injects the real
@@ -608,9 +679,12 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 ttl_s=SESSION_TOKEN_TTL_S,
             )
             tunnel_url = settings.subscription_tunnel_url.strip()
-            via_tunnel = uses_tunnel(co_located=co_located, tunnel_url=tunnel_url)
+            via_tunnel = uses_tunnel(tunnel_url=tunnel_url)
+            tunnel_port = tunnel_port_for_topic(topic_id)
             connect_proxy_url = connect_transport(
-                session_token=session_token, via_tunnel=via_tunnel
+                session_token=session_token,
+                via_tunnel=via_tunnel,
+                tunnel_port=tunnel_port,
             )
             sub = provider_env.subscription_provider(
                 ca_path=_DEVICE_PROXY_CA_PATH,
@@ -642,14 +716,10 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 # built entirely from `extra_env` — there is no other channel
                 # into that builder.
                 merged["CHEESE_TUNNEL_URL"] = tunnel_url
-                merged["CHEESE_TUNNEL_PORT"] = str(
-                    settings.subscription_tunnel_local_port
-                )
+                merged["CHEESE_TUNNEL_PORT"] = str(tunnel_port)
             elif await self._device_ccproxy_upstream(device_id):
-                # A CO-LOCATED device that brings its own ccproxy identity (the
-                # dev box, registered on `DeviceRow.ccproxy_upstream`) runs on
-                # the machine-ticket model exactly like a tunneled MicroCloud
-                # machine: the launcher's reconcile hands claude the device's
+                # A device with its own ccproxy identity runs on the machine-ticket
+                # model: the launcher's reconcile hands claude the device's
                 # own ticket instead of our scoped token, and admission tells
                 # the meter which identity to relay it over. Without this flag
                 # such a device silently falls onto the platform-credential swap
@@ -679,31 +749,30 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             # check before adopting.
             credential_expires = _credential_expiry(token)
             model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
-        if not co_located:
-            _warn_if_model_endpoint_is_box_local(model_env, device_id)
+        _warn_if_model_endpoint_is_box_local(model_env, device_id)
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),
             hook_token=token,
             home_dir=home_dir,
             work_dir=work_dir,
-            model=model,
+            model=launch.model,
             extra_env=model_env,
-            api_base=f"{self._public_base}/api",
+            # The base already maps 1:1 onto the backend root (see
+            # settings.connector_public_base), and every backend route is bare
+            # since #370 step 2 — so the CLI's base IS that base. Appending
+            # another `/api` was right only while the 2.0 routes carried their
+            # own prefix; afterwards it injected `<origin>/api/api` and every
+            # `cheese` command in a device sandbox 404'd with 话题不存在.
+            api_base=self._public_base,
             cli_url=f"{self._public_base}/sandbox/cli/cheese",
             project_id=str(project_id),
             topic_id=str(topic_id),
             author=agent_handle,
-            # A machine on its own host has no worktree to edit, so it clones the
-            # project and pushes the topic branch back. Same origin + same scoped
-            # token the platform CLI already uses from this machine — one
-            # convention, so there is a single place to be wrong about the prefix.
-            git_remote=(
-                None
-                if co_located
-                else f"{self._public_base}/api/projects/{project_id}/git"
-            ),
-            git_branch=ws.branch_for_topic(topic_id),
-            system_prompt=system_prompt,
+            git_author=_git_author(project_id, topic_id),
+            # Every device owns its checkout and syncs through authenticated git.
+            git_remote=f"{self._public_base}/projects/{project_id}/git",
+            git_branch=ws.branch_for_place(topic_id),
+            system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
         )
         command = await self._ship_launcher(device_id, topic_id, command)
@@ -735,12 +804,12 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
 
     # --- turn --------------------------------------------------------------
 
-    async def _precheck(
+    async def precheck(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> tuple[str, int, str]:
         """Resolve the topic's pinned/online device + its agent identity BEFORE the
         base claims the topic's hook queue (pre-refactor ordering, review finding).
-        The resolved tuple is handed back to ``_ensure_ready`` via ``precheck``.
+        The resolved tuple is handed back to ``ensure_ready`` via ``precheck``.
         Raises ``ScreenSetupError`` (offline pinned device, or none online)."""
         resolved = await self._resolve_device_agent(project_id, topic_id)
         if resolved is None:
@@ -749,38 +818,43 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             )
         return resolved
 
-    async def _ensure_ready(
+    async def ensure_ready(
         self,
         *,
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         token: str,
-        model: str | None,
         env: dict[str, str] | None,
         memory_scope: str | None,
         owner: str | None,
         turn_id: uuid.UUID | None,
-        resume_session_id: str | None,
-        system_prompt: str,
+        launch: LaunchPlan,
         precheck: object,
     ) -> HubScreen:
         """Reuse/open the topic's screen running `claude` with our hooks on the
-        device resolved by ``_precheck``; return the screen (ctx). Raises
-        ScreenSetupError when the screen fails."""
-        assert isinstance(precheck, tuple)  # from our _precheck
+        device resolved by ``precheck``; return the screen (ctx). Raises
+        ScreenSetupError when the screen fails.
+
+        This channel READS the plan rather than performing it — a remote screen
+        is built out of a shell script this side writes, so the launch has to be
+        assembled here, and the script it goes into says ``claude``. That is the
+        crossing the ledger still records against this file: the tmux channel
+        can host whatever it is handed, and this one cannot."""
+        assert isinstance(precheck, tuple)  # from our precheck
         device_id, agent_user_id, agent_handle = precheck
         try:
-            return await self._ensure_screen(
+            screen = await self._ensure_screen(
                 device_id=device_id,
                 agent_user_id=agent_user_id,
                 agent_handle=agent_handle,
                 project_id=project_id,
                 topic_id=topic_id,
                 token=token,
-                model=model,
                 env=env,
-                system_prompt=system_prompt,
+                launch=launch,
             )
+            self._subscription_devices[topic_id] = device_id
+            return screen
         except Exception as exc:  # noqa: BLE001 — any setup failure ends the turn
             # str(exc) is EMPTY for a bare TimeoutError — the failure that used to
             # reach the room as 「device 后端启动失败：」 with nothing after the
@@ -790,18 +864,92 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                 f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
             ) from exc
 
-    async def _send_prompt(self, screen: HubScreen, prompt: str) -> None:
-        """Deliver the prompt via the minimal cheeselet's `prompt` (it gates on the
-        `❯` input box first, so a fresh screen's first prompt is not dropped)."""
+    async def send_interrupt(self, screen: HubScreen) -> bool:
+        """Escape into the screen, down the channel that carries a watching
+        person's keystrokes. Not the rendezvous socket: that enqueues a MESSAGE,
+        and a message is what `send` is for — this is the key that takes the
+        work away without saying anything."""
+        await self._hub.viewer_input(screen.device_id, screen.sid, b"\x1b")
+        return True
+
+    async def stage_images(
+        self, screen: HubScreen, images: list[dict]
+    ) -> tuple[list[dict], list[dict]]:
+        """Copy each uploaded image onto the machine this screen runs on.
+
+        The upload landed in the backend's own worktree; a device is a different
+        filesystem, so without this the prompt's `@uploads/x.png` points at
+        nothing and 芝士 is handed a mention that resolves to no image.
+
+        Per image, and never fatal. One that cannot be staged — the connector
+        predates the file frame (this is real: the binary deployed on the dev
+        box was built the day before `file.put` existed, so every frame was
+        dropped unanswered and the send timed out), the machine is wedged, the
+        bytes are gone — comes back in the second list and the turn says so.
+        Before this, the failure propagated out of `send_prompt` and the whole
+        message vanished silently.
+        """
+        if screen.project_id is None or screen.topic_id is None:
+            # A screen adopted without its coordinates cannot be told which
+            # worktree the file came from. Say so rather than send a mention
+            # that resolves to nothing.
+            return [], list(images)
+        staged: list[dict] = []
+        lost: list[dict] = []
+        for image in images:
+            path = str(image.get("path") or "")
+            try:
+                data = ws.read_file_bytes(
+                    screen.project_id, path, topic_id=screen.topic_id
+                )
+                await self._hub.put_file(
+                    screen.device_id,
+                    screen.sid,
+                    path,
+                    data,
+                    timeout=_FILE_STAGE_TIMEOUT_S,
+                )
+            except Exception as exc:  # noqa: BLE001 — an image is not the message
+                logger.warning(
+                    "could not stage image %s onto device %s (topic=%s): %s",
+                    path,
+                    screen.device_id,
+                    screen.topic_id,
+                    exc,
+                )
+                lost.append(image)
+            else:
+                staged.append(image)
+        return staged, lost
+
+    async def send_prompt(self, screen: HubScreen, prompt: str) -> bool | None:
+        """Deliver the prompt over the screen's rendezvous socket, where Claude
+        Code enqueues it as `origin: {kind:"human"}` — the same place a keystroke
+        lands, with none of a keystroke's blindness.
+
+        The call name and result shape are unchanged from the cheeselet era on
+        purpose (`{ready: bool}`), so only the transport moved. What IS new is
+        that a failure here is a real failure: the connector answers with an
+        error when the socket never bound, the token never appeared, or the
+        session refused the frame — instead of a driver silently re-pasting into
+        a composer nobody was reading (2026-08-16)."""
         try:
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
             )
-            await self._hub.await_call(screen.device_id, call_id, timeout=60)
+            result = await self._hub.await_call(
+                screen.device_id, call_id, timeout=_PROMPT_DELIVERY_TIMEOUT_S
+            )
         except Exception as exc:  # noqa: BLE001 — a failed prompt ends the turn
+            # NOT "启动失败": by this point the screen is up. Saying what actually
+            # failed is the difference between someone re-@ing the agent and
+            # someone going to look at the machine.
             raise ScreenSetupError(
-                f"device 后端启动失败：{str(exc) or exc.__class__.__name__}"
+                f"提示词没能送进机器上的会话：{str(exc) or exc.__class__.__name__}"
             ) from exc
+        if isinstance(result, dict) and isinstance(result.get("ready"), bool):
+            return result["ready"]
+        return None
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has
@@ -812,11 +960,11 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         (HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN) exactly once at
         startup, and a reused screen is only reasserted (a cheeselet hot-reload),
         never relaunched — so a still-running process on a dead credential is
-        rejected on every request while the process-tree probe (`_confirm_alive`)
+        rejected on every request while the process-tree probe (`confirm_alive`)
         keeps reporting it healthy. This is the local, in-memory half of the gate;
         it never touches the device.
 
-        Conservative in the same direction as `_confirm_alive`: a screen with no
+        Conservative in the same direction as `confirm_alive`: a screen with no
         recorded expiry (`None` — adopted after a server restart, or a dev token
         with no decodable claim) is treated as FRESH and never retired on missing
         information, so we only ever retire a credential we can prove is dying."""
@@ -825,7 +973,45 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             return False
         return exp <= int(time.time()) + _CREDENTIAL_EXPIRY_MARGIN_S
 
-    async def _confirm_alive(self, screen: HubScreen) -> bool:
+    async def _tunnel_helper_is_down(self, screen: HubScreen) -> bool:
+        """Whether the machine-local tunnel helper this screen's `claude` dials has
+        stopped listening — the second half of the reuse gate, alongside
+        `_credential_is_stale`.
+
+        Both answer the same question about different dependencies: `claude` reads
+        its HTTPS_PROXY exactly once at startup, and a reused screen is reasserted
+        rather than relaunched, so a dependency that dies under the running process
+        can never be repaired in place. For the credential that meant a permanent
+        407; for the tunnel helper it means a permanent ConnectionRefused, with the
+        process-tree probe reporting `alive` throughout.
+
+        Skipped entirely on a deployment with no tunnel (the device dials the meter
+        directly, so there is no helper to lose) — that keeps the per-turn cost at
+        zero everywhere the failure cannot happen.
+
+        Conservative in the same direction as `confirm_alive`: only an explicit
+        `down` retires a screen. An exec failure, a non-zero exit, or an `unknown`
+        (no /proc, no awk) is read as "still up", so a probe hiccup never throws
+        away a healthy screen and its in-progress work."""
+        topic_id = screen.topic_id
+        if topic_id is None:
+            return False
+        if not uses_tunnel(tunnel_url=settings.subscription_tunnel_url.strip()):
+            return False
+        try:
+            result = await self._hub.exec(
+                screen.device_id,
+                ["sh", "-c", DEVICE_TUNNEL_PROBE],
+                env={"CHEESE_TUNNEL_PROBE_PORT": str(tunnel_port_for_topic(topic_id))},
+                timeout=_ALIVE_PROBE_TIMEOUT_S,
+            )
+        except Exception:  # noqa: BLE001 — a probe failure is not proof of death
+            return False
+        if result.get("exit") != 0:
+            return False
+        return (result.get("stdout") or "").strip() == "down"
+
+    async def confirm_alive(self, screen: HubScreen) -> bool:
         """Idle-suspect liveness probe for a device screen (turn 活跃度检测, the
         device half). Once a turn crosses `idle_suspect_s`, the hooks substrate
         calls this to tell a `claude` that is silently working — a long FOREGROUND
@@ -837,10 +1023,9 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         live `claude` still running for THIS topic on the box? The process-tree
         signal is the one that stays valid through a hook-silent window; there is no
         cheap screen-byte signal on a headless device (the hub relays raw bytes only
-        to a live browser viewer). The same call serves a co-located device and a
-        remote one — it is NOT gated on co-location.
+        to a live browser viewer). Every device uses the same probe.
 
-        Conservative, mirroring TmuxHooksProvider._confirm_alive: only an explicit
+        Conservative, mirroring TmuxChannel.confirm_alive: only an explicit
         `dead` reading ends the turn; any exec failure/timeout, a non-zero exit, or
         an `unknown`/empty result is read as alive, so a link hiccup or a hardened
         /proc never false-kills a turn that is really still working."""
@@ -860,15 +1045,6 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
             return True
         return (result.get("stdout") or "").strip() != "dead"
 
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        """A CO-LOCATED device edited the backend's REAL worktree this turn, so
-        snapshot it into version history exactly like the local path (else 采纳/diff
-        wouldn't see the edits). A REMOTE device owns its own tree → still a no-op
-        (it pushes its own work back over git instead). Held while a `cheese await`
-        command is still writing that tree, same as the local path."""
-        if self._co_located_at.get((project_id, topic_id)):
-            awaited_tasks.checkpoint_worktree(project_id, topic_id)
-
     # --- teardown ----------------------------------------------------------
 
     async def release_topic(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
@@ -879,25 +1055,24 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
         it) leaks on the machine forever, since the reaper only ever knew how to free
         Docker containers.
 
-        A CO-LOCATED device edited the backend's REAL worktree, so ONLY its screen is
-        closed — the tree belongs to the backend and must never be deleted here. A
-        REMOTE device owns its clone under a per-topic scratch dir, so that dir is
-        removed too (the per-project home dir is shared across a project's topics →
-        never touched).
+        The device's clone under its per-topic work dir is removed too. The
+        per-topic home keeps session state and is deliberately not part of this
+        worktree cleanup.
 
         Best-effort and idempotent: no screen (device offline / already gone) is a
         successful no-op, and every failure is swallowed so one topic can never break
         a reap loop. The screen is forgotten even when its device is offline, so an
         archived topic leaves no stale registry entry behind."""
+        await drop_topic_subscriptions(topic_id)
         for screen in self._hub.screens_for_topic(topic_id):
             device_id = screen.device_id
             try:
                 # Close first so the device's claude process stops holding the tree,
-                # THEN remove the (now idle) remote clone. close_screen forgets the
+                # THEN remove the (now idle) device clone. close_screen forgets the
                 # screen even for an offline device (its session_close is a no-op),
                 # so our registry never leaks an archived topic.
                 await self._hub.close_screen(device_id, screen.sid)
-                await self._remove_remote_work_dir(device_id, project_id, topic_id)
+                await self._remove_work_dir(device_id, project_id, topic_id)
             except Exception:  # noqa: BLE001 — one screen must not stop the rest
                 logger.warning(
                     "release_topic: failed freeing screen %s on device %s (topic %s)",
@@ -907,21 +1082,13 @@ class DeviceProvider(HooksTurnProvider[HubScreen]):
                     exc_info=True,
                 )
 
-    async def _remove_remote_work_dir(
+    async def _remove_work_dir(
         self, device_id: str, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> None:
-        """Remove a REMOTE device's per-topic work dir on the box. A co-located device
-        is skipped entirely — its work dir IS the backend's real worktree, deleting it
-        would destroy the topic's branch. Only runs while the device is online (an
-        offline box is unreachable — nothing to remove now). The delete target is
-        always the scratch path ``_work_dir(co_located=False)`` returns, never the
-        co-located worktree translation, so even a mis-classification cannot reach the
-        backend's tree."""
+        """Remove this topic's checkout from an online device."""
         if not self._hub.is_online(device_id):
             return
-        if await self._is_co_located(device_id):
-            return
-        work_dir = self._work_dir(project_id, topic_id, co_located=False)
+        work_dir = self._work_dir(project_id, topic_id)
         # `$HOME` in the scratch path is expanded by the device's shell; project and
         # topic are UUIDs (no shell metacharacters), so the argv stays a fixed
         # boundary with nothing to inject.
@@ -939,14 +1106,14 @@ async def release_topic_screen(
     hub: DeviceHub | None = None,
     session_factory: async_sessionmaker | None = None,
 ) -> None:
-    """Free a topic's device screen from a caller that holds no ``DeviceProvider`` —
+    """Free a topic's device screen from a caller that holds no ``DeviceChannel`` —
     the accept/archive path and the idle reaper both reach compute through ws-level
-    helpers, not the compute pool. Thin wrapper over ``DeviceProvider.release_topic``
+    helpers, not the compute pool. Thin wrapper over ``DeviceChannel.release_topic``
     bound to the shared ``device_hub`` singleton (``hub=None``). Best-effort and
     idempotent, so it is safe to call for EVERY archived/idle topic regardless of
     backend: a topic that never ran on a device simply has no screen to free."""
-    provider = DeviceProvider(hub=hub, session_factory=session_factory)
-    await provider.release_topic(project_id, topic_id)
+    channel = DeviceChannel(hub=hub, session_factory=session_factory)
+    await channel.release_topic(project_id, topic_id)
 
 
 def topic_credential_expiry(

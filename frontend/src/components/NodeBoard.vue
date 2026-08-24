@@ -5,9 +5,9 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { getMarketNodes } from '../api'
 
-// 节点状态 (spec §9.1): the physical side of the compute pools — every
-// configured node (local docker + cheesed remote), its liveness, and how many
-// turns it is running right now. Self-contained: fetches + refreshes itself.
+// 节点状态 (spec §9.1): the physical side of the compute pools — each node this
+// deployment runs, its liveness, and how many turns it is running right now.
+// Self-contained: fetches + refreshes itself.
 const board = ref<MarketNodes | null>(null)
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -19,7 +19,7 @@ async function load() {
   try {
     board.value = await getMarketNodes()
   } catch (e) {
-    error.value = e instanceof Error ? e.message : '加载节点状态失败'
+    error.value = e instanceof Error ? e.message : '加载机器状态失败'
   } finally {
     loading.value = false
   }
@@ -39,7 +39,7 @@ onBeforeUnmount(() => {
   <div class="node-board">
     <div class="node-board__head">
       <v-icon size="20" class="me-2 c-muted">mdi-lan</v-icon>
-      <h2 class="node-board__title">节点状态</h2>
+      <h2 class="node-board__title">机器状态</h2>
       <span class="node-board__hint c-faint">算力池背后的机器，在线状态与当前负载</span>
       <v-spacer />
       <span v-if="board" class="node-board__total c-faint"> 全平台进行中 {{ board.active_turns_total }} 轮 </span>
@@ -58,7 +58,7 @@ onBeforeUnmount(() => {
           <span class="node-dot" :class="n.online ? 'node-dot--on' : 'node-dot--off'" />
           <span class="node-card__status">{{ n.online ? '在线' : '离线' }}</span>
           <span class="node-card__kind">{{ n.kind === 'local' ? '本地' : '远程' }}</span>
-          <span v-if="n.current" class="node-card__current">当前执行节点</span>
+          <span v-if="n.current" class="node-card__current">当前执行的机器</span>
         </div>
         <h3 class="node-card__title">{{ n.label }}</h3>
         <p class="node-card__desc c-muted">{{ n.description }}</p>
@@ -123,8 +123,8 @@ onBeforeUnmount(() => {
   border-radius: 50%;
 }
 .node-dot--on {
-  background: #35b37e;
-  box-shadow: 0 0 0 3px rgba(53, 179, 126, 0.18);
+  background: var(--ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent);
 }
 .node-dot--off {
   background: var(--faint);
@@ -139,14 +139,14 @@ onBeforeUnmount(() => {
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.1);
   padding: 1px 8px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 .node-card__current {
   font-size: 0.66rem;
   color: var(--muted);
   border: 1px solid rgba(var(--v-border-color), 0.7);
   padding: 0 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
 }
 .node-card__title {
   font-size: 1rem;

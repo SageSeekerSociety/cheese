@@ -6,20 +6,28 @@ project's settings (pick which pool this project runs on). Two kinds of pool:
   - ``ai``      — which model/provider a turn runs on (ExecutionProfile / AIPool)
   - ``compute`` — which machine runs the sandbox (ComputeProvider / ComputePool)
 
-`available` is the honest flag: a listing that isn't deployed/credentialed shows
-in the market but can't be selected, so a project never silently runs on
-something that isn't there.
+`available` is the honest flag: a listing that isn't deployed/credentialed can't
+be selected, so a project never silently runs on something that isn't there.
+
+The catalog carries only pools that EXIST. `available` is for a pool that is
+real but not reachable right now (no machine online, no provisioning
+configured); a pool that does not exist is not listed greyed out, it is not
+listed. Teaching a reader that connecting something would light a row up is
+only honest when it would.
 """
 
 from dataclasses import dataclass
 
 from app.domain.agent.profiles import ProfileRegistry
+from app.domain.device.supply import (
+    Visibility,
+    default_visibility,
+    has_runnable_transport,
+)
 
 # Compute provider names (match ComputeProvider.name in compute.py).
-COMPUTE_LOCAL = "local-docker"
-COMPUTE_REMOTE = "remote-cheesed"
 COMPUTE_DEVICE = "device"
-COMPUTE_GPU = "gpu"
+COMPUTE_CLOUD = "cloud"
 
 
 @dataclass(frozen=True)
@@ -78,15 +86,20 @@ def compute_listings(
     *,
     device_online: bool | None = None,
 ) -> list[PoolListing]:
-    """Every compute pool in the catalog. Local is always on; the self-hosted
-    device pool is on when a relevant machine is connected; remote is on only when
-    a cheesed node is wired; GPU is request-only for now.
+    """Every compute pool in the catalog — self-hosted and Cloud. The device pool
+    is on when a relevant machine is connected; Cloud is on when provisioning is
+    configured.
 
     ``device_online`` scopes the device pool's availability to a CONTEXT: a route
     that knows the project passes whether THAT project has an online enrolled
     machine (compute belongs to the project/team, not globally). Left as ``None``
     (the global 市场 catalog) it falls back to 'is any device connected at all'."""
-    remote_ready = bool(settings.cheesed_url) and settings.compute_provider == "remote"
+    # Cloud is available when cheese can PROVISION it. Connector presence belongs
+    # to an individual topic machine's later boot/enrolment state; using it here
+    # would make a configured empty pool impossible to select.
+    cloud_ready = bool(
+        settings.microcloud_base_url and settings.microcloud_tenant_secret
+    )
     # A device is real compute the moment a relevant machine is connected (DeviceHub
     # presence) — the honest `available` flag. Per-project when the caller knows the
     # context; else the global 'any device online'.
@@ -95,24 +108,11 @@ def compute_listings(
 
         device_online = bool(device_hub.online_device_ids())
     device_ready = device_online
-    # #22 收敛: local-docker can be retired from NEW selection per deployment. When
-    # off, its `available` goes False so `compute_selectable` no longer offers it —
-    # yet it stays LISTED (a topic already frozen on it keeps a readable label) and
-    # stays registered in the ComputePool (execution never consults `available`, so
-    # existing pins still run). `default` stays True: it remains the always-on
-    # runtime fallback (`compute_default_name`), just not a pick for new topics.
-    local_selectable = getattr(settings, "compute_local_docker_selectable", True)
-    return [
-        PoolListing(
-            kind="compute",
-            id=COMPUTE_LOCAL,
-            label="知是本地算力",
-            tier="included",
-            price="包含",
-            description="平台托管的容器算力（CPU 级），适合代码、文档与数据分析。",
-            available=local_selectable,
-            default=True,
-        ),
+    # The platform's own box is not offered here (#358 "retire local"): what a
+    # person picks between is whose machine runs the work, and "ours" is what
+    # they get by not choosing. It is still in the ComputePool — the execution
+    # layer never consults this catalog — so an unconfigured topic lands there.
+    listings = [
         PoolListing(
             kind="compute",
             id=COMPUTE_DEVICE,
@@ -124,23 +124,19 @@ def compute_listings(
         ),
         PoolListing(
             kind="compute",
-            id=COMPUTE_REMOTE,
-            label="远程节点（cheesed）",
-            tier="byo",
-            price="自备 / 接入报价",
-            description="把算力接到你自己的 cheesed 节点，数据不出你的环境。",
-            available=remote_ready,
-        ),
-        PoolListing(
-            kind="compute",
-            id=COMPUTE_GPU,
-            label="GPU 算力",
+            id=COMPUTE_CLOUD,
+            label="Cloud",
             tier="premium",
-            price="按需报价",
-            description="带 GPU 的算力，用于训练 / 推理类赛题，按小时计费，按需申请。",
-            available=False,
+            price="按量计费",
+            description="为这个话题创建一台独占云端机器；首次启动需要等待几分钟。",
+            available=cloud_ready,
+            # The fallback when nothing was selected — see `compute_default_name`.
+            # Last selection still wins; this is only where a topic lands with no
+            # topic choice, no project sticky and no team default.
+            default=True,
         ),
     ]
+    return listings
 
 
 def compute_selectable(
@@ -158,7 +154,14 @@ def compute_selectable(
 
 
 def compute_default_name() -> str:
-    return COMPUTE_LOCAL
+    """What a topic runs on when nothing was chosen: last selection first (the
+    topic's own, then the project's sticky memory, then the team default — see
+    `_resolve_compute_id`), and Cloud when there is none.
+
+    It used to name the platform's own box. That made the pool nobody was
+    offered the destination of every unconfigured topic (#358).
+    """
+    return COMPUTE_CLOUD
 
 
 # --- Visibility (#282 §四 / #358): the whole-machine question -------------------
@@ -180,12 +183,15 @@ MACHINE_VISIBILITY_NOTICE = "让它看到整台机器（能操作这台机器上
 def visibility_listings() -> list[PoolListing]:
     """The visibility 档 a room may run its self-hosted compute under (#282 §四).
 
-    ``isolated`` is the conservative DEFAULT (``default=True``) but its per-room
-    container transport is not built yet (#358 step 2), so it is honestly
-    ``available=False`` — same convention as an undeployed compute pool. ``host``
-    (whole machine) works today but is 申请制: ``default=False``, and its
-    description IS the #282 safety line, so whoever renders the picker or the room
-    badge reads the warning straight from the catalog."""
+    ``available`` says whether a 档 has a transport; ``default`` says which one a
+    topic gets when nobody picks. Both come from `device.supply`, so this catalogue
+    cannot tell someone their topic is boxed while the resolver binds it to the
+    whole machine — which is exactly what it used to do, `isolated` being declared
+    the default here while `resolve_pinned_device` wrote `host` unconditionally.
+
+    ``host``'s description IS the #282 safety line, so whoever renders the picker
+    or the room badge reads the warning straight from the catalogue."""
+    default = default_visibility()
     return [
         PoolListing(
             kind="visibility",
@@ -194,8 +200,8 @@ def visibility_listings() -> list[PoolListing]:
             tier="included",
             price="包含",
             description="每个房间一个容器，只看得到自己的工作树，房间之间互不串扰；即将上线。",
-            available=False,
-            default=True,
+            available=has_runnable_transport(Visibility.isolated),
+            default=default is Visibility.isolated,
         ),
         PoolListing(
             kind="visibility",
@@ -204,8 +210,8 @@ def visibility_listings() -> list[PoolListing]:
             tier="byo",
             price="自备",
             description=MACHINE_VISIBILITY_NOTICE,
-            available=True,
-            default=False,
+            available=has_runnable_transport(Visibility.host),
+            default=default is Visibility.host,
         ),
     ]
 

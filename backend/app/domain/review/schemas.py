@@ -11,6 +11,14 @@ from app.domain.review.models import AcceptStatus
 class AcceptCardCreate(BaseModel):
     reviewer_handle: str = Field(min_length=1, max_length=64)
     routing_reason: str = ""
+    # What the change IS, in Conventional Commits form — becomes the PR title
+    # and the squash commit subject. REQUIRED since 2026-08-17, but enforced in
+    # review/services.py rather than here: a Pydantic-required field answers
+    # 422 with pydantic's own wording, and the thing that has to reach the
+    # filer is a sentence teaching them how to write one. Typed optional only
+    # so that message — not `Field required` — is what comes back.
+    change_subject: str | None = Field(default=None, max_length=255)
+    change_body: str | None = None
 
 
 class AcceptDecision(BaseModel):
@@ -31,6 +39,15 @@ class VoidDecision(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+class ForceMergeDecision(BaseModel):
+    """人工放行 (App 采纳等 CI 再合)。No `decided_by`, same reason as 作废: this
+    is an authorization action and the signature is the entire point — the
+    actor comes from the session token only, never from the body, or "谁明知红
+    仍合并" would be whatever the caller typed."""
+
+    reason: str = Field(default="", max_length=2000)
+
+
 class ApprovalCreate(BaseModel):
     approver_handle: str = Field(min_length=1, max_length=64)
 
@@ -42,10 +59,19 @@ class AcceptCardOut(BaseModel):
     topic_id: uuid.UUID
     reviewer_handle: str
     routing_reason: str
+    # The commit this card will become, as filed — so the reviewer can see the
+    # subject that is about to enter the project's history BEFORE accepting,
+    # which is the last moment anyone can object to it.
+    change_subject: str | None = None
+    change_body: str | None = None
     status: AcceptStatus
     decided_by: str | None
     decided_at: datetime | None
     note: str
+    #: 这条 note 是「停住了」(error) 还是「还在走」(info)，空 note 是 None。
+    #: 服务端从卡的状态码算好下发 (domain/review/notes.py)，浏览器只把它画成
+    #: 颜色，不再去读文案开头那个字符。
+    note_level: str | None = None
     created_at: datetime
     # 机器闸门 (eval C2): when the check_command started / passed. `started` is
     # NULL on a card whose gate never actually ran — see models.AcceptCard.

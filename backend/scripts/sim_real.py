@@ -62,7 +62,7 @@ def api_get(path: str):
 
 
 def blocks_of(topic_id: str) -> list[dict]:
-    d = api_get(f"/api/topics/{topic_id}/blocks")
+    d = api_get(f"/topics/{topic_id}/blocks")
     return d["data"] if isinstance(d, dict) and "data" in d else d
 
 
@@ -288,7 +288,7 @@ async def main() -> None:
         await page.reload(wait_until="networkidle")
         await page.wait_for_timeout(1500)
 
-        topics = api_get(f"/api/topics?project_id={project_id}")["data"]
+        topics = api_get(f"/topics?project_id={project_id}")["data"]
         root_id = next(t["id"] for t in topics if t["kind"] == "root")
         _log(f"root topic: {root_id}")
 
@@ -300,7 +300,7 @@ async def main() -> None:
             "我是组长林知行。本项目叫『AI 课程推荐系统』——给校内学生做个性化选课推荐"
             "（注意：项目本身就是这个推荐系统，不是别的平台）。请作为芝士本体给项目开个头："
             "1) 用一段话说清楚我们要做什么、分成哪几个工作块、谁负责；"
-            "2) 把这份开工概览写进本话题的活文档；"
+            "2) 把这份开工概览写进本话题的实况文档；"
             "3) 把『中期汇报』钉成里程碑（due 2026-06-20，需导师张衡验收）。",
         )
         await wait_ai_turn(root_id, "本体开工")
@@ -311,7 +311,7 @@ async def main() -> None:
         _log("creating work topic via + (untitled; 芝士 will name it)…")
         await page.get_by_title("新建话题").first.click()
         await page.wait_for_timeout(2500)
-        topics = api_get(f"/api/topics?project_id={project_id}")["data"]
+        topics = api_get(f"/topics?project_id={project_id}")["data"]
         work_id = next(
             t["id"] for t in topics if t["kind"] == "topic" and t["title"] == "新话题"
         )
@@ -335,7 +335,7 @@ async def main() -> None:
         await send_composer(
             page,
             "请根据项目记忆，说明我们定的技术栈和算法方向，"
-            "并把本话题的活文档建好（目标 / 约束 / 计划 / 当前进展）。",
+            "并把本话题的实况文档建好（目标 / 约束 / 计划 / 当前进展）。",
         )
         await wait_ai_turn(work_id, "工作话题·建文档")
 
@@ -368,7 +368,7 @@ async def main() -> None:
         _log("【私聊】opening private chat with 芝士…")
         await page.get_by_text("与芝士私聊").first.click()
         await page.wait_for_timeout(1500)
-        priv = api_get(f"/api/projects/{project_id}/private-chat?user_handle=user-1")
+        priv = api_get(f"/projects/{project_id}/private-chat?user_handle=user-1")
         priv_id = priv["id"]
         _log(f"private topic: {priv_id}")
         # ChatPanel's own composer already defaults to @芝士 ON.
@@ -392,11 +392,11 @@ async def main() -> None:
     print(f"  project_id : {project_id}")
     print(f"  open       : {BASE}/project/{project_id}")
     work_events = count_blocks(work_id, "ai", "event")
-    decisions = api_get(f"/api/projects/{project_id}/decisions")
+    decisions = api_get(f"/projects/{project_id}/decisions")
     n_dec = decisions.get("total") if isinstance(decisions, dict) else len(decisions)
     print(f"  工作话题 现场事件 : {work_events}")
     print(f"  决策记录 条数      : {n_dec}")
-    topics = api_get(f"/api/topics?project_id={project_id}")["data"]
+    topics = api_get(f"/topics?project_id={project_id}")["data"]
     print(f"  话题总数（含子话题）: {len(topics)}")
     print("=" * 60)
 

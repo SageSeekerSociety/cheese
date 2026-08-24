@@ -9,14 +9,14 @@ import pytest
 
 from app.domain.agent.chat import ChatService
 from app.domain.identity.handles import topic_agent_handle
-from tests.conftest import StubAgent
+from tests.conftest import stub_compute
 from tests.integration.conftest import chat_ws_url
 
 
 def _create_topic(client, owner: str = "alice") -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": owner},
     ).json()["data"]
     return t["id"]
@@ -39,14 +39,14 @@ def _post_message(client, topic_id: str, content: str, author: str) -> str:
 
 def _toggle(client, block_id: str, emoji: str, author: str) -> dict:
     r = client.post(
-        f"/api/blocks/{block_id}/reactions", json={"emoji": emoji, "author": author}
+        f"/blocks/{block_id}/reactions", json={"emoji": emoji, "author": author}
     )
     assert r.status_code == 200
     return r.json()["data"]
 
 
 def _block_reactions(client, topic_id: str, block_id: str) -> list[dict]:
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     return next(b for b in blocks if b["id"] == block_id)["reactions"]
 
 
@@ -96,7 +96,7 @@ def test_reaction_broadcasts_live_ws_frame(client):
 
 def test_reaction_on_missing_block_is_404(client):
     r = client.post(
-        f"/api/blocks/{uuid.uuid4()}/reactions",
+        f"/blocks/{uuid.uuid4()}/reactions",
         json={"emoji": "👍", "author": "bob"},
     )
     assert r.status_code == 404
@@ -142,9 +142,9 @@ async def test_resume_turn_adds_no_receipt(client, tmp_path):
 
     svc = ChatService(
         session_factory=factory,
-        agent=StubAgent(),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     from app.domain.project.services import ProjectService
     from app.domain.topic.services import TopicService

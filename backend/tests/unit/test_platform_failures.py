@@ -72,7 +72,7 @@ def test_missing_runtime_image_is_a_sanitized_platform_event():
         "event_type": "platform_error",
         "code": "runtime_image_missing",
         "severity": "error",
-        "title": "Agent 运行组件暂时缺失",
+        "title": "运行环境镜像暂时不可用",
         "retryable": True,
         "detail": (
             "本轮还没有开始执行，项目文件没有受到影响。"
@@ -148,3 +148,82 @@ def test_workspace_vcs_perms_payload_is_stable_and_sanitized():
     # both are checked.
     assert "/ws/p" not in failure.content + failure.detail
     assert "AI 服务" not in failure.content + failure.detail
+
+
+def test_prompt_undelivered_is_not_blamed_on_the_ai_service():
+    """The hooks substrate raises this itself when nothing came back from the
+    claude session. It used to fall through to chat.py's `else` and render as
+    「AI 服务返回错误」 — blaming the provider for a turn it never saw, which
+    sends whoever is debugging in exactly the wrong direction."""
+    from app.domain.agent.platform_failures import (
+        PROMPT_UNDELIVERED,
+        PROMPT_UNDELIVERED_CODE,
+        classify_platform_failure,
+    )
+
+    failure = classify_platform_failure("", code=PROMPT_UNDELIVERED_CODE)
+    assert failure is PROMPT_UNDELIVERED
+    assert "AI 服务" not in failure.content
+    assert failure.retryable is True
+    # A wedged session belongs to THIS topic's screen, not to the box — counting
+    # it against the machine would quarantine a healthy host and drag unrelated
+    # topics off it.
+    assert failure.host_scoped is False
+
+
+def test_the_platforms_own_wording_no_longer_decides_anything():
+    """平台自己写的那三句话，改成什么样都不再影响分类——反过来，别处冒出一句
+    长得像的文字也不会被误判成它。
+
+    这正是过去做不到的：判断读的就是这句话的开头/片段，于是文案既不能改、也
+    不能缩，而任何一处巧合的措辞都能冒名顶替。
+    """
+    from app.domain.agent.platform_failures import (
+        DEVICE_OFFLINE_MESSAGE,
+        PROMPT_UNDELIVERED_MESSAGE,
+        TURN_TIMEOUT_MESSAGE,
+        classify_platform_failure,
+    )
+
+    for sentence in (
+        PROMPT_UNDELIVERED_MESSAGE,
+        TURN_TIMEOUT_MESSAGE,
+        DEVICE_OFFLINE_MESSAGE,
+        f"tmux {TURN_TIMEOUT_MESSAGE}",
+    ):
+        assert classify_platform_failure(sentence) is None, sentence
+
+
+def test_an_offline_device_declares_itself_through_a_wrapping_raise():
+    """设备连不上是平台自己判定的，所以异常自己带着码——而且要能穿过包装。
+
+    抛出的地方和把它变成一条轮次结果的地方隔着好几层，中间常有 `raise X from
+    exc`：码只看最外层就会在这里丢掉。
+    """
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+    from app.domain.agent.platform_failures import (
+        DEVICE_OFFLINE_MESSAGE,
+        HOST_UNREACHABLE,
+        HOST_UNREACHABLE_CODE,
+        classify_platform_failure,
+    )
+
+    inner = ScreenSetupError(DEVICE_OFFLINE_MESSAGE, failure_code=HOST_UNREACHABLE_CODE)
+    assert classify_platform_failure(inner) is HOST_UNREACHABLE
+
+    try:
+        try:
+            raise inner
+        except ScreenSetupError as exc:
+            raise RuntimeError("包了一层") from exc
+    except RuntimeError as wrapped:
+        assert classify_platform_failure(wrapped) is HOST_UNREACHABLE
+
+
+def test_a_setup_failure_the_platform_cannot_name_stays_unnamed():
+    """没有码的 ScreenSetupError（比如「这个话题上已有工作正在运行」）不该被
+    硬塞进某个分类里——不知道就是不知道，runtime 有专门的一条路走它。"""
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+    from app.domain.agent.platform_failures import classify_platform_failure
+
+    assert classify_platform_failure(ScreenSetupError("说不清的失败")) is None

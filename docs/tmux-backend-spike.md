@@ -8,7 +8,10 @@
 - hooks 在交互模式下照常触发,事件与 AgentEvent 1:1 映射:
   - `SessionStart.session_id`      → AgentSessionInfo
   - `PreToolUse{tool_name,tool_input}` → AgentToolUse
-  - `MessageDisplay.delta`         → AgentMessage(离散消息)
+  - `MessageDisplay.delta`         → AgentMessage(注意:每条消息**多次** flush,
+    每批新完成的行一次,带 `message_id`/`index`/`final`;spike 的回复短到单次
+    flush 装得下,曾被误读成"一次 hook 一条消息"。现由 `MessageAssembler`
+    按 `final` 拼回整条消息——见 `hook_events.py`)
   - `PostToolUse{tool_name,duration_ms}` → 工具完成
   - `Stop{last_assistant_message,transcript_path}` → AgentResult
 - ttyd `-R` 只读镜像:浏览器里是逐字节真终端(Playwright 截图确认)。
@@ -26,7 +29,7 @@
 ## 后端设计(据此)
 - 沙箱镜像烤入 tmux + ttyd + hooks settings.json(HTTP hook → POST 后端)+ 预接受标志。
 - HTTP hook 端点按 session/turn 关联,推进 per-turn asyncio.Queue。
-- 新 ComputeProvider(TmuxHooksProvider).run_turn:确保 tmux 会话 → 就绪握手 →
+- 新 ComputeProvider(TmuxChannel).run_turn:确保 tmux 会话 → 就绪握手 →
   paste prompt → 从 queue 取 hook 事件 → yield AgentEvent → Stop 收尾。
 - 现场:每话题 ttyd,Caddy 反代,前端抽屉嵌 xterm/iframe。
 - `AGENT_BACKEND=sdk|tmux` 切换,SDK 后端保留。

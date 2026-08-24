@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type {
+  AgentType,
   ComputeProfiles,
   ExecProfiles,
-  ExpertRole,
   GithubConnection,
   OAuthConnectionInfo,
   SandboxImageInfo,
@@ -14,7 +14,7 @@ import { useRoute, useRouter } from 'vue-router'
 
 import {
   connectGithubRepo as apiConnectGithubRepo,
-  createRole,
+  createAgentType,
   deleteOAuthConnection,
   getExecutionProfiles,
   getGithubAccountAuthorizeUrl,
@@ -23,11 +23,12 @@ import {
   getProject,
   getSandboxImage,
   getUpstream,
+  listAgentTypes,
   listOAuthConnections,
-  listRoles,
+  listProjectAgents,
   setExecutionProfile,
   setModelProfile,
-  setProjectExpertRole,
+  setProjectAgentType,
   setSandboxImage,
   setUpstream,
   syncUpstream,
@@ -122,10 +123,12 @@ async function disconnectGithubAccount() {
   }
 }
 
-// 专家角色 (spec §8.2): which persona 芝士 loads for this project. The catalog
-// merges built-in library roles with custom ones; '' = generic 芝士.
-const roles = ref<ExpertRole[]>([])
-const roleCurrent = ref('')
+// Which type this project's 芝士 wears. The catalog merges preset types with
+// custom ones; '' = 芝士 with no specialty. The type sits on the AGENT, not on
+// the project — switching it re-skins the 芝士 that is already here and leaves
+// the memory it has accumulated exactly where it is.
+const agentTypes = ref<AgentType[]>([])
+const agentTypeCurrent = ref('')
 const savingRole = ref(false)
 // 新建角色 dialog: the Claude Code agents-file fields (frontmatter + body).
 const roleDialog = ref(false)
@@ -138,7 +141,7 @@ const roleFormError = ref<string | null>(null)
 
 const roleItems = computed(() => [
   { name: '', title: '不设置（通用芝士）', description: '' },
-  ...roles.value.map((r) => ({
+  ...agentTypes.value.map((r) => ({
     name: r.name,
     title: r.builtin ? r.title : `${r.title || r.name}（自定义）`,
     description: r.description,
@@ -149,8 +152,8 @@ async function pickRole(name: string | null) {
   const next = name ?? ''
   savingRole.value = true
   try {
-    const r = await setProjectExpertRole(props.projectId, next)
-    roleCurrent.value = r.current ?? ''
+    const agent = await setProjectAgentType(props.projectId, next)
+    agentTypeCurrent.value = agent.type_name ?? ''
   } catch (e) {
     error.value = e instanceof Error ? e.message : '切换专家角色失败'
   } finally {
@@ -162,7 +165,7 @@ async function submitNewRole() {
   roleFormError.value = null
   creatingRole.value = true
   try {
-    const created = await createRole({
+    const created = await createAgentType({
       name: newRoleName.value.trim(),
       title: newRoleTitle.value.trim(),
       description: newRoleDescription.value.trim(),
@@ -170,7 +173,7 @@ async function submitNewRole() {
       created_by: myHandle(),
     })
     // A custom role shadows its built-in namesake — keep one entry per name.
-    roles.value = [...roles.value.filter((r) => r.name !== created.name), created]
+    agentTypes.value = [...agentTypes.value.filter((r) => r.name !== created.name), created]
     roleDialog.value = false
     newRoleName.value = ''
     newRoleTitle.value = ''
@@ -197,13 +200,14 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const [proj, execP, modelP, envP, upP, rolesP, ghP] = await Promise.all([
+    const [proj, execP, modelP, envP, upP, typesP, agentsP, ghP] = await Promise.all([
       getProject(props.projectId),
       getExecutionProfiles(props.projectId),
       getModelProfiles(props.projectId),
       getSandboxImage(props.projectId),
       getUpstream(props.projectId),
-      listRoles(),
+      listAgentTypes(),
+      listProjectAgents(props.projectId),
       getGithubConnection(props.projectId),
     ])
     projectName.value = proj.name
@@ -212,8 +216,8 @@ async function load() {
     env.value = envP
     upstreamSaved.value = upP.url
     upstreamUrl.value = upP.url ?? ''
-    roles.value = rolesP.data
-    roleCurrent.value = proj.expert_role ?? ''
+    agentTypes.value = typesP.data
+    agentTypeCurrent.value = agentsP.data.find((a) => a.is_default)?.type_name ?? ''
     githubConnection.value = ghP
   } catch (e) {
     error.value = e instanceof Error ? e.message : '加载设置失败'
@@ -344,11 +348,11 @@ function consumeGithubCallbackNotice() {
     const repo = route.query.repo as string | undefined
     githubRepoNotice.value = { type: 'success', text: `已连接仓库 ${repo ?? ''}`.trim() }
   } else if (install === 'pending') {
-    githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准。' }
+    githubRepoNotice.value = { type: 'info', text: '安装请求已提交，等待组织管理员批准' }
   } else if (install === 'error') {
     githubRepoNotice.value = { type: 'error', text: explainRepoInstallFailure(reason) }
   } else if (account === 'success') {
-    githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号。' }
+    githubAccountNotice.value = { type: 'success', text: '已连接 GitHub 账号' }
   } else if (account === 'error') {
     githubAccountNotice.value = { type: 'error', text: explainAccountLinkFailure(reason) }
   }
@@ -361,13 +365,6 @@ function consumeGithubCallbackNotice() {
   router.replace({ query: rest })
 }
 
-// Back to wherever you came from (the workspace, via the gear), with an overview
-// fallback for a deep link — same pattern as the member page.
-function goBack() {
-  if (window.history.state?.back != null) router.back()
-  else router.push({ name: 'overview', params: { projectId: props.projectId } })
-}
-
 onMounted(() => {
   consumeGithubCallbackNotice()
   load()
@@ -378,9 +375,8 @@ watch(() => props.projectId, load)
 
 <template>
   <div class="settings-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 900px">
+    <v-container class="py-6 page-container">
       <div class="d-flex align-center mb-4">
-        <v-btn variant="text" size="small" prepend-icon="mdi-arrow-left" class="px-1" @click="goBack"> 返回 </v-btn>
         <v-spacer />
         <v-btn
           variant="text"
@@ -388,7 +384,7 @@ watch(() => props.projectId, load)
           append-icon="mdi-storefront-outline"
           @click="router.push({ name: 'market' })"
         >
-          逛市场
+          市场
         </v-btn>
       </div>
 
@@ -396,8 +392,9 @@ watch(() => props.projectId, load)
         <div class="t-eyebrow mb-1">项目设置 · {{ projectName }}</div>
         <h1 class="t-page-title">资源池</h1>
         <p class="t-body c-muted mt-1" style="max-width: 640px">
-          选择这个项目用哪套 AI 模型、跑在哪套算力上。默认都是知是自己的池，开箱即用； 需要更强的模型或专属机器，可以在
-          <a class="link" @click="router.push({ name: 'market' })">市场</a> 里挑。
+          选择这个项目使用哪套 AI
+          模型、运行在哪套算力上。默认都是知是自己的资源池，开箱即用；需要更强的模型或专属机器，可以在
+          <a class="link" @click="router.push({ name: 'market' })">市场</a> 里挑选。
         </p>
       </div>
 
@@ -410,15 +407,15 @@ watch(() => props.projectId, load)
 
       <template v-else>
         <!-- 专家角色 (spec §8.2): which persona 芝士 loads for this project -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-account-school-outline</v-icon>
-            <span class="ln-section-title">专家角色</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-account-school-outline</v-icon>
+            <span class="page-section-title">专家角色</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <div class="d-flex align-center" style="gap: 8px">
               <v-select
-                :model-value="roleCurrent"
+                :model-value="agentTypeCurrent"
                 :items="roleItems"
                 item-title="title"
                 item-value="name"
@@ -437,18 +434,18 @@ watch(() => props.projectId, load)
               <v-btn size="small" variant="tonal" prepend-icon="mdi-plus" @click="roleDialog = true"> 新建角色 </v-btn>
             </div>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              芝士以这个专家身份进驻项目（影响它的口吻和关注点）。平台内置了几个； 也可以给机构或自己定义新角色。
+              芝士以这个专家身份进驻项目，影响它的口吻和关注点。平台内置了几个角色，也可以为机构或自己定义新的。
             </p>
           </div>
         </section>
 
         <!-- AI 模型池 -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-brain</v-icon>
-            <span class="ln-section-title">AI 模型池</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
+            <span class="page-section-title">AI 模型池</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <button
               v-for="p in ai?.profiles ?? []"
               :key="p.name"
@@ -473,15 +470,15 @@ watch(() => props.projectId, load)
         </section>
 
         <!-- 模型 -->
-        <section v-if="(model?.profiles?.length ?? 0) > 0" class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-brain</v-icon>
-            <span class="ln-section-title">模型</span>
+        <section v-if="(model?.profiles?.length ?? 0) > 0" class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-brain</v-icon>
+            <span class="page-section-title">模型</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <p class="t-body c-muted mb-2" style="font-size: 0.82rem">
-              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省 订阅额度）；复杂项目可切
-              <strong>Opus 5</strong>（更强，但更快消耗额度）。
+              芝士在这个项目里用哪个 Claude 模型。默认 <strong>Sonnet 5</strong>（均衡、最省额度）；复杂项目可切换到
+              <strong>Opus 5</strong>（更强，但消耗额度更快）。
             </p>
             <button
               v-for="p in model?.profiles ?? []"
@@ -507,12 +504,12 @@ watch(() => props.projectId, load)
         </section>
 
         <!-- 环境 (spec §9.1): which sandbox image the agent runs in -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-package-variant-closed</v-icon>
-            <span class="ln-section-title">环境镜像</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-package-variant-closed</v-icon>
+            <span class="page-section-title">环境镜像</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <!-- Default (pool base image) -->
             <button
               type="button"
@@ -523,7 +520,7 @@ watch(() => props.projectId, load)
             >
               <span class="pool-radio" :class="{ 'pool-radio--on': !env?.current }" />
               <div class="pool-main">
-                <div class="pool-title">知是基座（默认）</div>
+                <div class="pool-title">默认镜像</div>
                 <div class="pool-sub c-muted">{{ env?.default }}</div>
               </div>
               <v-progress-circular
@@ -554,19 +551,19 @@ watch(() => props.projectId, load)
               <span v-else-if="env?.current === o.image" class="pool-current">使用中</span>
             </button>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              基座装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的 依赖，芝士可以直接在盒子里跑 cheesex
-              自己的测试（dogfooding）。
+              默认镜像装了 uv / node / git 等通用工具；cheesex-dev 额外预装了本仓库的依赖，芝士可以直接在里面运行本仓库
+              自己的测试。
             </p>
           </div>
         </section>
 
         <!-- 上游仓库 (spec §6.3): link an existing repo, keep pulling it in -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-source-branch-sync</v-icon>
-            <span class="ln-section-title">上游仓库</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-source-branch-sync</v-icon>
+            <span class="page-section-title">上游仓库</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <div class="d-flex align-center" style="gap: 8px">
               <v-text-field
                 v-model="upstreamUrl"
@@ -596,25 +593,26 @@ watch(() => props.projectId, load)
               :class="syncResult.synced ? 'c-muted' : 'text-error'"
             >
               <template v-if="syncResult.synced && (syncResult.commits ?? 0) > 0">
-                已合入上游 {{ syncResult.commits }} 个提交。
+                已合入上游 {{ syncResult.commits }} 个提交
               </template>
-              <template v-else-if="syncResult.synced">已是最新，没有新提交。</template>
+              <template v-else-if="syncResult.synced">已是最新，没有新提交</template>
               <template v-else>同步失败：{{ syncResult.reason }}</template>
             </p>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              关联一个已有的 git 仓库，把它的历史拉进这个项目；之后随时同步新提交。 有冲突时会原样中止，不会合一半。
+              关联一个已有的 git
+              仓库，把它的历史拉进这个项目；之后可随时同步新提交。有冲突时会原样中止，不会只合并一部分。
             </p>
           </div>
         </section>
 
         <!-- 连接 GitHub 仓库 (#192): cheesex-app 安装到具体仓库, 之后该项目的
              git 操作走这个 installation 的短时 token -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-github</v-icon>
-            <span class="ln-section-title">连接 GitHub 仓库</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-github</v-icon>
+            <span class="page-section-title">连接 GitHub 仓库</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <v-alert
               v-if="githubRepoNotice"
               :type="githubRepoNotice.type"
@@ -636,7 +634,7 @@ watch(() => props.projectId, load)
               </v-btn>
             </div>
             <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">尚未连接仓库</span>
+              <span class="t-body c-muted">暂无关联仓库</span>
               <v-spacer />
               <v-btn
                 size="small"
@@ -649,8 +647,8 @@ watch(() => props.projectId, load)
               </v-btn>
             </div>
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后沙箱看 CI/CD 用的短时 token
-              会按这个连接铸造，不用再手工配凭据。
+              通过 cheesex-app 把这个项目接到一个 GitHub 仓库；之后芝士查看 CI/CD 所需的临时凭据
+              会按这个连接自动签发，不用再手工配置。
             </p>
           </div>
         </section>
@@ -658,12 +656,12 @@ watch(() => props.projectId, load)
         <!-- 连接 GitHub 账号 (#192): App 的 user-to-server 授权, 独立于经典
              OAuth 登录 —— 记录"这个人是哪个 GitHub 账号", 供 credit 归属 +
              两阶段采纳代表身份开 PR 用 -->
-        <section class="ln-section">
-          <div class="ln-section-head">
-            <v-icon size="18" class="me-1 c-muted">mdi-account-box-outline</v-icon>
-            <span class="ln-section-title">连接 GitHub 账号</span>
+        <section class="page-section">
+          <div class="page-section-head">
+            <v-icon size="14" class="c-faint">mdi-account-box-outline</v-icon>
+            <span class="page-section-title">连接 GitHub 账号</span>
           </div>
-          <div class="ln-body">
+          <div class="page-section-body">
             <!-- The 账号 flow's own outcome, in the 账号 section. -->
             <v-alert
               v-if="githubAccountNotice"
@@ -728,7 +726,7 @@ watch(() => props.projectId, load)
 
             <!-- 未连接 -->
             <div v-else class="d-flex align-center" style="gap: 8px">
-              <span class="t-body c-muted">把你自己的 GitHub 账号和这个平台身份关联起来</span>
+              <span class="t-body c-muted">暂无关联账号</span>
               <v-spacer />
               <v-btn size="small" variant="tonal" :loading="connectingGithubAccount" @click="connectGithubAccount">
                 连接 GitHub 账号
@@ -736,8 +734,8 @@ watch(() => props.projectId, load)
             </div>
 
             <p class="t-body c-faint mt-2" style="font-size: 0.8rem">
-              用于把你 merge 的提交正确归到你名下（committer credit），也是两阶段采纳能代表你身份开 PR
-              的前提。跟登录用的 GitHub 账号授权是两回事，可以是同一个 GitHub 账号，也可以不是。
+              用于把你合并的提交正确归到你名下，也是采纳时能代表你的身份开 PR 的前提。这与登录用的 GitHub
+              授权是两回事，可以是同一个账号，也可以不是。
             </p>
           </div>
         </section>
@@ -752,9 +750,9 @@ watch(() => props.projectId, load)
         <v-card-text class="pb-0">
           <v-text-field
             v-model="newRoleName"
-            label="名称（英文标识）"
+            label="名称（英文）"
             placeholder="data-science"
-            hint="小写字母、数字和 .-_，作为角色的唯一 ID"
+            hint="小写字母、数字和 .-_"
             persistent-hint
             density="compact"
             variant="outlined"
@@ -770,7 +768,7 @@ watch(() => props.projectId, load)
           />
           <v-text-field
             v-model="newRoleDescription"
-            label="描述（一句话，显示在下拉里）"
+            label="描述"
             placeholder="统计分析、机器学习与数据可视化"
             density="compact"
             variant="outlined"
@@ -778,7 +776,7 @@ watch(() => props.projectId, load)
           />
           <v-textarea
             v-model="newRoleBody"
-            label="Persona 正文（注入芝士的 system prompt）"
+            label="角色设定（可留空）"
             placeholder="你是一位数据科学导师，擅长……"
             rows="6"
             density="compact"
@@ -796,7 +794,7 @@ watch(() => props.projectId, load)
             color="primary"
             variant="flat"
             :loading="creatingRole"
-            :disabled="!newRoleName.trim() || !newRoleBody.trim()"
+            :disabled="!newRoleName.trim()"
             @click="submitNewRole"
           >
             创建并使用
@@ -808,24 +806,32 @@ watch(() => props.projectId, load)
 </template>
 
 <style scoped>
+/* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图、总览同一层关系。 */
 .settings-page {
-  background: var(--canvas);
+  background: var(--surface);
 }
-/* Section rhythm (the ln-* classes are scoped to OverviewView, so style them
-   here). Flat sections: a title, then the pool rows are the cards. */
-.ln-section {
-  margin-bottom: 26px;
+/* 区块节奏。这里的区块本来就不是卡片（卡片是下面那些 .pool-row —— 一个池子、
+   一个镜像是真正可拿起的对象）；区块标题跟着总览一起降成 eyebrow，划分靠留白
+   加一条顶部发丝线。类名同步改掉：`ln-section` 是这个仓库对「白卡片区块」的叫
+   法，留着它会让下一个人以为这里还有卡片可以照抄。 */
+.page-section {
+  padding-top: 18px;
+  margin-bottom: 22px;
+  border-top: 1px solid var(--line);
 }
-.ln-section-head {
+.page-section-head {
   display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 10px;
 }
-.ln-section-title {
-  font-size: 15px;
+.page-section-title {
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--faint);
 }
-.ln-body {
+.page-section-body {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -838,8 +844,10 @@ watch(() => props.projectId, load)
   text-align: left;
   padding: 12px 14px;
   border: 1px solid rgba(var(--v-border-color), 0.55);
-  border-radius: 10px;
-  background: var(--surface);
+  border-radius: var(--radius-md);
+  /* 根面已经是 surface，再刷一层 surface 就是白底压白底 —— 这一行的边界由描边
+     给，底色留给 hover。 */
+  background: transparent;
   cursor: pointer;
   transition:
     border-color 0.15s,
@@ -848,6 +856,11 @@ watch(() => props.projectId, load)
 }
 .pool-row:hover:not(:disabled) {
   border-color: rgba(var(--v-theme-primary), 0.5);
+  background: var(--fill);
+}
+/* 选中态自己有底色，hover 不该把它冲淡。 */
+.pool-row--active:hover:not(:disabled) {
+  background: rgba(var(--v-theme-primary), 0.05);
 }
 .pool-row--active {
   border-color: rgb(var(--v-theme-primary));
@@ -883,7 +896,8 @@ watch(() => props.projectId, load)
   font-size: 0.68rem;
   font-weight: 500;
   padding: 1px 7px;
-  border-radius: 10px;
+  /* 小标签 → --radius-sm，和 .chip-neutral / .ln-tag 同档（原来是 10px，不在阶梯上）。 */
+  border-radius: var(--radius-sm);
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.1);
 }

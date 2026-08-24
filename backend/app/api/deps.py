@@ -10,14 +10,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import async_session_factory, get_db
 from app.domain.agent.chat import ChatService
+from app.domain.agent.cloud_provider import CloudChannel, CloudLease
 from app.domain.agent.compute import build_compute_pool
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.profiles import ProfileRegistry, build_registry
-from app.domain.agent.runtime import TurnRunner, get_broker
-from app.domain.agent.service import AgentService
+from app.domain.agent.runtime import AgentWorkRunner, get_broker
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
+from app.domain.identity.actor import Actor
+from app.domain.machine.models import AiStatus, MachineStatus, ProjectMachine
+from app.domain.machine.services import MachineService
 from app.domain.scheduler.service import SchedulerService
 
 __all__ = [
@@ -26,7 +29,7 @@ __all__ = [
     "get_scheduler_service",
     "get_profile_registry",
     "get_broker",
-    "get_turn_runner",
+    "get_work_runner",
     "project_device_online",
     "team_device_online",
 ]
@@ -53,9 +56,48 @@ def get_profile_registry() -> ProfileRegistry:
     return build_registry(settings)
 
 
+def _cloud_lease(machine: ProjectMachine) -> CloudLease:
+    error = None
+    if machine.status == MachineStatus.error:
+        error = "Cloud machine provisioning failed"
+    elif machine.ai_status == AiStatus.error:
+        error = "Cloud machine AI access provisioning failed"
+    return CloudLease(
+        project_id=machine.project_id,
+        device_id=machine.device_id,
+        machine_ready=machine.status == MachineStatus.running,
+        ai_ready=machine.ai_status == AiStatus.ready,
+        error=error,
+    )
+
+
+async def _ensure_topic_cloud(topic_id: uuid.UUID, actor: Actor | None) -> CloudLease:
+    async with async_session_factory() as session:
+        service = MachineService(session)
+        if not service.available:
+            from app.core.errors import ValidationError
+
+            raise ValidationError(
+                "machine provisioning is not configured for this deployment"
+            )
+        machine = await service.ensure_topic_machine(topic_id, actor=actor)
+        await session.commit()
+        return _cloud_lease(machine)
+
+
+async def _read_topic_cloud(topic_id: uuid.UUID) -> CloudLease | None:
+    async with async_session_factory() as session:
+        machine = await MachineService(session).topic_machine(topic_id)
+        await session.commit()
+        return None if machine is None else _cloud_lease(machine)
+
+
+async def _replace_topic_cloud(topic_id: uuid.UUID, session: AsyncSession) -> None:
+    await MachineService(session).replace_topic_machine(topic_id)
+
+
 @lru_cache
 def get_chat_service() -> ChatService:
-    agent = AgentService(model=settings.agent_model, env=settings.agent_env())
     # Gateway admin client (docs/llm-gateway.md L1/L2): only when the pool routes
     # through the self-hosted gateway AND admin creds are configured.
     gateway = None
@@ -63,15 +105,21 @@ def get_chat_service() -> ChatService:
         gateway = LlmGateway(
             settings.llm_gateway_admin_base, settings.llm_gateway_admin_key
         )
+    cloud = CloudChannel(
+        configured=bool(
+            settings.microcloud_base_url and settings.microcloud_tenant_secret
+        ),
+        ensure_topic_cloud=_ensure_topic_cloud,
+        read_topic_cloud=_read_topic_cloud,
+    )
     return ChatService(
         session_factory=async_session_factory,
-        agent=agent,
         base_system_prompt=settings.agent_system_prompt,
         workspace_root=settings.workspace_root,
-        sandbox_enabled=settings.agent_sandbox_enabled,
         profiles=get_profile_registry(),
-        compute=build_compute_pool(agent),
+        compute=build_compute_pool(cloud_channel=cloud),
         gateway=gateway,
+        replace_cloud_machine=_replace_topic_cloud,
     )
 
 
@@ -82,7 +130,7 @@ def get_scheduler_service(
 
 
 @lru_cache
-def get_turn_runner() -> TurnRunner:
+def get_work_runner() -> AgentWorkRunner:
     # #388 缺陷一: let the cold-start fuse know when a topic's device screen is
     # running on a credential the backend already stamped as expired, so a doomed
     # turn fast-fails with the true reason instead of burning the full fuse. Reads
@@ -90,9 +138,10 @@ def get_turn_runner() -> TurnRunner:
     # tmux/SDK path has no screen there → None → the fuse is unchanged.
     from app.domain.agent.device_provider import topic_credential_expiry
 
-    return TurnRunner(
+    return AgentWorkRunner(
         get_broker(),
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
+        replace_cloud_machine=_replace_topic_cloud,
     )

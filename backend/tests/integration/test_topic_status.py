@@ -4,15 +4,13 @@ import uuid
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
@@ -21,7 +19,7 @@ def test_status_snapshot_shape(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
 
-    r = client.get(f"/api/topics/{tid}/status")
+    r = client.get(f"/topics/{tid}/status")
     assert r.status_code == 200
     data = r.json()["data"]
     assert data["topic"]["id"] == tid
@@ -40,12 +38,16 @@ def test_status_includes_cards_with_gate_tail(client):
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     r = client.post(
-        f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        f"/topics/{tid}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
 
-    r = client.get(f"/api/topics/{tid}/status")
+    r = client.get(f"/topics/{tid}/status")
     cards = r.json()["data"]["cards"]
     assert len(cards) == 1
     assert cards[0]["status"] == "pending"
@@ -54,5 +56,5 @@ def test_status_includes_cards_with_gate_tail(client):
 
 
 def test_status_404_for_missing_topic(client):
-    r = client.get(f"/api/topics/{uuid.uuid4()}/status")
+    r = client.get(f"/topics/{uuid.uuid4()}/status")
     assert r.status_code == 404

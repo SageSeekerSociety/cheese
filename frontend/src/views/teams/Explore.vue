@@ -1,5 +1,7 @@
 <template>
-  <div class="w-100 header-corner-glow-flow teams-explore-header-container">
+  <!-- 广告词只给第一次来的人看，而底栏点进来的是每天回来的人：手机上它连
+         内边距要吃掉 128px，一屏去掉一大半，下面才是你来这儿要用的东西。 -->
+  <div v-if="mdAndUp" class="w-100 header-corner-glow-flow teams-explore-header-container">
     <div class="teams-explore-header h-100 d-flex flex-row align-stretch justify-space-between">
       <div class="px-8 py-16">
         <div class="text-h4 text-high-emphasis">与同频者，成就不凡。</div>
@@ -167,6 +169,7 @@
 import type { Team } from '@/types'
 
 import { ref } from 'vue'
+import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -174,6 +177,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import { TeamsApi } from '@/network/api/teams'
 import AccountService from '@/services/account'
 
+const { mdAndUp } = useDisplay()
 const searchQuery = ref('')
 const searchTeamsData = ref<Team[]>([])
 const hasSearched = ref(false)
@@ -276,12 +280,12 @@ const submitJoinRequest = async () => {
 
 .create-btn {
   transition: transform 0.2s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-1);
 }
 
 .create-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-2);
 }
 
 .team-description-editor {

@@ -1,61 +1,41 @@
 """Slack-style discrete messages (no token streaming).
 
-Tool calls are real message boundaries. The SDK adapter coalesces partial
-AssistantMessages before this provider-neutral orchestration layer sees them.
+Tool calls are real message boundaries.
 """
+
+import uuid
 
 import pytest
 
-from app.domain.agent.service import (
-    AgentDelta,
-    AgentMessage,
-    AgentResult,
-    AgentToolUse,
-    AgentUsage,
-)
-from tests.conftest import StubAgent
+from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url
 
 
-class MultiMessageAgent(StubAgent):
+class MultiMessageScreen(StubChannel):
     """Two message boundaries with a tool call in between — the shape a real
-    SDK turn produces (AssistantMessage / ToolUse / AssistantMessage). The
-    result text repeats the LAST message, exactly like the real ResultMessage."""
+    session produces. The Stop text repeats the LAST message, exactly like a
+    real one does."""
 
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        self.last_system_prompt = system_prompt
-        self.last_prompt = prompt
-        yield AgentDelta(text="我先")  # stray deltas must NOT reach the chat
-        yield AgentMessage(text="我先查一下代码，稍等")
-        yield AgentToolUse(name="Grep", input={"pattern": "TODO"})
-        yield AgentMessage(text="查完了：一共 3 处 TODO")
-        yield AgentResult(
-            text="查完了：一共 3 处 TODO",
-            session_id="sess-multi-1",
-            usage=AgentUsage(model="stub", input_tokens=5, output_tokens=5),
-        )
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, "我先查一下代码，稍等")
+        self.uses(topic_id, "Grep", pattern="TODO")
+        self.says(topic_id, "查完了：一共 3 处 TODO")
+        self.stops(topic_id, "查完了：一共 3 处 TODO")
 
 
 @pytest.fixture
-def stub_agent() -> MultiMessageAgent:
-    # Overrides conftest's stub_agent for this module; `client` picks it up.
-    return MultiMessageAgent()
+def stub_hooks() -> MultiMessageScreen:
+    # Overrides conftest's stub_hooks for this module; `client` picks it up.
+    return MultiMessageScreen()
 
 
 def _run_turn(client) -> tuple[str, list[dict]]:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "话题", "created_by": "alice"},
     ).json()["data"]
     with client.websocket_connect(chat_ws_url(t["id"], "alice")) as ws:
@@ -77,10 +57,11 @@ def test_each_message_boundary_lands_as_own_block(client):
     assert "delta" not in types
     assert types == [
         "user_block",
+        "turn_started",  # explicit lifecycle for every open client
         "reaction",  # the platform's ✅ receipt on the summoning message
-        "turn_active",  # working indicator for every open client
+        "turn_started",  # again, from the session that picked the work up
         "assistant_block",
-        "tool",
+        "event_block",  # the tool call, as the 现场 record of it
         "assistant_block",
         "done",
     ]
@@ -98,7 +79,7 @@ def test_each_message_boundary_lands_as_own_block(client):
 
 def test_result_text_is_not_duplicated_as_extra_block(client):
     topic_id, _frames = _run_turn(client)
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     ai_messages = [
         b for b in blocks if b["author_type"] == "ai" and b["kind"] == "message"
     ]
@@ -110,15 +91,17 @@ def test_result_text_is_not_duplicated_as_extra_block(client):
     ]
 
 
-def test_plain_result_only_agent_still_lands_one_message(client, stub_agent):
-    """Fallback: a provider with no message boundaries (conftest's StubAgent
-    shape — deltas + result only) still lands its reply as one block."""
+def test_plain_result_only_agent_still_lands_one_message(client, stub_hooks):
+    """Fallback: a session that never displays a message and only stops still
+    lands its reply as one block."""
 
-    async def _plain(**_):
-        yield AgentDelta(text="Hello ")
-        yield AgentResult(text="Hello world", session_id="s1", usage=None)
+    def _plain(topic_id, prompt, reply):
+        del reply
+        stub_hooks.starts(topic_id)
+        stub_hooks.acknowledges(topic_id, prompt)
+        stub_hooks.stops(topic_id, "Hello world")
 
-    stub_agent.stream_reply = lambda **kw: _plain(**kw)  # type: ignore[method-assign]
+    stub_hooks.emit_turn = _plain  # type: ignore[method-assign]
     topic_id, frames = _run_turn(client)
     assistant = [f["block"] for f in frames if f["type"] == "assistant_block"]
     assert len(assistant) == 1

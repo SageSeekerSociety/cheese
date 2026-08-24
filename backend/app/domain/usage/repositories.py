@@ -5,6 +5,7 @@ import uuid
 from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.room_task.place import room_and_task
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 
 
@@ -26,21 +27,30 @@ class UsageRepository:
         route: str = "",
         turn_id: uuid.UUID | None = None,
     ) -> ResourceUsage:
-        """Record a turn's spend.
+        """Record spend against its originating message or platform work id.
 
-        ``metered=False`` records a turn whose token counts are NOT knowable —
+        ``metered=False`` records work whose token counts are NOT knowable —
         the hooks backends run interactive Claude Code, which reports no usage
         locally, and the gateway that would supply it is not configured
-        everywhere. Such a turn used to be skipped entirely, so the table showed
+        everywhere. Such work used to be skipped entirely, so the table showed
         an empty month while real money drained: 300 RMB of relay credit went
         without a single row naming what spent it. A row with zero tokens is
-        still worth writing — it says a turn happened, on which project, with
+        still worth writing — it says work happened, on which project, with
         which model, which is the difference between "we do not know how much"
         and "we do not know anything".
         """
+        # `topic_id` names the PLACE the spend happened in, which is usually a
+        # thread — spend is what WORK does. Split here so "what did this task
+        # cost" stays answerable, which a room-level total cannot answer.
+        room_id, task_id = (
+            (None, None)
+            if topic_id is None
+            else await room_and_task(self._session, topic_id)
+        )
         row = ResourceUsage(
             project_id=project_id,
-            topic_id=topic_id,
+            topic_id=room_id,
+            task_id=task_id,
             turn_id=turn_id,
             model=model,
             input_tokens=input_tokens,
@@ -55,13 +65,13 @@ class UsageRepository:
         return row
 
     async def _agg(self, column, value) -> dict:
-        # 轮次 counts TURNS, not rows. One turn writes several rows — the
-        # metering proxy logs a row per /v1/messages call and the gateway lands
-        # a deferred backfill row for the same turn — which is how a 3-turn
-        # topic reported 43. Rows carrying a turn_id collapse to their turn;
-        # rows without one (pre-column history, unattributable proxy lines)
-        # still count one each rather than vanishing.
+        # The public `turns` key is retained for wire compatibility, but its
+        # number now means distinct originating human messages or platform work
+        # ids, not intervals. One attributed unit can write several rows: the
+        # metering proxy logs every /v1/messages call and the gateway may land a
+        # deferred backfill. Rows without attribution still count once each.
         unattributed = func.sum(case((ResourceUsage.turn_id.is_(None), 1), else_=0))
+        attributed_work = func.count(func.distinct(ResourceUsage.turn_id))
         # Tokens whose USD price is not knowable — a subscription is billed by
         # the month, so its rows carry cost_usd = 0.0 meaning "no price", not
         # "free". Reported separately so the UI can say 未知 instead of printing
@@ -80,7 +90,7 @@ class UsageRepository:
             func.coalesce(func.sum(ResourceUsage.output_tokens), 0),
             func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
             func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
-            func.count(func.distinct(ResourceUsage.turn_id)),
+            attributed_work,
             func.coalesce(unattributed, 0),
             func.coalesce(unpriced, 0),
         ).where(column == value)
@@ -111,7 +121,7 @@ class ComputeGrantRepository:
         self,
         *,
         project_id: uuid.UUID,
-        source_task_id: uuid.UUID | None,
+        source_task_id: int | None,
         credits_total: float,
     ) -> ComputeGrant:
         row = ComputeGrant(

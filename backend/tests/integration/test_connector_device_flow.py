@@ -22,7 +22,7 @@ def _bearer(token: str) -> dict:
 def test_full_device_flow_start_approve_poll(client):
     # A project the device will be bound to.
     project = client.post(
-        "/api/projects", json={"name": "P", "owner_handle": "alice"}
+        "/projects", json={"name": "P", "owner_handle": "alice"}
     ).json()["data"]
     token = _login(client, "alice")
 
@@ -68,19 +68,8 @@ def test_full_device_flow_start_approve_poll(client):
     assert dd["device_id"] == device_id and dd["token"]
 
 
-def test_the_human_door_enrols_a_self_hosted_boxed_machine_by_default(client):
-    """入口决定待遇 on BOTH axes (#282 决定 2 / #358): this door is a human running the
-    connector on a box they already keep running, so what it enrols is `self_hosted`
-    AND — without ticking 「让它看到整台机器」 — the boxed `isolated` visibility. Both
-    are CONSTANTS at the call site: the MicroCloud sweep writes `cloud`/`host` for
-    identical hardware, and nothing about the machine itself is consulted either way.
-
-    Drives the real route and captures what it passed, because the constants ARE the
-    behaviour here — 「入口决定待遇」 is only true if each entry point states its own
-    answer rather than sharing a default. Whole-machine must never be reached by
-    omission (#358): the request omits `whole_machine`, and the recorded visibility
-    proves the omission lands on `isolated`, not `host`.
-    """
+def test_the_human_door_creates_the_hosted_subtype(client):
+    """Enrollment identifies human-owned supply; visibility is chosen per topic."""
     from app.api.routes.connector import DbSession, get_device_service
     from app.domain.device.service import DeviceService
     from app.domain.device.supply import Supply, Visibility
@@ -114,7 +103,7 @@ def test_the_human_door_enrols_a_self_hosted_boxed_machine_by_default(client):
     try:
         connect = client.post(
             "/connector/connect",
-            json={"device_code": code},  # note: no `whole_machine`
+            json={"device_code": code},
             headers=_bearer(token),
         )
     finally:
@@ -122,54 +111,6 @@ def test_the_human_door_enrols_a_self_hosted_boxed_machine_by_default(client):
 
     assert connect.status_code == 200, connect.text
     assert recorded == [(Supply.self_hosted, Visibility.isolated)]
-
-
-def test_the_human_door_grants_whole_machine_only_when_explicitly_ticked(client):
-    """The opt-in half of #358: ticking 「让它看到整台机器」 (`whole_machine: true`) is
-    the ONLY way the connector enrols a `host` device. Same door, same hardware —
-    the approver's explicit choice is the whole difference, which is the point of
-    making whole-machine 申请制 rather than a default."""
-    from app.api.routes.connector import DbSession, get_device_service
-    from app.domain.device.service import DeviceService
-    from app.domain.device.supply import Supply, Visibility
-
-    recorded: list[tuple[Supply, Visibility]] = []
-
-    class Recording(DeviceService):
-        async def approve(
-            self, code_value, *, owner_user_id, supply, visibility, name=None
-        ):
-            recorded.append((supply, visibility))
-            return await super().approve(
-                code_value,
-                owner_user_id=owner_user_id,
-                supply=supply,
-                visibility=visibility,
-                name=name,
-            )
-
-    def _recording_service(db: DbSession) -> DeviceService:
-        from app.domain.device.sql_repository import SqlDeviceRepository
-
-        return Recording(SqlDeviceRepository(db))
-
-    token = _login(client, "carol")
-    code = client.post(
-        "/connector/auth/device/start", json={"device_name": "carols-devbox"}
-    ).json()["device_code"]
-
-    client.app.dependency_overrides[get_device_service] = _recording_service
-    try:
-        connect = client.post(
-            "/connector/connect",
-            json={"device_code": code, "whole_machine": True},
-            headers=_bearer(token),
-        )
-    finally:
-        client.app.dependency_overrides.pop(get_device_service, None)
-
-    assert connect.status_code == 200, connect.text
-    assert recorded == [(Supply.self_hosted, Visibility.host)]
 
 
 def test_proposed_name_lets_approval_page_prefill_hostname(client):
@@ -211,7 +152,7 @@ def test_agent_ws_rejects_unknown_token(client):
             ws.receive_text()  # should not get here; the server closes 1008
 
 
-def test_agent_ws_does_not_park_a_session_idle_in_transaction(client):
+def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatch):
     """#356 regression, against a real Postgres.
 
     The device control channel stays connected for the machine's whole uptime, and
@@ -239,8 +180,18 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client):
     )
     assert connect.status_code == 200, connect.text
     poll = client.post("/connector/auth/device/poll", json={"device_code": code}).json()
+    device_id = poll["device_id"]
     device_token = poll["token"]
     assert device_token
+
+    recovered: list[str] = []
+
+    class Chat:
+        async def recover_sessions(self, connected_device_id: str) -> int:
+            recovered.append(connected_device_id)
+            return 0
+
+    monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
 
     async def _parked_on_device_team() -> int:
         # Superuser test role → pg_stat_activity exposes other backends' query text,
@@ -271,3 +222,4 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client):
         f"the device control channel left {parked} session(s) idle-in-transaction on "
         "the device_team read — the #356 leak that blocks device-table migrations"
     )
+    assert recovered == [device_id]

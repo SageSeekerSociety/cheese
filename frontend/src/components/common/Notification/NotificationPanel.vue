@@ -1,7 +1,16 @@
 <template>
-  <v-card class="notification-panel rounded-lg" elevation="1" min-width="380" max-width="420">
-    <v-card-title class="d-flex justify-space-between align-center pa-4">
-      <span class="text-h6 font-weight-medium">{{ t('notifications.common.notificationCenter') }}</span>
+  <v-card
+    class="notification-panel"
+    :class="page ? 'rounded-0' : 'rounded-lg'"
+    :elevation="page ? 0 : 1"
+    :border="page ? false : undefined"
+    :min-width="page ? undefined : 380"
+    :max-width="page ? undefined : 420"
+  >
+    <!-- 整页形态下顶栏已经写着这一页叫什么，卡片再写一遍就是两层标题叠着；
+         所以这一行只在还剩东西可放（全部标为已读）的时候才存在。 -->
+    <v-card-title v-if="!page || hasUnread" class="d-flex justify-space-between align-center pa-4">
+      <span v-if="!page" class="text-h6 font-weight-medium">{{ t('notifications.common.notificationCenter') }}</span>
       <div class="d-flex align-center">
         <v-btn
           v-if="hasUnread"
@@ -16,9 +25,12 @@
       </div>
     </v-card-title>
 
-    <v-divider></v-divider>
+    <v-divider v-if="!page || hasUnread"></v-divider>
 
-    <v-card-text class="pa-0 notification-list-container" :style="{ maxHeight: '420px', overflowY: 'auto' }">
+    <v-card-text
+      class="pa-0 notification-list-container"
+      :style="{ maxHeight: page ? undefined : '420px', overflowY: 'auto' }"
+    >
       <v-list v-if="notifications.length > 0" density="compact" lines="three" class="py-0">
         <notification-item
           v-for="notification in notifications"
@@ -29,7 +41,7 @@
         />
       </v-list>
       <div v-else class="d-flex flex-column align-center justify-center py-8">
-        <v-icon icon="mdi-bell-off-outline" size="64" color="grey-lighten-1" class="mb-3"></v-icon>
+        <v-icon icon="mdi-bell-off-outline" size="64" class="mb-3 text-medium-emphasis"></v-icon>
         <span class="text-subtitle-1 text-medium-emphasis">{{ t('notifications.common.noNotifications') }}</span>
       </div>
     </v-card-text>
@@ -59,6 +71,8 @@ const { t } = useI18n()
 
 const props = defineProps<{
   onClose?: () => void
+  /** 整页形态（手机底栏「待办」那一格），不是顶栏铃铛的下拉卡片。 */
+  page?: boolean
 }>()
 
 const emit = defineEmits<{

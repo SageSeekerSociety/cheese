@@ -51,7 +51,18 @@ _SANDBOX_PERMISSIONS = {
 }
 # What the BACKEND ITSELF may do for PR-based accept (#188 §5.1): push the topic
 # branch, open and merge the PR. Never exposed through any sandbox-facing route.
-_WRITE_PERMISSIONS = {"contents": "write", "metadata": "read", "pull_requests": "write"}
+# `workflows: write` is load-bearing, not optional: without it GitHub rejects
+# the PUSH of any branch that touches .github/workflows/* ("refusing to allow a
+# GitHub App to create or update workflow ... without `workflows` permission"),
+# which surfaced as an opaque 422 on accept (2026-08-16, topic ee17b136). The
+# App itself has held this grant all along (see the module docstring) — the
+# mint request simply never asked, and GitHub narrows to what is asked.
+_WRITE_PERMISSIONS = {
+    "contents": "write",
+    "metadata": "read",
+    "pull_requests": "write",
+    "workflows": "write",
+}
 # GitHub caps app JWTs at 10 minutes; stay clear of clock-skew rejections.
 _JWT_TTL_S = 540
 # Re-mint when the cached token has less life left than a long agent turn.

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.domain.agent.github_app import github_app_tokens_for_project
+from app.domain.review import notes
 from app.domain.review.github_pr import GitHubPRClient, parse_github_repo
 from app.domain.workspace import service as ws
 
@@ -30,7 +31,7 @@ logger = logging.getLogger("cheesex.pr_publish")
 #: 明显不同——这条前缀就是那个不同：失败原因直接写在 note 上，而不是只进 logger。
 #: 采纳现场的补开（AcceptService._publish_pr_for_accept）就是它的重试路径；重试
 #: 开出 PR 后 `record_pr` 会把这条 note 清掉。
-PR_OPEN_FAILED_PREFIX = "⚠️ 开 PR 失败"
+PR_OPEN_FAILED_PREFIX = "开 PR 失败"
 
 _TASKS: set[asyncio.Task] = set()
 
@@ -145,11 +146,52 @@ async def open_pr_for_card(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
     client = GitHubPRClient(owner, repo_name, tokens)
-    pr = await client.open_pr(head=branch, base=base, title=title, body=body)
+    pr = await client.open_pr(
+        head=branch,
+        base=base,
+        title=title,
+        body=body,
+        # Open it as the person whose work it is, not as the bot — see
+        # `GitHubPRClient.open_pr`. Push above still uses the App token: pushing
+        # is not attributed to anyone, and the App's write access is the one
+        # thing here that is guaranteed to work.
+        as_user_token=await _requester_token(session, topic_id),
+    )
     logger.info(
         "PR #%s ready for card %s (%s)", pr.get("number"), card_id, pr.get("html_url")
     )
     return pr
+
+
+async def _requester_token(session: AsyncSession, topic_id: uuid.UUID) -> str | None:
+    """The GitHub credential of the human this topic belongs to, so the PR is
+    opened in their name. None whenever they have not connected GitHub, their
+    token cannot be refreshed, or anything at all goes wrong — this is an
+    attribution nicety and must never be the reason a PR fails to open.
+
+    Who that human is comes from `identity.requester_handle`, not from
+    `Topic.created_by`: on a 分身-split room the creator is the 分身's own
+    `cheese-<hex12>` handle, which matches no account, so this returned None and
+    every such PR opened as `cheesex-app[bot]`."""
+    from app.domain.oauth.services import get_github_user_token_for_handle
+    from app.domain.room_task.place import PlaceResolver
+    from app.domain.workspace import identity
+
+    try:
+        # `topic_id` is a place id: a card is usually a thread's, and the human
+        # it belongs to is on the thread, not on the room's roster.
+        place = await PlaceResolver(session).resolve(topic_id)
+        if place is None:
+            return None
+        handle = await identity.requester_handle(
+            session, place.room, task_id=place.task_id
+        )
+        if not handle:
+            return None
+        return await get_github_user_token_for_handle(session, handle)
+    except Exception:  # noqa: BLE001
+        logger.info("no requester token for topic %s", topic_id, exc_info=True)
+        return None
 
 
 async def _pr_text(
@@ -159,23 +201,33 @@ async def _pr_text(
     topic_id: uuid.UUID,
     branch: str,
 ) -> tuple[str, str]:
-    """PR title/body from the topic and card. Falls back to the branch name."""
-    from app.domain.review.repositories import AcceptCardRepository
-    from app.domain.topic.repositories import TopicRepository
+    """PR title/body from the card's change summary (`cheese accept-request
+    --subject/--body`), falling back to the topic title when the card was filed
+    without one.
 
-    title = branch
-    lines: list[str] = []
-    topic = await TopicRepository(session).get(topic_id)
-    if topic is not None and topic.title:
-        title = topic.title
+    Same builders the merge path uses (`review/pr_text.py`), on purpose: the
+    PR a reviewer reads and the squash commit that lands on main must not be
+    able to say two different things about the same change.
+
+    The routing bookkeeping the old body carried — 验收人, 路由理由, "采纳这张
+    验收卡即合并本 PR" — is gone. It described the platform's workflow to people
+    who were already inside it, while the reviewer opening the PR on GitHub
+    wanted to know what changed and why."""
+    from app.domain.review import pr_text
+    from app.domain.review.repositories import AcceptCardRepository
+    from app.domain.room_task.place import PlaceResolver
+    from app.domain.workspace import identity
+
+    place = await PlaceResolver(session).resolve(topic_id)
     card = await AcceptCardRepository(session).get(card_id)
-    if card is not None:
-        lines.append(f"验收人：{card.reviewer_handle}")
-        if card.routing_reason:
-            lines.append(f"路由理由：{card.routing_reason}")
-    lines.append(f"话题分支 `{branch}`，由平台递验收卡时自动创建（#188 采纳 PR 化）。")
-    lines.append("采纳这张验收卡即合并本 PR。")
-    return title, "\n\n".join(lines)
+    if place is None:
+        return branch, f"Cheese-Topic: {topic_id}"
+    topic = place.room
+    who = await identity.attribution(session, topic, task_id=place.task_id)
+    # No approver yet — the PR opens when the card is FILED, and 采纳 is what
+    # merges it. `Reviewed-by` is written onto the squash commit at merge time,
+    # by whoever actually clicks.
+    return pr_text.change_subject(card, topic), pr_text.pr_body(topic, "", card, who)
 
 
 async def record_pr(
@@ -193,8 +245,8 @@ async def record_pr(
             return
         card.pr_number = int(pr["number"])
         card.pr_url = str(pr.get("html_url") or "")[:255] or None
-        if card.note.startswith(PR_OPEN_FAILED_PREFIX):
-            card.note = ""
+        if card.note_code is notes.NoteCode.pr_open_failed:
+            notes.clear(card)
         await session.commit()
 
 
@@ -220,7 +272,7 @@ async def _record_failure(
             card = await AcceptCardRepository(session).get(card_id)
             if card is None:
                 return
-            card.note = note
+            notes.record(card, notes.NoteCode.pr_open_failed, note)
             await session.commit()
     except Exception:  # noqa: BLE001
         logger.exception("PR publish failure not recorded on card %s", card_id)

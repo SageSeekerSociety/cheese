@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.domain.agent import awaited_tasks
 from app.domain.workspace import service as ws
 from app.main import app
@@ -44,9 +44,9 @@ class FakeRunner:
 def runner():
     fake = FakeRunner()
     awaited_tasks.reset()
-    app.dependency_overrides[get_turn_runner] = lambda: fake
+    app.dependency_overrides[get_work_runner] = lambda: fake
     yield fake
-    app.dependency_overrides.pop(get_turn_runner, None)
+    app.dependency_overrides.pop(get_work_runner, None)
     awaited_tasks.reset()
 
 
@@ -60,7 +60,7 @@ def _on_branch(project: uuid.UUID, topic: uuid.UUID, path: str) -> str:
     not the worktree. Empty string when the branch has no such file."""
     repo = ws.ensure_repo(project)
     done = subprocess.run(
-        ["git", "show", f"{ws.branch_for_topic(topic)}:{path}"],
+        ["git", "show", f"{ws.branch_for_place(topic)}:{path}"],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -72,7 +72,7 @@ def _on_branch(project: uuid.UUID, topic: uuid.UUID, path: str) -> str:
 def _commit_messages(project: uuid.UUID, topic: uuid.UUID) -> list[str]:
     repo = ws.ensure_repo(project)
     done = subprocess.run(
-        ["git", "log", "--format=%s", ws.branch_for_topic(topic)],
+        ["git", "log", "--format=%s", ws.branch_for_place(topic)],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -81,10 +81,25 @@ def _commit_messages(project: uuid.UUID, topic: uuid.UUID) -> list[str]:
     return done.stdout.splitlines()
 
 
+def _head_commit(project: uuid.UUID, topic: uuid.UUID) -> str:
+    """Subject AND body. 提交与 PR 规范 (2026-08-16) moved everything that is not
+    a Conventional Commits subject into the body, so a test that reads only `%s`
+    can no longer see what the snapshot admitted about itself."""
+    repo = ws.ensure_repo(project)
+    done = subprocess.run(
+        ["git", "log", "-1", "--format=%B", ws.branch_for_place(topic)],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return done.stdout
+
+
 def _worktree_with_committed_fix(project: uuid.UUID, topic: uuid.UUID):
     """A topic whose finished work (the fix) is already on the branch — the state
     the incident started from."""
-    wt = ws._ensure_worktree(project, ws.branch_for_topic(topic))
+    wt = ws._ensure_worktree(project, topic)
     (wt / "app.py").write_text("def load(path):\n" + FIX)
     ws.snapshot_worktree(project, topic, "修复 + 测试")
     assert FIX in _on_branch(project, topic, "app.py")
@@ -158,9 +173,13 @@ def test_a_snapshot_that_cannot_be_held_says_so_in_its_commit(workspace, runner)
     _register(project, topic, label="全量检查")
 
     (wt / "app.py").write_text("def load(path):\n")
-    ws.snapshot_worktree(project, topic, "采纳前快照")
+    ws.snapshot_worktree(project, topic, ws.SNAPSHOT_BEFORE_ACCEPT)
 
-    assert "全量检查" in _commit_messages(project, topic)[0]
+    # In the BODY, not the subject: the subject is a Conventional Commits line
+    # and a warning glued onto it would read as part of the change.
+    subject, _, body = _head_commit(project, topic).partition("\n")
+    assert subject.strip() == ws.SNAPSHOT_BEFORE_ACCEPT
+    assert "全量检查" in body
 
 
 def test_the_finished_command_gets_the_final_state_onto_the_branch(
@@ -168,14 +187,14 @@ def test_the_finished_command_gets_the_final_state_onto_the_branch(
 ):
     """The other half: holding is only safe because the report puts the settled
     tree on the branch. Driven over the real HTTP path the detached child uses."""
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
-    created = client.post("/api/topics", json={"project_id": p["id"], "title": "T"})
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    created = client.post("/topics", json={"project_id": p["id"], "title": "T"})
     tid = created.json()["data"]["id"]
     project, topic = uuid.UUID(p["id"]), uuid.UUID(tid)
     wt = _worktree_with_committed_fix(project, topic)
 
     task = client.post(
-        f"/api/topics/{tid}/background-task",
+        f"/topics/{tid}/background-task",
         json={
             "command": "bash verify_fix.sh",
             "label": "验证修复有效",
@@ -191,7 +210,7 @@ def test_the_finished_command_gets_the_final_state_onto_the_branch(
     (wt / "app.py").write_text("def load(path):\n" + FIX)
     (wt / "verify_fix.out").write_text("负向对照红了，正向绿了\n")
     done = client.post(
-        f"/api/topics/{tid}/background-task/{task['task_id']}/done",
+        f"/topics/{tid}/background-task/{task['task_id']}/done",
         json={"exit_code": 0, "tail": "ok", "duration_s": 35.0},
         headers={"X-Cheese-Token": task["wake_token"]},
     )
@@ -201,4 +220,4 @@ def test_the_finished_command_gets_the_final_state_onto_the_branch(
     assert _on_branch(project, topic, "verify_fix.out"), (
         "the run's own output never reached the branch"
     )
-    assert "验证修复有效" in _commit_messages(project, topic)[0]
+    assert "验证修复有效" in _head_commit(project, topic)

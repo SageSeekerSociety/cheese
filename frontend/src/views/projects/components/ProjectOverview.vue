@@ -14,7 +14,7 @@
               <div v-html="renderedContent"></div>
             </div>
             <div v-else class="text-center py-8 empty-content">
-              <v-icon icon="mdi-file-document-outline" size="48" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-file-document-outline" size="48" class="mb-3 empty-state-icon"></v-icon>
               <h3 class="text-subtitle-1 font-weight-medium mb-2">项目内容未填写</h3>
               <p class="text-body-2 text-medium-emphasis mb-4">添加项目详细内容、目标和说明文档</p>
               <v-btn color="primary" variant="tonal" size="small" rounded="lg" prepend-icon="mdi-pencil">
@@ -32,7 +32,7 @@
           </v-card-title>
           <v-card-text class="px-6 pb-5 pt-2">
             <div class="text-center py-6">
-              <v-icon icon="mdi-flag-outline" size="48" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-flag-outline" size="48" class="mb-3 empty-state-icon"></v-icon>
               <h3 class="text-subtitle-1 font-weight-medium mb-2">里程碑功能开发中</h3>
               <p class="text-body-2 text-medium-emphasis mb-4">
                 这是一个占位模块，里程碑功能将在后续版本中实现。里程碑系统将帮助您跟踪项目的关键节点和阶段性目标。
@@ -87,7 +87,7 @@
             </v-list>
 
             <div v-else class="text-center py-6">
-              <v-icon icon="mdi-account-group-outline" size="40" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-account-group-outline" size="40" class="mb-3 empty-state-icon"></v-icon>
               <p class="text-body-2 text-medium-emphasis">暂无成员</p>
             </div>
           </v-card-text>
@@ -101,7 +101,7 @@
           </v-card-title>
           <v-card-text class="px-6 pb-5 pt-2">
             <div class="text-center py-6">
-              <v-icon icon="mdi-history" size="40" color="grey-lighten-2" class="mb-3"></v-icon>
+              <v-icon icon="mdi-history" size="40" class="mb-3 empty-state-icon"></v-icon>
               <h3 class="text-subtitle-1 font-weight-medium mb-2">活动记录功能即将推出</h3>
               <p class="text-body-2 text-medium-emphasis">您将能够查看项目的所有最新动态</p>
             </div>
@@ -117,9 +117,10 @@ import type { Project, ProjectMemberRole } from '@/types'
 
 import { computed, defineProps, inject } from 'vue'
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { markdown } from '@/lib/markdown'
 
 // 定义 props
 const props = defineProps<{
@@ -132,7 +133,7 @@ const goToMembersTab = inject('goToMembersTab', () => {})
 // 渲染 Markdown 内容
 const renderedContent = computed(() => {
   if (!props.project?.content) return ''
-  const rawHtml = marked.parse(props.project.content) as string
+  const rawHtml = markdown.parse(props.project.content) as string
   return DOMPurify.sanitize(rawHtml)
 })
 
@@ -149,17 +150,17 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
 
 <style scoped lang="scss">
 .content-card {
-  border: 1px solid rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--line);
   overflow: hidden;
   transition: all 0.3s ease;
 
   &:hover {
-    border-color: rgba(0, 0, 0, 0.12);
+    border-color: var(--line-2);
   }
 }
 
 .project-content {
-  color: rgba(0, 0, 0, 0.8);
+  color: var(--text);
   line-height: 1.7;
   max-width: 100%;
   overflow-x: auto;
@@ -173,12 +174,12 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
     margin-top: 1.5rem;
     margin-bottom: 1rem;
     font-weight: 500;
-    color: rgba(0, 0, 0, 0.85);
+    color: var(--ink);
   }
 
   :deep(h1) {
     font-size: 1.75rem;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    border-bottom: 1px solid var(--line);
     padding-bottom: 0.75rem;
   }
 
@@ -206,7 +207,7 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
   }
 
   :deep(pre) {
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
     padding: 1rem;
     border-radius: 8px;
     overflow-x: auto;
@@ -215,7 +216,7 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
   }
 
   :deep(code) {
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
     padding: 0.2rem 0.4rem;
     border-radius: 4px;
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
@@ -226,7 +227,7 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
     border-left: 4px solid rgba(var(--v-theme-primary), 0.5);
     padding: 0.5rem 0 0.5rem 1rem;
     margin: 1rem 0;
-    color: rgba(0, 0, 0, 0.6);
+    color: var(--muted);
     background-color: rgba(var(--v-theme-primary), 0.03);
     border-radius: 0 4px 4px 0;
   }
@@ -240,11 +241,11 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
   :deep(th),
   :deep(td) {
     padding: 0.75rem;
-    border: 1px solid rgba(0, 0, 0, 0.1);
+    border: 1px solid var(--line-2);
   }
 
   :deep(th) {
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
   }
 
   :deep(img) {
@@ -266,12 +267,12 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
 }
 
 .empty-content {
-  background-color: rgba(0, 0, 0, 0.01);
+  background-color: var(--canvas);
   border-radius: 8px;
   transition: all 0.3s ease;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: var(--fill);
   }
 }
 
@@ -301,7 +302,7 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
   border-radius: 8px;
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.03);
+    background-color: var(--fill);
     transform: translateX(2px);
   }
 }
@@ -321,5 +322,11 @@ const getMemberRoleText = (role: ProjectMemberRole): string => {
 
 .project-meta-item {
   margin-right: 2rem;
+}
+
+/* 空状态的占位图标 —— design-system §1.3 里 --faint 那一档（“占位提示”）。
+   原值 grey-lighten-2 恒等于 #EEEEEE，浅色下几乎隐形、深色下反而是一块刺眼亮斑。 */
+.empty-state-icon {
+  color: var(--faint);
 }
 </style>

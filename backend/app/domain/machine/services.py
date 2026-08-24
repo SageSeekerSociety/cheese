@@ -16,9 +16,17 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import (
+    AuthenticationRequiredError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
+from app.domain.device.ccproxy_tenant import CcproxyTenantError
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.actor import Actor
+from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -30,7 +38,10 @@ from app.domain.machine.models import (
     ProjectMachine,
 )
 from app.domain.machine.repositories import ProjectMachineRepository
+from app.domain.membership.services import MemberService
 from app.domain.project.repositories import ProjectRepository
+from app.domain.team.services import team_service
+from app.domain.topic.models import TopicStatus
 
 # MicroCloud bills a customer, and a customer is keyed by the caller's own id.
 # Scoping it to the PROJECT (not the person) matches how compute is granted in
@@ -75,6 +86,50 @@ class MachineService:
     def available(self) -> bool:
         return self._client.configured
 
+    async def require_team_create_authority(
+        self, team_id: int, actor: Actor, *, conceal_nonmember: bool = False
+    ) -> None:
+        """Apply the paid machine-create rule to a team-scoped Cloud choice."""
+        if actor.via != "token" or actor.is_agent or actor.user_id is None:
+            raise AuthenticationRequiredError("Login required to create cloud machines")
+        teams = team_service(self._session)
+        if not await teams.is_team_member(team_id, actor.user_id):
+            if conceal_nonmember:
+                raise NotFoundError("Project not found")
+            raise ForbiddenError(
+                "Only team owners and admins can create cloud machines"
+            )
+        if not await teams.is_team_at_least_admin(team_id, actor.user_id):
+            raise ForbiddenError(
+                "Only team owners and admins can create cloud machines"
+            )
+
+    async def require_create_authority(
+        self, project_id: uuid.UUID, actor: Actor
+    ) -> None:
+        """The one authorization rule for every path that can create a billed VM."""
+        if actor.via != "token" or actor.is_agent:
+            raise AuthenticationRequiredError("Login required to create cloud machines")
+        project = await self._projects.get(project_id)
+        if project is None:
+            raise NotFoundError("Project not found")
+        if project.team_id is not None:
+            await self.require_team_create_authority(
+                project.team_id, actor, conceal_nonmember=True
+            )
+            return
+        # Legacy team-less project. An outsider must not learn that it exists, let
+        # alone that it has a machine inventory — so a non-member is concealed as
+        # 404 here, the same as the team branch above. `require_manager` alone
+        # answers 403, which is right for roster writes (you can see the project,
+        # you just may not manage it) and wrong here.
+        members = MemberService(self._session)
+        if project.owner_handle != actor.handle:
+            roster, _ = await members.list_for_project(project_id)
+            if not any(m.user_handle == actor.handle for m in roster):
+                raise NotFoundError("Project not found")
+        await members.require_manager(project_id, actor)
+
     async def _pick_offering(self) -> dict:
         offerings = await self._client.list_offerings()
         if not offerings:
@@ -114,6 +169,7 @@ class MachineService:
         self,
         *,
         project_id: uuid.UUID,
+        topic_id: uuid.UUID | None = None,
         requested_by: str | None,
         ssh_pubkey: str | None = None,
         owner_user_id: int | None = None,
@@ -155,7 +211,7 @@ class MachineService:
         existing = [
             m
             for m in await self._repo.list_for_project(project_id)
-            if m.status not in GONE
+            if m.status not in GONE and m.released_at is None
         ]
         if len(existing) >= settings.microcloud_max_machines_per_project:
             raise ValidationError(
@@ -193,6 +249,7 @@ class MachineService:
         created = await self._apply_desired_ai_mode(created)
         return await self._repo.add(
             project_id=project_id,
+            topic_id=topic_id,
             machine_id=int(created["id"]),
             customer_id=customer_id,
             account_id=account_id,
@@ -210,6 +267,105 @@ class MachineService:
             owner_user_id=owner_user_id,
             bootstrap_key=bootstrap_private,
         )
+
+    async def ensure_topic_machine(
+        self, topic_id: uuid.UUID, *, actor: Actor | None = None
+    ) -> ProjectMachine:
+        """Return/create one locked lease; the project lock serializes quota."""
+        from app.domain.topic.services import TopicService
+
+        topic = await TopicService(self._session).get_or_404(topic_id)
+        await self._repo.lock_provisioning(topic.project_id, topic_id)
+        # The archive path takes the same topic lock. Re-read after waiting so a
+        # first turn cannot provision from the stale pre-lock `active` state.
+        await self._session.refresh(topic)
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("archived topic cannot provision cloud compute")
+
+        existing = await self._repo.get_active_for_topic(topic_id)
+        if existing is not None:
+            if _still_moving(existing) or _stale(existing):
+                await self.refresh(existing)
+            if existing.status not in GONE:
+                return existing
+            await self.forget(existing)
+
+        if actor is None:
+            raise AuthenticationRequiredError(
+                "Cloud provisioning requires an authorized human caller"
+            )
+        await self.require_create_authority(topic.project_id, actor)
+
+        project = await self._projects.get(topic.project_id)
+        if project is None:
+            raise NotFoundError("project not found")
+        agent = await IdentityService(self._session).ensure_topic_agent_user(topic_id)
+        return await self.provision(
+            project_id=topic.project_id,
+            topic_id=topic_id,
+            requested_by=actor.handle,
+            owner_user_id=agent.id,
+        )
+
+    async def topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
+        return await self._repo.get_active_for_topic(topic_id)
+
+    async def release_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine | None:
+        """Destroy and release the topic's active Cloud VM, idempotently.
+
+        `released_at` is stamped only after MicroCloud accepts deletion. With no
+        cleanup timer by product decision, pretending release succeeded on a
+        provider failure would permanently hide a billed leak from later archive
+        retries.
+        """
+        await self._repo.lock_topic(topic_id)
+        machine = await self._repo.get_active_for_topic(topic_id)
+        if machine is None:
+            return None
+        if machine.status not in {MachineStatus.deleting, MachineStatus.deleted}:
+            await self.destroy(machine)
+        binding = await self._devices.topic_binding(topic_id)
+        if (
+            binding is not None
+            and machine.device_id is not None
+            and binding.device_id == machine.device_id
+        ):
+            await self._devices.release_topic_device(
+                topic_id, reason="topic cloud machine released on archive"
+            )
+        return await self._repo.mark_released(machine, when=datetime.now(UTC))
+
+    async def replace_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine:
+        """Replace one authorized topic lease without borrowing another's VM."""
+        from app.domain.topic.services import TopicService
+
+        topic = await TopicService(self._session).get_or_404(topic_id)
+        await self._repo.lock_provisioning(topic.project_id, topic_id)
+        await self._session.refresh(topic)
+        if topic.status == TopicStatus.archived:
+            raise ValidationError("archived topic cannot replace cloud compute")
+        old = await self._repo.get_active_for_topic(topic_id)
+        if old is None:
+            raise ValidationError("cloud replacement requires an active topic lease")
+        requested_by = old.requested_by
+        owner_user_id = old.owner_user_id
+        if old.status not in {MachineStatus.deleting, MachineStatus.deleted}:
+            await self.destroy(old)
+        binding = await self._devices.topic_binding(topic_id)
+        if binding is not None and old.device_id == binding.device_id:
+            await self._devices.release_topic_device(
+                topic_id, reason="replacing failed topic cloud machine"
+            )
+        await self._repo.mark_released(old, when=datetime.now(UTC))
+        return await self.provision(
+            project_id=topic.project_id,
+            topic_id=topic_id,
+            requested_by=requested_by,
+            owner_user_id=owner_user_id,
+        )
+
+    async def ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
+        return await self._repo.list_ready_topic_devices()
 
     async def _apply_desired_ai_mode(self, created: dict) -> dict:
         """Switch a fresh machine's built-in AI channel to the configured mode.
@@ -506,9 +662,25 @@ class MachineService:
             elif device is not None and device.owner_user_id == machine.owner_user_id:
                 # Device deletion also removes project/team/topic bindings. Do
                 # this before the machine row so a failure remains retryable.
-                await self._devices.delete_platform_provisioned(
-                    machine.device_id, actor_user_id=machine.owner_user_id
-                )
+                try:
+                    await self._devices.delete_platform_provisioned(
+                        machine.device_id, actor_user_id=machine.owner_user_id
+                    )
+                except CcproxyTenantError as exc:
+                    # #420: the device carries a ccproxy ticket and revocation
+                    # was not confirmed. `forget` runs from `list_for_project`
+                    # (a GET), so raising here would wedge machine listing for
+                    # the whole project over a ccproxy outage. Keep BOTH rows —
+                    # the machine row is what brings us back here to retry once
+                    # ccproxy answers again — and say so loudly.
+                    logger.error(
+                        "not reaping machine %s yet: ccproxy revocation for "
+                        "device %s unconfirmed (%s)",
+                        machine.hostname,
+                        machine.device_id,
+                        exc,
+                    )
+                    return
             elif device is not None:
                 # Never delete a device now owned by somebody else. This should
                 # be impossible for platform-enrolled machines, so retain an

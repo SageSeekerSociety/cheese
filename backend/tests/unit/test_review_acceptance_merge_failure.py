@@ -19,6 +19,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     card = SimpleNamespace(
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
+        # The card is the room's own main line, not one thread's — delivery
+        # therefore gets stamped on the room.
+        task_id=None,
         status=AcceptStatus.pending,
         reviewer_handle="alice",
         decided_by=None,
@@ -36,6 +39,10 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         accepted_by=None,
         accepted_at=None,
         archived_at=None,
+        # A top-level room: attribution asks whether there is a parent whose
+        # owner should be credited, and a fake missing the field would send it
+        # down its error path instead of its ordinary "nobody to credit" one.
+        parent_id=None,
     )
     project = SimpleNamespace(
         ai_mode=AiMode.collaborative,
@@ -49,8 +56,12 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._repo.list_approver_handles.return_value = []
     service._topics = AsyncMock()
     service._topics.get.return_value = topic
+    # A card is addressed by a PLACE id and resolved to the room around it,
+    # which needs a real session to walk — hand the answer over directly.
+    service._topic_or_404 = AsyncMock(return_value=topic)
     service._projects = AsyncMock()
     service._projects.get.return_value = project
+    service._machines = AsyncMock()
     service._enforce_protocol = AsyncMock()
     return service, card, topic
 
@@ -97,7 +108,9 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
     assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
-    assert "git object database unavailable" in kwargs["content"]
+    # 房间只看到一行；报错原话在展开区里，一个字没少。
+    assert kwargs["content"] == "采纳未完成：合并出错"
+    assert "git object database unavailable" in kwargs["meta"]["detail"]
 
 
 @pytest.mark.anyio
@@ -126,7 +139,7 @@ async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"
-    assert "失败" in kwargs["content"]
+    assert kwargs["content"] == "采纳未完成：合并失败"
 
 
 @pytest.mark.anyio
@@ -156,8 +169,8 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
     assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
-    assert "冲突" in kwargs["content"]
-    assert "app/main.py" in kwargs["content"]
+    assert kwargs["content"] == "采纳未完成：合并冲突"
+    assert "app/main.py" in kwargs["meta"]["detail"]
 
 
 @pytest.mark.anyio
@@ -176,7 +189,9 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
 
     assert returned is card
     assert card.status == AcceptStatus.accepted
-    assert topic.status == TopicStatus.archived
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert topic.status == TopicStatus.active
+    assert topic.accepted_at is not None
     service._repo.add_approval.assert_awaited_once_with(card.id, "alice")
     await _drain_notify()
     notify.assert_awaited_once()
@@ -184,8 +199,8 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
     assert kwargs["project_id"] == topic.project_id
     assert kwargs["topic_id"] == topic.id
     assert kwargs["source"] == "accept"
-    assert "✅" in kwargs["content"]
     assert "alice" in kwargs["content"]
+    assert kwargs["meta"]["severity"] == "info"
 
 
 @pytest.mark.anyio
@@ -206,10 +221,14 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
 
     assert returned is card
     assert card.status == AcceptStatus.accepted
-    assert topic.status == TopicStatus.archived
+    assert topic.status == TopicStatus.active
+    assert topic.accepted_by == "alice"
+    # 计费云 VM 仍然在交付时回收（它没有 reaper），容器/设备屏不再动。
+    service._machines.release_topic_machine.assert_awaited_once_with(topic.id)
     await _drain_notify()
     notify.assert_awaited_once()
     _, kwargs = notify.await_args
     assert kwargs["source"] == "accept"
-    assert "✅" in kwargs["content"]
-    assert "origin/main" in kwargs["content"]
+    assert kwargs["meta"]["severity"] == "info"
+    # 推送去向是交付说明的一部分，收进展开区，不占房间那一行。
+    assert "origin/main" in kwargs["meta"]["detail"]

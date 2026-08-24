@@ -20,11 +20,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_chat_service, get_turn_runner
+from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.agent.chat import ChatService
-from app.domain.agent.runtime import TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.conclusion.repositories import ConclusionCardRepository
 from app.domain.conclusion.schemas import (
     ConclusionCardOut,
@@ -40,7 +40,7 @@ from app.domain.conclusion.services import (
 
 logger = logging.getLogger("cheesex.conclusion")
 
-router = APIRouter(prefix="/api", tags=["conclusion"])
+router = APIRouter(prefix="", tags=["conclusion"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -51,8 +51,8 @@ def _out(card) -> dict:
 
 @router.get("/topics/{topic_id}/conclusion-cards")
 async def list_conclusion_cards(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """Cards this topic PRODUCED (its own 回流 history), newest first."""
-    cards = await ConclusionCardRepository(db).list_for_topic(topic_id)
+    """Cards this place PRODUCED (its own 回流 history), newest first."""
+    cards = await ConclusionCardRepository(db).list_for_place(topic_id)
     return ok(page([_out(c) for c in cards], len(cards)))
 
 
@@ -79,7 +79,7 @@ async def need_evidence(
     body: NeedEvidenceIn,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-    runner: Annotated[TurnRunner, Depends(get_turn_runner)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
 ) -> dict:
     """补证据 —— costs a whole turn (the sub-topic is woken), which is precisely
     the asymmetry that makes 采信 the path of least resistance."""
@@ -93,8 +93,11 @@ async def need_evidence(
     )
     out = _out(card)
     prompt = need_evidence_prompt(card)
-    sub_id = card.topic_id
-    # Commit BEFORE waking: the sub-topic's turn runs on its own session and
+    # The THREAD that produced the conclusion, not the room it hangs in. Waking
+    # the room would put "go get more evidence" in front of everyone except the
+    # 分身 the instruction is for.
+    sub_id = card.task_id or card.topic_id
+    # Commit BEFORE waking: the thread's turn runs on its own session and
     # must see the card already in `returned`.
     await db.commit()
     runner.submit_kickoff(chat, sub_id, prompt=prompt)

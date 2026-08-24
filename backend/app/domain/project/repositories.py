@@ -6,12 +6,12 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
+from app.domain.avatars.models import Avatar
 from app.domain.project.models import (
     AiMode,
     Project,
     ProjectGitInstallation,
     ProjectMember,
-    ProjectTaskLink,
 )
 from app.domain.user.models import User, UserProfile
 
@@ -26,7 +26,6 @@ class ProjectRepository:
         name: str,
         owner_handle: str | None = None,
         ai_mode: AiMode = AiMode.collaborative,
-        expert_role: str | None = None,
         team_id: int | None = None,
         external_task_id: int | None = None,
     ) -> Project:
@@ -34,7 +33,6 @@ class ProjectRepository:
             name=name,
             owner_handle=owner_handle,
             ai_mode=ai_mode,
-            expert_role=expert_role,
             team_id=team_id,
             external_task_id=external_task_id,
         )
@@ -101,65 +99,70 @@ class ProjectRepository:
         project.settings = settings
         await self._session.flush()
 
-    async def link_task(
-        self, *, project_id: uuid.UUID, task_id: uuid.UUID
-    ) -> ProjectTaskLink:
-        link = ProjectTaskLink(project_id=project_id, task_id=task_id)
-        self._session.add(link)
-        await self._session.flush()
-        await self._session.refresh(link)
-        return link
-
-    async def unlink_task(self, *, project_id: uuid.UUID, task_id: uuid.UUID) -> bool:
-        link = await self.get_link(project_id=project_id, task_id=task_id)
-        if link is None:
-            return False
-        await self._session.delete(link)
-        await self._session.flush()
-        return True
-
-    async def get_link(
-        self, *, project_id: uuid.UUID, task_id: uuid.UUID
-    ) -> ProjectTaskLink | None:
-        stmt = select(ProjectTaskLink).where(
-            ProjectTaskLink.project_id == project_id,
-            ProjectTaskLink.task_id == task_id,
-        )
-        return (await self._session.scalars(stmt)).first()
-
-    async def list_links(self, project_id: uuid.UUID) -> list[ProjectTaskLink]:
-        stmt = select(ProjectTaskLink).where(ProjectTaskLink.project_id == project_id)
-        return list((await self._session.scalars(stmt)).all())
-
     async def list_members(self, project_id: uuid.UUID) -> list[dict]:
         """Project roster: each member's handle, display name, avatar and role —
         used to inject 芝士's teammate context, to resolve @mentions to a handle,
         and to render a member's real avatar in the chat panel."""
         # Display name lives on UserProfile.nickname (main's User has only
         # username); join both, keyed by handle == username (fusion identity).
-        # ``avatar_id`` rides along from the same profile row: the column is NOT
-        # NULL, so it is None here only when the outer join found no profile
-        # (a handle with no fusion user behind it) — the caller renders the
-        # colored-initial fallback for exactly that case.
+        # ``avatar_id`` rides along from the same profile row and is None here
+        # in two cases, both of which mean "render the colored initial":
+        #
+        #   1. the outer join found no profile (a handle with no fusion user);
+        #   2. the profile still points at the *global default* avatar.
+        #
+        # Case 2 is not a choice anyone made: every registration path hardcodes
+        # ``default_avatar_id: int = 1`` (``domain/user/services.py``), as does
+        # 芝士's own profile (``domain/identity/services.py``). Reporting that id
+        # would make every member who never picked an avatar share one face —
+        # strictly worse at telling people apart than the per-handle hashed
+        # initial, which is the whole job of an avatar in a chat panel. So the
+        # roster's contract is "avatar_id = the avatar this person chose, null if
+        # they never chose one"; the join reads ``avatar_type`` rather than
+        # comparing against a literal 1, because which row is the default is
+        # seed data and differs per environment.
         stmt = (
             select(
                 ProjectMember.user_handle,
                 ProjectMember.role,
                 UserProfile.nickname,
                 UserProfile.avatar_id,
+                Avatar.avatar_type,
             )
             .join(User, User.username == ProjectMember.user_handle, isouter=True)
             .join(UserProfile, UserProfile.user_id == User.id, isouter=True)
+            .join(Avatar, Avatar.id == UserProfile.avatar_id, isouter=True)
             .where(ProjectMember.project_id == project_id)
         )
         rows = (await self._session.execute(stmt)).all()
         return [
-            {"handle": h, "role": str(role), "name": name or h, "avatar_id": avatar_id}
-            for (h, role, name, avatar_id) in rows
+            {
+                "handle": h,
+                "role": str(role),
+                "name": name or h,
+                "avatar_id": None if avatar_type == "default" else avatar_id,
+            }
+            for (h, role, name, avatar_id, avatar_type) in rows
         ]
 
-    async def list_projects_for_task(self, task_id: uuid.UUID) -> list[ProjectTaskLink]:
-        stmt = select(ProjectTaskLink).where(ProjectTaskLink.task_id == task_id)
+    async def list_ids_for_space_tasks(self, space_id: int) -> list[uuid.UUID]:
+        """Project ids for every 赛题 published under this Space (机构看板).
+
+        One query rather than a walk: the 赛题 already carry `space_id`, and a
+        project names the 赛题 it was created from, so the board is a join and
+        not a four-level traversal through a parallel hierarchy (#370).
+        """
+        from app.domain.task.models import Task
+
+        stmt = (
+            select(Project.id)
+            .where(
+                Project.external_task_id.in_(
+                    select(Task.id).where(Task.space_id == space_id)
+                )
+            )
+            .order_by(Project.created_at.asc())
+        )
         return list((await self._session.scalars(stmt)).all())
 
     async def list_for_external_task(self, task_id: int) -> list[Project]:

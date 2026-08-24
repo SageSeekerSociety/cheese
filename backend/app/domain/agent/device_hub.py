@@ -18,7 +18,7 @@ Our adaptations vs the reference:
   * a screen carries our identity shape — ``agent_user_id: uuid`` + ``agent_handle``
     (the authorship key) — plus its ``project_id``/``topic_id`` and a ``hook_key``
     (the token the device's ``cheese-hook`` posts under, so hooks route to the turn);
-  * ``call_screen`` returns the call id so the caller (DeviceProvider) can correlate
+  * ``call_screen`` returns the call id so the caller (DeviceChannel) can correlate
     an ``rpc.result`` (used to await a ``prompt`` acknowledgement).
 """
 
@@ -61,7 +61,7 @@ class HubScreen:
     token: str  # the CHEESE_SCREEN value injected into the screen
     # A screen *is* an agent (一个 agent 是一个屏幕): it acts as one agent-user in its
     # project/topic. Attribution of the screen's cheese-api calls keys on
-    # agent_user_id; hooks route by hook_key (see DeviceProvider).
+    # agent_user_id; hooks route by hook_key (see DeviceChannel).
     agent_user_id: int
     agent_handle: str
     project_id: uuid.UUID | None = None
@@ -72,7 +72,7 @@ class HubScreen:
     # HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN — ONCE at startup and
     # never re-reads it, and a reused screen is only reasserted (a cheeselet
     # hot-reload), never relaunched, so once this passes the process is a corpse
-    # that 407s/401s every turn while still alive. The DeviceProvider stamps it at
+    # that 407s/401s every turn while still alive. The DeviceChannel stamps it at
     # open time and folds it into the reuse decision (retire + reopen past it),
     # and the zero-output fuse reads it to fast-fail with the true reason (#388).
     # `None` = never recorded (a screen adopted after a server restart, or a dev
@@ -94,10 +94,12 @@ class HubDevice:
     screens: dict[str, HubScreen] = field(default_factory=dict)
     exec_seq: int = 0
     call_seq: int = 0
+    file_seq: int = 0
     exec_pending: dict[str, asyncio.Future[dict[str, Any]]] = field(
         default_factory=dict
     )
     call_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
+    file_pending: dict[str, asyncio.Future[Any]] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     async def send(self, msg: dict[str, Any]) -> None:
@@ -113,12 +115,41 @@ async def _screen_ready(hub: "DeviceHub", screen: "HubScreen", args: list[Any]) 
     return {"ok": True}
 
 
+def _delivery_hook(name: str) -> "ScreenFn":
+    """A cheeselet-originated delivery report (#445), re-published into the
+    topic's hook stream so the ACTIVE turn hears it. Without this bridge the
+    driver's give-up existed only in the connector's local journal while the
+    room stared at silence until the 300s no-output bound."""
+
+    async def fn(hub: "DeviceHub", screen: "HubScreen", args: list[Any]) -> Any:
+        # Local import: hook_events imports nothing from this module, so the
+        # edge stays one-directional at runtime while avoiding a module-load
+        # cycle through the agent package's wiring.
+        from app.domain.agent.harness.claude_code import hook_router
+
+        if screen.topic_id is None:
+            return {"ok": False}
+        phase = str(args[0]) if args else ""
+        ticks = int(args[1]) if len(args) > 1 and str(args[1]).isdigit() else 0
+        delivered = hook_router.push(
+            str(screen.topic_id),
+            {"hook_event_name": name, "phase": phase, "ticks": ticks},
+        )
+        return {"ok": delivered}
+
+    return fn
+
+
 class DeviceHub:
     def __init__(self, screen_fns: dict[str, ScreenFn] | None = None) -> None:
         self._devices: dict[str, HubDevice] = {}
         self._screens: dict[str, HubScreen] = {}  # sid -> screen (across devices)
         self._by_screen_token: dict[str, HubScreen] = {}
-        self._fns: dict[str, ScreenFn] = {"screenReady": _screen_ready}
+        self._fns: dict[str, ScreenFn] = {
+            "screenReady": _screen_ready,
+            "deliveryFailed": _delivery_hook("CheeseDeliveryFailed"),
+            "deliveryRetried": _delivery_hook("CheeseDeliveryRetried"),
+        }
         if screen_fns:
             self._fns.update(screen_fns)
 
@@ -136,6 +167,14 @@ class DeviceHub:
         device = self._devices.get(device_id)
         if device is not None and device.transport is transport:
             device.transport = None
+            from app.domain.agent.harness.claude_code import (
+                drop_device_subscriptions,
+                drop_screen_subscriptions,
+            )
+
+            for screen in list(device.screens.values()):
+                await drop_screen_subscriptions(screen)
+            await drop_device_subscriptions(device_id)
 
     def is_online(self, device_id: str) -> bool:
         device = self._devices.get(device_id)
@@ -281,6 +320,11 @@ class DeviceHub:
             return False
         self._screens.pop(sid, None)
         self._by_screen_token.pop(screen.token, None)
+        from app.domain.agent.harness.claude_code import (
+            drop_screen_subscriptions,
+        )
+
+        await drop_screen_subscriptions(screen)
         await device.send(device_link.session_close(sid))
         return True
 
@@ -336,6 +380,27 @@ class DeviceHub:
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             device.call_pending.pop(call_id, None)
+
+    async def put_file(
+        self,
+        device_id: str,
+        sid: str,
+        path: str,
+        data: bytes,
+        *,
+        timeout: float = 30,
+    ) -> Any:
+        """Atomically stage one file under the screen's workspace and await ack."""
+        device = self._device(device_id)
+        device.file_seq += 1
+        file_id = f"f{device.file_seq}"
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        device.file_pending[file_id] = future
+        try:
+            await device.send(device_link.file_put(sid, file_id, path, data))
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            device.file_pending.pop(file_id, None)
 
     # -- exec (server -> device, awaited) ----------------------------------
 
@@ -468,6 +533,14 @@ class DeviceHub:
                 else:
                     fut.set_result(msg.value)
             return
+        if msg.t == "file.result":
+            fut = device.file_pending.get(msg.id)
+            if fut is not None and not fut.done():
+                if msg.error:
+                    fut.set_exception(RuntimeError(msg.error))
+                else:
+                    fut.set_result(msg.value)
+            return
         if msg.t == "rpc.call":
             await self._handle_screen_call(device, screen, m)
             return
@@ -514,5 +587,5 @@ class DeviceHub:
         pass
 
 
-# Shared singleton: the connector route and the DeviceProvider import this instance.
+# Shared singleton: the connector route and the DeviceChannel import this instance.
 device_hub = DeviceHub()

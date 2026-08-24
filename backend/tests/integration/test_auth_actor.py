@@ -2,6 +2,8 @@
 resolved from the verified token (not the body), the Phase-0 handle fallback
 still works, and a token-authenticated outsider is denied (越权)."""
 
+import pytest
+
 from app.core.tokens import verify_session_token
 from tests.integration.conftest import session_token
 
@@ -19,11 +21,11 @@ def _bearer(token: str) -> dict:
 
 
 def _project_topic(client, owner: str) -> tuple[str, str]:
-    p = client.post("/api/projects", json={"name": "P", "owner_handle": owner}).json()[
+    p = client.post("/projects", json={"name": "P", "owner_handle": owner}).json()[
         "data"
     ]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": owner},
     ).json()["data"]
     return p["id"], t["id"]
@@ -42,8 +44,8 @@ def test_token_actor_wins_over_body_author(client):
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/api/topics/{tid}/doc",
-        json={"content": "# hi", "author": "mallory-forged"},
+        f"/topics/{tid}/doc",
+        json={"content": "# hi", "author": "mallory-forged", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -56,8 +58,8 @@ def test_no_token_falls_back_to_body_author(client):
     _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/api/topics/{tid}/doc",
-        json={"content": "# hi", "author": "alice"},
+        f"/topics/{tid}/doc",
+        json={"content": "# hi", "author": "alice", "expected_version": 0},
     )
     assert r.status_code == 200
     assert r.json()["data"]["author"] == "alice"
@@ -69,8 +71,8 @@ def test_token_outsider_denied_on_rostered_topic(client):
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
     r = client.put(
-        f"/api/topics/{tid}/doc",
-        json={"content": "# sneaky", "author": "mallory"},
+        f"/topics/{tid}/doc",
+        json={"content": "# sneaky", "author": "mallory", "expected_version": 0},
         headers=_bearer(outsider),
     )
     assert r.status_code == 403
@@ -81,8 +83,8 @@ def test_token_owner_allowed(client):
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
     r = client.put(
-        f"/api/topics/{tid}/doc",
-        json={"content": "# ok", "author": "alice"},
+        f"/topics/{tid}/doc",
+        json={"content": "# ok", "author": "alice", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200
@@ -93,7 +95,7 @@ def test_ws_token_pins_message_author(client):
     per-message `author` is ignored."""
     token = _login(client, "alice")
     _, tid = _project_topic(client, owner="alice")
-    with client.websocket_connect(f"/api/topics/{tid}/chat?token={token}") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat?token={token}") as ws:
         ws.send_json(
             {"type": "message", "content": "hello", "author": "mallory-forged"}
         )
@@ -101,7 +103,7 @@ def test_ws_token_pins_message_author(client):
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):
                 break
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     users = [b for b in blocks if b["content"] == "hello"]
     assert users and all(b["author"] == "alice" for b in users)
 
@@ -110,7 +112,7 @@ def test_ws_outsider_token_rejected(client):
     """越权: an outsider's token on the chat WS is refused before any message."""
     _, tid = _project_topic(client, owner="alice")
     outsider = _login(client, "mallory")
-    with client.websocket_connect(f"/api/topics/{tid}/chat?token={outsider}") as ws:
+    with client.websocket_connect(f"/topics/{tid}/chat?token={outsider}") as ws:
         frame = ws.receive_json()
         assert frame["type"] == "error"
 
@@ -162,8 +164,62 @@ def test_project_member_allowed_even_if_not_in_roster(client):
     asyncio.run(_add_member())
 
     r = client.put(
-        f"/api/topics/{tid}/doc",
-        json={"content": "# member", "author": "bob"},
+        f"/topics/{tid}/doc",
+        json={"content": "# member", "author": "bob", "expected_version": 0},
         headers=_bearer(token),
     )
     assert r.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/topics/{tid}/doc",
+        "/topics/{tid}/docs",
+        "/topics/{tid}/comments",
+        "/topics/{tid}/transcript",
+        "/topics/{tid}/status",
+        "/topics/{tid}/progress",
+        "/topics/{tid}/children",
+    ],
+)
+def test_read_surfaces_deny_the_outsider(client, path):
+    """越权 (2026-08-16): a logged-in non-member could read a topic's living doc,
+    comments and transcript verbatim — only /blocks was guarded, so the UI
+    rendered a whole foreign project around one 403. Every read surface must
+    answer 403 to the outsider, exactly like /blocks."""
+    _, tid = _project_topic(client, owner="alice")
+    outsider = _login(client, "mallory")
+    r = client.get(path.format(tid=tid), headers=_bearer(outsider))
+    assert r.status_code == 403, f"{path}: {r.status_code} {r.text[:120]}"
+
+
+def test_topic_list_denies_the_outsider(client):
+    """The project sidebar (titles, activity, participants) is member-only —
+    it was readable by ANY logged-in caller holding the project id."""
+    pid, _ = _project_topic(client, owner="alice")
+    outsider = _login(client, "mallory")
+    r = client.get(f"/topics?project_id={pid}", headers=_bearer(outsider))
+    assert r.status_code == 403, r.text[:120]
+
+
+def test_archive_denies_the_outsider(client):
+    """Write side of the same hole: a non-member could archive someone else's
+    topic."""
+    _, tid = _project_topic(client, owner="alice")
+    outsider = _login(client, "mallory")
+    r = client.post(f"/topics/{tid}/archive", json={}, headers=_bearer(outsider))
+    assert r.status_code == 403, r.text[:120]
+
+
+def test_member_still_reads_everything(client):
+    """The guard must not lock the door on the people who belong inside."""
+    token = _login(client, "alice")
+    pid, tid = _project_topic(client, owner="alice")
+    for path in (
+        f"/topics/{tid}/doc",
+        f"/topics/{tid}/comments",
+        f"/topics?project_id={pid}",
+    ):
+        r = client.get(path, headers=_bearer(token))
+        assert r.status_code == 200, f"{path}: {r.status_code} {r.text[:120]}"

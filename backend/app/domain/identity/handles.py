@@ -8,10 +8,21 @@ is still ``IdentityService.is_agent`` (the ``AgentBinding``).
 
 import uuid
 
-# 芝士's platform-wide handle — a real user row, seeded once. The fallback
-# identity: what a token that names no 分身 resolves to.
+# 芝士's platform-wide handle — a real user row, seeded once, and the handle a
+# project's default agent keys its memory under.
+#
+# It used to double as the fallback identity ("a token that names no 分身"), and
+# that was one job too many: once an agent's memory is keyed by its handle, every
+# call the platform could not attribute wrote into the DEFAULT agent's pool. The
+# unattributable case now has a name of its own, below.
 CHEESE_HANDLE = "cheese"
 CHEESE_NAME = "芝士"
+
+# What a credential that names no 分身 resolves to when there is no project to
+# ask either — i.e. genuinely "we cannot tell which agent this is". Inside the
+# `cheese-` namespace on purpose: it is reserved against human registration and
+# renders as an agent by the same house rule as every other 分身 handle.
+UNRESOLVED_AGENT_HANDLE = "cheese-unresolved"
 
 # Namespace for per-topic 分身 handles. Derived, never stored as a lookup table:
 # the handle is a pure function of the topic id, so a token can carry the acting
@@ -83,3 +94,20 @@ def is_reserved_username(username: str) -> bool:
         # the two cannot drift apart into "reserved but renderable as a person".
         or looks_like_agent_handle(folded)
     )
+
+
+def names_a_person(handle: str | None) -> bool:
+    """Whether ``handle`` names a HUMAN, as opposed to nobody or the platform.
+
+    Attribution needs this: a handle that reaches it may be a real person, the
+    ``anonymous`` sentinel, ``system`` (every platform-initiated turn — gate
+    verdicts, scheduled wake-ups, ``cheese await`` reports), or 芝士 / one of her
+    per-topic 分身. Only the first may become a topic's owner or be credited on
+    a commit; the rest must fall through to whatever the caller's fallback is.
+
+    Defined as the complement of :func:`is_reserved_username` on purpose — those
+    reserved strings are reserved *precisely because* they do not name a person,
+    so deriving one from the other keeps a new sentinel from being handled in one
+    place and forgotten in the other.
+    """
+    return bool(handle and handle.strip() and not is_reserved_username(handle))

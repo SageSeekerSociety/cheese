@@ -19,6 +19,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 
 from app.core.config import settings
+from app.domain.machine import claude_dist
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 
@@ -133,6 +134,36 @@ fi
 echo "next: cheesehost auth login $ORIGIN/connector"
 """
     return PlainTextResponse(script, media_type="text/x-shellscript")
+
+
+# Claude Code itself, served from here for the same reason the connector is: a
+# machine may have no route to the vendor (private cloud subnets, a user's
+# network we do not control, or the vendor's own regional availability, which
+# their installer names as a failure mode). Fetched once, checksum-verified
+# against the vendor's manifest, cached, then served locally — so the pinned
+# version is something we HAND the machine rather than something we hope it can
+# reach.
+#
+# The platform string is the vendor's (`linux-x64`, `linux-arm64-musl`, …), not
+# our `<os>-<arch>` connector target: only the machine knows whether its libc is
+# musl, and our target names cannot express that distinction.
+@router.get("/claude/{version}/{platform}/claude")
+async def download_claude(version: str, platform: str) -> Response:
+    if not claude_dist.VERSION_RE.match(version):
+        return PlainTextResponse("bad version", status_code=400)
+    if not claude_dist.PLATFORM_RE.match(platform):
+        return PlainTextResponse("unknown platform", status_code=400)
+    try:
+        binary = await claude_dist.ensure_cached(_dist_dir(), version, platform)
+    except claude_dist.ClaudeDistError as exc:
+        # 503, not 404: the build may well exist and be fetchable later. A 404
+        # would tell an enrolling machine to give up on something transient.
+        return PlainTextResponse(
+            f"claude {version} unavailable: {exc}", status_code=503
+        )
+    return FileResponse(
+        binary, media_type="application/octet-stream", filename="claude"
+    )
 
 
 @router.get("/latest/{target}/cheesehost")

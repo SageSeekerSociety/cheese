@@ -9,11 +9,22 @@ never words put in 芝士's mouth (CLAUDE.md 硬性禁止 #4).
 """
 
 from app.core.config import settings
+from app.domain.agent.platform_notices import (
+    EVENT_TURN_FAILED,
+    SEVERITY_ERROR,
+    WHO_HUMAN,
+    notice,
+)
 
-# Posted into the topic 现场 when a turn is refused for lack of credits.
-CREDITS_EXHAUSTED_EVENT = (
-    "⛔ 项目的算力额度已用完，这轮没有执行。"
-    "请联系发放额度的机构续充，或解绑机构任务后自治运行。"
+# Posted into the topic 现场 when a turn is refused for lack of credits. The
+# room draws the severity from `meta`; the line itself just says what happened.
+CREDITS_EXHAUSTED_EVENT = "项目的算力额度已用完，这轮没有执行"
+CREDITS_EXHAUSTED_META = notice(
+    EVENT_TURN_FAILED,
+    severity=SEVERITY_ERROR,
+    who=WHO_HUMAN,
+    detail="请联系发放额度的机构续充，或解绑机构任务后自治运行。",
+    detail_label="怎么恢复",
 )
 
 

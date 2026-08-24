@@ -31,9 +31,12 @@ from datetime import UTC, datetime
 from app.core.config import settings
 from app.domain.identity.handles import topic_agent_handle
 
-# Signing secret (per-process unless pinned via SANDBOX_TOKEN). Never sent to a
-# container as-is when scoped tokens are used; it only signs them.
-SANDBOX_TOKEN: str = settings.sandbox_token or secrets.token_hex(24)
+# Signing secret. Stable across restarts by construction — pinned via
+# SANDBOX_TOKEN, else derived from jwt_secret; see
+# `Settings.sandbox_signing_secret` for why a per-process random was a live
+# outage rather than a hardening measure. Never sent to a container as-is when
+# scoped tokens are used; it only signs them.
+SANDBOX_TOKEN: str = settings.sandbox_signing_secret
 _SECRET = SANDBOX_TOKEN.encode()
 
 # Default scoped-token lifetime — a turn is minutes; this is a safe ceiling.

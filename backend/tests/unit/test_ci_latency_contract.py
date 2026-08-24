@@ -68,10 +68,18 @@ def test_backend_lint_is_a_separate_hosted_job():
     assert "run_heavy == 'true'" not in lint["if"]
     assert "needs.scope.outputs.run_heavy != 'false'" in lint["if"]
 
+    # The commands themselves moved into .pre-commit-config.yaml, so what is
+    # pinned here is that CI goes THROUGH that file rather than restating them —
+    # a second copy is how the local gate and CI drifted apart before. Both
+    # halves matter: CI must invoke the hook, and the hook must exist.
     lint_commands = "\n".join(s.get("run", "") for s in lint["steps"])
-    assert "ruff format --check ." in lint_commands
-    assert "ruff check ." in lint_commands
-    assert "pyright" in lint_commands
+    assert "pre-commit run" in lint_commands
+    config = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())
+    declared = {h["id"] for repo in config["repos"] for h in repo["hooks"]}
+    for hook in ("ruff", "ruff-format", "pyright"):
+        assert hook in declared, f"{hook} is not declared in .pre-commit-config.yaml"
+        assert "pre-commit run --all-files" in lint_commands
+        assert hook in lint_commands
 
     test_commands = "\n".join(
         s.get("run", "") for s in workflow["jobs"]["test"]["steps"]
@@ -117,8 +125,59 @@ def test_connector_payload_is_verified_inside_the_backend_image_build():
     )
 
     dockerfile = (ROOT / "backend" / "Dockerfile").read_text()
-    assert "COPY --from=connector /out ./connector-dist" in dockerfile
+    assert "--from=connector" in dockerfile
+    assert "./connector-dist" in dockerfile
     assert 'test -s "$f"' in dockerfile
+
+
+def _production_stage_lineage() -> str:
+    """Every instruction the production image is actually built from, following
+    the FROM chain back to its root."""
+    stages: dict[str, tuple[str, list[str]]] = {}
+    current: list[str] = []
+    for line in (ROOT / "backend" / "Dockerfile").read_text().splitlines():
+        # A comment often explains what a stage deliberately does NOT do, so
+        # reading comments as instructions makes each such note trip the check.
+        if line.strip().startswith("#"):
+            continue
+        words = line.split()
+        if words[:1] == ["FROM"]:
+            current = []
+            stages[words[-1]] = (words[1], current)
+        else:
+            current.append(line)
+
+    lineage: list[str] = []
+    cursor = "production"
+    while cursor in stages:
+        parent, body = stages[cursor]
+        lineage += body
+        cursor = parent
+    return "\n".join(lineage)
+
+
+def test_a_backend_commit_does_not_rewrite_the_whole_image():
+    """The production image pays for its layers twice per commit unless two
+    things hold, and neither is visible from the outside.
+
+    `chown -R` over a populated /app copies up every file it touches — on
+    2026-08-17 that single instruction ran for 101s and left a near-duplicate of
+    .venv + connector-dist to export (51s) and push (70s), on every commit,
+    because it sits below `COPY app`. Setting ownership as each COPY writes
+    costs nothing. And the compilers that build srp_rs have no runtime caller,
+    so a production stage that inherits them ships ~1.5GB nothing runs.
+    """
+    lineage = _production_stage_lineage()
+
+    assert "chown -R" not in lineage, (
+        "production is recursively chowning a tree again — use COPY --chown, "
+        "which sets the owner as the layer is written"
+    )
+    for toolchain in ("rustup", "build-essential"):
+        assert toolchain not in lineage, (
+            f"{toolchain} is back in the production image's lineage; nothing at "
+            "runtime calls it"
+        )
 
 
 def test_deploy_bounds_cache_without_making_every_build_cold():

@@ -72,7 +72,7 @@ async def test_a_reused_box_with_the_old_mount_is_flagged_stale(monkeypatch, ses
         return 0, "/opt/cheesex/sandbox/cheese->/usr/local/bin/cheese\n", ""
 
     monkeypatch.setattr(tmux_provider, "_docker", inspect)
-    assert await tmux_provider.TmuxHooksProvider._cli_mount_stale("box", str(session))
+    assert await tmux_provider.TmuxChannel._cli_mount_stale("box", str(session))
 
 
 @pytest.mark.anyio
@@ -83,7 +83,7 @@ async def test_a_box_mounting_the_staged_copy_is_left_alone(monkeypatch, session
         return 0, f"{session}->/home/node/.claude\n{want}->/usr/local/bin/cheese\n", ""
 
     monkeypatch.setattr(tmux_provider, "_docker", inspect)
-    stale = tmux_provider.TmuxHooksProvider._cli_mount_stale
+    stale = tmux_provider.TmuxChannel._cli_mount_stale
     assert not await stale("box", str(session))
 
 
@@ -96,5 +96,5 @@ async def test_a_failed_inspect_does_not_destroy_the_box(monkeypatch, session):
         return 1, "", "no such container"
 
     monkeypatch.setattr(tmux_provider, "_docker", failing)
-    stale = tmux_provider.TmuxHooksProvider._cli_mount_stale
+    stale = tmux_provider.TmuxChannel._cli_mount_stale
     assert not await stale("box", str(session))

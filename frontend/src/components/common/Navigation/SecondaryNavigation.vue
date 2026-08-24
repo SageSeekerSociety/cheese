@@ -22,7 +22,9 @@ import { useNavigationStore } from '@/stores/navigation'
 interface Props {
   // 是否在桌面端强制使用临时抽屉模式，默认 false
   forceMobile?: boolean
-  // 自定义颜色，默认为 grey-lighten-5
+  // 自定义颜色，默认为 background（主题语义色，随亮/暗主题切换）。
+  // 传值时也请用语义色名，不要用 grey-lighten-5 这类 Material 固定灰阶——
+  // 它在两个主题下都是同一个 #FAFAFA，深色下会变成白底浅字。
   color?: string
   // 自定义边框，默认为 sm
   border?: string
@@ -32,7 +34,7 @@ interface Props {
 
 const props = withDefaults(defineProps<Props>(), {
   forceMobile: false,
-  color: 'grey-lighten-5',
+  color: 'background',
   border: 'sm',
   customClass: '',
 })
@@ -75,7 +77,6 @@ const drawerClass = computed(() => {
 
 // 路由变化时自动关闭移动端抽屉
 import { useRouter } from 'vue-router'
-import { is } from '@babel/types'
 const router = useRouter()
 
 watch(

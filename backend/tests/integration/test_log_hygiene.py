@@ -7,6 +7,7 @@ refusal was an INFO line with no path — so the report that came back was 网�
 """
 
 import logging
+import sys
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
@@ -36,13 +37,52 @@ def test_the_filter_is_actually_installed_by_the_real_setup():
         pathname=__file__,
         lineno=1,
         msg='%s - "WebSocket %s"',
-        args=("1.2.3.4:5", "/api/topics/x/chat?token=LIVE-SESSION-TOKEN"),
+        args=("1.2.3.4:5", "/topics/x/chat?token=LIVE-SESSION-TOKEN"),
         exc_info=None,
     )
     for h in handlers:
         for f in h.filters:
             f.filter(record)
     assert "LIVE-SESSION-TOKEN" not in record.getMessage()
+
+
+def test_an_exception_line_does_not_carry_the_frame_it_came_from():
+    """A traceback must cost a traceback's worth of bytes.
+
+    The renderer decides this, and its default decides it badly: given rich —
+    which arrives transitively, not by our choosing — it dumps every frame's
+    locals. One unhandled exception in a route then serialises the whole
+    resolved dependency tree, synchronously, on the event loop, and the process
+    stops answering anything at all (dev, 2026-08-20).
+
+    So: raise from a frame holding something big, push it through the handler
+    the app really installs, and read what comes out.
+    """
+    configure_logging()
+    handler = logging.getLogger().handlers[0]
+
+    def failing_frame():
+        big_local = ["x" * 200 for _ in range(500)]  # noqa: F841 — the point
+        raise ValueError("upstream said no")
+
+    try:
+        failing_frame()
+    except ValueError:
+        record = logging.LogRecord(
+            name="app.test",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="request failed",
+            args=(),
+            exc_info=sys.exc_info(),
+        )
+        rendered = handler.format(record)
+
+    assert "ValueError" in rendered, "the exception itself must still be readable"
+    assert "failing_frame" in rendered, "the frame it came from must still be named"
+    assert "big_local" not in rendered, "frame locals are being dumped into the log"
+    assert len(rendered) < 4000, f"one traceback rendered {len(rendered)} bytes"
 
 
 def test_a_session_token_never_reaches_the_log():
@@ -166,14 +206,14 @@ def test_the_request_line_names_the_user_and_forwarded_client(client, caplog):
 def test_an_anonymous_request_line_has_no_user_field(client, caplog):
     """No auth → no attribution: the field is absent, not user=0/None."""
     with caplog.at_level(logging.INFO, logger="http"):
-        client.get("/api/version")
+        client.get("/version")
 
     req_lines = [
         rec.msg
         for rec in caplog.records
         if isinstance(rec.msg, dict) and rec.msg.get("event") == "req"
     ]
-    line = next(ln for ln in req_lines if ln.get("path") == "/api/version")
+    line = next(ln for ln in req_lines if ln.get("path") == "/version")
     assert "user" not in line
 
 

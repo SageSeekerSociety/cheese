@@ -100,7 +100,7 @@ class AwaitedTask:
     started_at: float = field(default_factory=time.time)
 
 
-# Process-global, like TurnRunner._tasks and HookRouter: a restart forgets
+# Process-global, like AgentWorkRunner._tasks and HookRouter: a restart forgets
 # in-flight tasks. For the WAKE half that costs one wake (the child's report 404s
 # and it gives up) and corrupts nothing, and persisting would not buy much — a
 # container rebuild kills the child that was going to report anyway.
@@ -290,7 +290,10 @@ async def _catch_up_snapshot(task: AwaitedTask) -> None:
         checkpoint_worktree,
         task.project_id,
         task.topic_id,
-        f"芝士 edits（后台任务「{task.label}」结束后的最终态）",
+        # Subject stays a plain Conventional Commits line; WHICH task settled
+        # this tree is body material (see ws.SNAPSHOT_MESSAGE's rationale).
+        "chore: snapshot workspace after background task\n\n"
+        f"Final state after the background task {task.label!r} finished.",
     )
     logger.info("catch-up snapshot after task %s: %s", task.id, outcome)
 
@@ -358,7 +361,7 @@ def _submit_wake(runner, chat_service, task: AwaitedTask, content: str) -> bool:
             "接着处理它的结果：绿了就继续推进原来的活，红了就修。"
         ),
         summon=True,
-        nudge_event=f"⏱️ 后台任务「{task.label}」跑完了，芝士来处理",
+        nudge_event=f"后台任务「{task.label}」跑完了，芝士来处理",
     )
     return True
 

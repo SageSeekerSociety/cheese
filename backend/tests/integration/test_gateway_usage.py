@@ -16,30 +16,25 @@ from app.domain.agent.profiles import (
     AgentProfile,
     ProfileRegistry,
 )
-from app.domain.agent.service import AgentResult, AgentService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
+from tests.conftest import StubChannel, settle_turn, stub_compute
 
 
-class QuietAgent(AgentService):
-    """A turn that reports NO usage — the tmux/device reality."""
+class QuietScreen(StubChannel):
+    """A turn that reports NO usage — the interactive reality."""
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        yield AgentResult(text="ok", session_id="s1", usage=None)
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id, session_id="s1")
+        self.acknowledges(topic_id, prompt)
+        self.hook(
+            topic_id,
+            hook_event_name="Stop",
+            session_id="s1",
+            last_assistant_message="ok",
+        )
 
 
 class FakeGateway:
@@ -78,10 +73,10 @@ class FailingMintGateway(FakeGateway):
         return None
 
 
-async def _mk_service(factory, tmp_path, fake, profiles=None):
+async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
     svc = ChatService(
         session_factory=factory,
-        agent=QuietAgent(),
+        compute=stub_compute(screen or QuietScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
         profiles=profiles,
@@ -203,6 +198,7 @@ async def test_zero_usage_turn_gets_real_usage_from_gateway(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     from app.domain.usage.repositories import UsageRepository
 
@@ -241,6 +237,7 @@ async def test_credits_burn_by_real_spend_not_raw_tokens(client, tmp_path, monke
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     async with factory() as session:
         summary = await ComputeGrantRepository(session).summary(pid)
@@ -266,6 +263,7 @@ async def test_late_spend_rows_land_via_deferred_drain(client, tmp_path, monkeyp
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
     # Let the deferred task run (its sleep is patched away).
     import asyncio as _asyncio
 
@@ -359,6 +357,7 @@ async def test_usage_rows_record_their_route(client, tmp_path, monkeypatch):
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     from sqlalchemy import select
 
@@ -380,29 +379,29 @@ async def test_zero_usage_report_lands_as_unmetered_not_metered_zero(client, tmp
     """Interactive Claude Code's Stop hook decodes to an all-zero usage — that
     is 'unknown', not 'this turn was free'. Without a meter for the route, the
     row must say unmetered."""
-    from app.domain.agent.service import AgentUsage
 
-    class ZeroUsageAgent(AgentService):
-        def __init__(self) -> None:
-            super().__init__(model="stub")
+    class ZeroUsageScreen(StubChannel):
+        def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+            del reply
+            self.starts(topic_id, session_id="s1")
+            self.acknowledges(topic_id, prompt)
+            self.hook(
+                topic_id,
+                hook_event_name="Stop",
+                session_id="s1",
+                last_assistant_message="ok",
+                usage={"input": 0, "output": 0},
+            )
 
-        async def stream_reply(self, **_kw):
-            yield AgentResult(text="ok", session_id="s1", usage=AgentUsage())
-
-    svc, factory, pid, tid = await _mk_service(client.test_factory, tmp_path, None)
-    # Rebuild the pool around the zero-usage agent (the ctor built it already).
-    from app.domain.agent.compute import ComputePool
-
-    svc._compute = ComputePool.local(
-        agent=ZeroUsageAgent(),
-        workspace_root=str(tmp_path / "ws"),
-        sandbox_enabled=False,
+    svc, factory, pid, tid = await _mk_service(
+        client.test_factory, tmp_path, None, screen=ZeroUsageScreen()
     )
 
     async for _ in svc.converse(
         topic_id=tid, author="u", content="做点事", summon=True
     ):
         pass
+    await settle_turn(svc, tid)
 
     from sqlalchemy import select
 

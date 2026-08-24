@@ -1,6 +1,8 @@
 <template>
-  <SecondaryNavigation>
-    <div class="page-header">
+  <!-- 手机上这一层不是抽屉，是页内分段（layouts/home/Home.vue）—— 这条侧栏
+       只在桌面存在。 -->
+  <SecondaryNavigation v-if="mdAndUp">
+    <div class="sidebar-header">
       <span class="text-subtitle-1">首页</span>
       <v-spacer></v-spacer>
     </div>
@@ -14,5 +16,9 @@
 </template>
 
 <script setup lang="ts">
+import { useDisplay } from 'vuetify'
+
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
+
+const { mdAndUp } = useDisplay()
 </script>

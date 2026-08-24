@@ -14,12 +14,14 @@ import uuid
 
 import pytest
 
-from app.domain.agent import device_launch
 from app.domain.agent import tmux_provider as tp
 from app.domain.agent.device_hub import HubScreen
-from app.domain.agent.device_provider import DeviceProvider
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.tmux_provider import TmuxHooksProvider
+from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness.claude_code import device_launch
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import ClaudeCodeRuntime
+from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.tmux_provider import TmuxChannel
 
 _FLAG = "--append-system-prompt-file"
 _PROMPT = "你是芝士，一个 cheese 平台上的正式成员。\n平台事件通过 cheese CLI 到达。\n"
@@ -53,8 +55,8 @@ def _stub_workspace(monkeypatch, tmp_path):
     return tmp_path / "session"
 
 
-async def _one_turn(provider: TmuxHooksProvider, router, topic_id, **kw) -> list:
-    """Drive a full run_turn; the fake 'container' answers Stop immediately."""
+async def _one_turn(channel, router, topic_id, **kw) -> list:
+    """Drive a full turn; the fake 'container' answers Stop immediately."""
 
     async def fake_send(name: str, prompt: str) -> None:
         router.push(
@@ -66,10 +68,11 @@ async def _one_turn(provider: TmuxHooksProvider, router, topic_id, **kw) -> list
             },
         )
 
-    provider._send_prompt = fake_send  # type: ignore[method-assign]
+    channel.send_prompt = fake_send  # type: ignore[method-assign]
+    runtime = ClaudeCodeRuntime(channel, router=router)
     return [
         e
-        async for e in provider.run_turn(
+        async for e in runtime.run_turn(
             project_id=uuid.uuid4(), topic_id=topic_id, prompt="hi", **kw
         )
     ]
@@ -81,14 +84,18 @@ async def test_tmux_launch_carries_the_system_prompt(monkeypatch, tmp_path):
     monkeypatch.setattr(tp, "_docker", _fake_docker(calls, session_alive=False))
     session_dir = _stub_workspace(monkeypatch, tmp_path)
     router = HookRouter()
-    provider = TmuxHooksProvider(image="img:test", router=router)
+    provider = TmuxChannel(image="img:test")
 
+    topic_id = uuid.uuid4()
     await _one_turn(
-        provider, router, uuid.uuid4(), system_prompt=_PROMPT, resume_session_id=None
+        provider, router, topic_id, system_prompt=_PROMPT, resume_session_id=None
     )
 
     launch = " ".join(next(c for c in calls if "new-session" in c))
-    assert f"{_FLAG} /home/node/.claude/cheese-system-prompt.md" in launch
+    # The path is the SESSION's own config dir, not a fixed ~/.claude: a box
+    # hosts a whole room, so every topic in it would otherwise be launched
+    # against one shared prompt file — whichever topic wrote it last.
+    assert f"{_FLAG} {tp.ws.sandbox_session_dir(topic_id)}/cheese" in launch
     written = (session_dir / "cheese-system-prompt.md").read_text(encoding="utf-8")
     assert written == _PROMPT
 
@@ -99,7 +106,7 @@ async def test_tmux_empty_system_prompt_launches_stock_claude(monkeypatch, tmp_p
     monkeypatch.setattr(tp, "_docker", _fake_docker(calls, session_alive=False))
     _stub_workspace(monkeypatch, tmp_path)
     router = HookRouter()
-    provider = TmuxHooksProvider(image="img:test", router=router)
+    provider = TmuxChannel(image="img:test")
 
     await _one_turn(
         provider, router, uuid.uuid4(), system_prompt="", resume_session_id=None
@@ -121,7 +128,7 @@ async def test_tmux_reused_session_still_records_the_current_prompt(
     session_dir = _stub_workspace(monkeypatch, tmp_path)
     (session_dir / "cheese-system-prompt.md").write_text("旧的", encoding="utf-8")
     router = HookRouter()
-    provider = TmuxHooksProvider(image="img:test", router=router)
+    provider = TmuxChannel(image="img:test")
 
     await _one_turn(
         provider, router, uuid.uuid4(), system_prompt=_PROMPT, resume_session_id=None
@@ -204,13 +211,9 @@ class _RecordingHub:
 
 
 @pytest.mark.anyio
-async def test_device_screen_opens_with_the_system_prompt(monkeypatch):
-    async def co_located(_device_id: str) -> bool:
-        return False
-
+async def test_device_screen_opens_with_the_system_prompt():
     hub = _RecordingHub()
-    provider = DeviceProvider(hub=hub, public_base="http://cheese.test")  # type: ignore[arg-type]
-    monkeypatch.setattr(provider, "_is_co_located", co_located)
+    provider = DeviceChannel(hub=hub, public_base="http://cheese.test")  # type: ignore[arg-type]
 
     await provider._ensure_screen(
         device_id="dev1",
@@ -219,9 +222,8 @@ async def test_device_screen_opens_with_the_system_prompt(monkeypatch):
         project_id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         token="tok",
-        model=None,
         env=None,
-        system_prompt=_PROMPT,
+        launch=ClaudeLaunch(system_prompt=_PROMPT),
     )
 
     # The launcher rides to the device as a FILE over `exec` (tmux argv caps out

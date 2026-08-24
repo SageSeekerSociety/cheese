@@ -19,13 +19,16 @@ name: Repo Guards
 # `.github/workflows/**` is in the path filter because one of the guards judges
 # the workflows themselves (action pinning) — filtering on this file alone would
 # let an unpinned action land in any other workflow without ever running it.
-# `deploy/**` is there for the same reason: the metering-proxy guard judges the
-# deployment config, so a change under deploy/ must be able to trip it.
+# And `frontend/**`, for the same reason: the fixed-palette guard judges .vue
+# templates, and the change it exists to catch — a new `color="grey-lighten-5"`
+# on a component — is by definition a frontend-only diff, which without this
+# line would sail past without the guard ever starting.
 on:
   push:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'frontend/**'
       - 'deploy/**'
       - '.claude/scripts/**'
       - '.github/workflows/**'
@@ -33,6 +36,7 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'frontend/**'
       - 'deploy/**'
       - '.claude/scripts/**'
       - '.github/workflows/**'
@@ -50,10 +54,18 @@ concurrency:
 
 jobs:
   guards:
-    runs-on: [self-hosted, cheese-ci]
+    runs-on: [self-hosted, cheese-ci-any]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # This job used to need nothing but bash and python3. It now runs the
+      # guards through pre-commit, so that CI and a developer's commit read one
+      # list instead of two — and that needs uv on PATH. Same pin as test.yml.
+      - name: Install uv
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4
+        with:
+          version: "0.12.1"
 
       # Each guard proves itself before it is trusted to judge the tree: a guard
       # that silently stopped matching would otherwise look identical to a clean
@@ -62,11 +74,15 @@ jobs:
         run: |
           bash .claude/scripts/check-repo-rules.sh --self-test
           bash .claude/scripts/check-action-pins.sh --self-test
-          bash .claude/scripts/check-metering-proxy.sh --self-test
           python3 .claude/scripts/check-migration-fork.py --self-test
 
-      - name: CLAUDE.md rules (naive datetime, builtin shadowing, raw HTTPException)
-        run: bash .claude/scripts/check-repo-rules.sh
+      # Run through pre-commit rather than calling the scripts directly, so
+      # this job and a developer's commit are the same list by construction.
+      # The guards' own --self-test above still calls them directly: that step
+      # proves the guard fires, which is a different question from whether the
+      # tree passes it.
+      - name: Repo rules (datetime, HTTPException, palette, platform CLI, …)
+        run: uvx pre-commit run --all-files repo-rules
 
       # Third-party actions run on the dev and prod boxes themselves (build.yml,
       # build-tmux.yml and deploy-dev.yml all target self-hosted runners), so a
@@ -74,14 +90,8 @@ jobs:
       # credentials in reach. Pins make that an upgrade we review, not one that
       # happens to us.
       - name: Actions are pinned to a commit SHA
-        run: bash .claude/scripts/check-action-pins.sh
+        run: uvx pre-commit run --all-files action-pins
 
-      # The subscription metering proxy's durable credential is a one-year,
-      # non-refreshing setup-token (CODEX findings / #388). This fails the build
-      # if the deploy config reintroduces a refresh command, a login-JSON source,
-      # or a credential-refresh daemon — the mechanisms behind the outage.
-      - name: Metering proxy stays credential-hardened
-        run: bash .claude/scripts/check-metering-proxy.sh
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
       # does not create it. Shallow is enough — only the tree at main's tip is
@@ -90,4 +100,4 @@ jobs:
         run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
 
       - name: Alembic chain would not fork on merge
-        run: python3 .claude/scripts/check-migration-fork.py --base origin/main
+        run: uvx pre-commit run --all-files migration-fork

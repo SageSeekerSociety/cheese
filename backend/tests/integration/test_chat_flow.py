@@ -10,12 +10,12 @@ from tests.integration.conftest import chat_ws_url, session_auth_headers
 
 
 def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
-    pr = client.post("/api/projects", json={"name": "Demo", "owner_handle": owner})
+    pr = client.post("/projects", json={"name": "Demo", "owner_handle": owner})
     assert pr.status_code == 200
     project_id = pr.json()["data"]["id"]
 
     tr = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": project_id, "title": "第一个话题", "created_by": owner},
     )
     assert tr.status_code == 200
@@ -38,8 +38,8 @@ def test_create_and_list_project(client):
     # their token lapsed). Creating anonymously would leave the project with no
     # owner and no roster, so nobody would have a claim on it either.
     headers = session_auth_headers("alice")
-    client.post("/api/projects", json={"name": "P1"}, headers=headers)
-    r = client.get("/api/projects", headers=headers)
+    client.post("/projects", json={"name": "P1"}, headers=headers)
+    r = client.get("/projects", headers=headers)
     body = r.json()
     assert body["code"] == 200
     assert body["data"]["total"] == 1
@@ -48,7 +48,7 @@ def test_create_and_list_project(client):
 
 def test_create_topic_requires_existing_project(client):
     r = client.post(
-        "/api/topics",
+        "/topics",
         json={
             "project_id": "00000000-0000-0000-0000-000000000000",
             "title": "x",
@@ -60,7 +60,7 @@ def test_create_topic_requires_existing_project(client):
 def test_blocks_empty_then_populated_after_chat(client):
     _, topic_id = _create_project_and_topic(client)
 
-    r = client.get(f"/api/topics/{topic_id}/blocks")
+    r = client.get(f"/topics/{topic_id}/blocks")
     assert r.json()["data"]["total"] == 0
 
     with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
@@ -71,7 +71,21 @@ def test_blocks_empty_then_populated_after_chat(client):
     # Slack-style: no token deltas — the platform ✅-acks the summoning message,
     # announces the working turn (正在思考 for every open client), then 芝士's
     # reply lands as one complete message block.
-    assert types == ["user_block", "reaction", "turn_active", "assistant_block", "done"]
+    #
+    # `turn_started` twice, for the same turn: the platform says it when the
+    # turn opens, and the session says it again when it actually picks the work
+    # up. They carry the same id and a client applies whichever arrives — the
+    # second one is what a session that starts working WITHOUT being asked (a
+    # resumed screen, a 分身) has to announce itself with, and it does not stop
+    # saying it just because this turn was asked for.
+    assert types == [
+        "user_block",
+        "turn_started",
+        "reaction",
+        "turn_started",
+        "assistant_block",
+        "done",
+    ]
 
     ack = next(f for f in frames if f["type"] == "reaction")
     agent = topic_agent_handle(uuid.UUID(topic_id))
@@ -84,11 +98,15 @@ def test_blocks_empty_then_populated_after_chat(client):
     user = next(f for f in frames if f["type"] == "user_block")["block"]
     assert user["content"] == "你好芝士"
     assert user["author_type"] == "human"
+    # Explicit null distinguishes a new pending input from an unmarked legacy
+    # block. A later exact receipt replaces it with the consuming turn id.
+    assert user["meta"]["consumed_turn"] is None
 
     # Persisted: two blocks now exist in timeline order.
-    r = client.get(f"/api/topics/{topic_id}/blocks")
+    r = client.get(f"/topics/{topic_id}/blocks")
     blocks = r.json()["data"]["data"]
     assert [b["author_type"] for b in blocks] == ["human", "ai"]
+    assert blocks[0]["meta"]["consumed_turn"]
 
 
 def test_session_id_persisted_for_resume(client):
@@ -103,7 +121,7 @@ def test_session_id_persisted_for_resume(client):
         _drain_until_done(ws)
 
 
-def test_memory_injected_into_system_prompt(client, stub_agent):
+def test_memory_injected_into_system_prompt(client, stub_hooks):
     project_id, topic_id = _create_project_and_topic(client)
 
     # Seed a project memory fact.
@@ -120,8 +138,8 @@ def test_memory_injected_into_system_prompt(client, stub_agent):
         ws.send_json({"type": "message", "content": "技术栈是什么", "summon": True})
         _drain_until_done(ws)
 
-    assert stub_agent.last_system_prompt is not None
-    assert "项目用 FastAPI 写后端" in stub_agent.last_system_prompt
+    assert stub_hooks.last_system_prompt is not None
+    assert "项目用 FastAPI 写后端" in stub_hooks.last_system_prompt
 
 
 def test_empty_content_rejected(client):
@@ -142,18 +160,18 @@ def test_message_without_summon_does_not_invoke_cheese(client):
     types = [f["type"] for f in frames]
     assert types == ["user_block", "done"]  # no ✅ ack / assistant_block
 
-    blocks = client.get(f"/api/topics/{topic_id}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{topic_id}/blocks").json()["data"]["data"]
     assert [b["author_type"] for b in blocks] == ["human"]  # only the human msg
 
 
-def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
+def test_unsummoned_messages_reach_next_summon_with_labels(stub_hooks, client):
     # spec §7.1: messages posted without @芝士 are still seen on the next summon,
     # each tagged with who said it (§8.4 multi-person disambiguation).
     # Two speakers means two sockets: authorship is pinned to the connection's
     # token, so one socket can only ever speak as one person.
     _, topic_id = _create_project_and_topic(client, owner="alice")
     client.post(
-        f"/api/topics/{topic_id}/members",
+        f"/topics/{topic_id}/members",
         json={"handle": "bob", "role": "member", "actor": "alice"},
     )
     with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
@@ -169,7 +187,7 @@ def test_unsummoned_messages_reach_next_summon_with_labels(stub_agent, client):
         ws.send_json({"type": "message", "content": "芝士看看", "summon": True})
         _drain_until_done(ws)
 
-    prompt = stub_agent.last_prompt or ""
+    prompt = stub_hooks.last_prompt or ""
     assert "[alice]: 先随便说一句" in prompt
     assert "[bob]: 再补一句" in prompt
     assert "[alice]: 芝士看看" in prompt
@@ -200,4 +218,8 @@ def test_debug_turns_records_lifecycle(client):
     assert t["topic_id"] == topic_id
     assert t["status"] == "done"
     assert t["duration_s"] is not None
-    assert t["first_output_s"] is not None  # the assistant message was observed
+    # Stamped from what the SESSION produced, not from frames crossing this
+    # request: the call that starts a turn returns before 芝士 says anything, so
+    # a summary fed only by that stream reports every healthy turn with the
+    # exact signature of a sandbox whose hooks never arrive.
+    assert t["first_output_s"] is not None

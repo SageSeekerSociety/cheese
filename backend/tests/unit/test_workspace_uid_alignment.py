@@ -95,17 +95,18 @@ async def test_sandbox_container_is_started_as_that_user(project, monkeypatch):
         return 0, "", ""
 
     monkeypatch.setattr(tmux_provider, "_docker", _fake_docker)
-    provider = tmux_provider.TmuxHooksProvider(image="cheesex-agent-sandbox:test")
+    provider = tmux_provider.TmuxChannel(image="cheesex-agent-sandbox:test")
     topic = uuid.uuid4()
     # The argv it builds IS the behaviour under test.
     await provider._create_container(  # noqa: SLF001
         "cheesex-tmux-test",
         {
+            # A box is a ROOM's now, so its env names the room, never a topic.
             "CHEESE_PROJECT": str(project),
-            "CHEESE_TOPIC": str(topic),
-            "SBX_WORKTREE": str(ws.topic_worktree(project, topic)),
-            "SBX_SESSION": str(ws.session_dir(project, topic)),
+            "CHEESE_ROOM": str(topic),
+            "SBX_SESSIONS": str(ws.sessions_root(project)),
         },
+        topic,
     )
     args = captured[-1]
     assert "--user" in args

@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -25,6 +27,7 @@ import (
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
+	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
 	"github.com/SageSeekerSociety/cheese/cli/internal/runtime"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
@@ -58,6 +61,19 @@ type sess struct {
 	client   *terminal.Client // a real tmux client (pty) while a viewer is attached
 	lastCols int
 	lastRows int
+
+	// Prompt delivery goes through the session's own rendezvous socket when the
+	// launcher armed one (CLAUDE_BG_RENDEZVOUS_SOCK / CLAUDE_BG_RV_AUTH in the
+	// screen env). That path replaces typing into the terminal entirely: the
+	// text is enqueued by Claude Code as human-origin input, so nothing about
+	// delivery depends on pane width, TUI state, or a screen scrape.
+	// rvTokenFile is read lazily, not at create time: the launcher writes it
+	// while claude boots, which is strictly after the screen is spawned.
+	rvPath      string
+	rvTokenFile string
+	workDir     string
+	rvMu        sync.Mutex
+	rv          *rendezvous.Client
 }
 
 // New builds a Host from cfg. cfgPath locates the shared state file that lets
@@ -196,7 +212,22 @@ func (h *Host) onMsg(m link.Msg) {
 		}
 	case "rpc.call": // server invokes a script-exposed function
 		if s := h.session(m.Sid); s != nil {
+			// `prompt` is the one call that must never go through the terminal:
+			// it carries what a person said, and typing it into a TUI made
+			// delivery depend on pane width and screen scraping. When the
+			// launcher armed a rendezvous socket, deliver over that instead —
+			// same call name, same rpc.result contract, different transport.
+			if s.usesRendezvous(m.Name) {
+				go h.deliverPrompt(m, s)
+				return
+			}
 			s.rt.Invoke(m.ID, m.Name, m.Args)
+		}
+	case "file.put":
+		if s := h.session(m.Sid); s != nil {
+			go h.putFile(m, s)
+		} else {
+			_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Error: "unknown screen"})
 		}
 	case "rpc.result": // result of a script->server call
 		if s := h.session(m.Sid); s != nil {
@@ -283,7 +314,11 @@ func (h *Host) createSession(m link.Msg) {
 	ctx, cancel := context.WithCancel(h.ctx)
 
 	h.mu.Lock()
-	h.sessions[m.Sid] = &sess{term: term, rt: rt, cancel: cancel}
+	h.sessions[m.Sid] = &sess{
+		term: term, rt: rt, cancel: cancel,
+		rvPath: m.Env[envRvSock], rvTokenFile: m.Env[envRvTokenFile],
+		workDir: m.Env["CHEESE_WORK"],
+	}
 	h.mu.Unlock()
 
 	go func() { _ = rt.Run(ctx) }()
@@ -371,8 +406,245 @@ func (h *Host) teardown(s *sess) {
 	if s.client != nil {
 		s.client.Close()
 	}
+	s.rvMu.Lock()
+	if s.rv != nil {
+		s.rv.Close()
+		s.rv = nil
+	}
+	s.rvMu.Unlock()
 	s.cancel()
 	_ = s.term.Close()
+}
+
+// The screen-env keys the launcher and this host agree on. The launcher derives
+// Claude Code's own three variables from them and writes the token file; the
+// host reads the same two to find the socket and its token. Keeping the token
+// in a FILE rather than the env is what makes an adopted screen work: a reused
+// `claude` keeps the token it booted with, so a fresh env value would not match
+// — the file is the single copy both sides read.
+const (
+	envRvSock      = "CHEESE_RV_SOCK"
+	envRvTokenFile = "CHEESE_RV_TOKEN_FILE"
+	promptCall     = "prompt"
+)
+
+// rvDialWindow bounds how long we wait for a booting claude to bind its socket.
+// A cold screen (image pull, node start, TUI mount) has been measured well over
+// a minute; giving up early is what made the old driver abandon a prompt while
+// the session was merely still starting.
+const rvDialWindow = 120 * time.Second
+
+const maxScreenFileBytes = 10 << 20
+
+// putFile stages an uploaded image before its @path is submitted over rendezvous.
+// The acknowledgement is the ordering boundary: the prompt cannot race ahead of
+// the bytes on a remote device.
+func (h *Host) putFile(m link.Msg, s *sess) {
+	reply := func(value any, errStr string) {
+		_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Value: value, Error: errStr})
+	}
+	workDir, err := resolveScreenWorkDir(s.workDir)
+	if err == nil {
+		err = writeScreenFile(workDir, m.Path, m.Data)
+	}
+	if err != nil {
+		reply(nil, fmt.Sprintf("file.put: %v", err))
+		return
+	}
+	reply(map[string]any{"ok": true, "path": m.Path}, "")
+}
+
+func resolveScreenWorkDir(workDir string) (string, error) {
+	if workDir == "" {
+		return "", fmt.Errorf("screen has no work directory")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if workDir == "$HOME" {
+		workDir = home
+	} else if strings.HasPrefix(workDir, "$HOME/") {
+		workDir = filepath.Join(home, strings.TrimPrefix(workDir, "$HOME/"))
+	}
+	if !filepath.IsAbs(workDir) {
+		return "", fmt.Errorf("work directory is not absolute")
+	}
+	return filepath.Clean(workDir), nil
+}
+
+func writeScreenFile(workDir, wirePath, encoded string) error {
+	clean := path.Clean(wirePath)
+	if path.IsAbs(clean) || clean == "." || clean == "uploads" ||
+		!strings.HasPrefix(clean, "uploads/") || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("path must be a file under uploads/")
+	}
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxScreenFileBytes) {
+		return fmt.Errorf("file exceeds %d bytes", maxScreenFileBytes)
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return fmt.Errorf("invalid base64: %w", err)
+	}
+	if len(raw) == 0 || len(raw) > maxScreenFileBytes {
+		return fmt.Errorf("invalid file size %d", len(raw))
+	}
+	root, err := filepath.Abs(workDir)
+	if err != nil {
+		return err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("resolve work directory: %w", err)
+	}
+	target := filepath.Join(root, filepath.FromSlash(clean))
+	parent := filepath.Dir(target)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	realParent, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, realParent)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("upload path escapes screen workspace")
+	}
+	tmp, err := os.CreateTemp(realParent, ".cheese-upload-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	err = tmp.Chmod(0o644)
+	if err == nil {
+		_, err = tmp.Write(raw)
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, filepath.Join(realParent, filepath.Base(target)))
+}
+
+// deliverPrompt hands one turn's prompt to the session over its rendezvous
+// socket and answers the server's rpc.call with the outcome. Failure here is
+// REPORTED, never retried into the void: the whole point of leaving send-keys
+// behind is that a prompt either lands or says why not.
+func (h *Host) deliverPrompt(m link.Msg, s *sess) {
+	text := ""
+	if len(m.Args) > 0 {
+		if str, ok := m.Args[0].(string); ok {
+			text = str
+		}
+	}
+	reply := func(value any, errStr string) {
+		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID, Value: value, Error: errStr})
+	}
+	if text == "" {
+		reply(nil, "rendezvous: empty prompt")
+		return
+	}
+
+	c, err := h.rendezvousClient(s)
+	if err != nil {
+		reply(nil, err.Error())
+		return
+	}
+	err = c.Reply(text)
+	if err == nil {
+		reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous"}, "")
+		return
+	}
+	// One reconnect-and-retry. A session that has been idle can have dropped
+	// our connection (or been re-attached by another client), and that failure
+	// mode is indistinguishable from a dead session until we try again. A
+	// rejected or unwritable frame never reached the queue, so a retry cannot
+	// duplicate a delivered prompt.
+	h.dropRendezvous(s)
+	if c2, err2 := h.rendezvousClient(s); err2 == nil {
+		if err3 := c2.Reply(text); err3 == nil {
+			reply(map[string]any{"ok": true, "ready": true, "transport": "rendezvous", "retried": true}, "")
+			return
+		} else {
+			err = err3
+		}
+	}
+	reply(nil, fmt.Sprintf("rendezvous delivery failed: %v", err))
+}
+
+// rendezvousClient returns a live client for the screen, dialling on first use.
+func (h *Host) rendezvousClient(s *sess) (*rendezvous.Client, error) {
+	s.rvMu.Lock()
+	defer s.rvMu.Unlock()
+	if s.rv != nil && s.rv.Alive() {
+		return s.rv, nil
+	}
+	if s.rv != nil {
+		s.rv.Close()
+		s.rv = nil
+	}
+	token, err := readRvToken(s.rvTokenFile)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(h.ctx, rvDialWindow+15*time.Second)
+	defer cancel()
+	c, err := rendezvous.Dial(ctx, s.rvPath, token, rendezvous.Options{
+		WaitForSocket: rvDialWindow,
+		Logf: func(format string, args ...any) {
+			fmt.Fprintf(os.Stderr, "cheese: rendezvous: "+format+"\n", args...)
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.rv = c
+	return c, nil
+}
+
+func (h *Host) dropRendezvous(s *sess) {
+	s.rvMu.Lock()
+	defer s.rvMu.Unlock()
+	if s.rv != nil {
+		s.rv.Close()
+		s.rv = nil
+	}
+}
+
+// rvTokenWait bounds the wait below. A var, not a const, so a test does not
+// have to spend it.
+var rvTokenWait = 20 * time.Second
+
+// usesRendezvous reports whether this call should bypass the cheeselet. Only
+// `prompt` does, and only when the launcher armed a socket for this screen —
+// every other exposed function still belongs to the script.
+func (s *sess) usesRendezvous(callName string) bool {
+	return callName == promptCall && s.rvPath != ""
+}
+
+// readRvToken reads the launcher-written token. It waits briefly: the file is
+// written on the launcher's way to exec'ing claude, so a prompt that races a
+// cold screen can arrive a moment before it exists.
+func readRvToken(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("rendezvous: no token file configured (%s)", envRvTokenFile)
+	}
+	deadline := time.Now().Add(rvTokenWait)
+	for {
+		b, err := os.ReadFile(path)
+		if err == nil {
+			if tok := strings.TrimSpace(string(b)); tok != "" {
+				return tok, nil
+			}
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("rendezvous: token file %s never appeared", path)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }
 
 // execMaxOut caps each of stdout/stderr so a runaway command can't exhaust memory.

@@ -1,6 +1,6 @@
 ## 状态：已实现，验证通过，递验收卡待 wangchangxin 过一遍
 
-把本地 tmux 后端（`TmuxHooksProvider`）的固定 900 秒静态超时，改成"5 分钟疑似
+把本地 tmux 后端（`TmuxChannel`）的固定 900 秒静态超时，改成"5 分钟疑似
 卡死→轻量探活，3 小时绝对硬顶"两层机制。远程 device 后端明确不动。数值已由
 wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b30a63`。
 
@@ -9,12 +9,12 @@ wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b3
 - `backend/app/core/config.py`：新增 `agent_idle_suspect_s`（300）、
   `agent_turn_hard_ceiling_s`（10800）。`agent_turn_timeout_s`（900）保留，
   收窄为"SDK 后端外层墙 + device 后端自己的固定超时"，tmux 后端不再用它。
-- `backend/app/domain/agent/hooks_substrate.py`：`run_hooks_turn` 拆成两层
+- `backend/app/domain/agent/harness/claude_code/hooks_substrate.py`：`run_hooks_turn` 拆成两层
   （`idle_suspect_s` 疑似卡死 + `hard_ceiling_s` 绝对硬顶），新增 `ActivityTracker`
   （被 hook 到达 / 外部活跃度信号共同触碰）；`HooksTurnProvider` 新增
-  `_start_activity_monitor`/`_confirm_alive` 两个 seam（默认无操作，仿
-  `_send_prompt` 的子类各自实现模式）。
-- `backend/app/domain/agent/tmux_provider.py`：`TmuxHooksProvider` 实现 seam——
+  `start_activity_monitor`/`confirm_alive` 两个 seam（默认无操作，和
+  `send_prompt` 一样由 channel 各自实现）。
+- `backend/app/domain/agent/tmux_provider.py`：`TmuxChannel` 实现 seam——
   后台任务每 12s `capture-pane` 一次、输出哈希变了记一次活跃；疑似卡死时调用
   `pane_dead()` 探活；`activity_status(topic_id)` 给 `cheese status` 读。
 - `backend/app/domain/agent/device_provider.py`：（本增量）seam 用默认空实现，
@@ -74,22 +74,21 @@ wangchangxin 拍板；设计文档在子话题 `e6ddab21-5b1a-4647-861d-a06a67b3
 hook 全静默：PreToolUse 开头响一次、PostToolUse 结束才响、中间零 hook）会在第 15
 分钟被误杀。本次把 device 侧补齐，和本地同一套策略：
 
-- `device_provider.py`：`DeviceProvider` 改成分别接 `idle_suspect_s` /
+- `device_provider.py`：`DeviceChannel` 改成分别接 `idle_suspect_s` /
   `hard_ceiling_s`（默认 300 / 10800，与本地同值），删掉 `turn_timeout_s` 单值
   塌缩与那段 TODO。
-- `device_provider.py` + `device_launch.py`：给 device 一个真的 `_confirm_alive`
+- `device_provider.py` + `device_launch.py`：给 device 一个真的 `confirm_alive`
   ——**进程树探活**。静默期最可靠的存活信号是进程还在不在（transcript mtime /
   statusline / OTel 在静默期都无效；headless 设备也没有现成的屏幕字节流——hub 只
   在有浏览器 viewer 订阅时才回传 `screen.data`）。`DEVICE_ALIVE_PROBE` 经 hub 的
   `exec` 在设备上跑一段 `sh`：按 claude 进程自己的 `CHEESE_TOPIC` 环境变量在
   `/proc` 里精确匹配本话题的 claude 是否还活着，打印 `alive`/`dead`/`unknown`。
   只有明确 `dead` 才判死；`unknown`（非 Linux / environ 不可读）、exec 报错、非零
-  退出一律保守判活，探测抖动绝不误杀。co-located（后端本机）与 remote 都走同一条
-  `exec`，不按 co-location 分叉。
+  退出一律保守判活，探测抖动绝不误杀。所有 Device 都走同一条 `exec`。
 - `compute.py` / `config.py`：device 直接复用 `settings.agent_idle_suspect_s` /
   `settings.agent_turn_hard_ceiling_s`（与本地 tmux 同源，共一套旋钮）；删掉
   `device_turn_timeout_s`。
-- `chat.py`：`is_activity_aware_backend` 从「只认 `TmuxHooksProvider`」放宽成
+- `chat.py`：`is_activity_aware_backend` 从「只认 `TmuxChannel`」放宽成
   「认 `HooksTurnProvider`」——**这条是让内层修复真正生效的关键**：只改内层两层
   不够，`runtime.py` 外层墙不发 `turn_ceiling` 就仍在 900s 无差别杀 device turn。
   现在 device 也发 `turn_ceiling`（= 其 `hard_ceiling_s` 10800），外层墙同样放宽。

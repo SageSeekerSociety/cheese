@@ -25,13 +25,14 @@ def _load():
     return mod
 
 
-def test_api_root_strips_api_prefix(monkeypatch):
+@pytest.mark.parametrize(
+    "base",
+    ("http://host.docker.internal:8099", "https://cheese.example/api"),
+)
+def test_api_root_preserves_the_selected_transport_surface(monkeypatch, base):
     cli = _load()
-    monkeypatch.setattr(cli, "API", "http://host.docker.internal:8099/api")
-    assert cli._api_root() == "http://host.docker.internal:8099"
-    # No /api suffix → returned unchanged.
-    monkeypatch.setattr(cli, "API", "http://localhost:9000")
-    assert cli._api_root() == "http://localhost:9000"
+    monkeypatch.setattr(cli, "API", base)
+    assert cli._api_root() == base
 
 
 def test_api_subcommand_parses_method_and_path(monkeypatch):
@@ -363,6 +364,53 @@ def test_await_report_retries_before_giving_up(monkeypatch, tmp_path):
 # from emptying out again.
 
 
+def test_accept_request_without_a_subject_never_reaches_the_backend(
+    monkeypatch, capsys
+):
+    """The subject is required, and the CLI must refuse BEFORE the POST — a card
+    that is already filed cannot be un-filed, so a warning printed afterwards
+    (which is what this used to do) taught nobody anything."""
+    cli = _load()
+    calls: list[tuple] = []
+    monkeypatch.setattr(cli, "_call", lambda *a, **k: calls.append(a))
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "accept-request", "alice", "最懂"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code != 0
+    assert calls == []
+    assert "--subject" in capsys.readouterr().err
+
+
+def test_accept_request_sends_the_subject_it_was_given(monkeypatch):
+    cli = _load()
+    sent: list[dict] = []
+    monkeypatch.setattr(
+        cli, "_call", lambda m, p, d=None: sent.append({"p": p, "d": d})
+    )
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli.sys,
+        "argv",
+        [
+            "cheese",
+            "accept-request",
+            "alice",
+            "最懂",
+            "--subject",
+            "fix(accept): require a commit subject",
+        ],
+    )
+
+    cli.main()
+
+    [call] = sent
+    assert call["p"] == "/topics/t-1/accept-card"
+    assert call["d"]["change_subject"] == "fix(accept): require a commit subject"
+
+
 def _subparsers(parser):
     """(name, parser) for every subcommand, minus the internal `__`-prefixed ones."""
     import argparse
@@ -520,3 +568,103 @@ def _subparsers_or_empty(parser):
         return _subparsers(parser)
     except AssertionError:
         return []
+
+
+# --- 实况文档的写入版本 ---------------------------------------------------
+#
+# The living doc is replaced whole, so a `doc set` based on a version somebody
+# has already moved past destroys their edit outright. The CLI's job is to make
+# the version a fact about what the agent READ, never something it can state.
+
+
+def _doc_cli(monkeypatch, tmp_path, calls):
+    cli = _load()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(cli, "AUTHOR", "cheese")
+
+    def fake_call(method, path, body=None, **kwargs):
+        calls.append((method, path, body))
+        if method == "GET":
+            return {"data": {"content": "# 现在的文档", "doc_version": 7}}
+        return {"data": {"doc_version": 8}}
+
+    monkeypatch.setattr(cli, "_call", fake_call)
+    return cli
+
+
+def test_a_set_without_a_read_claims_no_version(monkeypatch, tmp_path, capsys):
+    """Never having read the doc is version 0 — which the platform accepts only
+    when there is no doc yet. Writing over a document you have not read is the
+    whole failure, so the CLI must not invent a number that lets it through."""
+    calls: list[tuple] = []
+    cli = _doc_cli(monkeypatch, tmp_path, calls)
+    doc = tmp_path / "d.md"
+    doc.write_text("# 我写的", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+
+    cli.main()
+
+    assert calls[-1][2]["expected_version"] == 0
+
+
+def test_a_set_writes_against_the_version_get_showed(monkeypatch, tmp_path, capsys):
+    """`doc get` is what earns the write: the version it printed is the one the
+    following `doc set` is based on."""
+    calls: list[tuple] = []
+    cli = _doc_cli(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "get"])
+    cli.main()
+    assert "# 现在的文档" in capsys.readouterr().out
+
+    doc = tmp_path / "d.md"
+    doc.write_text("# 现在的文档\n\n加一段", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+    cli.main()
+
+    assert calls[-1][2]["expected_version"] == 7
+
+
+def test_a_refused_set_says_how_to_recover(monkeypatch, tmp_path, capsys):
+    """A rejection has to leave the agent knowing what to do next. Retrying the
+    same file is refused identically, forever — the way out is re-reading."""
+    cli = _load()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli,
+        "_call",
+        lambda *a, **k: {
+            "ok": False,
+            "status": 409,
+            "error": {"data": {"doc_version": 9}},
+        },
+    )
+    doc = tmp_path / "d.md"
+    doc.write_text("# 旧的", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "第 9 版" in err
+    assert "cheese doc get" in err
+
+
+def test_a_won_set_remembers_the_version_it_produced(monkeypatch, tmp_path, capsys):
+    """Two `doc set` calls in one turn is normal. The second is based on what
+    the first produced — asking the agent to re-read its own write would be
+    ceremony, and forgetting would reject it."""
+    calls: list[tuple] = []
+    cli = _doc_cli(monkeypatch, tmp_path, calls)
+    doc = tmp_path / "d.md"
+    doc.write_text("# 一稿", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "get"])
+    cli.main()
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+    cli.main()
+    cli.main()
+
+    assert [c[2]["expected_version"] for c in calls if c[0] == "PUT"] == [7, 8]

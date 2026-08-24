@@ -3,38 +3,44 @@ import type { MemoryEntryOut } from '../api'
 import type { Block, Topic } from '../cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRouter } from 'vue-router'
 import DOMPurify from 'dompurify'
-import { marked } from 'marked'
 
 import { deleteMemory, getProject, getProjectDecisions, listMemory, listTopics } from '../api'
 import DocEditor from '../components/DocEditor.vue'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
-// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集. Shown either as a standalone
-// route or embedded inside the 工作台 (keeping the left rail) — `kind`/`embedded`
-// override the route when embedded.
+import { markdown } from '@/lib/markdown'
+
+// 项目级文档 (spec §7.1): 章程 / 决策记录 / 周报集 / 记忆 — one address each
+// (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
+// is a route parameter, not a route NAME: as three separate named routes this
+// page could be reached two different ways (a sidebar swap and a full-page push)
+// that led to two different places under the same words.
 type Kind = 'charter' | 'decisions' | 'weeklies' | 'memory'
+const KINDS: readonly Kind[] = ['charter', 'decisions', 'weeklies', 'memory']
 const props = defineProps<{
   projectId: string
-  kind?: Kind
-  embedded?: boolean
+  kind?: string
 }>()
-const route = useRoute()
 
 const AUTHOR = myHandle()
+const router = useRouter()
 
-// Which document to show: an explicit prop (embedded) wins over the route name.
-const kind = computed<Kind>(() => {
-  if (props.kind) return props.kind
-  if (route.name === 'project-decisions') return 'decisions'
-  if (route.name === 'project-weeklies') return 'weeklies'
-  return 'charter'
-})
+const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
+
+// 四种文档的切换住在这一页里，不在侧栏——它们是一份文档的四个面，占不起侧栏
+// 四行黄金位。切换仍然是一次 router.push：一 kind 一址的承诺不变，所以每一个
+// tab 都能收藏、能分享、刷新回到同一页。
+function openKind(next: unknown) {
+  const k = String(next) as Kind
+  if (k === kind.value) return
+  void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: k } })
+}
 
 const TITLES: Record<Kind, string> = {
-  charter: '章程 · 项目根文档',
+  charter: '章程',
   decisions: '决策记录',
   weeklies: '周报集',
   memory: '记忆',
@@ -51,12 +57,12 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 
 function renderMarkdown(text: string): string {
-  return DOMPurify.sanitize(marked.parse(text, { async: false }) as string)
+  return DOMPurify.sanitize(markdown.parse(text, { async: false }) as string)
 }
 
 // ---- 章程: the root topic's living doc (改了就等于给芝士下指令). The rich
 // editor (DocEditor) owns loading/saving the doc's markdown via the same
-// getDoc/putDoc API DocPanel uses. Like the workspace DocPanel, it is ALWAYS
+// getDoc/putDoc API PanelDoc uses. Like the workspace PanelDoc, it is ALWAYS
 // editable and autosaves (debounce + ⌘S + blur) — no 编辑 toggle. Here we only
 // mirror the save-status indicator it emits. ----
 const rootTopicId = ref<string | null>(null)
@@ -132,43 +138,22 @@ async function load() {
   }
 }
 
-// 返回工作台: project workspace (defaults to the root topic).
-const workspaceTo = { name: 'workspace-project', params: { projectId: props.projectId } }
-
-// A source-topic link: open the workspace AND pre-select that topic via ?topic=.
-// Without the query, WorkspaceView always falls back to the root topic.
+// A source-topic link: open that topic in the same project frame.
 function topicTo(topicId: string | null | undefined) {
-  if (!topicId) return workspaceTo
-  return {
-    name: 'workspace-project',
-    params: { projectId: props.projectId },
-    query: { topic: topicId },
-  }
+  if (!topicId) return { name: 'workspace-project', params: { projectId: props.projectId } }
+  return { name: 'workspace-topic', params: { projectId: props.projectId, topicId } }
 }
 
-watch(() => [props.projectId, route.name], load)
 onMounted(load)
-// Embedded in the workspace the component persists across 章程/决策/周报/记忆
-// switches — each switch must refetch or the new page shows stale/empty data.
+// The component persists across 章程/决策/周报/记忆 switches (same route record,
+// different param) — each switch must refetch or the new page shows stale data.
 watch([kind, () => props.projectId], load)
 </script>
 
 <template>
   <div class="docs-page fill-height overflow-y-auto">
-    <v-container class="py-6" style="max-width: 920px">
-      <!-- Header (the back link is redundant when embedded — the rail is there) -->
-      <v-btn
-        v-if="!props.embedded"
-        :to="workspaceTo"
-        variant="text"
-        size="small"
-        prepend-icon="mdi-arrow-left"
-        class="mb-3 px-1"
-      >
-        返回工作台
-      </v-btn>
-
-      <div class="mb-6">
+    <v-container class="py-6 page-container">
+      <div class="mb-4">
         <div class="t-eyebrow mb-1">{{ OVERLINES[kind] }}</div>
         <div class="d-flex align-center flex-wrap ga-3">
           <h1 class="t-page-title" style="font-size: 27px">{{ TITLES[kind] }}</h1>
@@ -185,6 +170,16 @@ watch([kind, () => props.projectId], load)
         <div v-if="kind === 'charter'" class="t-meta mt-1">改了就等于给芝士下指令</div>
       </div>
 
+      <v-tabs
+        :model-value="kind"
+        density="compact"
+        color="primary"
+        class="docs-tabs mb-6"
+        @update:model-value="openKind"
+      >
+        <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ TITLES[k] }}</v-tab>
+      </v-tabs>
+
       <div v-if="loading" class="d-flex justify-center py-10">
         <v-progress-circular indeterminate color="primary" />
       </div>
@@ -197,8 +192,8 @@ watch([kind, () => props.projectId], load)
         <template v-if="kind === 'memory'">
           <div v-if="memoryEntries.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
             <v-icon size="28" class="text-disabled mb-2">mdi-brain</v-icon>
-            <div>芝士还没有记下任何事</div>
-            <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里。</div>
+            <div>暂无记忆</div>
+            <div class="text-caption mt-1">对话里说「记住……」，或它自己判断重要时，会写进这里</div>
           </div>
           <v-card v-for="e in memoryEntries" :key="e.id" class="memory-card mb-2" variant="flat">
             <div class="d-flex align-start ga-3 pa-3">
@@ -228,31 +223,34 @@ watch([kind, () => props.projectId], load)
              (drag handle, tables, task lists, code highlighting), persisted via
              the same getDoc/putDoc API. ===== -->
         <template v-else-if="kind === 'charter'">
-          <v-card class="charter-card">
-            <div class="charter-body">
-              <DocEditor
-                v-if="rootTopicId"
-                :topic-id="rootTopicId"
-                :editable="true"
-                placeholder="芝士还没写章程——它会在你定下项目方向后维护这份根文档。直接在这里写就行，会自动保存。"
-                @saving="onCharterSaving"
-                @saved="onCharterSaved"
-                @dirty="onCharterDirty"
-                @error="onCharterError"
-              />
-              <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有根话题，暂时无法编辑章程。</div>
-            </div>
-          </v-card>
+          <!-- 一整篇文档，不是列表里的一个对象 —— 根面是白底之后，把它框进一张
+               白卡片只是给白底加了个轮廓。直接铺在页面上。 -->
+          <div class="charter-body">
+            <DocEditor
+              v-if="rootTopicId"
+              :topic-id="rootTopicId"
+              :editable="true"
+              placeholder="芝士还没写章程——它会在你定下项目方向后维护这份文档。你也可以直接在这里写，内容会自动保存。"
+              @saving="onCharterSaving"
+              @saved="onCharterSaved"
+              @dirty="onCharterDirty"
+              @error="onCharterError"
+            />
+            <div v-else class="text-medium-emphasis text-body-2 py-2">这个项目还没有可编辑的章程文档</div>
+          </div>
         </template>
 
         <!-- ===== 决策记录 ===== -->
         <template v-else-if="kind === 'decisions'">
           <div v-if="decisions.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-            芝士还没记录决策——它在协作中定下关键决策时会记到这里。
+            <div>暂无决策记录</div>
+            <div class="text-caption mt-1">芝士在协作中定下关键决策时会记到这里</div>
           </div>
           <div v-else class="d-flex flex-column ga-3">
+            <!-- 一条决策是列表里真正可拿起的对象（有自己的日期、正文和「来自
+                 话题」入口），所以卡片形态保留。左侧那条 3px 竖条删掉：区块强调
+                 不用左条纹，卡片自己的 --line 描边已经把边界说清楚了。 -->
             <v-card v-for="d in decisions" :key="d.id" class="decision-card">
-              <div class="decision-bar" />
               <div class="pa-4">
                 <div class="d-flex align-center ga-2 mb-2">
                   <v-icon size="17" class="c-faint"> mdi-clipboard-text-clock-outline </v-icon>
@@ -278,22 +276,21 @@ watch([kind, () => props.projectId], load)
         <!-- ===== 周报集 ===== -->
         <template v-else>
           <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
-            周报由芝士定期产出，暂时还没有。
+            <div>暂无周报</div>
+            <div class="text-caption mt-1">周报由芝士定期产出</div>
           </div>
-          <div v-else class="d-flex flex-column ga-3">
-            <router-link v-for="t in weeklies" :key="t.id" class="weekly-link" :to="topicTo(t.id)">
-              <v-card class="weekly-card">
-                <div class="pa-4 d-flex align-center ga-3">
-                  <v-icon size="20" class="c-faint"> mdi-calendar-week-outline </v-icon>
-                  <div class="flex-grow-1" style="min-width: 0">
-                    <div class="t-body text-truncate" style="font-weight: 500; color: var(--ink)">
-                      {{ t.title }}
-                    </div>
-                    <div class="t-meta">{{ fmtDate(t.created_at) }}</div>
-                  </div>
-                  <v-icon size="18" class="c-faint">mdi-chevron-right</v-icon>
+          <!-- 一份周报整卡就是一个链接：没有卡内操作、没有第二层信息，它是导航
+               行不是对象卡。改成带发丝线的行列表，和总览页的成员列表同一套语法。 -->
+          <div v-else class="weekly-list">
+            <router-link v-for="t in weeklies" :key="t.id" class="weekly-row" :to="topicTo(t.id)">
+              <v-icon size="18" class="c-faint">mdi-calendar-week-outline</v-icon>
+              <div class="flex-grow-1" style="min-width: 0">
+                <div class="t-body text-truncate" style="font-weight: 500; color: var(--ink)">
+                  {{ t.title }}
                 </div>
-              </v-card>
+                <div class="t-meta">{{ fmtDate(t.created_at) }}</div>
+              </div>
+              <v-icon size="18" class="c-faint">mdi-chevron-right</v-icon>
             </router-link>
           </div>
         </template>
@@ -303,39 +300,43 @@ watch([kind, () => props.projectId], load)
 </template>
 
 <style scoped>
+/* 内容区是侧栏 (--canvas) 上面那张 surface —— 和话题视图、总览同一层关系。 */
 .docs-page {
-  background: var(--canvas);
-}
-
-/* 章程 card: a clean document sheet. */
-.charter-card {
   background: var(--surface);
 }
-.charter-body {
-  padding: 28px 32px;
+
+/* 四种文档的切换带。它以前是侧栏里四行常驻的一级导航，占着黄金位养的却是四个
+   二级页面；收成这一条 tab 带之后，侧栏只留一行「项目文档」。 */
+.docs-tabs {
+  border-bottom: 1px solid var(--line);
 }
 
-/* 决策记录 cards: quiet left rule (源自原始话题) — neutral, not amber. */
+/* 章程: 页面本身就是那张纸。左右不再补内边距 —— DocEditor 自带 56px 的左侧
+   拖拽手柄槽，再叠一层会把正文推得离页头更远。 */
+.charter-body {
+  padding: 4px 0 40px;
+}
+
+/* 决策记录: 一条决策 = 一个对象，卡片保留（描边来自全局 VCard 默认的
+   flat + border=thin，没有阴影）。 */
 .decision-card {
-  position: relative;
+  /* 正文里的长表格/代码块不许冲出 12px 圆角。 */
   overflow: hidden;
 }
-.decision-bar {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--line-2);
-}
 
-/* 周报集 link cards. */
-.weekly-link {
+/* 周报集: 行列表，靠发丝线分隔。列表不自带顶边 —— 上面 .docs-tabs 的底边线就
+   是它的顶边，再画一条会在 24px 之内出现两条平行的满宽横线。 */
+.weekly-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 8px;
+  border-bottom: 1px solid var(--line);
   text-decoration: none;
   color: inherit;
-}
-.weekly-card {
   transition: background 0.12s ease;
 }
-.weekly-card:hover {
+.weekly-row:hover {
   background: var(--fill);
 }
 
@@ -387,7 +388,7 @@ watch([kind, () => props.projectId], load)
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
 .md-content :deep(pre) {
@@ -406,8 +407,8 @@ watch([kind, () => props.projectId], load)
 
 <style scoped>
 .memory-card {
-  border: 1px solid var(--line-2, #e8e8e8);
-  border-radius: 10px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
 }
 .memory-card__content {
   font-size: 0.9rem;

@@ -21,9 +21,11 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -59,8 +61,10 @@ class AuthorType(enum.StrEnum):
     system = "system"
 
 
-# `meta` key stamped on a human block once an agent turn has actually read it
-# into its prompt (BlockRepository.mark_consumed). Value = that turn's id.
+# `meta` key carried by every new human message/attachment. Its value is null
+# while the input is pending, then the id of the agent turn that actually read
+# it (BlockRepository.mark_consumed). Presence of the null key distinguishes a
+# tracked pending input from a legacy block created before turn accounting.
 #
 # 为什么是运行时事实而不是位置：一轮的 prompt 窗口是在**拿到锁的那一刻**按当时
 # 的 history 算的，而消息是无锁落库的 —— 于是"这条被哪一轮读进去了"根本不可能
@@ -71,10 +75,27 @@ class AuthorType(enum.StrEnum):
 # 查询/索引，而本仓多个 agent 并发改动，一次 alembic 分叉的代价高于一列的收益。
 CONSUMED_TURN_META_KEY = "consumed_turn"
 
+# How many turns have taken this block into a prompt — INCLUDING the ones that
+# died before finishing. `consumed_turn` above is stamped only by a turn that
+# completed, which is deliberate (a dead turn must not eat the message). The
+# cost of that correctness is invisible replay: a turn that keeps failing keeps
+# re-sending the exact same blocks, forever, and from the room it is
+# indistinguishable from "this topic is broken".
+#
+# 两个键分开，不是一个计数器兼职两件事：`consumed_turn` 决定**下一轮带什么**，
+# 这个键只决定**要不要把重放说出来**。合并成一个的话，"说出来"就得改动窗口语义，
+# 而那正是原注释在防的事。
+PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
+
 
 def consumed_turn(block: "Block") -> str | None:
     """Which turn already read this block into a prompt (None = still pending)."""
     return (block.meta or {}).get(CONSUMED_TURN_META_KEY)
+
+
+def prompt_attempts(block: "Block") -> int:
+    """How many turns have put this block into a prompt, finished or not."""
+    return int((block.meta or {}).get(PROMPT_ATTEMPTS_META_KEY) or 0)
 
 
 class Block(UuidPk, Timestamps, Base):
@@ -83,13 +104,32 @@ class Block(UuidPk, Timestamps, Base):
     # question: the timeline pages, and the MAX(created_at) behind a topic's
     # 最后活动时间 — which the sidebar sorts on, so it runs once per listed topic
     # and must not degrade into reading the whole topic's history.
-    __table_args__ = (Index("ix_blocks_topic_id_created_at", "topic_id", "created_at"),)
+    __table_args__ = (
+        Index("ix_blocks_topic_id_created_at", "topic_id", "created_at"),
+        # The same shape one level down: a thread's conversation, oldest-first.
+        # Partial, because most blocks are the room's own line and carry no
+        # task — indexing those NULLs would double the index for no reader.
+        Index(
+            "ix_blocks_task_id_created_at",
+            "task_id",
+            "created_at",
+            postgresql_where=text("task_id IS NOT NULL"),
+        ),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
     topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    # WHICH thread this block is in. NULL = the room's own line; set = the
+    # conversation of that one piece of work. This is the key that makes a task
+    # a thread instead of a room: before it, the only way to give work its own
+    # conversation was to give it its own row in `topics`, because `topic_id`
+    # was the sole grouping key.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
     )
 
     kind: Mapped[BlockKind] = mapped_column(
@@ -127,6 +167,21 @@ class Block(UuidPk, Timestamps, Base):
     # kind=artifact blocks (e.g. text/html, image/svg+xml).
     mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # How many times the living doc has been written (kind=doc only; every other
+    # block sits at 1 and never moves). A writer sends the version it read and
+    # the update is conditional on it, so 芝士 overwriting the whole doc from a
+    # copy it took ten minutes ago is refused instead of erasing what a person
+    # wrote in between — 整块覆盖 is the only way this doc is ever written, which
+    # makes every stale write a total loss.
+    #
+    # A counter rather than a content hash (the version workspace files carry):
+    # this one is said out loud. A person's edit pushes 「文档已更新到第 7 版」
+    # into the running session, and 第 7 版 is a thing 芝士 can compare against
+    # what it holds; a hash is not.
+    doc_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1", default=1
+    )
+
     # The agent turn that produced this block (review R4): groups a turn's blocks
     # for traceability / recovery / the collaboration-trajectory dataset. Null for
     # human-authored or pre-R4 blocks.
@@ -144,6 +199,14 @@ class Block(UuidPk, Timestamps, Base):
     # position becomes a live link to the new topic.
     upgraded_to_topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    )
+    # …and if it was dispatched into a piece of work instead, which is what
+    # upgrading a message inside a room now does. Two columns rather than one
+    # holding either kind of id: both are real foreign keys, and a single
+    # untyped column would be a pointer the database cannot check into a table
+    # it cannot name.
+    upgraded_to_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
     )
 
 

@@ -155,6 +155,39 @@ stopped work.
 To see disk across the CI pool without ssh, run `box-diag.yml`'s `ci-pool` job —
 it prints hostname and disk per machine.
 
+## Logs — reading a container that no longer exists
+
+The dev/prod containers log to **journald**, not to a json-file. The difference
+only matters after a deploy, and then it matters completely: a json-file lives
+in the container's own directory, so `docker compose down` deletes it. Turns die
+*during* deploys, so the failures most worth reading were the ones whose
+evidence the deploy had already removed — that is how 257 turn failures on
+2026-08-18 ended up permanently unclassifiable (#574).
+
+`docker logs` works exactly as before for a *live* container. For one that is
+gone:
+
+```bash
+sudo journalctl -t cheese-backend-1 --since "2 hours ago"   # by container name
+sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
+sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
+```
+
+`sudo` (or membership of `systemd-journal`) is required — an ordinary user sees
+only their own messages, and the command returns empty rather than refusing,
+which reads exactly like "there are no logs".
+
+Retention is journald's default, `SystemMaxUse` = min(10% of the filesystem,
+4 GB). Measured on dev, the backend writes ~61 MB/day, so 4 GB is on the order
+of two months; the journal also gives back space automatically when the disk
+runs low (`SystemKeepFree`), so it cannot be the thing that fills a box.
+
+The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
+covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
+`deploy-docker.sh`, so its logs used to vanish whenever an operator re-ran that
+script — including across the 「container up, pipe dead」 incident (#579), whose
+first-hand account was exactly what nobody could read afterwards.
+
 ## Box ops runbook — changing backend env on a box
 
 The one rule: **containers are only ever (re)created by `deploy/deploy-docker.sh`.**

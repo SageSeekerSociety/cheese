@@ -3,21 +3,23 @@
 
 代码/文件的事用原生工具（Bash/Write/Read）；改平台状态的事用本 CLI。
 环境变量（容器注入）：
-  CHEESE_API     平台 API 基址，如 http://host.docker.internal:8099/api
+  CHEESE_API     平台 API 基址；直连后端用 http://host.docker.internal:8099，
+                 经公共网关用 https://example.com/api
   CHEESE_PROJECT 当前项目 id
   CHEESE_TOPIC   当前话题 id
   CHEESE_AUTHOR  当前作者 handle（默认 cheese）
 
 例:
-  cheese doc set DOC.md            # 把 DOC.md 设为本话题活文档
-  cheese doc get                   # 打印本话题活文档
-  cheese split "数据清洗"           # 拆出子话题
+  cheese doc set DOC.md            # 把 DOC.md 设为本话题实况文档
+  cheese doc get                   # 打印本话题实况文档
+  cheese split "数据清洗"           # 派出一条支线
   cheese decision "用 item-based CF" # 记一条决策
   cheese remember "技术栈=FastAPI"  # 记入项目记忆
   cheese recall "技术选型"          # 按需检索记忆(关键词检索)
   cheese notify --title "看下" --to mentor-1 --level strong --kind decision_request --options "A|B"
   cheese accept-request mentor-1 "中期验收"  # 递验收卡
-  cheese conclude "原型完成,Recall@10=0.18"  # 子话题结论回流
+  cheese conclude "原型完成,Recall@10=0.18"  # 支线结论回流房间
+  cheese tell "数据清洗" "口径改了,按新的来"    # 给正在跑的支线追加要求(会叫醒它)
   cheese milestone "中期汇报" --due 2026-06-20
   cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
@@ -37,7 +39,7 @@ import sys
 import urllib.error
 import urllib.request
 
-API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099/api").rstrip("/")
+API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
@@ -51,8 +53,16 @@ OWNER = os.environ.get("CHEESE_OWNER", "")
 
 
 def _call(
-    method: str, path: str, body: dict | None = None, *, token: str | None = None
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    token: str | None = None,
+    tolerate: tuple[int, ...] = (),
 ) -> dict:
+    """Call the platform. Any HTTP error is fatal, except the statuses in
+    `tolerate` — those come back as ``{"ok": False, "status": ..., "error": ...}``
+    for a caller that has something better to say than the raw response."""
     url = f"{API}{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
@@ -66,12 +76,79 @@ def _call(
         with urllib.request.urlopen(req, timeout=20) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:400]
-        print(f"[cheese] {method} {path} 失败 HTTP {e.code}: {detail}", file=sys.stderr)
+        raw = e.read().decode(errors="replace")
+        if e.code in tolerate:
+            try:
+                payload = json.loads(raw)
+            except ValueError:
+                payload = {}
+            return {"ok": False, "status": e.code, "error": payload.get("error") or {}}
+        print(
+            f"[cheese] {method} {path} 失败 HTTP {e.code}: {raw[:400]}", file=sys.stderr
+        )
         sys.exit(1)
     except Exception as e:  # noqa: BLE001
         print(f"[cheese] {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _doc_version_path(topic: str) -> str:
+    """Where the version `cheese doc get` last showed for this topic is kept.
+
+    The living doc has no partial write: `doc set` replaces the whole thing. So
+    a write has to say which version it is replacing, and that number must be
+    EVIDENCE OF A READ rather than something the caller states. A flag would let
+    you assert a version you only heard about — the platform pushes 「文档已更新
+    到第 7 版」 into a running session — and write ten-minute-old content over it
+    claiming to be based on it, which is the exact overwrite the version exists
+    to stop.
+
+    Lives on the session mount (host-backed, survives a container rebuild) next
+    to the await logs, for the same reason: a rebuild mid-turn must not turn a
+    read the agent really did into a read the CLI has forgotten.
+    """
+    home = os.environ.get("HOME") or "/tmp"
+    session = os.path.join(home, ".claude")
+    base = (
+        os.path.join(session, "cheese-doc")
+        if os.path.isdir(session)
+        else os.path.join(home, ".cheese", "doc")
+    )
+    os.makedirs(base, exist_ok=True)
+    return os.path.join(base, f"{topic}.version")
+
+
+def _remember_doc_version(topic: str, version: int) -> None:
+    try:
+        with open(_doc_version_path(topic), "w", encoding="utf-8") as f:
+            f.write(str(version))
+    except OSError:
+        # Losing the note costs a rejected `doc set` and a re-read, which is the
+        # safe direction. Failing the `doc get` over it is not.
+        pass
+
+
+def _read_doc_version(topic: str) -> int:
+    """The version this CLI last showed the agent. 0 — "I have not read it" —
+    when there is no note, which is also the only version under which `doc set`
+    may CREATE a doc. Not having read a doc that exists is exactly when a write
+    must be refused."""
+    try:
+        with open(_doc_version_path(topic), encoding="utf-8") as f:
+            return int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _port_answers(port: int, timeout: float = 1.0) -> bool:
+    """Is anything listening on this port inside the box? A TCP connect, not an
+    HTTP request: it is what "the platform can reach your server" reduces to, and
+    it stays true for a server that answers HTTP with a 500."""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex(("127.0.0.1", port)) == 0
 
 
 def _need(name: str, value: str) -> str:
@@ -82,9 +159,14 @@ def _need(name: str, value: str) -> str:
 
 
 def _api_root() -> str:
-    """The app root (where /openapi.json lives), i.e. CHEESE_API without the
-    trailing /api mount prefix."""
-    return API[: -len("/api")] if API.endswith("/api") else API
+    """The API surface base exactly as the launcher supplied it.
+
+    A direct backend URL is the app root. A public URL includes the gateway's
+    ``/api`` mount, which nginx strips before forwarding. Removing that suffix
+    here makes device calls to ``/openapi.json`` and ``/sandbox/github-token``
+    miss the gateway and hit the frontend instead.
+    """
+    return API
 
 
 def _raw_request(method: str, path: str, data: str | None) -> None:
@@ -428,20 +510,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     pd = sub.add_parser(
         "doc",
-        help="活文档",
+        help="实况文档",
         description=(
-            "活文档 = 本话题的状态摘要,也是你跨轮的记忆。"
+            "实况文档 = 本话题的状态摘要,也是你跨轮的记忆。"
             "话题标题会被渲染成文档大标题,正文别再用一级标题重复一遍。"
         ),
     )
     pdsub = pd.add_subparsers(dest="doccmd", required=True)
     pdset = pdsub.add_parser(
         "set",
-        help="把文件设为本话题活文档",
+        help="把文件设为本话题实况文档",
         description=(
-            "整块覆盖,没有版本历史,也没有并发控制。人在文档面板上编辑是 2.5 秒"
-            "自动保存的,你 set 上去就把人刚写的东西盖掉了、且捞不回来。"
-            "所以:改之前先 doc get 看一眼,做增量改写,别拿一份旧内容直接覆盖。"
+            "整块覆盖:写的是你这个文件的全文,不是补丁。所以写之前必须先 "
+            "doc get 读一遍——平台按你读到的那一版收这次写入,期间别人改过就"
+            "直接拒了,不会悄悄盖掉。被拒之后重新 doc get、把别人的改动合进你"
+            "的文件、再 set,别原样重试。"
         ),
     )
     pdset.add_argument(
@@ -450,19 +533,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     pdsub.add_parser(
         "get",
-        help="打印本话题活文档",
-        description="打印当前活文档原文。set 之前先跑一次,免得覆盖掉别人的改动。",
+        help="打印本话题实况文档",
+        description=(
+            "打印当前实况文档原文。这一步同时决定了你接下来能写回哪一版:"
+            "没 get 过就 set,平台当你没读过,只有本话题还没有文档时才让你建。"
+        ),
     )
 
     ps = sub.add_parser(
         "split",
-        help="拆出子话题（分身自动开工）",
+        help="派出一条支线（分身自动开工）",
         description=(
-            "拆出一个子话题,平台立刻起一个分身去做它。\n"
+            "在这个房间里派出一条支线,平台立刻起一个分身去做它。\n"
             "\n"
             "分身开工时能看到的只有两样东西,都来自本命令:\n"
             "  1. --brief 的原文(标题为「拆分意图」)\n"
-            "  2. 本话题当前活文档的快照(平台自动附上,不用你复制)\n"
+            "  2. 本话题当前实况文档的快照(平台自动附上,不用你复制)\n"
             "它看不到本话题的对话历史。简报里没写的前提,它就是不知道。\n"
             "\n"
             "分身跑在一个独立沙箱里,工作区是从 main 新建的 jj workspace:\n"
@@ -476,14 +562,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ps.add_argument("title", help="子话题标题,≤12 字最好")
+    ps.add_argument("title", help="这条支线的标题,≤12 字最好")
     ps.add_argument(
         "--brief",
         default=None,
         help=(
             "任务简报,分身的全部起点:要干什么、硬边界(别碰哪些文件/别做哪些事)、"
             "验收标准(做到什么程度算完)、已知但未核实的事实要标出来。"
-            "不用重复父话题活文档(平台会自动附快照)。"
+            "不用重复房间的实况文档(平台会自动附快照)。"
             "不填的话分身只有标题和那份快照,基本等于让它自己猜。"
         ),
     )
@@ -540,18 +626,30 @@ def build_parser() -> argparse.ArgumentParser:
             "\n"
             "只记「跨话题还成立、且从代码/git 历史里读不出来」的东西。"
             "代码结构、改过什么 bug、本轮的临时状态都不要记。"
-            "相对时间要换成绝对日期。"
+            "相对时间要换成绝对日期。\n"
+            "\n"
+            "普通记忆按当轮上下文检索后注入,不一定每轮都在场;--core 的每轮全量注入。"
         ),
     )
     prem.add_argument("fact", help="一条事实,一句话")
+    prem.add_argument(
+        "--core",
+        action="store_true",
+        help=(
+            "记成核心记忆:每轮都在场,不参与相关性筛选。"
+            "只给「你是谁、你的长期规则和目标」这类永远成立的东西用——"
+            "核心记忆的预算很小,多一条就挤掉另一条,写多了等于没有核心记忆。"
+        ),
+    )
 
     prec = sub.add_parser(
         "recall",
         help="按需检索记忆（关键词检索,不是语义检索）",
         description=(
-            "检索项目记忆。开场注入的不是全部——放不下的会被截断,"
-            "而且截断时注入块会明说「另有 N 条更早的记忆没放进来」。所以:"
-            "需要某条的细节、或怀疑有相关旧记忆没出现在开场里时,先 recall 再回答。\n"
+            "检索项目记忆。开场注入的不是全部——核心记忆每轮都在,其余的是按本轮"
+            "上下文挑出来的,挑剩下的注入块会明说「还有 N 条这一轮没注入」。所以:"
+            "话题拐弯了、需要某条的细节、或怀疑有相关旧记忆没出现在开场里时,"
+            "先 recall 再回答。\n"
             "\n"
             "这是**关键词检索**,不是语义检索:你的问题会被拆成关键词,"
             "按命中覆盖度排序。**一次没查到不等于没有这条记忆**——"
@@ -614,18 +712,39 @@ def build_parser() -> argparse.ArgumentParser:
             "配了质量闸门的项目,递卡后平台会自动跑一遍检查,红了卡片会被打回、"
             "根本到不了验收人手上。**递卡前先自己把检查跑绿**,省一个来回。\n"
             "闸门跑在另一个容器里,只和你共享 /work,$HOME 不一样——所以「我这儿是绿的」"
-            "不等于闸门那儿是绿的。"
+            "不等于闸门那儿是绿的。\n"
+            "\n"
+            "**--subject 就是这次改动留在 git 历史里的那一行**,必填。递卡会开 PR,采纳会把\n"
+            "整个分支压成一个提交,标题用的就是它。不给就递不出去——后端会当场打回并告诉你\n"
+            "该怎么写。\n"
+            "\n"
+            "写法(Conventional Commits, 英文祈使句, ≤72 字符, 不加句号):\n"
+            "  cheese accept-request lisi \"最懂这块\" \\\n"
+            "    --subject 'fix(accept): open the PR as the requester, not the bot' \\\n"
+            "    --body 'PRs opened with the App token belong to the bot on GitHub,\n"
+            "so the person whose work it is gets no attribution.'\n"
+            "\n"
+            "--body 写**为什么**,不写做了什么的清单——diff 已经说了做了什么。显而易见的\n"
+            "改动可以不写。别写「跑通了所有测试」这类废话:提交能存在就说明它过了。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     pa.add_argument("reviewer", help="验收人的 handle(用 `cheese members` 查准确值)")
     pa.add_argument("reason", nargs="?", default="", help="为什么找这个人验收")
+    pa.add_argument(
+        "--subject",
+        required=True,
+        help="必填。这次改动的提交标题: `type(scope): description`,英文,≤72 字符",
+    )
+    pa.add_argument(
+        "--body", default=None, help="提交正文: 为什么要这次改动(不明显时才写)"
+    )
 
     pc = sub.add_parser(
         "conclude",
-        help="子话题结论回流父话题",
+        help="支线结论回流它所在的房间",
         description=(
-            "子话题做完了,把结论回流父话题。父话题读到的就只有这段话——"
+            "这条支线做完了,把结论回流到它所在的房间。房间读到的就只有这段话——"
             "写摘要,不写流水账。\n"
             "\n"
             "值钱的三样:做了什么、**查出来但故意没做的(以及为什么)**、"
@@ -633,15 +752,40 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    pc.add_argument("conclusion", help="结论摘要,给父话题看的")
+    pc.add_argument("conclusion", help="结论摘要,给房间看的")
+
+    pt = sub.add_parser(
+        "tell",
+        help="给正在跑的支线(或你所在的房间)传一句话,并叫醒它",
+        description=(
+            "往父子这条边上传一句话,**并且真的叫醒对方**。只有两个方向通:\n"
+            "  房间 → 它派出的支线    支线 → 它所在的房间\n"
+            "没有父子关系的两个话题之间发不通——那等于放弃话题级隔离。\n"
+            "\n"
+            "它解决的是:任务简报是一次性的、写完就改不了。发现简报写错了、"
+            "口径变了、有个前提不成立,用这个追过去,别等对方交完活再返工。\n"
+            "\n"
+            "多快:对方**正在跑一轮**的话,这句话直接插进它那一轮(秒级,像人在旁边\n"
+            "插话);对方闲着就叫醒它开一轮;已经有一轮在排队就搭同一轮——\n"
+            "同一个话题连收多条只处理一轮,不会被反复叫醒。命令的输出会告诉你\n"
+            "走的是哪一种。\n"
+            "长的东西写进实况文档(两边都读得到),这里只发「一条追加要求」。\n"
+            "\n"
+            "对方是谁:地点 id、`<#id>`、或者标题都行(只在你派出的支线+你所在的房间里认)。\n"
+            "回母话题可以直接写 `parent`,不用去查它叫什么: cheese tell parent \"...\""
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    pt.add_argument("target", help="收方: 支线/房间的 id、<#id> 或标题")
+    pt.add_argument("message", help="要说的话")
 
     pcc = sub.add_parser(
         "conclusion",
-        help="结算子话题回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
+        help="结算支线回流上来的结论卡（不结算=默认采信，本轮结束自动生效）",
         description=(
-            "结算子话题回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
+            "结算支线回流上来的结论卡。**不结算也会生效**——本轮结束时还开着的卡"
             "自动采信，另有 30 分钟绝对超时兜底,所以「什么都不做」等于同意。\n"
-            "只有你要改变默认结果时才用它: need-evidence 让子话题补一条证据"
+            "只有你要改变默认结果时才用它: need-evidence 让那条支线补一条证据"
             "(要付一整轮,且每张卡最多打回 1 次), escalate 是要人拍板。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -649,7 +793,7 @@ def build_parser() -> argparse.ArgumentParser:
     pcc.add_argument(
         "action",
         choices=["accept", "need-evidence", "escalate"],
-        help="accept=采信(可不做,默认就会采信) / need-evidence=让子话题补一条证据 / escalate=要人拍板",
+        help="accept=采信(可不做,默认就会采信) / need-evidence=让那条支线补一条证据 / escalate=要人拍板",
     )
     pcc.add_argument("card", help="结论卡 id（消化提示里带着）")
     pcc.add_argument(
@@ -713,10 +857,18 @@ def build_parser() -> argparse.ArgumentParser:
             "  2. 后台跑(nohup ... &)\n"
             "  3. curl localhost:$CHEESE_APP_PORT 验证通了,再 serve\n"
             "\n"
+            "**端口是写死的,没得商量**:平台只把 $CHEESE_APP_PORT 这一个端口发布出去,\n"
+            "容器创建时就定了,事后加不了,也没有「把别的端口转发过去」这种命令。所以\n"
+            "dev server 必须固定在这个端口上——vite 默认端口被占就静默跳到下一个,那个\n"
+            "端口平台永远够不到,你却以为自己照做了:\n"
+            "  vite --base=$CHEESE_APP_BASE --host 0.0.0.0 --strictPort\n"
+            "(uvicorn/next 没有静默跳号的行为,但同样必须 --port $CHEESE_APP_PORT。)\n"
+            "\n"
             "页面经后端反代挂在 $CHEESE_APP_BASE 这个子路径下。会发根绝对资源 URL 的\n"
-            "dev server(vite 的 /@vite/client)要按这个 base 起:\n"
-            "  vite --base=$CHEESE_APP_BASE --host 0.0.0.0\n"
-            "否则用户那边只有一个白框。"
+            "dev server(vite 的 /@vite/client)要按这个 base 起,否则用户那边只有一个白框。\n"
+            "\n"
+            "$CHEESE_APP_PORT 是空的 = 本话题不跑在平台容器里(跑在谁自己的机器上),\n"
+            "运行中的应用到不了预览面板,serve 会直接拒绝——改用 cheese artifact 点名文件。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -763,11 +915,30 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         with open(a.file, encoding="utf-8") as f:
             content = f.read()
-        _call("PUT", f"/topics/{topic}/doc", {"content": content, "author": AUTHOR})
-        print("已更新活文档。")
+        based_on = _read_doc_version(topic)
+        res = _call(
+            "PUT",
+            f"/topics/{topic}/doc",
+            {"content": content, "author": AUTHOR, "expected_version": based_on},
+            tolerate=(409,),
+        )
+        if res.get("ok") is False:
+            current = (res.get("error") or {}).get("data", {}).get("doc_version")
+            print(
+                f"[cheese] 没写进去：文档现在是第 {current} 版，你这份是照第 "
+                f"{based_on} 版改的。先 cheese doc get 重新读一遍，把别人的改动"
+                "合进你的文件，再 cheese doc set。直接重试会原样被拒。",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        _remember_doc_version(topic, (res.get("data") or {}).get("doc_version", 0))
+        print("已更新实况文档。")
     elif a.cmd == "doc" and a.doccmd == "get":
         topic = _need("CHEESE_TOPIC", TOPIC)
         d = _call("GET", f"/topics/{topic}/doc").get("data")
+        # Reading is what earns the right to write: remember the version this
+        # printed, and `doc set` writes against it.
+        _remember_doc_version(topic, (d or {}).get("doc_version", 0))
         print((d or {}).get("content", "") if d else "")
     elif a.cmd == "split":
         topic = _need("CHEESE_TOPIC", TOPIC)
@@ -775,7 +946,7 @@ def main() -> None:
         if a.brief:
             body["brief"] = a.brief
         r = _call("POST", f"/topics/{topic}/split", body)
-        print(f"已拆出子话题：{r['data']['title']}（id={r['data']['id']}），分身已带简报自动开工")
+        print(f"已派出支线：{r['data']['title']}（id={r['data']['id']}），分身已带简报自动开工")
     elif a.cmd == "await":
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":
@@ -793,14 +964,17 @@ def main() -> None:
         # 带上话题：后端据此认出是哪个芝士在记，存进它自己的项目记忆
         # (同一个项目里的两个芝士各记各的，跟人一样)。
         body = {"content": a.fact, "topic": TOPIC}
+        if a.core:
+            body["layer"] = "core"
+        kind = "核心记忆（每轮都在场）" if a.core else "记忆"
         if MEMORY_SCOPE == "personal" and OWNER:
             body["scope"] = "user"
             body["owner"] = OWNER
             _call("POST", f"/projects/{proj}/memory", body)
-            print("已记入个人记忆。")
+            print(f"已记入个人{kind}。")
         else:
             _call("POST", f"/projects/{proj}/memory", body)
-            print("已记入项目记忆。")
+            print(f"已记入项目{kind}。")
     elif a.cmd == "recall":
         proj = _need("CHEESE_PROJECT", PROJECT)
         body = {"query": a.query, "topic": TOPIC}
@@ -838,12 +1012,34 @@ def main() -> None:
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/accept-card",
-              {"reviewer_handle": a.reviewer, "routing_reason": a.reason})
+              {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
+               "change_subject": a.subject, "change_body": a.body})
         print(f"已把验收卡递给 {a.reviewer}。")
     elif a.cmd == "conclude":
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/return-conclusion", {"conclusion": a.conclusion})
         print("已把结论回流父话题。")
+    elif a.cmd == "tell":
+        # URL 里的 topic 是**发方**（per-turn token 按它校验作用域）；收方在 body 里，
+        # 由后端按父子关系校验。
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        data = _call(
+            "POST", f"/topics/{topic}/tell",
+            {"target": a.target, "content": a.message},
+        ).get("data", {})
+        where = data.get("target_title") or data.get("target_topic_id") or a.target
+        print({
+            "injected": f"已插进「{where}」正在跑的那一轮——它现在就看到了。",
+            "woke": f"已传给「{where}」，它被叫醒了，马上开一轮处理。",
+            "merged": (
+                f"已传给「{where}」。它那边已经有一个待跑的轮次，这条搭同一轮"
+                "一起处理（不重复叫醒）。"
+            ),
+            "archived": (
+                f"「{where}」已归档，消息留在那边了，但**没有人被叫醒**"
+                "（归档话题不再跑轮次）。要它动起来先取消归档。"
+            ),
+        }.get(data.get("delivery"), f"已传给「{where}」。"))
     elif a.cmd == "conclusion":
         # 路由挂在父话题下：per-turn token 按 URL 里的 topic 校验作用域，而结算
         # 这一步是父话题在自己那一轮做的，所以 CHEESE_TOPIC 就是收方。
@@ -857,8 +1053,8 @@ def main() -> None:
         _call("POST", f"/topics/{topic}/conclusion-cards/{a.card}/{a.action}", body)
         print(
             {
-                "accept": "已采信该结论，子话题归档。",
-                "need-evidence": "已让子话题补证据（它会被叫醒一轮）。",
+                "accept": "已采信该结论，那条支线收起。",
+                "need-evidence": "已让那条支线补证据（它会被叫醒一轮）。",
                 "escalate": "已升级，等人拍板。",
             }[a.action]
         )
@@ -870,7 +1066,7 @@ def main() -> None:
         _call("POST", f"/projects/{proj}/milestones", body)
         print(f"已钉里程碑：{a.title}")
     elif a.cmd == "gh-token":
-        # Root-mounted like /llm (not under /api): build from the api root.
+        # Same API surface as every other platform endpoint.
         # stdout carries ONLY the token so `GH_TOKEN=$(cheese gh-token)` works;
         # the expiry note goes to stderr.
         req = urllib.request.Request(f"{_api_root()}/sandbox/github-token")
@@ -933,10 +1129,32 @@ def main() -> None:
         print(_format_status(d))
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
-        port = os.environ.get("CHEESE_APP_PORT", "3000")
+        port = os.environ.get("CHEESE_APP_PORT", "")
+        if not port:
+            # No app port in the environment = this runtime is not a platform
+            # container (a topic running on someone's own machine). 运行环境预览
+            # resolves a docker-published port on the backend's host, so there is
+            # nothing for it to reach here — and the panel would show 「应用暂时
+            # 不在线」 forever. The backend refuses this too; failing here just
+            # costs one fewer round trip and says it in the agent's own terms.
+            print("[cheese] 这个运行环境没有可预览的应用端口"
+                  "（CHEESE_APP_PORT 未注入,说明本话题不跑在平台容器里）。\n"
+                  "[cheese] 运行中的应用到不了预览面板。要给人看结果,"
+                  "用 cheese artifact <文件> 点名一个网页/SVG。", file=sys.stderr)
+            sys.exit(2)
+        if not _port_answers(int(port)):
+            # Declaring a preview that cannot render is worse than not declaring
+            # one: 芝士 then tells the user 「预览已就绪」 and the user opens a
+            # white frame. vite in particular hops to the next free port when
+            # this one is taken, so "我明明起了服务" and "端口上没人" coexist.
+            print(f"[cheese] {port} 端口上没有服务在应答,没有设置预览。\n"
+                  f"[cheese] 先把应用起在 0.0.0.0:{port}（只绑 localhost 不行）,"
+                  f"确认 curl localhost:{port} 通了再 serve。\n"
+                  f"[cheese] dev server 要固定端口: vite --strictPort（默认行为是"
+                  f"端口被占就静默跳号,平台够不到跳过去的那个）。", file=sys.stderr)
+            sys.exit(2)
         _call("POST", f"/topics/{topic}/artifact", {"path": a.note, "as": "app"})
-        print(f"已把容器 :{port} 上的应用设为当前预览（{a.note}）。"
-              f"确保它监听 0.0.0.0:{port}，别只绑 localhost。")
+        print(f"已把 :{port} 上的应用设为当前预览（{a.note}）。")
     elif a.cmd == "artifact":
         topic = _need("CHEESE_TOPIC", TOPIC)
         # The platform resolves artifact paths against the worktree ROOT (/work),

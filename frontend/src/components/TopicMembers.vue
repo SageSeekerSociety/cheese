@@ -10,8 +10,12 @@ import { computed, ref, watch } from 'vue'
 
 import { addTopicMember, listTopicMembers, removeTopicMember, updateTopicMemberRole } from '../api'
 
+import TopicAgentPicker from './TopicAgentPicker.vue'
+
 const props = defineProps<{
   topicId: string
+  /** 换 AI 队友要从这个项目的队友里挑，见 TopicAgentPicker。 */
+  projectId: string
   projectMembers: ProjectMemberRow[]
   me: string
 }>()
@@ -164,6 +168,9 @@ async function onSetRole(handle: string, role: string) {
           </span>
           <span v-if="m.agent" class="roster__badge">Agent</span>
 
+          <!-- 芝士那一行：换一个 AI 队友。和换人的角色同一个位置、同一个样子。 -->
+          <TopicAgentPicker v-if="m.agent && canManage" :topic-id="topicId" :project-id="projectId" />
+
           <!-- Owner/admin: change role via a small menu; else a static chip. -->
           <template v-if="canManage && !m.agent">
             <v-menu location="bottom end">
@@ -197,7 +204,9 @@ async function onSetRole(handle: string, role: string) {
               <v-icon size="15">mdi-close</v-icon>
             </button>
           </template>
-          <span v-else class="roster__role">{{ roleLabel(m.role) }}</span>
+          <!-- 芝士不写角色：它在房间里的身份是 Agent 那个标，「成员」对它没有意义，
+               和左边的「换」并排更像是两个能点的东西。 -->
+          <span v-else-if="!m.agent" class="roster__role">{{ roleLabel(m.role) }}</span>
         </li>
       </ul>
 
@@ -209,8 +218,8 @@ async function onSetRole(handle: string, role: string) {
           density="compact"
           variant="outlined"
           hide-details
-          placeholder="加成员…"
-          no-data-text="项目成员都在话题里了"
+          placeholder="添加成员…"
+          no-data-text="项目成员都已在话题中"
           class="roster__select"
         />
         <v-btn
@@ -224,7 +233,7 @@ async function onSetRole(handle: string, role: string) {
           加入
         </v-btn>
       </div>
-      <div v-else class="roster__hint">只有 owner / admin 能改成员</div>
+      <div v-else class="roster__hint">只有拥有者和管理员能修改成员</div>
     </div>
   </v-menu>
 </template>
@@ -248,8 +257,8 @@ async function onSetRole(handle: string, role: string) {
 }
 .members-mini:hover,
 .members-mini--open {
-  background: var(--fill, #f4f5f7);
-  border-color: var(--line-2, #e2e3e6);
+  background: var(--fill);
+  border-color: var(--line-2);
 }
 .members-mini__stack {
   display: inline-flex;
@@ -265,58 +274,64 @@ async function onSetRole(handle: string, role: string) {
   margin-left: -7px;
   font-size: 0.66rem;
   font-weight: 700;
+  /* Theme-invariant pair, kept literal on purpose (same call as the default
+     avatar in LeftAppRail): the slate disc is one value in both themes, so the
+     initial on it must be one value too. */
   color: #fff;
   background: #8a94a3;
-  border: 1.5px solid var(--surface, #fff);
+  border: 1.5px solid var(--surface);
   box-sizing: border-box;
 }
 .members-mini__face:first-child {
   margin-left: 0;
 }
 .members-mini__face--more {
-  background: var(--fill-2, #eeeff1);
-  color: var(--muted, #6a6e76);
+  background: var(--fill-2);
+  color: var(--muted);
   font-size: 0.6rem;
 }
 .members-mini__face--agent {
-  background: var(--accent, #f57f17);
+  /* on-primary, not the inherited #fff: dark lightens the amber to #FFA733,
+     where white ink measures 1.9:1. */
+  color: rgb(var(--v-theme-on-primary));
+  background: var(--accent);
   font-size: 0.6rem;
 }
 .members-mini__count {
   font-size: 0.78rem;
   font-weight: 600;
-  color: var(--muted, #6a6e76);
+  color: var(--muted);
   line-height: 1;
 }
 .members-mini:hover .members-mini__count,
 .members-mini--open .members-mini__count {
-  color: var(--ink, #222);
+  color: var(--ink);
 }
 
 .roster {
   width: 320px;
   max-width: 88vw;
-  background: var(--surface, #fff);
-  border: 1px solid var(--line-2, #e0e0e0);
-  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-2);
 }
 .roster__head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid var(--line-2, #eee);
+  border-bottom: 1px solid var(--line-2);
 }
 .roster__title {
   font-weight: 600;
   font-size: 0.9rem;
-  color: var(--ink, #222);
+  color: var(--ink);
 }
 .roster__count {
   font-size: 0.75rem;
-  color: var(--muted, #999);
+  color: var(--muted);
 }
 .roster__error {
   padding: 8px 14px;
@@ -328,7 +343,7 @@ async function onSetRole(handle: string, role: string) {
 .roster__hint {
   padding: 12px 14px;
   font-size: 0.78rem;
-  color: var(--muted, #999);
+  color: var(--muted);
 }
 .roster__list {
   list-style: none;
@@ -344,7 +359,7 @@ async function onSetRole(handle: string, role: string) {
   padding: 6px 14px;
 }
 .roster__item:hover {
-  background: var(--fill, #f6f7f8);
+  background: var(--fill);
 }
 .roster__avatar {
   display: inline-flex;
@@ -355,12 +370,16 @@ async function onSetRole(handle: string, role: string) {
   border-radius: 8px;
   font-size: 0.72rem;
   font-weight: 700;
-  color: #fff;
+  color: #fff; /* theme-invariant ground, see .members-mini__face */
   background: #8a94a3;
   flex: none;
 }
 .roster__avatar--agent {
-  background: var(--ink, #222);
+  /* --ink inverts with the theme, so the ink on it has to invert too: --surface
+     is #fff in light (unchanged) and #1B1D20 in dark. The inherited #fff would
+     be white-on-near-white there. */
+  color: var(--surface);
+  background: var(--ink);
   font-size: 0.62rem;
 }
 .roster__who {
@@ -372,26 +391,26 @@ async function onSetRole(handle: string, role: string) {
 .roster__name {
   font-size: 0.84rem;
   font-weight: 500;
-  color: var(--ink, #222);
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .roster__handle {
   font-size: 0.72rem;
-  color: var(--muted, #999);
+  color: var(--muted);
 }
 .roster__badge {
   font-size: 0.62rem;
   font-weight: 600;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: rgb(var(--v-theme-primary));
   background: rgba(var(--v-theme-primary), 0.12);
 }
 .roster__role {
   font-size: 0.72rem;
-  color: var(--muted, #888);
+  color: var(--muted);
   flex: none;
 }
 .roster__role--btn {
@@ -399,14 +418,14 @@ async function onSetRole(handle: string, role: string) {
   align-items: center;
   gap: 1px;
   padding: 2px 6px;
-  border: 1px solid var(--line-2, #e0e0e0);
+  border: 1px solid var(--line-2);
   border-radius: 6px;
-  background: var(--surface, #fff);
+  background: var(--surface);
   cursor: pointer;
 }
 .roster__role--btn:hover:not(:disabled) {
-  border-color: var(--line, #ccc);
-  color: var(--ink, #222);
+  border-color: var(--line);
+  color: var(--ink);
 }
 .roster__role--btn:disabled {
   opacity: 0.5;
@@ -415,7 +434,7 @@ async function onSetRole(handle: string, role: string) {
 .roster__remove {
   display: inline-flex;
   align-items: center;
-  color: var(--muted, #aaa);
+  color: var(--muted);
   cursor: pointer;
   flex: none;
 }
@@ -431,7 +450,7 @@ async function onSetRole(handle: string, role: string) {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border-top: 1px solid var(--line-2, #eee);
+  border-top: 1px solid var(--line-2);
 }
 .roster__select {
   flex: 1 1 auto;

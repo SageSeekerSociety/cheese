@@ -13,19 +13,24 @@
 """
 
 import asyncio
-import uuid
 
 import pytest
 
-from app.domain.agent.runtime import InProcessBroker, TurnRunner
+from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from tests.turn_log import a_topic
 
 
 class _Backend:
     """够用的 chat service 替身。`submit` 收的那个对象既产 frame 又落系统事件，
     所以这里也是一个对象扮两个角色（和 test_turn_continuation 的 `_Quiet` 同形）。
 
+    还得带上 `session_factory`：一轮开跑就在库里开一段区间，真的 ChatService
+    带着这个库，替身也就得带。
+
     子类只需要覆写 `frames()`。
     """
+
+    session_factory = None
 
     def __init__(self) -> None:
         self.events: list[str] = []
@@ -80,9 +85,10 @@ class _SpeaksThenHangs(_Backend):
         yield {"type": "done"}  # pragma: no cover
 
 
-async def _error_frame(runner: TurnRunner, backend: _Backend) -> dict:
+async def _error_frame(runner: AgentWorkRunner, backend: _Backend, db_factory) -> dict:
     """跑一轮，返回它最终那条 error frame。"""
-    topic = uuid.uuid4()
+    backend.session_factory = db_factory
+    topic = await a_topic(db_factory)
     async with runner._broker.subscribe(str(topic)) as q:
         runner.submit(backend, topic, author="u", content="hi", summon=True)
         while True:
@@ -92,14 +98,16 @@ async def _error_frame(runner: TurnRunner, backend: _Backend) -> dict:
 
 
 @pytest.mark.anyio
-async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling():
+async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling(
+    db_factory,
+):
     backend = _Mute()
     # 上限 10 秒，保险丝 0.05 秒。保险丝没生效的话这一轮要跑满 10 秒，
     # 下面 2 秒的等待会先超时——「被上限砍」和「被保险丝砍」就是这么分开的。
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
     )
-    frame = await asyncio.wait_for(_error_frame(runner, backend), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, backend, db_factory), 2)
 
     assert "一个字都没输出" in frame["message"]
     # 而且**不能**说「已完成的改动都在」——什么都没跑，那句话是假的。
@@ -109,38 +117,44 @@ async def test_a_turn_that_never_speaks_is_cut_at_the_fuse_not_at_the_ceiling():
 
 
 @pytest.mark.anyio
-async def test_turn_ceiling_alone_does_not_lift_the_fuse():
+async def test_turn_ceiling_alone_does_not_lift_the_fuse(db_factory):
     # 这条是整个改动里最容易写错的一处。`turn_ceiling` 是碰容器之前发的，
     # 让它把 deadline 推到 900 秒，等于把看门狗对真实故障关掉。
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
     )
     frame = await asyncio.wait_for(
-        _error_frame(runner, _MuteButAnnouncesItsCeiling()), 2
+        _error_frame(runner, _MuteButAnnouncesItsCeiling(), db_factory), 2
     )
 
     assert "一个字都没输出" in frame["message"]
 
 
 @pytest.mark.anyio
-async def test_first_output_retires_the_fuse_so_a_slow_turn_runs_its_full_ceiling():
+async def test_first_output_retires_the_fuse_so_a_slow_turn_runs_its_full_ceiling(
+    db_factory,
+):
     # 开过口的 turn 归上限管：保险丝 0.05 秒、上限 0.6 秒，它必须活过前者、
     # 死在后者，报的也得是老那条超时话术。
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=0.6, first_output_timeout_s=0.05
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _SpeaksThenHangs()), 3)
+    frame = await asyncio.wait_for(
+        _error_frame(runner, _SpeaksThenHangs(), db_factory), 3
+    )
 
     assert "超时被中断" in frame["message"]
     assert "一个字都没输出" not in frame["message"]
 
 
 @pytest.mark.anyio
-async def test_the_fuse_can_be_turned_off():
+async def test_the_fuse_can_be_turned_off(db_factory):
     # 0 = 关掉。留这个口子是因为判据是启发式的，真出误杀要能一键回到从前——
     # 关掉之后连话术都必须逐字是旧的那条。
-    runner = TurnRunner(InProcessBroker(), turn_timeout_s=0.3, first_output_timeout_s=0)
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 3)
+    runner = AgentWorkRunner(
+        InProcessBroker(), turn_timeout_s=0.3, first_output_timeout_s=0
+    )
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 3)
 
     assert "超时被中断" in frame["message"]
     assert "一个字都没输出" not in frame["message"]
@@ -154,19 +168,19 @@ async def test_the_fuse_can_be_turned_off():
 
 
 @pytest.mark.anyio
-async def test_known_expired_credential_fast_fails_with_the_true_reason():
+async def test_known_expired_credential_fast_fails_with_the_true_reason(db_factory):
     # first_output_timeout_s is LARGE (30s) but the credential is known-expired, so
     # the credential fuse (0.05s) is what fires — proving the short-circuit is the
     # credential signal, not a small generic fuse. If it did NOT fire, the 30s wall
     # would blow past the 2s wait below.
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(),
         turn_timeout_s=60.0,
         first_output_timeout_s=30.0,
         credential_expiry_of=lambda _topic: 0,  # epoch → long expired
         credential_expired_fuse_s=0.05,
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
 
     # The event tells the truth: an expired subscription credential needing host
     # re-auth — NOT the misleading container/disk/network guesses.
@@ -180,17 +194,17 @@ async def test_known_expired_credential_fast_fails_with_the_true_reason():
 
 
 @pytest.mark.anyio
-async def test_a_live_credential_keeps_the_generic_cold_start_message():
+async def test_a_live_credential_keeps_the_generic_cold_start_message(db_factory):
     # Credential lookup reports a healthy (far-future) expiry → the credential path
     # never engages, and a mute turn falls to the ordinary cold-start message.
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(),
         turn_timeout_s=10.0,
         first_output_timeout_s=0.05,
         credential_expiry_of=lambda _topic: 10**12,  # year 33658 — very much alive
         credential_expired_fuse_s=0.05,
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
 
     assert "一个字都没输出" in frame["message"]
     assert "凭据已过期" not in frame["message"]
@@ -198,13 +212,13 @@ async def test_a_live_credential_keeps_the_generic_cold_start_message():
 
 
 @pytest.mark.anyio
-async def test_no_credential_lookup_leaves_the_fuse_untouched():
+async def test_no_credential_lookup_leaves_the_fuse_untouched(db_factory):
     # The default (no lookup wired) must behave exactly as before: a mute turn is
     # the generic cold-start failure, no credential branch anywhere.
-    runner = TurnRunner(
+    runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=10.0, first_output_timeout_s=0.05
     )
-    frame = await asyncio.wait_for(_error_frame(runner, _Mute()), 2)
+    frame = await asyncio.wait_for(_error_frame(runner, _Mute(), db_factory), 2)
 
     assert "一个字都没输出" in frame["message"]
     assert "凭据已过期" not in frame["message"]

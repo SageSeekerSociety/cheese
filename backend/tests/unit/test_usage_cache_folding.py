@@ -14,7 +14,7 @@ this payload, what does the platform record?
 
 import pytest
 
-from app.domain.agent.hook_events import usage_from_hook
+from app.domain.agent.harness.claude_code.hook_events import usage_from_hook
 from app.domain.usage.tokens import fold_input_tokens, input_output_tokens
 
 # One turn, as each supply describes it. 2.9M cached against 141k fresh is the

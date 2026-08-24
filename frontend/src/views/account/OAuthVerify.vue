@@ -4,9 +4,9 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-link-variant</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: #212121; line-height: 1.2">绑定账户</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">绑定账户</h1>
       </div>
-      <p class="text-body-1" style="color: #757575; line-height: 1.5">请输入密码以绑定您的账户</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">请输入密码以绑定您的账户</p>
     </div>
 
     <!-- 用户信息显示 -->
@@ -53,8 +53,10 @@
 
     <!-- 返回登录链接 -->
     <div class="text-center">
-      <span style="color: #757575">无法验证？</span>
-      <router-link to="/account/signin" class="text-decoration-none" style="color: #ff6b35"> 返回登录页面 </router-link>
+      <span style="color: var(--muted)">无法验证？</span>
+      <router-link to="/account/signin" class="text-decoration-none" style="color: var(--accent-ink)">
+        返回登录页面
+      </router-link>
     </div>
   </div>
 </template>

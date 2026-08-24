@@ -1,4 +1,4 @@
-"""换身体 — when the machine a topic runs on is judged dead, move the topic (#186).
+"""换身体 — when a topic's cloud machine is judged dead, move the topic (#186).
 
 The gap this closes: a turn that dies of a *recognised* platform failure used to be
 the one kind of failure that never came back. Ordinary crashes get an automatic
@@ -13,11 +13,12 @@ The flow, on a host-scoped failure (``PlatformFailure.host_scoped``):
   1. record it against the DEVICE (not the topic) — ``record_host_failure``;
   2. if that was the second consecutive failure of the same kind, the machine is
      quarantined for a cooldown (``device.health``);
-  3. pick another online, non-quarantined machine in the project;
-  4. release the topic's pin **explicitly, with a reason**, and re-pin to it;
-  5. hand the caller a room-visible message and an auto-resume delay.
+  3. if the failed machine is self-hosted, keep its pin and wait for it;
+  4. otherwise, pick another runnable cloud machine in the project;
+  5. release the topic's pin **explicitly, with a reason**, and re-pin to it;
+  6. hand the caller a room-visible message and an auto-resume delay.
 
-Steps 4 and 5 are not decoration. ``bind_topic_device`` is write-once and the
+Steps 5 and 6 are not decoration. ``bind_topic_device`` is write-once and the
 resolver is documented to NEVER fall back to another device, because a topic that
 silently woke up elsewhere with an empty work tree was a real bug that was hard to
 see. Moving a topic is allowed exactly when it is deliberate, reasoned and said out
@@ -32,13 +33,21 @@ drift bug wearing a new hat.
 
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from sqlalchemy import select
 
 from app.domain.agent.platform_failures import PlatformFailure
+from app.domain.agent.platform_notices import (
+    EVENT_HOST_SWAP,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.device.service import DeviceService, device_service_for_session
+from app.domain.device.supply import Supply, has_runnable_transport
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +55,20 @@ logger = logging.getLogger(__name__)
 # short enough that the room does not look abandoned.
 SWAP_RESUME_AFTER_S = 15.0
 SWAP_RESUME_REASON = "已换到另一台机器，接着跑"
+
+
+def _swap_meta(failure, verdict, whose: str, detail: str) -> dict:
+    """换机事件的 `meta`。失败次数和原因是**展开区**的内容，不是那一行。"""
+    return notice(
+        EVENT_HOST_SWAP,
+        severity=SEVERITY_WARN,
+        who=whose,
+        detail=(
+            f"连续 {verdict.consecutive_failures} 轮因「{failure.title}」失败。\n"
+            f"{detail}"
+        ),
+        detail_label="发生了什么",
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +86,7 @@ class SwapOutcome:
     message: str | None = None
     resume_after_s: float | None = None
     resume_reason: str | None = None
+    event_meta: dict | None = None
 
 
 NO_SWAP = SwapOutcome()
@@ -81,6 +105,7 @@ async def swap_topic_device(
     project_id: uuid.UUID | None,
     failure: PlatformFailure,
     is_online: Callable[[str], bool],
+    replace_cloud: Callable[[], Awaitable[None]] | None = None,
 ) -> SwapOutcome:
     """Account for one host-scoped turn failure and, if the machine is now judged
     dead, move the topic to a healthy one. The whole decision, with no session
@@ -94,9 +119,10 @@ async def swap_topic_device(
         # this one. Counting it would quarantine healthy boxes for a registry
         # outage — and quarantine every box, since they all fail the same way.
         return NO_SWAP
-    old_id = await service.topic_device(topic_id)
-    if old_id is None:
+    binding = await service.topic_binding(topic_id)
+    if binding is None:
         return NO_SWAP
+    old_id = binding.device_id
     verdict = await service.record_host_failure(old_id, failure.code)
     if not verdict.quarantined:
         # First strike: stay put. One failure is a hiccup, and moving a topic
@@ -105,12 +131,61 @@ async def swap_topic_device(
 
     old = await service.get_device(old_id)
     old_name = old.name if old is not None else old_id
+    if old is not None and old.supply is Supply.self_hosted:
+        return SwapOutcome(
+            quarantined=True,
+            old_device=old_id,
+            message=f"机器「{old_name}」连续失败，已暂停派活",
+            event_meta=_swap_meta(
+                failure,
+                verdict,
+                WHO_HUMAN,
+                "本话题仍留在这台机器上，平台会等它恢复，不会迁移到别的机器。"
+                "请在机器恢复后再 @芝士。",
+            ),
+        )
+    if old is not None and old.supply is Supply.cloud:
+        if replace_cloud is None:
+            return SwapOutcome(
+                quarantined=True,
+                old_device=old_id,
+                message=f"Cloud 机器「{old_name}」连续失败",
+                event_meta=_swap_meta(
+                    failure, verdict, WHO_HUMAN, "本话题不会借用另一话题的机器。"
+                ),
+            )
+        await replace_cloud()
+        return SwapOutcome(
+            quarantined=True,
+            old_device=old_id,
+            message=f"Cloud 机器「{old_name}」连续失败，正在换一台",
+            # `cloud_provisioning` wins over the swap code: the room's "机器还在
+            # 创建" branch keys on it, and a topic waiting for a replacement is
+            # in exactly that state.
+            event_meta={
+                **_swap_meta(
+                    failure,
+                    verdict,
+                    WHO_PLATFORM,
+                    "正在为本话题创建替代机器，消息会保留，就绪后自动继续。",
+                ),
+                "event_type": "cloud_provisioning",
+                "state": "waiting",
+            },
+        )
     candidates = (
         []
         if project_id is None
-        else await service.healthy_devices_for_project(project_id, is_online)
+        else await service.healthy_cloud_devices_for_project(project_id, is_online)
     )
-    target = next((d for d in candidates if d.device_id != old_id), None)
+    target = next(
+        (
+            device
+            for device in candidates
+            if device.device_id != old_id and has_runnable_transport(binding.visibility)
+        ),
+        None,
+    )
     if target is None:
         # Judged dead with nowhere to go. Say so plainly rather than silently
         # leaving the topic pinned to a machine we just took out of rotation — the
@@ -119,11 +194,13 @@ async def swap_topic_device(
         return SwapOutcome(
             quarantined=True,
             old_device=old_id,
-            message=(
-                f"⚠️ 机器「{old_name}」连续 {verdict.consecutive_failures} 轮"
-                f"因「{failure.title}」失败，已暂停向它派活；"
-                "但当前没有别的可用机器接手，本话题只能等它恢复。"
-                "请稍后再 @芝士，或让管理员加一台机器。"
+            message=f"机器「{old_name}」连续失败，已暂停派活",
+            event_meta=_swap_meta(
+                failure,
+                verdict,
+                WHO_HUMAN,
+                "当前没有别的可用机器接手，本话题只能等它恢复。"
+                "请稍后再 @芝士，或让管理员加一台机器。",
             ),
         )
 
@@ -134,7 +211,9 @@ async def swap_topic_device(
             f"consecutive {failure.code} failures; moving to {target.device_id}"
         ),
     )
-    await service.bind_topic_device(topic_id, target.device_id)
+    await service.bind_topic_device(
+        topic_id, target.device_id, visibility=binding.visibility
+    )
     logger.warning(
         "topic %s moved from device %s to %s after %s",
         topic_id,
@@ -146,12 +225,13 @@ async def swap_topic_device(
         quarantined=True,
         old_device=old_id,
         new_device=target.device_id,
-        message=(
-            f"🔁 机器「{old_name}」连续 {verdict.consecutive_failures} 轮"
-            f"因「{failure.title}」失败，已暂停向它派活；"
-            f"本话题已换到「{target.name}」上继续。"
-            "代码会从 git 恢复，已提交的改动都在；"
-            "上一轮没来得及提交的半成品可能丢失。"
+        message=f"机器「{old_name}」连续失败，已换到「{target.name}」",
+        event_meta=_swap_meta(
+            failure,
+            verdict,
+            WHO_PLATFORM,
+            "已暂停向原机器派活。代码会从 git 恢复，已提交的改动都在；"
+            "上一轮没来得及提交的半成品可能丢失。",
         ),
         resume_after_s=SWAP_RESUME_AFTER_S,
         resume_reason=SWAP_RESUME_REASON,
@@ -165,6 +245,7 @@ async def handle_host_failure(
     session_factory: Callable | None = None,
     is_online: Callable[[str], bool] | None = None,
     project_id: uuid.UUID | None = None,
+    replace_cloud_machine: Callable[..., Awaitable[None]] | None = None,
 ) -> SwapOutcome:
     """``swap_topic_device`` against the real database. Never raises — a failure in
     the failure handler must not replace the error the user needs to see."""
@@ -184,12 +265,21 @@ async def handle_host_failure(
 
         async with factory() as session:
             service = device_service_for_session(session)
+
+            async def replace_cloud() -> None:
+                if replace_cloud_machine is None:
+                    raise RuntimeError("cloud replacement is not wired")
+                await replace_cloud_machine(topic_id, session)
+
             outcome = await swap_topic_device(
                 service,
                 topic_id=topic_id,
                 project_id=project_id or await _project_of_topic(session, topic_id),
                 failure=failure,
                 is_online=online,
+                replace_cloud=(
+                    replace_cloud if replace_cloud_machine is not None else None
+                ),
             )
             await session.commit()
             return outcome

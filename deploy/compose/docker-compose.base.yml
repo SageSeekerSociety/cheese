@@ -21,6 +21,14 @@ services:
     env_file:
       - ${BACKEND_ENV_FILE:-/home/nictheboy/cheese-backend-py/backend/.env}
     environment:
+      # "Started by this compose file" — asserted as a LITERAL, on purpose (#439).
+      # The boot guard that refuses an insecure JWT_SECRET has to know it is on a
+      # deployment, and it cannot learn that from ENVIRONMENT: that variable lives
+      # in the env_file above, alongside JWT_SECRET, so the one failure the guard
+      # exists for (the env file not applying, #342/#356) removes both at once and
+      # the guard waves itself through. Anything interpolated here would inherit
+      # the same weakness, so this must stay a constant with no ${...} in it.
+      - DEPLOYED_VIA_COMPOSE=1
       # Uploads live OUTSIDE any release/image, on a host path bind-mounted below,
       # so deploys never touch them (the 赛题 PDFs on prod).
       - STORAGE_LOCAL_PATH=/data/uploads
@@ -66,8 +74,24 @@ services:
       retries: 5
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      # journald, not json-file. A json-file log lives inside the container's
+      # own directory, so the `down` half of a deploy deletes it — and a deploy
+      # is precisely when turns die. That circularity has a measured cost: on
+      # 2026-08-18, 257 turn failures went unclassified (#574) and their
+      # tracebacks could not be read back, because the deploy that caused them
+      # had removed the only copy. A failure whose evidence is destroyed by its
+      # own trigger cannot be diagnosed at all.
+      #
+      # journald writes to the HOST journal, so the lines outlive the container
+      # that produced them. `docker logs` still works exactly as before; a dead
+      # container is read with `journalctl CONTAINER_NAME=cheese-backend-1`
+      # (needs sudo or membership of systemd-journal).
+      driver: journald
+      options:
+        # Without this, every line is prefixed with the container's short id,
+        # which is different after each deploy and reads as noise. The name is
+        # stable and is what anyone searching already knows.
+        tag: "{{.Name}}"
 
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}}
@@ -116,5 +140,8 @@ services:
       retries: 5
     restart: unless-stopped
     logging:
-      driver: json-file
-      options: { max-size: "10m", max-file: "3" }
+      # Same reason as the backend above: a deploy must not delete the record
+      # of what happened before it.
+      driver: journald
+      options:
+        tag: "{{.Name}}"

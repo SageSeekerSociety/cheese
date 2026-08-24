@@ -10,6 +10,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 
 	ksvc "github.com/kardianos/service"
@@ -98,8 +102,92 @@ func newService(cfgPath string, userService bool) (ksvc.Service, error) {
 	return ksvc.New(&program{cfgPath: cfgPath}, cfg)
 }
 
+// serviceRunsAs is the account the installed unit will run under: the invoking
+// user normally, and SUDO_USER for a system unit installed with sudo (mirroring
+// newService, which sets cfg.UserName the same way).
+func serviceRunsAs() (uid int, name string) {
+	if os.Geteuid() == 0 {
+		if u := os.Getenv("SUDO_USER"); u != "" && u != "root" {
+			if acct, err := user.Lookup(u); err == nil {
+				if id, err := strconv.Atoi(acct.Uid); err == nil {
+					return id, u
+				}
+			}
+		}
+		return 0, "root"
+	}
+	return os.Getuid(), strconv.Itoa(os.Getuid())
+}
+
+// checkSelfUpdatable refuses an install that could never update itself.
+//
+// The connector replaces its own binary by downloading into the SAME directory
+// and renaming over itself — atomically, which is the only safe way to swap a
+// running executable. Both halves need write permission on the *directory*. So
+// installing a service whose ExecStart points into a directory the service's own
+// user cannot write produces a connector that is permanently frozen at this
+// version, and — because a failed update correctly keeps the old binary running
+// — frozen SILENTLY.
+//
+// That is not hypothetical: a device sat on a two-day-old build through a
+// deploy, binary in /usr/local/bin (root-owned) with the unit running as an
+// ordinary user, while every dashboard showed it healthy (#501).
+//
+// Refusing beats warning here. A warning at install time is read once, by
+// someone who is mid-task; the consequence surfaces weeks later as "the rollout
+// didn't take" with nothing pointing back to this moment.
+func checkSelfUpdatable() error {
+	self, err := os.Executable()
+	if err != nil {
+		return nil // cannot judge; never block an install on our own uncertainty
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+	uid, name := serviceRunsAs()
+	return selfUpdatableIn(filepath.Dir(self), uid, name)
+}
+
+// selfUpdatableIn is the judgement, split out so it can be tested against real
+// directories without pretending to be another user or reinstalling a service.
+func selfUpdatableIn(dir string, uid int, name string) error {
+	if uid == 0 {
+		return nil // root can write anywhere; self-update will work
+	}
+	fi, err := os.Stat(dir)
+	if err != nil {
+		return nil // cannot judge
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil // not a POSIX filesystem; leave it alone
+	}
+	mode := fi.Mode().Perm()
+	// Owner-writable for that uid, or world-writable. Group membership is
+	// deliberately NOT consulted: resolving the target user's full group list is
+	// more machinery than this is worth, and being wrong in the permissive
+	// direction here restores exactly the silent failure this exists to prevent.
+	if (int(st.Uid) == uid && mode&0o200 != 0) || mode&0o002 != 0 {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to install: the service would run as %s, which cannot write to %s "+
+			"— so this connector could never update itself, and the failure would be "+
+			"silent (a failed update keeps the old binary running by design).\n"+
+			"Install it under a directory that user owns and register the service from "+
+			"there:\n"+
+			"  curl -fsSL <origin>/connector/install.sh | sh   # → ~/.local/bin/cheesehost\n"+
+			"  ~/.local/bin/cheesehost service install",
+		name, dir)
+}
+
 // Control runs an install/uninstall/start/stop/restart action against the service.
 func Control(cfgPath, action string) error {
+	if action == "install" {
+		if err := checkSelfUpdatable(); err != nil {
+			return err
+		}
+	}
 	s, err := New(cfgPath)
 	if err != nil {
 		return err

@@ -41,6 +41,7 @@ dev = [
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",
     "pytest-rerunfailures>=16.4",
+    "pytest-timeout>=2.4.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.17",
 ]
@@ -50,7 +51,19 @@ line-length = 88
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+# DTZ and A003 are here because a hand-rolled guard was doing half of each job
+# worse. DTZ (flake8-datetimez) catches the half our own rule never covered —
+# `datetime.now()` with no tzinfo at all, as opposed to `.replace(tzinfo=None)`
+# stripping one that was there; both produce the same silent UTC shift against
+# TIMESTAMPTZ columns, and only the second was ever checked. A003 replaces that
+# guard's builtin-shadowing rule outright, and covers every builtin rather than
+# the four someone thought to list. Both were verified to report zero on the
+# tree at the time they were switched on, so neither arrives with a backlog.
+#
+# A001/A002 (variable and argument shadowing) are deliberately NOT selected: 12
+# existing sites, and `id`/`type` as a parameter name is idiomatic enough that
+# the rule would cost more attention than it saves.
+select = ["E", "F", "I", "UP", "B", "DTZ", "A003"]
 # UP042 wants `class X(str, Enum)` → `class X(StrEnum)`. That is NOT behaviour-
 # preserving: `str(member)` returns "X.MEMBER" for (str, Enum) but the raw value
 # for StrEnum, which silently changes serialization/logging output. The existing
@@ -59,6 +72,14 @@ select = ["E", "F", "I", "UP", "B"]
 ignore = ["UP042"]
 
 [tool.ruff.lint.per-file-ignores]
+# A test that pins behaviour to a fixed instant writes `datetime(2026, 1, 1)`,
+# and demanding a tzinfo on each of those 44 sites buys nothing — that value is
+# never compared against a stored one, it IS the expectation. DTZ005 stays on
+# even here: `now()` without a tz is the same latent bug in a test as in app
+# code, since it lands in a TIMESTAMPTZ column and reads back shifted. Three of
+# those were live in the contract data factory when this rule was switched on.
+"tests/**" = ["DTZ001"]
+
 # Alembic migrations are generated/historical and carry long inline seed-data
 # strings; line length there is noise, not a defect.
 "alembic/versions/*" = ["E501"]
@@ -97,6 +118,23 @@ venv = ".venv"
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 testpaths = ["tests"]
+# A wedged test must name itself. Without this, one test that never returns
+# looks exactly like a slow suite: the run produces progress dots, then
+# nothing, and CI kills the job at its own ceiling — so the log ends with a
+# row of dots and no test name anywhere in it. That has now happened three
+# times, and each one cost twenty minutes of the box's single runner to learn
+# nothing at all.
+#
+# 300s is deliberately loose for a first pass. Nobody can currently say how
+# long the slowest honest test in here takes — that is the same blindness this
+# is meant to end — so the number is set where it cannot plausibly fire on a
+# healthy test, and a wedge still names itself with fifteen minutes to spare
+# under the job ceiling. Tighten it once `--durations` has reported a real
+# distribution; a timeout that turns a green suite red teaches nothing.
+#
+# It applies locally too, deliberately: the same silence is just as unreadable
+# on a laptop, and pytest-timeout stands down on its own under a debugger.
+timeout = 300
 
 [tool.uv.workspace]
 members = [

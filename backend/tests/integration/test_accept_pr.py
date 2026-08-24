@@ -25,39 +25,41 @@ from app.core.errors import ValidationError
 from app.domain.project.repositories import ProjectGitInstallationRepository
 from app.domain.review import github_pr
 from app.domain.workspace import service as ws
-from tests.conftest import wait_turns_idle
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
 
 
 def _make_project(client) -> str:
-    r = client.post("/api/projects", json={"name": "P"})
+    r = client.post("/projects", json={"name": "P"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_topic(client, project_id: str) -> str:
-    r = client.post(
-        "/api/topics", json={"project_id": project_id, "title": "做一个东西"}
-    )
+    r = client.post("/topics", json={"project_id": project_id, "title": "做一个东西"})
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
     r = client.post(
-        f"/api/topics/{topic_id}/accept-card",
-        json={"reviewer_handle": reviewer, "routing_reason": "最懂"},
+        f"/topics/{topic_id}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": reviewer,
+            "routing_reason": "最懂",
+        },
     )
     assert r.status_code == 200
     return r.json()["data"]["id"]
 
 
 def _topic(client, topic_id: str) -> dict:
-    return client.get(f"/api/topics/{topic_id}").json()["data"]
+    return client.get(f"/topics/{topic_id}").json()["data"]
 
 
 def _cards_for_topic(client, topic_id: str) -> list[dict]:
-    return client.get(f"/api/topics/{topic_id}/accept-card").json()["data"]["data"]
+    return client.get(f"/topics/{topic_id}/accept-card").json()["data"]["data"]
 
 
 def _deployed_job(name: str = "deploy") -> github_pr.WorkflowJob:
@@ -114,6 +116,18 @@ class FakeGitHubPrClient:
         self.workflow_runs: list[github_pr.WorkflowRun] = []
         self.compare_status_by_pair: dict[tuple[str, str], str] = {}
         self.compare_status_calls: list[tuple[str, str]] = []
+        # Tier-2 (#468): per-sha check-run NAME sets, and update-branch capture.
+        self.check_names_by_sha: dict[str, set[str]] = {}
+        self.update_branch_calls: list[int] = []
+        self.update_branch_result: bool = True
+        # Which credential each Update-branch was made with. It matters on the
+        # App lane the same way `check_state_tokens` does, in the opposite
+        # direction: this call PUSHES a merge of main onto the PR branch, so the
+        # read mint answers 403 and the poller retries forever.
+        self.update_branch_tokens: list[str] = []
+        # A GitHub failure to raise out of `check_state`, for the "the poll
+        # cannot read GitHub at all" case.
+        self.check_state_error: Exception | None = None
         # run id → 那次运行的 job 列表。默认（未登记的 run）给一个真的部署过的
         # job，因为绝大多数测试关心的不是这一层；「跳过了部署」和「挂在哪个
         # job 上」的用例自己登记。
@@ -123,6 +137,10 @@ class FakeGitHubPrClient:
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
         self.head_sha_calls: list[int] = []
+        # Which credential each check-runs read was made with. It matters on
+        # the App lane: the write mint carries no `checks` permission, so a
+        # read made with it is a 403 that the poller retries forever.
+        self.check_state_tokens: list[str] = []
 
     async def open_pull_request(
         self, *, owner, repo, head, base, title, body, token
@@ -167,11 +185,31 @@ class FakeGitHubPrClient:
         self.status_calls.append(number)
         return github_pr.PullRequestStatus(
             head_sha=pr["head_sha"],
+            # The branch the PR is actually open on. Fed back to the poller so
+            # a re-push goes to THIS PR's branch instead of one derived from
+            # the topic id — the two lanes name it differently.
+            head_ref=pr["head"],
             state=pr["state"],
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
             merged_at=pr["merged_at"],
         )
+
+    def seed_pr(self, number: int, *, head: str, base: str = "main") -> str:
+        """Register a PR this fake did not open itself — the App lane opens its
+        PR through a different client (`GitHubPRClient.open_pr`), so the poller
+        side has to be told the PR exists. Returns its head sha."""
+        head_sha = f"sha-{head}-1"
+        self.prs[number] = {
+            "head": head,
+            "base": base,
+            "head_sha": head_sha,
+            "state": "open",
+            "merged": False,
+            "merge_commit_sha": None,
+            "merged_at": None,
+        }
+        return head_sha
 
     def merge_externally(
         self,
@@ -201,6 +239,9 @@ class FakeGitHubPrClient:
         return new_sha
 
     async def check_state(self, *, owner, repo, ref, token) -> tuple[str, str]:
+        self.check_state_tokens.append(token)
+        if self.check_state_error is not None:
+            raise self.check_state_error
         return self.check_state_by_sha.get(ref, ("pending", "还没跑"))
 
     async def compare_files(
@@ -217,6 +258,7 @@ class FakeGitHubPrClient:
                 "number": number,
                 "commit_title": commit_title,
                 "commit_message": commit_message,
+                "token": token,
             }
         )
         blocked = self.merge_blocked_by_number.get(number)
@@ -239,6 +281,25 @@ class FakeGitHubPrClient:
     async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
+
+    async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
+        # Default: everything required is present — existing tests exercise the
+        # green/red/pending states, not the tier-2 absence valve (#468).
+        if ref in self.check_names_by_sha:
+            return set(self.check_names_by_sha[ref])
+        return {"test", "guards", "lint", "e2e"}
+
+    async def update_branch(self, *, owner, repo, number, token) -> bool:
+        self.update_branch_calls.append(number)
+        self.update_branch_tokens.append(token)
+        if self.update_branch_result:
+            # GitHub's Update branch MERGES base into head, so it creates a
+            # commit and the PR's head moves. Modelling that is what makes the
+            # rebase cap observable at all — see
+            # test_accept_app_waits_for_ci.test_rebasing_stops_after_three_tries.
+            pr = self.prs[number]
+            pr["head_sha"] = f"{pr['head_sha']}-rebased"
+        return self.update_branch_result
 
     async def workflow_run_jobs(
         self, *, owner, repo, run_id, token
@@ -312,10 +373,10 @@ def _reset_client():
 def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
     """The REAL current head of a topic's local git branch — used by the
     repush tests below to prove the platform actually reads real git state
-    (via the same public ensure_repo/branch_for_topic helpers production code
+    (via the same public ensure_repo/branch_for_place helpers production code
     uses), not a value we made up in the test."""
     repo_path = ws.ensure_repo(project_id)
-    branch = ws.branch_for_topic(topic_id)
+    branch = ws.branch_for_place(topic_id)
     return subprocess.run(
         ["git", "-C", str(repo_path), "rev-parse", branch],
         capture_output=True,
@@ -325,7 +386,7 @@ def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
 
 
 def _poll(client) -> dict:
-    r = client.post("/api/admin/scheduler/poll-open-prs")
+    r = client.post("/admin/scheduler/poll-open-prs")
     assert r.status_code == 200
     return r.json()["data"]
 
@@ -338,7 +399,7 @@ def test_accept_with_token_opens_pr_topic_stays_active(client, monkeypatch):
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -382,7 +443,7 @@ def test_accept_pr_open_failure_degrades_with_github_call_failed_reason(
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -405,7 +466,7 @@ def test_poll_ci_pending_no_change(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -441,7 +502,7 @@ def test_poll_token_gone_pauses_with_visible_reason(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -472,7 +533,7 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -490,25 +551,33 @@ def test_poll_ci_green_merges_and_that_finishes_the_accept(client, monkeypatch):
         # stranding the card forever.
         assert card["status"] == "accepted"
         assert card["pr_merged_at"] is not None
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
         assert fake.merge_calls[0]["number"] == number
         # Trailers ride the squash commit's BODY (2026-08-09 设计要点5)...
         assert "Reviewed-by: alice" in fake.merge_calls[0]["commit_message"]
         # ...and its title carries "(#N)", which GitHub only auto-appends to
         # the default title — an explicit commit_title replaces that default.
-        assert fake.merge_calls[0]["commit_title"] == f"采纳 做一个东西 (#{number})"
+        # The subject is the card's own (递卡必带 --subject, review/services.py);
+        # the `(#N)` is what this assertion is really about.
+        assert (
+            fake.merge_calls[0]["commit_title"]
+            == f"chore(test): file an accept card (#{number})"
+        )
     finally:
         _reset_client()
 
 
-def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
+def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_hooks):
     fake = _pr_ready(client, monkeypatch)
     try:
         pid = _make_project(client)
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -517,14 +586,14 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         fake.check_state_by_sha[head_sha] = ("failure", "pytest: 3 failed")
 
         _poll(client)
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        wait_work_idle()
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         # 平台提示统一契约: 房间里是一行 + 折叠的 `meta.detail`（`room_text` 把两半
         # 都算上），而**行动指引整段只进芝士的 prompt**，房间里根本不显示 —— 所以
         # 下面这四条断言的对象是 prompt，不是块。
         assert "pytest: 3 failed" in contents
-        prompt = stub_agent.last_prompt or ""
+        prompt = stub_hooks.last_prompt or ""
         # 2026-08-09 fix: 芝士's sandbox can't push to GitHub — the nudge must
         # not tell it to "推送新 commit", or it goes chasing an impossible
         # instruction (see docs/topics for the incident this caused).
@@ -540,8 +609,8 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
 
         # Polling again with the SAME failing commit must not spam a second nudge.
         _poll(client)
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        wait_work_idle()
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert contents.count("pytest: 3 failed") == nudge_count
 
@@ -554,8 +623,8 @@ def test_poll_ci_failure_nudges_cheese_once(client, monkeypatch, stub_agent):
         new_sha = fake.push_new_commit(number)
         fake.check_state_by_sha[new_sha] = ("failure", "pytest: 1 failed now")
         _poll(client)
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        wait_work_idle()
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "pytest: 1 failed now" in contents
     finally:
@@ -568,7 +637,7 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
     branch (the platform's own `push_topic_branch_for_github_pr` was only
     ever called once, at PR-open time). This exercises the REAL local git
     plumbing that now detects and re-pushes it: `ensure_repo`/
-    `branch_for_topic`/`snapshot_worktree` run for real against a real
+    `branch_for_place`/`snapshot_worktree` run for real against a real
     jj-colocated repo. Only the actual network hop to github.com is faked
     (the sandbox has no route there — see docs/topics for that constraint);
     the fake still computes the pushed head_sha via a real `git rev-parse`,
@@ -601,7 +670,7 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
 
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -671,7 +740,7 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
 
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -776,7 +845,7 @@ def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)  # born pending, no App PR recorded yet
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -790,7 +859,10 @@ def test_app_pr_mechanism_suppresses_the_personal_token_pr_on_accept(
         # (noop on an empty topic) IS the accept, labelled as such.
         assert card["status"] == "accepted"
         assert "本项目未接 GitHub" in card["note"]
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
     finally:
         _reset_client()
 
@@ -862,7 +934,8 @@ def test_repush_skips_a_doomed_non_fast_forward_and_says_so(client, monkeypatch)
         card = _cards_for_topic(client, tid)[0]
         assert pushes == []  # the doomed push was never attempted
         assert card["status"] == "pr_open"
-        assert card["note"].startswith("🌿 本地分支与 PR 分支已分叉")
+        assert card["note_level"] == "error"
+        assert card["note"].startswith("本地分支与 PR 分支已分叉")
         assert _topic(client, tid)["status"] == "active"
 
         # 60s polling: no spam, still no push on the next tick.
@@ -920,7 +993,7 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     cid = _make_card(client, tid)
 
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -928,7 +1001,10 @@ def test_accept_without_token_or_repo_degrades_to_direct_merge(client):
     card = r.json()["data"]
     assert card["status"] == "accepted"
     assert card["pr_number"] is None
-    assert _topic(client, tid)["status"] == "archived"
+    delivered = _topic(client, tid)
+    # 交付完成 ≠ 话题结束 (#442 decision 1).
+    assert delivered["status"] == "active"
+    assert delivered["accepted_at"] is not None
     # 降级原因可见性: WHY it skipped the PR path must be legible on the card,
     # not indistinguishable from "never eligible in the first place" — and
     # must never contain a token or ciphertext.
@@ -1008,7 +1084,7 @@ def test_accept_claims_the_pr_that_already_exists_on_the_branch(client, monkeypa
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -1067,7 +1143,7 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
         cid = _make_card(client, tid)
 
         r = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         )
@@ -1078,7 +1154,10 @@ def test_accept_still_degrades_on_a_422_that_is_not_already_exists(client, monke
         assert card["pr_number"] is None
         assert "未走 PR 采纳" in card["note"]
         assert "Base ref must be a branch" in card["note"]
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
         assert seen == ["POST"]
     finally:
         _reset_client()
@@ -1091,7 +1170,7 @@ def test_poll_open_prs_ignores_non_pr_open_cards(client, monkeypatch):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     )
@@ -1110,7 +1189,7 @@ def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1139,7 +1218,7 @@ def test_poll_merge_refused_puts_the_reason_on_the_card(client, monkeypatch):
 
 
 def test_poll_merge_refusal_summons_cheese_once_per_reason(
-    client, monkeypatch, stub_agent
+    client, monkeypatch, stub_hooks
 ):
     """A note nobody is looking at is not a notification (2026-08-11): a PR the
     platform can't merge — typically merge conflicts, which 芝士 can fix in its
@@ -1152,7 +1231,7 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1163,29 +1242,29 @@ def test_poll_merge_refusal_summons_cheese_once_per_reason(
         )
 
         _poll(client)
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        wait_work_idle()
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "Pull Request has merge conflicts" in contents
         # Must be actionable from inside the sandbox: 芝士 has no GitHub
         # credentials, so the same promise the CI nudge makes has to hold here.
         # 平台提示统一契约: 这句是**给芝士的指令**，只进 prompt，房间里不显示。
-        assert "平台会自动把新提交同步到这个 PR" in (stub_agent.last_prompt or "")
+        assert "平台会自动把新提交同步到这个 PR" in (stub_hooks.last_prompt or "")
         first_count = contents.count("Pull Request has merge conflicts")
         assert first_count == 1
 
         # Same refusal next tick → no second summon.
         _poll(client)
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        wait_work_idle()
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert contents.count("Pull Request has merge conflicts") == first_count
 
         # A DIFFERENT refusal is new information — summon again.
         fake.merge_blocked_by_number[number] = "HTTP 409：Head branch was modified"
         _poll(client)
-        wait_turns_idle()
-        blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+        wait_work_idle()
+        blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
         contents = room_text(blocks)
         assert "Head branch was modified" in contents
 
@@ -1204,7 +1283,7 @@ def test_poll_merge_refusal_reason_updates_when_it_changes(client, monkeypatch):
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1237,7 +1316,7 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
         tid = _make_topic(client, pid)
         cid = _make_card(client, tid)
         accepted = client.post(
-            f"/api/accept-cards/{cid}/accept",
+            f"/accept-cards/{cid}/accept",
             json={"decided_by": "alice"},
             headers=session_auth_headers("alice"),
         ).json()["data"]
@@ -1245,15 +1324,17 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
         head_sha = fake.prs[number]["head_sha"]
         fake.check_state_by_sha[head_sha] = ("failure", "lint 挂了")
         _poll(client)
-        assert _cards_for_topic(client, tid)[0]["note"].startswith("⚠️")
+        assert _cards_for_topic(client, tid)[0]["note_level"] == "error"
 
         fake.check_state_by_sha[head_sha] = ("success", "全部通过")
         fake.merge_blocked_by_number[number] = "HTTP 405：merge method disabled"
         _poll(client)
 
-        note = _cards_for_topic(client, tid)[0]["note"]
-        assert "405" in note
-        assert not note.startswith("⚠️")
+        # 合并被拒是新的停因，它要顶掉旧的检查失败，而不是排在它后面。
+        refused = _cards_for_topic(client, tid)[0]
+        assert "405" in refused["note"]
+        assert "拒绝合并" in refused["note"]
+        assert "lint 挂了" not in refused["note"]
     finally:
         _reset_client()
 
@@ -1261,7 +1342,7 @@ def test_poll_merge_refusal_replaces_a_stale_ci_failure_note(client, monkeypatch
 # --- PR 被外部（人工）处理掉的情况 (2026-08-10) ------------------------------
 #
 # 病灶：a PR merged by hand on GitHub was invisible to the poller, so its card
-# sat at `pr_open` forever and the topic never archived (cards 1c7016e3 / #210
+# sat at `pr_open` forever and never reached accepted (cards 1c7016e3 / #210
 # and ceb1b9b9 / #211). These drive the poller through the same public
 # endpoint every other test here uses; nothing inspects source.
 
@@ -1273,7 +1354,7 @@ def _accept_to_pr_open(client, monkeypatch) -> tuple[FakeGitHubPrClient, str, in
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     accepted = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": "alice"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
@@ -1303,7 +1384,10 @@ def test_poll_externally_merged_pr_finishes_the_accept(client, monkeypatch):
         # and since #206 that fact is the whole of what the accept waits for.
         assert card["status"] == "accepted"
         assert card["pr_merged_at"] is not None
-        assert _topic(client, tid)["status"] == "archived"
+        delivered = _topic(client, tid)
+        # 交付完成 ≠ 话题结束 (#442 decision 1).
+        assert delivered["status"] == "active"
+        assert delivered["accepted_at"] is not None
         # The wording still has to say who merged it — an accept that reads as
         # if the platform did it hides that nobody here ran the checks.
         assert "人工合并" in card["note"]
@@ -1316,7 +1400,7 @@ def test_poll_externally_merged_pr_finishes_the_accept(client, monkeypatch):
         card = _cards_for_topic(client, tid)[0]
         assert card["status"] == "accepted"
         topic = _topic(client, tid)
-        assert topic["status"] == "archived"
+        assert topic["status"] == "active"
         assert topic["accepted_by"] == "alice"
     finally:
         _reset_client()

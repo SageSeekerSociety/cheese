@@ -3,8 +3,8 @@
 The property under test is stated as an invariant rather than a happy path,
 because the bug it replaces was precisely a path nobody enumerated:
 
-    Once 芝士 has announced its session id, ``topic.session_id`` is committed —
-    no matter how the turn ends.
+    Once 芝士 has announced its session id, its ``agent_sessions`` row is
+    committed — no matter how the turn ends.
 
 Before the fix the pointer was written at turn end (``_converse_impl``'s tx2) or
 by the failure handlers, so it held for a clean finish and for exceptions that
@@ -28,6 +28,7 @@ gets to run, and only an actual signal to an actual process proves that.
 """
 
 import asyncio
+import contextlib
 import os
 import signal
 import subprocess
@@ -37,62 +38,66 @@ import time
 import uuid
 
 import pytest
-from sqlalchemy import select
 
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import (
-    AgentResult,
-    AgentService,
-    AgentSessionInfo,
-)
-from app.domain.topic.models import Topic
+from app.domain.agent_session.services import AgentSessionService
+from app.domain.identity.handles import CHEESE_HANDLE
+from tests.conftest import StubChannel, drain_hooks, stub_compute
 
 SESSION_ID = "sess-exit-path"
 
 
-class _Agent(AgentService):
-    """Announces its session id (as the hooks backends do on SessionStart) and
-    then ends the turn the way this test wants it to end."""
+class _Screen(StubChannel):
+    """Announces its session id on SessionStart and then ends the turn the way
+    this test wants it to end."""
 
     def __init__(self, *, mode: str) -> None:
-        super().__init__(model="stub")
+        # Squeezed watchdog: the `provider_error` case is a session that goes
+        # quiet, and that is what the watchdog is for.
+        super().__init__(idle_suspect_s=0.2, hard_ceiling_s=0.4, delivery_timeout_s=0.2)
         self._mode = mode
 
-    async def stream_reply(self, **_):
-        yield AgentSessionInfo(session_id=SESSION_ID)
+    async def send_prompt(
+        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+    ) -> bool:
+        del images
+        self.last_prompt = prompt
+        if self.on_start is not None:
+            self.on_start()
+        self.starts(screen, session_id=SESSION_ID)
         if self._mode == "raise":
-            raise RuntimeError("provider exploded mid-stream")
-        if self._mode == "hang":
-            await asyncio.sleep(3600)  # cancelled from outside
-        yield AgentResult(
-            text="done",
-            session_id=SESSION_ID,
-            is_error=(self._mode == "provider_error"),
-        )
+            raise RuntimeError("provider exploded mid-write")
+        if self._mode != "provider_error":
+            asyncio.get_running_loop().call_soon(self.stops, screen, "done", SESSION_ID)
+        # `provider_error` / `hang`: nothing more is ever said.
+        return True
 
 
 def _seed_topic(client) -> str:
-    pid = client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
-    return client.post(
-        "/api/topics", json={"project_id": pid, "title": "退出路径"}
-    ).json()["data"]["id"]
+    pid = client.post("/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/topics", json={"project_id": pid, "title": "退出路径"}).json()[
+        "data"
+    ]["id"]
 
 
 async def _stored_session_id(factory, topic_id: str) -> str | None:
     """Read the pointer back through a FRESH session — a value that is only
-    visible inside the writer's own transaction is not persisted."""
+    visible inside the writer's own transaction is not persisted.
+
+    A room's conversation belongs to the agent having it; these topics are all
+    served by the project's implicit 芝士, so that is the key to read under."""
     async with factory() as s:
-        topic = (
-            await s.execute(select(Topic).where(Topic.id == uuid.UUID(topic_id)))
-        ).scalar_one()
-        return topic.session_id
+        return await AgentSessionService(s).resume_token(
+            uuid.UUID(topic_id), CHEESE_HANDLE
+        )
 
 
 def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
     """Drive one turn to completion (or to its failure) on the client DB."""
+    screen = _Screen(mode=mode)
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=_Agent(mode=mode),
+        compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -101,18 +106,27 @@ def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
         agen = chat.converse(
             topic_id=uuid.UUID(topic_id), author="u", content="做事", summon=True
         )
+        reached = asyncio.Event()
+        screen.on_start = reached.set
+        task = asyncio.ensure_future(_drain(agen))
         if mode == "hang":
-            # What the wall-clock ceiling does to a wedged turn: cancel it.
-            task = asyncio.ensure_future(_drain(agen))
-            await asyncio.sleep(0.5)
+            # The caller goes away while the session keeps working — a
+            # cancelled request, a closed socket, a killed wrapper. The turn is
+            # not the caller's to end, so this must change nothing. Cancelled
+            # only once the session HAS it: cancelling earlier would be testing
+            # that a turn which never started announces nothing.
+            await asyncio.wait_for(reached.wait(), 5)
             task.cancel()
-            with pytest.raises(asyncio.CancelledError):
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            return
-        try:
-            await _drain(agen)
-        except RuntimeError:
-            pass  # case 3 — the turn dies, the assertion is about the pointer
+        else:
+            with contextlib.suppress(RuntimeError):
+                await task  # 异常中断 — the assertion is about the pointer
+        # The pointer is written by the SUBSCRIPTION, on its own task: the call
+        # that started the turn returns long before. Waiting for the session's
+        # hooks to be consumed is what makes this a test of the write and not
+        # of the ordering.
+        await drain_hooks(screen, uuid.UUID(topic_id))
 
     async def _drain(agen) -> None:
         async for _ in agen:
@@ -152,36 +166,47 @@ _CHILD = textwrap.dedent(
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from sqlalchemy.pool import NullPool
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.service import AgentService, AgentSessionInfo
+    from app.domain.agent.compute import ComputePool
+    from tests.conftest import StubChannel
 
     DSN, TOPIC, MARKER, WS, SID = sys.argv[1:6]
 
-    class A(AgentService):
-        def __init__(self):
-            super().__init__(model="stub")
-
-        async def stream_reply(self, **_):
-            yield AgentSessionInfo(session_id=SID)
-            # The consumer fully handles the event above — including committing
-            # the pointer — before it asks this generator for the next one. So
-            # the marker landing PROVES the write already happened; the parent
-            # can kill us the instant it appears.
-            open(MARKER, "w").write("ready")
-            await asyncio.sleep(3600)
+    class A(StubChannel):
+        async def send_prompt(self, screen, prompt):
+            self.starts(screen, session_id=SID)
+            return True
 
     async def main():
         engine = create_async_engine(DSN, poolclass=NullPool)
         factory = async_sessionmaker(engine, expire_on_commit=False)
+        screen = A()
         chat = ChatService(
             session_factory=factory,
-            agent=A(),
             base_system_prompt="你是芝士。",
             workspace_root=WS,
+            compute=ComputePool([screen.runtime], screen.name),
         )
         async for _ in chat.converse(
             topic_id=uuid.UUID(TOPIC), author="u", content="做事", summon=True
         ):
             pass
+        # The SessionStart above is consumed off the subscription, so wait for
+        # the pointer to actually be in the DB before saying "ready": the marker
+        # is what tells the parent it may kill us, and killing us early would
+        # test nothing.
+        from app.domain.agent_session.services import AgentSessionService
+        from app.domain.identity.handles import CHEESE_HANDLE
+
+        for _ in range(500):
+            async with factory() as s:
+                token = await AgentSessionService(s).resume_token(
+                    uuid.UUID(TOPIC), CHEESE_HANDLE
+                )
+            if token == SID:
+                break
+            await asyncio.sleep(0.01)
+        open(MARKER, "w").write("ready")
+        await asyncio.sleep(3600)
 
     asyncio.run(main())
     """
@@ -252,16 +277,15 @@ def test_session_pointer_survives_a_real_sigkill(client, tmp_path):
     )
 
 
-class _SilentAgent(AgentService):
-    """A provider that dies before announcing anything — the one case where
-    there genuinely is no session to point at."""
+class _SilentScreen(StubChannel):
+    """A screen that dies before announcing anything — the one case where there
+    genuinely is no session to point at."""
 
-    def __init__(self) -> None:
-        super().__init__(model="stub")
-
-    async def stream_reply(self, **_):
+    async def send_prompt(
+        self, screen: uuid.UUID, prompt: str, images: list[dict] | None = None
+    ) -> bool:
+        del screen, prompt, images
         raise RuntimeError("died before SessionStart")
-        yield  # pragma: no cover — makes this an async generator
 
 
 def test_no_session_announced_leaves_the_pointer_null(client, tmp_path):
@@ -274,7 +298,7 @@ def test_no_session_announced_leaves_the_pointer_null(client, tmp_path):
     topic_id = _seed_topic(client)
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=_SilentAgent(),
+        compute=stub_compute(_SilentScreen()),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )

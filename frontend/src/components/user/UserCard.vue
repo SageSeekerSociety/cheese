@@ -25,21 +25,15 @@
           <div class="d-flex align-center user-name-container">
             <h2 class="text-h4 font-weight-bold user-name">{{ profile.nickname }}</h2>
 
-            <v-chip
-              v-if="profile.username"
-              size="small"
-              color="grey-lighten-4"
-              variant="flat"
-              class="ml-4 user-id-chip"
-            >
+            <v-chip v-if="profile.username" size="small" color="surface-light" variant="flat" class="ml-4 user-id-chip">
               <v-icon size="small" start>mdi-account</v-icon>
               {{ profile.username }}
             </v-chip>
           </div>
 
-          <div class="user-intro mt-2 text-subtitle-1 text-grey-darken-1">
+          <div class="user-intro mt-2 text-subtitle-1 text-medium-emphasis">
             <span v-if="profile.intro">{{ profile.intro }}</span>
-            <span v-else class="text-grey-lighten-1 font-italic">这个人很神秘，没有留下介绍</span>
+            <span v-else class="text-disabled font-italic">这个人很神秘，没有留下介绍</span>
           </div>
 
           <!-- 社交统计 -->
@@ -64,7 +58,7 @@
             <v-btn
               variant="tonal"
               :loading="isFollowLoading"
-              :color="isFollowing ? 'grey' : 'primary'"
+              :color="isFollowing ? 'secondary' : 'primary'"
               :class="isFollowing ? 'following-btn' : 'follow-btn'"
               :prepend-icon="isFollowing ? 'mdi-check' : 'mdi-plus'"
               min-width="110"
@@ -157,7 +151,7 @@ onMounted(async () => {
   position: relative;
   border: 1px solid rgba(var(--v-theme-primary), 0.05);
   transition: all 0.3s ease;
-  background-color: white;
+  background-color: var(--surface);
 
   &:hover {
     border: 1px solid rgba(var(--v-theme-primary), 0.1);
@@ -182,7 +176,7 @@ onMounted(async () => {
   position: relative;
   display: flex;
   padding: 0 2rem 2rem;
-  background-color: white;
+  background-color: var(--surface);
 }
 
 .info-action-container {
@@ -200,8 +194,9 @@ onMounted(async () => {
   flex-shrink: 0;
 
   .user-avatar {
-    border: 4px solid white;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+    /* 头像外圈是"和卡片同色的一道缝"，不是白色装饰 —— 用 --surface 才能跟着主题走 */
+    border: 4px solid var(--surface);
+    box-shadow: var(--shadow-1);
     transition: transform 0.3s ease;
 
     &:hover {
@@ -219,7 +214,7 @@ onMounted(async () => {
 
   .user-name {
     font-weight: 700;
-    color: #333;
+    color: var(--ink);
     letter-spacing: 0.3px;
   }
 
@@ -257,7 +252,7 @@ onMounted(async () => {
 
   .stat-label {
     font-size: 0.8rem;
-    color: rgba(0, 0, 0, 0.5);
+    color: var(--muted);
   }
 }
 
@@ -283,11 +278,12 @@ onMounted(async () => {
     border-radius: 8px;
 
     &:hover {
-      background-color: rgba(211, 47, 47, 0.1);
-      color: #d32f2f;
+      /* 「取消关注」是一个破坏性动作，按 §1.5 三件套：底色 wash、文字 ink、图标记号色 */
+      background-color: var(--danger-wash);
+      color: var(--danger-ink);
 
       .v-icon {
-        color: #d32f2f;
+        color: var(--danger);
       }
 
       &:before {

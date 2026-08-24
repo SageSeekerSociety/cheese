@@ -28,11 +28,11 @@ class ComputeGrant(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
-    # The task whose template funded this grant. Kept on task deletion (the
-    # credits were granted; the audit trail should survive the source).
-    source_task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
-    )
+    # The 赛题 whose 项目集 funded this grant (#370). An int, and deliberately
+    # NOT a foreign key: the credits were granted, so the audit trail has to
+    # survive the 赛题 being deleted. It pointed at cheesex `tasks.id` (uuid)
+    # until that hierarchy was retired.
+    source_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     credits_total: Mapped[float] = mapped_column(Float)
     credits_used: Mapped[float] = mapped_column(Float, default=0.0)
 
@@ -43,15 +43,21 @@ class ResourceUsage(UuidPk, Timestamps, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
     )
+    # The room the spend happened in; NULL when it cannot be attributed at all.
     topic_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    # The agent turn this spend belongs to. A turn writes MORE than one row —
-    # the metering proxy logs every /v1/messages call, the gateway lands a
-    # deferred backfill row later — so counting rows counted 43 "turns" for a
-    # 3-turn topic. NULL where the supply cannot be attributed (rows predating
-    # this column, or proxy lines outside any known turn); those still count as
-    # one turn each, which is the old behaviour and the honest floor.
+    # Which piece of work inside it. NULL is the room's own main line — the
+    # distinction matters here because "what did this task cost" is a question
+    # people ask, and a room-level total cannot answer it.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # The human message or platform work id this spend belongs to. One attributed
+    # unit can write more than one row because the metering proxy logs every
+    # /v1/messages call and the gateway can land a deferred backfill. The column
+    # name stays for storage and protocol compatibility. NULL means the supply
+    # cannot be attributed; each such row remains one unit in aggregate reports.
     turn_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     model: Mapped[str] = mapped_column(String(64), default="")
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)

@@ -23,14 +23,15 @@ approver's own token instead, so `GitHubAppTokens`'s write-mint stays solely
 `GitHubPRClient`'s concern.
 """
 
+import functools
 import logging
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 
@@ -80,6 +81,15 @@ class PullRequestStatus:
     merged: bool
     merge_commit_sha: str | None = None
     merged_at: datetime | None = None
+    #: The PR's OWN head branch (`head.ref`), as GitHub reports it. The poller
+    #: re-pushes 芝士's fixes to this branch, and it cannot be derived from the
+    #: topic id: the two lanes name it differently (`pr_branch_name` →
+    #: `cheesex/<hex8>` for the personal-token lane, `ws.branch_for_place` →
+    #: `topic/<hex8>` for the App lane). Deriving it pushed App cards' fixes to
+    #: a branch no PR was open on — the commit landed, the PR never saw it.
+    #: Empty only for a fake/older payload; callers fall back to the derived
+    #: name, which is what the personal-token lane always used.
+    head_ref: str = ""
 
 
 @dataclass
@@ -305,6 +315,25 @@ class GitHubPrClient(Protocol):
         Same endpoint as `compare_files`, different field: this one is about
         ancestry, not the file list. With `base` = another commit and `head` =
         ours, `behind`/`identical` means that other commit CONTAINS ours."""
+        ...
+
+    async def check_run_names(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> set[str]:
+        """Names of every check-run that EXISTS on `ref` (#468 tier-2). The
+        poller compares this against the required list: a required name not in
+        this set has never reported, and its absence blocks the merge — a
+        path-filtered or broken workflow must read as "still waiting", never
+        as "nothing failed"."""
+        ...
+
+    async def update_branch(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> bool:
+        """Merge the base branch into the PR's head (GitHub's Update branch
+        button; #468 strict up-to-date). True = accepted (202); False = GitHub
+        declined non-fatally (already up to date, or the head moved — 422),
+        which the poller just retries next tick."""
         ...
 
 
@@ -754,6 +783,7 @@ class HttpxGitHubPrClient:
         merged = bool(data.get("merged"))
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
+            head_ref=str(data["head"].get("ref") or ""),
             state=str(data.get("state") or ""),
             merged=merged,
             # Gated on `merged` on purpose — see PullRequestStatus's docstring
@@ -917,6 +947,46 @@ class HttpxGitHubPrClient:
             )
         status = resp.json().get("status")
         return status if isinstance(status, str) else None
+
+    async def check_run_names(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> set[str]:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.get(
+                f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
+                headers=self._headers(token),
+                params={"per_page": 100},
+            )
+        if resp.status_code != 200:
+            raise GitHubPrError(
+                f"GitHub 拒绝列出 check-runs（HTTP {resp.status_code}）："
+                f"{resp.text[:300]}"
+            )
+        runs = resp.json().get("check_runs") or []
+        return {
+            str(run.get("name"))
+            for run in runs
+            if isinstance(run, dict) and run.get("name")
+        }
+
+    async def update_branch(
+        self, *, owner: str, repo: str, number: int, token: str
+    ) -> bool:
+        async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
+            resp = await client.put(
+                f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}/update-branch",
+                headers=self._headers(token),
+            )
+        if resp.status_code == 202:
+            return True
+        if resp.status_code == 422:
+            # Already up to date, or the head moved under us — both are
+            # non-fatal; the next poll re-evaluates from scratch.
+            return False
+        raise GitHubPrError(
+            f"GitHub 拒绝更新 PR #{number} 的分支"
+            f"（HTTP {resp.status_code}）：{resp.text[:300]}"
+        )
 
 
 def _summarize_runs(runs: list[dict]) -> tuple[CheckState, str]:
@@ -1083,6 +1153,36 @@ class GitHubPRMergeBlocked(GitHubPRError):
     """The merge was refused because the PR is not mergeable (conflict)."""
 
 
+def _as_pr_error[**P, R](
+    fn: Callable[P, Awaitable[R]],
+) -> Callable[P, Coroutine[Any, Any, R]]:
+    """Translate a failure to *reach* GitHub into this module's own error.
+
+    Every caller already handles `GitHubPRError`; none of them handled a raw
+    `httpx.ConnectError`, so a DNS blip or a TLS handshake that never finished
+    came out of `pr_view` unchanged and became a 500 with a traceback in the room
+    (`/pr-checks` polls every few seconds, so it was a 500 every few seconds).
+    Unreachable is not a different KIND of failure from "GitHub said no" for
+    anyone upstream — it is the same "I could not learn the PR's state", and
+    that is what the error class already claims to mean.
+
+    Wrapping the whole method, not just the request, is deliberate: minting the
+    installation token (`GitHubAppTokens`) talks to GitHub too, so the network
+    can drop on that line just as easily as on the call after it.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return await fn(*args, **kwargs)
+        except httpx.RequestError as exc:
+            raise GitHubPRError(
+                f"GitHub unreachable ({type(exc).__name__}: {exc})"[:300]
+            ) from exc
+
+    return wrapper
+
+
 class GitHubPRClient:
     def __init__(
         self,
@@ -1109,26 +1209,63 @@ class GitHubPRClient:
             "Accept": "application/vnd.github+json",
         }
 
-    async def open_pr(self, *, head: str, base: str, title: str, body: str) -> dict:
+    @_as_pr_error
+    async def open_pr(
+        self,
+        *,
+        head: str,
+        base: str,
+        title: str,
+        body: str,
+        as_user_token: str | None = None,
+    ) -> dict:
         """Open (or find the already-open) PR for a branch.
 
         Re-submitting a card for the same topic must not fail on GitHub's
         "a pull request already exists" — the existing PR IS this topic's PR.
+
+        `as_user_token` is the requester's own user-to-server token, and it
+        decides WHOSE PR this is: GitHub attributes a PR to whoever's
+        credential created it, and an App token makes every PR on the platform
+        belong to the bot — no avatar, no "opened by you", no filter-by-author
+        for the person whose work it is. An App can never impersonate a user,
+        so the only way to open it as them is to use their token. Falls back to
+        the App on any failure: a PR that exists under the wrong name beats no
+        PR at all, and the fallback is invisible to everything downstream.
         """
-        token, _ = await self._tokens.write_token()
+        app_token, _ = await self._tokens.write_token()
+        payload = {"title": title, "head": head, "base": base, "body": body}
         async with httpx.AsyncClient(transport=self._transport, timeout=30.0) as client:
-            resp = await client.post(
-                self._url("/pulls"),
-                json={"title": title, "head": head, "base": base, "body": body},
-                headers=self._headers(token),
-            )
-            if resp.status_code == 201:
-                return resp.json()
+
+            async def _create(token: str) -> httpx.Response:
+                return await client.post(
+                    self._url("/pulls"), json=payload, headers=self._headers(token)
+                )
+
+            resp = None
+            if as_user_token:
+                resp = await _create(as_user_token)
+                if resp.status_code == 201:
+                    return resp.json()
+                if resp.status_code != 422 or "already exist" not in resp.text:
+                    # Their token may simply not reach this repo (left the org,
+                    # authorization revoked, App uninstalled for them). Not an
+                    # error worth surfacing — the App opens it instead.
+                    logger.info(
+                        "opening PR as the requester failed (HTTP %s); "
+                        "falling back to the App token",
+                        resp.status_code,
+                    )
+                    resp = None
+            if resp is None:
+                resp = await _create(app_token)
+                if resp.status_code == 201:
+                    return resp.json()
             if resp.status_code == 422 and "already exist" in resp.text:
                 listing = await client.get(
                     self._url("/pulls"),
                     params={"head": f"{self._owner}:{head}", "state": "open"},
-                    headers=self._headers(token),
+                    headers=self._headers(app_token),
                 )
                 if listing.status_code == 200 and listing.json():
                     return listing.json()[0]
@@ -1136,6 +1273,7 @@ class GitHubPRClient:
                 f"PR creation failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )
 
+    @_as_pr_error
     async def pr_view(self, number: int) -> dict:
         token, _ = await self._tokens.write_token()
         async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
@@ -1148,6 +1286,7 @@ class GitHubPRClient:
             )
         return resp.json()
 
+    @_as_pr_error
     async def merge_pr(self, number: int, *, title: str, message: str) -> dict:
         """Merge the PR using `settings.accept_pr_merge_method` — same reason
         as the 两阶段采纳 client above: this used to hardcode a merge commit,
@@ -1178,6 +1317,7 @@ class GitHubPRClient:
             f"PR merge failed (HTTP {resp.status_code}): {resp.text[:300]}"
         )
 
+    @_as_pr_error
     async def check_runs(self, ref: str) -> list[dict]:
         """Simplified check runs for a ref (branch name or sha) — display only.
 

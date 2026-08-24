@@ -1,496 +1,337 @@
 """ComputePool: the compute side of the two-pool model (design v2 R2 / v3).
 
-Symmetric to AIPool (profiles.py). A ComputeProvider OWNS execution of an agent
-turn: it builds the sandbox (container + worktree + session + cheese env), runs
-the turn, and checkpoints the worktree afterward. The turn path talks to the
-pool, never to a sandbox dict or a cli_path — so a remote / GPU / competition
-node slots in behind the same `run_turn`/`checkpoint` contract without touching
-callers (review Finding R2: the provider seam is a turn executor that owns
-compute, not an exec(argv)/cli_path detail leaked to the orchestrator).
+Symmetric to AIPool (profiles.py). A ComputeProvider answers WHERE a turn runs:
+it builds the machine (container + worktree + session + cheese env) and
+checkpoints the workspace afterwards. What runs there is an ``AgentRuntime``.
 
-Today `LocalDockerProvider` runs the Claude SDK in-process against the local
-per-topic Docker sandbox. Tomorrow `RemoteCheesedProvider` reimplements the same
-two methods by relocating execution to a cheesed node and relaying the event
-stream + git refs back.
+Every provider in the pool keeps a live session. There used to be a second
+shape — start a subprocess, stream what it says, exit — and every piece of
+salvage machinery in the platform came from its one property: whoever held the
+iterator owned the turn, so the turn died when that process did. The rooms it
+ran are gone; what remains is the shape that can be reconnected to.
 """
 
-import json
-import subprocess
 import uuid
-from collections.abc import AsyncIterator
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-import httpx
-
-from app.core.background import spawn
 from app.core.config import settings
-from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent import awaited_tasks
-from app.domain.agent.sandbox_notices import warn_container_rebuilt
-from app.domain.agent.service import (
-    AgentEvent,
-    AgentService,
-    event_from_dict,
-)
-from app.domain.identity.handles import topic_agent_handle
-from app.domain.workspace import service as ws
+from app.domain.agent.harness import AgentRuntime, runtime_for
 
-# Author handle for 芝士's cheese-CLI callbacks (kept here to avoid importing
-# chat.py, which imports this module).
-
-# Native tools 芝士 may use inside the sandbox + the Task tools (live todo).
-_SANDBOX_TOOLS = [
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Grep",
-    "Glob",
-    "TaskCreate",
-    "TaskUpdate",
-    "TaskList",
-    "TaskGet",
-]
+if TYPE_CHECKING:
+    from app.domain.agent.harness import (
+        ActivityConsumer,
+        Backlog,
+        EventConsumer,
+        ReceiptConsumer,
+        SessionRef,
+    )
+    from app.domain.agent.harness.claude_code import Channel
 
 
 class ComputeProvider(Protocol):
-    """Runs one agent turn (owning the sandbox) and checkpoints its workspace.
-    The unit a remote node reimplements by relocating execution + relaying the
-    event stream / git refs over RPC."""
+    """Where a turn runs: a machine with a workspace on it, and a way to
+    snapshot that workspace afterwards.
 
-    name: str
+    NOT how a turn runs — that is an ``AgentRuntime``. Which machine and what
+    runs on it were one switch for as long as the only harness we drive was also
+    the only thing that knew how to reach its own machine; separating the
+    questions is what lets a second harness run on the machines the first one
+    uses.
+
+    What the pool holds is a runtime WRAPPING a channel, and the runtime answers
+    this protocol by forwarding to the channel it is driving. So the two halves
+    are separate objects now, not just separate contracts. That forwarding is
+    why the three facts below are read-only: a backend is ASKED which machine it
+    is and what reaches it, and the answer comes from somewhere else.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    # 图片输入: whether the turn's user message actually carries `images=`. It is
+    # a capability, not a preference — the prompt wording branches on it
+    # (chat._prompt_line). Before this existed, `images=` was accepted by every
+    # provider and silently dropped by some, while the prompt kept telling 芝士
+    # "图片内容已附在本条消息里" on all of them. An agent that reads that promise
+    # and sees nothing does not error — it invents what the image said, which is
+    # worse than saying "我没收到图". A backend that drops images MUST say False
+    # here rather than leave the prompt lying for it.
+    @property
+    def embeds_images(self) -> bool: ...
+
+    # Does a turn here have to wait for a machine to be created first? The turn
+    # path branches on it — 「机器正在创建」 with the prompt held — instead of on
+    # the backend's class, which is what lets a second leased-machine backend
+    # get the same waiting room without the platform learning its name.
+    @property
+    def provisions_machine(self) -> bool: ...
 
     def available(self) -> bool: ...
 
-    def run_turn(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID | None,
-        prompt: str,
-        system_prompt: str,
-        resume_session_id: str | None,
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        turn_id: uuid.UUID | None = None,
-        sandbox_image: str | None = None,
-        images: list[dict] | None = None,
-    ) -> AsyncIterator[AgentEvent]: ...
+    async def prepare_topic(
+        self, *, project_id: uuid.UUID, topic_id: uuid.UUID, actor: object | None
+    ) -> tuple[bool, str]:
+        """Get the machine ready, and say whether it is. Only asked of a backend
+        that declares ``provisions_machine``; everyone else's machine is already
+        there."""
+        ...
+
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
+        """Inject text into the session already running on this topic, if this
+        backend has one. False = "nothing live here" — the caller queues instead.
+
+        A RUNTIME operation, declared here too because what the pool holds is a
+        runtime wrapping a channel and the hot path asks the pool. Spelled out
+        rather than duck-typed so a backend that cannot take an injection has to
+        say so, which is what stops the pool from silently skipping one that
+        could.
+        """
+        ...
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
 
 
-class LocalDockerProvider:
-    """Default provider: builds the local per-topic Docker sandbox and runs the
-    SDK in-process. When Docker is absent (tests / degraded) it runs a plain
-    model turn with no platform tools — same behaviour as before, now owned here
-    instead of in ChatService."""
-
-    name = "local-docker"
-
-    def __init__(
-        self, *, agent: AgentService, workspace_root: str, sandbox_enabled: bool
-    ):
-        self._agent = agent
-        self._workspace_root = workspace_root
-        self._sandbox_enabled = sandbox_enabled
-
-    def available(self) -> bool:
-        return True
-
-    def sandboxed(self) -> bool:
-        """Whether this turn runs in a real sandbox (Docker present + enabled)."""
-        return self._sandbox_enabled and ws.sandbox_available()
-
-    def _workspace_for(self, project_id: uuid.UUID) -> str:
-        path = Path(self._workspace_root) / str(project_id)
-        path.mkdir(parents=True, exist_ok=True)
-        return str(path)
-
-    def _warn_if_image_switch(
-        self, topic_id: uuid.UUID, container: str, resolved_image: str
-    ) -> None:
-        """Read-only mirror of the sandbox shim's own check (claude-sbx): if the
-        topic's container is already running a different image than what this
-        turn resolved to, the shim is about to `docker rm -f` it (no grace
-        period) and rebuild — taking any interactive session / background
-        process in the old box with it. Warn the topic before that happens.
-        Fire-and-forget (schedules the notice, doesn't await it) so a slow DB
-        write never delays turn start; skipped outside a running loop (e.g.
-        sync tests) and on a fresh/absent container (nothing to lose)."""
-        if not self.sandboxed():
-            return
-        result = subprocess.run(
-            ["docker", "inspect", "-f", "{{.Config.Image}}", container],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0 or result.stdout.strip() == resolved_image:
-            return
-        # Strong reference + no-op without a loop; see app/core/background.
-        # This one tells the topic its box (and everything running in it) was
-        # rebuilt — a notice that silently doesn't arrive is worse than none.
-        spawn(
-            warn_container_rebuilt(topic_id, "image"),
-            name=f"image switch notice topic={topic_id}",
-        )
-
-    def _sandbox_config(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        *,
-        memory_scope: str | None,
-        owner: str | None,
-        turn_id: uuid.UUID | None,
-        sandbox_image: str | None = None,
-    ) -> tuple[dict, str]:
-        """Per-topic sandbox (container + worktree + session + cheese env) + cwd.
-
-        sandbox_image lets a project pick its own env image (e.g. cheesex-dev for
-        dogfooding on this repo — spec §9.1 environment); falls back to the pool's
-        default base image."""
-        worktree = ws.topic_worktree(project_id, topic_id)
-        resolved_image = sandbox_image or settings.sandbox_image
-        container_name = ws.container_name(topic_id)
-        self._warn_if_image_switch(topic_id, container_name, resolved_image)
-        env = {
-            "SBX_IMAGE": resolved_image,
-            "SBX_CONTAINER": container_name,
-            "SBX_WORKTREE": str(worktree),
-            # The worktree is a jj workspace whose .jj/repo pointer is only
-            # resolvable inside the sandbox if these are ALSO mounted (see
-            # ws.sandbox_vcs_mounts) — the shim (claude-sbx) appends them to
-            # `docker run` as extra `-v` args, space-joined since deterministic
-            # workspace_root/UUID paths never contain whitespace.
-            "SBX_VCS_MOUNTS": " ".join(
-                ws.sandbox_vcs_mounts(project_id, ws.branch_for_topic(topic_id))
-            ),
-            "SBX_SESSION": str(ws.session_dir(project_id, topic_id)),
-            "CHEESE_API": settings.sandbox_api_base,
-            "CHEESE_PROJECT": str(project_id),
-            "CHEESE_TOPIC": str(topic_id),
-            # Which 分身 this sandbox is (分身独立身份) — the same identity its
-            # scoped CHEESE_TOKEN carries, never the shared account.
-            "CHEESE_AUTHOR": topic_agent_handle(topic_id),
-            # Per-turn token scoped to THIS project+topic (review R5): a container
-            # for one project/topic can't write another's cheese endpoints.
-            "CHEESE_TOKEN": mint_scoped_token(
-                project_id=str(project_id), topic_id=str(topic_id)
-            ),
-        }
-        if memory_scope:
-            env["CHEESE_MEMORY_SCOPE"] = memory_scope
-        if owner:
-            env["CHEESE_OWNER"] = owner
-        if turn_id:
-            # cheese sends this back as X-Cheese-Turn so its blocks share the
-            # turn's id (R4).
-            env["CHEESE_TURN"] = str(turn_id)
-        sandbox = {
-            "cli_path": str(Path(settings.sandbox_shim).resolve()),
-            "allowed_tools": _SANDBOX_TOOLS,
-            "env": env,
-        }
-        return sandbox, str(worktree)
-
-    def run_turn(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID | None,
-        prompt: str,
-        system_prompt: str,
-        resume_session_id: str | None,
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        turn_id: uuid.UUID | None = None,
-        sandbox_image: str | None = None,
-        images: list[dict] | None = None,
-    ) -> AsyncIterator[AgentEvent]:
-        # topic_id None (e.g. a project with no root topic) → no per-topic sandbox.
-        if self.sandboxed() and topic_id is not None:
-            sandbox, cwd = self._sandbox_config(
-                project_id,
-                topic_id,
-                memory_scope=memory_scope,
-                owner=owner,
-                turn_id=turn_id,
-                sandbox_image=sandbox_image,
-            )
-        else:
-            sandbox, cwd = None, self._workspace_for(project_id)
-        return self._agent.stream_reply(
-            prompt=prompt,
-            system_prompt=system_prompt,
-            cwd=cwd,
-            resume_session_id=resume_session_id,
-            sandbox=sandbox,
-            model=model,
-            env=env,
-            images=images,
-        )
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        """Snapshot the agent's native edits this turn into version history
-        (workspace lifecycle, R2/R9). Best-effort; never fail the turn on git.
-
-        Held while a `cheese await` command is still writing the worktree — the
-        turn ends first BY DESIGN there, so this is the one moment the snapshot
-        is guaranteed to catch a half-finished tree."""
-        if not self.sandboxed():
-            return
-        awaited_tasks.checkpoint_worktree(project_id, topic_id)
-
-
-class RemoteCheesedProvider:
-    """Runs a turn on a remote cheesed node (design v2 R2/§5). Ships the request to
-    the node's daemon and relays the AgentEvent stream back over NDJSON. The node's
-    container calls cheese back to `cheese_api` with the per-turn scoped token the
-    backend mints here — so execution runs anywhere while the platform stays the
-    source of truth and the signing secret never leaves the backend."""
-
-    name = "remote-cheesed"
-
-    def __init__(self, *, cheesed_url: str, cheese_api: str):
-        self._url = cheesed_url.rstrip("/")
-        self._cheese_api = cheese_api
-
-    def available(self) -> bool:
-        return True
-
-    async def run_turn(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID | None,
-        prompt: str,
-        system_prompt: str,
-        resume_session_id: str | None,
-        model: str | None = None,
-        env: dict[str, str] | None = None,
-        memory_scope: str | None = None,
-        owner: str | None = None,
-        turn_id: uuid.UUID | None = None,
-        sandbox_image: str | None = None,
-        images: list[dict] | None = None,
-    ) -> AsyncIterator[AgentEvent]:
-        body = {
-            "project_id": str(project_id),
-            "topic_id": str(topic_id),
-            "prompt": prompt,
-            "system_prompt": system_prompt,
-            "resume_session_id": resume_session_id,
-            "model": model or settings.agent_model,
-            "env": env or {},
-            # The node picks the project's env image (falls back to its own default).
-            "sandbox_image": sandbox_image,
-            "cheese_api": self._cheese_api,
-            # Minted here (backend holds the signing secret); the node only relays it.
-            "cheese_token": mint_scoped_token(
-                project_id=str(project_id), topic_id=str(topic_id)
-            ),
-            "turn_id": str(turn_id) if turn_id else None,
-            "memory_scope": memory_scope,
-            "owner": owner,
-            # 图片输入: worktree-relative image refs; the NODE (which has the
-            # files) base64-embeds them into the user message (build_query_input).
-            "images": images or [],
-        }
-        async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
-                "POST", f"{self._url}/run-turn", json=body
-            ) as resp:
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if line.strip():
-                        yield event_from_dict(json.loads(line))
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        # Commit the turn's edits ON THE NODE so /git/log + /git/diff have history.
-        # Best-effort; never fail the turn (runs after streaming, not in the path).
-        #
-        # The await hold is decided HERE rather than on the node: `cheese await`
-        # registers with the platform, so this process is the only one that knows
-        # a command is still writing that tree. There is no catch-up snapshot on
-        # this path either — `_catch_up_snapshot` commits the LOCAL worktree, and
-        # a remote node has none here — so the node catches up on the next turn's
-        # checkpoint, which the report's wake provides.
-        #
-        # Known gap, accepted: two of the guards in `awaited_tasks` take the result
-        # as a block WITHOUT waking (归档话题, 卡已结算). On those the node's tree
-        # stays uncommitted until some later turn happens to run. Accepted because
-        # both states mean nobody is reading that branch any more — but it is a
-        # gap, not an invariant: do not read this as "a wake always follows".
-        if awaited_tasks.snapshot_hold(topic_id) is not None:
-            return
-        try:
-            httpx.post(f"{self._url}/checkpoint/{project_id}/{topic_id}", timeout=15)
-        except httpx.HTTPError:
-            pass
-
-
 class ComputePool:
-    """A pool of compute providers + per-turn selection (design §3 / v3).
+    """Which backend a turn lands on — a machine AND a harness.
 
-    Mirror image of AIPool (profiles.ProfileRegistry): a registry with a default
-    that is always available. Caps-matching + project quota + overflow queue land
-    when there is more than one provider; today the default is returned directly.
+    Two axes, because they are two questions. WHICH MACHINE is the topic's
+    ``compute_profile``: a container on this host, someone's enrolled laptop, a
+    leased Cloud box. WHAT RUNS THERE is the agent type's ``harness``. They were
+    one key for as long as one harness existed, and a registry keyed by machine
+    alone cannot hold a second one — two runtimes over the same transport would
+    collide on the same name.
+
+    Caps-matching + project quota + overflow queue land when there is more than
+    one backend per pair; today the pair is looked up directly.
     """
 
-    def __init__(self, providers: list[ComputeProvider], default_name: str):
-        self._providers = {p.name: p for p in providers}
-        if default_name not in self._providers:
-            raise ValueError(f"default provider {default_name!r} not registered")
-        self._default_name = default_name
+    def __init__(self, backends: list[ComputeProvider], default_name: str):
+        from app.domain.agent.harness import DEFAULT_HARNESS
 
-    @classmethod
-    def local(
-        cls, *, agent: AgentService, workspace_root: str, sandbox_enabled: bool
-    ) -> "ComputePool":
-        provider = LocalDockerProvider(
-            agent=agent, workspace_root=workspace_root, sandbox_enabled=sandbox_enabled
-        )
-        return cls([provider], provider.name)
+        # Every backend runs a harness. Checked HERE, once, at wiring time: the
+        # turn path then reads `runtime_for` as an answer rather than as a
+        # question, and a backend that forgot half the contract is a startup
+        # failure instead of a turn that silently does nothing.
+        self._backends = {
+            (backend.name, runtime_for(backend).harness): backend
+            for backend in backends
+        }
+        self._default = (default_name, DEFAULT_HARNESS)
+        if self._default not in self._backends:
+            raise ValueError(f"default backend {self._default!r} not registered")
 
     def default(self) -> ComputeProvider:
-        return self._providers[self._default_name]
+        return self._backends[self._default]
 
-    @classmethod
-    def remote(cls, *, cheesed_url: str, cheese_api: str) -> "ComputePool":
-        provider = RemoteCheesedProvider(cheesed_url=cheesed_url, cheese_api=cheese_api)
-        return cls([provider], provider.name)
+    def _runtimes(self) -> list[AgentRuntime]:
+        """Every harness in the pool.
 
-    @classmethod
-    def tmux(
-        cls, *, image: str, idle_suspect_s: float, hard_ceiling_s: float
-    ) -> "ComputePool":
-        """Interactive/tmux backend (AGENT_BACKEND=tmux): drives `claude` in a
-        tmux session and streams events from Claude Code HTTP hooks."""
-        from app.domain.agent.tmux_provider import TmuxHooksProvider
+        The pool is keyed by machine and holds objects that answer both
+        questions; the calls below are addressed to the harness half. This is
+        where the guarantee bought at wiring time — every backend runs one — is
+        spent, so the callers read as statements rather than as questions.
+        """
+        return [runtime_for(backend) for backend in self._backends.values()]
 
-        provider = TmuxHooksProvider(
-            image=image, idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
-        )
-        return cls([provider], provider.name)
-
-    @classmethod
-    def device(cls, *, idle_suspect_s: float, hard_ceiling_s: float) -> "ComputePool":
-        """Self-hosted / BYO backend (AGENT_BACKEND=device, P3): runs the turn on a
-        user's own enrolled machine via the frozen link.Msg channel, streaming events
-        from Claude Code hooks — same contract, execution relocated to the device.
-
-        The two-layer timeout is the SAME policy the local tmux backend runs
-        (turn 活跃度检测): `idle_suspect_s` then a `_confirm_alive` process-tree
-        probe, `hard_ceiling_s` as the backstop."""
-        from app.domain.agent.device_provider import DeviceProvider
-
-        provider = DeviceProvider(
-            idle_suspect_s=idle_suspect_s, hard_ceiling_s=hard_ceiling_s
-        )
-        return cls([provider], provider.name)
+    def machines(self) -> set[str]:
+        """Which machine pools this deployment offers, whatever runs on them."""
+        return {name for name, _ in self._backends}
 
     def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
         """turn 活跃度检测: `cheese status`'s idle-suspect signal, read from
-        whichever tmux provider is in this pool (at most one — see
-        `build_compute_pool`). None when there's no tmux provider in the pool,
-        or no turn currently monitored for this topic (not running, or running
-        on a different backend)."""
-        from app.domain.agent.tmux_provider import TmuxHooksProvider
+        whichever tmux backend is in this pool. None when there is no tmux
+        backend, or no turn currently monitored for this topic (not running, or
+        running on a different machine)."""
+        from app.domain.agent.tmux_provider import TmuxChannel
 
-        for provider in self._providers.values():
-            if isinstance(provider, TmuxHooksProvider):
-                return provider.activity_status(topic_id)
+        for backend in self._backends.values():
+            channel = getattr(backend, "channel", None)
+            if isinstance(channel, TmuxChannel):
+                return channel.activity_status(topic_id)
         return None
 
+    async def deliver(
+        self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
+    ) -> bool:
+        """Inject text into whichever session is currently running on this
+        topic. Asks every backend rather than resolving the topic's configured
+        one: only one that HAS a live session for this exact topic can answer
+        True, so the first True is the right one — and it needs no DB read on
+        the hot path where a human is waiting.
+
+        Every backend is asked rather than only the ones that keep a session:
+        answering False is cheap, and a pool that decided in advance who COULD
+        answer would be deciding it from the class rather than from whether
+        there is a live session — which is the thing actually being asked."""
+        for backend in self._backends.values():
+            delivered = (
+                await backend.deliver(topic_id, text, images=images)
+                if images
+                else await backend.deliver(topic_id, text)
+            )
+            if delivered:
+                return True
+        return False
+
+    def bind_events(
+        self,
+        consumer: "EventConsumer",
+        activity: "ActivityConsumer | None" = None,
+    ) -> None:
+        """Give every runtime the room-side persistence and activity owners."""
+        for runtime in self._runtimes():
+            runtime.bind_events(consumer)
+            if activity is not None:
+                runtime.bind_activity(activity)
+
+    def bind_receipts(self, consumer: "ReceiptConsumer") -> None:
+        """Give every runtime the owner of prompt receipts — the consumed-stamp
+        side of #539 decision A."""
+        for runtime in self._runtimes():
+            runtime.bind_receipts(consumer)
+
+    def holds(self, topic_id: uuid.UUID) -> bool:
+        """Does any backend still hold a live session for this topic?"""
+        return any(runtime.holds(topic_id) for runtime in self._runtimes())
+
+    async def recover_sessions(
+        self, device_id: str | None = None
+    ) -> list["SessionRef"]:
+        """Listen again to sessions that survived this process."""
+        recovered: list[SessionRef] = []
+        for runtime in self._runtimes():
+            recovered.extend(await runtime.recover(device_id))
+        return recovered
+
+    def backlog(self, session: "SessionRef") -> "Backlog":
+        """The unread tail for this session, from whichever backend kept it.
+
+        A session's records live with the HARNESS that made them, and this call
+        does not know which one ran the topic — resolving that means a DB read
+        the reconcile path does not have in hand. Asking is cheap and
+        unambiguous instead: at most one harness has anything to hand over for a
+        given session, so the first non-empty answer is the right one. When
+        nobody has anything the reader is empty either way, and the caller still
+        gets one to close the pass with.
+        """
+        readers = [runtime.backlog(session) for runtime in self._runtimes()]
+        for reader in readers:
+            if reader.unread():
+                return reader
+        return readers[0]
+
+    async def replay(self, session: "SessionRef", *, known_texts: set[str]) -> None:
+        """Land what a recovered session produced while nobody listened."""
+        for runtime in self._runtimes():
+            await runtime.replay(session, known_texts=known_texts)
+
+    def platform_work(self, provider_id: str | None = None) -> ComputeProvider:
+        """The backend for work the PLATFORM starts — the activity digest, the
+        heartbeat patrol, the project summary.
+
+        No agent type stands behind these, so there is no harness to honour and
+        nothing to refuse: they run on whatever the machine runs. Never None,
+        unlike ``select`` — a caller with no type to satisfy always has an
+        answer, and falling back to the default machine is a better one than
+        crashing on a wiring gap.
+        """
+        return self.select(provider_id=provider_id) or self.default()
+
     def has(self, provider_id: str) -> bool:
-        return provider_id in self._providers
+        return provider_id in self.machines()
 
     def select(
-        self, *, provider_id: str | None = None, env_spec: dict | None = None
-    ) -> ComputeProvider:
-        """Pick a provider for this turn (execution-architecture v4 会话级选择).
+        self,
+        *,
+        provider_id: str | None = None,
+        harness: str | None = None,
+        env_spec: dict | None = None,
+    ) -> ComputeProvider | None:
+        """Pick the backend for this turn (execution-architecture v4 会话级选择).
 
-        ``provider_id`` is the compute a topic/project chose (resolved upstream from
-        ``topic.compute_profile`` → project sticky). A registered id routes the turn
-        to that provider; an unknown / None id falls back to the pool default (which
-        is always available) — so a stored selection that isn't deployed here never
-        breaks a turn. caps/quota/queue routing arrives with ``env_spec`` (design §3
+        ``provider_id`` is the machine a topic/project chose (resolved upstream
+        from ``topic.compute_profile`` → project sticky); a machine this
+        deployment does not have falls back to the default one, so a stored
+        selection that was retired never breaks a turn.
+
+        ``harness`` is what the agent's TYPE asks to be run by, and it does NOT
+        fall back. A type that names a harness this deployment does not run on
+        that machine gets None — running something else would answer as an agent
+        nobody configured, which is worse than not answering. None asks for the
+        deployment's default harness.
+
+        caps/quota/queue routing arrives with ``env_spec`` (design §3
         pick_provider, v2 R9)."""
-        if provider_id is not None and provider_id in self._providers:
-            return self._providers[provider_id]
-        return self.default()
+        from app.domain.agent.harness import harness_name
+
+        machine = provider_id if provider_id in self.machines() else self._default[0]
+        return self._backends.get((machine, harness_name(harness)))
 
 
-def build_compute_pool(agent: AgentService) -> ComputePool:
+def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     """Build the ComputePool from settings.
 
-    ``agent_backend`` picks the LOCAL transport — how a turn reaches a container
-    on this box — and nothing else. It used to pick the whole pool, which made
-    the convergence end state unreachable: fusion-design §8.6 settles on ONE turn
-    flow with two thin transports (tmux locally, device remotely, a topic
-    choosing per turn), and returning a single-provider pool for `tmux` dropped
-    the remote transport entirely. The only way to have device compute was to run
-    the pre-convergence SDK path locally — a configuration nobody chose.
+    The local transport (a container on this box) always joins, the device
+    transport always joins, and Cloud joins when it is configured. A topic picks
+    between them per turn, with the first turn pinning the choice; the device
+    and Cloud pools are only OFFERED when they can actually run something, which
+    is what keeps them opt-in without a deployment switch.
 
-    So: exactly one local provider joins the pool (tmux or the SDK's
-    LocalDockerProvider), the device transport ALWAYS joins it, and a remote
-    cheesed node joins when wired.
+    ``agent_backend`` used to choose between this and an SDK subprocess. There
+    is nothing to choose between now.
     """
-    local: ComputeProvider
-    if settings.agent_backend == "tmux":
-        # Interactive `claude` in a per-topic tmux session in a platform
-        # container, driven by docker exec + send-keys (fusion-design §8.6: the
-        # LOCAL transport of the hooks substrate).
-        from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.device_provider import DeviceChannel
+    from app.domain.agent.harness.claude_code import Channel, ClaudeCodeRuntime
+    from app.domain.agent.tmux_provider import TmuxChannel
 
-        local = TmuxHooksProvider(
-            image=settings.tmux_sandbox_image,
+    def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:
+        # One timeout policy, applied where the watching happens. The two-layer
+        # shape (turn 活跃度检测) is `idle_suspect_s` of no hook and no liveness
+        # evidence → only SUSPECTED wedged, then a `confirm_alive` probe until it
+        # says dead, with `hard_ceiling_s` as the unconditional backstop. It used
+        # to be a constructor argument on every transport, which is how a single
+        # 900s deadline could kill a long-but-silent turn on one of them and not
+        # the others.
+        return ClaudeCodeRuntime(
+            channel,
             idle_suspect_s=settings.agent_idle_suspect_s,
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
-    else:
-        # The pre-convergence SDK stream-json path, retained as the orthogonal
-        # product form (§8.6 item 4) rather than the main line.
-        local = LocalDockerProvider(
-            agent=agent,
-            workspace_root=settings.workspace_root,
-            sandbox_enabled=settings.agent_sandbox_enabled,
-        )
-    providers: list[ComputeProvider] = [local]
-    # The remote transport ALWAYS joins, whatever the local one is: a topic picks
-    # its compute per turn (with topic affinity — the pin freezes on the first
-    # turn), and it is only offered when a device is actually online (gated in the
-    # market listing), so this stays opt-in.
-    from app.domain.agent.device_provider import DeviceProvider
 
-    # Same two-layer timeout policy as the local tmux backend (turn 活跃度检测),
-    # from the SAME settings — the local and remote hooks backends share one knob
-    # pair, they don't drift. Replaces the old single `device_turn_timeout_s` that
-    # collapsed both layers into one 900s deadline and killed long-but-silent turns.
-    providers.append(
-        DeviceProvider(
-            idle_suspect_s=settings.agent_idle_suspect_s,
-            hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
-        )
+    channels: list[Channel] = [
+        TmuxChannel(image=settings.tmux_sandbox_image),
+        DeviceChannel(),
+    ]
+    if cloud_channel is not None:
+        channels.append(cloud_channel)
+    default_name = (
+        DeviceChannel.name if settings.agent_backend == "device" else TmuxChannel.name
     )
-    if settings.cheesed_url:
-        providers.append(
-            RemoteCheesedProvider(
-                cheesed_url=settings.cheesed_url,
-                cheese_api=settings.cheesed_cheese_api,
-            )
-        )
-    if settings.agent_backend == "device":
-        # Every turn on someone else's machine unless a topic says otherwise.
-        default_name = DeviceProvider.name
-    elif settings.compute_provider == "remote" and settings.cheesed_url:
-        default_name = RemoteCheesedProvider.name
-    else:
-        default_name = local.name
-    return ComputePool(providers, default_name)
+    backends: list[ComputeProvider] = [runs_claude_code(c) for c in channels]
+    return ComputePool(backends, default_name)
+
+
+def app_preview_reachable(compute_profile: str | None) -> bool:
+    """Can 运行环境预览 exist for a topic running on this compute at all?
+
+    The feature resolves the app port a *docker container on the backend's own
+    host* publishes (``workspace.app_endpoint`` → ``docker port``). That mapping
+    exists only when the topic's box IS a container here. A turn running on
+    someone's enrolled machine (``device``) or on a leased Cloud machine
+    (``cloud`` — a DeviceChannel subclass) has no container on this host, so the
+    lookup returns None for a reason that has nothing to do with the app: there
+    is no path from the platform to that port, and there never was.
+
+    Without this distinction both cases collapse into "container down", and the
+    panel tells those users to @ 芝士 again to bring up a box that is not coming.
+    """
+    from app.domain.agent.market import compute_default_name
+    from app.domain.agent.tmux_provider import TmuxChannel
+
+    local_box = {TmuxChannel.name}
+    # A topic that has an app artifact has necessarily run a turn, and the first
+    # turn pins `topic.compute_profile` — so the sticky project/team chain is
+    # already collapsed into it and only the deployment default is left to apply.
+    return (compute_profile or compute_default_name()) in local_box

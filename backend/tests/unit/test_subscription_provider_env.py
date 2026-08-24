@@ -12,6 +12,8 @@ but bills nothing" if it regresses:
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
 
+import json
+
 import pytest
 
 from app.domain.agent import provider_env
@@ -158,9 +160,19 @@ def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):
     written — not even a fake one (the file gets a local validation that rejected
     the placeholder, and a real token there would be the very leak we forbid)."""
     from app.core.config import settings
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+    from app.domain.agent.harness.claude_code import build_session_launch
 
-    provider = TmuxHooksProvider(image="x", idle_suspect_s=1.0, hard_ceiling_s=1.0)
     monkeypatch.setattr(settings, "subscription_enabled", True)
-    provider._write_session_settings(str(tmp_path))
-    assert not (tmp_path / ".credentials.json").exists()
+    launch = build_session_launch(
+        config_dir="/sessions/ab12cd34",
+        workdir="/topics/topic_ab12cd34",
+        system_prompt="",
+    )
+    planted = {f.name: f.content for f in launch.files}
+    assert ".credentials.json" not in planted
+    # The gates it DOES plant are not credential-shaped, and they trust this
+    # topic's own cwd rather than a path baked into the image.
+    gates = json.loads(planted[".claude.json"])
+    assert gates["hasCompletedOnboarding"] is True
+    assert "/topics/topic_ab12cd34" in gates["projects"]
+    assert "token" not in json.dumps(gates).lower()

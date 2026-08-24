@@ -1,5 +1,7 @@
 <template>
-  <div class="header-corner-glow-flow">
+  <!-- 广告词只给第一次来的人看，而底栏点进来的是每天回来的人：手机上它连
+         内边距要吃掉 128px，一屏去掉一大半，下面才是你来这儿要用的东西。 -->
+  <div v-if="mdAndUp" class="header-corner-glow-flow">
     <PageHeader icon="mdi-view-dashboard" title="空间"></PageHeader>
     <div class="w-100 pa-8 py-16">
       <div class="text-h4 text-high-emphasis">在知是，灵感启航。</div>
@@ -47,18 +49,20 @@
                 <v-col v-for="space in spaces" :key="space.id" cols="12" sm="6" md="4">
                   <v-card flat rounded="lg" class="space-card elevation-0 border" :to="`/spaces/${space.id}`">
                     <v-card-item>
+                      <!-- 首字母走 text-surface 而不是 text-white：底色是琥珀，深色主题下
+                           它会提亮到 #FFA733，白字只有 1.9:1；surface 在深色下是深墨。 -->
                       <v-avatar size="60" color="primary" class="mt-2 mb-4">
                         <v-img v-if="space.avatarId" :src="getAvatarUrl(space.avatarId)">
                           <!-- seed avatars may be invalid; fall back to the initial.
                                The #error slot fills the v-img, so the char must be a
                                flex-centered fill or it sits top-left, not centered. -->
                           <template #error>
-                            <span class="space-avatar-char text-h5 text-white font-weight-medium">{{
+                            <span class="space-avatar-char text-h5 text-surface font-weight-medium">{{
                               (space.name || '·').trim().charAt(0)
                             }}</span>
                           </template>
                         </v-img>
-                        <span v-else class="space-avatar-char text-h5 text-white font-weight-medium">{{
+                        <span v-else class="space-avatar-char text-h5 text-surface font-weight-medium">{{
                           (space.name || '·').trim().charAt(0)
                         }}</span>
                       </v-avatar>
@@ -79,6 +83,7 @@
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 import { usePaging } from '@/utils/paging'
@@ -88,6 +93,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
+const { mdAndUp } = useDisplay()
 
 const selectedSort = ref('newest')
 const sortOptions = [

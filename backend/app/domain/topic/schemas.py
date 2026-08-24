@@ -13,6 +13,9 @@ class TopicCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     parent_id: uuid.UUID | None = None
     created_by: str | None = None
+    # Which agent works here. Omitted = the project's default, and it keeps
+    # following that default rather than freezing a copy of it now.
+    agent_instance_id: uuid.UUID | None = None
 
 
 class TopicOut(BaseModel):
@@ -39,11 +42,31 @@ class TopicOut(BaseModel):
     accepted_at: datetime | None = None
     archived_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
-    # 本轮是否在跑 (TurnRunner, in-memory — separate from `status`/归档: a topic
+    # NULL = this topic uses the project's default agent.
+    agent_instance_id: uuid.UUID | None = None
+    # 本轮是否在跑 (AgentWorkRunner, in-memory — separate from `status`/归档: a topic
     # can be "active" and idle, or "active" and mid-turn). False unless the
     # caller explicitly fills it in (see list_topics/get_topic) — the ORM model
     # has no such attribute, so from_attributes just leaves the default.
     running: bool = False
+    # 与我的相关性 (C2): what this topic is to the CALLER, so the sidebar can
+    # show "我参与的" flat and fold everyone else's away. Two orthogonal
+    # booleans rather than one relevance enum — an enum has to grow a new value
+    # (and a new frontend branch) every time a way of being involved is added,
+    # while these two each answer one question and compose.
+    #
+    # `i_participate`: I'm in the topic's roster, OR I created it, OR a card
+    # here is routed to me, OR I've been @'d in it.
+    # `awaits_me`: it is waiting on ME right now — a card routed to me is still
+    # pending, or an @ at me is unread. This is the "永远不折叠" signal, and it
+    # implies `i_participate` (every way of being awaited is also a way of
+    # participating), so the folding rule only ever reads one of the two.
+    #
+    # Derived per caller, so — like `last_activity_at` and `running` — only the
+    # endpoints that ask for them fill them in (list_topics/get_topic);
+    # elsewhere both stay False, meaning "nobody computed this", not "no".
+    i_participate: bool = False
+    awaits_me: bool = False
 
 
 class UpgradeBlockIn(BaseModel):
@@ -62,9 +85,25 @@ class ConclusionIn(BaseModel):
     conclusion: str = Field(min_length=1)
 
 
+class RelayIn(BaseModel):
+    """母子传话 (`cheese tell`): one message across the parent/child edge.
+
+    ``target`` is a topic id, a ``<#id>`` reference token, or a title — resolved
+    against the sender's parent + direct children only (app.domain.topic.relay).
+    """
+
+    target: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1)
+
+
 class DocEditIn(BaseModel):
     content: str
     author: str = "anonymous"
+    # The `doc_version` this edit is based on — 0 for "there is no doc yet".
+    # Required, and deliberately so: this doc is only ever written whole, so a
+    # writer with no version is a writer about to erase whatever it did not
+    # read. Everything that writes here has just read the doc.
+    expected_version: int
 
 
 class BackgroundTaskIn(BaseModel):

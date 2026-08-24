@@ -1,7 +1,10 @@
 <template>
-  <v-navigation-drawer permanent rail :rail-width="64" class="app-rail pb-2" color="grey-lighten-5" border="none">
+  <!-- `background` (not a fixed grey): the rail is on every page, so a Material
+       palette name like grey-lighten-5 would pin it to #FAFAFA in dark theme
+       while its icons follow --v-theme-on-surface → white tile, pale icons. -->
+  <v-navigation-drawer permanent rail :rail-width="64" class="app-rail pb-2" color="background" border="none">
     <!-- <v-avatar v-tooltip="'知是'" :image="logo" size="48" /> -->
-    <RailItem v-for="item in showItems" :key="item.key" :item="item"></RailItem>
+    <RailItem v-for="item in items" :key="item.key" :item="item"></RailItem>
     <v-spacer></v-spacer>
     <v-menu
       v-if="userMenu.loggedIn.value"
@@ -70,7 +73,9 @@
           <v-card variant="tonal" color="primary" class="ai-quota-card rounded-lg mb-3" elevation="0">
             <v-card-text class="pa-3">
               <div class="d-flex align-center mb-2">
-                <v-avatar color="white" size="28" class="me-2">
+                <!-- surface-bright, not white: this disc sits inside a tonal
+                     card, so a hard #FFF would be a glaring hole in dark theme. -->
+                <v-avatar color="surface-bright" size="28" class="me-2">
                   <v-icon icon="mdi-creation" color="primary" size="small"></v-icon>
                 </v-avatar>
                 <span class="text-subtitle-2 font-weight-medium">知启星 AI</span>
@@ -118,6 +123,7 @@
               </template>
               <v-list-item-title>我的设备</v-list-item-title>
             </v-list-item>
+            <ThemeToggle />
             <v-list-item rounded="lg" color="error" @click="userMenu.onLogout">
               <template #prepend>
                 <v-icon icon="mdi-exit-to-app" class="me-2"></v-icon>
@@ -133,7 +139,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, toRefs } from 'vue'
+import { toRefs } from 'vue'
 
 import { useUserMenu } from '@/composables/useUserMenu'
 
@@ -141,16 +147,13 @@ import RailItem from './RailItem.vue'
 import { NavBarProps } from './types'
 
 import logo from '@/assets/logo.svg?url'
+import ThemeToggle from '@/components/common/ThemeToggle.vue'
 
 const navBarProps = withDefaults(defineProps<NavBarProps>(), {
   items: () => [],
 })
 
 const { items } = toRefs(navBarProps)
-
-const showItems = computed(() => {
-  return items.value.filter((item) => item.type !== 'item' || item.visibleOnPC !== false)
-})
 
 // 使用用户菜单 composable
 const userMenu = useUserMenu()
@@ -180,6 +183,16 @@ const userMenu = useUserMenu()
   width: 100%;
   height: 100%;
   line-height: 1;
+  // Deliberately a literal, and one of the few that is CORRECT in both themes:
+  // the background here is not a theme token but the `#rrggbb` that
+  // `avatarColor()` computes — a fixed PERCEPTUAL lightness (OKLCH L = 0.54 /
+  // C = 0.12), identical in light and dark. This is "on-avatar" ink, so it must
+  // not follow --v-theme-on-surface (that would turn it near-black on light and
+  // pale-grey on dark, over the same colour). Do not "fix" it to a token.
+  // The contrast caveat this comment used to carry is gone: the old
+  // hsl(h, 55%, 55%) formula dropped to ~1.7:1 on yellow/green hues, while the
+  // OKLCH one lands every hue between 4.75:1 and 5.43:1 against this white —
+  // asserted hue-by-hue in src/utils/avatar.spec.ts.
   color: #fff;
   font-weight: 600;
   font-size: 14px;

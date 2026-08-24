@@ -3,7 +3,7 @@
 import uuid
 
 from app.core.sandbox_auth import SANDBOX_TOKEN
-from app.domain.agent.hook_events import hook_router
+from app.domain.agent.harness.claude_code.hook_events import hook_router
 
 
 def test_hook_rejected_without_valid_token(client):
@@ -27,9 +27,9 @@ def test_hook_accepted_but_undelivered_without_listener(client):
     assert r.json()["data"]["delivered"] is False
 
 
-def test_hook_routed_to_registered_queue(client):
+def test_hook_routed_to_subscribed_sink(client):
     topic = str(uuid.uuid4())
-    queue = hook_router.register(topic)
+    sink = hook_router.subscribe(topic)
     try:
         r = client.post(
             f"/sandbox/hooks/{topic}",
@@ -38,9 +38,9 @@ def test_hook_routed_to_registered_queue(client):
         )
         assert r.status_code == 200
         assert r.json()["data"]["delivered"] is True
-        assert queue.get_nowait()["delta"] == "hi"
+        assert sink.queue.get_nowait()["delta"] == "hi"
     finally:
-        hook_router.unregister(topic, queue)
+        hook_router.unsubscribe(topic, sink)
 
 
 def test_hook_rejects_non_object_body(client):

@@ -58,11 +58,11 @@ class SchedulerService:
         The startup one only ever runs when the PROCESS restarts, but a turn can
         die without taking the process with it (container recreate, OOM-killed
         child, sandbox image swap). Nothing re-read the registry in that case, so
-        the topic stayed `active` forever — see TurnRunner.sweep_orphans."""
-        from app.api.deps import get_turn_runner
+        the topic stayed `active` forever — see AgentWorkRunner.sweep_orphans."""
+        from app.api.deps import get_work_runner
         from app.core.config import settings
 
-        return await get_turn_runner().sweep_orphans(
+        return await get_work_runner().sweep_orphans(
             self._chat,
             last_activity=self.last_block_at,
             silence_s=settings.turn_silence_timeout_s,
@@ -72,7 +72,7 @@ class SchedulerService:
         self, topic_ids: set[uuid.UUID]
     ) -> dict[uuid.UUID, datetime]:
         """Newest block timestamp per topic — the liveness probe the orphan sweep
-        judges silence on. Lives here rather than in TurnRunner because the runner
+        judges silence on. Lives here rather than in AgentWorkRunner because the runner
         has no DB binding, and it is the same signal a human reads off the topic
         (「最后一块是几点」), which is what makes a sweep verdict checkable."""
         if not topic_ids:
@@ -103,21 +103,32 @@ class SchedulerService:
         an active turn has just-persisted blocks, so its topic can never look
         idle.
 
+        A tmux box is named after a ROOM and hosts that room's tasks too, so its
+        idleness is the idleness of the room AND everything in it. Judging the
+        room alone would destroy a box with a task working in it the moment the
+        room's own timeline went quiet — which is the normal state of a room
+        whose work has been split out.
+
         Reaping is not destructive to the conversation. The transcript lives in
-        the topic's ``~/.claude`` mount on the HOST, so the next turn recreates
-        the box and resumes from it — the container is the body, not the
-        continuity."""
+        the topic's config dir on the HOST, so the next turn recreates the box
+        and resumes from it — the container is the body, not the continuity."""
         names = ws.list_sandbox_containers()
         if not names:
             return 0
         cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
         reaped = 0
         async with self._sessions() as session:
-            ids = (await session.execute(select(Topic.id))).scalars().all()
-            by_hex = {t.hex[:12]: t for t in ids}
+            rows = (await session.execute(select(Topic.id))).all()
+            by_hex = {row.id.hex[:12]: row.id for row in rows}
             for name in names:
                 topic_id = by_hex.get(name.rsplit("-", 1)[-1])
                 if topic_id is not None:
+                    # One predicate covers the room AND every thread in it: a
+                    # thread's blocks carry the room's `topic_id`. This used to
+                    # walk `topics.parent_id` to collect the work, and the walk
+                    # would now find nothing — the room would look idle the
+                    # moment its own line went quiet, which is exactly the
+                    # normal state of a room whose work has been dispatched.
                     last = (
                         await session.execute(
                             select(func.max(Block.created_at)).where(
@@ -144,8 +155,7 @@ class SchedulerService:
 
         Only ONLINE devices are walked (an offline box is unreachable now). The same
         safety holds as for containers: an active turn has just-persisted blocks, so
-        its topic can never look idle. Teardown is best-effort — a remote device's
-        per-topic work dir is removed too, a co-located device keeps its real tree.
+        its topic can never look idle. Teardown removes the device's per-topic tree.
         Returns how many topics were released."""
         from app.domain.agent.device_hub import device_hub
         from app.domain.agent.device_provider import release_topic_screen
@@ -173,8 +183,7 @@ class SchedulerService:
                 if last is not None and last >= cutoff:
                     continue  # recently active — keep the screen alive
                 idle.append((project_id, topic_id))
-        # Release outside the query session so co-location's own DB read (a separate
-        # session) never nests inside this one.
+        # Release outside the query session so teardown cannot hold it open.
         for project_id, topic_id in idle:
             await release_topic_screen(
                 project_id, topic_id, session_factory=self._sessions
@@ -201,10 +210,10 @@ class SchedulerService:
         reuses an already-open resolution task, so repeating this on an interval
         cannot pile up duplicates, and a project with no owner is skipped rather
         than dispatched into nowhere."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.workspace import upstream_conflict
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
         synced = 0
         dispatched = 0
         errors: list[str] = []
@@ -243,10 +252,10 @@ class SchedulerService:
         machine (check PR CI → merge → check deploy workflow → archive).
         One DB transaction per card so one card's failure can't roll back
         another's progress."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.review.services import AcceptService
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
         checked = 0
         errors: list[str] = []
         async with self._sessions() as session:
@@ -267,17 +276,42 @@ class SchedulerService:
                     await session.rollback()
                     errors.append(f"{card_id}: {exc}")
                     logger.exception("poll_open_prs failed for card %s", card_id)
+                    await self._note_card_poll_crashed(card_id, exc)
         return {"cards_checked": checked, "errors": errors}
+
+    async def _note_card_poll_crashed(
+        self, card_id: uuid.UUID, exc: BaseException
+    ) -> None:
+        """Leave the crash on the card, in its own transaction.
+
+        The rollback above throws away everything the failed tick wrote — which
+        is right for the state machine and wrong for the reader: the card keeps
+        showing whatever it said before, usually 「等 CI」, while every tick dies
+        the same way. A person watching a green PR that never merges has no way
+        to tell that apart from slow checks. So the explanation is written by a
+        SEPARATE session that the rollback cannot take with it.
+
+        Best-effort by construction: if even this write fails, the log line
+        above is still there and the poll loop keeps going.
+        """
+        from app.domain.review.services import AcceptService
+
+        try:
+            async with self._sessions() as session:
+                await AcceptService(session).note_poll_crashed(card_id, exc)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — never let the explanation kill the loop
+            logger.exception("could not record poll failure on card %s", card_id)
 
     async def sweep_abandoned_gates(self) -> dict:
         """闸门孤儿卡扫底 (2026-08-11): condemn `pending_gate` cards whose gate
         runner is gone, so their topic stops being unable to file a new card.
         The actual rules (and why a periodic sweep is needed on top of the
         startup one) live in review/gate_sweep.py."""
-        from app.api.deps import get_turn_runner
+        from app.api.deps import get_work_runner
         from app.domain.review import gate_sweep
 
-        runner = get_turn_runner()
+        runner = get_work_runner()
 
         def nudge(topic_id: uuid.UUID, content: str, event: str, meta: dict) -> None:
             runner.submit(
@@ -300,9 +334,23 @@ class SchedulerService:
         ran at all (queued behind a wedged turn, refused on credits, killed by a
         deploy). 默认采信 must not depend on any turn actually happening.
         One transaction per sweep — the cards are independent but few.
+
+        Second job, same shape: pay back the archives 采信 deferred because the
+        sub-topic still held an undecided accept card. That deferral is what
+        keeps a reviewer's card from being revoked out from under them; this is
+        what keeps the deferral from turning into a never-archived sub-topic.
+
+        Third job: land the sub-topic commits 采信 could not fold into the room's
+        branch at the time — the room was waiting on CI, or somebody was editing
+        in its workspace. Queuing those is the whole reason they are safe to
+        refuse; this is the exit from the queue.
         """
         from app.domain.conclusion.services import ConclusionCardService
 
+        errors: list[str] = []
+        settled: list[uuid.UUID] = []
+        archived: list[uuid.UUID] = []
+        folded: list[uuid.UUID] = []
         async with self._sessions() as session:
             try:
                 settled = await ConclusionCardService(session).sweep_expired()
@@ -311,8 +359,38 @@ class SchedulerService:
             except Exception as exc:  # noqa: BLE001 — maintenance must survive
                 await session.rollback()
                 logger.exception("conclusion card sweep failed")
-                return {"settled": 0, "errors": [str(exc)]}
-        return {"settled": len(settled), "errors": []}
+                errors.append(str(exc))
+        # 归档补账走**自己的**事务：默认采信是主机制，补账是它的尾巴，尾巴出错
+        # 不能把已经结算好的卡一起回滚掉。
+        async with self._sessions() as session:
+            try:
+                service = ConclusionCardService(session)
+                archived = await service.sweep_deferred_archives()
+                if archived:
+                    await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("deferred archive sweep failed")
+                errors.append(str(exc))
+        # 同理，合并重试也走自己的事务：git 那一侧出错不能把结算和归档回滚掉。
+        async with self._sessions() as session:
+            try:
+                folded = await ConclusionCardService(session).sweep_room_merges()
+                # Unconditional, unlike the two above: a round that folds
+                # nothing can still have written the room a line saying why
+                # (queued, or conflicted), and dropping that is what "不能默默
+                # 失败" forbids.
+                await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("room merge sweep failed")
+                errors.append(str(exc))
+        return {
+            "settled": len(settled),
+            "archived": len(archived),
+            "folded": len(folded),
+            "errors": errors,
+        }
 
 
 class SchedulerRunner:
@@ -558,7 +636,7 @@ class ConclusionSweepRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._scheduler.sweep_conclusion_cards()
-                if result["settled"] or result["errors"]:
+                if any(result[k] for k in ("settled", "archived", "folded", "errors")):
                     logger.info("conclusion sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("conclusion sweep failed")

@@ -10,6 +10,33 @@
 const scrollMemory = new Map<string, { top: number; atBottom: boolean }>()
 // How close to the bottom still counts as "at the bottom" (px).
 const BOTTOM_THRESHOLD = 80
+
+// 每话题草稿 (飞书语义): what you had typed, who you were replying to, and the
+// images waiting to go — all belong to the topic they were composed in. Module
+// scope so they survive this component unmounting, same as scrollMemory.
+//
+// 之前只有待发图片被清掉，文字和回复目标原地不动地跟着你换话题：打了一半的话
+// 可能发错房间，而**回复目标**更糟——它指向的块在另一个话题里，屏幕上看不出
+// 异常（本话题找不到父块就不画引用条），库里的会话树已经串了。
+interface ComposerDraft {
+  draft: string
+  reply: Block | null
+  atts: ChatAttachment[]
+  /** 还没落库的消息。它们是发给**这个**话题的，跟着它走，不跟着屏幕走。 */
+  outbox: Outgoing[]
+}
+const composerMemory = new Map<string, ComposerDraft>()
+
+/** 发件箱里一条还没落库的消息。 */
+interface Outgoing {
+  clientId: string
+  content: string
+  summon: boolean
+  replyTo?: string
+  atts?: ChatAttachment[]
+  /** queued = 还没送出去（没连上）; sending = 送出了在等回声; failed = 等超了 */
+  state: 'queued' | 'sending' | 'failed'
+}
 </script>
 
 <script setup lang="ts">
@@ -18,8 +45,10 @@ import type {
   ChatAttachment,
   ProjectMemberRow,
   ReactionAgg,
+  RoomTask,
   TodoItem,
   Topic,
+  TopicMemberRow,
   WsClientMessage,
   WsServerFrame,
 } from '../cx_types'
@@ -33,25 +62,28 @@ import {
   chatWsUrl,
   getProgress,
   listBlocks,
+  listRoomTasks,
+  listTopicMembers,
   toggleReaction as apiToggleReaction,
 } from '../api'
 import { usePendingAttachments } from '../lib/attachments'
-import { backendErrorPresentation } from '../lib/backendErrorEvent'
 import { cachedWindow, setCachedWindow } from '../lib/blockCache'
 import { mergeRefreshedTail, PAGE_SIZE, prependOlder, scrollTopAfterPrepend, shouldLoadOlder } from '../lib/blockPaging'
-import { platformErrorPresentation } from '../lib/platformEvents'
+import { collapseNotices } from '../lib/platformNotice'
 import {
   coalesceSplitFencedCodeBlocks,
   renderMarkdown as renderMarkdownWith,
   renderPlain as renderPlainWith,
 } from '../lib/renderMessage'
 import { placeSplitMarkers } from '../lib/splitMarkers'
+import { topicShortId, topicStateBadge } from '../lib/topicState'
 import { myHandle } from '../me'
 import { avatarColor, avatarInitial } from '../utils/avatar'
 import { getAvatarUrl } from '../utils/materials'
 
 import CheeseAvatar from './CheeseAvatar.vue'
 import DispatchedMarker from './DispatchedMarker.vue'
+import TimelineMark from './TimelineMark.vue'
 
 // Message rendering (markdown / plain / reference chips) lives in
 // ../lib/renderMessage so it's unit-testable; here we just bind the
@@ -71,17 +103,22 @@ function renderPlain(text: string): string {
 const props = withDefaults(
   defineProps<{
     topic: Topic | null
-    // @芝士 default for new messages. Off for human-to-human (工作台), on for
-    // the 1:1 private chat where 芝士 is the only counterpart.
-    defaultSummon?: boolean
-    // Render a self-contained composer at the bottom (used when ChatPanel is
-    // dropped in standalone, e.g. the 私聊 1:1 chat in the main area). For work
-    // topics WorkspaceView keeps its own spanning composer and leaves this off.
+    // 这一栏里每条消息都是说给芝士听的：1:1 私聊那种只有它一个对话方的地方。
+    // 别处叫它靠 @ 它（和 @ 人同一套），见 sendDraft。
+    alwaysSummon?: boolean
+    // Render the composer at the bottom of THIS column. Every caller wants it —
+    // 工作台 used to span its own copy across the chat and the work panel, which
+    // read as addressing the whole topic while 99% of what it sent was a chat
+    // message only this column shows. Still a prop, because the composer is
+    // the last thing the root-topic embed would want if it ever loses its input.
     showComposer?: boolean
     // Show the GitHub-PR-style header (话题 = PR). Only real work topics are
     // PRs — the root topic (本体) and the 1:1 private chat are NOT, so they use
     // the plain chat header instead.
     prHeader?: boolean
+    // No header at all. 工作台 puts ONE topic header above both columns (see
+    // TopicHeader.vue), so the chat column must not draw a second one under it.
+    hideHeader?: boolean
     // Project roster (handle→name) so <@handle> mention tokens render as chips.
     members?: ProjectMemberRow[]
     // Project topics (id→title) so <#topicId> reference tokens render as chips.
@@ -89,14 +126,19 @@ const props = withDefaults(
     // Header label override for a 私聊 whose stored title is a bookkeeping key
     // (e.g. a person DM's canonical "私聊 · a · b"): show the peer's name instead.
     titleOverride?: string | null
+    // 开这个话题的那一刻还有多少条没读（只数别人发的，和侧栏角标同一口径）。
+    // 由 host 在 markRead 之前捕获——一旦 markRead 跑过，这个数就没了。
+    unreadOnOpen?: number
   }>(),
   {
-    defaultSummon: false,
+    alwaysSummon: false,
     showComposer: false,
     prHeader: false,
+    hideHeader: false,
     members: () => [],
     topicList: () => [],
     titleOverride: null,
+    unreadOnOpen: 0,
   }
 )
 
@@ -109,6 +151,11 @@ const emit = defineEmits<{
   // the parent refreshes that panel live, mid-turn.
   (e: 'state-changed', resource: string): void
   (e: 'turn-done'): void
+  // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
+  // turn_active 开，turn_finished / done / error 关），不是跟着第一个工具调用
+  // 走：工具帧是干活的**证据**，不是干活的**开始**，而右边那格「现场」得在开工
+  // 那一刻就在那儿——它就是用来看它在干什么的。
+  (e: 'working', working: boolean): void
   // ⤴ 升级为话题 (eval A1): the parent upgrades this message block into a topic.
   (e: 'upgrade-message', messageId: string): void
   // Open the topic an upgraded block points to (the 活引用 back-link).
@@ -124,13 +171,59 @@ const emit = defineEmits<{
 
 const AUTHOR = myHandle()
 
-// Keep the module-level handle→name map in sync with the roster prop, so
+// 这一条出错就写给用户看，所以它得在下面那段（房间名册）之前。
+const errorMsg = ref<string | null>(null)
+
+// 这个房间里有谁。
+//
+// @ 的候选不能只看项目名册：**芝士的座位在话题名册上**，一个话题一个分身
+// （handle 是 cheese-<话题 hex>），项目名册上没有它——种子数据里有一行共用的
+// `cheese` 掩盖过这件事，真实部署里没有。名单里少了它，就没人 @ 得到它，而 @ 它
+// 正是叫它干活的唯一方式。
+const roomMembers = ref<TopicMemberRow[]>([])
+
+async function loadRoster() {
+  const id = props.topic?.id
+  if (!id) {
+    roomMembers.value = []
+    return
+  }
+  try {
+    const payload = await listTopicMembers(id)
+    if (props.topic?.id === id) roomMembers.value = payload.data
+  } catch {
+    // 名单拉不到就说出来：@ 补全会缺人（包括芝士）。静默的话，表现是「@ 不出
+    // 芝士」，而屏幕上没有任何东西说明为什么。
+    errorMsg.value = '成员名单加载失败，@ 补全可能不全'
+  }
+}
+
+watch(() => props.topic?.id, loadRoster, { immediate: true })
+
+/** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
+const mentionPool = computed(() => {
+  const room = roomMembers.value.map((m) => ({
+    handle: m.member_handle,
+    label: m.name || m.member_handle,
+    agent: !!m.agent,
+  }))
+  const inRoom = new Set(room.map((r) => r.handle))
+  // 这个房间已经有自己的芝士时，项目名册上那种共用的 agent 行就不进名单了：
+  // 两行都叫「芝士」的话，@芝士 展开成哪一个纯看顺序。房间里那位才是会动的那个。
+  const roomHasAgent = room.some((r) => r.agent)
+  const rest = props.members
+    .filter((m) => !inRoom.has(m.user_handle) && !(roomHasAgent && m.agent))
+    .map((m) => ({ handle: m.user_handle, label: m.name || m.user_handle, agent: !!m.agent }))
+  return [...room, ...rest]
+})
+
+// Keep the module-level handle→name map in sync with the roster, so
 // <@handle> tokens render with the member's display name.
 watch(
-  () => props.members,
-  (m) => {
+  mentionPool,
+  (pool) => {
     for (const k of Object.keys(mentionNames)) delete mentionNames[k]
-    for (const row of m) mentionNames[row.user_handle] = row.name || row.user_handle
+    for (const row of pool) mentionNames[row.handle] = row.label
     // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
     // not the raw literal — they are reserved handles, not roster members.
     mentionNames.all = '所有人'
@@ -150,12 +243,13 @@ watch(
 const messages = ref<Block[]>([])
 const loadingHistory = ref(false)
 const connected = ref(false)
-const errorMsg = ref<string | null>(null)
 
 // Slack-style discrete messages: 芝士 doesn't stream tokens — each complete
 // message lands as an `assistant_block` frame. `awaitingReply` drives the
-// 正在看… indicator from summon until the FIRST message of the turn arrives.
+// 正在看… indicator from summon until every active turn explicitly finishes.
 const awaitingReply = ref(false)
+const activeTurnIds = ref<Set<string>>(new Set())
+watch(awaitingReply, (v) => emit('working', v))
 
 // Tool actions 芝士 performed this turn (施工现场, spec §9.1) — ephemeral.
 // Working-log todo (芝士's Task tools). Live during a turn (§3.1.1); between
@@ -163,21 +257,30 @@ const awaitingReply = ref(false)
 // "做到哪了" is visible in the room without summoning anyone.
 const todoItems = ref<TodoItem[]>([])
 // The list on screen is a previous turn's leftovers, not this turn's live
-// progress — labelled differently so nobody reads a stale ◐ as "running now".
+// progress — labelled differently so nobody reads a stale half-circle as
+// "running now".
 const todoRestored = ref(false)
 // Action cards: 芝士's cheese actions (decision/doc/...) are persisted as system
 // event blocks tagged refs=["action:<resource>"] and rendered as clickable cards.
-const ACTION_META: Record<string, { verb: string; btn: string }> = {
-  doc: { verb: '更新了活文档', btn: '看活文档' },
-  decision: { verb: '记录了一条决策', btn: '查看决策记录' },
-  topics: { verb: '更新了子话题', btn: '' },
-  milestone: { verb: '钉了一个里程碑', btn: '看日历' },
-  accept: { verb: '递出了验收卡', btn: '去验收' },
-  notify: { verb: '发了通知', btn: '' },
+// 只有按钮文案在这里。动作行那句话由后端写进块内容（`_ACTION_LABEL` /
+// `编辑了文档`），这里曾经并排放着一份 `verb` 副本，谁都没读过它，改了也不会
+// 生效——两份会漂移的文案里，看不见的那份最危险。
+const ACTION_META: Record<string, { btn: string }> = {
+  doc: { btn: '查看文档' },
+  decision: { btn: '查看决策记录' },
+  topics: { btn: '' },
+  milestone: { btn: '查看日历' },
+  accept: { btn: '前往验收' },
+  notify: { btn: '' },
 }
 
-function todoMark(status: string): string {
-  return status === 'completed' ? '✓' : status === 'in_progress' ? '◐' : '○'
+// 三态用图标而不是文字符号（✓ / ◐ / ○）：那三个字符的字重和基线随系统字体变，
+// 在 13px 上 ◐ 和 ○ 几乎分不开。三个 mdi 图标按「填充程度」递进，一眼可分——
+// 空心圈 = 还没做，半填充 = 正在做，实心圈里带勾 = 做完了。
+function todoIcon(status: string): string {
+  if (status === 'completed') return 'mdi-check-circle'
+  if (status === 'in_progress') return 'mdi-circle-slice-4'
+  return 'mdi-circle-outline'
 }
 
 // ---- 选项问题 (cheese ask): buttons under the message; one click answers
@@ -228,26 +331,12 @@ async function onReact(m: Block, emoji: string) {
     const out = await apiToggleReaction(m.id, emoji, AUTHOR)
     applyReactions(m.id, out.reactions)
   } catch (e) {
-    errorMsg.value = e instanceof Error ? e.message : '表情操作失败'
+    errorMsg.value = e instanceof Error ? e.message : '表情未能更新'
   }
 }
 
-// A system event block tagged refs=["action:<resource>"] is a clickable action
-// card (decision/doc/...); returns the resource, or null for a plain event line.
-function actionResource(b: Block): string | null {
-  // Structured meta.action (shared events like 编辑了文档) wins; legacy
-  // action:<resource> refs (cheese-only cards) still resolve.
-  const metaAction = (b.meta as Record<string, unknown> | null)?.action
-  if (typeof metaAction === 'string') return metaAction
-  const r = (b.refs || []).find((x) => x.startsWith('action:'))
-  return r ? r.slice('action:'.length) : null
-}
-// meta.action events carry the actor in their content (张衡/芝士 编辑了文档);
-// legacy cards need the 芝士 prefix prepended.
-function actionText(b: Block): string {
-  const metaAction = (b.meta as Record<string, unknown> | null)?.action
-  return typeof metaAction === 'string' ? b.content : `芝士${b.content}`
-}
+// 「这条事件长什么样」的判断全在 lib/platformNotice.ts —— 包括动作卡认哪些块
+// (refs=["action:<resource>"] / meta.action)。这里只剩按钮文案和 emit 接线。
 
 // @mention chips are rendered via v-html; delegate clicks so the parent can
 // resolve the name (person → member page, topic/doc → open it).
@@ -483,10 +572,19 @@ function openSocket(topicId: string) {
     connected.value = true
     retryDelayMs = 1000 // healthy again → next outage starts backoff fresh
     errorMsg.value = null
+    flushOutbox() // 断线期间打的字，连上就自己走
   }
   ws.onclose = () => {
     if (socket === ws) {
       connected.value = false
+      // Anything still waiting for an echo lost its channel — queue it again
+      // rather than let its timer call it undelivered while we reconnect.
+      for (const item of outbox.value) {
+        if (item.state === 'sending') {
+          clearEchoTimer(item.clientId)
+          item.state = 'queued'
+        }
+      }
       scheduleReconnect(topicId)
     }
   }
@@ -534,6 +632,7 @@ function pushBlock(b: Block) {
 function handleFrame(frame: WsServerFrame) {
   switch (frame.type) {
     case 'user_block':
+      settleOutbox(frame.block)
       pushBlock(frame.block)
       autoScroll()
       break
@@ -567,10 +666,9 @@ function handleFrame(frame: WsServerFrame) {
       break
     case 'assistant_block':
       // One complete 芝士 message (Slack-style) — a turn may land several.
-      // The first one retires the 正在看… indicator; the working-log todo
-      // stays visible until the turn actually finishes.
       pushBlock(frame.block)
-      awaitingReply.value = false
+      // Compatibility with an older backend that has no lifecycle markers.
+      if (activeTurnIds.value.size === 0) awaitingReply.value = false
       autoScroll()
       break
     case 'error':
@@ -585,27 +683,45 @@ function handleFrame(frame: WsServerFrame) {
       // A persisted turn failure is already in the timeline as an event block
       // (现场即事实记录); only un-persisted errors need the floating banner.
       if (!frame.persisted) errorMsg.value = frame.message
-      awaitingReply.value = false
+      if (activeTurnIds.value.size === 0) awaitingReply.value = false
       // A failed turn is exactly when the checklist matters most — it is what
       // whoever picks this up next (person or new machine) works from. Keep it.
       todoRestored.value = true
       break
     case 'done':
-      awaitingReply.value = false
-      // Kept, not cleared: the checklist is the topic's 进度层 now, not just
-      // this turn's working log, and it is what the next turn resumes from.
-      todoRestored.value = true
-      emit('turn-done')
+      // Mid-session messages fold into the existing Claude run and emit no
+      // separate completion frame. Lifecycle markers own the running indicator.
+      if (activeTurnIds.value.size === 0) {
+        awaitingReply.value = false
+        todoRestored.value = true
+        emit('turn-done')
+      }
       autoScroll()
       break
     case 'retract_block':
       messages.value = messages.value.filter((m) => m.id !== frame.block_id)
       break
     case 'turn_active':
-      // Re-entered a topic whose turn is mid-stream: show 正在思考 until the
-      // replayed/live frames take over (cleared by assistant_block/done).
+      if (frame.turn_ids?.length) activeTurnIds.value = new Set(frame.turn_ids)
       awaitingReply.value = true
       break
+    case 'turn_started': {
+      const next = new Set(activeTurnIds.value)
+      next.add(frame.turn_id)
+      activeTurnIds.value = next
+      awaitingReply.value = true
+      break
+    }
+    case 'turn_finished': {
+      const next = new Set(activeTurnIds.value)
+      next.delete(frame.turn_id)
+      activeTurnIds.value = next
+      awaitingReply.value = next.size > 0
+      todoRestored.value = true
+      emit('turn-done')
+      autoScroll()
+      break
+    }
   }
 }
 
@@ -613,6 +729,7 @@ async function loadTopic(topic: Topic) {
   errorMsg.value = null
   connectRefused.value = false // a fresh topic gets a fresh attempt at connecting
   awaitingReply.value = false
+  activeTurnIds.value = new Set()
   todoItems.value = []
   todoRestored.value = false
   // 进度层 (#187): the checklist the last turn left behind. Fire-and-forget and
@@ -632,6 +749,7 @@ async function loadTopic(topic: Topic) {
     })
     .catch(() => {})
   reactionPickerFor.value = null
+  unreadAnchorId.value = null
   clearPendingAtts() // pending images belong to the topic they were typed in
   closeSocket()
   loadingOlder.value = false
@@ -665,6 +783,7 @@ async function loadTopic(topic: Topic) {
     messages.value = merged.blocks
     hasMore.value = merged.hasMore
     setCachedWindow(topic.id, merged)
+    placeUnreadAnchor() // 冻在这一刻：之后来的新消息不再移动这条线
     if (!cached) restoreScroll(topic.id)
     else if (grew && atBottom.value) autoScroll()
     openSocket(topic.id)
@@ -676,8 +795,8 @@ async function loadTopic(topic: Topic) {
   }
 }
 
-// Send a message. `summon` (= @芝士) asks 芝士 to reply; when false the message
-// is just posted (spec §7.1 默认不 @). The composer lives in WorkspaceView and
+// Send a message. `summon` (= 这条消息 @ 了芝士) asks 芝士 to reply; when false
+// the message is just posted (spec §7.1 默认不 @). The composer lives in TopicView and
 // drives this via the exposed ref, so the input bar can span chat + doc.
 // B3: reply target — the message this next send threads under (reply_to).
 const replyTarget = ref<Block | null>(null)
@@ -712,21 +831,94 @@ function scrollToMessage(id: string) {
   document.querySelector(`[data-mid="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
+// ---- 发件箱 (§14.1 实时) ----
+// 「人发的消息立即显示，绝不排在 AI turn 后面。别的都可以错，现场不能错」——
+// 而在这之前，发送是把帧塞进 socket 就完了：屏幕上什么都没有，要等后端落库
+// （名册查询、mention 解析、通知写入）再广播回来才显示。快的时候看不出，慢的
+// 时候你会以为自己的消息发丢了；socket 没开时更直接：输入框本身是禁用的。
+//
+// 现在消息立刻出现在时间线末尾，再去对账：后端把 client_id 原样戳回块上，回声
+// 一到就把本地这条换成真的。对不上账的那条不会消失，它变成一条能重试的行。
+const outbox = ref<Outgoing[]>([])
+// 等回声等多久算没送到。宁可长一点：误报「未送达」比晚一点显示更伤——房间里
+// 已经有过一次这种误报（#539）。
+const ECHO_TIMEOUT_MS = 30_000
+const echoTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+function clearEchoTimer(clientId: string) {
+  const t = echoTimers.get(clientId)
+  if (t) clearTimeout(t)
+  echoTimers.delete(clientId)
+}
+
+function markFailed(clientId: string) {
+  clearEchoTimer(clientId)
+  const item = outbox.value.find((o) => o.clientId === clientId)
+  if (item && item.state !== 'failed') item.state = 'failed'
+}
+
+/** Hand one queued message to the socket, if there is one to hand it to. */
+function flushOutbox() {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return
+  for (const item of outbox.value) {
+    if (item.state === 'sending') continue
+    const msg: WsClientMessage = {
+      type: 'message',
+      content: item.content,
+      summon: item.summon,
+      reply_to: item.replyTo,
+      attachments: item.atts,
+      client_id: item.clientId,
+    }
+    socket.send(JSON.stringify(msg))
+    item.state = 'sending'
+    clearEchoTimer(item.clientId)
+    echoTimers.set(
+      item.clientId,
+      setTimeout(() => markFailed(item.clientId), ECHO_TIMEOUT_MS)
+    )
+  }
+}
+
+/** The echo came home — this local copy has a real block now. */
+function settleOutbox(block: Block): boolean {
+  const clientId = (block.meta as Record<string, unknown> | null)?.client_id
+  if (typeof clientId !== 'string') return false
+  const i = outbox.value.findIndex((o) => o.clientId === clientId)
+  if (i < 0) return false
+  clearEchoTimer(clientId)
+  outbox.value.splice(i, 1)
+  return true
+}
+
+function retrySend(clientId: string) {
+  const item = outbox.value.find((o) => o.clientId === clientId)
+  if (!item) return
+  item.state = 'queued'
+  flushOutbox()
+}
+
+function dropSend(clientId: string) {
+  clearEchoTimer(clientId)
+  outbox.value = outbox.value.filter((o) => o.clientId !== clientId)
+}
+
 function send(content: string, summon: boolean, attachments?: ChatAttachment[]): boolean {
   const trimmed = content.trim()
   const atts = attachments?.length ? attachments : undefined
   // An image-only send (no text) is a valid message (图片输入).
-  if ((!trimmed && !atts) || !socket || socket.readyState !== WebSocket.OPEN) return false
+  if (!trimmed && !atts) return false
   errorMsg.value = null
-  const msg: WsClientMessage = {
-    type: 'message',
+  outbox.value.push({
+    clientId: `c${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     content: trimmed,
     summon,
-    reply_to: replyTarget.value?.id ?? undefined,
-    attachments: atts,
-  }
+    replyTo: replyTarget.value?.id ?? undefined,
+    atts,
+    state: 'queued',
+  })
   replyTarget.value = null
-  socket.send(JSON.stringify(msg))
+  flushOutbox()
   // Only show the "awaiting reply" indicator when 芝士 was summoned — an
   // instant local ack (正在看…) even before the backend's ✅ receipt lands.
   if (summon) awaitingReply.value = true
@@ -742,38 +934,91 @@ defineExpose({ send, connected })
 // The conversation stream shows messages + lightweight system lines only.
 // doc/decision blocks are document state (they live in the doc panel), and AI
 // tool/巡检 events belong in 现场 — neither belongs in the group chat (spec §7.1).
-const visible = computed<Block[]>(() => {
-  const out: Block[] = []
-  // Historical SDK turns can contain one fenced Markdown block split across
-  // consecutive message rows. Repair those rows before hiding event blocks,
-  // because an event is a hard boundary and must prevent an accidental merge.
-  for (const m of coalesceSplitFencedCodeBlocks(messages.value)) {
-    if (m.kind === 'message' || m.kind === 'attachment') {
-      out.push(m)
-    } else if (m.kind === 'event' && m.author_type === 'system') {
-      // 前端报错 events belong to the 现场 drawer (debugging surface), not the
-      // group chat — same rule as tool events (frontend_log.py).
-      if ((m.meta as Record<string, unknown> | null)?.event_type === 'frontend_error') {
-        continue
-      }
-      // Collapse a run of identical system lines (e.g. repeated 编辑了文档) so
-      // a burst of edits shows as one line, not a wall.
-      const prev = out[out.length - 1]
-      if (prev && prev.kind === 'event' && prev.author_type === 'system' && prev.content === m.content) {
-        continue
-      }
-      out.push(m)
-    }
+// Historical SDK turns can contain one fenced Markdown block split across
+// consecutive message rows. Repair those rows before collapseNotices hides
+// event blocks, because an event is a hard boundary and must prevent an
+// accidental merge.
+const rows = computed(() => collapseNotices(coalesceSplitFencedCodeBlocks(messages.value)))
+const visible = computed<Block[]>(() => rows.value.map((r) => r.block))
+
+// ---- 时间刻度 ----
+// 「这条属于哪一天」只在跨天时说一次。用本地日期而不是 UTC：读的人在哪个时区,
+// 「今天」就该是哪个时区的今天。
+const DAY_MS = 86_400_000
+function dayKey(iso: string): string {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+}
+function dayLabel(iso: string): string {
+  const d = new Date(iso)
+  const today = new Date()
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const days = Math.round((startOf(today) - startOf(d)) / DAY_MS)
+  if (days === 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 7 && days > 0) return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()]
+  const sameYear = d.getFullYear() === today.getFullYear()
+  return d.toLocaleDateString([], sameYear ? { month: 'long', day: 'numeric' } : undefined)
+}
+// blockId → 要画在它上面的那条日期线。第一条也画：翻到时间线顶部的人同样需要
+// 知道这段是什么时候的。
+const dayLabels = computed(() => {
+  const out = new Map<string, string>()
+  let prev: string | null = null
+  for (const { block } of rows.value) {
+    const key = dayKey(block.created_at)
+    if (key !== prev) out.set(block.id, dayLabel(block.created_at))
+    prev = key
   }
   return out
 })
 
-// 「已派出」标记 (issue #314): 本房间拆出去的子话题，在时间线上它被拆出去的那个
-// 时刻标一行，点进去就是那边。库里没有这行 —— split 不往父话题写任何 block，所以
-// 位置只能由子话题的 parent_id + created_at 现算（lib/splitMarkers.ts 说明了它能
-// 标什么、标不了什么）。topicList 是本项目的全部话题，子话题已经在里面了。
+// 新消息线锚在哪条块上。开话题时按当时的未读数往回数一次就冻住 —— 它是「我上次
+// 看到哪儿」的记号，不是一个会跟着新消息跑的游标。
+const unreadAnchorId = ref<string | null>(null)
+function placeUnreadAnchor() {
+  const n = props.unreadOnOpen
+  if (!n || n <= 0) return
+  let seen = 0
+  for (let i = rows.value.length - 1; i >= 0; i -= 1) {
+    const b = rows.value[i].block
+    // 和后端未读口径一致：只数别人发的消息，系统事件不算。
+    if ((b.kind !== 'message' && b.kind !== 'attachment') || b.author === AUTHOR) continue
+    seen += 1
+    if (seen === n) {
+      unreadAnchorId.value = b.id
+      return
+    }
+  }
+  // 未读比这一页还多：线就画在这一页最老的那条别人的消息上，别装作没有。
+  const oldest = rows.value.find((r) => r.block.author !== AUTHOR && r.block.kind === 'message')
+  unreadAnchorId.value = oldest?.block.id ?? null
+}
+
+// 「已派出」标记 (issue #314): 本房间派出去的活，在时间线上它被派出去的那个时刻
+// 标一行，点进去就是那条支线。库里没有这行 —— split 不往房间主线写任何 block，所
+// 以位置只能由支线的 created_at 现算（lib/splitMarkers.ts 说明了它能标什么、标不
+// 了什么）。
+//
+// 单独拉一次而不是从 topicList 里挑：一件活不再是话题树上的一个节点，话题列表里
+// 根本没有它了。`limit: 1` 是因为标记只要支线本身，不要它们的对话。
+const roomTasks = ref<RoomTask[]>([])
+watch(
+  () => props.topic?.id,
+  async (id) => {
+    roomTasks.value = []
+    if (!id) return
+    try {
+      roomTasks.value = (await listRoomTasks(id, { limit: 1 })).data
+    } catch {
+      // 标记是派生出来的装饰，不是内容。拉不到就少几行标记，不该让整个时间线红掉。
+    }
+  },
+  { immediate: true }
+)
+
 const splitMarkers = computed(() =>
-  placeSplitMarkers(props.topic?.id, props.topicList, {
+  placeSplitMarkers(roomTasks.value, {
     blocks: visible.value,
     hasMore: hasMore.value,
   })
@@ -807,6 +1052,14 @@ function onAvatarError(handle: string): void {
   if (avatarBroken.value.has(handle)) return
   avatarBroken.value = new Set(avatarBroken.value).add(handle)
 }
+// 自己在名册上的名字（发件箱那几行用它，因为它们还没有作者字段）。
+const myName = computed(() => memberByHandle.value.get(AUTHOR)?.name || AUTHOR)
+
+function outgoingState(item: Outgoing): string {
+  if (item.state === 'failed') return '未送达'
+  return connected.value ? '发送中…' : '等待连接'
+}
+
 function fmtTime(iso: string): string {
   // Local HH:mm next to the name on the first of a run (not raw UTC).
   return new Date(iso).toLocaleTimeString([], {
@@ -828,32 +1081,25 @@ function isRunStart(i: number): boolean {
   return prev.author !== cur.author || prev.author_type !== cur.author_type
 }
 
-// ---- Topic header state — product language, not git's (去 PR 化). The
-// branch/merge machinery is real underneath, but a normal user shouldn't
-// need to read git to know where a topic stands.
-const prShortId = computed(() => props.topic?.id.slice(0, 6) ?? '')
-const prState = computed(() => {
-  const s = props.topic?.status
-  if (s === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
-  if (s === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
-  return { label: '进行中', cls: 'pr-state--open' }
-})
+// ---- Topic header state. The labels live in lib/topicState.ts because the
+// 工作台's own topic header renders the same badge — one table, so the two can
+// never disagree about what `archived` is called.
+const prShortId = computed(() => topicShortId(props.topic?.id))
+const prState = computed(() => topicStateBadge(props.topic?.status))
 
 // ---- Self-contained composer (only when showComposer) ----
 const draft = ref('')
-const summon = ref(props.defaultSummon)
-const composerInput = ref<{ focus?: () => void } | null>(null)
-
-// 同 WorkspaceView：切换后把焦点还给输入框，否则 chip 一直握着焦点，用户接下来
-// 按的那次 Enter 打在 chip 上，把刚点亮的 @芝士 又静默关掉且不发送。
-function toggleSummon() {
-  summon.value = !summon.value
-  void nextTick(() => composerInput.value?.focus?.())
+// 拖文件到输入栏 (spec §7.1)。只是把落区标出来，判断留给 usePendingAttachments。
+const dragOver = ref(false)
+function onDropFiles(e: DragEvent) {
+  dragOver.value = false
+  onComposerDrop(e)
 }
+const composerInput = ref<{ focus?: () => void } | null>(null)
 
 // @-autocomplete (§3.1.1 人也能 @): the @token being typed at the end of the
 // draft, and the teammates / topics / broadcast tokens it can complete to.
-// Mirrors WorkspaceView's composer so the root-topic and 私聊 composers get the
+// Mirrors TopicView's composer so the root-topic and 私聊 composers get the
 // same picker.
 const mentionQuery = computed(() => {
   const m = draft.value.match(/@([^\s@]*)$/)
@@ -879,13 +1125,13 @@ const mentionMatches = computed<MentionItem[]>(() => {
   if (q === null) return []
   const ql = q.toLowerCase()
   const broadcast = BROADCAST_ITEMS.filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
-  const rest: MentionItem[] = [
-    ...props.members.map((m) => ({
-      label: m.name || m.user_handle,
+  const named: MentionItem[] = [
+    ...mentionPool.value.map((m) => ({
+      label: m.label,
       kind: 'member' as const,
-      insert: m.name || m.user_handle,
-      sub: `@${m.user_handle}`,
-      agent: !!m.agent,
+      insert: m.label,
+      sub: `@${m.handle}`,
+      agent: m.agent,
     })),
     ...props.topicList
       .filter((t) => t.kind !== 'root')
@@ -897,10 +1143,20 @@ const mentionMatches = computed<MentionItem[]>(() => {
         agent: false,
       })),
   ].filter((i) => i.label.toLowerCase().includes(ql))
-  return [...broadcast, ...rest].slice(0, 7)
+  // Agent 排在最前，群播让位。第一格就是 Enter 的默认答案，而「打一个 @ 然后回
+  // 车」在这个产品里压倒性地是「交给芝士」——把 @all 摆在那个位置，等于让最常见
+  // 的一次输入默认去打扰整个话题的所有人。群播是 fixed-literal token，换个位置
+  // 它还是那两个 token。
+  const agents = named.filter((i) => i.agent)
+  const rest = named.filter((i) => !i.agent)
+  return [...agents, ...broadcast, ...rest].slice(0, 7)
 })
 function pickMention(item: MentionItem) {
   draft.value = draft.value.replace(/@([^\s@]*)$/, `@${item.insert} `)
+  // 挑完一个人，正是你要接着往下打字的时刻。鼠标点菜单会把焦点带到那颗按钮上，
+  // 键盘挑则让整块菜单从 DOM 里消失——两条路都可能把光标从输入框里带走，而「@
+  // 完人还要再点一次输入框」是这个面板最烦人的地方。
+  void nextTick(() => composerInput.value?.focus?.())
 }
 
 // Human composer: turn a friendly "@名字 / @话题名 / @handle" into the canonical
@@ -911,9 +1167,9 @@ function expandMentions(text: string): string {
   const subs: { pat: string; token: string }[] = [
     { pat: '@all', token: '<@all>' },
     { pat: '@here', token: '<@here>' },
-    ...props.members.flatMap((m) => [
-      { pat: `@${m.name || m.user_handle}`, token: `<@${m.user_handle}>` },
-      { pat: `@${m.user_handle}`, token: `<@${m.user_handle}>` },
+    ...mentionPool.value.flatMap((m) => [
+      { pat: `@${m.label}`, token: `<@${m.handle}>` },
+      { pat: `@${m.handle}`, token: `<@${m.handle}>` },
     ]),
     ...props.topicList.filter((t) => t.kind !== 'root').map((t) => ({ pat: `@${t.title}`, token: `<#${t.id}>` })),
   ].sort((a, b) => b.pat.length - a.pat.length)
@@ -930,6 +1186,7 @@ const {
   uploading: attsUploading,
   addFiles,
   onPaste: onComposerPaste,
+  onDrop: onComposerDrop,
   removeAt: removePendingAtt,
   clear: clearPendingAtts,
 } = usePendingAttachments(
@@ -947,14 +1204,51 @@ function onFilePicked(e: Event) {
   input.value = '' // allow re-picking the same file
 }
 
+// 叫不叫芝士，由**这条消息 @ 没 @ 它**决定 —— 和 @ 一个人走的是同一条路，
+// 区别只在于 @ 人是通知、@ 它是真的开一轮。这以前是输入区上一个单独的开关：
+// 芝士本来就在 @ 补全的名单里（`agent` 标记），于是同一个意图有两条并列的说法，
+// 而只有开关那条是通的 —— 在正文里 @ 了它，它读得到，却不会动。
+//
+// 群播 (@all/@here) 不算：那是通知房间里的人，不是把活派给它。
+function mentionsAgent(expanded: string): boolean {
+  return mentionPool.value.some((m) => m.agent && expanded.includes(`<@${m.handle}>`))
+}
+
 function sendDraft() {
-  if (send(expandMentions(draft.value), summon.value, pendingAtts.value.slice())) {
+  const content = expandMentions(draft.value)
+  if (send(content, props.alwaysSummon || mentionsAgent(content), pendingAtts.value.slice())) {
     draft.value = ''
     clearPendingAtts()
   }
 }
 
-// IME (输入法) guard — see WorkspaceView.vue for the full story: Safari fires
+// 每话题草稿: stash / restore everything the composer holds. Nothing here is
+// "just a preference" — each field names something in the topic being left
+// (a block to reply to, files already uploaded to that topic's worktree).
+function rememberComposer(topicId: string) {
+  const hasContent =
+    !!draft.value.trim() || pendingAtts.value.length > 0 || !!replyTarget.value || outbox.value.length > 0
+  if (!hasContent) composerMemory.delete(topicId)
+  else
+    composerMemory.set(topicId, {
+      draft: draft.value,
+      reply: replyTarget.value,
+      atts: pendingAtts.value.slice(),
+      outbox: outbox.value.slice(),
+    })
+}
+
+function restoreComposer(topicId: string | undefined) {
+  const saved = topicId ? composerMemory.get(topicId) : undefined
+  draft.value = saved?.draft ?? ''
+  replyTarget.value = saved?.reply ?? null
+  pendingAtts.value = saved?.atts ?? []
+  // 换话题时在飞的那些没法再等回声了（socket 换了），回到队列，等这个话题
+  // 下次连上再走。它们不会在别的房间里露面。
+  outbox.value = (saved?.outbox ?? []).map((o) => (o.state === 'sending' ? { ...o, state: 'queued' } : o))
+}
+
+// IME (输入法) guard — see TopicView.vue for the full story: Safari fires
 // compositionend BEFORE the commit-Enter keydown, which then looks like a
 // plain Enter. Track composition ourselves and swallow the trailing Enter.
 let composing = false
@@ -970,6 +1264,13 @@ function isImeKey(e: KeyboardEvent) {
   return composing || e.isComposing || e.keyCode === 229 || e.timeStamp - compositionEndedAt < 100
 }
 
+// 触摸屏上回车是换行。软键盘没有 Shift 这一层，所以「Enter 发送 / Shift+Enter
+// 换行」在手机上等于「打不出第二行」——发送有按钮，换行没有别的办法。
+// 按输入方式判断，不按视口宽度：带触摸屏的笔记本两样都对。
+const coarse = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none)') : undefined
+const enterSends = ref(!coarse?.matches)
+coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.value = !e.matches))
+
 function onComposerKey(e: KeyboardEvent) {
   if (e.key !== 'Enter' || e.shiftKey) return
   // IME composition (拼音选字/上屏) 的回车是按给输入法的，绝不当成发送。
@@ -977,12 +1278,14 @@ function onComposerKey(e: KeyboardEvent) {
   // Only act on Enter from the focused composer textarea itself.
   const t = e.target as HTMLElement | null
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
-  e.preventDefault()
   // While the @-menu is open, Enter picks the first match instead of sending.
   if (mentionMatches.value.length) {
+    e.preventDefault()
     pickMention(mentionMatches.value[0])
     return
   }
+  if (!enterSends.value) return
+  e.preventDefault()
   sendDraft()
 }
 
@@ -1000,8 +1303,16 @@ watch(
       const el = scrollRef.value
       scrollMemory.set(oldId, { top: el.scrollTop, atBottom: isAtBottom(el) })
     }
-    if (props.topic) loadTopic(props.topic)
-    else {
+    if (oldId) {
+      rememberComposer(oldId)
+      for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
+    }
+    if (props.topic) {
+      // loadTopic clears the pending attachments synchronously before its first
+      // await, so this topic's own draft has to be restored AFTER the call.
+      loadTopic(props.topic)
+      restoreComposer(id)
+    } else {
       messages.value = []
       closeSocket()
     }
@@ -1011,6 +1322,8 @@ watch(
 
 onBeforeUnmount(() => {
   rememberScroll() // persist position across an unmount (e.g. leaving the view)
+  if (props.topic) rememberComposer(props.topic.id)
+  for (const id of [...echoTimers.keys()]) clearEchoTimer(id)
   contentObserver?.disconnect()
   contentObserver = null
   closeSocket()
@@ -1027,14 +1340,14 @@ onBeforeUnmount(() => {
     <div v-if="!topic" class="flex-grow-1 d-flex align-center justify-center text-medium-emphasis">
       <div class="text-center">
         <v-icon size="48" class="mb-2 text-disabled">mdi-forum-outline</v-icon>
-        <div>选择或新建一个话题，开始对话</div>
+        <div>选择一个话题开始对话</div>
       </div>
     </div>
 
     <template v-else>
       <!-- GitHub-PR-style header (Fix 4): only for real work topics (话题 = PR).
            The root topic (本体) and private chat use the plain header below. -->
-      <div v-if="prHeader" class="pr-header px-4 py-3">
+      <div v-if="!hideHeader && prHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2 flex-wrap">
           <span class="pr-title t-title">{{ topic.title }}</span>
           <span class="pr-num t-meta">#{{ prShortId }}</span>
@@ -1049,7 +1362,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
-      <div v-else class="pr-header px-4 py-3">
+      <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
         <div class="d-flex align-center ga-2">
           <span class="pr-title t-title">{{ titleOverride || topic.title }}</span>
           <v-spacer />
@@ -1073,7 +1386,7 @@ onBeforeUnmount(() => {
         <!-- Single wrapper so a ResizeObserver can watch the timeline's total
              content height (rows + streaming bubble + timeline-end slot). -->
         <div ref="contentRef">
-          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载历史…</div>
+          <div v-if="loadingHistory" class="text-medium-emphasis text-body-2 px-4 py-2">加载聊天记录…</div>
 
           <!-- Paging back through history. The row is always rendered while
                older blocks exist so the timeline's top edge does not change
@@ -1085,92 +1398,155 @@ onBeforeUnmount(() => {
             class="text-medium-emphasis text-body-2 px-4 py-2 text-center"
             data-testid="chat-older-loader"
           >
-            {{ loadingOlder ? '加载更早的消息…' : '向上滚动查看更早的消息' }}
+            {{ loadingOlder ? '加载更早的消息…' : '更早的消息' }}
           </div>
 
-          <template v-for="(m, i) in visible" :key="m.id">
+          <template v-for="({ block: m, notice }, i) in rows" :key="m.id">
+            <!-- 时间刻度: 换天了。一个跑几周的话题里，一串 09:32 / 14:07 分不出
+               哪条是今天的——这条线是唯一说得出「那是上周」的东西。 -->
+            <TimelineMark v-if="dayLabels.get(m.id)" quiet>{{ dayLabels.get(m.id) }}</TimelineMark>
+            <!-- 时间刻度: 你上次离开时看到哪儿。侧栏的未读角标只回答「有没有新的」,
+               这条线回答「新的从哪开始」。开话题时算一次就冻住，不随新消息移动。 -->
+            <TimelineMark v-if="m.id === unreadAnchorId" tone="unread">
+              <v-icon size="12">mdi-arrow-down</v-icon>
+              以下是新消息
+            </TimelineMark>
             <!-- 「已派出」标记 (issue #314): 拆出子话题在库里不留任何 block，所以
-               这一行是按子话题的 parent_id + created_at 现算出来的，插在它被拆出
-               去的那个时刻上。它不是消息，但会像 event 一样把消息分组打断。 -->
+               这一行是按支线的 created_at 现算出来的，插在它被派出去的那个时刻
+               上。它不是消息，但会像 event 一样把消息分组打断。 -->
             <DispatchedMarker
               v-for="marker in splitMarkers.before.get(m.id) ?? []"
-              :key="marker.topicId"
+              :key="marker.taskId"
               :marker="marker"
               @open="emit('open-topic', $event)"
             />
-            <!-- Infrastructure incidents are facts in the conversation, but they
-               are neither 芝士 messages nor faint activity lines. Structured
-               metadata selects this persistent, accessible recovery card. -->
+            <!-- 平台行：一种形态。lib/platformNotice.ts 决定分档，这里只按
+               「严重度改记号、不改形态」画。左边缘和消息正文同一条 54px 轴 ——
+               整列只有一条扫视线，右侧固定放动作/归属，「谁在等我」一眼扫得出。 -->
             <div
-              v-if="platformErrorPresentation(m)"
-              class="platform-incident"
+              v-if="notice?.mode === 'incident'"
+              class="sys-row sys-row--danger platform-incident"
               role="alert"
-              :data-error-code="platformErrorPresentation(m)!.code"
+              :data-error-code="notice.incident.code"
               data-testid="platform-error-card"
             >
-              <div class="platform-incident__icon" aria-hidden="true">
-                <v-icon :icon="platformErrorPresentation(m)!.icon" size="20" />
+              <div class="sys-line">
+                <v-icon class="sys-mark" :icon="notice.incident.icon" size="15" />
+                <span class="sys-text">{{ notice.incident.title }}</span>
+                <span class="sys-who">{{ notice.incident.status }}</span>
               </div>
-              <div class="platform-incident__content">
-                <div class="platform-incident__eyebrow">平台资源</div>
-                <div class="platform-incident__title">
-                  {{ platformErrorPresentation(m)!.title }}
-                </div>
-                <div class="platform-incident__body">
-                  {{ platformErrorPresentation(m)!.body }}
-                </div>
-                <div class="platform-incident__status">
-                  <span class="platform-incident__pulse" aria-hidden="true" />
-                  {{ platformErrorPresentation(m)!.status }}
-                </div>
+              <div class="sys-sub">{{ notice.lead }}</div>
+              <details v-if="notice.rest" class="sys-more">
+                <summary>{{ notice.detailLabel || '展开详情' }}</summary>
+                <pre class="sys-detail">{{ notice.rest }}</pre>
+              </details>
+            </div>
+            <!-- 本轮摘要 (spec §8.5 变更提醒): 这一轮改了什么 + 顺带更新了什么。
+               「查看改动」是这一行唯一的动作 —— 采纳是话题级的一次性动作，不是
+               每轮都问一遍的东西（§14.6）。 -->
+            <div v-else-if="notice?.mode === 'turn-summary'" class="sys-row turn-summary">
+              <div class="sys-line">
+                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                <span class="sys-text">
+                  <template v-if="notice.changes">
+                    本轮改了 {{ notice.changes.filesTotal }} 个文件 (+{{ notice.changes.added }} −{{
+                      notice.changes.removed
+                    }})
+                  </template>
+                  <template v-for="(act, ai) in notice.actions" :key="ai">
+                    <span v-if="ai > 0 || notice.changes" class="sys-sep"> · </span>
+                    <span v-html="renderPlain(act.text)" />
+                  </template>
+                </span>
+                <button
+                  v-if="notice.changes"
+                  type="button"
+                  class="sys-action"
+                  @click="emit('open-resource', 'changes', notice.turnId ?? undefined)"
+                >
+                  查看改动
+                </button>
+              </div>
+              <div v-if="notice.changes?.files.length" class="sys-sub sys-files">
+                {{ notice.changes.files.join(' · ')
+                }}<template v-if="notice.changes.filesOmitted"> · 另 {{ notice.changes.filesOmitted }} 个</template>
               </div>
             </div>
-            <!-- action row: 芝士's cheese action this turn — a quiet system line
-               (amber dot = platform act) with an inline amber link, no box. -->
-            <div v-else-if="m.kind === 'event' && actionResource(m)" class="action-card">
-              <!-- actionText may carry a <@handle> actor token (编辑了文档): render
-                 through the shared token→chip path so the actor is clickable. -->
-              <span class="action-verb" v-html="renderPlain(actionText(m))" />
-              <button
-                v-if="ACTION_META[actionResource(m)!]?.btn"
-                type="button"
-                class="action-link"
-                @click="emit('open-resource', actionResource(m)!, m.turn_id ?? undefined)"
-              >
-                {{ ACTION_META[actionResource(m)!].btn }}
-              </button>
+            <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
+            <div v-else-if="notice?.mode === 'action'" class="sys-row action-card">
+              <div class="sys-line">
+                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                <!-- notice.text may carry a <@handle> actor token (编辑了文档): render
+                   through the shared token→chip path so the actor is clickable. -->
+                <span class="sys-text" v-html="renderPlain(notice.text)" />
+                <button
+                  v-if="ACTION_META[notice.resource]?.btn"
+                  type="button"
+                  class="sys-action"
+                  @click="emit('open-resource', notice.resource, m.turn_id ?? undefined)"
+                >
+                  {{ ACTION_META[notice.resource].btn }}
+                </button>
+              </div>
             </div>
             <!-- 后端报错 (backend_log.py): 芝士 needs the whole traceback, a
                person needs to know it happened. So the line shows by default
                and the stack is one click away — a room is a conversation, not
                a monitoring dashboard. -->
-            <details v-else-if="backendErrorPresentation(m)" class="backend-error" data-testid="backend-error-event">
-              <summary class="backend-error__line">
-                <span>{{ backendErrorPresentation(m)!.line }}</span>
-                <span v-if="backendErrorPresentation(m)!.count" class="backend-error__count">
-                  ×{{ backendErrorPresentation(m)!.count }}
-                </span>
+            <details
+              v-else-if="notice?.mode === 'backend-error'"
+              class="sys-row sys-row--warn backend-error"
+              data-testid="backend-error-event"
+            >
+              <summary class="sys-line">
+                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                <span class="sys-text">{{ notice.error.line }}</span>
+                <span v-if="notice.error.count" class="sys-count">×{{ notice.error.count }}</span>
               </summary>
-              <div class="backend-error__meta">
-                <span v-if="backendErrorPresentation(m)!.where">{{ backendErrorPresentation(m)!.where }}</span>
-                <span v-if="backendErrorPresentation(m)!.requestId">
-                  req {{ backendErrorPresentation(m)!.requestId }}
-                </span>
+              <div class="sys-fold">
+                <div v-if="notice.error.where || notice.error.requestId" class="sys-meta">
+                  <span v-if="notice.error.where">{{ notice.error.where }}</span>
+                  <span v-if="notice.error.requestId"> req {{ notice.error.requestId }} </span>
+                </div>
+                <pre v-if="notice.error.stack" class="sys-detail">{{ notice.error.stack }}</pre>
               </div>
-              <pre v-if="backendErrorPresentation(m)!.stack" class="backend-error__stack">{{
-                backendErrorPresentation(m)!.stack
-              }}</pre>
             </details>
-            <!-- system / event blocks: centered, gray, small (Feishu 系统提示).
-               Content may carry a <@handle> actor token (归档/编辑…): render it
-               through the SAME token→chip path as messages so the actor is a
-               clickable mention, not raw text. -->
-            <div v-else-if="m.kind === 'event'" class="im-event text-caption">
-              <span v-html="renderPlain(m.content)" />
+            <!-- 折叠行: CI 没过 / 闸门红了 / 轮次失败… summary 一行就够决定「出了
+               什么事、归谁管」，日志和原话在一次点击之后。连着来的同类事件折成一
+               条带 ×N，但每一次的原话都还在展开区里，一条都没扔。 -->
+            <details
+              v-else-if="notice?.mode === 'fold'"
+              class="sys-row"
+              :class="{ 'sys-row--warn': notice.who === 'human' }"
+              data-testid="platform-notice"
+            >
+              <summary class="sys-line">
+                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                <span class="sys-text">{{ notice.line }}</span>
+                <span v-if="notice.count > 1" class="sys-count">×{{ notice.count }}</span>
+                <span v-if="notice.whoLabel" class="sys-who">{{ notice.whoLabel }}</span>
+              </summary>
+              <div class="sys-fold">
+                <div v-for="(occ, oi) in notice.occurrences" :key="oi" class="sys-occurrence">
+                  <div class="sys-meta">
+                    {{ occ.label || '详情' }}<template v-if="notice.count > 1"> · {{ occ.line }}</template>
+                  </div>
+                  <pre class="sys-detail">{{ occ.detail }}</pre>
+                </div>
+              </div>
+            </details>
+            <!-- system / event blocks. Content may carry a <@handle> actor token
+               (归档/编辑…): render it through the SAME token→chip path as
+               messages so the actor is a clickable mention, not raw text. -->
+            <div v-else-if="notice?.mode === 'plain'" class="sys-row im-event">
+              <div class="sys-line">
+                <span class="sys-mark sys-mark--dot" aria-hidden="true" />
+                <span class="sys-text" v-html="renderPlain(m.content)" />
+              </div>
             </div>
 
             <!-- message row -->
-            <div v-else class="im-row" :class="{ 'im-row--cont': !isRunStart(i) }" :data-mid="m.id">
+            <div v-else-if="!notice" class="im-row" :class="{ 'im-row--cont': !isRunStart(i) }" :data-mid="m.id">
               <!-- avatar gutter: only on the first of a run -->
               <div class="im-gutter">
                 <template v-if="isRunStart(i)">
@@ -1230,12 +1606,14 @@ onBeforeUnmount(() => {
                     {{ askAnswered(m)!.by }} 选了「{{ askAnswered(m)!.option }}」
                   </div>
                 </div>
-                <!-- 活引用 (eval A1): an upgraded block links to its new topic. -->
+                <!-- 活引用 (eval A1): 升级出去的块指向它变成的那个地点。房间里
+                   升级出来的是一条支线，私聊里升级出来的才是房间——两个字段各指
+                   一张表，同时只会有一个非空。 -->
                 <button
-                  v-if="m.upgraded_to_topic_id"
+                  v-if="m.upgraded_to_task_id || m.upgraded_to_topic_id"
                   type="button"
                   class="im-upgraded"
-                  @click="emit('open-topic', m.upgraded_to_topic_id)"
+                  @click="emit('open-topic', (m.upgraded_to_task_id || m.upgraded_to_topic_id)!)"
                 >
                   <v-icon size="13">mdi-arrow-top-right</v-icon>
                   已升级为话题，点击查看
@@ -1265,7 +1643,7 @@ onBeforeUnmount(() => {
                   type="button"
                   class="im-act rx-toggle"
                   :class="{ 'im-act--on': reactionPickerFor === m.id }"
-                  title="加表情"
+                  title="添加表情"
                   @click="reactionPickerFor = reactionPickerFor === m.id ? null : m.id"
                 >
                   <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
@@ -1286,17 +1664,45 @@ onBeforeUnmount(() => {
             </div>
           </template>
 
-          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚拆出去、之后房间里还
-             没人说过话的那些子话题。 -->
+          <!-- 比时间线上每一条消息都新的「已派出」标记 —— 刚派出去、之后房间里还
+             没人说过话的那些支线。 -->
           <DispatchedMarker
             v-for="marker in splitMarkers.tail"
-            :key="marker.topicId"
+            :key="marker.taskId"
             :marker="marker"
             @open="emit('open-topic', $event)"
           />
 
+          <!-- 发件箱: 已经打出去、还没落库的消息。它长得就是一条自己发的消息,
+             只是右边多一行状态——「立即显示」是第一位的，送达状态是第二位的。 -->
+          <div v-for="item in outbox" :key="item.clientId" class="im-row im-row--pending">
+            <div class="im-gutter">
+              <img
+                v-if="avatarSrc(AUTHOR)"
+                class="im-avatar im-avatar--photo"
+                :src="avatarSrc(AUTHOR)!"
+                alt=""
+                @error="onAvatarError(AUTHOR)"
+              />
+              <div v-else class="im-avatar" :style="{ backgroundColor: avatarColor(AUTHOR) }">
+                {{ avatarInitial(myName) }}
+              </div>
+            </div>
+            <div class="im-main">
+              <div class="im-meta">
+                <span class="im-name">{{ myName }}</span>
+                <span class="im-time">{{ outgoingState(item) }}</span>
+              </div>
+              <div class="im-text im-text--verbatim" v-html="renderPlain(item.content)" />
+              <div v-if="item.state === 'failed'" class="outbox-actions">
+                <button type="button" class="outbox-act" @click="retrySend(item.clientId)">重试</button>
+                <button type="button" class="outbox-act" @click="dropSend(item.clientId)">删除</button>
+              </div>
+            </div>
+          </div>
+
           <!-- 芝士 working indicator (Slack-style: no token streaming). Shown
-             from summon until the turn's FIRST message lands; the live
+             from summon until every explicitly active turn finishes; the live
              working-log checklist stays visible for the whole turn. -->
           <div v-if="awaitingReply || todoItems.length" class="im-row">
             <div class="im-gutter">
@@ -1309,18 +1715,19 @@ onBeforeUnmount(() => {
 
               <!-- Working-log checklist (芝士's tasks, §3.1.1). Live during a
                  turn; between turns this is the topic's stored 进度层 (#187),
-                 labelled so a leftover ◐ is not read as "running right now". -->
-              <div v-if="todoItems.length && todoRestored" class="todo-label">进度（上次做到这里）</div>
+                 labelled so a leftover 进行中 row is not read as "running right
+                 now". -->
+              <div v-if="todoItems.length && todoRestored" class="todo-label">上次的进度</div>
               <ul v-if="todoItems.length" class="todo-list">
                 <li v-for="t in todoItems" :key="t.id" class="todo-item" :class="'todo-' + t.status">
-                  <span class="todo-mark">{{ todoMark(t.status) }}</span>
+                  <v-icon class="todo-mark" size="14">{{ todoIcon(t.status) }}</v-icon>
                   <span class="todo-text">{{ t.subject }}</span>
                 </li>
               </ul>
 
               <!-- Instant ack before the first message / during cold start -->
               <div v-if="awaitingReply" class="im-text">
-                <span class="text-medium-emphasis">芝士 正在看…</span>
+                <span class="text-medium-emphasis">芝士正在处理…</span>
                 <span class="caret" />
               </div>
             </div>
@@ -1353,22 +1760,14 @@ onBeforeUnmount(() => {
 
       <!-- Built-in composer (private chat / standalone use). -->
       <template v-if="showComposer">
-        <v-divider />
-        <div class="composer pa-2 px-3">
-          <div class="d-flex align-center ga-2 mb-1">
-            <!-- The ONE amber chip allowed: @芝士 toggle when ON. -->
-            <button
-              type="button"
-              class="summon-chip"
-              :class="{ 'summon-chip--on': summon }"
-              title="@芝士 — 让芝士回复"
-              @click="toggleSummon"
-            >
-              <v-icon v-if="summon" size="13">mdi-creation</v-icon>
-              @芝士
-            </button>
-            <v-spacer />
-          </div>
+        <div
+          class="composer pa-2 px-3"
+          :class="{ 'composer--drop': dragOver }"
+          @dragenter.prevent="dragOver = true"
+          @dragover.prevent="dragOver = true"
+          @dragleave="dragOver = false"
+          @drop="onDropFiles"
+        >
           <!-- @-autocomplete: pick a teammate / topic / broadcast while typing @ -->
           <div v-if="mentionMatches.length" class="mention-menu">
             <button
@@ -1396,15 +1795,22 @@ onBeforeUnmount(() => {
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
           </div>
-          <!-- 图片输入: images waiting to go with the next send. -->
-          <div v-if="pendingAtts.length || attsUploading" class="att-strip">
-            <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
-              <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
-              <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">×</button>
+          <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
+               「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
+               分隔，所以上面那条 divider 没了。 -->
+          <div class="composer-box">
+            <!-- 图片输入: images waiting to go with the next send. -->
+            <div v-if="pendingAtts.length || attsUploading" class="att-strip">
+              <div v-for="(a, i) in pendingAtts" :key="a.path" class="att-thumb">
+                <img :src="attachmentRawUrl(topic.id, a.path)" :alt="a.path" />
+                <button type="button" class="att-remove" title="移除" @click="removePendingAtt(i)">
+                  <v-icon size="12">mdi-close</v-icon>
+                </button>
+              </div>
+              <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
             </div>
-            <v-progress-circular v-if="attsUploading" indeterminate size="18" width="2" />
-          </div>
-          <div class="d-flex align-end ga-2">
+            <!-- 输入框独占一整行。它旁边并排放按钮时，真正能打字的那块在手机上只剩
+               半屏——而按钮的数量只会往上加。 -->
             <v-textarea
               ref="composerInput"
               v-model="draft"
@@ -1414,38 +1820,53 @@ onBeforeUnmount(() => {
               max-rows="6"
               hide-details
               density="comfortable"
-              class="composer-input flex-grow-1"
-              placeholder="发条消息…（Enter 发送，Shift+Enter 换行，可直接粘贴图片）"
-              :disabled="!connected"
+              class="composer-input"
+              :placeholder="alwaysSummon ? '告诉芝士要做什么…' : '输入消息，@芝士 交给它做'"
+              :title="enterSends ? 'Enter 发送，Shift+Enter 换行，可直接粘贴图片' : '可直接粘贴图片'"
               @keydown="onComposerKey"
               @paste="onComposerPaste"
               @compositionstart="onCompositionStart"
               @compositionend="onCompositionEnd"
             />
-            <input
-              ref="fileInput"
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              multiple
-              class="d-none"
-              @change="onFilePicked"
-            />
-            <v-btn
-              icon="mdi-image-plus-outline"
-              variant="text"
-              size="small"
-              title="发送图片"
-              :disabled="!connected"
-              @click="pickFiles"
-            />
-            <v-btn
-              color="primary"
-              variant="flat"
-              icon="mdi-send"
-              size="small"
-              :disabled="!connected || (!draft.trim() && !pendingAtts.length)"
-              @click="sendDraft"
-            />
+            <!-- 下面一行：动作靠左，发送靠右。发送是这一行唯一的主操作，所以它是
+               唯一的实心按钮，其余一律是安静的图标。 -->
+            <div class="composer-actions d-flex align-center ga-1">
+              <input
+                ref="fileInput"
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                class="d-none"
+                @change="onFilePicked"
+              />
+              <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
+                 时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
+              <v-btn
+                class="composer-icon"
+                icon="mdi-image-plus-outline"
+                variant="text"
+                size="small"
+                color="medium-emphasis"
+                title="发送图片"
+                @click="pickFiles"
+              />
+              <v-spacer />
+              <!-- 算力说的是「这条消息会在哪儿跑」，属于发送这一侧，不和左边那两个
+                 「这条消息本身」的动作并列。它是设置不是动作，所以最安静。 -->
+              <slot name="composer-chips" />
+              <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
+                 按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。 -->
+              <v-btn
+                class="composer-send"
+                color="primary"
+                variant="flat"
+                icon="mdi-send"
+                size="small"
+                title="发送"
+                :disabled="!draft.trim() && !pendingAtts.length"
+                @click="sendDraft"
+              />
+            </div>
           </div>
         </div>
       </template>
@@ -1454,6 +1875,178 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* ---------------------------------------------------------------------------
+   平台行 —— 时间线上除了「人说的话」以外的一切，共用这一种形态。
+   之前这里有五套几何：居中淡行、居中动作行、16px 起的折叠卡、16px 起的报错卡、
+   还有一张 12px 圆角带渐变的事故卡。同一列里三条不同的左边缘（16 / 54 / 居中）
+   是它读起来乱的直接原因。现在只有一条轴：和消息正文对齐的 54px
+   （.im-row 的 16px padding + 28px 头像槽 + 10px gap）。
+   严重度只改**记号和底色**，绝不改形态。
+   --------------------------------------------------------------------------- */
+.sys-row {
+  padding: 3px 16px 3px 54px;
+  font-size: 13px; /* 13px 是可读下限；平台行比正文低一档，不低于它 */
+  line-height: 1.6;
+  color: var(--muted);
+}
+details.sys-row > summary {
+  cursor: pointer;
+  list-style: none;
+}
+details.sys-row > summary::-webkit-details-marker {
+  display: none;
+}
+.sys-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+/* 记号槽：宽度固定，所以圆点和图标不会把文字推成两个起点。 */
+.sys-mark {
+  flex: none;
+  width: 15px;
+  align-self: center;
+  color: var(--faint);
+}
+.sys-mark--dot {
+  position: relative;
+  height: 15px;
+}
+.sys-mark--dot::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 4px;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: currentcolor;
+}
+.sys-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* 右侧固定放「归属 / 状态」和「动作」——扫一列就知道有没有在等自己。 */
+.sys-who {
+  flex: none;
+  font-size: 12px;
+  color: var(--faint);
+}
+.sys-count {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+.sys-action {
+  flex: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 13px;
+  color: var(--accent-ink); /* 记号色做文字对比度不够，见 design-system §1.6 */
+  cursor: pointer;
+}
+.sys-action:hover {
+  text-decoration: underline;
+}
+.sys-sub {
+  padding-left: 23px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.sys-fold,
+.sys-more {
+  padding-left: 23px;
+}
+.sys-more > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--faint);
+}
+.sys-meta {
+  font-size: 12px;
+  color: var(--faint);
+  margin-top: 4px;
+}
+.sys-detail {
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  max-height: 240px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--fill);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.sys-occurrence + .sys-occurrence {
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+/* 拖文件进来时的落区，只描一圈，不改布局（改了会把输入框顶一下）。 */
+.composer--drop {
+  outline: 1px dashed var(--accent);
+  outline-offset: -3px;
+}
+/* 发件箱: 已显示、还没落库。淡一档，不换形状——它就是那条消息。 */
+.im-row--pending .im-text,
+.im-row--pending .im-name {
+  opacity: 0.62;
+}
+.outbox-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+.outbox-act {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+.outbox-act:hover {
+  text-decoration: underline;
+}
+/* 本轮摘要：文件清单是次要信息，压到元信息档，一行放不下就截断。 */
+.sys-files {
+  font-size: 12px;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sys-sep {
+  color: var(--faint);
+}
+/* 两档色，底色一律取自色板的 -wash，不再手搓 color-mix。 */
+.sys-row--warn {
+  background: var(--warn-wash);
+}
+.sys-row--warn .sys-mark {
+  color: var(--warn);
+}
+.sys-row--danger {
+  background: var(--danger-wash);
+}
+.sys-row--danger .sys-mark {
+  color: var(--danger);
+}
+.sys-row--warn,
+.sys-row--danger {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
 .chat {
   /* Was `d-flex flex-column fill-height` on the root. Spelled here instead so
      the declarations carry normal specificity: v-show's inline `display: none`
@@ -1463,21 +2056,6 @@ onBeforeUnmount(() => {
   height: 100%;
   background: var(--surface);
 }
-/* Action cards (§3.1.1 控件) — 芝士's cheese actions as clickable affordances.
-   Same visual language as the reaction chips / event pills: quiet fill, hairline
-   border, an amber platform dot marking "the platform recorded this". */
-/* System lines are ONE visual family: centered, small, muted — whether they
-   carry an action link (amber dot = platform act) or are plain notices. */
-.action-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 8px 16px;
-  padding: 0;
-  font-size: 12px;
-  color: var(--faint);
-}
 .chat-error-toast {
   position: absolute;
   left: 50%;
@@ -1486,69 +2064,45 @@ onBeforeUnmount(() => {
   z-index: 30;
   max-width: min(560px, calc(100% - 32px));
   overflow-wrap: anywhere;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
-}
-.action-link {
-  border: none;
-  background: none;
-  padding: 0;
-  font-size: 0.8rem;
-  color: rgb(var(--v-theme-primary));
-  cursor: pointer;
-}
-.action-link:hover {
-  text-decoration: underline;
-}
-.action-verb {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--muted, #666);
-}
-.action-verb::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex: none;
+  box-shadow: var(--shadow-2);
 }
 /* Working-log checklist (§3.1.1) — process, sits above the streaming text.
    Between turns the same list shows the stored 进度层 (#187) under a label. */
 .todo-label {
   font-size: 12px;
-  color: var(--muted, #666);
+  color: var(--muted);
   margin: 2px 0 0;
 }
+/* 任务清单块：强调靠 wash 底色，不靠左竖条（左条纹只留给引用块和结构线）。 */
 .todo-list {
   list-style: none;
   margin: 2px 0 6px;
   padding: 6px 10px;
-  border-left: 2px solid var(--v-theme-primary, #6750a4);
-  background: rgba(103, 80, 164, 0.05);
-  border-radius: 4px;
+  background: rgba(var(--v-theme-primary), 0.05);
+  border-radius: var(--radius-sm);
 }
 .todo-item {
   display: flex;
   gap: 6px;
-  align-items: baseline;
-  font-size: 0.85rem;
+  align-items: flex-start;
+  font-size: 13px;
   line-height: 1.5;
 }
+/* 图标盒子没有文字基线，所以整行改成顶对齐，再把图标压到第一行文字的中线上
+   ((13.6px × 1.5 − 14px) / 2 ≈ 3px)——否则多行标题会把图标顶到最后一行。 */
 .todo-mark {
-  width: 1em;
   flex: none;
-  text-align: center;
+  margin-top: 3px;
 }
 .todo-pending {
-  color: var(--text-muted, #888);
+  color: var(--faint);
 }
 .todo-in_progress {
-  color: var(--v-theme-primary, #6750a4);
+  color: var(--accent-ink);
   font-weight: 600;
 }
 .todo-completed {
-  color: var(--text-muted, #999);
+  color: var(--faint);
 }
 .todo-completed .todo-text {
   text-decoration: line-through;
@@ -1563,22 +2117,62 @@ onBeforeUnmount(() => {
 }
 .composer {
   background: var(--surface);
+  /* 手机底部那一条圆角/横杠区（安全区）会压在输入框上。桌面上这个值是 0。 */
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+}
+/* 输入区是一个控件。原来输入框和几颗按钮各自浮在页面上，读起来是几个零件而不是
+   一件东西——一个圆角描边就把它们收成一块，顺带替掉了上面那条 divider。 */
+.composer-box {
+  padding: 4px 6px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  transition: border-color 0.12s ease;
+}
+/* 聚焦时那条边只提一档：--muted 是正文级的灰，一压就把整个盒子变成了主角。 */
+.composer-box:focus-within {
+  border-color: var(--faint);
 }
 .composer-input :deep(textarea) {
   font-size: 14px;
   line-height: 1.5;
 }
+/* Vuetify 给输入框留的顶部内边距是「浮动标签落下来时站的地方」：plain + comfortable
+   下是 15px 的 --v-input-padding-top 再加 3.5px，而底部只有 3px。这个输入框没有
+   标签，那 15px 就只剩一个效果——第一行字被顶到盒子中间，上下差了六倍。 */
+.composer-input :deep(.v-field) {
+  --v-input-padding-top: 0px;
+}
+/* 那道遮罩是给「文字从浮动标签底下滑过去」用的渐隐。没有标签就没有要遮的东西，
+   留着它只会把第一行字的上半截淡掉——尤其在内边距刚被收窄之后。 */
+.composer-input :deep(.v-field__input) {
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+/* 动作行的规矩，三条：
+   1. 一行一个高度。原来是 24 / 32 / 24 / 30 四种，这是它看起来像一堆零件的主因。
+   2. 静止时谁也不画边框、不画底色——状态用墨色说，不用盒子说。
+   3. 整行只有一个实心块，就是发送。
+   位置负责表达语义：左边是「这条消息本身」的动作，右边是「它会怎么发出去」。 */
+.composer-actions {
+  min-height: 28px;
+  margin-top: 2px;
+}
+.composer-icon,
+.composer-send {
+  width: 28px;
+  height: 28px;
+}
 
-/* @-autocomplete popup — mirrors WorkspaceView's composer picker. */
+/* @-autocomplete popup — mirrors TopicView's composer picker. */
 .mention-menu {
   display: flex;
   flex-direction: column;
   margin-bottom: 6px;
-  border: 1px solid var(--border, #e0e0e0);
+  border: 1px solid var(--line-2);
   border-radius: 8px;
   overflow: hidden;
   background: var(--surface);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-2);
 }
 .mention-menu-item {
   display: flex;
@@ -1587,11 +2181,11 @@ onBeforeUnmount(() => {
   padding: 7px 12px;
   min-height: 36px;
   text-align: left;
-  font-size: 0.85rem;
+  font-size: 13px;
   cursor: pointer;
 }
 .mention-menu-item:hover {
-  background: var(--fill, #f5f5f5);
+  background: var(--fill);
 }
 .mention-avatar {
   display: inline-flex;
@@ -1602,59 +2196,48 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   font-size: 0.7rem;
   font-weight: 700;
+  /* Theme-invariant pair (same call as the default avatar in LeftAppRail): the
+     slate disc is one value in both themes, so its ink must be too. */
   color: #fff;
   background: #8a94a3;
   flex: none;
 }
 .mention-avatar--agent {
-  background: var(--accent, #f57f17);
+  /* 琥珀底上的墨：主题色自己那一套，深浅主题各有一个值。 */
+  color: rgb(var(--v-theme-on-primary));
+  background: var(--accent);
 }
 .mention-avatar--broadcast {
-  background: var(--ink, #33373d);
+  /* --ink inverts with the theme (near-black → near-white), so the ink on it
+     has to invert too; --surface is #fff in light (unchanged) and #1B1D20 dark. */
+  color: var(--surface);
+  background: var(--ink);
 }
 .mention-avatar--topic {
-  background: var(--fill, #f0f1f3);
-  color: var(--muted, #6b6b6b);
+  background: var(--fill);
+  color: var(--muted);
 }
 .mention-menu-name {
   font-weight: 500;
 }
 .mention-agent-badge {
-  font-size: 0.65rem;
+  font-size: 12px;
   font-weight: 600;
   padding: 0 5px;
-  border-radius: 4px;
-  color: rgb(var(--v-theme-primary));
-  background: rgba(var(--v-theme-primary), 0.12);
+  border-radius: var(--radius-sm);
+  /* 记号色做文字对比度不够 (design-system §1.6): --accent 在白底上是 2.65:1,
+     远低于正文门槛 4.5;--accent-ink 是 5.76:1。 */
+  color: var(--accent-ink);
+  background: var(--accent-wash);
 }
 .mention-menu-sub {
   font-size: 0.75rem;
-  color: var(--text-muted, #999);
+  color: var(--faint);
 }
 .mention-menu-hint {
   margin-left: auto;
   font-size: 0.7rem;
-  color: var(--text-muted, #aaa);
-}
-
-/* The ONE amber chip allowed: @芝士 toggle when ON. OFF = neutral. */
-.summon-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  background: var(--fill);
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 0.12s ease;
-}
-.summon-chip--on {
-  background: var(--accent);
-  color: #fff;
+  color: var(--faint);
 }
 
 /* ---- GitHub PR header ---- */
@@ -1678,7 +2261,13 @@ onBeforeUnmount(() => {
   border-radius: 6px;
 }
 .pr-state--open {
-  color: #fff;
+  /* --surface, not #fff: the ground (--ok) lightens on dark (#3FBF7F), where
+     white ink drops to 2.34:1. --surface IS #fff in light, so the badge looks
+     exactly as it does today, and flips to near-black ink on dark. (§1.5's
+     canonical chip is --ok-ink on --ok-wash, which would also lift the light
+     side above AA, but that changes how the badge looks — a call for the
+     design owner, not this pass.) */
+  color: var(--surface);
   background: var(--ok);
 }
 .pr-state--merged {
@@ -1693,7 +2282,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-weight: 500;
   color: var(--muted);
 }
@@ -1727,6 +2316,8 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   background: var(--fill);
+  /* Literal on purpose: the real ground is avatarColor() (a fixed hsl bound
+     inline in the template), identical in both themes — so is the initial. */
   color: #fff;
   font-size: 12px;
   font-weight: 600;
@@ -1754,7 +2345,7 @@ onBeforeUnmount(() => {
 }
 .im-time {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 12px; /* 12 是元信息档；11.5 既不在档位上，也在可读下限以下 */
   color: var(--faint);
 }
 .im-text {
@@ -1802,16 +2393,18 @@ onBeforeUnmount(() => {
   background: var(--fill);
 }
 .att-remove {
+  display: inline-flex;
   position: absolute;
   top: -6px;
   right: -6px;
+  align-items: center;
+  justify-content: center;
   width: 18px;
   height: 18px;
   border-radius: 50%;
   border: 1px solid var(--line);
   background: var(--surface);
   color: var(--muted);
-  font-size: 13px;
   line-height: 1;
   cursor: pointer;
 }
@@ -1828,9 +2421,9 @@ onBeforeUnmount(() => {
   margin-bottom: 3px;
   padding: 1px 6px;
   font-size: 12px;
-  color: var(--ink-3, #8a8f98);
+  color: var(--muted);
   background: var(--fill);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1845,7 +2438,7 @@ onBeforeUnmount(() => {
   gap: 2px;
   padding: 4px 12px;
   font-size: 12px;
-  color: var(--ink-2, #656a72);
+  color: var(--muted);
   background: var(--fill);
   border-top: 1px solid var(--line);
 }
@@ -1865,7 +2458,7 @@ onBeforeUnmount(() => {
   color: var(--accent-ink);
   background: var(--fill);
   border: 1px solid var(--line-2);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .im-upgraded:hover {
@@ -1874,21 +2467,27 @@ onBeforeUnmount(() => {
 }
 /* @mention: neutral inset, ink text — not amber. */
 .im-text :deep(.mention) {
-  color: var(--v-theme-primary, #6750a4);
+  color: var(--accent-ink);
   background: var(--fill);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   padding: 0 3px;
   font-weight: 500;
   cursor: pointer;
 }
 /* @person handle reads as a link: persistent accent underline. File/topic
-   refs (📄/#) keep their chip look and only underline on hover, below. */
+   refs (file icon / #) keep their chip look and only underline on hover. */
 .im-text :deep(.mention:not(.file-ref):not(.topic-ref)) {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 .im-text :deep(.mention:hover) {
   text-decoration: underline;
+}
+/* 文件 chip 前的 mdi 图标。不挂在 .im-text 下：同样的 chip 也出现在动作卡
+   (.action-verb) 和系统事件行里，那两处不在 .im-text 里面。 */
+:deep(.file-ref__icon) {
+  margin-right: 3px;
+  font-size: 0.92em;
 }
 
 /* per-row hover action bar (Feishu), floats at the row's top-right */
@@ -1902,7 +2501,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 8px;
-  box-shadow: 0 3px 10px rgba(25, 26, 28, 0.09);
+  box-shadow: var(--shadow-1);
   opacity: 0;
   transition: opacity 0.12s ease;
   pointer-events: none;
@@ -1950,7 +2549,7 @@ onBeforeUnmount(() => {
   background: var(--surface);
   border: 1px solid var(--line-2);
   border-radius: 8px;
-  box-shadow: 0 4px 14px rgba(25, 26, 28, 0.12);
+  box-shadow: var(--shadow-2);
   z-index: 5;
 }
 .rx-pick {
@@ -1976,9 +2575,9 @@ onBeforeUnmount(() => {
 .ask-option {
   border: 1px solid var(--line-2);
   background: var(--surface);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 5px 14px;
-  font-size: 0.85rem;
+  font-size: 13px;
   cursor: pointer;
   transition:
     border-color 0.12s,
@@ -2015,7 +2614,7 @@ onBeforeUnmount(() => {
   height: 22px;
   padding: 0 8px;
   border: 1px solid var(--line-2);
-  border-radius: 11px;
+  border-radius: var(--radius-pill);
   background: var(--fill);
   font-size: 12px;
   line-height: 1;
@@ -2040,160 +2639,12 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-/* system / event line: centered, faint, small */
-.platform-incident {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  margin: 12px 16px;
-  padding: 13px 15px 13px 14px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, #c65a1e 28%, var(--line));
-  border-radius: 10px;
-  background: linear-gradient(105deg, rgb(198 90 30 / 9%), transparent 38%), var(--surface);
-  box-shadow:
-    inset 3px 0 0 #c65a1e,
-    0 6px 20px rgb(73 35 16 / 6%);
-}
-.platform-incident::after {
-  position: absolute;
-  top: -18px;
-  right: -12px;
-  width: 76px;
-  height: 76px;
-  border: 1px solid rgb(198 90 30 / 10%);
-  border-radius: 50%;
-  content: '';
-}
-.platform-incident__icon {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  flex: 0 0 34px;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgb(198 90 30 / 22%);
-  border-radius: 9px;
-  color: #b64717;
-  background: rgb(198 90 30 / 10%);
-}
-.platform-incident__content {
-  position: relative;
-  z-index: 1;
-  min-width: 0;
-}
-.platform-incident__eyebrow {
-  margin-bottom: 2px;
-  color: #a84417;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-.platform-incident__title {
-  color: var(--ink);
-  font-size: 14px;
-  font-weight: 680;
-  line-height: 1.35;
-}
-.platform-incident__body {
-  margin-top: 4px;
-  color: var(--muted);
-  font-size: 12.5px;
-  line-height: 1.55;
-}
-.platform-incident__status {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 8px;
-  color: #9a4a1f;
-  font-size: 11px;
-  font-weight: 600;
-}
-.platform-incident__pulse {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #d97706;
-  box-shadow: 0 0 0 3px rgb(217 119 6 / 14%);
-  animation: incident-pulse 1.8s ease-out infinite;
-}
 @keyframes incident-pulse {
   50% {
-    box-shadow: 0 0 0 6px rgb(217 119 6 / 0%);
+    box-shadow: 0 0 0 6px transparent;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .platform-incident__pulse {
-    animation: none;
-  }
-}
-
-.im-event {
-  text-align: center;
-  color: var(--faint);
-  margin: 10px 0;
-  padding: 0 16px;
-  font-size: 12px;
-}
-.im-event span {
-  display: inline-block;
-  padding: 0 10px;
-}
-
-/* 后端报错: collapsed by default — one quiet line among the system lines, with
-   the traceback behind a click. Louder than 编辑了文档, quieter than a platform
-   incident card. */
-.backend-error {
-  margin: 8px 16px;
-  padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, #c65a1e 22%, var(--line));
-  border-radius: 8px;
-  background: color-mix(in srgb, #c65a1e 5%, transparent);
-  font-size: 12px;
-}
-.backend-error__line {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  cursor: pointer;
-  color: var(--text-muted, var(--faint));
-  list-style: none;
-}
-.backend-error__line > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.backend-error__count {
-  flex-shrink: 0;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, #c65a1e 16%, transparent);
-  font-variant-numeric: tabular-nums;
-}
-.backend-error__meta {
-  display: flex;
-  gap: 12px;
-  margin-top: 6px;
-  color: var(--faint);
-  font-size: 11px;
-}
-.backend-error__stack {
-  margin: 6px 0 0;
-  max-height: 320px;
-  overflow: auto;
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--surface-sunken, rgb(0 0 0 / 4%));
-  color: var(--faint);
-  font-size: 11px;
-  line-height: 1.5;
-  white-space: pre;
 }
 
 .caret {
@@ -2262,7 +2713,7 @@ onBeforeUnmount(() => {
   font-family: var(--font-mono);
   background: var(--fill);
   padding: 0.5px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.88em;
 }
 .md-content :deep(pre) {

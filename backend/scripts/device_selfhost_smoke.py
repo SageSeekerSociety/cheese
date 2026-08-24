@@ -4,8 +4,8 @@ container on the box that also hosts the enrolled device.
 It drives one real summoned turn on a device-backed project and asserts the three
 properties the first dev self-hosting run got wrong:
 
-  #94  the screen edits the topic's REAL worktree (co-located devices), and the
-       backend snapshots it — so 采纳/diff see the work;
+  #94  the screen edits its device-owned checkout and pushes the topic branch,
+       so 采纳/diff see the work;
   #95  the agent can file its own 验收卡 with the `cheese` CLI shipped to the device;
   #96  the chat WebSocket relays frames to a client while the turn runs.
 
@@ -23,6 +23,7 @@ Exit code 0 only when every check passes; the summary lists PASS/FAIL per check.
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -126,12 +127,35 @@ async def main() -> int:
     topic_id = uuid.UUID(
         api(
             "POST",
-            "/api/topics",
+            "/topics",
             token,
             {"project_id": str(project_id), "title": f"设备自托管冒烟 {MARKER}"},
         )["data"]["id"]
     )
-    print(f"topic={topic_id}", flush=True)
+    repo = ws.ensure_repo(project_id)
+    branch = ws.branch_for_place(topic_id)
+
+    def branch_head() -> str:
+        return subprocess.run(
+            ["git", "rev-parse", branch],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        ).stdout.strip()
+
+    def branch_readme() -> str:
+        result = subprocess.run(
+            ["git", "show", f"{branch}:README.md"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        return result.stdout if result.returncode == 0 else ""
+
+    before_head = branch_head()
+    print(f"topic={topic_id} branch={branch} base={before_head}", flush=True)
 
     # 2. Drive one summoned turn over the chat WS, recording every relayed frame
     #    (that recording IS the #96 check).
@@ -139,7 +163,7 @@ async def main() -> int:
 
     frames: list[dict] = []
     url = f"{BASE.replace('http://', 'ws://').replace('https://', 'wss://')}"
-    url += f"/api/topics/{topic_id}/chat?token={token}"
+    url += f"/topics/{topic_id}/chat?token={token}"
     async with websockets.connect(url, open_timeout=20) as sock:
         await sock.send(
             json.dumps({"type": "message", "content": PROMPT, "summon": True})
@@ -191,45 +215,39 @@ async def main() -> int:
         )
     )
 
-    # The worktree snapshot and the card land as the turn finishes; give them a
-    # short grace window rather than reading the instant the stream goes quiet.
+    # The device push and the card land as the request finishes; give them a short
+    # grace window rather than reading the instant the stream goes quiet.
     for _ in range(20):
-        cards_now = api("GET", f"/api/topics/{topic_id}/accept-card", token)["data"]
-        wt_now = ws.topic_worktree(project_id, topic_id) / "README.md"
-        seen = wt_now.exists() and MARKER in wt_now.read_text(
-            encoding="utf-8", errors="ignore"
-        )
+        cards_now = api("GET", f"/topics/{topic_id}/accept-card", token)["data"]
+        seen = MARKER in branch_readme()
         if seen and int(cards_now.get("total") or 0) > 0:
             break
         await asyncio.sleep(6)
 
+    after_head = branch_head()
+    pushed = bool(after_head) and after_head != before_head
     custom = bool(os.environ.get("PROMPT", "").strip())
-    worktree = ws.topic_worktree(project_id, topic_id)
-    readme = worktree / "README.md"
-    edited = readme.exists() and MARKER in readme.read_text(
-        encoding="utf-8", errors="ignore"
-    )
+    edited = MARKER in branch_readme()
     if custom:
-        # A caller-supplied task writes whatever it was asked to; assert only that
-        # the turn CHANGED the topic's real worktree, not that it wrote our marker.
-        changed = [p.name for p in worktree.iterdir() if not p.name.startswith(".")]
+        # A caller-supplied task may write anything; a changed branch head proves
+        # that the device committed and pushed its work back.
         results.append(
             (
-                "#94 device worked in the topic's real worktree",
-                bool(changed),
-                f"{worktree} has {len(changed)} entries",
+                "#94 device pushed the topic branch",
+                pushed,
+                f"{before_head[:12]} -> {after_head[:12]}",
             )
         )
     else:
         results.append(
             (
-                "#94 device edited the topic's real worktree",
-                edited,
-                f"{readme} {'contains' if edited else 'MISSING'} the marker",
+                "#94 device pushed its edit into the topic branch",
+                pushed and edited,
+                f"{branch}:README.md {'contains' if edited else 'MISSING'} the marker",
             )
         )
 
-    cards = api("GET", f"/api/topics/{topic_id}/accept-card", token)["data"]
+    cards = api("GET", f"/topics/{topic_id}/accept-card", token)["data"]
     filed = int(cards.get("total") or 0) > 0
     results.append(
         (

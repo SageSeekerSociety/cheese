@@ -2,14 +2,15 @@
 
 import uuid
 
+from app.core.sandbox_auth import mint_scoped_token
 from app.domain.identity.handles import topic_agent_handle
 from tests.integration.conftest import chat_ws_url
 
 
 def _topic(client) -> str:
-    p = client.post("/api/projects", json={"name": "P"}).json()["data"]
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
     t = client.post(
-        "/api/topics",
+        "/topics",
         json={"project_id": p["id"], "title": "T", "created_by": "user-1"},
     ).json()["data"]
     return t["id"]
@@ -17,7 +18,7 @@ def _topic(client) -> str:
 
 def _ask(client, tid: str) -> dict:
     r = client.post(
-        f"/api/topics/{tid}/ask",
+        f"/topics/{tid}/ask",
         json={"question": "分页方案选哪个？", "options": ["cursor", "pageStart"]},
     )
     assert r.status_code == 200
@@ -32,21 +33,47 @@ def test_ask_creates_option_message(client):
     assert blk["kind"] == "message"
     assert blk["meta"]["options"] == ["cursor", "pageStart"]
     # It shows in the timeline like any message.
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     assert any(b["id"] == blk["id"] for b in blocks)
 
 
 def test_ask_rejects_bad_option_counts(client):
     tid = _topic(client)
     r = client.post(
-        f"/api/topics/{tid}/ask", json={"question": "q", "options": ["only-one"]}
+        f"/topics/{tid}/ask", json={"question": "q", "options": ["only-one"]}
     )
     assert r.status_code == 422
     r = client.post(
-        f"/api/topics/{tid}/ask",
+        f"/topics/{tid}/ask",
         json={"question": "q", "options": ["a", "b", "c", "d", "e"]},
     )
     assert r.status_code == 422
+
+
+def test_ask_requires_a_valid_topic_scoped_credential(client):
+    tid = _topic(client)
+    body = {"question": "选哪个？", "options": ["a", "b"]}
+    without_token = client.post(
+        f"/topics/{tid}/ask",
+        json=body,
+        headers={"X-Cheese-Token": ""},
+    )
+    assert without_token.status_code == 401
+
+    other = _topic(client)
+    wrong_topic = client.post(
+        f"/topics/{tid}/ask",
+        json=body,
+        headers={
+            "X-Cheese-Token": mint_scoped_token(
+                project_id=str(
+                    client.get(f"/topics/{other}").json()["data"]["project_id"]
+                ),
+                topic_id=other,
+            )
+        },
+    )
+    assert wrong_topic.status_code == 401
 
 
 def test_answer_records_choice_and_posts_reply(client):
@@ -54,7 +81,7 @@ def test_answer_records_choice_and_posts_reply(client):
     blk = _ask(client, tid)
 
     r = client.post(
-        f"/api/topics/blocks/{blk['id']}/answer",
+        f"/topics/blocks/{blk['id']}/answer",
         json={"option": "cursor", "author": "user-1"},
     )
     assert r.status_code == 200
@@ -70,7 +97,7 @@ def test_answer_records_choice_and_posts_reply(client):
             frame = ws.receive_json()
             if frame["type"] in ("done", "error"):
                 break
-    blocks = client.get(f"/api/topics/{tid}/blocks").json()["data"]["data"]
+    blocks = client.get(f"/topics/{tid}/blocks").json()["data"]["data"]
     debug = [(b["author"], b["kind"], b["content"][:30]) for b in blocks]
     assert any(b["author"] == "user-1" and b["content"] == "cursor" for b in blocks), (
         f"choice message never landed: {debug}"
@@ -82,17 +109,17 @@ def test_answer_validates_option_and_single_shot(client):
     blk = _ask(client, tid)
 
     r = client.post(
-        f"/api/topics/blocks/{blk['id']}/answer",
+        f"/topics/blocks/{blk['id']}/answer",
         json={"option": "不存在的", "author": "user-1"},
     )
     assert r.status_code == 422
 
     client.post(
-        f"/api/topics/blocks/{blk['id']}/answer",
+        f"/topics/blocks/{blk['id']}/answer",
         json={"option": "cursor", "author": "user-1"},
     )
     r = client.post(
-        f"/api/topics/blocks/{blk['id']}/answer",
+        f"/topics/blocks/{blk['id']}/answer",
         json={"option": "pageStart", "author": "user-2"},
     )
     assert r.status_code == 422

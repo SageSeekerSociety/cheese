@@ -10,10 +10,10 @@ import uuid
 
 def test_listing_a_projects_files_needs_a_credential(client):
     project = client.post(
-        "/api/projects", json={"name": "Secret", "owner_handle": "alice"}
+        "/projects", json={"name": "Secret", "owner_handle": "alice"}
     ).json()["data"]
 
-    resp = client.get(f"/api/projects/{project['id']}/files")
+    resp = client.get(f"/projects/{project['id']}/files")
 
     assert resp.status_code in (401, 403, 404), (
         f"an unauthenticated caller got {resp.status_code}: {resp.text[:200]}"
@@ -22,12 +22,10 @@ def test_listing_a_projects_files_needs_a_credential(client):
 
 def test_reading_a_file_needs_a_credential(client):
     project = client.post(
-        "/api/projects", json={"name": "Secret2", "owner_handle": "alice"}
+        "/projects", json={"name": "Secret2", "owner_handle": "alice"}
     ).json()["data"]
 
-    resp = client.get(
-        f"/api/projects/{project['id']}/file", params={"path": "README.md"}
-    )
+    resp = client.get(f"/projects/{project['id']}/file", params={"path": "README.md"})
 
     assert resp.status_code in (401, 403, 404), (
         f"an unauthenticated caller got {resp.status_code}: {resp.text[:200]}"
@@ -44,8 +42,8 @@ def test_a_topic_worktree_listing_reflects_what_was_pushed(tmp_path, monkeypatch
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(topic)
-    ws._ensure_worktree(project, branch)
+    branch = ws.branch_for_place(topic)
+    ws._ensure_worktree(project, topic)
     _configure_for_push(repo)
 
     import subprocess
@@ -116,8 +114,8 @@ def test_an_uncommitted_local_edit_is_never_swept_aside(tmp_path, monkeypatch):
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(topic)
-    wt = ws._ensure_worktree(project, branch)
+    branch = ws.branch_for_place(topic)
+    wt = ws._ensure_worktree(project, topic)
 
     (wt / "being_edited.txt").write_text("a human is typing here\n")
     _push_a_file(repo, tmp_path, branch, "from_machine.txt")
@@ -134,8 +132,8 @@ def test_a_clean_workspace_picks_the_push_up(tmp_path, monkeypatch):
     monkeypatch.setattr(ws.settings, "workspace_root", str(tmp_path / "ws2"))
     project, topic = uuid.uuid4(), uuid.uuid4()
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_topic(topic)
-    ws._ensure_worktree(project, branch)
+    branch = ws.branch_for_place(topic)
+    ws._ensure_worktree(project, topic)
 
     _push_a_file(repo, tmp_path, branch, "landed.txt")
 

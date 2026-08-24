@@ -7,7 +7,7 @@ power going out. So every side effect an auto-resumed turn could repeat carries
 a durable key, and this file asserts the property one action at a time.
 
 The key is scoped to the **continuation** — the logical unit of work that a turn
-and all of its auto-resumes share (``TurnRunner.continuation_for``). That is
+and all of its auto-resumes share (``AgentWorkRunner.continuation_for``). That is
 what makes "the resumed 芝士 re-doing it" and "someone legitimately doing the
 same thing next week" distinguishable at all; see ``domain.idempotency.keys``.
 
@@ -31,18 +31,13 @@ import uuid
 import pytest
 from sqlalchemy import func, select
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.domain.agent.chat import ChatService
-from app.domain.agent.service import (
-    AgentMessage,
-    AgentResult,
-    AgentService,
-    AgentSessionInfo,
-)
 from app.domain.block.models import Block, BlockKind
 from app.domain.idempotency.keys import action_key
 from app.domain.milestone.models import Milestone
-from app.domain.topic.models import Topic
+from app.domain.room_task.models import Task
+from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import session_auth_headers
 
 # One fixed continuation for every test here: it stands for "the interrupted
@@ -58,18 +53,18 @@ def in_a_turn(monkeypatch):
     Production gets this from the runner's live lifecycle record; a test that
     started a real background turn just to read one uuid back out would be
     testing the turn machinery, not the dedup."""
-    runner = get_turn_runner()
+    runner = get_work_runner()
     monkeypatch.setattr(runner, "continuation_for", lambda _topic_id: CONTINUATION)
     return runner
 
 
 def _project(client) -> str:
-    return client.post("/api/projects", json={"name": "P"}).json()["data"]["id"]
+    return client.post("/projects", json={"name": "P"}).json()["data"]["id"]
 
 
 def _topic(client, project_id: str, title: str = "母话题") -> str:
     return client.post(
-        "/api/topics", json={"project_id": project_id, "title": title}
+        "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]["id"]
 
 
@@ -81,18 +76,20 @@ async def _count(factory, stmt) -> int:
 # --- 1. 发消息 ---------------------------------------------------------------
 
 
-class _SameMessageTwice(AgentService):
+class _SameMessageTwice(StubChannel):
     """A 芝士 that says the exact same thing on both attempts — which is what a
-    resumed turn with no memory of the first attempt does."""
+    resumed session with no memory of the first attempt does."""
 
     def __init__(self, text: str) -> None:
-        super().__init__(model="stub")
+        super().__init__()
         self._text = text
 
-    async def stream_reply(self, **_):
-        yield AgentSessionInfo(session_id="s1")
-        yield AgentMessage(text=self._text)
-        yield AgentResult(text=self._text, session_id="s1")
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id, session_id="s1")
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, self._text)
+        self.stops(topic_id, self._text, session_id="s1")
 
 
 def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
@@ -101,7 +98,7 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
     text = "我先把这五条落到代码上逐一自查，不动手改。"
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=_SameMessageTwice(text),
+        compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -115,9 +112,13 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
             continuation_id=CONTINUATION,
         ):
             pass
+        await settle_turn(chat, uuid.UUID(tid))
 
-    asyncio.run(_turn())  # the attempt that got interrupted
-    asyncio.run(_turn())  # the auto-resume, saying the same thing again
+    async def _both() -> None:
+        await _turn()  # the attempt that got interrupted
+        await _turn()  # the auto-resume, saying the same thing again
+
+    asyncio.run(_both())
 
     said = asyncio.run(
         _count(
@@ -134,6 +135,47 @@ def test_message_is_not_posted_twice_under_one_continuation(client, tmp_path):
     assert said == 1, "续跑把同一句话又说了一遍"
 
 
+def test_kickoff_message_is_not_posted_twice_under_one_turn(client, tmp_path):
+    """A kickoff turn (分身自动开工 / parent digesting a conclusion) is the one
+    turn shape that ran with NO continuation — so an interrupted kickoff's
+    auto-resume re-said everything, unprotected. It must claim under its own
+    turn id like every converse turn does."""
+    pid = _project(client)
+    tid = _topic(client, pid)
+    text = "领到任务了，我先把仓库结构过一遍。"
+    chat = ChatService(
+        session_factory=client.test_factory,
+        compute=stub_compute(_SameMessageTwice(text)),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    kickoff_turn = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+
+    async def _turn() -> None:
+        async for _ in chat.kickoff(topic_id=uuid.UUID(tid), turn_id=kickoff_turn):
+            pass
+
+    async def _both() -> None:
+        await _turn()  # the attempt that got interrupted
+        await _turn()  # the auto-resume, saying the same thing again
+
+    asyncio.run(_both())
+
+    said = asyncio.run(
+        _count(
+            client.test_factory,
+            select(func.count())
+            .select_from(Block)
+            .where(
+                Block.topic_id == uuid.UUID(tid),
+                Block.kind == BlockKind.message,
+                Block.content == text,
+            ),
+        )
+    )
+    assert said == 1, "kickoff 的续跑把同一句话又说了一遍"
+
+
 def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
     """The complement, and the reason the key is not just a content hash: the
     SAME text in a LATER, unrelated unit of work is a second message, not a
@@ -144,7 +186,7 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
     text = "好的"
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=_SameMessageTwice(text),
+        compute=stub_compute(_SameMessageTwice(text)),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -158,9 +200,13 @@ def test_message_dedup_does_not_leak_across_continuations(client, tmp_path):
             continuation_id=cont,
         ):
             pass
+        await settle_turn(chat, uuid.UUID(tid))
 
-    asyncio.run(_turn(uuid.uuid4()))
-    asyncio.run(_turn(uuid.uuid4()))
+    async def _both() -> None:
+        await _turn(uuid.uuid4())
+        await _turn(uuid.uuid4())
+
+    asyncio.run(_both())
 
     said = asyncio.run(
         _count(
@@ -193,8 +239,8 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
     tid = _topic(client, pid)
     body = {"title": "数据清洗", "brief": "把脏数据洗掉", "created_by": "cheese"}
 
-    first = client.post(f"/api/topics/{tid}/split", json=body)
-    second = client.post(f"/api/topics/{tid}/split", json=body)
+    first = client.post(f"/topics/{tid}/split", json=body)
+    second = client.post(f"/topics/{tid}/split", json=body)
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
 
@@ -202,11 +248,11 @@ def test_split_does_not_spawn_a_second_subtopic(client, in_a_turn, monkeypatch):
         _count(
             client.test_factory,
             select(func.count())
-            .select_from(Topic)
-            .where(Topic.parent_id == uuid.UUID(tid)),
+            .select_from(Task)
+            .where(Task.room_id == uuid.UUID(tid)),
         )
     )
-    assert children == 1, "续跑拆出了第二个子话题"
+    assert children == 1, "续跑派出了第二条支线"
     assert len(kickoffs) == 1, "第二个分身被叫起来干活了"
     # The replay gets the FIRST child back, not an error: a resumed 芝士 asking
     # again should learn what already exists.
@@ -221,8 +267,8 @@ def test_decision_is_recorded_once(client, in_a_turn):
     tid = _topic(client, pid)
     body = {"decision": "用 item-based CF"}
 
-    assert client.post(f"/api/topics/{tid}/decision", json=body).status_code == 200
-    assert client.post(f"/api/topics/{tid}/decision", json=body).status_code == 200
+    assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
+    assert client.post(f"/topics/{tid}/decision", json=body).status_code == 200
 
     rows = asyncio.run(
         _count(
@@ -250,8 +296,8 @@ def test_milestone_is_pinned_once(client, in_a_turn):
         "source_topic_id": tid,
     }
 
-    assert client.post(f"/api/projects/{pid}/milestones", json=body).status_code == 200
-    assert client.post(f"/api/projects/{pid}/milestones", json=body).status_code == 200
+    assert client.post(f"/projects/{pid}/milestones", json=body).status_code == 200
+    assert client.post(f"/projects/{pid}/milestones", json=body).status_code == 200
 
     rows = asyncio.run(
         _count(
@@ -279,15 +325,23 @@ def test_second_accept_card_is_refused_so_no_second_pr(client):
     tid = _topic(client, pid)
 
     first = client.post(
-        f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        f"/topics/{tid}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
         headers=session_auth_headers("cheese"),
     )
     assert first.status_code == 200, first.text
 
     second = client.post(
-        f"/api/topics/{tid}/accept-card",
-        json={"reviewer_handle": "alice", "routing_reason": "最懂"},
+        f"/topics/{tid}/accept-card",
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+        },
         headers=session_auth_headers("cheese"),
     )
     assert second.status_code >= 400, "第二张验收卡没被拦住——它能开出第二个 PR"
@@ -301,7 +355,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
     rule deliberately: outside an automatic turn there is no continuation and
     no dedup. A human pressing 记决策 twice means it twice — the risk this whole
     mechanism exists for is created by 自动续跑, not by people."""
-    runner = get_turn_runner()
+    runner = get_work_runner()
     monkeypatch.setattr(runner, "continuation_for", lambda _topic_id: None)
     kickoffs: list[uuid.UUID] = []
     monkeypatch.setattr(
@@ -315,13 +369,13 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
     for _ in range(2):
         assert (
             client.post(
-                f"/api/topics/{tid}/decision", json={"decision": "同一条"}
+                f"/topics/{tid}/decision", json={"decision": "同一条"}
             ).status_code
             == 200
         )
         assert (
             client.post(
-                f"/api/projects/{pid}/milestones",
+                f"/projects/{pid}/milestones",
                 json={
                     "title": "同一个",
                     "due_date": "2026-06-20",
@@ -332,7 +386,7 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
         )
         assert (
             client.post(
-                f"/api/topics/{tid}/split",
+                f"/topics/{tid}/split",
                 json={"title": "同一个子话题", "created_by": "cheese"},
             ).status_code
             == 200
@@ -358,8 +412,8 @@ def test_without_a_running_turn_nothing_is_deduped(client, monkeypatch):
         _count(
             client.test_factory,
             select(func.count())
-            .select_from(Topic)
-            .where(Topic.parent_id == uuid.UUID(tid)),
+            .select_from(Task)
+            .where(Task.room_id == uuid.UUID(tid)),
         )
     )
     assert (decisions, milestones, children) == (2, 2, 2)

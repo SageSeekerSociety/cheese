@@ -4,39 +4,26 @@ cheese-hook forwarder, and the drain loop. Tested without Docker or a device."""
 
 import asyncio
 import contextlib
+import uuid as _uuid
 from pathlib import Path
 
 import pytest
 
-from app.domain.agent.hook_events import HookRouter
-from app.domain.agent.hooks_substrate import (
+from app.domain.agent.harness import Opening, SessionRef
+from app.domain.agent.harness.claude_code.hook_events import HookRouter
+from app.domain.agent.harness.claude_code.hooks_substrate import (
     CHEESE_HOOK_SCRIPT,
     SESSION_TOKEN_TTL_S,
     ActivityTracker,
-    HooksTurnProvider,
+    Channel,
+    ClaudeCodeRuntime,
     ScreenSetupError,
-    hooks_settings,
-    run_hooks_turn,
+    WorkAttribution,
+    monitor_session_activity,
 )
 from app.domain.agent.service import AgentMessage, AgentResult, AgentToolUse
 
 pytestmark = pytest.mark.anyio
-
-
-def test_hooks_settings_wire_every_perception_hook_to_the_forwarder():
-    s = hooks_settings()
-    assert s["skipDangerousModePermissionPrompt"] is True
-    names = ("SessionStart", "PreToolUse", "PostToolUse", "MessageDisplay", "Stop")
-    for event in names:
-        entry = s["hooks"][event][0]
-        assert entry["hooks"][0] == {"type": "command", "command": "cheese-hook"}
-
-
-def test_hooks_settings_deny_the_tool_no_user_can_answer():
-    """AskUserQuestion's picker is drawn inside the screen's terminal, out of
-    every user's reach — a turn that calls it waits forever. Both hooks backends
-    read this settings.json, so the deny belongs here, next to the hook wiring."""
-    assert hooks_settings()["permissions"]["deny"] == ["AskUserQuestion"]
 
 
 def test_forwarder_spools_then_posts_hook_json_with_scoped_token():
@@ -67,12 +54,12 @@ def test_baked_forwarder_matches_the_single_source():
 
 async def _drain(queue, **kw):
     events = []
-    async for e in run_hooks_turn(queue=queue, resume_session_id=None, **kw):
+    async for e in monitor_session_activity(queue=queue, resume_session_id=None, **kw):
         events.append(e)
     return events
 
 
-async def test_run_hooks_turn_streams_in_order_and_ends_on_stop():
+async def test_monitor_session_activity_streams_in_order_and_ends_on_stop():
     queue: asyncio.Queue[dict] = asyncio.Queue()
     queue.put_nowait({"hook_event_name": "SessionStart", "session_id": "s1"})
     queue.put_nowait(
@@ -104,7 +91,7 @@ async def test_run_hooks_turn_streams_in_order_and_ends_on_stop():
     assert events[-1].is_error is False
 
 
-async def test_run_hooks_turn_times_out_with_message_on_silence():
+async def test_monitor_session_activity_times_out_with_message_on_silence():
     queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
     events = await _drain(
         queue, idle_suspect_s=0.05, hard_ceiling_s=0.05, timeout_message="轮次超时"
@@ -115,44 +102,88 @@ async def test_run_hooks_turn_times_out_with_message_on_silence():
     assert events[0].text == "轮次超时"
 
 
-async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
-    monkeypatch, tmp_path
-):
-    """register() claims the topic's queue BEFORE the screen is ready (so no
-    hook is missed) — but that means a straggler from a PREVIOUS, abandoned
-    turn (its own late Stop included, arriving only once its `claude` process
-    finally finishes) can land in the fresh queue before the new turn's prompt
-    is even sent. It must never be mistaken for the new turn's own result."""
+async def test_a_timed_out_turn_carries_its_own_classification():
+    """超时这条失败是平台自己造的，所以它自己说自己是什么。
+
+    过去它是靠在自己刚写下的那句话里找一个片段认出来的。改一个字——或者某个
+    transport 换了自己的措辞——分类就丢了，房间里显示的是「AI 服务返回错误」，
+    把排查的人指向一个根本没收到这轮请求的服务。这里故意用一句和原文毫无共同
+    字词的文案，它照样得被认出来。
+    """
+    from app.domain.agent.platform_failures import (
+        TURN_TIMEOUT,
+        classify_platform_failure,
+    )
+
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    events = await _drain(
+        queue,
+        idle_suspect_s=0.05,
+        hard_ceiling_s=0.05,
+        timeout_message="完全不一样的一句话",
+    )
+    result = events[-1]
+    assert isinstance(result, AgentResult) and result.is_error
+    assert (
+        classify_platform_failure(result.text, code=result.failure_code) is TURN_TIMEOUT
+    )
+
+
+async def test_an_undelivered_prompt_carries_its_own_classification():
+    """同上：送不到芝士那边这条失败，分类也不再取决于那句话怎么写。"""
+    from app.domain.agent.platform_failures import (
+        PROMPT_UNDELIVERED,
+        classify_platform_failure,
+    )
+
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    events = await _drain(
+        queue,
+        idle_suspect_s=5,
+        hard_ceiling_s=5,
+        delivery_timeout_s=0.05,
+        timeout_message="轮次超时",
+        delivery_message="又是完全不一样的一句话",
+    )
+    result = events[-1]
+    assert isinstance(result, AgentResult) and result.is_error
+    assert (
+        classify_platform_failure(result.text, code=result.failure_code)
+        is PROMPT_UNDELIVERED
+    )
+
+
+async def test_stale_stop_before_screen_ready_never_ends_the_new_run():
+    """A straggler before screen setup completes has no subscription yet and
+    therefore cannot be mistaken for the new run's result."""
     import uuid as _uuid
 
-    from app.core.config import settings
-    from app.domain.agent import event_spool
-    from app.domain.workspace import service as ws
-
-    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "ws"))
     router = HookRouter()
     project_id = _uuid.uuid4()
     topic_id = _uuid.uuid4()
     topic_key = str(topic_id)
+    stale_delivered: list[bool] = []
 
-    class _FakeProvider(HooksTurnProvider[str]):
+    class _FakeChannel(Channel):
         name = "fake"
 
-        async def _ensure_ready(self, **kwargs):
+        async def ensure_ready(self, **kwargs):
             # While "waiting for the screen", the abandoned previous turn's
             # `claude` process finally finishes and its late Stop arrives.
-            router.push(
-                topic_key,
-                {
-                    "hook_event_name": "Stop",
-                    "last_assistant_message": "旧turn的过期结果",
-                    "session_id": "s-old",
-                    "_eid": "stale-stop-1",
-                },
+            stale_delivered.append(
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "Stop",
+                        "last_assistant_message": "旧turn的过期结果",
+                        "session_id": "s-old",
+                        "_eid": "stale-stop-1",
+                    },
+                )
             )
             return "screen"
 
-        async def _send_prompt(self, screen, prompt):
+        async def send_prompt(self, screen, prompt):
             # The new turn genuinely starts now — its own events follow.
             router.push(
                 topic_key,
@@ -172,7 +203,9 @@ async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
                 },
             )
 
-    provider = _FakeProvider(router=router, idle_suspect_s=2, hard_ceiling_s=2)
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
     events = [
         e
         async for e in provider.run_turn(
@@ -189,10 +222,8 @@ async def test_stale_stop_from_abandoned_turn_never_ends_the_new_turn(
     assert isinstance(result, AgentResult)
     assert result.text == "新turn的真实回复"  # NOT the stale turn's text
 
-    # The stale Stop was never dropped — it's parked for a later reconcile.
-    entries = event_spool.spool_entries(ws.spool_dir(project_id, topic_id))
-    eids = [eid for _path, eid, _payload in entries]
-    assert eids == ["stale-stop-1"]
+    assert stale_delivered == [False]
+    await provider._close_topic(topic_id)
 
 
 async def test_failed_precheck_never_touches_the_router():
@@ -201,17 +232,19 @@ async def test_failed_precheck_never_touches_the_router():
     live turn's queue (review finding; matches pre-refactor ordering)."""
     import uuid as _uuid
 
-    class _NoRun(HooksTurnProvider[str]):
+    class _NoRun(Channel):
         name = "no-run"
 
-        async def _precheck(self, project_id, topic_id):
+        async def precheck(self, project_id, topic_id):
             raise ScreenSetupError("挡在门外")
 
     router = HookRouter()
     topic_id = _uuid.uuid4()
-    live_queue = router.register(str(topic_id))  # a "running turn" holds the slot
+    live_sink = router.subscribe(str(topic_id))
 
-    provider = _NoRun(router=router, idle_suspect_s=1, hard_ceiling_s=1)
+    provider = ClaudeCodeRuntime(
+        _NoRun(), router=router, idle_suspect_s=1, hard_ceiling_s=1
+    )
     events = [
         e
         async for e in provider.run_turn(
@@ -227,7 +260,8 @@ async def test_failed_precheck_never_touches_the_router():
     assert events[0].text == "挡在门外"
     # The live turn's queue is untouched: pushes still reach it.
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is True
-    assert live_queue.qsize() == 1
+    assert live_sink.queue.qsize() == 1
+    router.unsubscribe(str(topic_id), live_sink)
 
 
 async def test_undelivered_prompt_fails_fast_instead_of_waiting_out_the_turn():
@@ -394,3 +428,931 @@ async def test_external_tracker_touch_clears_idle_suspicion():
 
     assert events[0].text == "硬顶到了"
     assert probe_calls == 0
+
+
+async def test_deliver_reaches_the_screen_of_the_turn_in_flight():
+    """A message posted while a turn is running must reach that turn's screen —
+    the whole point of not queueing it behind the turn. `deliver` is only
+    allowed to speak to a screen whose hook queue is registered, i.e. exactly
+    while `run_turn` is between its screen handshake and its Stop."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+    injected: list[str] = []
+    started = asyncio.Event()
+
+    class _FakeChannel(Channel):
+        name = "fake"
+
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            injected.append(prompt)
+            if prompt == "第一条":
+                started.set()
+                return
+            router.push(
+                topic_key, {"hook_event_name": "UserPromptSubmit", "prompt": prompt}
+            )
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+
+    # Before any turn: nothing to inject into, so the caller must run its own.
+    assert await provider.deliver(topic_id, "早") is False
+
+    async def run() -> list:
+        return [
+            event
+            async for event in provider.run_turn(
+                project_id=_uuid.uuid4(),
+                topic_id=topic_id,
+                prompt="第一条",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+
+    turn = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), 1)
+    assert await provider.deliver(topic_id, "[人]: 等一下") is True
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "好",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    events = await asyncio.wait_for(turn, 1)
+    assert isinstance(events[-1], AgentResult)
+    assert injected == ["第一条", "[人]: 等一下"]
+
+    # The screen and subscription outlive the run, but its attribution is closed.
+    assert await provider.deliver(topic_id, "晚") is False
+    await provider._close_topic(topic_id)
+
+
+async def test_deliver_reports_false_when_the_screen_refuses():
+    """A screen that can't take the text must not be reported as delivered."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+    started = asyncio.Event()
+
+    class _FakeChannel(Channel):
+        name = "fake"
+
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            if prompt == "第一条":
+                started.set()
+                return
+            raise ScreenSetupError("窗格已经死掉")
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+
+    async def run() -> list:
+        return [
+            event
+            async for event in provider.run_turn(
+                project_id=_uuid.uuid4(),
+                topic_id=topic_id,
+                prompt="第一条",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+
+    turn = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), 1)
+    assert await provider.deliver(topic_id, "插一句") is False
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "好",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    events = await asyncio.wait_for(turn, 1)
+    assert isinstance(events[-1], AgentResult)
+    await provider._close_topic(topic_id)
+
+
+async def test_subscription_outlives_run_and_drops_only_with_screen():
+    """Stop closes attribution, not the stable screen subscription."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "done",
+                    "_eid": "stop-1",
+                },
+            )
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    assert isinstance(events[-1], AgentResult)
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    assert subscription.current_work is None
+    assert subscription.consumer_task is not None
+    assert not subscription.consumer_task.done()
+    assert await provider.ensure_subscription(project_id, topic_id) is subscription
+
+    await provider.drop_screen_subscription("screen")
+    assert subscription.consumer_task.done()
+    assert router.push(topic_key, {"hook_event_name": "Stop"}) is False
+
+
+async def test_run_refuses_to_clobber_existing_attribution():
+    """A second reader cannot replace the attribution feeding a live run."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            return None
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+    subscription = await provider.ensure_subscription(project_id, topic_id)
+    open_attribution = WorkAttribution(work_id=_uuid.uuid4(), queue=asyncio.Queue())
+    subscription.current_work = open_attribution
+
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="inspect",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    assert len(events) == 1
+    assert isinstance(events[0], AgentResult)
+    assert events[0].is_error is True
+    assert subscription.current_work is open_attribution
+    await provider._close_topic(topic_id)
+
+
+# --- MessageDisplay flush coalescing on the live subscription ---------------
+
+
+def _display_flush(
+    mid: str, idx: int, delta: str, *, final: bool = False, eid: str = ""
+) -> dict:
+    return {
+        "hook_event_name": "MessageDisplay",
+        "message_id": mid,
+        "index": idx,
+        "final": final,
+        "delta": delta,
+        "_eid": eid or f"{mid}-{idx}",
+    }
+
+
+async def test_run_turn_coalesces_message_flushes_into_one_message():
+    """A streamed reply arrives as several MessageDisplay flushes; the turn
+    must see ONE AgentMessage carrying the whole text (each flush used to
+    become its own chat message — one reply, many bubbles)."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            router.push(topic_key, _display_flush("m1", 0, "line 1\nline 2\n"))
+            router.push(topic_key, _display_flush("m1", 1, "line 3", final=True))
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "line 1\nline 2\nline 3",
+                    "session_id": "s1",
+                    "_eid": "stop-1",
+                },
+            )
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    messages = [e for e in events if isinstance(e, AgentMessage)]
+    assert [m.text for m in messages] == ["line 1\nline 2\nline 3"]
+    assert messages[0].eids == ("m1-0", "m1-1")
+    assert isinstance(events[-1], AgentResult)
+    await provider._close_topic(topic_id)
+
+
+async def test_run_turn_stop_drains_a_partial_message():
+    """A message whose final flush never arrived still lands at Stop — the
+    buffered lines must not die with the buffer."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            router.push(topic_key, _display_flush("m1", 0, "第一行\n"))
+            router.push(topic_key, _display_flush("m1", 1, "到这里就断了\n"))
+            router.push(
+                topic_key,
+                {
+                    "hook_event_name": "Stop",
+                    "last_assistant_message": "",
+                    "session_id": "s1",
+                    "_eid": "stop-1",
+                },
+            )
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+    events = [
+        event
+        async for event in provider.run_turn(
+            project_id=project_id,
+            topic_id=topic_id,
+            prompt="go",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+
+    types = [type(e).__name__ for e in events]
+    assert types == ["AgentMessage", "AgentResult"]
+    assert events[0].text == "第一行\n到这里就断了\n"
+    await provider._close_topic(topic_id)
+
+
+async def test_unsolicited_flushes_reach_the_consumer_as_one_message():
+    """The screen-subscription consumer path (no turn listening) coalesces the
+    same way, and the Stop's copy of the message is recognized as already
+    seen — this exact miss is what stored a whole extra copy of every
+    multi-flush reply."""
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            return None
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+    consumed: list[tuple[object, str | None, bool]] = []
+
+    async def consumer(
+        project, topic, work_id, event, eid, result_text_seen, unsolicited
+    ):
+        consumed.append((event, eid, result_text_seen))
+
+    provider.bind_events(consumer)
+    await provider.ensure_subscription(project_id, topic_id)
+
+    router.push(topic_key, _display_flush("m1", 0, "第一行\n"))
+    router.push(topic_key, _display_flush("m1", 1, "第二行", final=True))
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "第一行\n第二行",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if any(isinstance(e, AgentResult) for e, _eid, _seen in consumed):
+            break
+
+    messages = [e for e, _eid, _seen in consumed if isinstance(e, AgentMessage)]
+    assert [m.text for m in messages] == ["第一行\n第二行"]
+    results = [(e, seen) for e, _eid, seen in consumed if isinstance(e, AgentResult)]
+    assert len(results) == 1
+    assert results[0][1] is True  # Stop's text matches the assembled message
+    await provider._close_topic(topic_id)
+
+
+# --- delivery verdicts must leave a server-side trace -------------------------
+#
+# 2026-08-17: a wave of false 「这条消息没能送到芝士那边」 banners was debugged
+# with ZERO server-side evidence — every verdict below went straight into a room
+# banner without a log line, so the only forensic record was a user's screenshot
+# (issue #539). Each verdict now says what it decided and for which topic.
+
+
+async def test_undelivered_verdict_logs_a_warning_with_context(caplog):
+    queue: asyncio.Queue[dict] = asyncio.Queue()  # nothing ever arrives
+    with caplog.at_level("WARNING"):
+        events = await _drain(
+            queue,
+            idle_suspect_s=5,
+            hard_ceiling_s=5,
+            timeout_message="轮次超时",
+            delivery_timeout_s=0.05,
+            context="topic=t-undelivered",
+        )
+    assert isinstance(events[0], AgentResult) and events[0].is_error
+    assert any(
+        "t-undelivered" in r.getMessage() and "undelivered" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_hard_ceiling_verdict_logs_a_warning_with_context(caplog):
+    queue: asyncio.Queue[dict] = asyncio.Queue()
+    queue.put_nowait({"hook_event_name": "SessionStart", "session_id": "s1"})
+    with caplog.at_level("WARNING"):
+        events = await _drain(
+            queue,
+            idle_suspect_s=0.05,
+            hard_ceiling_s=0.15,
+            timeout_message="轮次超时",
+            context="topic=t-ceiling",
+        )
+    assert isinstance(events[-1], AgentResult) and events[-1].is_error
+    assert any(
+        "t-ceiling" in r.getMessage() and "ceiling" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+async def test_deliver_without_live_screen_logs_why(caplog):
+    import uuid as _uuid
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            return None
+
+    provider = ClaudeCodeRuntime(_FakeChannel(), router=HookRouter())
+    topic_id = _uuid.uuid4()
+    with caplog.at_level("INFO"):
+        assert await provider.deliver(topic_id, "hi") is False
+    assert any(
+        str(topic_id) in r.getMessage() and "no live screen" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+# --- receipt semantics: write-accept IS delivery (#539 decision A) -----------
+#
+# The transport already promises "a write either reaches the process or
+# returns an error" (#487). UserPromptSubmit fires when the session CONSUMES
+# the message — often minutes later on a busy session — so gating deliver()
+# on a 25s receipt wait manufactured false 「没能送到」 banners for messages
+# that were sitting safely in claude's own input queue. The receipt's real
+# jobs are the consumed stamp and the record, both via the receipt consumer.
+
+
+async def test_deliver_trusts_write_accept_without_waiting_for_a_receipt(
+    monkeypatch,
+):
+    import time as _time
+    import uuid as _uuid
+
+    from app.domain.agent.harness.claude_code import hooks_substrate as hs
+
+    monkeypatch.setattr(hs, "DELIVERY_TIMEOUT_S", 0.3)
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    started = asyncio.Event()
+
+    class _FakeChannel(Channel):
+        name = "fake"
+
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            # Write accepted; the session is busy — NO UserPromptSubmit comes
+            # back for a long while. That must not read as "undelivered".
+            if prompt == "第一条":
+                started.set()
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+
+    async def run() -> list:
+        return [
+            event
+            async for event in provider.run_turn(
+                project_id=_uuid.uuid4(),
+                topic_id=topic_id,
+                prompt="第一条",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+
+    turn = asyncio.create_task(run())
+    await asyncio.wait_for(started.wait(), 1)
+    t0 = _time.monotonic()
+    assert await provider.deliver(topic_id, "[人]: 等一下") is True
+    assert _time.monotonic() - t0 < 0.25  # returned on write-accept, no wait
+    router.push(
+        str(topic_id),
+        {"hook_event_name": "Stop", "last_assistant_message": "好", "_eid": "s1"},
+    )
+    await asyncio.wait_for(turn, 1)
+    await provider._close_topic(topic_id)
+
+
+async def test_user_prompt_submit_is_reported_to_the_receipt_consumer():
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    received: list[tuple[object, str]] = []
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            return None
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+
+    async def on_receipt(tid, prompt):
+        received.append((tid, prompt))
+
+    provider.bind_receipts(on_receipt)
+    await provider.ensure_subscription(project_id, topic_id)
+    router.push(
+        str(topic_id),
+        {"hook_event_name": "UserPromptSubmit", "prompt": "[人]: 等一下"},
+    )
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if received:
+            break
+    assert received == [(topic_id, "[人]: 等一下")]
+    await provider._close_topic(topic_id)
+
+
+async def test_prompt_redelivery_logs_each_attempt(caplog):
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id = _uuid.uuid4()
+    topic_id = _uuid.uuid4()
+    topic_key = str(topic_id)
+    sends: list[str] = []
+
+    class _FakeChannel(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            sends.append(prompt)
+            if len(sends) == 1:
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "CheeseDeliveryFailed",
+                        "phase": "paste",
+                        "ticks": 3,
+                    },
+                )
+            else:
+                router.push(
+                    topic_key,
+                    {"hook_event_name": "Stop", "last_assistant_message": "好"},
+                )
+
+    provider = ClaudeCodeRuntime(
+        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
+    )
+    with caplog.at_level("WARNING"):
+        events = [
+            e
+            async for e in provider.run_turn(
+                project_id=project_id,
+                topic_id=topic_id,
+                prompt="go",
+                system_prompt="",
+                resume_session_id=None,
+            )
+        ]
+    assert len(sends) == 2  # original + one redelivery
+    assert isinstance(events[-1], AgentResult)
+    assert any(
+        str(topic_id) in r.getMessage() and "redeliver" in r.getMessage()
+        for r in caplog.records
+    )
+    await provider._close_topic(topic_id)
+
+
+async def test_every_turn_reported_started_is_also_reported_finished():
+    """一轮报了开始，就必须报结束——哪怕它是烂尾的。
+
+    ``bind_activity`` is how the platform knows a topic is busy: it lights the
+    room's 正在思考, it is what a redeploy drains on, and it is what stops a
+    second turn from starting on top of a live one. So an unmatched "started"
+    costs more than a frame — the topic carries that mark for the life of the
+    process, and every prompt after it is refused as 「已有工作正在运行」.
+
+    The turn here dies the way a screen dies mid-turn: the first prompt is
+    never acknowledged, and by the time the session tries again the screen is
+    gone. That is one lost turn. It must not also be a lost topic.
+    """
+    import uuid as _uuid
+
+    router = HookRouter()
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+    sends: list[str] = []
+    reported: list[tuple[_uuid.UUID, bool]] = []
+
+    async def watch_activity(_project, _topic, work_id, active):
+        reported.append((work_id, active))
+
+    class _ScreenThatDiesBeforeTheRetry(Channel):
+        async def ensure_ready(self, **kwargs):
+            return "screen"
+
+        async def send_prompt(self, screen, prompt):
+            sends.append(prompt)
+            if len(sends) == 1:
+                # Typed, never acknowledged — the session will try again.
+                router.push(
+                    topic_key,
+                    {
+                        "hook_event_name": "CheeseDeliveryFailed",
+                        "phase": "paste",
+                        "ticks": 3,
+                    },
+                )
+                return None
+            raise ScreenSetupError("屏幕没了")
+
+    provider = ClaudeCodeRuntime(
+        _ScreenThatDiesBeforeTheRetry(),
+        router=router,
+        idle_suspect_s=1,
+        hard_ceiling_s=1,
+    )
+    provider.bind_activity(watch_activity)
+
+    await provider.send(
+        SessionRef(project_id=project_id, topic_id=topic_id),
+        "go",
+        Opening(system_prompt=""),
+        work_id=_uuid.uuid4(),
+        on_mark=lambda _work_id: None,
+    )
+
+    # The watch runs alongside the turn, so give it its own ending rather than
+    # assuming the turn's last frame was also its last act.
+    for _ in range(300):
+        if any(not active for _work, active in reported):
+            break
+        await asyncio.sleep(0.01)
+
+    started = {work for work, active in reported if active}
+    finished = {work for work, active in reported if not active}
+    assert started, "这一轮根本没报告过开始，测试没测到东西"
+    assert started == finished, f"报了开始没报结束：{started - finished}，话题从此卡住"
+    await provider._close_topic(topic_id)
+
+
+# --- 什么才算「会话正在干活」 -------------------------------------------------
+#
+# 房间里那句「芝士正在处理…」由一段 activity 撑着，而在正常路径上，只有会话自己
+# 的 Stop 会撤掉它。开的条件和关的条件必须对得上：任何一个钩子都能开、只有 Stop
+# 能关，就是一笔永远平不了的账。
+
+
+class _AliveScreen(Channel):
+    """A session that accepts everything and stays up — the ordinary case."""
+
+    async def ensure_ready(self, **kwargs):
+        return "screen"
+
+    async def send_prompt(self, screen, prompt):
+        return True
+
+
+async def _one_turn(provider, router, topic_key, project_id, topic_id, consumed):
+    """Send a prompt and let the session answer it, exactly once."""
+    import uuid as _uuid
+
+    await provider.send(
+        SessionRef(project_id=project_id, topic_id=topic_id),
+        "go",
+        Opening(system_prompt=""),
+        work_id=_uuid.uuid4(),
+        on_mark=lambda _work_id: None,
+    )
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "done",
+            "session_id": "s1",
+            "_eid": "stop-1",
+        },
+    )
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if any(isinstance(e, AgentResult) for e in consumed):
+            return
+    raise AssertionError("这一轮没有结束，后面测的东西都不成立")
+
+
+def _provider_with_ledger():
+    """A runtime plus the two ledgers these cases read: activity and events."""
+    router = HookRouter()
+    reported: list[tuple[object, bool]] = []
+    consumed: list[object] = []
+
+    async def watch_activity(_project, _topic, work_id, active):
+        reported.append((work_id, active))
+
+    async def consumer(_p, _t, _work_id, event, _eid, _seen, _unsolicited):
+        consumed.append(event)
+
+    provider = ClaudeCodeRuntime(
+        _AliveScreen(), router=router, idle_suspect_s=30, hard_ceiling_s=30
+    )
+    provider.bind_activity(watch_activity)
+    provider.bind_events(consumer)
+    return provider, router, reported, consumed
+
+
+@pytest.mark.parametrize(
+    ("label", "hook"),
+    [
+        # 每次 resume、每次自动 compact 都会再发一遍，是线上最常撞到的那个。
+        ("SessionStart", {"hook_event_name": "SessionStart", "session_id": "s1"}),
+        ("UserPromptSubmit", {"hook_event_name": "UserPromptSubmit", "prompt": "hi"}),
+        (
+            "PostToolUse",
+            {
+                "hook_event_name": "PostToolUse",
+                "tool_name": "Read",
+                "tool_response": "x",
+            },
+        ),
+    ],
+)
+async def test_a_hook_that_is_not_the_session_working_opens_nothing(label, hook):
+    """轮次结束之后飘来的钩子，不能点亮一个没人会去关的「正在处理」。
+
+    这些钩子说的都不是「会话正在答」：会话起来了、有人敲了字、一个工具在答案给完
+    之后才回来。它们后面不会跟一个 Stop，所以一旦拿它们开了 activity，那个标记就
+    一直立到三小时的硬上限——而且每有一个客户端连上来，`turn_active` 就把它重新
+    塞给对方一次。刷新页面清不掉它，因为要清的东西根本不在页面这边。
+    """
+    import uuid as _uuid
+
+    provider, router, reported, consumed = _provider_with_ledger()
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    await _one_turn(provider, router, topic_key, project_id, topic_id, consumed)
+    assert {w for w, a in reported if a} == {w for w, a in reported if not a}
+
+    router.push(topic_key, {**hook, "_eid": f"stray-{label}"})
+    for _ in range(60):
+        await asyncio.sleep(0.01)
+
+    started = {w for w, a in reported if a}
+    finished = {w for w, a in reported if not a}
+    assert started == finished, f"{label} 之后房间卡在正在处理：{started - finished}"
+    await provider._close_topic(topic_id)
+
+
+async def test_the_session_working_on_its_own_still_lights_the_room():
+    """有人直接在机器上的会话里干活，房间照样要看得见——这是上面那条规则不能顺手
+    砍掉的东西。第一个「它在产出」的钩子点亮房间，会话的 Stop 熄灭它。"""
+    import uuid as _uuid
+
+    provider, router, reported, consumed = _provider_with_ledger()
+    project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
+    topic_key = str(topic_id)
+
+    await _one_turn(provider, router, topic_key, project_id, topic_id, consumed)
+    before = len({w for w, a in reported if a})
+
+    router.push(
+        topic_key, {"hook_event_name": "SessionStart", "session_id": "s1", "_eid": "e1"}
+    )
+    router.push(
+        topic_key,
+        {"hook_event_name": "UserPromptSubmit", "prompt": "改一下", "_eid": "e2"},
+    )
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "tool_input": {"command": "ls"},
+            "_eid": "e3",
+        },
+    )
+    for _ in range(200):
+        await asyncio.sleep(0.01)
+        if len({w for w, a in reported if a}) > before:
+            break
+    assert len({w for w, a in reported if a}) > before, "会话自己在干活，房间没亮"
+
+    router.push(
+        topic_key,
+        {
+            "hook_event_name": "Stop",
+            "last_assistant_message": "改完了",
+            "session_id": "s1",
+            "_eid": "e4",
+        },
+    )
+    for _ in range(300):
+        await asyncio.sleep(0.01)
+        if {w for w, a in reported if a} == {w for w, a in reported if not a}:
+            break
+    started = {w for w, a in reported if a}
+    finished = {w for w, a in reported if not a}
+    assert started == finished, f"会话干完了，房间还亮着：{started - finished}"
+    await provider._close_topic(topic_id)
+
+
+# --- 图片输入: an image that cannot be staged costs the image, not the message ---
+#
+# The bytes live in the backend's worktree. A screen on another machine can only
+# open them once they have been copied across, and that copy can fail for
+# reasons that have nothing to do with the message: a connector too old to know
+# the file frame (measured 2026-08-23 — the deployed binary predated `file.put`
+# by a day, so every frame was dropped unanswered and the send timed out), a
+# wedged machine, bytes that are no longer there. When staging lived inside the
+# send, that failure took the whole message with it: the room showed nothing at
+# all, while plain-text messages around it arrived normally.
+
+
+class _StagingChannel(Channel):
+    """A screen whose machine refuses the images it is offered."""
+
+    name = "staging"
+
+    def __init__(self, *, refuse: bool) -> None:
+        self._refuse = refuse
+        self.prompts: list[str] = []
+
+    async def ensure_ready(self, **kwargs):
+        return "screen"
+
+    async def stage_images(self, screen, images):
+        if self._refuse:
+            return [], list(images)
+        return list(images), []
+
+    async def send_prompt(self, screen, prompt):
+        self.prompts.append(prompt)
+        return True
+
+
+async def _deliver_one_image(channel: _StagingChannel) -> str | None:
+    router = HookRouter()
+    topic_id = _uuid.uuid4()
+    project_id = _uuid.uuid4()
+    router.subscribe(str(topic_id))
+    runtime = ClaudeCodeRuntime(channel, router=router)
+    subscription = await runtime.ensure_subscription(project_id, topic_id)
+    subscription.current_work = WorkAttribution(
+        work_id=_uuid.uuid4(), queue=asyncio.Queue()
+    )
+    runtime._live[topic_id] = "screen"
+    delivered = await runtime.deliver(
+        topic_id,
+        "[fulu] 看看这张截图",
+        images=[{"path": "uploads/img-1.png", "media_type": "image/png"}],
+    )
+    return channel.prompts[0] if delivered else None
+
+
+async def test_an_image_that_cannot_be_staged_still_delivers_the_words():
+    channel = _StagingChannel(refuse=True)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None, "the message must arrive even when the image does not"
+    assert "[fulu] 看看这张截图" in prompt
+
+
+async def test_an_unstaged_image_is_declared_rather_than_mentioned():
+    """Naming a path that is not on the machine produces silence — Claude Code
+    resolves the mention to nothing — and 芝士 answers about a picture it was
+    never shown. Say what happened instead."""
+    channel = _StagingChannel(refuse=True)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None
+    assert "@uploads/img-1.png" not in prompt
+    assert "没能送到" in prompt
+    assert "不要猜图里是什么" in prompt
+
+
+async def test_a_staged_image_is_mentioned_and_nothing_is_declared_missing():
+    channel = _StagingChannel(refuse=False)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None
+    assert "@uploads/img-1.png" in prompt
+    assert "没能送到" not in prompt
+
+
+async def test_a_channel_that_raises_while_staging_does_not_lose_the_message():
+    """A channel is expected to report losses rather than raise, but it talks to
+    a machine over a network. The runtime picks the message over the picture."""
+
+    class _Exploding(_StagingChannel):
+        async def stage_images(self, screen, images):
+            raise RuntimeError("connector went away mid-write")
+
+    channel = _Exploding(refuse=False)
+    prompt = await _deliver_one_image(channel)
+
+    assert prompt is not None
+    assert "[fulu] 看看这张截图" in prompt
+    assert "没能送到" in prompt

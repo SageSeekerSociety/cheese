@@ -11,7 +11,7 @@ repository 模块，且那道守卫是对的：值类型不该住在数据访问
 
 import enum
 
-__all__ = ["Supply", "Visibility"]
+__all__ = ["Supply", "Visibility", "has_runnable_transport"]
 
 
 class Supply(enum.StrEnum):
@@ -48,4 +48,35 @@ class Visibility(enum.StrEnum):
     """
 
     isolated = "isolated"  # one container per room — blast radius is the room
-    host = "host"  # the whole machine, as its owner — 申请制, never a default
+    # The whole machine, as its owner. 申请制 by intent — but it IS the default
+    # today, because `isolated` has no transport and there is nothing else to
+    # default to. `default_visibility()` says so out loud rather than leaving the
+    # comment and the code disagreeing; it stops being the default the moment
+    # #358 step 2 lands.
+    host = "host"
+
+
+def has_runnable_transport(visibility: Visibility) -> bool:
+    """Whether the device backend has a transport for this visibility today."""
+    return visibility is Visibility.host
+
+
+# Most conservative first: the default is the first entry that can actually run.
+_VISIBILITY_PREFERENCE = (Visibility.isolated, Visibility.host)
+
+
+def default_visibility() -> Visibility:
+    """The 档 a topic gets when nobody picked one.
+
+    DERIVED from what has a transport, never declared, because the two used to be
+    declared separately and disagreed: the market catalogue advertised `isolated`
+    as the default while `resolve_pinned_device` bound `host` unconditionally. A
+    person opening the picker was told their topic was boxed; every topic in fact
+    had whole-machine access. Both surfaces now read this, so when step 2 (#358)
+    gives `isolated` a transport, the default moves in both places at once and
+    nobody has to remember the second one.
+    """
+    for visibility in _VISIBILITY_PREFERENCE:
+        if has_runnable_transport(visibility):
+            return visibility
+    raise RuntimeError("no visibility has a runnable transport")

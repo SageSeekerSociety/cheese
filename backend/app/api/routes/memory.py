@@ -31,7 +31,7 @@ from app.domain.memory.models import (
     agent_project_scope_prefix,
 )
 
-router = APIRouter(prefix="/api/memory", tags=["memory"])
+router = APIRouter(prefix="/memory", tags=["memory"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -42,6 +42,7 @@ def _entry_out(e: MemoryEntry) -> dict:
         "scope": e.scope.value,
         "scope_id": e.scope_id,
         "content": e.content,
+        "layer": e.layer.value,
         "created_at": e.created_at.isoformat(),
     }
 
@@ -101,6 +102,7 @@ async def _list_openviking(
                     "scope": scope.value,
                     "scope_id": scope_id,
                     "content": f"[{e['rel_path']}] {e['abstract']}".strip(),
+                    "layer": e["layer"],
                     "created_at": e["mod_time"],
                 }
             )

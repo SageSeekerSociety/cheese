@@ -11,7 +11,6 @@ from app.api.response import ok, page
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
-    ForbiddenError,
     NotFoundError,
     ValidationError,
 )
@@ -21,11 +20,10 @@ from app.domain.machine.models import MachineStatus
 from app.domain.machine.schemas import MachineCreate, MachineOut
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
-from app.domain.project.models import ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.repositories import TeamRepository
 
-router = APIRouter(prefix="/api/projects", tags=["machines"])
+router = APIRouter(prefix="/projects", tags=["machines"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -60,6 +58,10 @@ async def _require_project_access(
     if not actor.authenticated or actor.via != "token" or actor.is_agent:
         raise AuthenticationRequiredError("Login required to manage project machines")
 
+    if mutate:
+        await MachineService(db).require_create_authority(project_id, actor)
+        return actor
+
     project = await ProjectRepository(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
@@ -72,12 +74,6 @@ async def _require_project_access(
         teams = TeamRepository(db)
         if not await teams.is_team_member(project.team_id, actor.user_id):
             raise NotFoundError("Project not found")
-        if mutate and not await teams.is_team_at_least_admin(
-            project.team_id, actor.user_id
-        ):
-            raise ForbiddenError(
-                "Only team owners and admins can create or delete cloud machines"
-            )
         return actor
 
     # Compatibility for projects created before every project gained a team.
@@ -86,14 +82,8 @@ async def _require_project_access(
     member = await MemberRepository(db).get(
         project_id=project_id, user_handle=actor.handle
     )
-    if member is not None and not mutate:
-        return actor
-    if member is not None and member.role == ProjectRole.lead:
-        return actor
     if member is not None:
-        raise ForbiddenError(
-            "Only project owners and leads can create or delete cloud machines"
-        )
+        return actor
 
     # Conceal the project and its machine inventory from authenticated outsiders.
     raise NotFoundError("Project not found")

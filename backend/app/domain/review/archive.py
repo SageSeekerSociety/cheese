@@ -2,8 +2,10 @@
 
 在这之前 `TopicService._archive_one` 完全不碰卡：话题归档了，它那张还没决议的
 验收卡就永远停在非终态上。对 `pr_open` 的卡来说这不是"停着"而是"还在动"——
-`SchedulerService.poll_open_prs` 每 60 秒仍会用 `decided_by` 的 GitHub token 去
-推进它（推分支、查 CI、合并 PR、再归档一次已归档的话题）。
+`SchedulerService.poll_open_prs` 每 60 秒仍会拿着 GitHub 凭据去推进它（推分支、
+查 CI、合并 PR、再归档一次已归档的话题）。用谁的凭据取决于 forge：接了平台
+GitHub App 的项目用 App 自己的 write token，其余用 `decided_by` 本人连接的
+token（`AcceptService._pr_poll_token`）。
 
 修复分两层（双保险）：
 
@@ -41,10 +43,17 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent.platform_notices import (
+    EVENT_ACCEPT_STOPPED,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.alert.models import AlertKind, AlertLevel
 from app.domain.alert.services import AlertService
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
+from app.domain.review import notes
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 
@@ -58,7 +67,6 @@ OPEN_CARD_STATUSES: tuple[AcceptStatus, ...] = (
 )
 
 _NOTE_MAX = 2000
-_ARCHIVE_NOTE_PREFIX = "📦"
 
 
 def prefix_note(note: str, added: str) -> str:
@@ -92,26 +100,26 @@ async def close_cards_for_archived_topic(
         if was == AcceptStatus.pr_open and card.pr_merged_at is not None:
             # PR 已经进 main 了，这是收尾，不是撤销。
             card.status = AcceptStatus.accepted
-            card.note = prefix_note(
-                card.note,
-                f"{_ARCHIVE_NOTE_PREFIX} 话题归档收尾：PR #{card.pr_number} 已合并。",
-            )
+            wrapped = f"话题归档收尾：PR #{card.pr_number} 已合并。"
+            notes.record(card, notes.NoteCode.archived, prefix_note(card.note, wrapped))
         elif was == AcceptStatus.pr_open:
             # 第一阶段：PR 还开着。停止推进，但不替任何人去关它。
             card.status = AcceptStatus.revoked
-            card.note = prefix_note(
-                card.note,
-                f"{_ARCHIVE_NOTE_PREFIX} 话题归档，平台已停止推进 PR "
-                f"#{card.pr_number}。PR 未合并、仍开在 GitHub 上，需要人工决定"
-                f"合并还是关闭：{card.pr_url or '(无链接)'}",
+            notes.record(
+                card,
+                notes.NoteCode.archived,
+                prefix_note(
+                    card.note,
+                    f"话题归档，平台已停止推进 PR #{card.pr_number}。PR 未合并、"
+                    f"仍开在 GitHub 上，合并还是关闭由人决定："
+                    f"{card.pr_url or '(无链接)'}",
+                ),
             )
             stranded.append(card)
         else:
             card.status = AcceptStatus.revoked
-            card.note = prefix_note(
-                card.note,
-                f"{_ARCHIVE_NOTE_PREFIX} 话题归档，验收卡随之关闭（原状态：{was}）。",
-            )
+            closed = f"话题归档，验收卡随之关闭于状态「{was}」。"
+            notes.record(card, notes.NoteCode.archived, prefix_note(card.note, closed))
         # 只在空的时候补：`pr_open` 的卡上 decided_by/decided_at 记的是当初点
         # 采纳的人和时刻，覆盖掉就丢了授权来源。
         if card.decided_by is None:
@@ -132,14 +140,22 @@ async def close_cards_for_archived_topic(
             topic_id=topic_id,
             author="cheese",
             author_type=AuthorType.system,
-            content=(
-                f"⚠️ 话题归档，平台停止推进 PR #{card.pr_number}"
-                f"（{card.pr_url or '无链接'}）。\n"
-                f"这个 PR 还没合并，也**不会**被平台自动关闭——它是以 "
-                f"<@{card.decided_by}> 的身份开的，关不关由人决定。"
-            ),
+            content=f"话题归档，平台停止推进 PR #{card.pr_number}",
             kind=BlockKind.event,
-            meta={"platform": True},
+            meta={
+                "platform": True,
+                **notice(
+                    EVENT_ACCEPT_STOPPED,
+                    severity=SEVERITY_WARN,
+                    who=WHO_HUMAN,
+                    detail=(
+                        f"{card.pr_url or '无链接'}\n"
+                        f"这个 PR 还没合并，平台也不会自动关掉它——它是以 "
+                        f"<@{card.decided_by}> 的身份开的，关不关由人决定。"
+                    ),
+                    detail_label="这个 PR 怎么办",
+                ),
+            },
         )
         if card.decided_by:
             await AlertService(session).create(

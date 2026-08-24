@@ -39,11 +39,11 @@ def project(tmp_path, monkeypatch) -> uuid.UUID:
 
 
 def test_mounts_land_where_the_real_jj_pointer_resolves(project, tmp_path):
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001 -- exercising real jj workspace creation
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001 -- exercising real jj workspace creation
     pointer = (wt / ".jj" / "repo").read_text()
 
-    mounts = ws.sandbox_vcs_mounts(project, branch, container_workdir="/work")
+    mounts = ws.sandbox_vcs_mounts(project, topic, container_workdir="/work")
 
     assert mounts[0] == "-v"
     jj_host, jj_container = mounts[1].split(":", 1)
@@ -64,8 +64,8 @@ def test_mounts_land_where_the_real_jj_pointer_resolves(project, tmp_path):
 def test_worktree_alone_is_unusable_once_relocated(project, tmp_path):
     """Reproduces the reported bug: relocating (≈ bind-mounting) only the
     worktree breaks jj, exactly like the sandbox container does today."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     isolated = tmp_path / "container-sim" / "work"
     isolated.parent.mkdir(parents=True)
@@ -80,15 +80,15 @@ def test_fix_makes_jj_work_inside_the_isolated_worktree(project, tmp_path):
     """The mounts sandbox_vcs_mounts() prescribes, applied via plain copies
     into a writable fake container root (standing in for real bind mounts at
     absolute container paths), restore jj/git/log/diff in the isolated tree."""
-    branch = ws.branch_for_topic(uuid.uuid4())
-    wt = ws._ensure_worktree(project, branch)  # noqa: SLF001
+    topic = uuid.uuid4()
+    wt = ws._ensure_worktree(project, topic)  # noqa: SLF001
 
     container_root = tmp_path / "container-sim"
     isolated = container_root / "work"
     isolated.parent.mkdir(parents=True)
     shutil.copytree(wt, isolated)
 
-    mounts = ws.sandbox_vcs_mounts(project, branch, container_workdir=str(isolated))
+    mounts = ws.sandbox_vcs_mounts(project, topic, container_workdir=str(isolated))
     # mounts is ["-v", "host:container", "-v", "host:container"]; container
     # sides were computed anchored at `isolated` itself (our fake /work), so
     # they land inside container_root — apply them as copies (a bind mount's

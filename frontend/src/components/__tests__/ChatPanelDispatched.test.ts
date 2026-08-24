@@ -7,7 +7,7 @@
  * 这里挂真实的 ChatPanel、喂真实的消息和话题列表、从 DOM 上读结果 —— 要钉的就是
  * 「人打开父话题，眼睛能不能看见这件事已经不归这里了」，而不是某个函数返回了什么。
  */
-import type { Topic } from '../../cx_types'
+import type { RoomTask, Topic } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -16,12 +16,15 @@ import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
+const listRoomTasks = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     listBlocks: (...a: unknown[]) => listBlocks(...a),
+    // 一件活不再是话题列表里的一行，标记要从房间的支线里读。
+    listRoomTasks: (...a: unknown[]) => listRoomTasks(...a),
     // 面板打开时顺手要的东西 —— 安静地给空答案。
     getProgress: vi.fn().mockResolvedValue({ items: [], updated_at: null }),
     chatWsUrl: () => 'ws://test/ws',
@@ -64,15 +67,15 @@ function message(roomId: string, id: string, createdAt: string, content: string)
   }
 }
 
-function work(roomId: string, id: string, title: string, createdAt: string, extra: Partial<Topic> = {}): Topic {
+function work(roomId: string, id: string, title: string, createdAt: string, extra: Partial<RoomTask> = {}): RoomTask {
   return {
     id,
     project_id: 'p1',
-    parent_id: roomId,
+    room_id: roomId,
     title,
-    kind: 'task',
-    status: 'active',
+    status: 'open',
     created_at: createdAt,
+    updated_at: createdAt,
     ...extra,
   }
 }
@@ -81,18 +84,19 @@ async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-function mountPanel(topic: Topic, topicList: Topic[]) {
+function mountPanel(topic: Topic, tasks: RoomTask[]) {
+  listRoomTasks.mockResolvedValue({ data: tasks, total: tasks.length })
   const vuetify = createVuetify({ components, directives })
   return render(ChatPanel, {
-    props: { topic, topicList },
+    props: { topic, topicList: [topic] },
     global: { plugins: [vuetify] },
   })
 }
 
-/** 时间线上从上到下的行：消息记 block id，派出标记记 t:<子话题id>。 */
+/** 时间线上从上到下的行：消息记 block id，派出标记记 t:<支线id>。 */
 function timelineOrder(container: Element): string[] {
   const rows = container.querySelectorAll('[data-mid],[data-testid="dispatched-marker"]')
-  return Array.from(rows).map((el) => el.getAttribute('data-mid') ?? `t:${el.getAttribute('data-topic-id')}`)
+  return Array.from(rows).map((el) => el.getAttribute('data-mid') ?? `t:${el.getAttribute('data-task-id')}`)
 }
 
 beforeAll(() => {
@@ -117,7 +121,7 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('父话题时间线上的「已派出」标记', () => {
+describe('房间时间线上的「已派出」标记', () => {
   it('标在活被拆出去的那一刻，夹在前后两条消息之间', async () => {
     const id = freshRoom()
     listBlocks.mockResolvedValue({
@@ -128,16 +132,13 @@ describe('父话题时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      room(id),
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z'),
-    ])
+    const { container } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
     await flush()
 
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1', 'b2'])
     const marker = container.querySelector('[data-testid="dispatched-marker"]')!
     expect(marker.textContent).toContain('进度层与记忆落地')
-    expect(marker.textContent).toContain('这件事在那边做，不在这里')
+    expect(marker.textContent).toContain('这部分正在进行')
   })
 
   it('点标记上的标题 = 打开那个子话题', async () => {
@@ -147,10 +148,7 @@ describe('父话题时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container, emitted } = mountPanel(room(id), [
-      room(id),
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z'),
-    ])
+    const { container, emitted } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
     await flush()
 
     const link = container.querySelector('[data-testid="dispatched-marker"] button')!
@@ -166,10 +164,7 @@ describe('父话题时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      room(id),
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z'),
-    ])
+    const { container } = mountPanel(room(id), [work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z')])
     await flush()
 
     expect(timelineOrder(container)).toEqual(['b1', 't:sub-1'])
@@ -182,13 +177,11 @@ describe('父话题时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      room(id),
-      work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', { status: 'archived' }),
-    ])
+    const done = work(id, 'sub-1', '进度层与记忆落地', '2026-08-11T09:04:31Z', { status: 'closed' })
+    const { container } = mountPanel(room(id), [done])
     await flush()
 
-    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('这件事在那边做完了')
+    expect(container.querySelector('[data-testid="dispatched-marker"]')!.textContent).toContain('这部分已完成')
   })
 
   it('房间里没派出去任何活时，时间线一如既往', async () => {
@@ -198,7 +191,7 @@ describe('父话题时间线上的「已派出」标记', () => {
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [room(id)])
+    const { container } = mountPanel(room(id), [])
     await flush()
 
     expect(container.querySelectorAll('[data-testid="dispatched-marker"]')).toHaveLength(0)
@@ -213,17 +206,15 @@ describe('父话题时间线上的「已派出」标记', () => {
       data: [
         {
           ...message(id, 'b1', '2026-08-11T09:00:00Z', '这条我们单开一个话题'),
-          upgraded_to_topic_id: 'sub-1',
+          upgraded_to_task_id: 'sub-1',
         },
         message(id, 'b2', '2026-08-11T10:00:00Z', '好'),
       ],
       has_more: false,
     })
 
-    const { container } = mountPanel(room(id), [
-      room(id),
-      work(id, 'sub-1', '单开的话题', '2026-08-11T09:04:31Z', { upgraded_from_block_id: 'b1' }),
-    ])
+    const upgraded = work(id, 'sub-1', '单开的话题', '2026-08-11T09:04:31Z', { upgraded_from_block_id: 'b1' })
+    const { container } = mountPanel(room(id), [upgraded])
     await flush()
 
     expect(container.querySelectorAll('[data-testid="dispatched-marker"]')).toHaveLength(0)

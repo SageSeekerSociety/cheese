@@ -251,14 +251,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Run formatting check
-        run: uv run ruff format --check .
-
-      - name: Run linting
-        run: uv run ruff check .
-
-      - name: Run type checking
-        run: uv run pyright
+      # The same hooks a developer's commit runs, read from
+      # .pre-commit-config.yaml. Before this, CI and the local gate were two
+      # hand-maintained lists that agreed only as long as someone remembered to
+      # update both. Each hook cds into backend/ on its own, so these run from
+      # the workspace root rather than under this job's `defaults`.
+      - name: Lint and type-check (pre-commit hooks)
+        working-directory: ${{ github.workspace }}
+        run: |
+          uvx pre-commit run --all-files --show-diff-on-failure ruff
+          uvx pre-commit run --all-files --show-diff-on-failure ruff-format
+          uvx pre-commit run --all-files pyright
 
   test:
     needs: scope
@@ -266,8 +269,13 @@ jobs:
     # not veto. Skip only on an explicit `false` from a run that happened.
     if: ${{ !cancelled() && needs.scope.outputs.run_heavy != 'false' }}
     runs-on: [self-hosted, cheese-ci]
-    # Measured median 5.1m; 20m covers a cold uv/docker cache without letting
-    # a wedged run sit on the box's single runner for hours.
+    # 20m keeps a wedged run off the box's single runner. The margin is
+    # thinner than it looks: the suite now takes ~14m, and three runs have
+    # been killed here. Raising this is the wrong reflex — a run that hits it
+    # reports as a failure with no test results in it at all, so the ceiling
+    # is the last thing standing between a hang and an hour of the shared
+    # runner. The scheduler and per-test timeout above are what buy the
+    # margin back; if it is hit again, the durations report says where to look.
     timeout-minutes: 20
     # Persists backend/srp_rs's Cargo build cache outside the checkout — see
     # the migration-heads job above for the full reasoning (why this path,
@@ -329,10 +337,18 @@ jobs:
       - name: Install Jujutsu (jj)
         run: |
           JJ_VERSION=v0.43.0
+          # The runner's own arch, not a hardcoded one: the pool is x86_64 today,
+          # and a machine of another arch joining it would fail here with a
+          # rejected binary rather than anything naming the real cause.
+          case "$(uname -m)" in
+            x86_64)          JJ_ARCH=x86_64 ;;
+            aarch64 | arm64) JJ_ARCH=aarch64 ;;
+            *) echo "no jj build published for $(uname -m)" >&2; exit 1 ;;
+          esac
           # Extract into a fresh runner-owned dir, not /tmp (whose sticky bit
           # makes tar fail to set perms on the archive's '.' entry).
           mkdir -p "$RUNNER_TEMP/jj-dl"
-          curl -sSL "https://github.com/jj-vcs/jj/releases/download/${JJ_VERSION}/jj-${JJ_VERSION}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP/jj-dl"
+          curl -sSL "https://github.com/jj-vcs/jj/releases/download/${JJ_VERSION}/jj-${JJ_VERSION}-${JJ_ARCH}-unknown-linux-musl.tar.gz" | tar -xz -C "$RUNNER_TEMP/jj-dl"
           sudo mv "$RUNNER_TEMP/jj-dl/jj" /usr/local/bin/jj
           jj --version
 
@@ -371,7 +387,22 @@ jobs:
           # present (AgentProfile.available = bool(auth_token)); the market test
           # asserts availability. Dummy token — no real calls are made.
           ANTHROPIC_AUTH_TOKEN: test-token
-        run: uv run pytest tests/ -n auto --tb=short -k "not kotlin"
+        # `worksteal` rather than the default `load` scheduler: `load` hands a
+        # worker its next batch and cannot take it back, so when the run winds
+        # down one worker ends up holding several slow tests and chews them
+        # serially while the rest idle. That tail is measurable — a single
+        # 72-test chunk has taken over five minutes on a run that passed — and
+        # it is what puts a ~14-minute suite within reach of the 20-minute
+        # ceiling below. `worksteal` lets an idle worker take work back off a
+        # busy one, which is exactly that failure and no other.
+        #
+        # `--durations` because nobody can currently say WHICH tests make this
+        # suite slow: the log is progress dots, and a dot costs the same
+        # whether it took 3ms or 40s. This prints the twenty worst on every
+        # run, so the question stops being re-asked from zero.
+        run: >-
+          uv run pytest tests/ -n auto --dist worksteal
+          --tb=short -k "not kotlin" --durations=20
 
       # Every run's postgres service container leaves a volume behind, and
       # nothing ever removed them: 57 had accumulated to 19GB and filled the

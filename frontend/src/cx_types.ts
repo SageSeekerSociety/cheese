@@ -8,24 +8,9 @@ export interface Project {
   summary?: string
   // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
   root_topic_id?: string
-  // 专家角色 (spec §8.2): which persona 芝士 loads. Null = generic 芝士.
-  expert_role?: string | null
   [key: string]: unknown
   /** 这个项目是从哪道赛题创建的（1.0 `task` 的整数 id）；不来自赛题时为 null。 */
   external_task_id?: number | null
-}
-
-// 专家角色 (spec §8.2): one entry of the merged catalog — built-in roles come
-// from the file library (read-only), custom roles from the DB. The body is the
-// persona system prompt.
-export interface ExpertRole {
-  name: string
-  title: string
-  description: string
-  body: string
-  builtin: boolean
-  space_id?: string | null
-  created_by?: string | null
 }
 
 export interface Topic {
@@ -49,9 +34,19 @@ export interface Topic {
   // 这个话题是从哪一块「升级」出来的（讨论升级 / 文档 🧩）。非空 = 它的来源 block
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
-  // 本轮是否在跑（TurnRunner, 内存态）——和 status/归档完全分开：一个话题可以
-  // 是 active 且空闲，也可以是 active 且正在跑一轮。只有 list/get 话题时才带。
+  // In-memory session activity, independent of topic status and archival state.
+  // Present only on topic list/get responses.
   running?: boolean
+  // 我和这个话题有没有关系：我在名册里 / 是我建的 / 我是验收人 / 我被 @ 过，
+  // 四者取一。只有 list/get 话题时才带。
+  i_participate?: boolean
+  // 这个话题在等我做事：有点名给我的待办验收卡，或有 @我 的未读。为真时
+  // i_participate 必然为真，所以「需要我行动的」只看这一个字段就够。
+  // 只有 list/get 话题时才带。
+  awaits_me?: boolean
+  // 哪个 AI 队友在这个话题里工作。null = 跟着项目的默认走（不是「没有」），
+  // 所以换了项目默认，这个话题也跟着换。
+  agent_instance_id?: string | null
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -93,6 +88,9 @@ export interface Block {
   anchor_quote?: string | null
   // Render-by-type: mimeType of an artifact block (set on kind=artifact).
   mime_type?: string | null
+  // How many times the living doc has been written (kind=doc). Send it back as
+  // `expected_version` to save; the write is refused if the doc moved since.
+  doc_version?: number
   turn_id?: string | null
   refs?: string[]
   // Structured event payload (kind=event): {tool, arg, platform} — the UI
@@ -101,6 +99,8 @@ export interface Block {
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
   upgraded_to_topic_id?: string | null
+  // 这一块被派成了哪条支线（房间里的「讨论升级」走这条）。两者只会有一个非空。
+  upgraded_to_task_id?: string | null
   created_at: string
 }
 
@@ -129,6 +129,28 @@ export interface TodoItem {
 
 // 进度层 (#187): the stored checklist for a topic. `updated_at` is null when the
 // topic has never had one (items is then []).
+// 一件活 —— 房间里的一条支线，不是话题树上的一个节点。房间有名册，一件活只有
+// 唯一的主（`owner_handle`），那个差别就是它不再是房间的全部理由。
+export interface RoomTask {
+  id: string
+  project_id: string
+  // 它挂在哪个房间里。永远是房间——活不嵌套。
+  room_id: string
+  title: string
+  status: string
+  owner_handle?: string | null
+  created_by?: string | null
+  agent_instance_id?: string | null
+  branch_name?: string | null
+  // 交付，和 `status` 不是同一个问题：活可以已交付但还开着，也可以关掉却什么都没交付。
+  accepted_by?: string | null
+  accepted_at?: string | null
+  closed_at?: string | null
+  upgraded_from_block_id?: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface TopicProgress {
   items: TodoItem[]
   updated_at: string | null
@@ -151,9 +173,11 @@ export type WsServerFrame =
   // block; the client must not double-show it as a floating banner.
   | { type: 'error'; message: string; persisted?: boolean; code?: string }
   | { type: 'done' }
+  | { type: 'turn_started'; turn_id: string }
+  | { type: 'turn_finished'; turn_id: string }
   // Sent once on WS connect when a turn is already mid-stream on this topic,
   // so a re-entering client rebuilds the 正在思考 indicator.
-  | { type: 'turn_active' }
+  | { type: 'turn_active'; turn_ids?: string[] }
   // A just-persisted block turned out to be a provider-error echo — remove it.
   | { type: 'retract_block'; block_id: string }
   // An existing block's data changed in place (e.g. an option question got
@@ -178,6 +202,9 @@ export interface WsClientMessage {
   summon: boolean
   reply_to?: string // B3: thread this message under another
   attachments?: ChatAttachment[] // 图片输入 (uploaded first, referenced here)
+  // 乐观渲染的对账号：客户端给自己这一次发送起的 id，后端原样戳回块的 meta 上。
+  // 靠文本对账是不行的——落库那一步会把 @名字 改写成 <@handle>。
+  client_id?: string
 }
 
 // ---- 项目总览 / 收件箱 (eval G2/G3) ----
@@ -204,8 +231,10 @@ export interface ProjectMemberRow {
   user_handle: string
   role: string
   name?: string
-  // 头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。名册行背后没有 fusion 用户
-  // 档案时为 null —— 那种情况用彩色首字母兜底，不要去取 /avatars/default。
+  // 这个人**自己选的**头像素材 id（getAvatarUrl 拼成 /avatars/{id}）。两种情况
+  // 为 null：名册行背后没有 fusion 用户档案，或者他从来没设过头像（档案还指着
+  // 全局默认头像，后端已替我们判掉）。两种都用彩色首字母兜底 —— 别去取
+  // /avatars/default，那会让所有没设过头像的人共用同一张脸。
   avatar_id?: number | null
   // `agent` marks 芝士 (any of its per-topic 分身), derived server-side from the
   // execution binding — never from the handle string, which differs per topic.
@@ -378,6 +407,26 @@ export interface PreviewInfo {
   // 应用没在跑" — without it both looked like an empty white frame.
   url?: string | null
   container_up?: boolean
+  // kind=app: whether this topic's runtime can host a live app AT ALL. A topic
+  // running on someone's own machine has no container here to publish the port,
+  // so `container_up` is false for a machine that is perfectly alive — telling
+  // those users to summon 芝士 again waits on a box that is never coming.
+  supported?: boolean
+  // Which artifact this is. Distinguishes "芝士 pointed at something new" from
+  // "the same preview, re-fetched" — re-pointing at the same path is new too.
+  artifact_id?: string
+}
+
+// GET /projects/{id}/topics/{id}/work-summary: what work a topic is holding,
+// answered without opening any of it. The 工作面板 offers a tab only where the
+// thing it shows exists, and 改动 carries the count — both are questions about
+// tabs that are closed.
+export interface TopicWorkSummary {
+  // Paths this topic's branch changes vs the base — the diff's table of contents.
+  changed_files: string[]
+  // The topic has run at least one turn, so there is a 现场 to open. A room
+  // where only people talked has none.
+  has_run: boolean
 }
 
 // Aggregated token/cost usage (GET /topics/{id}/usage, /projects/{id}/usage).
@@ -423,10 +472,18 @@ export interface AcceptCard {
   topic_id: string
   reviewer_handle: string
   routing_reason: string
+  // 提交与 PR 规范: the Conventional Commits subject + body this topic will be
+  // squash-merged under. Null on a card filed without them (the platform then
+  // falls back to `chore: <话题标题>`).
+  change_subject: string | null
+  change_body: string | null
   status: AcceptStatus
   decided_by: string | null
   decided_at: string | null
   note: string
+  // 这条 note 是「停住了」(error) 还是「还在走」(info)；空 note 是 null。
+  // 后端算好下发（domain/review/notes.py），别在这边按文案开头去猜。
+  note_level: 'error' | 'info' | null
   created_at: string
   // 机器闸门: when the check passed + the tail of its output.
   gate_passed_at: string | null
@@ -524,7 +581,7 @@ export interface MarketPools {
 
 // ---- 节点看板 (spec §9.1: where turns physically run) ----
 
-// One configured compute node (local docker / remote cheesed) with liveness.
+// One compute node this deployment runs, with liveness.
 export interface MarketNode {
   id: string
   label: string
@@ -565,33 +622,6 @@ export interface ProjectCredits {
 }
 
 // ---- 题目匹配市场 (spec §13 阶段 6: Space 发布题目, 团队应征) ----
-
-// GET /api/market/tasks — a published Task Template as a market listing.
-export interface MarketTask {
-  id: string
-  space_id: string
-  space_name: string
-  name: string
-  description: string
-  resource_pack: Record<string, unknown>
-  conditions: Array<Record<string, unknown>>
-  default_role: string | null
-  created_at: string
-}
-
-// An 应征 (team applies with a Project). status: pending → accepted | declined.
-export interface TaskApplication {
-  id: string
-  template_id: string
-  project_id: string
-  project_name: string
-  pitch: string
-  status: 'pending' | 'accepted' | 'declined'
-  decided_by: string | null
-  decided_at: string | null
-  task_id: string | null
-  created_at: string
-}
 
 // A selectable AI execution profile (GET /projects/{id}/execution-profiles).
 export interface ExecProfileOption {
@@ -670,13 +700,23 @@ export interface TopicComputeVisibility {
   notice: string
 }
 
+export interface TopicComputeDevice {
+  device_id: string
+  name: string
+  online: boolean
+}
+
 // GET /topics/{id}/compute-profile — a topic's session-level compute选择 (v4).
 // `current` is effective (topic → project sticky → team default → platform);
 // `locked` freezes the picker once the topic has run (session started);
 // `inherited` = still following project/team/platform defaults (no own choice yet);
-// `sticky` = project sticky if present, otherwise the team/platform default.
+// `sticky` = project sticky if present, otherwise the team/platform default;
+// `device_id` is the self-hosted machine pinned to this topic, or null while
+// 「系统挑一台」still waits for the first turn to choose one.
 export interface TopicComputeProfile {
   current: string
+  device_id: string | null
+  devices: TopicComputeDevice[]
   locked: boolean
   inherited: boolean
   sticky: string
@@ -781,4 +821,50 @@ export interface DeviceApproval {
   device_id: string
   device_name: string
   project_id: string | null
+}
+
+// ---- AI 队友 (agent 类型与实例) ----
+//
+// Three layers, three lifetimes (docs/topics/room-task-agent-session-设计方案.md
+// §12): a TYPE is 出厂设置 and belongs to no project; an INSTANCE is that type
+// working inside one project, and it owns the memory it accumulated there; a
+// session is where one conversation got to and may be thrown away.
+//
+// So "how this agent behaves" (system prompt, skills, MCP, model, effort,
+// harness) is on the TYPE, and "who it is here" (name, handle, memory) is on the
+// INSTANCE. The management page shows both, which is why it reads two endpoints.
+
+// GET /agent-types — presets merged with the project's custom types.
+export interface AgentType {
+  name: string
+  title: string
+  description: string
+  // The system prompt this type runs under (角色设定).
+  body: string
+  skills: string[]
+  mcp_servers: string[]
+  model: string | null
+  effort: string | null
+  harness: string | null
+  // Ships with the platform → read-only.
+  builtin: boolean
+  space_id?: number | null
+  created_by?: string | null
+  created_at?: string | null
+}
+
+// GET /projects/{id}/agents — one agent working in this project.
+export interface ProjectAgent {
+  // Null for the implicit 芝士 a project has before anyone configured one.
+  id: string | null
+  project_id: string
+  // The memory pool key inside the project (`{project}:{handle}`).
+  handle: string
+  type_name: string | null
+  display_name: string
+  // What a new topic in this project gets.
+  is_default: boolean
+  // False = it resolves and owns a memory pool, but there is no row to edit.
+  configured: boolean
+  created_at?: string | null
 }

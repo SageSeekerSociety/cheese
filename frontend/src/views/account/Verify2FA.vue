@@ -4,9 +4,9 @@
     <div class="mb-12">
       <div class="d-flex align-center mb-3">
         <v-icon color="primary" size="28" class="mr-3">mdi-two-factor-authentication</v-icon>
-        <h1 class="text-h3 font-weight-light" style="color: #212121; line-height: 1.2">两步验证</h1>
+        <h1 class="text-h3 font-weight-light" style="color: var(--ink); line-height: 1.2">两步验证</h1>
       </div>
-      <p class="text-body-1" style="color: #757575; line-height: 1.5">请输入您的验证信息</p>
+      <p class="text-body-1" style="color: var(--muted); line-height: 1.5">请输入您的验证信息</p>
     </div>
 
     <!-- 错误提示区域 -->
@@ -23,17 +23,17 @@
           <v-form @submit.prevent="handleVerify">
             <!-- 验证码输入说明 -->
             <div class="mb-6">
-              <p class="text-body-1 font-weight-medium mb-2" style="color: #424242">
+              <p class="text-body-1 font-weight-medium mb-2" style="color: var(--text)">
                 {{ codeType === 'totp' ? '输入动态验证码' : '输入备用验证码' }}
               </p>
-              <p class="text-body-2" style="color: #757575">
+              <p class="text-body-2" style="color: var(--muted)">
                 {{
                   codeType === 'totp'
                     ? '请打开您的身份验证器应用，输入6位数字验证码'
                     : '请输入8位字母数字组合的备用验证码'
                 }}
               </p>
-              <p class="text-body-2 mt-1" style="color: #9e9e9e">连续输错 5 次会锁定 15 分钟。</p>
+              <p class="text-body-2 mt-1" style="color: var(--faint)">连续输错 5 次会锁定 15 分钟。</p>
             </div>
 
             <!-- OTP 输入区域 -->
@@ -73,7 +73,7 @@
             </v-btn>
 
             <!-- 切换验证方式 -->
-            <p class="text-body-2" style="color: #757575">
+            <p class="text-body-2" style="color: var(--muted)">
               {{ codeType === 'totp' ? '无法获取验证码？' : '想使用动态验证码？' }}
               <v-btn
                 variant="text"

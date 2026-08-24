@@ -48,7 +48,7 @@ def _authorize(client, monkeypatch, *, reviewer: str = "alice") -> tuple:
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid, reviewer=reviewer)
     r = client.post(
-        f"/api/accept-cards/{cid}/accept",
+        f"/accept-cards/{cid}/accept",
         json={"decided_by": reviewer},
         headers=session_auth_headers(reviewer),
     )
@@ -120,7 +120,7 @@ def test_green_within_authorized_scope_auto_merges_without_asking_again(
         assert len(fake.merge_calls) == 1
         after = _cards_for_topic(client, tid)[0]
         assert after["pr_merged_at"] is not None
-        assert "✋" not in after["note"]
+        assert after["note_level"] != "error"  # 合上了就不该还停在红上
     finally:
         _reset_client()
 
@@ -187,11 +187,16 @@ def test_drift_beyond_authorized_scope_blocks_auto_merge(
         after = _cards_for_topic(client, tid)[0]
         assert after["status"] == "pr_open"
         assert after["pr_merged_at"] is None
-        assert after["note"].startswith("✋")
+        assert after["note_level"] == "error"
+        assert "平台不会自动合并" in after["note"]
         assert "超出了当时授权的范围" in after["note"]
         assert expected_phrase in after["note"]
-        # 回来找人：卡面必须说清人能做什么，而不只是"卡住了"。
-        assert "撤销这次采纳" in after["note"]
+        # 回来找人：卡面必须说清人能做什么，而不只是"卡住了"。三条出口都要在：
+        # 人工放行（署名合并）、自己去 GitHub 合、作废这张卡。（旧文案写的是
+        # "撤销这次采纳"，但 revoke 只受理 accepted 的卡，pr_open 的出口是作废。）
+        assert "人工放行" in after["note"]
+        assert "GitHub 上合并" in after["note"]
+        assert "作废" in after["note"]
         assert _topic(client, tid)["status"] == "active"
     finally:
         _reset_client()
@@ -249,8 +254,10 @@ def test_unknowable_scope_fails_closed(client, monkeypatch):
         _poll(client)
 
         assert fake.merge_calls == []
-        note = _cards_for_topic(client, tid)[0]["note"]
-        assert note.startswith("✋")
+        stopped = _cards_for_topic(client, tid)[0]
+        note = stopped["note"]
+        assert stopped["note_level"] == "error"
+        assert "平台不会自动合并" in note
         assert "无法确认" in note
     finally:
         _reset_client()
@@ -275,7 +282,8 @@ def test_no_checks_green_does_not_earn_auto_merge(client, monkeypatch):
         assert fake.merge_calls == []
         after = _cards_for_topic(client, tid)[0]
         assert after["status"] == "pr_open"
-        assert after["note"].startswith("✋")
+        assert after["note_level"] == "error"
+        assert "平台不会自动合并" in after["note"]
         assert "没有任何 CI 真的跑过这次改动" in after["note"]
         assert _topic(client, tid)["status"] == "active"
     finally:
@@ -318,7 +326,8 @@ def test_prod_base_never_auto_merges(client, monkeypatch):
 
         assert fake.merge_calls == []
         after = _cards_for_topic(client, tid)[0]
-        assert after["note"].startswith("✋")
+        assert after["note_level"] == "error"
+        assert "平台不会自动合并" in after["note"]
         assert "prod" in after["note"]
         assert _topic(client, tid)["status"] == "active"
     finally:
@@ -356,7 +365,9 @@ def test_unresolvable_base_branch_fails_closed(client, monkeypatch):
         _poll(client)
 
         assert fake.merge_calls == []
-        assert _cards_for_topic(client, tid)[0]["note"].startswith("✋")
+        stopped = _cards_for_topic(client, tid)[0]
+        assert stopped["note_level"] == "error"
+        assert "平台不会自动合并" in stopped["note"]
     finally:
         _reset_client()
 

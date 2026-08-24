@@ -6,7 +6,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_turn_runner
+from app.api.deps import get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
 from app.domain.idempotency import store as idem
@@ -23,7 +23,7 @@ router = APIRouter(prefix="", tags=["milestones"])
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
-@router.post("/api/projects/{project_id}/milestones")
+@router.post("/projects/{project_id}/milestones")
 async def create_milestone(
     project_id: uuid.UUID, body: MilestoneCreate, db: DbSession
 ) -> dict:
@@ -33,7 +33,7 @@ async def create_milestone(
     # to dedup against. No source topic (a human pinning one in the UI) → no
     # continuation → no dedup, same rule as everywhere else.
     continuation = (
-        get_turn_runner().continuation_for(body.source_topic_id)
+        get_work_runner().continuation_for(body.source_topic_id)
         if body.source_topic_id
         else None
     )
@@ -61,21 +61,21 @@ async def create_milestone(
     return ok(out)
 
 
-@router.get("/api/projects/{project_id}/milestones")
+@router.get("/projects/{project_id}/milestones")
 async def list_milestones(project_id: uuid.UUID, db: DbSession) -> dict:
     milestones, total = await MilestoneService(db).list_for_project(project_id)
     items = [MilestoneOut.model_validate(m).model_dump(mode="json") for m in milestones]
     return ok(page(items, total))
 
 
-@router.get("/api/projects/{project_id}/calendar")
+@router.get("/projects/{project_id}/calendar")
 async def project_calendar(project_id: uuid.UUID, db: DbSession) -> dict:
     milestones = await MilestoneService(db).calendar(project_id)
     items = [MilestoneOut.model_validate(m).model_dump(mode="json") for m in milestones]
     return ok(page(items, len(items)))
 
 
-@router.put("/api/milestones/{milestone_id}")
+@router.put("/milestones/{milestone_id}")
 async def update_milestone(
     milestone_id: uuid.UUID, body: MilestoneUpdate, db: DbSession
 ) -> dict:
@@ -90,7 +90,7 @@ async def update_milestone(
     return ok(MilestoneOut.model_validate(milestone).model_dump(mode="json"))
 
 
-@router.delete("/api/milestones/{milestone_id}")
+@router.delete("/milestones/{milestone_id}")
 async def delete_milestone(milestone_id: uuid.UUID, db: DbSession) -> dict:
     await MilestoneService(db).delete(milestone_id)
     return ok(None)
