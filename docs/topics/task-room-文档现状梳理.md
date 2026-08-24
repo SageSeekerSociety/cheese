@@ -83,6 +83,57 @@
 - **未读 vs 活跃**：房间的 `last_activity_at` **算**支线（房间里有活在跑就是活的），
   未读计数**不算**（否则每条支线说句话都把房间标红，红点变噪音）。两处相邻、写法相似、结论相反，是故意的。
 
+## 4.5 任务在 UI 上到底怎么显示（2026-08-23 核实）
+
+一句话：**支线在房间的时间线上有一条标记，但它自己没有任何界面** —— 点进去打不开。
+
+### 看得见的三处
+
+1. **房间时间线上的「已派出」分隔线**（<&frontend/src/components/DispatchedMarker.vue>）：
+   一条细线，写着「⑂ 已派出《标题》· 这部分正在进行 / 这部分已完成」。
+   刻意做成分隔线而不是气泡——它标的是时间线上的一个转折点（往下这段时间里，这件事在别处做），不是谁说了句话。
+   位置和内容**没有存在库里**，是读时用支线的 `room_id + created_at` 现算的
+   （<&frontend/src/lib/splitMarkers.ts>；因为 `split` 不往房间主线写任何 block，不这么做房间里就完全无痕）。
+2. **被升级的那条消息上的小链接**：`upgraded_to_task_id` 在 ChatPanel 的气泡和 PanelDoc 的文档节点两处都渲染成「已升级为话题」。
+3. **就这些。** 没有任务列表面板、没有看板、没有卡片。
+
+### 看不见的地方
+
+- **侧栏树里没有支线。** 侧栏读的是 `GET /topics?project_id=`，而这个接口只查 `topics` 表。
+  **实测（本项目，2026-08-23）：169 行，`kind` 全是 `topic`(168) + `root`(1)，一个支线都没有。**
+  `TopicSidebar.vue` 里还留着 `task: '任务'` / `subtopic: '分身'` 两个 kind 标签，是改造前的残留，现在永远取不到。
+- **没有「这个房间有几件活在跑」的汇总视图**。要看全部支线只能调 `GET /topics/{房间}/tasks`，
+  目前只有 ChatPanel 为了画标记而调它（而且 `limit: 1`，每条支线只取最新一条 block）。
+
+### ⚠️ 已确认的 bug：点开一条支线 = 「这个话题不存在」
+
+点「已派出《X》」→ `emit('open-topic', taskId)` → `router.push({name:'workspace-topic', params:{topicId: 支线id}})`。
+然后 <&frontend/src/views/workspace/TopicView.vue:49>：
+
+```ts
+const selectedTopic = computed(() => store.topics.find((t) => t.id === props.topicId) ?? null)
+```
+
+`store.topics` 只由 `listTopics()`（= 只有房间）填充；唯一往里 `push` 的地方是「新建房间」，
+`refreshTopicRow` 也只 `if (i >= 0)` 就地更新、不新增。**所以支线 id 永远不在里面** →
+`selectedTopic` 为 null → 渲染 <&frontend/src/views/workspace/TopicView.vue:270-275> 那个分支：
+
+> 这个话题不存在 / 它可能已被删除，或不属于这个项目
+
+同一条路还有第二个入口：消息升级完成后 `handleUpgradeMessage` 直接 `openTopic(upgraded.id)`，一样打不开。
+
+**后端是好的**：`GET /topics/{支线id}` 会正确解析成一个地点并返回 TaskOut（`room_id`/`owner_handle`/`status`），
+`/blocks`、`/doc` 也都认支线 id。**缺的只是前端这一步：`selectedTopic` 从一张只装房间的列表里找。**
+
+**为什么没被测出来**：<&frontend/src/components/__tests__/ChatPanelDispatched.test.ts> 只断言
+「点标题 → emit('open-topic', 'sub-1')」，正好停在组件边界上；e2e 里 `split`/`已派出` 零覆盖。
+
+修的时候要注意两件事（漏了不会报错）：
+- 头部拿到的是 **TaskOut 不是 TopicOut**（没有 `kind`、没有 `TopicStatus`、没有名册），
+  `TopicHeader` 现在按 `Topic` 取值，直接塞会渲染出一堆空。
+- 侧栏高亮走 `ancestorPathIds(props.topics, selectedTopicId)`，支线不在树里 → 打开支线时侧栏什么都不亮，
+  人会不知道自己在哪个房间里。
+
 ## 5. 交付：一个房间一条分支一个 PR
 
 这是最容易搞反的一条。设计图上曾经画的是「一件活自己开 PR」（D1 走 A），**最后没走这条**，因为
@@ -102,6 +153,21 @@
 `accepted_by`/`accepted_at` 这两个戳**在 task 上也有一份**（一件活自己的交付记录），
 但**开 PR 的是房间**。`branch_for_place` 对房间和支线都给分支名，只是支线的分支是折进去、不单独开 PR。
 
+## 5.5 已拍板：房间的用量算总账（@wangchangxin，2026-08-23）
+
+选的是「**算进来：房间显示总账，支线单看也能看**」。
+
+核下来这件事比预想的小：`resource_usage` 同时有 `topic_id`（房间）和 `task_id`（支线），
+一条支线的用量行存的是 `topic_id=房间 + task_id=支线`。而 `UsageRepository.for_topic` 是
+`_agg(ResourceUsage.topic_id, 房间id)` —— **它本来就把支线的花费一起加进去了，「总账」这一半已经成立**。
+
+真正缺的是**「支线单看也能看」**：`GET /topics/{id}/usage` 和 `/transcript` 开头是
+`TopicService(db).get_or_404(topic_id)`，拿支线 id 直接 404（旁边的 `/blocks`、`/doc` 都已经改成解析 Place 了，
+只有这两条没跟上）。所以要做的是：
+- 两条路由改成 `place_or_404`，鉴权照旧落在房间上；
+- 支线 → 按 (`topic_id`=房间, `task_id`=支线) 聚合；房间 → 维持现状（`topic_id`=房间，天然含支线）；
+- 前端 `TopicHeader` 的用量弹层拿支线 id 调 `getTopicUsage` 时不再 404。
+
 ## 6. 已知没做完 / 缺口（截至 2026-08-23）
 
 1. **用量和记录只对房间回答**：`GET /topics/{id}/usage` 和 `/transcript` 拿支线 id 会 404
@@ -117,5 +183,8 @@
 
 ## 待办
 
-- [ ] 用量/记录要不要把支线算进房间——**等 @wangchangxin 拍板**（见 §6.1）。
-- [ ] 清掉 docs/topics 下两份已过期的设计文档中被推翻的段落。
+- [x] 用量/记录要不要把支线算进房间 —— **@wangchangxin 2026-08-23 拍板：算进来**（见 §5.5）。
+- [ ] **修「点开支线 = 这个话题不存在」**（§4.5）——支线现在等于没有界面，优先级排在用量前面。
+- [ ] `/usage` 和 `/transcript` 改成解析 Place（§5.5）。
+- [ ] 清掉 docs/topics 下两份已过期的设计文档中被推翻的段落，以及 `TopicSidebar.vue` 里
+      `task`/`subtopic` 两个永远取不到的 kind 标签。
