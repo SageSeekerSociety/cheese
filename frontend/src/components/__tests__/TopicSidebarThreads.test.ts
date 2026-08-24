@@ -27,11 +27,15 @@ vi.mock('@/api', async () => {
   }
 })
 
-vi.mock('vue-router', () => ({
-  useRoute: () => ({ query: {}, params: {}, name: 'workspace-topic', matched: [] }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  RouterLink: { template: '<a><slot /></a>' },
-}))
+vi.mock('vue-router', async () => {
+  const { ref } = await import('vue')
+  const currentRoute = ref({ query: {}, params: {}, name: 'workspace-topic', matched: [], fullPath: '/' })
+  return {
+    useRoute: () => currentRoute.value,
+    useRouter: () => ({ push: vi.fn(), replace: vi.fn(), currentRoute }),
+    RouterLink: { template: '<a><slot /></a>' },
+  }
+})
 
 import TopicSidebar from '../TopicSidebar.vue'
 
@@ -81,23 +85,32 @@ beforeEach(() => {
   vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({}), text: async () => '' }))
 })
 
+// 侧栏是一条 v-navigation-drawer，Vuetify 要求它长在一个 v-layout 里面。
+const Host = {
+  components: { VLayout: components.VLayout, Sidebar },
+  props: ['sidebarProps'],
+  template: '<v-layout><Sidebar v-bind="sidebarProps" /></v-layout>',
+}
+
 function mount(topics: Topic[]) {
-  return render(Sidebar, {
+  return render(Host as unknown as Component, {
     props: {
-      page: 'workspace',
-      width: 280,
-      projects: [],
-      selectedProjectId: 'p1',
-      topics,
-      selectedTopicId: null,
-      loadingTopics: false,
-      privateActive: false,
-      members: [],
-      meHandle: 'alice',
-      activePeer: null,
-      activeDocs: null,
-      unreadMap: {},
-      privateUnreadMap: {},
+      sidebarProps: {
+        page: null,
+        width: 280,
+        projects: [],
+        selectedProjectId: 'p1',
+        topics,
+        selectedTopicId: null,
+        loadingTopics: false,
+        privateActive: false,
+        members: [],
+        meHandle: 'alice',
+        activePeer: null,
+        activeDocs: null,
+        unreadMap: {},
+        privateUnreadMap: {},
+      },
     },
     global: { plugins: [vuetify, i18n] },
   })
@@ -105,28 +118,28 @@ function mount(topics: Topic[]) {
 
 describe('侧栏画得出房间里在做什么', () => {
   it('一件活在树上有自己的一行', async () => {
-    const { findByText } = mount([ROOM, thread()])
-    expect(await findByText('查一下分页接口')).toBeTruthy()
+    const { findAllByText } = mount([ROOM, thread()])
+    expect((await findAllByText('查一下分页接口')).length).toBeGreaterThan(0)
   })
 
   it('它骑的那个 PR 就写在这一行上', async () => {
-    const { findByText } = mount([
+    const { findAllByText } = mount([
       ROOM,
       thread({ card: { id: 'c1', status: 'pr_open', pr_number: 611, pr_url: 'https://x/611' } }),
     ])
     // 「交付」这一段在树上唯一看得见的东西：一件活现在骑在哪个 PR 上。
-    expect(await findByText('#611')).toBeTruthy()
+    expect((await findAllByText('#611')).length).toBeGreaterThan(0)
   })
 
   it('还没递卡的活不硬造一个交付状态出来', async () => {
-    const { queryByText, findByText } = mount([ROOM, thread()])
-    await findByText('查一下分页接口')
+    const { queryByText, findAllByText } = mount([ROOM, thread()])
+    await findAllByText('查一下分页接口')
     expect(queryByText('待验收')).toBeNull()
     expect(queryByText('已采纳')).toBeNull()
   })
 
   it('做完的活说自己做完了，不跟在跑的长一个样', async () => {
-    const { findByText } = mount([ROOM, thread({ status: 'closed' })])
-    expect(await findByText('已完成')).toBeTruthy()
+    const { findAllByText } = mount([ROOM, thread({ status: 'closed' })])
+    expect((await findAllByText('已完成')).length).toBeGreaterThan(0)
   })
 })
