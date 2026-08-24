@@ -60,13 +60,15 @@ async function onArchiveTopic(topicId: string) {
 </script>
 
 <template>
+  <!-- `store.tree` 而不是 `store.topics`：侧栏画的是房间**加上**房间里派出去的
+       活，而 topics 只有房间（@话题 补全和文档里的 <#id> 解析读的是那一份）。 -->
   <TopicSidebar
     v-if="page || mdAndUp"
     :page="page"
     :width="store.railWidth"
     :projects="store.projects"
     :selected-project-id="store.projectId"
-    :topics="store.topics"
+    :topics="store.tree"
     :selected-topic-id="activeTopicId"
     :loading-topics="store.loadingTopics"
     :private-active="activeDmPeer === 'cheese'"

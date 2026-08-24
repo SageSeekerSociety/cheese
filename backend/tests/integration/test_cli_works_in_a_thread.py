@@ -12,6 +12,7 @@ id（`tmux_provider` 就是这么设的）。所以 CLI 打出去的每一个 `/
 """
 
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import session_auth_headers
 
 
@@ -112,6 +113,124 @@ def test_a_thread_writes_its_own_doc(client):
     assert "结论写在这" in client.get(f"/topics/{thread}/doc").json()["data"]["content"]
     after = client.get(f"/topics/{room}/doc").json()["data"]
     assert (after or {}).get("content") == room_doc_before
+
+
+def test_a_thread_reads_its_own_brief_holding_its_own_token(client):
+    """`cheese doc get` —— 分身开工要读的第一样东西，也是 `doc set` 的前置。
+
+    这条路由的失败方式和别处不同，所以单列：不是 404，是 **403「这个 token 属于
+    别的话题」**。分身手里那张 per-turn token 是按它所在的**地方**签的（支线），
+    而这条路拿**房间**的 id 去校验它，两个 id 都是合法 uuid，谁都不会报错。
+
+    上面那条测试读文档时不带 token，正好绕开了这一步——所以它一直是绿的，而真实
+    的分身第一条命令就打不通。
+    """
+    pid, room = _room(client)
+    thread = _thread(client, room, title="查一下分页接口")
+
+    r = client.get(f"/topics/{thread}/doc", headers=_as_agent(pid, thread))
+    assert r.status_code == 200, r.text
+    assert "查一下分页接口" in (r.json()["data"] or {}).get("content", "")
+
+
+def test_a_thread_reads_its_own_timeline_holding_its_own_token(client):
+    """`cheese api GET /topics/{id}/blocks` —— 分身回看自己说过什么的唯一路子。"""
+    pid, room = _room(client)
+    thread = _thread(client, room)
+    client.post(
+        f"/topics/{thread}/decision",
+        json={"decision": "改走游标分页"},
+        headers=_as_agent(pid, thread),
+    )
+
+    r = client.get(f"/topics/{thread}/blocks", headers=_as_agent(pid, thread))
+    assert r.status_code == 200, r.text
+    assert any(
+        "改走游标分页" in (b.get("content") or "") for b in r.json()["data"]["data"]
+    )
+
+
+# --- cheese conclude -------------------------------------------------------
+
+
+def test_a_thread_returns_its_conclusion_holding_its_own_token(client):
+    """`cheese conclude` 是一条支线**唯一**的回话出口——房间读不到它的对话，
+    结论不回流，这条线做的一切在房间里就是没发生过。
+
+    和上面同一个病：token 按支线签，校验按房间做。
+    """
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/return-conclusion",
+        json={"conclusion": "分页接口有个 N+1，改法写在文档里"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    assert any("N+1" in c for c in _contents(client, room))
+
+
+# --- cheese tell / cheese split --------------------------------------------
+
+
+def test_a_thread_can_speak_to_its_room(client):
+    """`cheese tell` —— 支线给房间捎一句话。"""
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/tell",
+        json={"target": "parent", "content": "这块我接手了"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    assert any("这块我接手了" in c for c in _contents(client, room))
+
+
+def test_a_thread_can_dispatch_work_of_its_own(client):
+    """`cheese split` —— 干一件活时发现第二件，是常态。活不嵌套，所以新的那条
+    挂在**同一个房间**下。"""
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/split",
+        json={"title": "顺带把索引补上"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["room_id"] == room
+
+
+# --- cheese notify ---------------------------------------------------------
+
+
+def test_a_thread_can_send_a_notification(client):
+    """`cheese notify` —— 「人不在这个话题里也得知道」的那条路。
+
+    它坏得和上面几条不一样：不是 403 而是**裸 500**。通知的 `topic_id` 是指向
+    `topics` 的外键，而 CLI 送来的是分身所在的**地点** id；支线不是 `topics` 的
+    一行（把活从话题里拆出来的那次迁移把它删了），于是外键违例冒成服务器错误，
+    屏幕上没有任何东西说明为什么。
+    """
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/projects/{pid}/alerts",
+        json={
+            "title": "该看一眼了",
+            "body": "",
+            "level": "light",
+            "kind": "change_alert",
+            "topic_id": thread,
+        },
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    # 指针指向房间：通知说的是「去哪儿看」，而一件活就住在一个房间里。
+    assert r.json()["data"]["topic_id"] == room
 
 
 # --- cheese ask / decision / artifact --------------------------------------
@@ -259,6 +378,114 @@ def test_what_a_thread_learns_is_readable_from_its_room(client):
         headers=_as_agent(pid, room),
     ).json()["data"]["hits"]
     assert [h["abstract"] for h in hits] == ["分页接口有个 N+1"]
+
+
+# --- 分身带着自己那张 token 调 -----------------------------------------------
+#
+# 上面每一条都验了「路由认不认支线的 id」，但大多没带 header —— 匿名请求根本不
+# 触发作用域检查。分身不是匿名的：它手里那张 per-turn token 是按**支线**签的，
+# 而一条路由若拿房间的 id 去认这张 token，得到的是 403「这个 token 属于别的话题」。
+# 症状和 404 完全不同（路由是通的，是它不认这个人），所以要单独钉。
+
+
+def _cli_read_paths(place_id: str) -> list[str]:
+    """CLI 和界面读一个地方时会打的每一条 GET。"""
+    return [
+        f"/topics/{place_id}",
+        f"/topics/{place_id}/blocks",
+        f"/topics/{place_id}/doc",
+        f"/topics/{place_id}/docs",
+        f"/topics/{place_id}/progress",
+    ]
+
+
+def test_a_thread_reads_itself_with_its_own_token(client):
+    """`cheese doc get` 是这里面最要命的一条。
+
+    它 403 之后 `cheese doc set` 也跟着废——写要求版本号必须来自一次真实的读，
+    唯一的读路径被拒，于是这条支线永远改不了自己的实况文档。
+    """
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    for path in _cli_read_paths(thread):
+        r = client.get(path, headers=_as_agent(pid, thread))
+        assert r.status_code == 200, f"{path} → {r.status_code} {r.text}"
+
+
+def test_a_room_still_reads_itself_with_its_own_token(client):
+    """另一半：房间自己那张 token 照常好使——上面那条不能是把检查关掉换来的。"""
+    pid, room = _room(client)
+
+    for path in _cli_read_paths(room):
+        r = client.get(path, headers=_as_agent(pid, room))
+        assert r.status_code == 200, f"{path} → {r.status_code} {r.text}"
+
+
+def test_a_token_from_another_place_is_still_refused(client):
+    """作用域检查本身要留着：拿甲支线的 token 去读乙支线，必须还是 403。"""
+    pid, room = _room(client)
+    mine = _thread(client, room, title="我的活")
+    yours = _thread(client, room, title="别人的活")
+
+    r = client.get(f"/topics/{yours}/doc", headers=_as_agent(pid, mine))
+    assert r.status_code == 403, r.text
+
+
+def test_a_thread_returns_its_conclusion_with_its_own_token(client):
+    """`cheese conclude` 是一条支线把结论送回房间的唯一通道。
+
+    它 403 的时候，这条支线做完的活一个字也回不去——而它自己是不会知道的，
+    因为报错只落在那一轮的终端里。
+    """
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/return-conclusion",
+        json={"conclusion": "查完了：分页少返一行，改游标就好"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    assert any("分页少返一行" in c for c in _contents(client, room))
+
+
+def test_a_thread_tells_its_room_with_its_own_token(client):
+    """`cheese tell` 是 conclude 之外那条「说句话就走」的路。
+
+    两条一起断的时候，房间还会建议分身「回话用 cheese tell」——而那正是坏的
+    那条，于是建议本身把人引进死胡同。
+    """
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/tell",
+        json={"target": room, "content": "先说一声：这条路能通。"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    assert any("这条路能通" in c for c in _contents(client, room))
+
+
+def test_a_thread_can_dispatch_more_work(client):
+    """`cheese split` 从支线里发得出去——这条路由的说明本来就写着 topic_id 可以
+    是支线的（干一件活时常常发现第二件）。活不嵌套，新的那条挂在同一个房间下。"""
+    pid, room = _room(client)
+    thread = _thread(client, room)
+
+    r = client.post(
+        f"/topics/{thread}/split",
+        json={"title": "顺手发现的第二件活"},
+        headers=_as_agent(pid, thread),
+    )
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+    assert r.json()["data"]["room_id"] == room
 
 
 # --- 人也要能照常用 --------------------------------------------------------

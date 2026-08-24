@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     agent_haiku_model: str | None = "glm-4.5-air"
     agent_sonnet_model: str | None = "glm-5.2"
     agent_opus_model: str | None = "glm-5.2"
-    # --- LLM gateway admin (docs/llm-gateway.md L1/L2) ---
+    # --- LLM gateway admin (L1/L2 — defined in `app.domain.agent.gateway`) ---
     # When the pool routes through the self-hosted LiteLLM gateway, the backend can
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
     # into the sandbox instead of the master key, so a sandbox never holds admin

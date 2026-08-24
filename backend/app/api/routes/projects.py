@@ -58,7 +58,10 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
+from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.place import Place
+from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.workspace import service as ws
@@ -326,6 +329,42 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
         project_id, BlockKind.decision
     )
     items = [BlockOut.model_validate(b).model_dump(mode="json") for b in blocks]
+    return ok(page(items, len(items)))
+
+
+@router.get("/{project_id}/tasks")
+async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
+    """Every thread in the project, each with the card it currently rides on.
+
+    The rail draws rooms and the work inside them, so it needs both halves at
+    once. Two round trips, not two per room and one per thread: a project here
+    already holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)
+    would make painting one sidebar 170 requests before a single PR badge.
+
+    `card` is the newest accept card ON THAT THREAD, narrowed to what a rail row
+    can show — where the work stands and the PR it rides on. Null for a thread
+    that has not been filed for acceptance, which is most of them while the work
+    is still going.
+    """
+    await ProjectService(db).get_or_404(project_id)
+    tasks = await TaskRepository(db).list_for_project(project_id)
+    cards = await AcceptCardRepository(db).latest_by_task([t.id for t in tasks])
+    items = []
+    for task in tasks:
+        card = cards.get(task.id)
+        items.append(
+            {
+                **TaskOut.model_validate(task).model_dump(mode="json"),
+                "card": None
+                if card is None
+                else {
+                    "id": str(card.id),
+                    "status": str(card.status),
+                    "pr_number": card.pr_number,
+                    "pr_url": card.pr_url,
+                },
+            }
+        )
     return ok(page(items, len(items)))
 
 

@@ -17,6 +17,10 @@ export interface TopicStateBadge {
 export function topicStateBadge(status?: string | null): TopicStateBadge {
   if (status === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
   if (status === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
+  // 支线只有 open / closed 两个状态，和房间那三个不是一套词。closed 是「这件活
+  // 做完了」——不是归档（支线不归档），所以既不能落到 archived，也不能不管它掉进
+  // 「进行中」，那会把一条已经收工的支线说成还在跑。
+  if (status === 'closed') return { label: '已完成', cls: 'pr-state--merged' }
   return { label: '进行中', cls: 'pr-state--open' }
 }
 
@@ -25,7 +29,7 @@ export type CardPhase = 'gate' | 'pending' | 'delivering' | null
 
 /** Where a topic stands right now — its status, its turn, and its accept card
  * folded into the one answer the header states and the panel opens on. */
-export type TopicPhase = 'archived' | 'draft' | 'working' | 'delivering' | 'reviewing' | 'open'
+export type TopicPhase = 'archived' | 'closed' | 'draft' | 'working' | 'delivering' | 'reviewing' | 'open'
 
 export interface TopicPhaseInput {
   status?: string | null
@@ -36,6 +40,7 @@ export interface TopicPhaseInput {
 
 export function topicPhase({ status, working, card }: TopicPhaseInput): TopicPhase {
   if (status === 'archived') return 'archived'
+  if (status === 'closed') return 'closed'
   if (status === 'draft') return 'draft'
   // The live fact wins over the paperwork: while 芝士 is running, 「待验收」 is
   // describing a card it may be about to supersede, and 「施工中」 is what is
@@ -48,6 +53,7 @@ export function topicPhase({ status, working, card }: TopicPhaseInput): TopicPha
 
 export function topicPhaseBadge(phase: TopicPhase): TopicStateBadge {
   if (phase === 'archived') return { label: '已采纳', cls: 'pr-state--merged' }
+  if (phase === 'closed') return { label: '已完成', cls: 'pr-state--merged' }
   if (phase === 'draft') return { label: '草稿', cls: 'pr-state--draft' }
   if (phase === 'working') return { label: '施工中', cls: 'pr-state--working' }
   if (phase === 'delivering') return { label: '交付中', cls: 'pr-state--delivering' }

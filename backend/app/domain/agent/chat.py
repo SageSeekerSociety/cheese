@@ -1350,7 +1350,8 @@ class ChatService:
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
-        # LiteLLM gateway ADMIN client (docs/llm-gateway.md L1/L2). None = off.
+        # LiteLLM gateway ADMIN client (L1/L2 — defined in
+        # `app.domain.agent.gateway`). None = off.
         # The lock serializes key-mint and usage-drain read-modify-writes on
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
