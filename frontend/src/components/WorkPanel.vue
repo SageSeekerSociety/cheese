@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 工作面板: the right-hand half of a topic — four平级 tabs, 文档 / 现场 / 改动 /
+// 工作面板: the right-hand half of a topic — 平级 tabs, 文档 / 任务 / 现场 / 改动 /
 // 预览. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
 // the drawers' float/pinned duality, their own width slider and the scrim are
 // gone, and 资源 is no longer a panel at all — its numbers live in the topic
@@ -21,12 +21,14 @@ import type { TopicPhase } from '../lib/topicState'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { getPreview, getTopicWorkSummary } from '../api'
+import { getPreview, getTopicWorkSummary, listRoomTasks } from '../api'
+import { roomIdOf } from '../lib/place'
 
 import PanelChanges from './panels/PanelChanges.vue'
 import PanelDoc from './panels/PanelDoc.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
+import PanelTasks from './panels/PanelTasks.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -69,7 +71,7 @@ const emit = defineEmits<{
   (e: 'update:tab', key: string): void
 }>()
 
-type TabKey = 'chat' | 'doc' | 'site' | 'changes' | 'preview'
+type TabKey = 'chat' | 'doc' | 'tasks' | 'site' | 'changes' | 'preview'
 interface TabDef {
   key: TabKey
   label: string
@@ -78,6 +80,7 @@ interface TabDef {
 const ALL_TABS: TabDef[] = [
   { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
   { key: 'doc', label: '文档', icon: 'mdi-file-document-outline' },
+  { key: 'tasks', label: '任务', icon: 'mdi-call-split' },
   { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
   { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
   { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
@@ -166,6 +169,8 @@ watch(
     refreshTick.value += 1
     void pollPreviewPointer()
     void pollWorkSummary()
+    // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
+    void pollThreads()
   }
 )
 
@@ -246,6 +251,27 @@ function markChangesSeen() {
   changesSeen.value = changesKey.value
 }
 
+// ---- 这个房间派出去了几件活 ----
+// A signal, so 任务 can carry its count while closed and can stay out of the way
+// of a room that never dispatched anything. Threads are counted for the ROOM: a
+// thread's siblings are the same list, and `/tasks` only answers for a room.
+const threads = ref<{ total: number; open: number }>({ total: 0, open: 0 })
+
+async function pollThreads() {
+  const place = props.topic
+  if (!place) return
+  const roomId = roomIdOf(place)
+  try {
+    // limit: 1 — see PanelTasks. Without it this asks for every thread's whole
+    // history just to count them.
+    const rows = (await listRoomTasks(roomId, { limit: 1 })).data
+    if (!props.topic || roomIdOf(props.topic) !== roomId) return
+    threads.value = { total: rows.length, open: rows.filter((r) => r.status === 'open').length }
+  } catch {
+    // A failed poll is not a state — same rule as the two polls above.
+  }
+}
+
 function tabIsOffered(key: TabKey): boolean {
   // The tab you are ON never disappears from under you. A topic whose changes
   // just merged, or whose preview 芝士 retracted, would otherwise close the
@@ -253,6 +279,9 @@ function tabIsOffered(key: TabKey): boolean {
   if (key === active.value) return true
   if (key === 'chat') return props.withChat
   if (key === 'doc') return true
+  // 任务 exists once this room has dispatched anything. A room that never did
+  // would get a tab whose entire content is a sentence saying so.
+  if (key === 'tasks') return threads.value.total > 0
   // 现场 is where 芝士 works: it is there once the topic has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
@@ -265,6 +294,9 @@ const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
   if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
+  if (t.key === 'tasks' && threads.total) {
+    return threads.open ? `${t.label}（${threads.total} 件，${threads.open} 件进行中）` : `${t.label}（${threads.total} 件）`
+  }
   if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
   if (t.key === 'changes' && summary.value.changedFiles.length) {
     const n = summary.value.changedFiles.length
@@ -290,9 +322,11 @@ watch(
     markPreviewSeen(null)
     summary.value = { changedFiles: [], hasRun: false }
     changesSeen.value = ''
+    threads.value = { total: 0, open: 0 }
     if (id) {
       void pollPreviewPointer({ seen: true })
       void pollWorkSummary({ seen: true })
+      void pollThreads()
     }
   },
   { immediate: true }
@@ -365,6 +399,9 @@ defineExpose({ pulse, highlightTurn, openFile })
           <!-- A dot, not a count: there is only ever one current preview, so a
                number would be noise. -->
           <span v-if="t.key === 'preview' && previewHasNew" class="tabbar__dot" />
+          <!-- 有几件活在跑。和 改动 一样用数字而不是点：几件在跑本身就是要看的
+               那个信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
+          <span v-if="t.key === 'tasks' && threads.total" class="tabbar__count">{{ threads.total }}</span>
           <!-- 改动 is the opposite: how much there is to review is the useful
                part, so the count carries the signal and turns amber when it is
                work you have not looked at yet. -->
@@ -392,6 +429,14 @@ defineExpose({ pulse, highlightTurn, openFile })
           @open-topic="emit('open-topic', $event)"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
+        />
+        <PanelTasks
+          v-if="mounted.has('tasks')"
+          v-show="active === 'tasks'"
+          :topic="topic"
+          :active="active === 'tasks'"
+          :refresh-tick="refreshTick"
+          @open-topic="emit('open-topic', $event)"
         />
         <PanelSite
           v-if="mounted.has('site')"
