@@ -226,12 +226,19 @@ const selectedTopic = computed(() => store.topics.find((t) => t.id === props.top
 
 ## 8. ⚠️ 两个挡路的平台问题（都不在上面两条支线范围里）
 
-### 8.1 质量闸门指着一个不存在的脚本
+### 8.1 ~~质量闸门指着一个不存在的脚本~~ —— **我说错了，已收回**
 
-`GET /projects/{id}/quality-gate` 返回 `check_command: "bash .claude/scripts/check.sh --no-tests"`，
-而 **`git ls-files` 里没有 `.claude/scripts/check.sh`**（`.claude/` 是被跟踪的，同目录下
-`check-repo-rules.sh` 等五个脚本都在，就是没有 check.sh）。
-所以**现在这个项目里谁递验收卡都会以 127 当场被打回**。要么改闸门配置，要么把脚本补回来。
+我 2026-08-23 说过「闸门指着不存在的 `check.sh`，现在谁都递不出验收卡」。**这句是错的。**
+
+2026-08-24 读码核实：**前置机器闸门已随 #296「采纳即合并」退役**——
+`run_check_command` 和它的 runner 都已删除，卡**永远不会**生成 `pending_gate` 态
+（`backend/app/api/routes/accept.py:70`：「the old machine-gate dispatch is retired
+(cards are never born `pending_gate` any more)」；`review/services.py:3184` 再说一遍）。
+`check_command` 的值还存着、`GET /quality-gate` 照样返回它，但**没有任何东西会去跑它**，
+所以它指着一个不存在的脚本毫无后果。
+
+递卡现在直接用平台 App 的 installation token 开 PR，由 GitHub 上真实 CI 决定绿不绿。
+**没有任何东西挡着递卡。** 两条支线已收到更正。
 
 ### 8.2 main 上有三个空合并，其中一个的内容彻底丢了
 
@@ -258,11 +265,30 @@ for c in $(git log --format=%h -20); do echo "$c $(git diff --name-only $c^ $c |
 **要 @wangchangxin 定的**：#610 那一整套要不要重做？（清那 4 处引用已经派给「清过期设计文档」那条支线了，
 但「每份文档声明自己是现状还是记录」+ check-docs.py 是一整个 PR 的量，我没擅自派。）
 
+## 9. 这些改动怎么走到 main（@wangchangxin 追问「那你改的有什么用」）
+
+这个问题是对的——我上一轮派完活就停了，没说产出怎么落地。补上，这条链每一环都得有人负责：
+
+1. 支线干完 → `cheese conclude` 回流结论 → 房间里开一张结论卡；
+2. 结论卡**默认采信**（房间这一轮结束、或 30 分钟没人管就自动采信）；
+3. 采信那一刻 `fold_into_room` 把支线分支上的提交折进**房间分支** `topic/b795cab5`；
+4. **← 这一步归我**：房间递验收卡（`cheese accept-request`）。递卡即开 PR（App token，立刻），CI 跑起来；
+5. **← 这一步归人**：@wangchangxin 在验收卡上采纳，PR 合并进 main。
+
+**第 4 步我之前没承诺过，那正是「改了有什么用」的答案**——不递卡，两条支线的产出就折进
+`topic/b795cab5` 然后停在那里，永远到不了 GitHub（平台只在卡处于 `pr_open` 的轮询里才代推）。
+现在明确：两条支线的结论都回流并折进来之后，**由我递卡**。
+
+**递卡后必须做的一件事**（见 §8.2，最近 20 个提交里三个空合并）：
+用 `gh api repos/{owner}/{repo}/pulls/{n}` 确认 `changed_files` 不是 0，**再叫人采纳**。
+PR 在 GitHub 上显示已合并，不等于内容进了 main。
+
 ## 待办
 
 - [x] 用量/记录要不要把支线算进房间 —— **@wangchangxin 2026-08-23 拍板：算进来**（见 §5.5）。
 - [~] 修「点开支线 = 这个话题不存在」+ `/usage` `/transcript` 解析 Place —— **已派给支线「支线在界面上能打开」**。
 - [~] **让支线看得见**（房间里的任务列表，§4.6）—— 已用 `cheese tell` 追加给同一条支线。
 - [~] 清过期设计文档 + 4 处死引用 —— **已派给支线「清过期设计文档」**。
-- [ ] **质量闸门指着不存在的 check.sh**（§8.1）—— 谁都递不出验收卡，要人处理。
+- [x] ~~质量闸门挡着递卡~~ —— **我核错了，已收回**（§8.1）：机器闸门早已退役，没有任何东西挡着递卡。
+- [ ] **两条支线回流后由我递验收卡**（§9），递完核 `changed_files != 0` 再交给 @wangchangxin 采纳。
 - [ ] **#610 整份丢了，要不要重做**（§8.2）—— 等 @wangchangxin 定。
