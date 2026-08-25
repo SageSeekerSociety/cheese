@@ -1,0 +1,122 @@
+name: Ops — restart the public tunnel
+
+# okcheese.com reaches the dev box through a Cloudflare Tunnel: a `cloudflared`
+# connector on the box holds outbound connections to Cloudflare's edge and
+# forwards to http://localhost:8080, which is the frontend container
+# (docker-compose.base.yml publishes 0.0.0.0:8080 -> :80). That connector is
+# HOST-level and predates the deploy scripts, so nothing else in this repo knows
+# it exists — `deploy-docker.sh` can rebuild every container without touching it.
+#
+# When the box's egress to *.argotunnels.com breaks, the connector drops and the
+# edge answers HTTP 530 / "error code: 1033" for every request. Fixing the
+# network is not enough: the connector can stay wedged in backoff afterwards, and
+# it has to be restarted by hand.
+#
+# 2026-08-25 is why this file exists. Campus network blocked the connector's
+# egress; the route was fixed upstream at ~04:00 CST but the tunnel had been down
+# since 04:29 UTC+8 and okcheese.com stayed at 1033 for hours. Nobody could
+# restart it: the box has no public inbound, the ghg VPN goes through
+# 183.174.60.119, and that host was itself unreachable from outside at the time.
+# The self-hosted runner was the only way in — so it is now a documented one.
+#
+# Deliberately unparameterized, same rule as box-diag.yml: it restarts one named
+# service and nothing else. It must never grow an input.
+
+on:
+  workflow_dispatch: {}
+  # TEMPORARY, removed before this branch merges: okcheese.com is down right now
+  # and workflow_dispatch only exists once the file is on the default branch.
+  push:
+    branches: [ops/restart-okcheese-tunnel]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ops-restart-tunnel
+  cancel-in-progress: false
+
+jobs:
+  restart:
+    runs-on: [self-hosted, cheese-dev]
+    timeout-minutes: 10
+    steps:
+      # Printed BEFORE anything is touched, because how the connector is
+      # supervised on the box is not recorded anywhere in this repo. If the
+      # restart step below finds nothing it recognises, this output is what tells
+      # the next person where it actually lives.
+      - name: How cloudflared is running here
+        run: |
+          echo "--- processes ---"
+          ps -eo pid,user,etime,args | grep '[c]loudflared' || echo "(none)"
+          echo "--- system units ---"
+          systemctl list-units --all --type=service --no-legend 2>/dev/null \
+            | grep -i cloudflared || echo "(none)"
+          echo "--- unit files ---"
+          systemctl list-unit-files --no-legend 2>/dev/null \
+            | grep -i cloudflared || echo "(none)"
+          echo "--- containers ---"
+          docker ps -a --format '{{.Names}}\t{{.Image}}\t{{.Status}}' 2>/dev/null \
+            | grep -i cloudflared || echo "(none)"
+          echo "--- can this runner sudo without a password? ---"
+          sudo -n true 2>/dev/null && echo yes || echo no
+
+      # Every branch is a restart of an EXISTING supervised service. Nothing here
+      # starts a connector that was not already configured, and nothing kills a
+      # bare process it cannot bring back — a wrong guess must leave the box
+      # exactly as it found it and fail loudly instead.
+      - name: Restart the connector
+        run: |
+          set -u
+          how=""
+
+          unit="$(systemctl list-unit-files --no-legend 2>/dev/null \
+                  | awk '{print $1}' | grep -i '^cloudflared' | head -1)"
+          if [ -n "$unit" ] && sudo -n true 2>/dev/null; then
+            sudo -n systemctl restart "$unit" && how="system unit $unit"
+          fi
+
+          if [ -z "$how" ]; then
+            uunit="$(systemctl --user list-unit-files --no-legend 2>/dev/null \
+                     | awk '{print $1}' | grep -i '^cloudflared' | head -1)"
+            if [ -n "$uunit" ]; then
+              systemctl --user restart "$uunit" && how="user unit $uunit"
+            fi
+          fi
+
+          if [ -z "$how" ]; then
+            ctr="$(docker ps -a --format '{{.Names}}' 2>/dev/null \
+                   | grep -i cloudflared | head -1)"
+            if [ -n "$ctr" ]; then
+              docker restart "$ctr" && how="container $ctr"
+            fi
+          fi
+
+          if [ -z "$how" ]; then
+            echo "::error::No supervised cloudflared found — see the step above \
+          for how it is actually running, and add that shape here rather than \
+          killing it by hand."
+            exit 1
+          fi
+          echo "restarted: $how"
+
+      # The restart succeeding says the supervisor accepted the command, not that
+      # the tunnel registered. Only the edge can tell us that, so ask it: a 1033
+      # is served by Cloudflare itself and still returns while the connector is
+      # absent. Anything that is not 5xx means the request reached the frontend.
+      - name: Confirm the edge is serving through the tunnel again
+        run: |
+          set -u
+          for i in $(seq 1 18); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+                    https://okcheese.com/ || echo 000)"
+            echo "attempt $i: HTTP $code"
+            case "$code" in
+              2*|3*) echo "tunnel is up"; exit 0 ;;
+            esac
+            sleep 10
+          done
+          echo "::error::okcheese.com still is not served through the tunnel. \
+          The connector restarted, so suspect its egress to *.argotunnels.com \
+          rather than the box."
+          exit 1
