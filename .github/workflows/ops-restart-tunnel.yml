@@ -120,3 +120,27 @@ jobs:
           The connector restarted, so suspect its egress to *.argotunnels.com \
           rather than the box."
           exit 1
+
+      # A restart that does not bring the tunnel back means the box cannot reach
+      # Cloudflare's edge at all, and the connector's own log is the only place
+      # that says why. Gathering it here is the difference between "still down"
+      # and a diagnosis — the box is not reachable any other way.
+      - name: Why it did not come back
+        if: failure()
+        run: |
+          echo "--- connector log ---"
+          sudo -n journalctl -u cloudflared --since '-15 min' --no-pager 2>&1 | tail -60
+          echo "--- ingress config ---"
+          sudo -n cat /etc/cloudflared/config.yml 2>&1
+          echo "--- does the edge resolve? ---"
+          for h in region1.v2.argotunnels.com region2.v2.argotunnels.com; do
+            echo "$h -> $(getent ahostsv4 "$h" | awk '{print $1}' | sort -u | tr '\n' ' ')"
+          done
+          echo "--- can we open :7844 to the edge? ---"
+          for ip in 198.41.192.7 198.41.200.13; do
+            timeout 8 bash -c "exec 3<>/dev/tcp/$ip/7844" 2>/dev/null \
+              && echo "$ip:7844 open" || echo "$ip:7844 unreachable"
+          done
+          echo "--- is general egress working at all? ---"
+          curl -s -o /dev/null -m 10 -w 'api.cloudflare.com: %{http_code}\n' \
+            https://api.cloudflare.com/client/v4/ || echo "api.cloudflare.com unreachable"
