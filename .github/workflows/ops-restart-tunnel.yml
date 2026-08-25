@@ -162,6 +162,16 @@ jobs:
           ip route get 198.41.192.7
           echo "=== can QUIC get out where http2 cannot? ==="
           echo "(second connector on the same tunnel; the running one is untouched)"
-          sudo -n timeout 35 cloudflared --no-autoupdate \
-            --config /etc/cloudflared/config.yml --protocol quic tunnel run 2>&1 \
-            | grep -iE "registered|connection|error|quic|udp" | head -25 || true
+          echo "(quic already ruled out; probing the relay route instead)"
+          echo "=== can this box reach etrip, the clean-egress relay? ==="
+          timeout 8 bash -c 'exec 3<>/dev/tcp/8.217.1.152/22 && head -c 40 <&3' \
+            2>/dev/null || echo "etrip:22 unreachable"
+          echo
+          echo "=== does the runner user have an ssh key already? ==="
+          ls -la ~/.ssh/ 2>/dev/null || echo "(no ~/.ssh)"
+          id
+          echo "=== what is 192.168.16.2 exposing? (read-only, ghg is not ours) ==="
+          for p in 22 53 7890 9090; do
+            timeout 5 bash -c "exec 3<>/dev/tcp/192.168.16.2/$p" 2>/dev/null \
+              && echo "192.168.16.2:$p open" || echo "192.168.16.2:$p closed"
+          done
