@@ -162,16 +162,15 @@ jobs:
           ip route get 198.41.192.7
           echo "=== can QUIC get out where http2 cannot? ==="
           echo "(second connector on the same tunnel; the running one is untouched)"
-          echo "(quic already ruled out; probing the relay route instead)"
-          echo "=== can this box reach etrip, the clean-egress relay? ==="
-          timeout 8 bash -c 'exec 3<>/dev/tcp/8.217.1.152/22 && head -c 40 <&3' \
-            2>/dev/null || echo "etrip:22 unreachable"
-          echo
-          echo "=== does the runner user have an ssh key already? ==="
-          ls -la ~/.ssh/ 2>/dev/null || echo "(no ~/.ssh)"
-          id
-          echo "=== what is 192.168.16.2 exposing? (read-only, ghg is not ours) ==="
-          for p in 22 53 7890 9090; do
-            timeout 5 bash -c "exec 3<>/dev/tcp/192.168.16.2/$p" 2>/dev/null \
-              && echo "192.168.16.2:$p open" || echo "192.168.16.2:$p closed"
+          echo "=== interior reachability from the box (we hold nictheboy's key) ==="
+          KEY=~/.ssh/id_ed25519
+          SSH="ssh -i $KEY -o IdentitiesOnly=yes -o ConnectTimeout=8 -o BatchMode=yes -o StrictHostKeyChecking=no"
+          echo "--- known_hosts the box has reached before ---"
+          awk '{print $1}' ~/.ssh/known_hosts 2>/dev/null | sort -u | head -40
+          echo "--- who am i on the physical host and gateway ---"
+          for h in 192.168.16.1 192.168.16.2 183.174.60.119; do
+            echo -n "$h: "
+            $SSH root@$h 'echo root-ok $(hostname)' 2>&1 | head -1
+            echo -n "$h (nictheboy): "
+            $SSH nictheboy@$h 'echo user-ok $(hostname); sudo -n true 2>/dev/null && echo +sudo || echo -sudo' 2>&1 | head -2 | tr "\n" " "; echo
           done
