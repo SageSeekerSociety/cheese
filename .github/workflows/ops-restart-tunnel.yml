@@ -144,3 +144,24 @@ jobs:
           echo "--- is general egress working at all? ---"
           curl -s -o /dev/null -m 10 -w 'api.cloudflare.com: %{http_code}\n' \
             https://api.cloudflare.com/client/v4/ || echo "api.cloudflare.com unreachable"
+
+      # TEMPORARY probe, removed before this branch merges.
+      - name: Probe what actually kills the handshake
+        if: always()
+        run: |
+          echo "=== is it the SNI, like 2026-07-01 on the mac-mini? ==="
+          for sni in "" h2.cftunnel.com; do
+            if [ -z "$sni" ]; then args=""; label="no SNI"; else args="-servername $sni"; label="SNI $sni"; fi
+            out="$(timeout 12 openssl s_client -connect 198.41.192.7:7844 $args </dev/null 2>&1 | wc -c)"
+            echo "$label -> $out bytes back"
+          done
+          echo "=== who answers DNS here ==="
+          cat /etc/resolv.conf | grep -v '^#'
+          echo "=== is anything proxying on this box ==="
+          ss -tlnp 2>/dev/null | grep -E ':(7890|7891|7897|9090)' || echo "(no local clash)"
+          ip route get 198.41.192.7
+          echo "=== can QUIC get out where http2 cannot? ==="
+          echo "(second connector on the same tunnel; the running one is untouched)"
+          sudo -n timeout 35 cloudflared --no-autoupdate \
+            --config /etc/cloudflared/config.yml --protocol quic tunnel run 2>&1 \
+            | grep -iE "registered|connection|error|quic|udp" | head -25 || true
