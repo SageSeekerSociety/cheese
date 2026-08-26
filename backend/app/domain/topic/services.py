@@ -42,7 +42,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import ClaimService, TaskService
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import (
     SortOrder,
@@ -824,6 +824,7 @@ class TopicService:
         title: str,
         created_by: str | None = None,
         brief: str | None = None,
+        paths: list[str] | None = None,
         triggered_by: str | None = None,
     ) -> Task:
         """从上往下拆解 (eval A2): open a new thread of work in a room.
@@ -901,6 +902,12 @@ class TopicService:
             # different agent and a different memory.
             agent_instance_id=room.agent_instance_id,
         )
+        if paths:
+            # 划出这条活要碰的地方。Refusals are NOT raised here: the caller
+            # renders them alongside the warnings, and an exception would carry
+            # only one of the two. A claim that was refused simply is not
+            # recorded — the thread still exists and can narrow it and try again.
+            await ClaimService(self._session).claim(task, paths)
         room_doc = await self._blocks.doc_root(room.id)
         await self._seed_brief_doc(
             room,

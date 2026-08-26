@@ -433,6 +433,11 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # 重推是意图，不是定时器: the poller stopped committing on a timer, so this
     # is how an agent says "the tree is worth showing now".
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/push-fix$")),
+    # 路径声明与两把锁: who is touching what, and who is overwriting a whole
+    # file or holding the room's heavy lane right now.
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/claim$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
     # 结论卡: settled by the PARENT during its own turn, so the scoping id in
     # the URL is the receiver, not the sub-topic that produced the card.
     (

@@ -1,15 +1,22 @@
 """Task services — reading a room's threads, and the trees they work on."""
 
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block
 from app.domain.room_task.models import (
+    FILE_LOCK_TTL,
+    HEAVY_LOCK_TTL,
     MAX_RESIDENT_TASKS_PER_ROOM,
+    LockKind,
     Residency,
+    RoomLock,
     Task,
+    TaskStatus,
     WorkTree,
 )
 from app.domain.room_task.repositories import TaskRepository, WorkTreeRepository
@@ -241,3 +248,221 @@ class TaskService:
             blocks = conversations.get(task.id, [])
             out.append((task, blocks[-limit:] if limit is not None else blocks))
         return out
+
+
+class ClaimService:
+    """谁在碰哪些路径 —— 声明，以及声明之间的冲突。
+
+    A claim is a path. **A claim ending in `/` is a directory; anything else is
+    a file.** That one rule is what lets the two answers stay far apart:
+
+    - the same FILE claimed twice is refused, because two threads writing one
+      file is the case with no other defence — the second write wins in silence;
+    - overlapping DIRECTORIES are a warning, because two threads working under
+      `backend/app/domain/review/` is ordinary and refusing it would make the
+      rule something people route around.
+
+    Claims are checked against the siblings on the same TREE, not the same room:
+    files are what conflict, and the tree is what holds the files.
+    """
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+        self._repo = TaskRepository(session)
+        self._trees = WorkTreeRepository(session)
+
+    @staticmethod
+    def normalise(paths: Iterable[str]) -> list[str]:
+        """Trim, drop empties, drop duplicates, keep the order given."""
+        seen: dict[str, None] = {}
+        for raw in paths:
+            path = raw.strip().lstrip("./")
+            if path:
+                seen.setdefault(path, None)
+        return list(seen)
+
+    @staticmethod
+    def _is_dir(path: str) -> bool:
+        return path.endswith("/")
+
+    @classmethod
+    def _overlaps(cls, a: str, b: str) -> bool:
+        """Do these two claims cover any of the same ground?"""
+        if a == b:
+            return True
+        if cls._is_dir(a) and b.startswith(a):
+            return True
+        return cls._is_dir(b) and a.startswith(b)
+
+    async def check(
+        self, *, tree_id: uuid.UUID, paths: list[str], exclude_task_id: uuid.UUID | None
+    ) -> tuple[list[str], list[str]]:
+        """(refusals, warnings) for claiming *paths* on *tree_id*.
+
+        A refusal names the other piece of work, because "conflict" without a
+        name leaves the caller nothing to do: the fix is to narrow one of the
+        two claims or to wait for the other, and both need to know which.
+        """
+        refusals: list[str] = []
+        warnings: list[str] = []
+        for other in await self._trees.list_tasks(tree_id):
+            if other.id == exclude_task_id or other.status is TaskStatus.closed:
+                continue
+            for mine in paths:
+                for theirs in other.claimed_paths or []:
+                    if not self._overlaps(mine, theirs):
+                        continue
+                    if mine == theirs and not self._is_dir(mine):
+                        refusals.append(f"「{other.title}」已经声明了同一个文件 {mine}")
+                    else:
+                        warnings.append(
+                            f"「{other.title}」也在 {theirs} 底下干活"
+                            f"（你声明的是 {mine}）"
+                        )
+        return refusals, warnings
+
+    async def claim(
+        self, task: Task, paths: Iterable[str]
+    ) -> tuple[list[str], list[str]]:
+        """Add *paths* to what this task says it will touch.
+
+        Additive: a claim grows as work reaches files nobody predicted, and
+        replacing it would silently drop the ground already agreed on.
+        Refusals are returned rather than raised — the caller has to show them
+        AND the warnings, and an exception carries only one of the two.
+        """
+        wanted = self.normalise(paths)
+        refusals, warnings = await self.check(
+            tree_id=task.tree_id, paths=wanted, exclude_task_id=task.id
+        )
+        if refusals:
+            return refusals, warnings
+        task.claimed_paths = self.normalise([*(task.claimed_paths or []), *wanted])
+        await self._session.flush()
+        return [], warnings
+
+    async def unclaimed(self, task: Task, touched: Iterable[str]) -> list[str]:
+        """Which of the paths actually touched were never claimed.
+
+        A claim is an intention and a snapshot is a fact; if nothing ever
+        compares them the claim is decoration. This is reported, never blocked —
+        finding out that work went somewhere unexpected is useful, and stopping
+        it after the fact would only lose the work.
+        """
+        claimed = task.claimed_paths or []
+        return [
+            path
+            for path in self.normalise(touched)
+            if not any(self._overlaps(path, c) for c in claimed)
+        ]
+
+
+class RoomLockService:
+    """整块覆盖一个文件、跑重活 —— 一次一个。
+
+    Narrow on purpose. It does not make concurrent writing safe in general: a
+    lock around a write cannot prevent a lost update, because the read that the
+    write is based on happened before the lock existed. It covers the two cases
+    that have no other defence — a whole-file overwrite (an `Edit` defends
+    itself; a `Write` cannot) and the things that fight over the machine rather
+    than the tree.
+    """
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def acquire(
+        self,
+        *,
+        room_id: uuid.UUID,
+        kind: LockKind,
+        resource: str = "",
+        holder_task_id: uuid.UUID | None,
+    ) -> tuple[bool, str]:
+        """Take the lock, or say who has it.
+
+        Never waits. Blocking would spend a whole turn's compute sitting still,
+        and the caller has something better to do with the answer — write a
+        different file, use `Edit`, come back next turn.
+        """
+        now = datetime.now(UTC)
+        existing = (
+            await self._session.scalars(
+                select(RoomLock).where(
+                    RoomLock.room_id == room_id,
+                    RoomLock.kind == kind,
+                    RoomLock.resource == resource,
+                )
+            )
+        ).first()
+        if existing is not None:
+            if existing.expires_at > now:
+                if existing.holder_task_id == holder_task_id:
+                    existing.expires_at = now + self._ttl(kind)
+                    await self._session.flush()
+                    return True, ""
+                return False, await self._who(existing)
+            # Expired: whoever held it is not coming back.
+            await self._session.delete(existing)
+            await self._session.flush()
+        self._session.add(
+            RoomLock(
+                room_id=room_id,
+                kind=kind,
+                resource=resource,
+                holder_task_id=holder_task_id,
+                acquired_at=now,
+                expires_at=now + self._ttl(kind),
+            )
+        )
+        await self._session.flush()
+        return True, ""
+
+    async def release(
+        self,
+        *,
+        room_id: uuid.UUID,
+        kind: LockKind,
+        resource: str = "",
+        holder_task_id: uuid.UUID | None,
+    ) -> bool:
+        """Give it back. Releasing a lock somebody else holds does nothing."""
+        existing = (
+            await self._session.scalars(
+                select(RoomLock).where(
+                    RoomLock.room_id == room_id,
+                    RoomLock.kind == kind,
+                    RoomLock.resource == resource,
+                )
+            )
+        ).first()
+        if existing is None or existing.holder_task_id != holder_task_id:
+            return False
+        await self._session.delete(existing)
+        await self._session.flush()
+        return True
+
+    async def sweep_expired(self) -> int:
+        """Take back every lock whose holder never came home."""
+        stale = list(
+            (
+                await self._session.scalars(
+                    select(RoomLock).where(RoomLock.expires_at <= datetime.now(UTC))
+                )
+            ).all()
+        )
+        for lock in stale:
+            await self._session.delete(lock)
+        if stale:
+            await self._session.flush()
+        return len(stale)
+
+    @staticmethod
+    def _ttl(kind: LockKind) -> timedelta:
+        return FILE_LOCK_TTL if kind is LockKind.file else HEAVY_LOCK_TTL
+
+    async def _who(self, lock: RoomLock) -> str:
+        if lock.holder_task_id is None:
+            return "这个房间自己正在改它"
+        task = await TaskRepository(self._session).get(lock.holder_task_id)
+        return f"「{task.title}」正在改它" if task else "另一条活正在改它"

@@ -21,6 +21,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from functools import lru_cache
 
+from app.core.background import spawn
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
 from app.domain.agent.host_swap import handle_host_failure, record_host_success
@@ -1540,7 +1541,16 @@ class AgentWorkRunner:
         lifecycle = {"started": False, "session_owned": False}
         # 占住这条活的额度。A thread holds one of its room's four slots while a
         # turn is going and gives it back below; a room's own line holds none.
-        await self._hold_slot(chat_service, topic_id)
+        #
+        # Detached deliberately: this is bookkeeping, and awaiting it would put a
+        # database round-trip in front of the turn's first frame — the person is
+        # waiting on that frame, and the slot is not what they are waiting for.
+        # The authoritative gate is `admit`, at dispatch and at dequeue; this
+        # only re-takes the slot for a thread somebody woke back up.
+        spawn(
+            self._hold_slot(chat_service, topic_id),
+            name=f"hold-slot-{topic_id}",
+        )
         try:
             if landed_user_block_id is not None:
                 frames = chat_service.converse_prepared(

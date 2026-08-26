@@ -391,6 +391,46 @@ def _await_start(command: str, label: str, timeout_s: int) -> None:
     )
 
 
+def _wait_for_heavy_lane(timeout_s: int) -> bool:
+    """Hold the room's single heavy lane, waiting for it if someone else has it.
+
+    Waiting is right HERE and wrong in a turn: `cheese await` already returned,
+    so nothing is blocked on this — the topic gets woken when the command ends,
+    whenever that is. Inside a turn the same wait would burn a whole turn's
+    compute standing still.
+
+    Gives up after a share of the command's own timeout rather than forever: a
+    command that never gets the lane should report that it did not run, not sit
+    invisible until someone goes looking.
+    """
+    import time as _time
+
+    topic = TOPIC
+    if not topic:
+        return False
+    deadline = _time.time() + max(60, min(timeout_s, 1800))
+    while _time.time() < deadline:
+        try:
+            r = _call(
+                "POST", f"/topics/{topic}/lock", {"kind": "heavy", "resource": ""}
+            )["data"]
+        except SystemExit:
+            return False  # the platform said no; running anyway beats not running
+        if r.get("acquired"):
+            return True
+        _time.sleep(5)
+    return False
+
+
+def _release_heavy_lane() -> None:
+    if not TOPIC:
+        return
+    try:
+        _call("POST", f"/topics/{TOPIC}/unlock", {"kind": "heavy", "resource": ""})
+    except SystemExit:
+        pass
+
+
 def _await_child(task_id: str, command: str, log_path: str, timeout_s: int) -> None:
     """The detached runner: run the command, then report how it ended.
 
@@ -402,7 +442,15 @@ def _await_child(task_id: str, command: str, log_path: str, timeout_s: int) -> N
 
     started = time.time()
     exit_code = -1
+    held_heavy = False
     try:
+        # 重活一次只跑一个: test runs, dependency installs and dev servers fight
+        # over the machine — ports, the database, one shared venv — not over the
+        # tree, so no amount of care about which files you touch helps. This is
+        # the one lock the platform can really enforce, because THIS code is the
+        # platform's; waiting here costs nothing, since the turn that asked for
+        # it already ended.
+        held_heavy = _wait_for_heavy_lane(timeout_s)
         with open(log_path, "wb") as log:
             proc = subprocess.Popen(  # noqa: S602 — the agent's own command, by design
                 ["bash", "-lc", command],
@@ -425,6 +473,13 @@ def _await_child(task_id: str, command: str, log_path: str, timeout_s: int) -> N
     except Exception as e:  # noqa: BLE001 — report the failure, never vanish
         with open(log_path, "a", encoding="utf-8") as log:
             log.write(f"\n[cheese await] 命令无法执行: {e}\n")
+    finally:
+        # Give the lane back however this ended. A lane held by a process that
+        # died is the one failure worse than the collision it prevents — though
+        # the lock's own expiry (30 minutes) is the backstop that keeps even
+        # that bounded.
+        if held_heavy:
+            _release_heavy_lane()
 
     _await_report(
         task_id,
@@ -581,6 +636,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ps.add_argument("title", help="这条支线的标题,≤12 字最好")
     ps.add_argument(
+        "--paths",
+        nargs="+",
+        default=None,
+        help=(
+            "这条活要碰哪些路径(结尾带 / 表示目录)。一批活共用同一棵树,"
+            "两条活整块覆盖同一个文件时后写的会**无声**盖掉先写的;声明了才拦得住。"
+            "中途还能用 `cheese claim` 追加"
+        ),
+    )
+    ps.add_argument(
         "--brief",
         default=None,
         help=(
@@ -629,6 +694,62 @@ def build_parser() -> argparse.ArgumentParser:
             "所以推送现在是**你说了算**:修完红的检查,自己说一声。\n"
             "没有在等 CI 的 PR、或者工作区没有新东西,它会直说,不算错误。"
         ),
+    )
+
+    pclaim = sub.add_parser(
+        "claim",
+        help="声明这条活要碰哪些路径(可以中途追加)",
+        description=(
+            "说清楚你这条活要动哪些路径,并当场看到还有谁在同一块地方干活。\n\n"
+            "为什么要声明:一批活共用**同一棵树**(同一个工作目录)。两条活整块覆盖\n"
+            "同一个文件时,后写的直接盖掉先写的,**没有任何工具会报错**——你要到很久\n"
+            "以后才会发现某个改动「莫名其妙回退了」。\n\n"
+            "规则:结尾带 `/` 的算目录,否则算文件。\n"
+            "  · 同一个**文件**被两条活声明 → 拒绝(这是唯一没有别的防线的情况)\n"
+            "  · **目录**重叠 → 只警告(两条活都在 backend/app/domain/review/ 底下很正常)\n\n"
+            "是追加,不是替换:活干着干着会碰到没预料到的文件,再 claim 一次就行。\n"
+            "简报里写路径没用——简报写完就改不了,而声明必然要长。"
+        ),
+    )
+    pclaim.add_argument("paths", nargs="+", help="路径,结尾带 / 表示目录")
+
+    plock = sub.add_parser(
+        "lock",
+        help="整块覆盖某个文件、或跑重活之前,先占住",
+        description=(
+            "本房间有两把锁,**强制程度不一样,用之前要知道**:\n\n"
+            "  heavy —— **真的拦得住**。跑测试、装依赖、起 dev server 都走\n"
+            "    `cheese await`,那是平台自己的代码,所以能真的排队。\n"
+            "  file  —— **只是提醒**。你的 Write 工具是你自己 harness 的,平台拦不住。\n"
+            "    它的作用是:你要整块覆盖一个文件之前,能知道别人是不是正在覆盖它。\n\n"
+            "两把锁都**不等待**:占不到就直接告诉你是谁占着,你可以改用 Edit、\n"
+            "换个文件、或者下一轮再来——干等会白白烧掉一整轮的算力。\n\n"
+            "两把锁都**不能防止 lost update**(你读了旧内容 → 别人改完 → 你按旧内容覆盖):\n"
+            "那一段发生在上锁之前。防这个的是 `Edit`——它匹配它以为在那儿的文本,\n"
+            "别人动过就当场报错。"
+        ),
+    )
+    plock.add_argument(
+        "kind", choices=["file", "heavy"], help="file=整块覆盖某个文件;heavy=跑重活"
+    )
+    plock.add_argument(
+        "resource", nargs="?", default="", help="要占住的文件路径(heavy 不用填)"
+    )
+
+    punlock = sub.add_parser(
+        "unlock",
+        help="把锁还回去",
+        description=(
+            "把 `cheese lock` 占住的东西还回去。占不到锁的时候不用还——"
+            "你本来就没占着。锁本身有超时(file 60 秒,heavy 30 分钟),"
+            "所以就算忘了还,也不会把别人永久挡在外面。"
+        ),
+    )
+    punlock.add_argument(
+        "kind", choices=["file", "heavy"], help="要还的是哪一把,和当初占的一致"
+    )
+    punlock.add_argument(
+        "resource", nargs="?", default="", help="当初占的那个文件路径(heavy 不用填)"
     )
 
     pdec = sub.add_parser(
@@ -987,6 +1108,8 @@ def main() -> None:
         body = {"title": a.title, "created_by": AUTHOR}
         if a.brief:
             body["brief"] = a.brief
+        if a.paths:
+            body["paths"] = a.paths
         r = _call("POST", f"/topics/{topic}/split", body)["data"]
         if r.get("queued"):
             held = "\n".join(
@@ -1005,6 +1128,34 @@ def main() -> None:
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":
         _await_child(a.task_id, a.command, a.log_path, a.timeout_s)
+    elif a.cmd == "claim":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call("POST", f"/topics/{topic}/claim", {"paths": a.paths})["data"]
+        if r.get("refusals"):
+            print("这些路径没能声明:")
+            for line in r["refusals"]:
+                print(f"  ✗ {line}")
+            print("把范围缩窄一点,或者等对方先做完。")
+        else:
+            print(f"已声明:{'、'.join(r.get('claimed') or a.paths)}")
+        for line in r.get("warnings") or []:
+            print(f"  ⚠ {line}")
+    elif a.cmd == "lock":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call(
+            "POST", f"/topics/{topic}/lock", {"kind": a.kind, "resource": a.resource}
+        )["data"]
+        if r.get("acquired"):
+            print(f"占住了({a.kind} {a.resource or ''})".rstrip())
+        else:
+            print(f"没占到:{r.get('reason') or '别人占着'}")
+            sys.exit(1)
+    elif a.cmd == "unlock":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call(
+            "POST", f"/topics/{topic}/unlock", {"kind": a.kind, "resource": a.resource}
+        )["data"]
+        print("已归还。" if r.get("released") else "你本来就没占着它。")
     elif a.cmd == "push-fix":
         topic = _need("CHEESE_TOPIC", TOPIC)
         r = _call("POST", f"/topics/{topic}/push-fix")["data"]

@@ -1164,6 +1164,28 @@ def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     return _git(repo, "diff", f"{_diff_base(repo)}...{branch}")
 
 
+def paths_in_last_snapshot(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
+    """What the most recent commit on this place's tree actually changed.
+
+    Attribution needs a window narrower than the branch: a tree carries a whole
+    batch, so "what changed on the branch" is the batch's answer, not this
+    thread's. One commit IS one turn — the snapshot boundary — so its own diff is
+    the closest thing to "what did this piece of work just touch".
+
+    Empty when the branch has no parent commit to compare against (a first
+    commit), which reads as "nothing to attribute" rather than "everything".
+    """
+    repo = ensure_repo(project_id)
+    branch = branch_for_tree(tree_for_place(topic_id))
+    if not _branch_exists(repo, branch):
+        return []
+    try:
+        out = _git(repo, "diff", "--name-only", f"{branch}~1", branch)
+    except ValidationError:
+        return []
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
 def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     """Paths a topic's branch changes relative to what it grew out of — the same
     range :func:`topic_diff` renders, named only.

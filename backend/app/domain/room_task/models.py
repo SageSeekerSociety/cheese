@@ -29,9 +29,9 @@ table is indistinguishable from a live one to whoever reads this next.
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, text
+from sqlalchemy import ARRAY, DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -166,6 +166,78 @@ class WorkTree(UuidPk, Timestamps, Base):
     )
 
 
+class LockKind(enum.StrEnum):
+    """What a room lock is protecting.
+
+    `file` — one whole-file overwrite. An `Edit` needs no lock: it matches the
+      text it means to replace and fails loudly when someone else moved it,
+      which IS a compare-and-swap. A `Write` or a shell `>` has no such check,
+      so it is the one operation that overwrites in silence.
+    `heavy` — the room's single lane for what fights over the machine rather
+      than over the tree: a test run, a dependency install, a dev server's port.
+      One lane per room, so `resource` is empty for these.
+    """
+
+    file = "file"
+    heavy = "heavy"
+
+
+#: How long a lock is honoured before the sweep takes it back. An agent that
+#: dies mid-write never returns to unlock, and a lock nobody can release is
+#: worse than the overwrite it was preventing.
+FILE_LOCK_TTL = timedelta(seconds=60)
+#: Longer, because what it guards is longer: a test run or a `uv sync`, not a
+#: single write.
+HEAVY_LOCK_TTL = timedelta(minutes=30)
+
+
+class RoomLock(UuidPk, Timestamps, Base):
+    """一次只有一个人整块覆盖同一个文件，一次只有一个人跑重活。
+
+    Deliberately narrow, and the two kinds are enforced differently — which is
+    worth knowing before trusting either:
+
+    - `heavy` is REAL. Test runs, dependency installs and dev servers go through
+      `cheese await`, which is the platform's own code, so the lane can simply
+      be held there.
+    - `file` is ADVISORY. An agent's `Write` is its harness's tool, not ours; we
+      cannot stand in front of it. What this offers is a way for an agent about
+      to overwrite a whole file to find out that somebody else is already doing
+      it, and `SKILL.md` is what asks it to look.
+
+    Neither makes concurrent writing safe in general — a lock around a write
+    cannot prevent a lost update, because the read the write is based on
+    happened before the lock existed. `Edit` is what covers that case, by
+    matching the text it expects and failing when someone else moved it.
+    """
+
+    __tablename__ = "room_locks"
+    __table_args__ = (
+        Index(
+            "uq_room_locks_resource", "room_id", "kind", "resource", unique=True
+        ),
+        Index("ix_room_locks_expires_at", "expires_at"),
+    )
+
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE")
+    )
+    kind: Mapped[LockKind] = mapped_column(String(16))
+    #: The path, for a `file` lock; empty for `heavy`. Empty rather than NULL so
+    #: the unique index constrains it — NULL never equals NULL, so a nullable
+    #: column would let one room hold any number of heavy locks.
+    resource: Mapped[str] = mapped_column(String(1024), default="", server_default="")
+    #: NULL = the room's own line holds it. The room writes to the same tree as
+    #: its threads, so it is not exempt from either lock.
+    holder_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
+    )
+    acquired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class Task(UuidPk, Timestamps, Base):
     __tablename__ = "tasks"
     # (room_id, created_at) is the room's task list, and it is read on every
@@ -222,6 +294,14 @@ class Task(UuidPk, Timestamps, Base):
     # decide what to do about it. NULL once it has started.
     queued_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    # 这条活说它要碰哪些路径。Mutable on purpose: a brief is written once and
+    # cannot be changed, but a claim always grows — work reaches a file nobody
+    # predicted. Overlapping DIRECTORIES are a warning (two threads in
+    # `domain/review/` is ordinary); the same FILE is a refusal.
+    claimed_paths: Mapped[list[str]] = mapped_column(
+        ARRAY(String), default=list, server_default="{}"
     )
 
     # 交付标记, stamped when the work merges. Independent of `status`, above.
