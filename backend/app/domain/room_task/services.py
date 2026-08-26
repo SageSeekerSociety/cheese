@@ -1,12 +1,113 @@
 """Task services — reading a room's threads, and the trees they work on."""
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block
-from app.domain.room_task.models import Task, WorkTree
+from app.domain.room_task.models import (
+    MAX_RESIDENT_TASKS_PER_ROOM,
+    Residency,
+    Task,
+    WorkTree,
+)
 from app.domain.room_task.repositories import TaskRepository, WorkTreeRepository
+
+#: A `running` row older than this is a ghost: the backend that was driving it
+#: died, and nothing else will ever move it. Generous on purpose — a real turn
+#: can be long, and freeing a slot out from under live work is worse than
+#: leaving a dead one held for a while.
+GHOST_RESIDENCY_AFTER = timedelta(hours=2)
+
+
+class ResidencyService:
+    """一个房间最多同时开 4 条后台子代理，多的排队。
+
+    The cap counts what is RUNNING, not what exists: a thread that finished its
+    turn is holding nothing, and it comes straight back if anyone speaks to it.
+    See `Residency` for why that distinction is the whole design.
+    """
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+        self._repo = TaskRepository(session)
+
+    async def admit(self, task: Task) -> bool:
+        """Give *task* a slot if the room has one; queue it if not.
+
+        Returns whether it may start now. A False is not a failure — the room is
+        busy, the task keeps its thread, its brief and its owner, and it starts
+        when a slot frees. Refusing instead would push a decision onto the
+        dispatcher about a condition that clears by itself.
+        """
+        if await self._repo.count_resident(task.room_id) >= MAX_RESIDENT_TASKS_PER_ROOM:
+            task.queued_at = task.queued_at or datetime.now(UTC)
+            await self._session.flush()
+            return False
+        task.residency = Residency.running
+        task.queued_at = None
+        task.last_turn_at = datetime.now(UTC)
+        await self._session.flush()
+        return True
+
+    async def touch(self, task: Task) -> None:
+        """A turn is running here — hold the slot and reset the ghost clock."""
+        task.residency = Residency.running
+        task.queued_at = None
+        task.last_turn_at = datetime.now(UTC)
+        await self._session.flush()
+
+    async def release(self, task: Task) -> Task | None:
+        """The turn ended: free the slot, and hand it to whoever is next.
+
+        Returns the task that just got the slot, so the caller can start it.
+        None when nobody was waiting.
+        """
+        task.residency = Residency.idle
+        await self._session.flush()
+        return await self.dequeue(task.room_id)
+
+    async def dequeue(self, room_id: uuid.UUID) -> Task | None:
+        """Start the longest-waiting queued task, if a slot is now free.
+
+        The ONLY place the queue moves. Spreading this over several call sites
+        is how two of them race and admit five.
+        """
+        if await self._repo.count_resident(room_id) >= MAX_RESIDENT_TASKS_PER_ROOM:
+            return None
+        nxt = await self._repo.next_queued(room_id)
+        if nxt is None:
+            return None
+        await self.admit(nxt)
+        return nxt
+
+    async def queue_position(self, task: Task) -> int:
+        """1-based place in its room's queue; 0 when it is not queued."""
+        if task.queued_at is None:
+            return 0
+        queued = await self._repo.list_queued(task.room_id)
+        return next((i + 1 for i, t in enumerate(queued) if t.id == task.id), 0)
+
+    async def holders(self, room_id: uuid.UUID) -> list[Task]:
+        """Who is holding this room's slots.
+
+        A room at its cap must be able to say WHO, with when each was last
+        active — "排队中" on its own tells the person nothing about which thread
+        to go and finish.
+        """
+        return await self._repo.list_resident(room_id)
+
+    async def sweep_ghosts(self) -> list[Task]:
+        """Free slots held by turns that died with the process driving them."""
+        stale = await self._repo.list_stale_resident(
+            datetime.now(UTC) - GHOST_RESIDENCY_AFTER
+        )
+        for task in stale:
+            task.residency = Residency.idle
+        if stale:
+            await self._session.flush()
+        return stale
 
 
 class WorkTreeService:

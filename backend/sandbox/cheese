@@ -987,8 +987,20 @@ def main() -> None:
         body = {"title": a.title, "created_by": AUTHOR}
         if a.brief:
             body["brief"] = a.brief
-        r = _call("POST", f"/topics/{topic}/split", body)
-        print(f"已派出支线：{r['data']['title']}（id={r['data']['id']}），分身已带简报自动开工")
+        r = _call("POST", f"/topics/{topic}/split", body)["data"]
+        if r.get("queued"):
+            held = "\n".join(
+                f"  · {h['title']}（主：{h.get('owner_handle') or '—'}，"
+                f"最后活动 {h.get('last_turn_at') or '未开始'}）"
+                for h in r.get("slots_held_by") or []
+            )
+            print(
+                f"已派出支线：{r['title']}（id={r['id']}），"
+                f"但本房间的 4 个额度都占着，它排在第 {r.get('queue_position') or '?'} 位，"
+                f"有额度就自动开工。\n现在占着额度的是：\n{held}"
+            )
+        else:
+            print(f"已派出支线：{r['title']}（id={r['id']}），分身已带简报自动开工")
     elif a.cmd == "await":
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":

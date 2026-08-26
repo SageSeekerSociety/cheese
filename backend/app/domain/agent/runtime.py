@@ -45,6 +45,7 @@ from app.domain.agent.platform_notices import (
 from app.domain.agent.repositories import AgentTurnRepository, TurnRecord
 from app.domain.identity.actor import Actor
 from app.domain.identity.handles import names_a_person
+from app.domain.room_task.services import ResidencyService
 
 logger = logging.getLogger("cheesex.runtime")
 
@@ -1537,6 +1538,9 @@ class AgentWorkRunner:
             )
             return
         lifecycle = {"started": False, "session_owned": False}
+        # 占住这条活的额度。A thread holds one of its room's four slots while a
+        # turn is going and gives it back below; a room's own line holds none.
+        await self._hold_slot(chat_service, topic_id)
         try:
             if landed_user_block_id is not None:
                 frames = chat_service.converse_prepared(
@@ -1605,6 +1609,51 @@ class AgentWorkRunner:
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
                 gate.release()
+            # …and give the slot back, which is also what starts whoever was
+            # queued behind it. In the `finally` deliberately: a turn that
+            # crashed still has to release, or one failure costs the room a
+            # slot permanently.
+            await self._free_slot(chat_service, topic_id)
+
+    async def _hold_slot(self, chat_service, topic_id: uuid.UUID) -> None:
+        """Mark this place's task as resident while its turn runs.
+
+        A room's own line is not a task and holds no slot — `_task_of` finding
+        nothing is the normal case, not an error.
+        """
+        factory = getattr(chat_service, "session_factory", None)
+        if factory is None:
+            return
+        try:
+            async with factory() as session:
+                task = await ResidencyService(session)._repo.get(topic_id)
+                if task is not None:
+                    await ResidencyService(session).touch(task)
+                    await session.commit()
+        except Exception:  # noqa: BLE001 — bookkeeping must never fail a turn
+            logger.exception("could not hold the slot for %s", topic_id)
+
+    async def _free_slot(self, chat_service, topic_id: uuid.UUID) -> None:
+        """Release this place's slot and start whoever was queued behind it."""
+        factory = getattr(chat_service, "session_factory", None)
+        if factory is None:
+            return
+        try:
+            async with factory() as session:
+                svc = ResidencyService(session)
+                task = await svc._repo.get(topic_id)
+                if task is None:
+                    return
+                promoted = await svc.release(task)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — bookkeeping must never fail a turn
+            logger.exception("could not release the slot for %s", topic_id)
+            return
+        if promoted is not None:
+            # Outside the session: starting a turn is not part of the
+            # bookkeeping transaction, and holding one open across it is how a
+            # slow kickoff turns into a lock nobody can explain.
+            self.submit_kickoff(chat_service, promoted.id)
 
     def _credential_is_known_expired(self, topic_id: uuid.UUID) -> bool:
         """Does the backend already KNOW this topic's model credential is expired?

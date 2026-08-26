@@ -371,9 +371,28 @@ class SchedulerService:
                 await session.rollback()
                 logger.exception("deferred archive sweep failed")
                 errors.append(str(exc))
+        # 幽灵额度: a backend that died mid-turn leaves a task marked running
+        # forever, holding one of its room's four slots with nothing behind it.
+        # Materialised residency is what lets a slot survive a restart; this is
+        # the other half of that bargain.
+        freed: list = []
+        async with self._sessions() as session:
+            try:
+                from app.domain.room_task.services import ResidencyService
+
+                svc = ResidencyService(session)
+                freed = await svc.sweep_ghosts()
+                for task in freed:
+                    await svc.dequeue(task.room_id)
+                await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("ghost residency sweep failed")
+                errors.append(str(exc))
         return {
             "settled": len(settled),
             "archived": len(archived),
+            "freed_slots": len(freed),
             "errors": errors,
         }
 
@@ -621,7 +640,9 @@ class ConclusionSweepRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._scheduler.sweep_conclusion_cards()
-                if any(result[k] for k in ("settled", "archived", "errors")):
+                if any(
+                    result[k] for k in ("settled", "archived", "freed_slots", "errors")
+                ):
                     logger.info("conclusion sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("conclusion sweep failed")

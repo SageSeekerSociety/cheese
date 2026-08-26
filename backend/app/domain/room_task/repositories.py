@@ -4,11 +4,11 @@ those threads work on."""
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import Task, TreeStatus, WorkTree
+from app.domain.room_task.models import Residency, Task, TreeStatus, WorkTree
 
 
 class WorkTreeRepository:
@@ -126,6 +126,57 @@ class TaskRepository:
         self._session.add(task)
         await self._session.flush()
         return task
+
+    async def count_resident(self, room_id: uuid.UUID) -> int:
+        """How many of this room's slots are in use right now."""
+        stmt = (
+            select(func.count())
+            .select_from(Task)
+            .where(Task.room_id == room_id, Task.residency == Residency.running)
+        )
+        return int((await self._session.scalar(stmt)) or 0)
+
+    async def next_queued(self, room_id: uuid.UUID) -> Task | None:
+        """The queued task that has been waiting longest, if any."""
+        stmt = (
+            select(Task)
+            .where(Task.room_id == room_id, Task.queued_at.is_not(None))
+            .order_by(Task.queued_at, Task.id)
+            .limit(1)
+        )
+        return (await self._session.scalars(stmt)).first()
+
+    async def list_queued(self, room_id: uuid.UUID) -> list[Task]:
+        """Everything waiting for a slot in this room, longest wait first."""
+        stmt = (
+            select(Task)
+            .where(Task.room_id == room_id, Task.queued_at.is_not(None))
+            .order_by(Task.queued_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_resident(self, room_id: uuid.UUID) -> list[Task]:
+        """Who is holding this room's slots — so a full room can say WHO."""
+        stmt = (
+            select(Task)
+            .where(Task.room_id == room_id, Task.residency == Residency.running)
+            .order_by(Task.last_turn_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def list_stale_resident(self, older_than: datetime) -> list[Task]:
+        """Tasks marked running whose last turn is too old to still be going.
+
+        A backend that dies mid-turn leaves the row saying `running` forever,
+        and that row holds a slot nobody can see or free. Materialised residency
+        is the price of surviving a restart; this is the other half of it.
+        """
+        stmt = select(Task).where(
+            Task.residency == Residency.running,
+            Task.last_turn_at.is_not(None),
+            Task.last_turn_at < older_than,
+        )
+        return list((await self._session.scalars(stmt)).all())
 
     async def list_for_room(self, room_id: uuid.UUID) -> list[Task]:
         """This room's threads, oldest first.

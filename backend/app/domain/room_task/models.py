@@ -76,6 +76,41 @@ class TreeStatus(enum.StrEnum):
     merged = "merged"
 
 
+class Residency(enum.StrEnum):
+    """Whether this task is using one of its room's slots right now.
+
+    `running` — a turn is going, or one is queued to start.
+    `idle` — quiet; the slot is released.
+
+    `idle` is NOT "finished". A task goes idle at the end of a turn and comes
+    back the moment anyone speaks to it, with its conversation and its files
+    untouched. That is what makes releasing the slot free — and therefore
+    automatic, rather than something a person has to remember to do.
+
+    DeepSeek Harness has a third value here, `waiting`: quiet, but still owning
+    children that have not finished. It is not reachable for us — 活不嵌套, a
+    task's split is a SIBLING in the same room — so it would be a word nothing
+    writes and nothing reads, which is the thing `TaskStatus` above refuses for
+    the same reason.
+
+    Deliberately separate from `TaskStatus`: open/closed answers "is this work
+    still wanted", which is a judgement; residency answers "is it using a slot",
+    which is observable. A room whose four slots were held by open-but-idle
+    threads could never take new work again, and nothing on screen would say
+    why — folding the two together is how that gets built.
+    """
+
+    running = "running"
+    idle = "idle"
+
+
+#: 一个房间最多同时开几条后台子代理。The room's own line is NOT one of them, so
+#: a busy room runs five agents: four threads and itself. Matching DeepSeek
+#: Harness's `maxBackgroundAgents` default, which is also a per-session budget
+#: covering every continuable direct child.
+MAX_RESIDENT_TASKS_PER_ROOM = 4
+
+
 class WorkTree(UuidPk, Timestamps, Base):
     """一棵树 = 一个分支 = 一个 PR = 一批活.
 
@@ -168,6 +203,25 @@ class Task(UuidPk, Timestamps, Base):
     # tree has nowhere to write.
     tree_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("work_trees.id", ondelete="CASCADE"), index=True
+    )
+
+    # 占不占本房间的一个额度，见 `Residency`. Materialised rather than derived:
+    # dsh can recompute it per call because its children live in the process
+    # that asks; ours outlive the backend that started them, so the answer has
+    # to survive a restart. `last_turn_at` is what lets a crash be told from a
+    # turn that is genuinely still going — a `running` row older than the
+    # timeout is a ghost holding a slot, and the sweep releases it.
+    residency: Mapped[Residency] = mapped_column(
+        String(16), default=Residency.idle, server_default="idle", index=True
+    )
+    last_turn_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # 排队中: dispatched, but the room was at its cap. Not a refusal — the
+    # condition clears on its own, and a refusal would make the dispatcher
+    # decide what to do about it. NULL once it has started.
+    queued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     # 交付标记, stamped when the work merges. Independent of `status`, above.

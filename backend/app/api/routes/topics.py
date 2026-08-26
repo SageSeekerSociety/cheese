@@ -57,7 +57,7 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import Task
 from app.domain.room_task.place import Place
 from app.domain.room_task.schemas import TaskOut
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import ResidencyService, TaskService
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic, TopicStatus
@@ -1386,7 +1386,30 @@ async def split_topic(
         # behaves exactly as it did before.
         triggered_by=runner.turn_author_for(topic_id),
     )
+    # 一个房间最多同时开 4 条: over the cap the thread is QUEUED, not refused.
+    # It keeps its brief, its owner and its place in the room; it starts when a
+    # slot frees. Refusing would hand the caller a condition that clears by
+    # itself and nothing useful to do about it.
+    residency = ResidencyService(db)
+    admitted = await residency.admit(task)
+    position = 0 if admitted else await residency.queue_position(task)
+    holders = [] if admitted else await residency.holders(task.room_id)
+
     out = TaskOut.model_validate(task).model_dump(mode="json")
+    out["queued"] = not admitted
+    out["queue_position"] = position
+    # 满额时不能只说「排队中」: the person has to know WHICH four threads are
+    # holding the room, and when each was last active, or they cannot tell
+    # which one to go and finish.
+    out["slots_held_by"] = [
+        {
+            "id": str(t.id),
+            "title": t.title,
+            "owner_handle": t.owner_handle,
+            "last_turn_at": t.last_turn_at.isoformat() if t.last_turn_at else None,
+        }
+        for t in holders
+    ]
     if key is not None:
         await idem.record_result(db, key, out)
     # Commit BEFORE kicking off: the 分身's first turn runs in the background
@@ -1394,7 +1417,8 @@ async def split_topic(
     # idempotency key commits in this same transaction, so a crash between the
     # commit and the kickoff cannot produce a SECOND thread on resume.
     await db.commit()
-    runner.submit_kickoff(chat, task.id)
+    if admitted:
+        runner.submit_kickoff(chat, task.id)
     return ok(out)
 
 
