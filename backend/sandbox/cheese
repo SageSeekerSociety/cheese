@@ -342,7 +342,9 @@ def _await_log_path(run_id: str) -> str:
     return os.path.join(log_dir, f"{run_id}.log")
 
 
-def _await_start(command: str, label: str, timeout_s: int) -> None:
+def _await_start(
+    command: str, label: str, timeout_s: int, as_check: bool = False
+) -> None:
     """Register the command, fork the detached runner, and return immediately."""
     import subprocess
     import time
@@ -374,6 +376,7 @@ def _await_start(command: str, label: str, timeout_s: int) -> None:
             command,
             log_path,
             str(timeout_s),
+            "check" if as_check else "run",
         ],
         env=child_env,
         cwd=os.getcwd(),
@@ -431,7 +434,9 @@ def _release_heavy_lane() -> None:
         pass
 
 
-def _await_child(task_id: str, command: str, log_path: str, timeout_s: int) -> None:
+def _await_child(
+    task_id: str, command: str, log_path: str, timeout_s: int, mode: str = "run"
+) -> None:
     """The detached runner: run the command, then report how it ended.
 
     Never raises past this frame — a crash here is a topic that never wakes up,
@@ -481,12 +486,36 @@ def _await_child(task_id: str, command: str, log_path: str, timeout_s: int) -> N
         if held_heavy:
             _release_heavy_lane()
 
+    tail = _await_tail(log_path)
+    if mode == "check":
+        # 超时算失败: a quick check's whole value is the speed, and one that
+        # quietly grew past its budget and reported "inconclusive" would rot
+        # into a second full CI. 124 is what the timeout path above records.
+        _report_check_result(exit_code == 0, exit_code, tail)
     _await_report(
         task_id,
         exit_code=exit_code,
-        tail=_await_tail(log_path),
+        tail=tail,
         duration_s=time.time() - started,
     )
+
+
+def _report_check_result(ok: bool, exit_code: int, tail: str) -> None:
+    """Put the result where the person about to accept will see it.
+
+    Not a gate — nothing reads it to decide anything. It is on the card because
+    a check whose result goes nowhere is a check nobody bothers to run."""
+    if not TOPIC:
+        return
+    head = "通过" if ok else ("超时" if exit_code == 124 else f"失败(exit {exit_code})")
+    try:
+        _call(
+            "POST",
+            f"/topics/{TOPIC}/check-result",
+            {"ok": ok, "detail": f"{head}\n{tail[-1500:]}"},
+        )
+    except SystemExit:
+        pass
 
 
 def _await_tail(log_path: str) -> str:
@@ -681,6 +710,7 @@ def build_parser() -> argparse.ArgumentParser:
     pawc.add_argument("command")
     pawc.add_argument("log_path")
     pawc.add_argument("timeout_s", type=int)
+    pawc.add_argument("mode", nargs="?", default="run", choices=["run", "check"])
 
     sub.add_parser(
         "push-fix",
@@ -694,6 +724,27 @@ def build_parser() -> argparse.ArgumentParser:
             "所以推送现在是**你说了算**:修完红的检查,自己说一声。\n"
             "没有在等 CI 的 PR、或者工作区没有新东西,它会直说,不算错误。"
         ),
+    )
+
+    pcheck = sub.add_parser(
+        "check",
+        help="跑一遍项目的快检(在自己的沙箱里,不占 CI runner)",
+        description=(
+            "跑项目配置的那条快检命令,结果记到本地点这棵树上,验收卡上看得见。\n\n"
+            "它**不是闸门**:红了照样能递卡,照样能采纳——决定权在 PR 上的真 CI\n"
+            "(#296)。它存在的意义是让红灯**被看见**:结果没人看的检查,没人会跑。\n\n"
+            "跑在你自己的沙箱里,走 `cheese await`,所以:占用的是本房间那条重活\n"
+            "车道(不会和别人的测试抢端口/数据库),**不占 CI runner**,并且本轮\n"
+            "立刻返回——跑完平台自动叫醒你。\n\n"
+            "**超时算失败**。快检的全部价值就是快;一条慢慢长过预算、还报「没结论」\n"
+            "的检查,会烂成第二个全量 CI。"
+        ),
+    )
+    pcheck.add_argument(
+        "--timeout",
+        type=int,
+        default=90,
+        help="时间预算(秒),超了算失败。默认 90",
     )
 
     pclaim = sub.add_parser(
@@ -1127,7 +1178,23 @@ def main() -> None:
     elif a.cmd == "await":
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":
-        _await_child(a.task_id, a.command, a.log_path, a.timeout_s)
+        _await_child(a.task_id, a.command, a.log_path, a.timeout_s, a.mode)
+    elif a.cmd == "check":
+        proj = _need("CHEESE_PROJECT", PROJECT)
+        gate = _call("GET", f"/projects/{proj}/quality-gate").get("data") or {}
+        cmd = (gate.get("check_command") or "").strip()
+        if not cmd:
+            print(
+                "这个项目没配快检命令(quality-gate 的 check_command 是空的),"
+                "没有东西可跑。"
+            )
+        else:
+            _await_start(cmd, "快检", a.timeout, as_check=True)
+            print(
+                f"快检已经在后台跑起来了(预算 {a.timeout} 秒,超了算失败)。"
+                "跑完平台会叫醒本话题并带上结果,同时记到验收卡上。"
+                "本轮不用等它。"
+            )
     elif a.cmd == "claim":
         topic = _need("CHEESE_TOPIC", TOPIC)
         r = _call("POST", f"/topics/{topic}/claim", {"paths": a.paths})["data"]

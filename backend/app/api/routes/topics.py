@@ -62,6 +62,7 @@ from app.domain.room_task.services import (
     ResidencyService,
     RoomLockService,
     TaskService,
+    WorkTreeService,
 )
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
@@ -71,6 +72,7 @@ from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     BackgroundTaskDoneIn,
     BackgroundTaskIn,
+    CheckResultIn,
     ClaimIn,
     ConclusionIn,
     DocEditIn,
@@ -1428,6 +1430,36 @@ async def split_topic(
     if admitted:
         runner.submit_kickoff(chat, task.id)
     return ok(out)
+
+
+@router.post("/{topic_id}/check-result")
+async def record_check_result(
+    topic_id: uuid.UUID,
+    body: CheckResultIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Record what the quick check said about this place's tree.
+
+    It gates nothing. #296 settled that a card is a view of a PR and the real
+    CI on that PR decides — a platform-side check voting on delivery is the
+    thing that was retired, and this does not bring it back. What it brings
+    back is the other half: a red check that the person about to accept can
+    SEE. A check whose result goes nowhere is a check nobody bothers to run.
+
+    A timeout is a failure, deliberately. A quick check has a time budget
+    because its value IS the speed; one that quietly grew past the budget and
+    got reported as "inconclusive" would rot into a second full CI.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    trees = WorkTreeService(db)
+    tree = await trees.ensure_open(
+        project_id=place.project_id, room_id=place.room_id
+    )
+    await trees.record_check(tree, ok=body.ok, detail=body.detail)
+    await db.commit()
+    return ok({"recorded": True, "tree_id": str(tree.id)})
 
 
 @router.post("/{topic_id}/claim")

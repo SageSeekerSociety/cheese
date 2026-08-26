@@ -31,7 +31,17 @@ import enum
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import ARRAY, DateTime, Enum, ForeignKey, Index, String, text
+from sqlalchemy import (
+    ARRAY,
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -164,6 +174,15 @@ class WorkTree(UuidPk, Timestamps, Base):
     merged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 快检最后一次说了什么，关于这棵树现在的内容。NOT a gate: nothing reads this
+    # to decide anything, and #296 settled that the real CI on the PR is what
+    # decides. It exists so a red check is VISIBLE to whoever is about to
+    # accept — a check nobody sees is a check nobody runs.
+    last_check_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_check_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_check_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
 
 
 class LockKind(enum.StrEnum):

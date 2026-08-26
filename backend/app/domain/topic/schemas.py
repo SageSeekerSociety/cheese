@@ -91,6 +91,17 @@ class ClaimIn(BaseModel):
     paths: list[str] = Field(default_factory=list)
 
 
+class CheckResultIn(BaseModel):
+    """What the quick check said (`cheese check`).
+
+    `ok=False` covers a red check AND one that ran out of its time budget: the
+    budget is the point, so exceeding it is a result, not an absence of one.
+    """
+
+    ok: bool
+    detail: str = ""
+
+
 class LockIn(BaseModel):
     """Take or give back one of the room's two locks.
 

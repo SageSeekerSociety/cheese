@@ -436,6 +436,7 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # 路径声明与两把锁: who is touching what, and who is overwriting a whole
     # file or holding the room's heavy lane right now.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/claim$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/check-result$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
     # 结论卡: settled by the PARENT during its own turn, so the scoping id in

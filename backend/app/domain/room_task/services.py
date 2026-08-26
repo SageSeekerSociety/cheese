@@ -121,6 +121,7 @@ class WorkTreeService:
     """一棵树 = 一个分支 = 一个 PR = 一批活."""
 
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = WorkTreeRepository(session)
 
     async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
@@ -172,6 +173,21 @@ class WorkTreeService:
 
     async def history(self, room_id: uuid.UUID) -> list[WorkTree]:
         return await self._repo.list_for_room(room_id)
+
+    async def record_check(
+        self, tree: WorkTree, *, ok: bool, detail: str
+    ) -> WorkTree:
+        """Remember what the quick check said about this tree's content.
+
+        It decides nothing — #296 settled that the PR's real CI is what does.
+        The point is that a red check becomes VISIBLE on the card somebody is
+        about to accept, because a check nobody sees is a check nobody runs.
+        """
+        tree.last_check_at = datetime.now(UTC)
+        tree.last_check_ok = ok
+        tree.last_check_detail = detail[:2000]
+        await self._session.flush()
+        return tree
 
 
 class TaskService:

@@ -78,6 +78,18 @@ class AcceptCard(UuidPk, Timestamps, Base):
     task_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # 这张卡交付的是哪一棵树 —— 一棵树 = 一个分支 = 一个 PR = 一批活. The room
+    # is where the card is READ; the tree is what it delivers, and with more
+    # than one tree per room those stop being the same answer. "One card at a
+    # time" is a rule about not running two PRs on one branch, so it is scoped
+    # here rather than to the room — scoping it to the room would mean a room
+    # could never open a second PR, which is what a second tree was for.
+    #
+    # Nullable: `SET NULL`, so a card outlives the tree it delivered, and a
+    # historical card whose tree was never created has no honest value.
+    tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("work_trees.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Routed reviewer (spec C5): the specific person asked to accept.
     reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)
     # Why this reviewer was suggested (最懂/没参与/有空), for transparency.

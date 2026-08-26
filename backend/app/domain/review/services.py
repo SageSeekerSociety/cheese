@@ -60,9 +60,9 @@ from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TreeStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, WorkTreeService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
@@ -674,7 +674,13 @@ class AcceptService:
         # deliberately do not (a red gate voids the card, and re-递卡 after fixing
         # IS the flow — same for a gate that never ran: 芝士 fixes the check
         # environment and re-files. Adding either here locks 芝士 out for good).
-        existing = await self._repo.list_for_topic(topic_id)
+        # 一棵树一个 PR: the thing that may not happen twice at once is two PRs
+        # on ONE branch. Asking the room instead would refuse a second batch its
+        # own PR, which is precisely what a second tree exists to allow.
+        tree = await WorkTreeService(self._session).ensure_open(
+            project_id=topic.project_id, room_id=topic.id
+        )
+        existing = await self._repo.list_for_tree(tree.id)
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
         )
@@ -707,6 +713,7 @@ class AcceptService:
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
+            tree_id=tree.id,
             status=AcceptStatus.pending,
             change_subject=change_subject,
             change_body=(change_body or None),
@@ -907,6 +914,23 @@ class AcceptService:
             data["stages"] = delivery.steps_for(card, forge)
         else:
             data["stages"] = []
+        # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
+        # red one has to be in front of the person about to accept. A check
+        # whose result goes nowhere is a check nobody runs.
+        tree = (
+            await WorkTreeService(self._session).get(card.tree_id)
+            if card.tree_id is not None
+            else None
+        )
+        data["quick_check"] = (
+            None
+            if tree is None or tree.last_check_at is None
+            else {
+                "ok": tree.last_check_ok,
+                "at": tree.last_check_at.isoformat(),
+                "detail": tree.last_check_detail,
+            }
+        )
         return data
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
@@ -1627,6 +1651,7 @@ class AcceptService:
         await self._repo.add_approval(card.id, decided_by)
         now = datetime.now(UTC)
         card.status = AcceptStatus.pr_open
+        await self._seal_cards_tree(card)
         card.decided_by = decided_by
         card.decided_at = now
         card.pr_number = pr.number
@@ -1810,6 +1835,32 @@ class AcceptService:
             # already gets, for the same reason.
             self._note_poll_failed(card, exc)
             await self._session.flush()
+
+    async def _seal_cards_tree(self, card: AcceptCard) -> None:
+        """封口: this tree's content is now what CI is checking.
+
+        From here nothing new joins the batch — `WorkTreeService.ensure_open`
+        starts a fresh tree for the next one, which is what lets the room keep
+        working while the PR flies. Before a room could hold more than one tree,
+        the same moment froze the whole room for as long as CI took.
+        """
+        if card.tree_id is None:
+            return
+        trees = WorkTreeService(self._session)
+        tree = await trees.get(card.tree_id)
+        if tree is not None and tree.status is TreeStatus.open:
+            await trees.seal(tree)
+
+    async def _mark_cards_tree_merged(self, card: AcceptCard) -> None:
+        """The batch landed. The tree stays — the work that produced it still
+        points here, and a task whose tree vanished could not say where its
+        changes went."""
+        if card.tree_id is None:
+            return
+        trees = WorkTreeService(self._session)
+        tree = await trees.get(card.tree_id)
+        if tree is not None and tree.status is not TreeStatus.merged:
+            await trees.mark_merged(tree)
 
     async def push_fix(self, place_id: uuid.UUID) -> dict:
         """Push what is in this place's workspace to the PR it is riding, NOW.
@@ -2169,6 +2220,7 @@ class AcceptService:
             await self._session.flush()
             return
         card.pr_merged_at = datetime.now(UTC)
+        await self._mark_cards_tree_merged(card)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         await self._finish_pr_accept(card=card, topic=topic)
 
@@ -2424,6 +2476,7 @@ class AcceptService:
         fact, and since #206 that fact is the whole of what the platform waits
         for."""
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
+        await self._mark_cards_tree_merged(card)
         if status.merge_commit_sha:
             # Nice to have, not required: nothing downstream looks a run up by
             # this sha any more, it is just the truest record of what landed.
@@ -2920,6 +2973,7 @@ class AcceptService:
         await self._repo.add_approval(card.id, decided_by)
         now = datetime.now(UTC)
         card.status = AcceptStatus.pr_open
+        await self._seal_cards_tree(card)
         card.decided_by = decided_by
         card.decided_at = now
         card.pr_repo = f"{owner}/{repo_name}"
@@ -3350,6 +3404,7 @@ class AcceptService:
             f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
         )
         card.pr_merged_at = now
+        await self._mark_cards_tree_merged(card)
         card.pr_head_sha = result.sha
         await self._finish_pr_accept(card=card, topic=topic, headline=headline)
         logger.warning(

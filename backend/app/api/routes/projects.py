@@ -834,11 +834,18 @@ async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
     """The project's 硬门 settings: `check_command` and `approvals_required`
     (distinct approvals an accept needs; default 1).
 
-    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): `check_command`
-    is RETIRED. It used to run in the topic workspace before a card reached the
-    reviewer; that mechanism is gone — a card is the view of a PR and real CI on
-    that PR decides. The value is still stored and returned (round-trip stays
-    working, a later stage clears it) but nothing runs it any more.
+    `check_command` is no longer a PLATFORM gate. #296 retired that: a card is
+    the view of a PR, and the real CI on that PR is what decides whether a
+    change is good — not a private check the platform runs before a reviewer
+    ever sees the card.
+
+    It is now the agent's own quick check, which `cheese check` runs in the
+    agent's sandbox, on the room's heavy lane, costing no CI runner. The result
+    is recorded on the tree and shown on the card. It still gates nothing: red
+    does not stop a card being filed or accepted. What it does is make a red
+    check VISIBLE to the person about to accept, which is the half that was
+    missing — a check whose result goes nowhere is a check nobody runs.
+
     `approvals_required` is unaffected."""
     from app.domain.review.services import approvals_required_of, check_command_of
 
