@@ -60,7 +60,7 @@ def _on_branch(project: uuid.UUID, topic: uuid.UUID, path: str) -> str:
     not the worktree. Empty string when the branch has no such file."""
     repo = ws.ensure_repo(project)
     done = subprocess.run(
-        ["git", "show", f"{ws.branch_for_place(topic)}:{path}"],
+        ["git", "show", f"{ws.branch_for_tree(topic)}:{path}"],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -72,7 +72,7 @@ def _on_branch(project: uuid.UUID, topic: uuid.UUID, path: str) -> str:
 def _commit_messages(project: uuid.UUID, topic: uuid.UUID) -> list[str]:
     repo = ws.ensure_repo(project)
     done = subprocess.run(
-        ["git", "log", "--format=%s", ws.branch_for_place(topic)],
+        ["git", "log", "--format=%s", ws.branch_for_tree(topic)],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -87,7 +87,7 @@ def _head_commit(project: uuid.UUID, topic: uuid.UUID) -> str:
     can no longer see what the snapshot admitted about itself."""
     repo = ws.ensure_repo(project)
     done = subprocess.run(
-        ["git", "log", "-1", "--format=%B", ws.branch_for_place(topic)],
+        ["git", "log", "-1", "--format=%B", ws.branch_for_tree(topic)],
         cwd=repo,
         capture_output=True,
         text=True,

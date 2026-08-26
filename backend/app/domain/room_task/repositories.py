@@ -1,12 +1,88 @@
-"""Task data access — a room's threads, and the conversation in each."""
+"""Task data access — a room's threads, the conversation in each, and the trees
+those threads work on."""
 
 import uuid
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TreeStatus, WorkTree
+
+
+class WorkTreeRepository:
+    """一棵树 = 一个分支 = 一个 PR = 一批活."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
+        return await self._session.get(WorkTree, tree_id)
+
+    async def open_tree_for_room(self, room_id: uuid.UUID) -> WorkTree | None:
+        """The tree this room is currently taking work into, if any.
+
+        None means the room is sealed — its tree's PR is in flight and the next
+        batch has not been started yet. That is a real state, not a missing row:
+        it is what stops a task from writing into a PR that CI is checking.
+        """
+        stmt = select(WorkTree).where(
+            WorkTree.room_id == room_id, WorkTree.status == TreeStatus.open
+        )
+        return (await self._session.scalars(stmt)).first()
+
+    async def list_for_room(self, room_id: uuid.UUID) -> list[WorkTree]:
+        """Every tree this room has had, oldest first."""
+        stmt = (
+            select(WorkTree)
+            .where(WorkTree.room_id == room_id)
+            .order_by(WorkTree.created_at, WorkTree.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def add(
+        self,
+        *,
+        project_id: uuid.UUID,
+        room_id: uuid.UUID,
+        tree_id: uuid.UUID | None = None,
+    ) -> WorkTree:
+        """Start a batch.
+
+        `tree_id` exists for the room's FIRST tree, which carries the room's own
+        id so that every branch, worktree directory, jj workspace, container
+        workdir and tmux session keeps the name it already had. Every later tree
+        gets a fresh id and therefore a fresh branch.
+        """
+        tree = WorkTree(project_id=project_id, room_id=room_id, status=TreeStatus.open)
+        if tree_id is not None:
+            tree.id = tree_id
+        self._session.add(tree)
+        await self._session.flush()
+        return tree
+
+    async def seal(self, tree: WorkTree) -> WorkTree:
+        """封口: its PR is in flight, so nothing new may be written here."""
+        tree.status = TreeStatus.sealed
+        tree.sealed_at = datetime.now(UTC)
+        await self._session.flush()
+        return tree
+
+    async def mark_merged(self, tree: WorkTree) -> WorkTree:
+        tree.status = TreeStatus.merged
+        tree.merged_at = datetime.now(UTC)
+        await self._session.flush()
+        return tree
+
+    async def list_tasks(self, tree_id: uuid.UUID) -> list[Task]:
+        """The batch: every task working on this tree, oldest first."""
+        stmt = (
+            select(Task)
+            .where(Task.tree_id == tree_id)
+            .order_by(Task.created_at, Task.id)
+        )
+        return list((await self._session.scalars(stmt)).all())
 
 
 class TaskRepository:
@@ -25,36 +101,29 @@ class TaskRepository:
         *,
         project_id: uuid.UUID,
         room_id: uuid.UUID,
+        tree_id: uuid.UUID,
         title: str,
         owner_handle: str | None,
         created_by: str | None,
         agent_instance_id: uuid.UUID | None,
     ) -> Task:
-        """A new thread in *room_id*.
+        """A new thread in *room_id*, working on *tree_id*.
 
-        `branch_name` is written HERE rather than derived at every read, which
-        is the one thing `topics.branch_name` never managed: it had no writer
-        anywhere in the app, so every row was NULL and `cheese status` reported
-        `branch: null` for the entire life of the column. The value is the same
-        pure function the workspace uses, so storing it cannot disagree with
-        where the files actually are — it only makes the answer legible in the
-        database.
+        The tree is passed in rather than looked up here: which tree a task
+        joins is a decision (the room's currently open one, and a sealed room
+        has none), and a repository that made it would be making it silently at
+        the moment of writing rather than where it can be explained.
         """
-        from app.domain.workspace.service import branch_for_place
-
         task = Task(
             project_id=project_id,
             room_id=room_id,
+            tree_id=tree_id,
             title=title,
             owner_handle=owner_handle,
             created_by=created_by,
             agent_instance_id=agent_instance_id,
         )
         self._session.add(task)
-        # Flush before naming the branch: the id is generated by the model's
-        # default, and the branch name is derived from it.
-        await self._session.flush()
-        task.branch_name = branch_for_place(task.id)
         await self._session.flush()
         return task
 

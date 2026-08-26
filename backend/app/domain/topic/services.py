@@ -89,23 +89,6 @@ def _require_room(parent: Topic) -> None:
         raise ValidationError("房间之下是「一件活」，不是另一个房间——用拆活")
 
 
-def _bind_room_branch(*, child_id: uuid.UUID, parent_id: uuid.UUID | None) -> None:
-    """一个房间一条分支：一件活的分支从它所在房间的分支长出来，采信时再并回去。
-
-    Rooms are unaffected — they fork the base branch and reach main through
-    采纳, as they always did. Recorded the instant the row is created, because
-    the fork point is chosen once, when the jj workspace is materialised
-    (`workspace.service._ensure_worktree`), and nothing can move it afterwards.
-
-    No kind check any more: the only caller is the one that opens a thread, so
-    the question "is this child a piece of work" is answered by which function
-    you are in rather than by re-deriving it from a column.
-    """
-    if parent_id is None:
-        return
-    ws.bind_branch_parent(child_id, parent_id)
-
-
 logger = logging.getLogger("cheesex.topic")
 
 
@@ -777,7 +760,6 @@ class TopicService:
                 agent_instance_id=parent.agent_instance_id,
             )
             task.upgraded_from_block_id = block.id
-            _bind_room_branch(child_id=task.id, parent_id=parent.id)
             await self._blocks.set_upgraded_to_place(block, task_id=task.id)
             await self._seed_brief_doc(parent, brief, task_id=task.id)
             return Place(room=parent, task=task), True
@@ -919,9 +901,6 @@ class TopicService:
             # different agent and a different memory.
             agent_instance_id=room.agent_instance_id,
         )
-        # 一个房间一条分支一个 PR: this task's branch forks the room's. Written
-        # here, before anything can materialise the workspace.
-        _bind_room_branch(child_id=task.id, parent_id=room.id)
         room_doc = await self._blocks.doc_root(room.id)
         await self._seed_brief_doc(
             room,

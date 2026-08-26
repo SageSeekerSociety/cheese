@@ -21,7 +21,9 @@ class TaskOut(BaseModel):
     owner_handle: str | None = None
     created_by: str | None = None
     agent_instance_id: uuid.UUID | None = None
-    branch_name: str | None = None
+    # 这条活在哪棵树上干 — many tasks share one, and that tree is the batch
+    # that opens one PR. A task has no branch of its own any more.
+    tree_id: uuid.UUID
     # Delivery, which is NOT the same question as `status` — work can be
     # delivered and still open, or closed with nothing delivered.
     accepted_by: str | None = None

@@ -42,7 +42,7 @@ def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
     topic_id = uuid.uuid4()
     worktree = ws._ensure_worktree(project, topic_id)
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_place(topic_id)
+    branch = ws.branch_for_tree(topic_id)
     before = _git(repo, "rev-parse", branch)
 
     # Somebody is working: a file changed, but nobody said "this is a fix".
@@ -61,7 +61,7 @@ def test_an_explicit_snapshot_is_what_moves_the_branch(project: uuid.UUID) -> No
     topic_id = uuid.uuid4()
     worktree = ws._ensure_worktree(project, topic_id)
     repo = ws.ensure_repo(project)
-    branch = ws.branch_for_place(topic_id)
+    branch = ws.branch_for_tree(topic_id)
     before = _git(repo, "rev-parse", branch)
 
     (worktree / "fix.md").write_text("the actual fix\n")

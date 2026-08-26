@@ -11,9 +11,11 @@ What a task owns, and the room does not:
 
 - a single owner (`owner_handle`) — not a roster,
 - the agent doing it (`agent_instance_id`),
-- an isolated workspace, named by `branch_name`,
 - one thread of conversation — every `Block` whose `task_id` is this row,
 - a delivery: `accepted_by` / `accepted_at`.
+
+What a task does NOT own is a tree. It works in its room's current `WorkTree`,
+with its siblings, and that tree is what carries a batch of work into one PR.
 
 The conversation is the load-bearing part. Until now the ONLY way to give a
 piece of work its own thread was to give it its own row in `topics`, because
@@ -29,7 +31,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, String
+from sqlalchemy import DateTime, Enum, ForeignKey, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -52,6 +54,81 @@ class TaskStatus(enum.StrEnum):
 
     open = "open"
     closed = "closed"
+
+
+class TreeStatus(enum.StrEnum):
+    """Whether this tree still takes work, and whether it has landed.
+
+    `open` — new tasks join it, everyone writes to it.
+    `sealed` — its PR is in flight. Nothing new joins, and the tasks already on
+      it finish the turn they are in and stop; the tree IS the PR's content, so
+      a write here would move the PR out from under the CI run checking it.
+    `merged` — the PR landed. Kept rather than deleted because the tasks that
+      produced it still point here, and a task whose tree vanished could not say
+      where its work went.
+
+    A room seals one tree and opens the next, which is what lets it keep working
+    while a PR flies. That is the whole reason a room holds more than one.
+    """
+
+    open = "open"
+    sealed = "sealed"
+    merged = "merged"
+
+
+class WorkTree(UuidPk, Timestamps, Base):
+    """一棵树 = 一个分支 = 一个 PR = 一批活.
+
+    A room's unit of DELIVERY, as distinct from `Task`, which is its unit of
+    WORK. The two used to be the same thing — every task had its own branch and
+    its commits were merged back into the room's one branch when its conclusion
+    was accepted — and that cost both of the things this table buys:
+
+    - the room could not take new work while its PR was in flight, because its
+      one tree was the PR's content;
+    - a finished task could not deliver on its own schedule, because the merge
+      had to wait for whatever the room's branch was doing.
+
+    Many tasks share one tree. That is the normal case: a batch of work goes out
+    together and lands together, in one PR, reviewed once.
+
+    The first tree of each room carries the ROOM's id (migration
+    `b8e2f4a90d33`), so every branch, worktree directory, jj workspace, container
+    workdir and tmux session keeps the name it already had.
+    """
+
+    __tablename__ = "work_trees"
+    __table_args__ = (
+        Index("ix_work_trees_room_id", "room_id"),
+        # 一个房间同时只有一棵开着的树: "which tree does this new task join" has
+        # to have exactly one answer, and it has to be true before a task can
+        # exist — so the database says it, not a convention.
+        Index(
+            "uq_work_trees_one_open_per_room",
+            "room_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+    )
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), index=True
+    )
+    room_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("topics.id", ondelete="CASCADE")
+    )
+    status: Mapped[TreeStatus] = mapped_column(
+        String(16), default=TreeStatus.open, server_default="open"
+    )
+    # When the PR opened, and when it landed. Kept apart from `status` for the
+    # same reason `Task` keeps delivery out of its status: "sealed" needs no
+    # timestamp to be true, and a tree can be sealed for a long time.
+    sealed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    merged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Task(UuidPk, Timestamps, Base):
@@ -85,8 +162,13 @@ class Task(UuidPk, Timestamps, Base):
         nullable=True,
         index=True,
     )
-    # The git branch this work's isolated worktree sits on.
-    branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # 这条活在哪棵树上干. Many tasks share one tree — 一棵树 = 一个分支 =
+    # 一个 PR = 一批活 — so this is what says which batch the work belongs to,
+    # and it is the only place a task's files live. NOT NULL: a task with no
+    # tree has nowhere to write.
+    tree_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("work_trees.id", ondelete="CASCADE"), index=True
+    )
 
     # 交付标记, stamped when the work merges. Independent of `status`, above.
     accepted_by: Mapped[str | None] = mapped_column(String(64), nullable=True)

@@ -373,10 +373,10 @@ def _reset_client():
 def _real_git_head(project_id: _uuid.UUID, topic_id: _uuid.UUID) -> str:
     """The REAL current head of a topic's local git branch — used by the
     repush tests below to prove the platform actually reads real git state
-    (via the same public ensure_repo/branch_for_place helpers production code
+    (via the same public ensure_repo/branch_for_tree helpers production code
     uses), not a value we made up in the test."""
     repo_path = ws.ensure_repo(project_id)
-    branch = ws.branch_for_place(topic_id)
+    branch = ws.branch_for_tree(topic_id)
     return subprocess.run(
         ["git", "-C", str(repo_path), "rev-parse", branch],
         capture_output=True,
@@ -637,7 +637,7 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
     branch (the platform's own `push_topic_branch_for_github_pr` was only
     ever called once, at PR-open time). This exercises the REAL local git
     plumbing that now detects and re-pushes it: `ensure_repo`/
-    `branch_for_place`/`snapshot_worktree` run for real against a real
+    `branch_for_tree`/`snapshot_worktree` run for real against a real
     jj-colocated repo. Only the actual network hop to github.com is faked
     (the sandbox has no route there — see docs/topics for that constraint);
     the fake still computes the pushed head_sha via a real `git rev-parse`,
@@ -688,11 +688,19 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         assert len(push_calls) == 1
         assert _cards_for_topic(client, tid)[0]["pr_head_sha"] == first_head
 
-        # 芝士 fixes something — a plain edit in the same workspace, no special
-        # "please push" step (that's the whole point of the fix: it can't).
+        # 芝士 fixes something. A plain edit is NOT a push: the poller stopped
+        # committing on a timer, because every write it swept up moved the PR
+        # and `cancel-in-progress` killed the CI run checking it.
         (wt / "work.txt").write_text("fixed\n")
 
         _poll(client)
+        assert len(push_calls) == 1, "轮询不再替人提交，所以不该产生新的推送"
+
+        # Saying so is what pushes it.
+        pushed = client.post(
+            f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
+        ).json()["data"]
+        assert pushed["pushed"] is True
         assert len(push_calls) == 2
         second_head = push_calls[1]["head_sha"]
         assert second_head != first_head
@@ -701,8 +709,13 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         assert card["pr_head_sha"] == second_head
 
         # Idempotent: polling again with no further local change must not
-        # trigger a third push.
+        # trigger a third push, and neither must asking again.
         _poll(client)
+        assert len(push_calls) == 2
+        again = client.post(
+            f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
+        ).json()["data"]
+        assert again["pushed"] is False, "没有新东西可推时,再问一次不算错误"
         assert len(push_calls) == 2
     finally:
         _reset_client()
@@ -747,10 +760,13 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         holder["pr_number"] = accepted["pr_number"]
         fake.prs[holder["pr_number"]]["head_sha"] = first_head
 
-        # 芝士 fixes something, then the token goes bad before the platform
-        # can re-push it (expired token / network hiccup / non-ff — same
-        # degrade contract either way).
+        # 芝士 fixes something and commits it, then the token goes bad before
+        # the platform can re-push it (expired token / network hiccup / non-ff
+        # — same degrade contract either way). The commit is explicit because
+        # the poller no longer makes one: it reads the branch head, it does not
+        # move it.
         (wt / "work.txt").write_text("fixed\n")
+        ws.snapshot_worktree(puid, tuid)
         holder["fail"] = True
 
         result = _poll(client)

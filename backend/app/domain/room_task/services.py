@@ -1,16 +1,74 @@
-"""Task services — reading a room's threads."""
+"""Task services — reading a room's threads, and the trees they work on."""
 
 import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block
-from app.domain.room_task.models import Task
-from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.models import Task, WorkTree
+from app.domain.room_task.repositories import TaskRepository, WorkTreeRepository
+
+
+class WorkTreeService:
+    """一棵树 = 一个分支 = 一个 PR = 一批活."""
+
+    def __init__(self, session: AsyncSession):
+        self._repo = WorkTreeRepository(session)
+
+    async def get(self, tree_id: uuid.UUID) -> WorkTree | None:
+        return await self._repo.get(tree_id)
+
+    async def current(self, room_id: uuid.UUID) -> WorkTree | None:
+        """The tree this room is writing to, or None while it is sealed."""
+        return await self._repo.open_tree_for_room(room_id)
+
+    async def ensure_open(
+        self, *, project_id: uuid.UUID, room_id: uuid.UUID
+    ) -> WorkTree:
+        """The room's writable tree, starting the next batch if there isn't one.
+
+        Being sealed is not a reason to refuse: sealing means "this batch's PR
+        is flying, do not touch its content", and the answer to new work
+        arriving is a NEW tree, not a queue. That is the whole reason a room may
+        hold more than one — before it could, a PR in flight froze the room for
+        as long as CI took.
+
+        The very first tree carries the room's own id so that its branch,
+        worktree directory, jj workspace, container workdir and tmux session are
+        byte-for-byte the names they already had (migration `b8e2f4a90d33`).
+        Later trees get fresh ids, and therefore fresh branches.
+        """
+        from app.domain.workspace import service as ws
+
+        current = await self._repo.open_tree_for_room(room_id)
+        if current is None:
+            first = not await self._repo.list_for_room(room_id)
+            current = await self._repo.add(
+                project_id=project_id,
+                room_id=room_id,
+                tree_id=room_id if first else None,
+            )
+        # The workspace layer is sync and DB-free, so it cannot ask which tree a
+        # room is on. Tell it — same arrangement `bind_room` uses for boxes.
+        ws.bind_tree(room_id, current.id)
+        return current
+
+    async def seal(self, tree: WorkTree) -> WorkTree:
+        return await self._repo.seal(tree)
+
+    async def mark_merged(self, tree: WorkTree) -> WorkTree:
+        return await self._repo.mark_merged(tree)
+
+    async def tasks_on(self, tree_id: uuid.UUID) -> list[Task]:
+        return await self._repo.list_tasks(tree_id)
+
+    async def history(self, room_id: uuid.UUID) -> list[WorkTree]:
+        return await self._repo.list_for_room(room_id)
 
 
 class TaskService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = TaskRepository(session)
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
@@ -26,20 +84,37 @@ class TaskService:
         created_by: str | None,
         agent_instance_id: uuid.UUID | None,
     ) -> Task:
-        """Open a new thread of work in a room.
+        """Open a new thread of work in a room, on the room's current tree.
 
         A service, not the repository, because the callers are in other domains
         (dispatch and 讨论升级 both live in `topic`), and a domain reaching into
         another's repository is what the import guard forbids.
+
+        The tree is resolved HERE rather than asked of the caller: every caller
+        wants the same answer — the batch this room is currently taking work
+        into — and making each of them look it up is how two of them end up
+        disagreeing about which batch a task belongs to.
         """
-        return await self._repo.add(
+        from app.domain.workspace import service as ws
+
+        tree = await WorkTreeService(self._session).ensure_open(
+            project_id=project_id, room_id=room_id
+        )
+        task = await self._repo.add(
             project_id=project_id,
             room_id=room_id,
+            tree_id=tree.id,
             title=title,
             owner_handle=owner_handle,
             created_by=created_by,
             agent_instance_id=agent_instance_id,
         )
+        # A thread writes to its room's tree, with its siblings. Without this the
+        # workspace layer would fall back to "the tree named by the place's own
+        # id" and hand the thread an empty tree of its own — one worktree per
+        # piece of work, which is exactly what this design removed.
+        ws.bind_tree(task.id, tree.id)
+        return task
 
     async def threads_for_room(
         self, room_id: uuid.UUID, *, limit: int | None = None

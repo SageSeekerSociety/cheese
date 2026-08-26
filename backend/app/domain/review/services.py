@@ -1380,7 +1380,7 @@ class AcceptService:
         from app.domain.workspace import service as ws
 
         repo_path = ws.ensure_repo(project_id)
-        branch = ws.branch_for_place(topic_id)
+        branch = ws.branch_for_tree(ws.tree_for_place(topic_id))
         result = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "--verify", "-q", branch],
             capture_output=True,
@@ -3028,7 +3028,7 @@ class AcceptService:
         if tokens is None or parsed is None:
             return None, ""  # App unconfigured / upstream changed since PR opened
         client = GitHubPRClient(*parsed, tokens)
-        branch = ws.branch_for_place(topic.id)
+        branch = ws.branch_for_tree(ws.tree_for_place(topic.id))
 
         try:
             # Someone may have handled the PR on GitHub directly — respect it.

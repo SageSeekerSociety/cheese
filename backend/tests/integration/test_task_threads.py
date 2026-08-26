@@ -184,7 +184,7 @@ def test_backfill_lands_every_shape_of_work_row_in_the_right_room(client):
 def test_backfill_stores_the_branch_the_code_actually_uses(client):
     """`topics.branch_name` 全库没有写入方，所以逐字复制会搬过去一堆 NULL。
 
-    工作区真正落在的分支是派生出来的（`branch_for_place` → `topic/<前 8 位 hex>`），
+    工作区真正落在的分支是派生出来的（`branch_for_tree` → `topic/<前 8 位 hex>`），
     迁移存的必须是那个值；而万一哪一行真的写了显式分支名，显式的那个说了算。
     """
     tasks_sql, _ = _backfill_sql()
@@ -231,9 +231,9 @@ def test_backfill_stores_the_branch_the_code_actually_uses(client):
 
     client.portal.call(_read)
 
-    from app.domain.workspace.service import branch_for_place
+    from app.domain.workspace.service import branch_for_tree
 
-    assert branches["derived"] == branch_for_place(ids["derived"])
+    assert branches["derived"] == branch_for_tree(ids["derived"])
     assert branches["explicit"] == "explicit/branch"
 
 

@@ -350,7 +350,6 @@ class SchedulerService:
         errors: list[str] = []
         settled: list[uuid.UUID] = []
         archived: list[uuid.UUID] = []
-        folded: list[uuid.UUID] = []
         async with self._sessions() as session:
             try:
                 settled = await ConclusionCardService(session).sweep_expired()
@@ -372,23 +371,9 @@ class SchedulerService:
                 await session.rollback()
                 logger.exception("deferred archive sweep failed")
                 errors.append(str(exc))
-        # 同理，合并重试也走自己的事务：git 那一侧出错不能把结算和归档回滚掉。
-        async with self._sessions() as session:
-            try:
-                folded = await ConclusionCardService(session).sweep_room_merges()
-                # Unconditional, unlike the two above: a round that folds
-                # nothing can still have written the room a line saying why
-                # (queued, or conflicted), and dropping that is what "不能默默
-                # 失败" forbids.
-                await session.commit()
-            except Exception as exc:  # noqa: BLE001 — maintenance must survive
-                await session.rollback()
-                logger.exception("room merge sweep failed")
-                errors.append(str(exc))
         return {
             "settled": len(settled),
             "archived": len(archived),
-            "folded": len(folded),
             "errors": errors,
         }
 
@@ -636,7 +621,7 @@ class ConclusionSweepRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._scheduler.sweep_conclusion_cards()
-                if any(result[k] for k in ("settled", "archived", "folded", "errors")):
+                if any(result[k] for k in ("settled", "archived", "errors")):
                     logger.info("conclusion sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("conclusion sweep failed")
