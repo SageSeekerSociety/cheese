@@ -2500,7 +2500,7 @@ SNAPSHOT_MESSAGE = "chore: snapshot workspace after agent turn"
 SNAPSHOT_BEFORE_ACCEPT = "chore: snapshot workspace before accept"
 SNAPSHOT_FOR_PR = "chore: snapshot workspace for pull request"
 SNAPSHOT_BEFORE_TWO_PHASE = "chore: snapshot workspace before two-phase accept"
-SNAPSHOT_BEFORE_CI_POLL = "chore: snapshot workspace before CI poll"
+SNAPSHOT_FOR_PUSH_FIX = "chore: snapshot workspace for push-fix"
 
 
 def snapshot_worktree(

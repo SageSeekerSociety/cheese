@@ -1356,21 +1356,29 @@ class AcceptService:
     def _local_topic_branch_head(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> str | None:
-        """Local topic branch head after folding any pending 芝士 edits into a
-        jj commit — local-only (no network), used to decide whether a re-push
-        to the PR branch is needed before touching GitHub at all. Deliberately
-        built from `workspace.service`'s existing public helpers
-        (ensure_repo/branch_for_place/snapshot_worktree) rather than adding a
-        new one there — this feature's touch scope is review/ + oauth/ only.
-        None if the repo/branch genuinely doesn't exist yet (nothing to push)."""
+        """The topic branch head as it stands — local-only (no network), used to
+        decide whether a re-push to the PR branch is needed before touching
+        GitHub at all.
+
+        It READS the branch and never moves it. It used to snapshot the
+        workspace first, which turned every poll tick into a potential new
+        commit: any write at all — a scratch file, a line in the living doc —
+        became a commit, the commit moved the head, the head moved the PR, and
+        `cancel-in-progress` killed the CI run that was already going. One
+        branch measured 17 runs of the backend suite, 14 of them cancelled, for
+        a single PR. Nothing was wrong with the code; the poller was racing the
+        agent.
+
+        The head still moves on its own at a boundary that means something —
+        the end-of-turn snapshot — and `push_fix` is the way to move it on
+        purpose in between. Both are intentional; a 60-second timer is not.
+
+        None if the repo/branch genuinely doesn't exist yet (nothing to push).
+        """
         import subprocess
 
         from app.domain.workspace import service as ws
 
-        try:
-            ws.snapshot_worktree(project_id, topic_id, ws.SNAPSHOT_BEFORE_CI_POLL)
-        except ValidationError:
-            pass  # no workspace/jj state yet — nothing pending to fold
         repo_path = ws.ensure_repo(project_id)
         branch = ws.branch_for_place(topic_id)
         result = subprocess.run(
@@ -1802,6 +1810,80 @@ class AcceptService:
             # already gets, for the same reason.
             self._note_poll_failed(card, exc)
             await self._session.flush()
+
+    async def push_fix(self, place_id: uuid.UUID) -> dict:
+        """Push what is in this place's workspace to the PR it is riding, NOW.
+
+        This is the intentional half of the pair whose accidental half was
+        removed from `_local_topic_branch_head`: the poller no longer commits
+        on a timer, so an agent that just fixed a red check says so instead of
+        waiting for a snapshot it did not ask for. The difference is not speed
+        — it is that a push now corresponds to somebody deciding the tree is
+        worth showing.
+
+        Returns a dict the CLI prints verbatim rather than raising for the
+        ordinary "nothing to do" answers: no card, no PR, nothing new to push.
+        None of those are errors, and an agent that gets an exception for "your
+        work was already pushed" learns to stop calling this.
+        """
+        cards = await self._repo.list_live_for_places(
+            [place_id], statuses=(AcceptStatus.pr_open,)
+        )
+        if not cards:
+            return {"pushed": False, "reason": "这个话题手上没有正在等 CI 的 PR"}
+        card = cards[0]
+        if not card.pr_repo or card.pr_number is None:
+            return {"pushed": False, "reason": "验收卡还没开出 PR"}
+        topic = await self._topic_or_404(card.topic_id)
+        owner, _, repo = card.pr_repo.partition("/")
+
+        creds, reason = await self._pr_poll_credentials(card, topic)
+        if creds is None:
+            return {"pushed": False, "reason": f"拿不到可用的 GitHub 凭据：{reason}"}
+
+        from app.domain.workspace import service as ws
+
+        # Fold the working tree into a commit FIRST — that is the whole point of
+        # an explicit push: the caller means "what is on disk right now".
+        try:
+            await asyncio.to_thread(
+                ws.snapshot_worktree,
+                topic.project_id,
+                place_id,
+                ws.SNAPSHOT_FOR_PUSH_FIX,
+            )
+        except ValidationError:
+            pass  # no workspace/jj state yet — nothing pending to fold
+
+        from app.domain.review import github_pr
+
+        client = github_pr.default_client()
+        try:
+            status = await client.pull_request_status(
+                owner=owner, repo=repo, number=card.pr_number, token=creds.read
+            )
+            pushed = await self._repush_if_local_head_moved(
+                card=card,
+                topic=topic,
+                owner=owner,
+                repo=repo,
+                token=creds.write,
+                remote_head=status.head_sha,
+                remote_branch=status.head_ref,
+            )
+        except github_pr.GitHubPrError as exc:
+            # Same reasoning as the poll path: say it on the card, because the
+            # person waiting is looking at the card and not at a log file.
+            self._note_poll_failed(card, exc)
+            await self._session.flush()
+            return {"pushed": False, "reason": f"GitHub 暂时不通：{exc}"}
+        await self._session.flush()
+        return {
+            "pushed": pushed,
+            "pr_number": card.pr_number,
+            "pr_url": card.pr_url,
+            "reason": "" if pushed else "工作区没有 PR 还不知道的提交",
+        }
 
     async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:
         """Same explanation as `_note_poll_failed`, for a poll that died on

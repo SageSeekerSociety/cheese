@@ -169,13 +169,21 @@ def _api_root() -> str:
     return API
 
 
-def _raw_request(method: str, path: str, data: str | None) -> None:
+def _raw_request(method: str, path: str, data: str | None, out: str | None = None) -> None:
     """Raw API escape hatch (fusion-design §5.2): hit our backend directly with
     the container's existing auth (CHEESE_TOKEN), printing the response body
     verbatim. NOT a no-auth backdoor — it still carries the token, and the
     backend still authorizes the actor per call; it is just the low-ceremony
     channel for the 20% of cases the curated commands don't cover. Prefer the
-    curated `cheese <verb>` commands (title/doc/ask/remember/...) — see SKILL.md."""
+    curated `cheese <verb>` commands (title/doc/ask/remember/...) — see SKILL.md.
+
+    `out` writes the body to a file as BYTES. Without it the body is decoded as
+    text, which is right for JSON and destroys anything else: `decode(errors=
+    "replace")` turns every byte over 0x7f into U+FFFD, so a PNG arrives with
+    its own signature (`\x89PNG`) mangled and no way to tell that happened
+    apart from the file not opening. Attachments are reachable over this
+    channel, so text-only was not a limitation of the API — only of this
+    function."""
     if not path.startswith("/"):
         path = "/" + path
     body = data.encode() if data else None
@@ -187,15 +195,24 @@ def _raw_request(method: str, path: str, data: str | None) -> None:
         req.add_header("X-Cheese-Turn", TURN)
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
-            print(r.read().decode(errors="replace"))
+            payload = r.read()
     except urllib.error.HTTPError as e:
         # Surface the backend's error body (auth failures, validation, etc.)
-        # verbatim so the caller sees exactly why — then exit non-zero.
+        # verbatim so the caller sees exactly why — then exit non-zero. Always
+        # as text: an error body is JSON even when the success body would not
+        # have been, and writing it to `out` would leave a file that looks like
+        # the download succeeded.
         print(e.read().decode(errors="replace"))
         sys.exit(1)
     except Exception as e:  # noqa: BLE001
         print(f"[cheese] api {method} {path} 出错: {e}", file=sys.stderr)
         sys.exit(1)
+    if out:
+        with open(out, "wb") as f:
+            f.write(payload)
+        print(f"已写入 {out}（{len(payload)} 字节）")
+    else:
+        print(payload.decode(errors="replace"))
 
 
 def _format_status(d: dict) -> str:
@@ -600,6 +617,20 @@ def build_parser() -> argparse.ArgumentParser:
     pawc.add_argument("log_path")
     pawc.add_argument("timeout_s", type=int)
 
+    sub.add_parser(
+        "push-fix",
+        help="把工作区现在的样子推到本话题正在等 CI 的那个 PR 上",
+        description=(
+            "把工作区**现在**的样子折成提交,推到本话题正在等 CI 的那个 PR。\n\n"
+            "为什么要有这条命令:平台的 CI 轮询**不再**每 60 秒替你提交一次了。\n"
+            "它以前会,后果是你在等 CI 期间随便写个文件(哪怕只是改实况文档)都会\n"
+            "变成一个提交、推上去、把正在跑的那轮 CI 掐掉重排——实测一个 PR 上\n"
+            "跑了 17 次后端测试,其中 14 次是被掐掉的。\n\n"
+            "所以推送现在是**你说了算**:修完红的检查,自己说一声。\n"
+            "没有在等 CI 的 PR、或者工作区没有新东西,它会直说,不算错误。"
+        ),
+    )
+
     pdec = sub.add_parser(
         "decision",
         help="记录一条决策",
@@ -904,6 +935,17 @@ def build_parser() -> argparse.ArgumentParser:
     papi.add_argument("method", nargs="?", help="HTTP 方法,如 GET/POST/PUT/DELETE")
     papi.add_argument("path", nargs="?", help="API 路径,如 /topics/<id>/blocks")
     papi.add_argument("--data", "-d", default=None, help="请求体(JSON 字符串)")
+    papi.add_argument(
+        "--output",
+        "-o",
+        default=None,
+        metavar="FILE",
+        help=(
+            "把响应体按**字节**写进这个文件,而不是当文本打印。"
+            "下载附件/图片必须用它:不带 -o 的输出会把每个 >0x7f 的字节换成 U+FFFD,"
+            "文件到手是坏的,而且看不出坏在哪"
+        ),
+    )
 
     return p
 
@@ -951,6 +993,13 @@ def main() -> None:
         _await_start(a.command, a.label, a.timeout)
     elif a.cmd == "__await-child":
         _await_child(a.task_id, a.command, a.log_path, a.timeout_s)
+    elif a.cmd == "push-fix":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        r = _call("POST", f"/topics/{topic}/push-fix")["data"]
+        if r.get("pushed"):
+            print(f"已推到 PR #{r['pr_number']}：{r.get('pr_url') or ''}")
+        else:
+            print(f"没有推送：{r.get('reason') or '没有可推的东西'}")
     elif a.cmd == "decision":
         topic = _need("CHEESE_TOPIC", TOPIC)
         _call("POST", f"/topics/{topic}/decision", {"decision": a.text})
@@ -1181,7 +1230,7 @@ def main() -> None:
             except ValueError as e:
                 print(f"[cheese] --data 不是合法 JSON: {e}", file=sys.stderr)
                 sys.exit(2)
-        _raw_request(a.method, a.path, a.data)
+        _raw_request(a.method, a.path, a.data, a.output)
 
 
 if __name__ == "__main__":
