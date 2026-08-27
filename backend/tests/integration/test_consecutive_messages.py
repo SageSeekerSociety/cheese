@@ -62,9 +62,15 @@ class WorkingScreen(StubChannel):
 
 
 async def _until(cond, timeout: float = 5.0) -> None:
-    async with asyncio.timeout(timeout):
-        while not cond():
-            await asyncio.sleep(0.01)
+    """给异步投递一点时间，但**不**由这里报错。
+
+    超时就安静返回，让紧跟着的 assert 去说话 —— 「屏幕上什么都没有」比一个
+    光秃秃的 TimeoutError 有用得多。
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not cond() and loop.time() < deadline:
+        await asyncio.sleep(0.01)
 
 
 async def _a_topic(factory) -> uuid.UUID:
