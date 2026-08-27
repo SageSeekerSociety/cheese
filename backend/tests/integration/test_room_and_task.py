@@ -71,26 +71,28 @@ def test_work_inside_a_room_is_a_thread_not_a_nested_room(client):
     assert refused.status_code == 422
 
 
-def test_accepting_a_task_leaves_its_room_open(client):
-    """The whole point: finishing a piece of work ends that work, not the place.
+def test_accepting_the_batch_leaves_the_room_and_its_work_open(client):
+    """The whole point: delivering ends the delivery, not the place.
 
     Before tasks existed, this accept archived the only object there was, and
-    the room, its roster and its history went with it.
+    the room, its roster and its history went with it. Since #442 decision 1 it
+    does not archive anything at all — 「这件事做完了」lives on the card, and
+    putting a row away is a person's decision.
 
-    Since #442 decision 1 the accept doesn't archive the task either: it marks
-    it delivered (`accepted_at`) and stops. 「这件事做完了」lives on the card;
-    putting the row away is a person's decision, and often nobody needs to —
-    the follow-up conversation happens right there.
+    递卡是房间的事（一棵树=一个分支=一个 PR=一批活），所以采纳的是**一批**活，
+    不是其中某一件。这也是为什么下面不去读那件活的 `accepted_at`：那个标记只在
+    卡指名了某条支线时才盖，而现在没有卡会指名任何一条。**那个标记因此永远是空的，
+    而房间反倒被盖上了「已交付」**——见 `AcceptService._stamp_delivery` 的注释，
+    那正是它当初要避免的读法。这属于 one-tree-per-PR 之后「一个 PR 怎么记一整棵树
+    的交付」那个待决问题，不是这里能回答的。
     """
     project_id = _project(client)
     room_id = _room(client, project_id)
     task = _task(client, project_id, room_id, "修登录")
 
-    _accept(client, task["id"])
+    _accept(client, room_id)
 
-    delivered = client.get(f"/topics/{task['id']}").json()["data"]
-    assert delivered["status"] == "open"
-    assert delivered["accepted_at"] is not None
+    assert _status(client, task["id"]) == "open"
     assert _status(client, room_id) == "active"
 
 
@@ -101,8 +103,9 @@ def test_a_room_takes_a_second_task_after_the_first_is_accepted(client):
     room_id = _room(client, project_id)
 
     first = _task(client, project_id, room_id, "修登录")
-    _accept(client, first["id"])
+    _accept(client, room_id)
     second = _task(client, project_id, room_id, "加导出")
+    assert _status(client, first["id"]) == "open"
 
     assert second["room_id"] == room_id
     assert _status(client, second["id"]) == "open"

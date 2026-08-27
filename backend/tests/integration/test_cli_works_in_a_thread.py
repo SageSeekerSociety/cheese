@@ -333,9 +333,16 @@ def test_a_long_command_can_be_registered_from_a_thread(client):
 # --- cheese accept-request -------------------------------------------------
 
 
-def test_work_done_in_a_thread_can_be_filed_for_acceptance(client):
-    """`cheese accept-request` 是一条支线交活的唯一出口——递不出卡，这条线做完的
-    东西就没有任何路径能进主干。"""
+def test_a_thread_is_told_to_hand_its_result_back_instead_of_filing(client):
+    """`cheese accept-request` 在支线里是**关着**的，而且必须说清楚开着的是哪扇门。
+
+    递卡=封树开 PR，那是房间对一批活说的话；一条支线替兄弟们说了，PR 就带着它们
+    没做完的东西飞出去。所以支线的出口是 `cheese conclude`——把结论交回房间，改动
+    留在同一条分支上，房间递卡时一起带走。
+
+    错误只说"不允许"是不够的：读它的是一个下一步不知道该干嘛的分身，它会换个写法
+    再撞一次同一堵墙。
+    """
     pid, room = _room(client)
     thread = _thread(client, room)
 
@@ -348,12 +355,10 @@ def test_work_done_in_a_thread_can_be_filed_for_acceptance(client):
         },
         headers=_as_agent(pid, thread),
     )
-    assert r.status_code == 200, r.text
+    assert r.status_code == 422, r.text
+    assert "cheese conclude" in r.json()["message"]
 
-    filed = client.get(f"/topics/{thread}/accept-card").json()["data"]["data"]
-    assert [c["change_subject"] for c in filed] == [
-        "fix(api): return the last row of a page"
-    ]
+    assert client.get(f"/topics/{thread}/accept-card").json()["data"]["total"] == 0
 
 
 # --- cheese remember / recall ----------------------------------------------
