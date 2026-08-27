@@ -9,10 +9,10 @@ import { listProjectAgents } from '../api'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
-  loadCollapsedTopics,
+  loadExpandedTopics,
   loadOthersGroupOpen,
   partitionByRelevance,
-  saveCollapsedTopics,
+  saveExpandedTopics,
   saveOthersGroupOpen,
   visibleRows,
 } from '../lib/topicTree'
@@ -53,7 +53,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
   (e: 'create-topic', title: string, agentInstanceId?: string | null): void
-  (e: 'split-topic', payload: { topicId: string; title: string }): void
   // 归档去向: manual archive / unarchive from the row's ⋯ actions.
   (e: 'archive-topic', id: string): void
   (e: 'unarchive-topic', id: string): void
@@ -94,6 +93,7 @@ const route = useRoute()
 
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
+  { key: 'workspace-running', label: '在跑的活', icon: 'mdi-play-circle-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
 ] as const
@@ -296,19 +296,28 @@ function startDm(handle: string) {
 // 长在每一个有子话题的行上。行的可见性/未读聚合是纯逻辑，住在 lib/topicTree.ts
 // 里（有单测），这里只管状态和落盘。
 //
-// 默认展开：升级前后所见完全一致，没有人会因为这次改动突然找不到自己的话题；
-// "这里还有内容" 这个提示再好也弱于直接看见那一行。100+ 话题带来的长列表由
-// 「收起来的状态会被记住」来解——每个人只需要把噪音大的父话题收一次。
-// 按项目存 localStorage（而不是只放内存）：这个 rail 是主导航，每次刷新都要
-// 重收一遍等于没有折叠。存的是**收起来的** id，所以新拆出来的话题天然可见。
-const collapsedIds = ref<ReadonlySet<string>>(new Set<string>())
+// 默认收起，展开是个动作。挂在一个房间下面的是它派出去的活，而活的去处是右边的
+// Task Progress —— 一个跑久了的房间有近两百条，全都摊在主导航上等于把侧栏变成
+// 一份没人读得完的清单。要看某个房间在干什么，点进去比在侧栏里滚要快。
+// 按项目存 localStorage（而不是只放内存）：这个 rail 是主导航，每次刷新都要重展
+// 一遍等于没有记住。存的是**展开的** id，所以新派出去的活天然是收起来的。
+const expandedIds = ref<ReadonlySet<string>>(new Set<string>())
+// `visibleRows` 问的是「哪些行是收起来的」，而我们记的是展开过的那些 —— 有孩子
+// 的行里，没被展开过的就是收起来的。
+const collapsedIds = computed<ReadonlySet<string>>(() => {
+  const withChildren = new Set<string>()
+  for (const t of props.topics) {
+    if (t.parent_id && !expandedIds.value.has(t.parent_id)) withChildren.add(t.parent_id)
+  }
+  return withChildren
+})
 // 「其他话题」这一组展开没展开。默认折叠——这一整条改动的意义就在这里，所以它
 // 也按项目落盘（键不在 = 折叠，见 lib/topicTree.ts）。
 const othersOpen = ref(false)
 watch(
   () => props.selectedProjectId,
   (pid) => {
-    collapsedIds.value = loadCollapsedTopics(pid)
+    expandedIds.value = loadExpandedTopics(pid)
     othersOpen.value = loadOthersGroupOpen(pid)
   },
   { immediate: true }
@@ -411,11 +420,11 @@ function toggleTitle(row: VisibleRow<Topic>): string {
 }
 
 function toggleCollapse(id: string) {
-  const next = new Set(collapsedIds.value)
+  const next = new Set(expandedIds.value)
   if (next.has(id)) next.delete(id)
   else next.add(id)
-  collapsedIds.value = next
-  saveCollapsedTopics(props.selectedProjectId, next)
+  expandedIds.value = next
+  saveExpandedTopics(props.selectedProjectId, next)
 }
 
 // The root topic (本体) — the pinned 「全局」 row at the top of the list. And
@@ -445,13 +454,6 @@ function saveRename(t: Topic) {
   const title = normalizeTopicTitle(draftTitle.value, t.title)
   renamingTopicId.value = null
   if (title) emit('rename-topic', { id: t.id, title })
-}
-
-function onSplit(t: Topic) {
-  // Never ask the human for a title (spec §rule 4, mirrors newTopic()). The
-  // sub-topic is born untitled and opened; its title is derived from the first
-  // message (芝士 can refine it via a tool).
-  emit('split-topic', { topicId: t.id, title: '' })
 }
 
 // 行操作收进一颗 ⋯ (C5): hover 只浮出一个入口，不再是三颗并排的按钮盖住标题
@@ -783,14 +785,6 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                             prepend-icon="mdi-archive-arrow-down-outline"
                             title="归档"
                             @click="emit('archive-topic', row.topic.id)"
-                          />
-                          <!-- 拆出子话题点一下就真的建一个话题并打开它——比上面两条
-                               重一个量级，所以在菜单里单独隔一组，不和改名并排。 -->
-                          <v-divider class="my-1" />
-                          <v-list-item
-                            prepend-icon="mdi-source-branch-plus"
-                            title="拆出子话题"
-                            @click="onSplit(row.topic)"
                           />
                         </v-list>
                       </v-menu>

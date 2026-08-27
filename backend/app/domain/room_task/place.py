@@ -22,19 +22,26 @@ token, a session key, a branch name, a webhook — had to be reissued.
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.work_context import current_place
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TreeStatus, WorkTree
 from app.domain.topic.models import Topic
 
 
 @dataclass(frozen=True)
 class Place:
-    """A room, and optionally one thread inside it."""
+    """A room, optionally one thread inside it, and the tree the work is on."""
 
     room: Topic
     task: Task | None = None
+    #: 这个地点的活写在哪棵树上。A thread's is the one recorded on the task; a
+    #: room's is whichever tree it is currently taking work into. None means
+    #: there is no writable tree right now — the room is sealed, waiting on the
+    #: PR its last tree opened. Callers that need files must say what they do
+    #: about that rather than silently writing into the PR under review.
+    tree: WorkTree | None = None
 
     @property
     def id(self) -> uuid.UUID:
@@ -83,14 +90,25 @@ class Place:
         return self.room.agent_instance_id
 
     @property
-    def branch_name(self) -> str | None:
-        """The branch this place's work is on — the thread's when it is one.
+    def tree_id(self) -> uuid.UUID | None:
+        return self.tree.id if self.tree is not None else None
 
-        一个房间一条分支, and a thread forks the room's, so these are never the
-        same string; reporting the room's for a thread would point whoever read
-        it at a branch the work is not on.
+    @property
+    def branch_name(self) -> str | None:
+        """The branch this place's work is on — its TREE's.
+
+        一棵树 = 一个分支 = 一个 PR = 一批活, and a thread shares its room's
+        tree with its siblings, so a room and the threads batched on the same
+        tree all report the same branch. That is not a rounding error: they are
+        genuinely writing to one place, and saying otherwise would promise an
+        isolation that does not exist.
+
+        None when the room is sealed and has not started its next batch — there
+        is no branch to name because there is nothing writable.
         """
-        return self.task.branch_name if self.task is not None else self.room.branch_name
+        from app.domain.workspace.service import branch_for_tree
+
+        return branch_for_tree(self.tree.id) if self.tree is not None else None
 
     @property
     def is_thread(self) -> bool:
@@ -143,6 +161,11 @@ class PlaceResolver:
         uuid4, and the ids tasks inherited belong to `topics` rows that the same
         migration deleted — so the order is a cost decision, not a correctness
         one: work is what gets addressed, rooms are what get opened.
+
+        The tree comes along because almost every caller that has a place goes
+        on to want files, and the two answers have different shapes: a thread's
+        tree is fixed at dispatch, a room's is whichever one it is taking work
+        into now — and a sealed room has none.
         """
         task = await self._session.get(Task, place_id)
         if task is not None:
@@ -150,6 +173,20 @@ class PlaceResolver:
             # A task whose room is gone cannot be rendered anywhere. Returning
             # None says that plainly instead of handing back half a place that
             # every caller would then have to check.
-            return Place(room=room, task=task) if room is not None else None
+            if room is None:
+                return None
+            return Place(
+                room=room,
+                task=task,
+                tree=await self._session.get(WorkTree, task.tree_id),
+            )
         topic = await self._session.get(Topic, place_id)
-        return Place(room=topic) if topic is not None else None
+        if topic is None:
+            return None
+        return Place(room=topic, tree=await self._open_tree(topic.id))
+
+    async def _open_tree(self, room_id: uuid.UUID) -> WorkTree | None:
+        stmt = select(WorkTree).where(
+            WorkTree.room_id == room_id, WorkTree.status == TreeStatus.open
+        )
+        return (await self._session.scalars(stmt)).first()

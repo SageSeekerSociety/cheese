@@ -28,6 +28,7 @@ import type {
   ProjectOverview,
   ReactionAgg,
   RoomTask,
+  RoomTree,
   SandboxImageInfo,
   Topic,
   TopicComputeProfile,
@@ -500,6 +501,15 @@ export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTas
   return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
 }
 
+/** 一个房间的一批批活（树），最新的在前。一棵树 = 一个分支 = 一个 PR = 一批活。
+ *
+ *  房间会封口一批、开下一批，所以「我现在写的东西进的是哪一批」才有答案 —— 封了
+ *  口的房间和没封口的在屏幕上长得一模一样，是「我改了半天，改动怎么不在 PR 上」
+ *  的来源。 */
+export function listRoomTrees(roomId: string): Promise<ListPayload<RoomTree>> {
+  return request<ListPayload<RoomTree>>(`/topics/${encodeURIComponent(roomId)}/trees`)
+}
+
 export function listRoomTasks(
   roomId: string,
   // 每条支线最多带回多少块对话。标记只要支线本身，所以取 1 —— 不传的话后端会把
@@ -599,15 +609,6 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
   return request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
     method: 'POST',
     body: JSON.stringify({ by }),
-  })
-}
-
-// Split a topic into a sub-topic (芝士的分身 works there). eval A1 / tree.
-// 派出一条支线。回来的是一行 task —— 活挂在**同一个房间**下，不嵌套。
-export function splitTopic(topicId: string, title: string, createdBy: string): Promise<RoomTask> {
-  return request<RoomTask>(`/topics/${encodeURIComponent(topicId)}/split`, {
-    method: 'POST',
-    body: JSON.stringify({ title, created_by: createdBy }),
   })
 }
 

@@ -60,9 +60,9 @@ from app.domain.review import forge as forge_mod
 from app.domain.review.models import AcceptCard, AcceptStatus, GateOutcome
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.schemas import AcceptCardOut
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TreeStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, WorkTreeService
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
@@ -674,7 +674,23 @@ class AcceptService:
         # deliberately do not (a red gate voids the card, and re-递卡 after fixing
         # IS the flow — same for a gate that never ran: 芝士 fixes the check
         # environment and re-files. Adding either here locks 芝士 out for good).
-        existing = await self._repo.list_for_topic(topic_id)
+        # 一棵树一个 PR: the thing that may not happen twice at once is two PRs
+        # on ONE branch. Asking the room instead would refuse a second batch its
+        # own PR, which is precisely what a second tree exists to allow.
+        tree = await WorkTreeService(self._session).ensure_open(
+            project_id=topic.project_id, room_id=topic.id
+        )
+        # Plus this place's tree-less cards. A card filed before trees existed
+        # kept `tree_id IS NULL` wherever the backfill had no honest value to
+        # give it, so asking the tree alone makes a live `pr_open` from that era
+        # invisible — and a second card would open a second PR on the same
+        # branch while the poller kept advancing the first. That is exactly the
+        # failure the guard was widened for on 2026-08-10, arriving by a new
+        # route.
+        existing = [
+            *await self._repo.list_for_tree(tree.id),
+            *await self._repo.list_treeless_for_topic(topic_id),
+        ]
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
         )
@@ -707,6 +723,7 @@ class AcceptService:
             topic_id=topic_id,
             reviewer_handle=reviewer_handle,
             routing_reason=routing_reason,
+            tree_id=tree.id,
             status=AcceptStatus.pending,
             change_subject=change_subject,
             change_body=(change_body or None),
@@ -907,6 +924,23 @@ class AcceptService:
             data["stages"] = delivery.steps_for(card, forge)
         else:
             data["stages"] = []
+        # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
+        # red one has to be in front of the person about to accept. A check
+        # whose result goes nowhere is a check nobody runs.
+        tree = (
+            await WorkTreeService(self._session).get(card.tree_id)
+            if card.tree_id is not None
+            else None
+        )
+        data["quick_check"] = (
+            None
+            if tree is None or tree.last_check_at is None
+            else {
+                "ok": tree.last_check_ok,
+                "at": tree.last_check_at.isoformat(),
+                "detail": tree.last_check_detail,
+            }
+        )
         return data
 
     async def _enforce_protocol(self, topic: Topic, decided_by: str) -> None:
@@ -1356,23 +1390,31 @@ class AcceptService:
     def _local_topic_branch_head(
         self, project_id: uuid.UUID, topic_id: uuid.UUID
     ) -> str | None:
-        """Local topic branch head after folding any pending 芝士 edits into a
-        jj commit — local-only (no network), used to decide whether a re-push
-        to the PR branch is needed before touching GitHub at all. Deliberately
-        built from `workspace.service`'s existing public helpers
-        (ensure_repo/branch_for_place/snapshot_worktree) rather than adding a
-        new one there — this feature's touch scope is review/ + oauth/ only.
-        None if the repo/branch genuinely doesn't exist yet (nothing to push)."""
+        """The topic branch head as it stands — local-only (no network), used to
+        decide whether a re-push to the PR branch is needed before touching
+        GitHub at all.
+
+        It READS the branch and never moves it. It used to snapshot the
+        workspace first, which turned every poll tick into a potential new
+        commit: any write at all — a scratch file, a line in the living doc —
+        became a commit, the commit moved the head, the head moved the PR, and
+        `cancel-in-progress` killed the CI run that was already going. One
+        branch measured 17 runs of the backend suite, 14 of them cancelled, for
+        a single PR. Nothing was wrong with the code; the poller was racing the
+        agent.
+
+        The head still moves on its own at a boundary that means something —
+        the end-of-turn snapshot — and `push_fix` is the way to move it on
+        purpose in between. Both are intentional; a 60-second timer is not.
+
+        None if the repo/branch genuinely doesn't exist yet (nothing to push).
+        """
         import subprocess
 
         from app.domain.workspace import service as ws
 
-        try:
-            ws.snapshot_worktree(project_id, topic_id, ws.SNAPSHOT_BEFORE_CI_POLL)
-        except ValidationError:
-            pass  # no workspace/jj state yet — nothing pending to fold
         repo_path = ws.ensure_repo(project_id)
-        branch = ws.branch_for_place(topic_id)
+        branch = ws.branch_for_tree(ws.tree_for_place(topic_id))
         result = subprocess.run(
             ["git", "-C", str(repo_path), "rev-parse", "--verify", "-q", branch],
             capture_output=True,
@@ -1619,6 +1661,7 @@ class AcceptService:
         await self._repo.add_approval(card.id, decided_by)
         now = datetime.now(UTC)
         card.status = AcceptStatus.pr_open
+        await self._seal_cards_tree(card)
         card.decided_by = decided_by
         card.decided_at = now
         card.pr_number = pr.number
@@ -1802,6 +1845,106 @@ class AcceptService:
             # already gets, for the same reason.
             self._note_poll_failed(card, exc)
             await self._session.flush()
+
+    async def _seal_cards_tree(self, card: AcceptCard) -> None:
+        """封口: this tree's content is now what CI is checking.
+
+        From here nothing new joins the batch — `WorkTreeService.ensure_open`
+        starts a fresh tree for the next one, which is what lets the room keep
+        working while the PR flies. Before a room could hold more than one tree,
+        the same moment froze the whole room for as long as CI took.
+        """
+        if card.tree_id is None:
+            return
+        trees = WorkTreeService(self._session)
+        tree = await trees.get(card.tree_id)
+        if tree is not None and tree.status is TreeStatus.open:
+            await trees.seal(tree)
+
+    async def _mark_cards_tree_merged(self, card: AcceptCard) -> None:
+        """The batch landed. The tree stays — the work that produced it still
+        points here, and a task whose tree vanished could not say where its
+        changes went."""
+        if card.tree_id is None:
+            return
+        trees = WorkTreeService(self._session)
+        tree = await trees.get(card.tree_id)
+        if tree is not None and tree.status is not TreeStatus.merged:
+            await trees.mark_merged(tree)
+
+    async def push_fix(self, place_id: uuid.UUID) -> dict:
+        """Push what is in this place's workspace to the PR it is riding, NOW.
+
+        This is the intentional half of the pair whose accidental half was
+        removed from `_local_topic_branch_head`: the poller no longer commits
+        on a timer, so an agent that just fixed a red check says so instead of
+        waiting for a snapshot it did not ask for. The difference is not speed
+        — it is that a push now corresponds to somebody deciding the tree is
+        worth showing.
+
+        Returns a dict the CLI prints verbatim rather than raising for the
+        ordinary "nothing to do" answers: no card, no PR, nothing new to push.
+        None of those are errors, and an agent that gets an exception for "your
+        work was already pushed" learns to stop calling this.
+        """
+        cards = await self._repo.list_live_for_places(
+            [place_id], statuses=(AcceptStatus.pr_open,)
+        )
+        if not cards:
+            return {"pushed": False, "reason": "这个话题手上没有正在等 CI 的 PR"}
+        card = cards[0]
+        if not card.pr_repo or card.pr_number is None:
+            return {"pushed": False, "reason": "验收卡还没开出 PR"}
+        topic = await self._topic_or_404(card.topic_id)
+        owner, _, repo = card.pr_repo.partition("/")
+
+        creds, reason = await self._pr_poll_credentials(card, topic)
+        if creds is None:
+            return {"pushed": False, "reason": f"拿不到可用的 GitHub 凭据：{reason}"}
+
+        from app.domain.workspace import service as ws
+
+        # Fold the working tree into a commit FIRST — that is the whole point of
+        # an explicit push: the caller means "what is on disk right now".
+        try:
+            await asyncio.to_thread(
+                ws.snapshot_worktree,
+                topic.project_id,
+                place_id,
+                ws.SNAPSHOT_FOR_PUSH_FIX,
+            )
+        except ValidationError:
+            pass  # no workspace/jj state yet — nothing pending to fold
+
+        from app.domain.review import github_pr
+
+        client = github_pr.default_client()
+        try:
+            status = await client.pull_request_status(
+                owner=owner, repo=repo, number=card.pr_number, token=creds.read
+            )
+            pushed = await self._repush_if_local_head_moved(
+                card=card,
+                topic=topic,
+                owner=owner,
+                repo=repo,
+                token=creds.write,
+                remote_head=status.head_sha,
+                remote_branch=status.head_ref,
+            )
+        except github_pr.GitHubPrError as exc:
+            # Same reasoning as the poll path: say it on the card, because the
+            # person waiting is looking at the card and not at a log file.
+            self._note_poll_failed(card, exc)
+            await self._session.flush()
+            return {"pushed": False, "reason": f"GitHub 暂时不通：{exc}"}
+        await self._session.flush()
+        return {
+            "pushed": pushed,
+            "pr_number": card.pr_number,
+            "pr_url": card.pr_url,
+            "reason": "" if pushed else "工作区没有 PR 还不知道的提交",
+        }
 
     async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:
         """Same explanation as `_note_poll_failed`, for a poll that died on
@@ -2087,6 +2230,7 @@ class AcceptService:
             await self._session.flush()
             return
         card.pr_merged_at = datetime.now(UTC)
+        await self._mark_cards_tree_merged(card)
         card.pr_head_sha = result.sha  # the merge commit, for the record
         await self._finish_pr_accept(card=card, topic=topic)
 
@@ -2342,6 +2486,7 @@ class AcceptService:
         fact, and since #206 that fact is the whole of what the platform waits
         for."""
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
+        await self._mark_cards_tree_merged(card)
         if status.merge_commit_sha:
             # Nice to have, not required: nothing downstream looks a run up by
             # this sha any more, it is just the truest record of what landed.
@@ -2838,6 +2983,7 @@ class AcceptService:
         await self._repo.add_approval(card.id, decided_by)
         now = datetime.now(UTC)
         card.status = AcceptStatus.pr_open
+        await self._seal_cards_tree(card)
         card.decided_by = decided_by
         card.decided_at = now
         card.pr_repo = f"{owner}/{repo_name}"
@@ -2946,7 +3092,7 @@ class AcceptService:
         if tokens is None or parsed is None:
             return None, ""  # App unconfigured / upstream changed since PR opened
         client = GitHubPRClient(*parsed, tokens)
-        branch = ws.branch_for_place(topic.id)
+        branch = ws.branch_for_tree(ws.tree_for_place(topic.id))
 
         try:
             # Someone may have handled the PR on GitHub directly — respect it.
@@ -3268,6 +3414,7 @@ class AcceptService:
             f"（{verdict}；合并时检查状态：{checks_at_merge}）{tail_reason}"
         )
         card.pr_merged_at = now
+        await self._mark_cards_tree_merged(card)
         card.pr_head_sha = result.sha
         await self._finish_pr_accept(card=card, topic=topic, headline=headline)
         logger.warning(

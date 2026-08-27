@@ -80,6 +80,25 @@ async def create_accept_card(
     return ok(await svc.describe(card))
 
 
+@router.post("/topics/{topic_id}/push-fix")
+async def push_fix(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """Push this place's workspace to the PR it is riding, right now.
+
+    The counterpart to the snapshot that used to happen on every CI poll: the
+    poller no longer commits on a timer (see
+    `AcceptService._local_topic_branch_head`), so a fix reaches the PR when the
+    agent says it is a fix — not sixty seconds after it touched any file at all.
+
+    `topic_id` is a PLACE. A thread pushes the tree it shares with its room,
+    which is the same tree either way; naming the place keeps the per-turn token
+    scoped to the caller like every other cheese write path.
+    """
+    svc = AcceptService(db)
+    result = await svc.push_fix(topic_id)
+    await db.commit()
+    return ok(result)
+
+
 @router.get("/topics/{topic_id}/accept-card")
 async def list_accept_cards(topic_id: uuid.UUID, db: DbSession) -> dict:
     svc = AcceptService(db)
@@ -128,7 +147,9 @@ async def _pr_checks_payload(topic_id: uuid.UUID, db: AsyncSession) -> dict:
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
-        checks = await client.check_runs(head_sha or ws.branch_for_place(topic_id))
+        checks = await client.check_runs(
+            head_sha or ws.branch_for_tree(ws.tree_for_place(topic_id))
+        )
     except GitHubPRError as exc:
         return {"available": False, "reason": str(exc)[:200]}
     return {

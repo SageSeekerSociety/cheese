@@ -771,7 +771,7 @@ class DeviceChannel(Channel):
             git_author=_git_author(project_id, topic_id),
             # Every device owns its checkout and syncs through authenticated git.
             git_remote=f"{self._public_base}/projects/{project_id}/git",
-            git_branch=ws.branch_for_place(topic_id),
+            git_branch=ws.branch_for_tree(ws.tree_for_place(topic_id)),
             system_prompt=launch.system_prompt,
             ca_pem=ca_pem,
         )

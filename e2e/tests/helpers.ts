@@ -23,6 +23,35 @@ export async function login(page: Page, username = DEMO_USERNAME, password = DEM
   await page.locator('.app-rail-item:not(.app-rail-item--add)').first().waitFor();
 }
 
+// The signed-in JWT the app itself uses (see frontend/src/api.ts — one token,
+// stored as `accessToken`). Setup that would take a person many clicks — five
+// dispatched threads, a sealed batch — goes through the API with this; the
+// ASSERTION always stays on what the screen says, which is the only part a
+// person actually gets.
+export async function apiToken(page: Page): Promise<string> {
+  const raw = await page.evaluate(() => localStorage.getItem('accessToken'));
+  if (!raw) throw new Error('没有登录态：apiToken 必须在 login() 之后调用');
+  return raw.replace(/^"|"$/g, '');
+}
+
+// `/api/...` through the frontend's own proxy, so this needs no second base URL
+// and cannot drift from the port the app is really talking to.
+export async function api(
+  page: Page,
+  method: 'get' | 'post' | 'patch',
+  path: string,
+  body?: unknown
+): Promise<Record<string, unknown>> {
+  const token = await apiToken(page);
+  const res = await page.request[method](`/api${path}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    ...(body === undefined ? {} : { data: body }),
+  });
+  if (!res.ok()) throw new Error(`${method.toUpperCase()} ${path} → ${res.status()} ${await res.text()}`);
+  const payload = (await res.json()) as { data?: Record<string, unknown> };
+  return payload.data ?? {};
+}
+
 // Opens the first project from the rail and waits for its topic sidebar to
 // finish loading, returning the count of visible (non-archived) topic rows.
 export async function openFirstProject(page: Page) {

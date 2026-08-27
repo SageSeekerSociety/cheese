@@ -39,18 +39,27 @@ def test_api_subcommand_parses_method_and_path(monkeypatch):
     cli = _load()
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        cli, "_raw_request", lambda m, p, d: captured.update(method=m, path=p, data=d)
+        cli,
+        "_raw_request",
+        lambda m, p, d, o=None: captured.update(method=m, path=p, data=d, out=o),
     )
     monkeypatch.setattr(cli.sys, "argv", ["cheese", "api", "GET", "/topics/x/blocks"])
     cli.main()
-    assert captured == {"method": "GET", "path": "/topics/x/blocks", "data": None}
+    assert captured == {
+        "method": "GET",
+        "path": "/topics/x/blocks",
+        "data": None,
+        "out": None,
+    }
 
 
 def test_api_subcommand_passes_data(monkeypatch):
     cli = _load()
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        cli, "_raw_request", lambda m, p, d: captured.update(method=m, path=p, data=d)
+        cli,
+        "_raw_request",
+        lambda m, p, d, o=None: captured.update(method=m, path=p, data=d, out=o),
     )
     monkeypatch.setattr(
         cli.sys,
