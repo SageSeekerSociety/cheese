@@ -141,6 +141,30 @@ class AcceptCardRepository:
                 latest[card.task_id] = card
         return latest
 
+    async def latest_by_tree(
+        self, tree_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        """The newest card on each of these trees, in ONE query.
+
+        A tree is a batch and a batch opens one PR, so this is how a room says
+        which PR its sealed batch is riding — the question 「这一批封口了，在哪儿
+        跑着」 has no other answer: the card belongs to the tree, not to any one
+        of the threads that wrote it.
+        """
+        if not tree_ids:
+            return {}
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.tree_id.in_(tree_ids))
+            .order_by(AcceptCard.created_at, AcceptCard.id)
+        )
+        latest: dict[uuid.UUID, AcceptCard] = {}
+        for card in (await self._session.scalars(stmt)).all():
+            # Ordered oldest-first, so the last write per key is the newest.
+            if card.tree_id is not None:
+                latest[card.tree_id] = card
+        return latest
+
     async def list_live_for_places(
         self, place_ids: list[uuid.UUID], *, statuses: tuple[AcceptStatus, ...]
     ) -> list[AcceptCard]:

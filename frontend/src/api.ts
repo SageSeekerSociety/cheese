@@ -28,6 +28,7 @@ import type {
   ProjectOverview,
   ReactionAgg,
   RoomTask,
+  RoomTree,
   SandboxImageInfo,
   Topic,
   TopicComputeProfile,
@@ -498,6 +499,15 @@ export function listTopics(
 // → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
 export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
   return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
+}
+
+/** 一个房间的一批批活（树），最新的在前。一棵树 = 一个分支 = 一个 PR = 一批活。
+ *
+ *  房间会封口一批、开下一批，所以「我现在写的东西进的是哪一批」才有答案 —— 封了
+ *  口的房间和没封口的在屏幕上长得一模一样，是「我改了半天，改动怎么不在 PR 上」
+ *  的来源。 */
+export function listRoomTrees(roomId: string): Promise<ListPayload<RoomTree>> {
+  return request<ListPayload<RoomTree>>(`/topics/${encodeURIComponent(roomId)}/trees`)
 }
 
 export function listRoomTasks(

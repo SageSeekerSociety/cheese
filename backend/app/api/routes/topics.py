@@ -449,6 +449,60 @@ async def list_room_tasks(
     return ok(page(items, len(items)))
 
 
+@router.get("/{topic_id}/trees")
+async def list_room_trees(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """This room's batches — newest first, each with the PR it rides on.
+
+    一棵树 = 一个分支 = 一个 PR = 一批活. A room seals one and opens the next, so
+    "is what I write right now going into the batch that is currently under CI,
+    or into the next one" has an answer — and until this endpoint existed, no
+    caller outside the backend could get it. A room whose batch is sealed reads
+    on screen exactly like one that is not, which is how somebody keeps working
+    and wonders why their changes are not on the PR.
+
+    `last_check_*` is the agent's own quick check on this tree's content. It
+    gates nothing (#296 settled that the PR's real CI decides) — it is here so a
+    red check is visible to whoever is about to accept.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    trees = await WorkTreeService(db).history(topic_id)
+    cards = await AcceptCardRepository(db).latest_by_tree([t.id for t in trees])
+    items = []
+    for tree in reversed(trees):
+        card = cards.get(tree.id)
+        items.append(
+            {
+                "id": str(tree.id),
+                "status": str(tree.status),
+                "created_at": tree.created_at,
+                "sealed_at": tree.sealed_at,
+                "merged_at": tree.merged_at,
+                "last_check_at": tree.last_check_at,
+                "last_check_ok": tree.last_check_ok,
+                "last_check_detail": tree.last_check_detail,
+                "card": None
+                if card is None
+                else {
+                    "id": str(card.id),
+                    "status": str(card.status),
+                    "pr_number": card.pr_number,
+                    "pr_url": card.pr_url,
+                },
+            }
+        )
+    return ok(page(items, len(items)))
+
+
 @router.get("/{topic_id}/transcript")
 async def topic_transcript(
     topic_id: uuid.UUID,

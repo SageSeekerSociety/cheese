@@ -162,6 +162,22 @@ export interface RoomTask {
   card?: ThreadCard | null
 }
 
+/** 一批活 —— 一棵树 = 一个分支 = 一个 PR。房间封口一批、开下一批，所以一个房间
+ *  同时可以有好几棵，但只有一棵是 `open` 的。 */
+export interface RoomTree {
+  id: string
+  status: 'open' | 'sealed' | 'merged'
+  created_at: string
+  sealed_at?: string | null
+  merged_at?: string | null
+  // 快检最后一次说了什么，关于这棵树现在的内容。它谁也不拦（#296 定了由 PR 上
+  // 真的 CI 决定），在这里只是为了让红的那次被将要验收的人看见。
+  last_check_at?: string | null
+  last_check_ok?: boolean | null
+  last_check_detail?: string
+  card?: ThreadCard | null
+}
+
 /** 一条支线绑着的验收卡，窄到只剩一行侧栏放得下的东西：活到哪一步、骑在哪个 PR 上。 */
 export interface ThreadCard {
   id: string

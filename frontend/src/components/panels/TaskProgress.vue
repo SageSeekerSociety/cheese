@@ -11,11 +11,11 @@
 // 「已交付 / 已关闭未交付」分两段列，因为它们不是同一件事：一条已交付的活是这个
 // 房间的产出，一条关掉却什么都没交付的活是被放弃的——混在一起看不出这个房间到底
 // 交出去了多少。
-import type { Block, RoomTask, Topic } from '../../cx_types'
+import type { Block, RoomTask, RoomTree, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { listRoomTasks } from '../../api'
+import { listRoomTasks, listRoomTrees } from '../../api'
 import { roomIdOf } from '../../lib/place'
 import { relTime } from '../../lib/relTime'
 import { ringRank, taskRing } from '../../lib/taskRing'
@@ -40,6 +40,7 @@ const emit = defineEmits<{
 type ThreadRow = RoomTask & { blocks?: Block[] }
 
 const rows = ref<ThreadRow[]>([])
+const trees = ref<RoomTree[]>([])
 const loading = ref(false)
 const errorMsg = ref<string | null>(null)
 // 默认展开：你打开一个房间的第一个问题就是「现在有什么在动」，折起来等于不答。
@@ -68,6 +69,14 @@ async function load() {
     errorMsg.value = '任务列表加载失败'
   } finally {
     if (props.topic && roomIdOf(props.topic) === roomId) loading.value = false
+  }
+  // 这一批封没封口，是另一个问题，也是另一条请求 —— 它失败了不该把整份清单变成
+  // 一句「加载失败」，所以拿不到就当没有提示，清单照常。
+  try {
+    const batches = await listRoomTrees(roomId)
+    if (props.topic && roomIdOf(props.topic) === roomId) trees.value = batches.data
+  } catch {
+    trees.value = []
   }
 }
 
@@ -112,6 +121,28 @@ const abandoned = computed(() => sortRows(rows.value.filter((r) => !r.accepted_a
 
 const runningCount = computed(() => rows.value.filter((r) => taskRing(r).state === 'running').length)
 const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state === 'queued').length)
+
+// ---- 封口期 ----
+// 一棵树 = 一个分支 = 一个 PR = 一批活。递卡的那一刻这一批封口，房间开下一棵接着
+// 干 —— 这正是房间不再被一个在飞的 PR 冻住的原因。但代价是「我现在写的东西进的
+// 是哪一批」变成了一个真问题，而封了口的房间和没封口的在屏幕上长得一模一样：
+// 「我改了半天，改动怎么不在 PR 上」就是这么来的。
+const sealed = computed(() => trees.value.filter((t) => t.status === 'sealed'))
+/** 最新那一棵。房间现在写的东西进的就是它。 */
+const current = computed<RoomTree | null>(() => trees.value[0] ?? null)
+// 只在真的有一批在飞的时候说话。房间只有一棵开着的树时，「进这一批」是废话。
+const sealNotice = computed(() => {
+  if (!sealed.value.length) return null
+  const n = sealed.value.length
+  const riding = sealed.value.map((t) => t.card?.pr_number).filter((x): x is number => !!x)
+  return {
+    count: n,
+    prs: riding,
+    // 最新那一棵还开着 = 现在写的进的是下一批；最新那一棵就是封了口的那棵 =
+    // 这个房间此刻整个在封口期，写什么都得等它。
+    nextIsOpen: current.value?.status === 'open',
+  }
+})
 </script>
 
 <template>
@@ -126,6 +157,24 @@ const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state ==
         </template>
       </span>
     </button>
+
+    <!-- 封口期提示。在清单外面而不是里面：它说的是「你现在写的东西去哪儿」，
+         对这个房间的每一条活都成立，而且折起来也该看得见。 -->
+    <div v-if="sealNotice" class="seal-notice t-meta" data-testid="seal-notice">
+      <v-icon size="14">mdi-lock-outline</v-icon>
+      <span>
+        <template v-if="sealNotice.nextIsOpen">
+          有 {{ sealNotice.count }} 批已封口在跑 CI<template v-if="sealNotice.prs.length"
+            >（{{ sealNotice.prs.map((n) => `#${n}`).join('、') }}）</template
+          >；现在写的进下一批。
+        </template>
+        <template v-else>
+          这一批已封口<template v-if="sealNotice.prs.length"
+            >（{{ sealNotice.prs.map((n) => `#${n}`).join('、') }}）</template
+          >，内容就是 CI 正在检查的东西 —— 现在别再往里写。
+        </template>
+      </span>
+    </div>
 
     <div v-if="open" class="task-progress__body">
       <div v-if="loading && !rows.length" class="d-flex justify-center py-4">
@@ -232,6 +281,13 @@ const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state ==
 .task-progress__body {
   max-height: 40vh;
   overflow-y: auto;
+}
+.seal-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 12px 8px;
+  color: var(--muted);
 }
 .task-progress__group {
   padding: 8px 12px 2px;

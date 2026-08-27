@@ -197,3 +197,116 @@ def test_a_red_quick_check_does_not_stop_anything(client):
     client.portal.call(_run)
 
     assert seen["dispatched_onto"] == seen["tree"]
+
+
+# --- 封口期提示：房间要说得出「你现在写的东西进的是哪一批」 --------------------
+#
+# 封口的房间和没封口的房间在屏幕上长得一模一样，是「我改了半天，改动怎么不在 PR
+# 上」的来源。这一格资料出不来，界面就无从说起。
+
+
+def _trees(client, room_id) -> list[dict]:
+    r = client.get(f"/topics/{room_id}/trees")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["data"]
+
+
+def test_a_room_says_which_of_its_batches_is_sealed(client):
+    project_id, room_id = _room(client)
+
+    rows = _trees(client, room_id)
+    assert [r["status"] for r in rows] == ["open"]
+    assert rows[0]["sealed_at"] is None
+
+    async def _seal() -> None:
+        async with client.test_factory() as s:
+            trees = WorkTreeService(s)
+            await trees.seal(
+                await trees.ensure_open(project_id=project_id, room_id=room_id)
+            )
+            await s.commit()
+
+    client.portal.call(_seal)
+
+    rows = _trees(client, room_id)
+    assert rows[0]["status"] == "sealed"
+    assert rows[0]["sealed_at"] is not None
+
+
+def test_the_newest_batch_comes_first_so_the_room_can_say_where_new_work_goes(client):
+    """封口一批、开下一批之后，「现在写的进哪一批」问的是最新那一棵。"""
+    project_id, room_id = _room(client)
+    sealed_id: dict = {}
+
+    async def _seal_then_open_next() -> None:
+        async with client.test_factory() as s:
+            trees = WorkTreeService(s)
+            first = await trees.ensure_open(project_id=project_id, room_id=room_id)
+            sealed_id["first"] = str(first.id)
+            await trees.seal(first)
+            # 房间照常接活 —— 接到新的一棵上。
+            await trees.ensure_open(project_id=project_id, room_id=room_id)
+            await s.commit()
+
+    client.portal.call(_seal_then_open_next)
+
+    rows = _trees(client, room_id)
+    assert len(rows) == 2
+    assert rows[0]["status"] == "open", "最新的一棵排在最前面"
+    assert rows[1]["status"] == "sealed"
+    assert rows[1]["id"] == sealed_id["first"]
+
+
+def test_a_sealed_batch_carries_the_pr_it_is_riding(client):
+    """封口的那一批在跑哪个 PR —— 卡挂在树上，不挂在写它的哪条活上。"""
+    from app.domain.review.models import AcceptCard, AcceptStatus
+
+    project_id, room_id = _room(client)
+
+    async def _seal_and_file() -> None:
+        async with client.test_factory() as s:
+            trees = WorkTreeService(s)
+            tree = await trees.ensure_open(project_id=project_id, room_id=room_id)
+            await trees.seal(tree)
+            s.add(
+                AcceptCard(
+                    topic_id=room_id,
+                    tree_id=tree.id,
+                    reviewer_handle="alice",
+                    routing_reason="最懂",
+                    status=AcceptStatus.pr_open,
+                    pr_number=615,
+                    pr_url="https://github.com/acme/widgets/pull/615",
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_seal_and_file)
+
+    rows = _trees(client, room_id)
+    assert rows[0]["card"]["pr_number"] == 615
+    assert rows[0]["card"]["status"] == "pr_open"
+
+
+def test_the_quick_check_result_rides_the_tree_it_checked(client):
+    """快检说了什么，是关于这棵树现在的内容的 —— 它谁也不拦，但要看得见。"""
+    project_id, room_id = _room(client)
+
+    async def _check() -> None:
+        async with client.test_factory() as s:
+            trees = WorkTreeService(s)
+            tree = await trees.ensure_open(project_id=project_id, room_id=room_id)
+            await trees.record_check(tree, ok=False, detail="3 failed")
+            await s.commit()
+
+    client.portal.call(_check)
+
+    rows = _trees(client, room_id)
+    assert rows[0]["last_check_ok"] is False
+    assert rows[0]["last_check_at"] is not None
+    assert "3 failed" in rows[0]["last_check_detail"]
+
+
+def test_asking_an_unknown_room_for_its_batches_is_a_404(client):
+    r = client.get(f"/topics/{uuid.uuid4()}/trees")
+    assert r.status_code == 404
