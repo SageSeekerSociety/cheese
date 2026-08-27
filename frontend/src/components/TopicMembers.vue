@@ -166,7 +166,7 @@ async function onSetRole(handle: string, role: string) {
             <span class="roster__name">{{ m.name || m.member_handle }}</span>
             <span class="roster__handle">@{{ m.member_handle }}</span>
           </span>
-          <span v-if="m.agent" class="roster__badge">Agent</span>
+          <span v-if="m.agent" class="roster__badge">AI 队友</span>
 
           <!-- 芝士那一行：换一个 AI 队友。和换人的角色同一个位置、同一个样子。 -->
           <TopicAgentPicker v-if="m.agent && canManage" :topic-id="topicId" :project-id="projectId" />

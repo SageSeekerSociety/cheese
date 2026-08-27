@@ -21,10 +21,20 @@ import 'vuetify/styles'
 
 import { createVuetify } from 'vuetify'
 import { aliases, mdi } from 'vuetify/iconsets/mdi'
+import { zhHans } from 'vuetify/locale'
 
 import { resolveInitialTheme } from '@/theme'
 
 export default createVuetify({
+  // Vuetify 自带一批它自己的文案 —— 数据表的「No data available」、分页的
+  // 「Items per page:」、文件选择器的按钮、一堆 aria-label。不声明语言的话它们
+  // 全是英文，混在中文界面里，而且这些字符串一个都不在本仓库里，搜不到、改不动。
+  // 声明一次，整套组件库跟着说中文。
+  locale: {
+    locale: 'zhHans',
+    fallback: 'zhHans',
+    messages: { zhHans },
+  },
   theme: {
     // Which theme to boot with is resolved from the persisted preference (or
     // the OS, when the user has never chosen) — the SAME logic the inline boot
