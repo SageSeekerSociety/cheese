@@ -2438,7 +2438,9 @@ SNAPSHOT_BEFORE_TWO_PHASE = "chore: snapshot workspace before two-phase accept"
 SNAPSHOT_FOR_PUSH_FIX = "chore: snapshot workspace for push-fix"
 
 
-def _put_the_branch_under_the_working_copy(*, main: Path, wt: Path, branch: str) -> None:
+def _put_the_branch_under_the_working_copy(
+    *, main: Path, wt: Path, branch: str
+) -> None:
     """Make whatever the branch grew elsewhere an ancestor of the working copy,
     so the bookmark move that follows can only go forwards.
 
