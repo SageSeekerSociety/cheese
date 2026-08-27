@@ -1,11 +1,11 @@
 <script setup lang="ts">
-// Task Progress —— 房间总览最上面那一段：这个房间下面有哪些活，各自处在哪一格。
+// 派出去的活 —— 房间总览最上面那一段：这个房间下面有哪些活，各自处在哪一格。
 //
 // 它取代了原来那个独立的「任务」tab。合并的理由不是省一个 tab：文档和这份清单
 // 回答的是同一个问题的两半——「这个房间在干什么」——而分成两格意味着看完一半得
 // 先想起来还有另一半。现在文档接在它下面，一屏就是全部。
 //
-// 每行一条活：状态圆环 +「Task N: 做什么」+ 小字写 subagent 和负责人。圆环显示
+// 每行一条活：状态圆环 +「第 N 件：做什么」+ 小字写 subagent 和负责人。圆环显示
 // 状态不显示百分比（`lib/taskRing.ts` 说明了为什么没有百分比可显示）。
 //
 // 「已交付 / 已关闭未交付」分两段列，因为它们不是同一件事：一条已交付的活是这个
@@ -95,9 +95,9 @@ function lastActivity(row: ThreadRow): string | null {
   return row.blocks?.[row.blocks.length - 1]?.created_at ?? row.updated_at ?? row.created_at ?? null
 }
 
-/** 「Task N」的 N —— 按这个房间派活的先后，和界面上怎么排序无关。
+/** 「第 N 件」的 N —— 按这个房间派活的先后，和界面上怎么排序无关。
  *
- *  编号必须稳定：它是人在对话里指代一条活的方式（「Task 3 卡住了」），跟着排序
+ *  编号必须稳定：它是人在对话里指代一条活的方式（「第 3 件卡住了」），跟着排序
  *  变的编号说的是别的活。 */
 const numberOf = computed(() => {
   const byBirth = [...rows.value].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
@@ -143,13 +143,64 @@ const sealNotice = computed(() => {
     nextIsOpen: current.value?.status === 'open',
   }
 })
+
+// ---- 批次清单 ----
+// 上面那行提示只说「现在写的进哪一批」；它答不了「我那条活最后从哪个 PR 出去」。
+// 一个房间干久了会有好几批、好几个 PR，而在这份清单之前 PR 号只在当前那张验收卡
+// 上出现过一次 —— 于是多个 PR 一并存就分不清哪个是哪个。这一段按批次列出来：
+// 每批什么状态、骑在哪个 PR 上、里面有几件活。
+const BATCH_STATE_LABEL: Record<RoomTree['status'], string> = {
+  open: '在收活',
+  sealed: '已封口 · CI 在跑',
+  merged: '已合并',
+}
+
+/** 批次编号 —— 和活的编号同一个道理：按开出来的先后，老的是 1，不跟着排序变。 */
+const batchNumberOf = computed(() => {
+  const byBirth = [...trees.value].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))
+  return new Map(byBirth.map((t, i) => [t.id, i + 1]))
+})
+
+/** 一批最后一次动的时间：合了看合的时候，封了看封的时候，还开着就是它开出来的时候。 */
+function batchTime(t: RoomTree): string | null {
+  if (t.status === 'merged') return t.merged_at ?? t.sealed_at ?? t.created_at
+  if (t.status === 'sealed') return t.sealed_at ?? t.created_at
+  return t.created_at
+}
+
+const batches = computed(() =>
+  trees.value.map((t) => ({
+    id: t.id,
+    n: batchNumberOf.value.get(t.id) ?? 0,
+    status: t.status,
+    stateLabel: BATCH_STATE_LABEL[t.status] ?? t.status,
+    prNumber: t.card?.pr_number ?? null,
+    prUrl: t.card?.pr_url ?? null,
+    // 这一批里有几件派出去的活。活自己带着它干在哪棵树上，所以不用再问一次后端。
+    taskCount: rows.value.filter((r) => r.tree_id === t.id).length,
+    // 快检谁也不拦，但红了得让将要验收的人看见。
+    checkFailed: t.last_check_ok === false,
+    // 最新那一棵还开着 = 现在写的东西进的就是它。
+    isCurrent: t.id === current.value?.id && t.status === 'open',
+    at: batchTime(t),
+  }))
+)
+
+// 只有一批、而且它还没开出 PR 的时候，「哪一批」根本不是个问题，这一段是纯噪声。
+const showBatches = computed(() => batches.value.length > 1 || batches.value.some((b) => b.prNumber))
+
+// 老批次折起来，但**说出折了几批** —— 悄悄截断会让人以为这就是全部。
+const BATCH_HEAD = 5
+const allBatches = ref(false)
+const shownBatches = computed(() => (allBatches.value ? batches.value : batches.value.slice(0, BATCH_HEAD)))
+const hiddenBatches = computed(() => batches.value.length - shownBatches.value.length)
 </script>
 
 <template>
   <section class="task-progress">
     <button type="button" class="task-progress__head" :aria-expanded="open" @click="open = !open">
       <v-icon size="16">{{ open ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
-      <span class="task-progress__title t-body">Task Progress</span>
+      <span class="task-progress__title t-body">派出去的活</span>
       <span class="task-progress__tally t-meta">
         <template v-if="rows.length">
           {{ rows.length }} 件<template v-if="runningCount">，{{ runningCount }} 件在跑</template>
@@ -177,6 +228,46 @@ const sealNotice = computed(() => {
     </div>
 
     <div v-if="open" class="task-progress__body">
+      <!-- 批次。在活的清单之上，因为它是那份清单的坐标系：一条活最后从哪个 PR
+           出去，取决于它在哪一批。房间自己写的东西也在批次里，所以一批可以一件
+           派出去的活都没有 —— 那时候不写件数，别编。 -->
+      <template v-if="showBatches">
+        <div class="task-progress__group t-meta">批次 · 一批活出一个 PR（{{ batches.length }}）</div>
+        <ul class="task-progress__list" data-testid="batch-list">
+          <li v-for="b in shownBatches" :key="b.id">
+            <div class="batch-row" :data-testid="`batch-${b.id}`">
+              <span class="ring" :class="`ring--batch-${b.status}`" :title="b.stateLabel" aria-hidden="true" />
+              <span class="task-row__text">
+                <span class="task-row__line1 t-body">
+                  第 {{ b.n }} 批 · {{ b.stateLabel }}
+                  <a
+                    v-if="b.prNumber && b.prUrl"
+                    class="batch-row__pr"
+                    :href="b.prUrl"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >PR #{{ b.prNumber }}</a
+                  >
+                  <span v-else-if="b.prNumber" class="batch-row__pr">PR #{{ b.prNumber }}</span>
+                  <span v-else class="batch-row__pr c-faint">还没开 PR</span>
+                </span>
+                <span class="task-row__line2 t-meta">
+                  <span v-if="b.taskCount">{{ b.taskCount }} 件活</span>
+                  <span v-if="b.taskCount" class="task-row__sep">·</span>
+                  <span>{{ relTime(b.at) }}</span>
+                  <span v-if="b.checkFailed" class="batch-row__check">快检没过</span>
+                  <span v-if="b.isCurrent" class="task-row__here-tag">现在写的进这一批</span>
+                </span>
+              </span>
+            </div>
+          </li>
+        </ul>
+        <!-- 折起来的批次要说出有几批，不然看起来就是全部。 -->
+        <button v-if="hiddenBatches" type="button" class="batch-more t-meta" @click="allBatches = true">
+          还有 {{ hiddenBatches }} 批更早的
+        </button>
+      </template>
+
       <div v-if="loading && !rows.length" class="d-flex justify-center py-4">
         <v-progress-circular indeterminate color="primary" size="20" />
       </div>
@@ -199,7 +290,7 @@ const sealNotice = computed(() => {
               <!-- 圆环：一个纯色环，颜色就是状态。不画百分比——一件活没有分母。 -->
               <span class="ring" :class="taskRing(row).cls" :title="taskRing(row).label" aria-hidden="true" />
               <span class="task-row__text">
-                <span class="task-row__line1 t-body"> Task {{ numberOf.get(row.id) }}: {{ row.title }} </span>
+                <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
                 <span class="task-row__line2 t-meta">
                   <span class="task-row__state">{{ taskRing(row).label }}</span>
                   <span class="task-row__sep">·</span>
@@ -235,7 +326,7 @@ const sealNotice = computed(() => {
                 >
                   <span class="ring" :class="taskRing(row).cls" :title="taskRing(row).label" aria-hidden="true" />
                   <span class="task-row__text">
-                    <span class="task-row__line1 t-body"> Task {{ numberOf.get(row.id) }}: {{ row.title }} </span>
+                    <span class="task-row__line1 t-body"> 第 {{ numberOf.get(row.id) }} 件：{{ row.title }}</span>
                     <span class="task-row__line2 t-meta">
                       <span class="task-row__state">{{ taskRing(row).label }}</span>
                       <span class="task-row__sep">·</span>
@@ -348,6 +439,38 @@ const sealNotice = computed(() => {
   color: var(--faint);
 }
 
+/* 批次那几行。不是按钮：一批活没有「打开」这回事，能点的只有它的 PR。 */
+.batch-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+}
+.batch-row__pr {
+  color: var(--muted);
+}
+a.batch-row__pr:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+/* 快检红了不拦任何人（PR 上真的 CI 才拦），但要验收的人得看见。用 -ink 那一档：
+   `--danger` 本身是给点和边框的，当正文在浅色下对比度不够。 */
+.batch-row__check {
+  color: var(--danger-ink);
+}
+.batch-more {
+  display: block;
+  width: 100%;
+  padding: 0 12px 8px;
+  text-align: left;
+  color: var(--muted);
+  cursor: pointer;
+}
+.batch-more:hover {
+  color: var(--ink);
+}
+
 /* 圆环：状态就是颜色。在跑的那一格转，因为「在跑」是唯一一个此刻还在变的状态。 */
 .ring {
   flex: 0 0 auto;
@@ -379,6 +502,18 @@ const sealNotice = computed(() => {
 }
 .ring--idle {
   border-color: var(--faint);
+}
+/* 批次的点：还在收活的是空心的（东西还能往里放），封了口的是黄的（CI 在看它，
+   别再动），合了的是实心的（已经落地）。 */
+.ring--batch-open {
+  border-color: var(--ok);
+}
+.ring--batch-sealed {
+  border-color: var(--warn);
+}
+.ring--batch-merged {
+  border-color: var(--ok);
+  background: var(--ok);
 }
 @keyframes ring-spin {
   to {
