@@ -209,24 +209,25 @@ def test_archiving_revokes_a_pending_card(client):
     assert card["decided_by"] == "bob"
 
 
-def test_cascade_archive_also_closes_a_threads_card(client):
-    """归档是级联的（房间带走里面的活），卡的收敛必须跟着一起级联。
+def test_cascade_archive_closes_the_work_and_settles_the_card_delivering_it(client):
+    """归档是级联的（房间带走里面的活），而收卡必须和它同一趟。
 
-    卡挂在支线上而不是房间上，所以只关支线、不收卡的话，留下的是一张没人能
-    再动的孤儿卡——它所在的地方已经冻住了。
+    卡是房间的（一张卡交付整棵树 = 房间里那一批活），支线自己递不了。所以级联要
+    收的不是「每条支线各自那张」，而是**房间这一张**——它正要交付的恰恰是被这次
+    归档关掉的那些活。漏收就留下一张没人能再动的孤儿卡：它所在的地方已经冻住了。
     """
     pid = _make_project(client)
     room = _make_topic(client, pid, "房间")
     thread = client.post(f"/topics/{room}/split", json={"title": "一件活"}).json()[
         "data"
     ]["id"]
-    _make_card(client, thread)
-    assert _cards(client, thread)[0]["status"] == "pending"
+    _make_card(client, room)
+    assert _cards(client, room)[0]["status"] == "pending"
 
     _archive(client, room, by="bob")
 
     assert _topic(client, thread)["status"] == "closed"
-    assert _cards(client, thread)[0]["status"] == "revoked"
+    assert _cards(client, room)[0]["status"] == "revoked"
 
 
 def test_archiving_does_not_touch_already_settled_cards(client):
