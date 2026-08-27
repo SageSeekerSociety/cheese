@@ -42,6 +42,11 @@ import urllib.request
 API = os.environ.get("CHEESE_API", "http://host.docker.internal:8099").rstrip("/")
 PROJECT = os.environ.get("CHEESE_PROJECT", "")
 TOPIC = os.environ.get("CHEESE_TOPIC", "")
+# The ROOM this turn happens in. A room's own turn has it equal to TOPIC; a
+# thread's is the room it lives in, so `ROOM != TOPIC` is exactly "this is a
+# thread". Not every runtime puts it in the environment, so an empty value means
+# "not known here", never "this is a room" — the backend is the actual rule.
+ROOM = os.environ.get("CHEESE_ROOM", "")
 AUTHOR = os.environ.get("CHEESE_AUTHOR", "cheese")
 TOKEN = os.environ.get("CHEESE_TOKEN", "")
 # The agent turn this CLI call belongs to — sent back so the blocks it creates
@@ -912,6 +917,10 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "成果做完了,把验收卡递给某个具体的人(不是广播)。\n"
             "\n"
+            "**只有房间递得了卡,支线递不了。** 一棵树=一个分支=一个 PR=一批活,而这批活是\n"
+            "整个房间的:递卡会把分支封口开 PR,你的兄弟支线还在往同一条分支上写。所以支线\n"
+            "做完是 `cheese conclude` 把结论交回房间,由房间统一递卡。\n"
+            "\n"
             "配了质量闸门的项目,递卡后平台会自动跑一遍检查,红了卡片会被打回、"
             "根本到不了验收人手上。**递卡前先自己把检查跑绿**,省一个来回。\n"
             "闸门跑在另一个容器里,只和你共享 /work,$HOME 不一样——所以「我这儿是绿的」"
@@ -1290,6 +1299,19 @@ def main() -> None:
         print(f"已发送通知给 {a.to or '所有人'}。")
     elif a.cmd == "accept-request":
         topic = _need("CHEESE_TOPIC", TOPIC)
+        # 递卡是房间的事。The backend refuses this too — this is here so a thread
+        # that tries gets told in its own sandbox, with the command it should
+        # have run, instead of a round trip and an HTTP status to decode.
+        if ROOM and ROOM != topic:
+            print(
+                "[cheese] 递卡是房间的事，一条支线递不了。\n"
+                "一棵树=一个分支=一个 PR=一批活，而这批活是整个房间的：递卡会把分支"
+                "封口开 PR，而你的兄弟支线还在往同一条分支上写。\n"
+                "你要做的是把结论交回房间，由房间统一递卡：\n"
+                '  cheese conclude "<做了什么、故意没做什么、哪些结论没核实>"',
+                file=sys.stderr,
+            )
+            sys.exit(2)
         _call("POST", f"/topics/{topic}/accept-card",
               {"reviewer_handle": a.reviewer, "routing_reason": a.reason,
                "change_subject": a.subject, "change_body": a.body})
