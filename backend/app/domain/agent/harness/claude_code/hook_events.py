@@ -177,6 +177,23 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
             )
         return None
 
+    if event == "CheeseWorkspace":
+        # The launcher had to repair, replace, or give up on the machine's
+        # checkout before the turn could start. Always surfaced: this is the one
+        # moment where the workspace an agent is about to trust is not the
+        # workspace it left, and a repair that says nothing is how a turn spends
+        # itself rewriting work that was still sitting there.
+        detail = str(hook.get("detail") or "").strip()
+        if not detail:
+            return None
+        return AgentMessage(
+            text=(
+                f"⚠️ 开工前这台机器的工作区不对劲，平台动了它：{detail}。"
+                "上一轮没推出去的东西可能不在了，先确认一遍再往下写；"
+                "被换掉的旧仓库放在 .git.broken.* 里，没有删。"
+            )
+        )
+
     if event == "CheeseDeliveryFailed":
         # Synthetic (device_hub, from the cheeselet's server call): the prompt
         # driver abandoned delivery. Surfaced as a typed event the provider

@@ -44,6 +44,8 @@ def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess
 
 
 def _repo_with_one_edit(work: Path, remote: str) -> None:
+    """A workspace one commit deep with an uncommitted edit on top — the shape
+    every turn ends in, and the one whose push has to be reported."""
     for args in (
         ["init", "-q"],
         ["config", "user.email", "c@z"],
@@ -51,6 +53,9 @@ def _repo_with_one_edit(work: Path, remote: str) -> None:
         ["remote", "add", "origin", remote],
     ):
         subprocess.run(["git", *args], cwd=work, capture_output=True)
+    (work / "committed.txt").write_text("already the agent's own commit\n")
+    subprocess.run(["git", "add", "-A"], cwd=work, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=work, capture_output=True)
     (work / "agent_wrote_this.txt").write_text("the user's only copy\n")
 
 
