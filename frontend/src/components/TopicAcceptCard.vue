@@ -1,14 +1,19 @@
 <script setup lang="ts">
 // 成果待采纳框 (eval C5/A3): the box at the end of the conversation timeline,
-// GitHub's merge box in shape. It has five mutually exclusive faces — 闸门运行中
-// / 闸门未通过 / 闸门未能执行 / 待采纳 / 交付中 / 已采纳 — and each of them says a
-// different thing about who is waiting on whom.
+// GitHub's merge box in shape. It has five mutually exclusive faces — 闸门未通过
+// / 闸门未能执行 / 待采纳 / 交付中 / 已采纳 — and each of them says a different
+// thing about who is waiting on whom.
 //
-// It owns its own data (the card list, the gate poll, the PR-checks poll) rather
-// than taking them as props: everything here is about this one topic's cards and
-// nothing outside needs to read them. TopicView only ever says 「重新拉一次」
-// (`reload`), which it does when 芝士 files a card or a `cheese` command changes
-// one mid-turn.
+// The first two are read-only history. 采纳即合并 (#296, stage 1) retired the
+// machine gate, so nothing files a card into a gate state any more; rows written
+// before that still carry it and still have to render (see
+// backend/app/domain/review/gate.py).
+//
+// It owns its own data (the card list, the PR-checks poll) rather than taking
+// them as props: everything here is about this one topic's cards and nothing
+// outside needs to read them. TopicView only ever says 「重新拉一次」 (`reload`),
+// which it does when 芝士 files a card or a `cheese` command changes one
+// mid-turn.
 import type { AcceptCard, PrChecks } from '@/cx_types'
 import type { CardPhase } from '@/lib/topicState'
 
@@ -76,12 +81,12 @@ const deliveryNote = computed(() => {
   return tone ? { text: card.note, tone } : null
 })
 
-// 机器闸门 (eval C2): the newest card while the platform check runs / after it
-// failed. Only the newest card can be in a gate state (one in-flight card per
-// topic is enforced server-side).
+// 机器闸门 (eval C2, 已退役): a card left in a gate state by the mechanism that
+// used to run the project's check before the card reached its reviewer. Only the
+// newest card can carry one (one live card per topic is enforced server-side).
 const gateCard = computed<AcceptCard | null>(() => {
   const c = acceptCards.value[0]
-  return c && (c.status === 'pending_gate' || c.status === 'gate_failed' || c.status === 'gate_blocked') ? c : null
+  return c && (c.status === 'gate_failed' || c.status === 'gate_blocked') ? c : null
 })
 const showGateOutput = ref(false)
 
@@ -98,7 +103,7 @@ const hasBox = computed(
 )
 
 async function loadAcceptCard(silent = false) {
-  // silent = a background refresh (gate polling / after a vote): keep the
+  // silent = a background refresh (the PR-checks poll / after a vote): keep the
   // current cards on screen instead of blanking the box for a beat.
   if (!silent) {
     acceptCards.value = []
@@ -119,23 +124,6 @@ async function loadAcceptCard(silent = false) {
     // Best-effort; the banner just stays hidden.
   }
 }
-
-// While the check runs (it can take minutes), poll the card until it settles.
-let gatePollTimer: number | null = null
-watch(
-  () => gateCard.value?.status === 'pending_gate',
-  (running) => {
-    if (running && gatePollTimer === null) {
-      gatePollTimer = window.setInterval(() => loadAcceptCard(true), 2500)
-    } else if (!running && gatePollTimer !== null) {
-      window.clearInterval(gatePollTimer)
-      gatePollTimer = null
-    }
-  }
-)
-onUnmounted(() => {
-  if (gatePollTimer !== null) window.clearInterval(gatePollTimer)
-})
 
 // 采纳 PR 化 (#188 §5.1): live CI state of the card's PR. Polled slowly while such
 // a card is on screen — checks take minutes, not seconds. Both the pending card
@@ -298,24 +286,8 @@ defineExpose({ reload: loadAcceptCard })
 
 <template>
   <template v-if="hasBox">
-    <!-- 机器闸门 (eval C2): the platform is running the project's 质量检查 in this
-         topic's workspace — the card reaches the reviewer only when it's green. -->
-    <v-card v-if="gateCard && gateCard.status === 'pending_gate'" variant="outlined" class="merge-box mt-2">
-      <div class="pa-3">
-        <div class="d-flex align-center ga-2 mb-1">
-          <v-progress-circular indeterminate size="18" width="2" />
-          <span class="t-title">平台检查进行中…</span>
-        </div>
-        <div class="text-caption text-medium-emphasis">
-          正在这个话题的工作区里运行项目配置的质量检查，通过后验收卡才会送给
-          <strong>@{{ gateCard.reviewer_handle }}</strong
-          >。
-        </div>
-      </div>
-    </v-card>
-
     <!-- 闸门未过：卡片作废，芝士已被通知去修，修完会重新递卡。 -->
-    <v-card v-else-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box mt-2">
+    <v-card v-if="gateCard && gateCard.status === 'gate_failed'" variant="outlined" class="merge-box mt-2">
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
           <v-icon color="error" size="19">mdi-close-octagon-outline</v-icon>
@@ -424,14 +396,18 @@ defineExpose({ reload: loadAcceptCard })
           <code class="text-caption">{{ pendingCard.change_subject }}</code>
         </div>
         <!--
-          机器闸门 (eval C2) + 人类授权动作前移 (2026-08-10): 闸门跑的是
-          check.sh --no-tests——lint 和类型，没有测试。真 CI 只在 PR 上跑，
-          而 PR 是你点下去之后才开的。所以这一格绝不能是绿勾：那等于让卡面
-          替一段还没被任何测试碰过的代码背书。它说的是"即将开始跑"。
+          机器闸门 (eval C2, 已退役) 的历史读数。`gate_passed_at` 只由
+          `AcceptService.finish_gate` 写，而 采纳即合并 (#296, stage 1) 之后再没有
+          任何东西调用它——所以今天递的卡这一格永远是空的，它出现就意味着这张卡是
+          退役之前递的。留着，是因为那次检查当年真的跑过：抹掉等于把「这张卡当年
+          过了平台检查」这个事实从界面上删掉。
+          绝不画成绿勾：当年跑的是项目自己配的 check_command，不是完整 CI，让一个
+          绿勾替它背书正是这一格要避免的事。今天的检查是 PR 上的 GitHub Actions，
+          平台不会先替你跑一遍。
         -->
         <div v-if="pendingCard.gate_passed_at" class="d-flex align-center ga-1 text-caption text-medium-emphasis mb-2">
           <v-icon size="15">mdi-timer-sand</v-icon>
-          平台检查已通过：只检查了代码规范和类型，未运行测试。完整检查在你授权后开始
+          平台检查已通过：只检查了代码规范和类型，未运行测试
         </div>
         <!-- 采纳 PR 化 (#188 §5.1): the real PR + its CI, live. -->
         <div v-if="pendingCard.pr_url" class="mb-2">
