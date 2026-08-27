@@ -9,4 +9,6 @@
 
 def test_ci_hold_until_every_task_lands() -> None:
     """故意失败：它红着，就说明这个 PR 还没做完。"""
-    raise AssertionError("占位闸门：全部任务完成后删除 backend/tests/unit/test_ci_hold.py")
+    raise AssertionError(
+        "占位闸门：全部任务完成后删除 backend/tests/unit/test_ci_hold.py"
+    )

@@ -66,9 +66,7 @@ def upgrade() -> None:
     # Counting a room's resident tasks is done on every dispatch and on every
     # turn boundary; it must not become a scan as a long-lived room accumulates
     # hundreds of finished threads.
-    op.create_index(
-        "ix_tasks_room_id_residency", "tasks", ["room_id", "residency"]
-    )
+    op.create_index("ix_tasks_room_id_residency", "tasks", ["room_id", "residency"])
     # The queue is read newest-slot-first: which task starts when one frees up.
     op.create_index(
         "ix_tasks_room_id_queued_at",

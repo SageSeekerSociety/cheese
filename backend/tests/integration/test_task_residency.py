@@ -200,9 +200,7 @@ def test_a_full_room_can_say_who_is_holding_it(client):
     client.portal.call(_run)
 
     assert seen["titles"] == sorted(titles)
-    assert seen["all_have_a_time"], (
-        "每条都要带最后活动时间——否则人不知道该去动哪一条"
-    )
+    assert seen["all_have_a_time"], "每条都要带最后活动时间——否则人不知道该去动哪一条"
 
 
 def test_a_turn_that_died_with_its_backend_stops_holding_the_slot(client, monkeypatch):

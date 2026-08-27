@@ -166,8 +166,8 @@ class ConclusionCardService:
     async def accept(self, card: ConclusionCard, *, by: str) -> ConclusionCard:
         """采信 —— the default. Settles the card and archives the sub-topic.
 
-收起是这里唯一可能欠下的动作：那条支线还挂着一张等人的验收卡时，采信照做、
-        回流照做，只把归档推迟到卡有结果之后（`_archive_subtopic`）。
+        收起是这里唯一可能欠下的动作：那条支线还挂着一张等人的验收卡时，采信照做、
+                回流照做，只把归档推迟到卡有结果之后（`_archive_subtopic`）。
         """
         self._require_open(card)
         await self._settle(

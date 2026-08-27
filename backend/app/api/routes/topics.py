@@ -1454,9 +1454,7 @@ async def record_check_result(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     trees = WorkTreeService(db)
-    tree = await trees.ensure_open(
-        project_id=place.project_id, room_id=place.room_id
-    )
+    tree = await trees.ensure_open(project_id=place.project_id, room_id=place.room_id)
     await trees.record_check(tree, ok=body.ok, detail=body.detail)
     await db.commit()
     return ok({"recorded": True, "tree_id": str(tree.id)})
@@ -1490,7 +1488,8 @@ async def claim_paths(
         # it just has no row of its own to hold the claim, so this reports the
         # conflicts without recording anything.
         refusals, warnings = await svc.check(
-            tree_id=place.tree_id or place.room_id, paths=svc.normalise(body.paths),
+            tree_id=place.tree_id or place.room_id,
+            paths=svc.normalise(body.paths),
             exclude_task_id=None,
         )
         return ok({"claimed": [], "refusals": refusals, "warnings": warnings})

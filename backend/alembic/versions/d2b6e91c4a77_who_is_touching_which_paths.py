@@ -74,7 +74,9 @@ def upgrade() -> None:
         # room rather than one per resource — an empty string rather than NULL
         # so the unique index below actually constrains it (NULL never equals
         # NULL, so a nullable column would let a room hold any number of them).
-        sa.Column("resource", sa.String(length=1024), nullable=False, server_default=""),
+        sa.Column(
+            "resource", sa.String(length=1024), nullable=False, server_default=""
+        ),
         # NULL = the room's own line holds it. The room writes to the same tree
         # as its threads and can overwrite their files exactly as they can
         # overwrite each other's, so it is not exempt.

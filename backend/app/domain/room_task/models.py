@@ -232,9 +232,7 @@ class RoomLock(UuidPk, Timestamps, Base):
 
     __tablename__ = "room_locks"
     __table_args__ = (
-        Index(
-            "uq_room_locks_resource", "room_id", "kind", "resource", unique=True
-        ),
+        Index("uq_room_locks_resource", "room_id", "kind", "resource", unique=True),
         Index("ix_room_locks_expires_at", "expires_at"),
     )
 
