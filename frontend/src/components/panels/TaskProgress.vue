@@ -363,11 +363,11 @@ const sealNotice = computed(() => {
   animation: ring-spin 1.1s linear infinite;
 }
 .ring--queued {
-  border-color: var(--warn, #d08700);
+  border-color: var(--warn);
   border-style: dotted;
 }
 .ring--reviewing {
-  border-color: var(--warn, #d08700);
+  border-color: var(--warn);
 }
 .ring--delivered {
   border-color: var(--ok);

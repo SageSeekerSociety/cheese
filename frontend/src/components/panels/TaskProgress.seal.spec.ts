@@ -18,7 +18,11 @@ const listRoomTrees = vi.fn()
 
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
-  return { ...actual, listRoomTasks: (...a: unknown[]) => listRoomTasks(...a), listRoomTrees: (...a: unknown[]) => listRoomTrees(...a) }
+  return {
+    ...actual,
+    listRoomTasks: (...a: unknown[]) => listRoomTasks(...a),
+    listRoomTrees: (...a: unknown[]) => listRoomTrees(...a),
+  }
 })
 
 import TaskProgress from './TaskProgress.vue'
