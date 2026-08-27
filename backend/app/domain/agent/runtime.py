@@ -616,6 +616,32 @@ class AgentWorkRunner:
                 channel, {"type": "user_block", "block": payload}
             )
         if not summon:
+            # 没 @ 不等于没说 (spec §7.1 所有消息 AI 都会收到). An unsummoned
+            # message is meant to be picked up by the pending window the next
+            # turn assembles — but a summon that arrives while work is live
+            # MERGES into that work instead of assembling anything, and only an
+            # assembled prompt reads the pending window. So for as long as the
+            # topic keeps working, the unsummoned message is never handed over:
+            # type the substance, bare-@ to summon, and 芝士 is handed the bare @
+            # alone, with the sentence it was answering nowhere in its session.
+            #
+            # So deliver it into the live turn, exactly the way a summoned
+            # mid-turn message goes. This starts no turn — the running one is
+            # already paid for, and that is what "no summon" is asking for. A
+            # topic with nothing live answers None here and falls through to the
+            # pending window, which is the right home for it.
+            #
+            # Awaited rather than spawned: two messages typed a second apart
+            # must reach the session in the order they were typed, and the only
+            # thing that orders them is this socket's own sequence.
+            if content or attachments:
+                await chat_service.merge_into_running_turn(
+                    topic_id,
+                    user_block_ids or [user_block_id],
+                    content,
+                    author,
+                    attachments,
+                )
             # Request completion, not turn completion: no turn was started.
             await self._broker.publish(channel, {"type": "done"})
             return turn_id
