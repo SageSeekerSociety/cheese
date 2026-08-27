@@ -680,7 +680,17 @@ class AcceptService:
         tree = await WorkTreeService(self._session).ensure_open(
             project_id=topic.project_id, room_id=topic.id
         )
-        existing = await self._repo.list_for_tree(tree.id)
+        # Plus this place's tree-less cards. A card filed before trees existed
+        # kept `tree_id IS NULL` wherever the backfill had no honest value to
+        # give it, so asking the tree alone makes a live `pr_open` from that era
+        # invisible — and a second card would open a second PR on the same
+        # branch while the poller kept advancing the first. That is exactly the
+        # failure the guard was widened for on 2026-08-10, arriving by a new
+        # route.
+        existing = [
+            *await self._repo.list_for_tree(tree.id),
+            *await self._repo.list_treeless_for_topic(topic_id),
+        ]
         blocking = next(
             (c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None
         )

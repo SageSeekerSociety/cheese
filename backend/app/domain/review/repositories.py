@@ -79,6 +79,23 @@ class AcceptCardRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
+    async def list_treeless_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
+        """This place's cards that belong to no tree, newest first.
+
+        Cards filed before trees existed carry `tree_id IS NULL`, and the
+        backfill (migration `e4c9a2f60b18`) deliberately left it that way for
+        every card whose tree was never created — there was no honest value to
+        invent. They are still real: a `pr_open` one from that era is driving a
+        live PR. Anything scoped to a tree has to ask for them separately or
+        pretend they are not there.
+        """
+        stmt = (
+            select(AcceptCard)
+            .where(AcceptCard.topic_id == topic_id, AcceptCard.tree_id.is_(None))
+            .order_by(AcceptCard.created_at.desc())
+        )
+        return list((await self._session.scalars(stmt)).all())
+
     async def list_for_topic(self, topic_id: uuid.UUID) -> list[AcceptCard]:
         """Cards filed from one PLACE — a room's own, or one thread's.
 

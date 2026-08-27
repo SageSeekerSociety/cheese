@@ -174,9 +174,7 @@ class WorkTreeService:
     async def history(self, room_id: uuid.UUID) -> list[WorkTree]:
         return await self._repo.list_for_room(room_id)
 
-    async def record_check(
-        self, tree: WorkTree, *, ok: bool, detail: str
-    ) -> WorkTree:
+    async def record_check(self, tree: WorkTree, *, ok: bool, detail: str) -> WorkTree:
         """Remember what the quick check said about this tree's content.
 
         It decides nothing — #296 settled that the PR's real CI is what does.
@@ -371,6 +369,23 @@ class ClaimService:
             for path in self.normalise(touched)
             if not any(self._overlaps(path, c) for c in claimed)
         ]
+
+    async def unclaimed_by_topic(
+        self, topic_id: uuid.UUID, touched: Iterable[str]
+    ) -> list[str]:
+        """:meth:`unclaimed`, asked by topic id instead of by Task.
+
+        Callers outside this domain hold a topic id and no Task. Without this
+        they reach for `TaskRepository` themselves, which is exactly the
+        cross-domain repository touch the import guard exists to stop.
+
+        A topic that is a room's own line, or work that claimed nothing, has no
+        expectation to have exceeded — both answer with an empty list.
+        """
+        task = await self._repo.get(topic_id)
+        if task is None or not task.claimed_paths:
+            return []
+        return await self.unclaimed(task, touched)
 
 
 class RoomLockService:

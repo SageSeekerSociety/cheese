@@ -258,9 +258,7 @@ def checkpoint_worktree(
     return "snapshotted"
 
 
-def _report_paths_outside_the_claim(
-    project_id: uuid.UUID, topic_id: uuid.UUID
-) -> None:
+def _report_paths_outside_the_claim(project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
     """Say when a turn touched ground this piece of work never claimed.
 
     A claim is an intention and a snapshot is a fact. If nothing ever compares
@@ -275,7 +273,6 @@ def _report_paths_outside_the_claim(
 
     async def _check() -> None:
         from app.core.db import async_session_factory
-        from app.domain.room_task.repositories import TaskRepository
         from app.domain.room_task.services import ClaimService
 
         try:
@@ -283,12 +280,12 @@ def _report_paths_outside_the_claim(
             if not touched:
                 return
             async with async_session_factory() as session:
-                task = await TaskRepository(session).get(topic_id)
-                if task is None or not task.claimed_paths:
-                    # A room's own line, or work that claimed nothing: there is
-                    # no expectation to have exceeded.
-                    return
-                surprises = await ClaimService(session).unclaimed(task, touched)
+                # By topic id, through the service: a room's own line and work
+                # that claimed nothing both come back empty, and this domain
+                # never has to hold room_task's repository to find that out.
+                surprises = await ClaimService(session).unclaimed_by_topic(
+                    topic_id, touched
+                )
             if surprises:
                 logger.info(
                     "task %s touched paths it never claimed: %s",
