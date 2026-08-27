@@ -147,6 +147,22 @@ jobs:
             timeout 8 bash -c "cat < /dev/null > /dev/tcp/$ip/7844" \
               && echo "$ip:7844 reachable" || echo "$ip:7844 UNREACHABLE"
           done
+          echo "===== TLS handshake to the edge, with SNI ====="
+          # The connector's own error is a TLS-layer EOF, so a TCP connect is
+          # not the test — it succeeds either way. What decides the diagnosis is
+          # whether a handshake CARRYING the SNI survives: a middlebox that
+          # resets on SNI kills this while leaving the TCP check green.
+          for ip in 198.41.192.167 198.41.200.113; do
+            echo "--- $ip ---"
+            echo | timeout 15 openssl s_client -connect $ip:7844 \
+              -servername h2.cftunnel.com 2>&1 \
+              | grep -E 'CONNECTED|BEGIN CERTIFICATE|Verify return code|handshake failure|no peer|errno' \
+              | head -5 || true
+          done
+          echo "===== is anything proxying this box's egress? ====="
+          env | grep -iE 'proxy' || echo "(no proxy env)"
+          systemctl show cloudflared -p Environment 2>&1 || true
+          ip route get 198.41.192.167 2>&1 || true
           echo "===== resolver + default route ====="
           grep -v '^#' /etc/resolv.conf 2>&1 || true
           ip route show default 2>&1 || true
