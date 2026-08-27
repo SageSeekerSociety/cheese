@@ -4,11 +4,12 @@
 过一次。要把「房间 → 它派出去的活 → 那件活的 PR」画出来，前端需要一次问全，而不是
 一个房间一个请求（这个项目有一百七十多个房间）再一条活一个请求去拿卡。
 
-所以这里钉两件事：**一次问全**，以及**卡是那条支线自己的**——一个房间里两条活各有
-各的卡，串了的话侧栏会把 A 的 PR 挂到 B 头上，而那正是没人会去核对的一种错。
-"""
+所以这里钉的是**一次问全**：两个房间各派一件活，一个请求把整棵树拿回来，每一行说得出
+自己挂在哪个房间。
 
-from tests.integration.conftest import session_auth_headers
+卡这一栏钉的是它**不许瞎猜**：递卡是房间的事（房间封树开 PR，一批活出一个 PR），支线
+递不了，所以支线那一行没有卡就是没有卡，不能把房间那张挂上去充数。
+"""
 
 
 def _project(client) -> str:
@@ -30,8 +31,8 @@ def _thread(client, room_id: str, title: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _file_card(client, place_id: str, subject: str) -> str:
-    r = client.post(
+def _post_card(client, place_id: str, subject: str):
+    return client.post(
         f"/topics/{place_id}/accept-card",
         json={
             "change_subject": subject,
@@ -39,6 +40,10 @@ def _file_card(client, place_id: str, subject: str) -> str:
             "routing_reason": "最懂",
         },
     )
+
+
+def _file_card(client, place_id: str, subject: str) -> str:
+    r = _post_card(client, place_id, subject)
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
 
@@ -63,16 +68,21 @@ def test_every_thread_in_the_project_comes_back_at_once(client):
     assert {r["room_id"] for r in rows} == {room_a, room_b}
 
 
-def test_a_thread_carries_the_card_it_rides_on(client):
-    """侧栏上「交付到哪一步了」读的就是这个字段。"""
+def test_a_thread_cannot_file_so_its_row_never_grows_a_card(client):
+    """支线递卡会被拒，所以它那一行永远是没有卡的。
+
+    递卡=封树开 PR，那是房间对**一批**活说的话。一条支线替兄弟们说了，PR 就带着
+    它们没做完的东西飞出去了。
+    """
     pid = _project(client)
     room = _room(client, pid, "运维")
     thread = _thread(client, room, "查一下分页接口")
-    _file_card(client, thread, "fix(api): return the last row of a page")
+
+    r = _post_card(client, thread, "fix(api): return the last row of a page")
+    assert r.status_code == 422, r.text
 
     (row,) = _tasks(client, pid)
-    assert row["card"] is not None
-    assert row["card"]["status"] == "pending"
+    assert row["card"] is None
 
 
 def test_a_thread_with_nothing_filed_says_so_rather_than_guessing(client):
@@ -85,22 +95,12 @@ def test_a_thread_with_nothing_filed_says_so_rather_than_guessing(client):
     assert row["card"] is None
 
 
-def test_one_threads_card_never_lands_on_another(client):
-    """同一个房间里两条活各有各的卡。串了的话侧栏会把 A 的 PR 挂到 B 头上——
-    屏幕上看着完全正常，没人会去核对。"""
-    pid = _project(client)
-    room = _room(client, pid, "运维")
-    filed = _thread(client, room, "已经递卡的")
-    _thread(client, room, "还没递卡的")
-    _file_card(client, filed, "fix(api): one")
-
-    by_title = {r["title"]: r for r in _tasks(client, pid)}
-    assert by_title["已经递卡的"]["card"] is not None
-    assert by_title["还没递卡的"]["card"] is None
-
-
 def test_the_rooms_own_card_is_not_a_threads(client):
-    """房间自己递的卡是**整条分支**的交付，不挂在任何一件活头上。"""
+    """房间递的卡交付的是**整棵树**（一条分支上所有兄弟的活），不挂在任何一件活头上。
+
+    挂上去的话，侧栏会拿房间那张卡去当某条支线的进度——那条活可能连一行都还没写完，
+    屏幕上却显示它在等验收。
+    """
     pid = _project(client)
     room = _room(client, pid, "运维")
     _thread(client, room, "一件活")
@@ -108,21 +108,3 @@ def test_the_rooms_own_card_is_not_a_threads(client):
 
     (row,) = _tasks(client, pid)
     assert row["card"] is None
-
-
-def test_the_newest_card_is_the_one_shown(client):
-    """一条活被打回之后会再递一次。侧栏要说的是它**现在**在哪一步。"""
-    pid = _project(client)
-    room = _room(client, pid, "运维")
-    thread = _thread(client, room, "改了两版的")
-    first = _file_card(client, thread, "fix(api): first try")
-    r = client.post(
-        f"/accept-cards/{first}/reject",
-        json={"decided_by": "alice", "reason": "再想想"},
-        headers=session_auth_headers("alice"),
-    )
-    assert r.status_code == 200, r.text
-    second = _file_card(client, thread, "fix(api): second try")
-
-    (row,) = _tasks(client, pid)
-    assert row["card"]["id"] == second

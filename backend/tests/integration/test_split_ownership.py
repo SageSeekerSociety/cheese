@@ -149,6 +149,11 @@ def _roster(client, topic_id: str) -> dict[str, str]:
 
 
 def _pr_body(client, pid: str, tid: str) -> str:
+    """房间递卡开出的 PR，正文长什么样。
+
+    卡从**房间**递，因为递卡=封树开 PR，交付的是这条分支上一整批活（`cheese split`
+    派出去的那些全在上面），支线自己递不了。
+    """
     from app.domain.review import pr_publish
 
     card = client.post(
@@ -159,7 +164,7 @@ def _pr_body(client, pid: str, tid: str) -> str:
             "change_subject": "fix(split): follow the driver, not the room",
         },
     )
-    assert card.status_code == 200
+    assert card.status_code == 200, card.text
     asyncio.run(
         pr_publish._run(
             client.test_factory,
@@ -212,46 +217,67 @@ def test_a_human_who_splits_it_themselves_still_wins(client, monkeypatch):
     assert r.json()["data"]["owner_handle"] == "carol"
 
 
-def test_the_original_requester_comes_back_as_a_coauthor(client, monkeypatch):
-    """验收 4: the PR is bob's — opened with his token, `Requested-by: bob` — and
-    alice, who asked for the thing, is credited on the commit that lands on main.
-    Squash-merging collapses the branch into one commit, so the trailer is the
-    only place she survives with an avatar and a link."""
+def test_the_agent_handle_never_reaches_the_pr_however_the_work_was_split(
+    client, monkeypatch
+):
+    """验收 4: 分身拆出去的活，交付时 PR 上署的必须是个真人。
+
+    递卡是房间的事，所以署的是房间归属的那个人。**这条活由谁推进，PR 上看不出来**
+    —— 一棵树 = 一个分支 = 一个 PR = 一批活，一个 PR 交付的是整批，没有"这个 PR 是
+    bob 那件活的"这回事。这是「只有房间能递卡」换来的代价，不是遗漏：
+    `identity.requester_handle` 的 `task_id` 分支（以及 `coauthor_handles` 的）从此
+    没有调用方了，该怎么给一整棵树署名要另行决定。
+
+    这里守住的是 PR #500 / #504 那条底线，它不受影响：分身自己的 `cheese-<hex12>`
+    handle 一个字都不许出现在 PR 上。
+    """
     _github_world(
         monkeypatch, connected={"alice": ("583231", "alice"), "bob": ("42", "bob")}
     )
     _driving(monkeypatch, "bob")
     pid, root = _project(client, owner="alice")
+    agent = _agent()
+    _split(client, root, by=agent)
 
-    body = _pr_body(client, pid, _split(client, root, by=_agent())["id"])
-    assert "Requested-by: bob" in body
-    assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in body
+    body = _pr_body(client, pid, root)
+    assert "Requested-by: alice" in body
+    assert agent not in body
 
 
 def test_nobody_is_credited_twice_when_the_room_never_changed_hands(
     client, monkeypatch
 ):
-    """验收 3: alice owns the parent AND the child, so she is the commit's author
-    already. `Co-authored-by: alice` next to `Requested-by: alice` claimed a
-    second contributor that does not exist — this is the ordinary case, and it is
-    why most changes now carry no such trailer at all."""
+    """验收 3: alice owns the room, so she is the commit's author already.
+    `Co-authored-by: alice` next to `Requested-by: alice` claimed a second
+    contributor that does not exist — this is the ordinary case, and it is why
+    most changes carry no such trailer at all."""
     _github_world(monkeypatch, connected={"alice": ("583231", "alice")})
     _driving(monkeypatch, None)
     pid, root = _project(client, owner="alice")
+    _split(client, root, by=_agent())
 
-    body = _pr_body(client, pid, _split(client, root, by=_agent())["id"])
+    body = _pr_body(client, pid, root)
     assert "Requested-by: alice" in body
     assert "Co-authored-by" not in body
 
 
-def test_an_unconnected_requester_costs_the_coauthor_nothing(client, monkeypatch):
-    """The two halves are independent: bob never linked GitHub, so the PR falls
-    back to the App token and no `author` identity resolves — alice's credit must
-    not disappear with it, since she is the one this trailer is for."""
+def test_a_thread_cannot_open_the_pr_for_the_batch_it_is_one_of(client, monkeypatch):
+    """支线自己递卡会被拒——这正是上面两条为什么都从房间递。
+
+    放它过去的话，它会把兄弟们还在写的那条分支封口开 PR。
+    """
     _github_world(monkeypatch, connected={"alice": ("583231", "alice")})
     _driving(monkeypatch, "bob")
-    pid, root = _project(client, owner="alice")
+    _, root = _project(client, owner="alice")
+    thread = _split(client, root, by=_agent())["id"]
 
-    body = _pr_body(client, pid, _split(client, root, by=_agent())["id"])
-    assert "Requested-by: bob" in body
-    assert "Co-authored-by: Alice <583231+alice@users.noreply.github.com>" in body
+    r = client.post(
+        f"/topics/{thread}/accept-card",
+        json={
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+            "change_subject": "fix(split): follow the driver, not the room",
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "cheese conclude" in r.json()["message"]
