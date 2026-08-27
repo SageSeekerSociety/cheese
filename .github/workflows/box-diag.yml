@@ -137,7 +137,11 @@ jobs:
           systemctl is-active cloudflared 2>&1 || true
           systemctl show cloudflared -p ActiveState -p SubState -p Result \
             -p NRestarts -p ExecMainStartTimestamp 2>&1 || true
-          journalctl -u cloudflared --since -6h --no-pager 2>&1 | tail -80 || true
+          # sudo: the runner user is not in systemd-journal, so an unprivileged
+          # journalctl prints "No entries" for a unit that is logging heavily —
+          # a silent wrong answer, which is worse here than no answer.
+          sudo -n journalctl -u cloudflared --since -48h --no-pager 2>&1 \
+            | grep -viE 'metrics|GET /ready' | tail -120 || true
           echo "===== egress to the tunnel edge (TCP 7844) ====="
           for ip in 198.41.192.167 198.41.200.113; do
             timeout 8 bash -c "cat < /dev/null > /dev/tcp/$ip/7844" \
