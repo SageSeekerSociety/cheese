@@ -14,7 +14,7 @@ import { createI18n } from 'vue-i18n'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -82,6 +82,9 @@ beforeAll(() => {
 
 beforeEach(() => {
   setActivePinia(createPinia())
+  // 展开状态是按项目落盘的，不清掉就会漏到下一条测试里 —— 上一条点开的房间，
+  // 下一条再点一下就变成收起来。
+  localStorage.clear()
   vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({}), text: async () => '' }))
 })
 
@@ -116,30 +119,43 @@ function mount(topics: Topic[]) {
   })
 }
 
+/** 房间那一行的展开开关。侧栏默认收着——一个跑久了的房间有近两百条活，全摊在
+ *  主导航上没人读得完，所以看它派出去了什么是一个动作。 */
+async function openRoom(container: Element): Promise<void> {
+  const toggle = container.querySelector('button.subtree-toggle') as HTMLElement | null
+  if (!toggle) throw new Error('房间那一行没有展开开关')
+  await fireEvent.click(toggle)
+}
+
 describe('侧栏画得出房间里在做什么', () => {
-  it('一件活在树上有自己的一行', async () => {
-    const { findAllByText } = mount([ROOM, thread()])
+  it('房间默认收着，点开才看得见它派出去的活', async () => {
+    const { container, queryByText, findAllByText } = mount([ROOM, thread()])
+    expect(queryByText('查一下分页接口')).toBeNull()
+    await openRoom(container)
     expect((await findAllByText('查一下分页接口')).length).toBeGreaterThan(0)
   })
 
   it('它骑的那个 PR 就写在这一行上', async () => {
-    const { findAllByText } = mount([
+    const { container, findAllByText } = mount([
       ROOM,
       thread({ card: { id: 'c1', status: 'pr_open', pr_number: 611, pr_url: 'https://x/611' } }),
     ])
+    await openRoom(container)
     // 「交付」这一段在树上唯一看得见的东西：一件活现在骑在哪个 PR 上。
     expect((await findAllByText('#611')).length).toBeGreaterThan(0)
   })
 
   it('还没递卡的活不硬造一个交付状态出来', async () => {
-    const { queryByText, findAllByText } = mount([ROOM, thread()])
+    const { container, queryByText, findAllByText } = mount([ROOM, thread()])
+    await openRoom(container)
     await findAllByText('查一下分页接口')
     expect(queryByText('待验收')).toBeNull()
     expect(queryByText('已采纳')).toBeNull()
   })
 
   it('做完的活说自己做完了，不跟在跑的长一个样', async () => {
-    const { findAllByText } = mount([ROOM, thread({ status: 'closed' })])
+    const { container, findAllByText } = mount([ROOM, thread({ status: 'closed' })])
+    await openRoom(container)
     expect((await findAllByText('已完成')).length).toBeGreaterThan(0)
   })
 })

@@ -112,9 +112,7 @@ function openTask(task: RoomTask) {
 
     <div v-else-if="!moving.length" class="pa-6">
       <div class="t-body c-muted">现在没有在动的活</div>
-      <div class="t-meta mt-1">
-        闲着的和做完的不在这里 —— 它们在各自房间的总览里，这一页只答「现在有什么在动」。
-      </div>
+      <div class="t-meta mt-1">闲着的和做完的不在这里 —— 它们在各自房间的总览里，这一页只答「现在有什么在动」。</div>
     </div>
 
     <ul v-else class="running-work__list">

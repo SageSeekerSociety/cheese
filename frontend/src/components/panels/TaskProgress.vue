@@ -116,12 +116,7 @@ const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state ==
 
 <template>
   <section class="task-progress">
-    <button
-      type="button"
-      class="task-progress__head"
-      :aria-expanded="open"
-      @click="open = !open"
-    >
+    <button type="button" class="task-progress__head" :aria-expanded="open" @click="open = !open">
       <v-icon size="16">{{ open ? 'mdi-chevron-down' : 'mdi-chevron-right' }}</v-icon>
       <span class="task-progress__title t-body">Task Progress</span>
       <span class="task-progress__tally t-meta">
@@ -155,9 +150,7 @@ const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state ==
               <!-- 圆环：一个纯色环，颜色就是状态。不画百分比——一件活没有分母。 -->
               <span class="ring" :class="taskRing(row).cls" :title="taskRing(row).label" aria-hidden="true" />
               <span class="task-row__text">
-                <span class="task-row__line1 t-body">
-                  Task {{ numberOf.get(row.id) }}: {{ row.title }}
-                </span>
+                <span class="task-row__line1 t-body"> Task {{ numberOf.get(row.id) }}: {{ row.title }} </span>
                 <span class="task-row__line2 t-meta">
                   <span class="task-row__state">{{ taskRing(row).label }}</span>
                   <span class="task-row__sep">·</span>
@@ -174,10 +167,13 @@ const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state ==
 
         <!-- 已交付 / 已关闭未交付分开：一条交出去了的活是这个房间的产出，一条
              关掉却什么都没交付的是被放弃的。混在一起看不出交了多少。 -->
-        <template v-for="group in [
-          { key: 'delivered', label: '已交付', list: delivered },
-          { key: 'abandoned', label: '已关闭 · 未交付', list: abandoned },
-        ]" :key="group.key">
+        <template
+          v-for="group in [
+            { key: 'delivered', label: '已交付', list: delivered },
+            { key: 'abandoned', label: '已关闭 · 未交付', list: abandoned },
+          ]"
+          :key="group.key"
+        >
           <template v-if="group.list.length">
             <div class="task-progress__group t-meta">{{ group.label }}（{{ group.list.length }}）</div>
             <ul class="task-progress__list">
@@ -190,9 +186,7 @@ const queuedCount = computed(() => rows.value.filter((r) => taskRing(r).state ==
                 >
                   <span class="ring" :class="taskRing(row).cls" :title="taskRing(row).label" aria-hidden="true" />
                   <span class="task-row__text">
-                    <span class="task-row__line1 t-body">
-                      Task {{ numberOf.get(row.id) }}: {{ row.title }}
-                    </span>
+                    <span class="task-row__line1 t-body"> Task {{ numberOf.get(row.id) }}: {{ row.title }} </span>
                     <span class="task-row__line2 t-meta">
                       <span class="task-row__state">{{ taskRing(row).label }}</span>
                       <span class="task-row__sep">·</span>

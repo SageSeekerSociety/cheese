@@ -31,7 +31,9 @@ export interface TaskRing {
 /** 一张卡还没结算完 —— 还在等人或者等 CI，都算「这条活卡在别人身上」。 */
 const SETTLED_CARD = new Set(['accepted', 'rejected', 'revoked', 'gate_failed', 'gate_blocked'])
 
-export function taskRing(task: Pick<RoomTask, 'status' | 'residency' | 'queued_at' | 'accepted_at' | 'card'>): TaskRing {
+export function taskRing(
+  task: Pick<RoomTask, 'status' | 'residency' | 'queued_at' | 'accepted_at' | 'card'>
+): TaskRing {
   if (task.accepted_at) return { state: 'delivered', label: '已交付', cls: 'ring--delivered' }
   // 在跑压过卡：卡描述的是它可能马上就要顶掉的那一版，而「在跑」是此刻真的成立
   // 的那件事。和话题头部 `topicPhase` 里 working 压过 card 是同一条规矩。
