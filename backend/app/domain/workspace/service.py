@@ -493,14 +493,15 @@ def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
             pass
         shutil.rmtree(wt, ignore_errors=True)
     wt.parent.mkdir(parents=True, exist_ok=True)
+    delivered = _branch_exists(main, branch)
     add = ["workspace", "add", "--name", _tree_dirname(tree_id)]
     # A commit id rather than the branch name: git is where the pushed ref
     # actually is, and a raw id needs no name to survive the trip into jj.
-    if _branch_exists(main, branch):
+    if delivered:
         add += ["--revision", _git(main, "rev-parse", branch).strip()]
     _jj(main, *add, str(wt))
-    if not _branch_exists(main, branch):
-        # A tree nobody has pushed to yet has no branch — give it one, so
+    if not delivered:
+        # A tree nobody has written to yet has no branch — give it one, so
         # merge/diff can go on using git.
         _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
         _jj(wt, "git", "export")
