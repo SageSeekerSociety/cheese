@@ -2454,32 +2454,58 @@ def _put_the_branch_under_the_working_copy(
 
     Nothing to do in the common case, where the branch is exactly where this
     workspace last left it. When there IS something, rebasing the working copy
-    onto the branch tip is the whole repair: this turn's edits keep their
-    content and gain the pushed commits as parents."""
+    onto it is the whole repair: this turn's edits keep their content and gain
+    the pushed commits as parents.
+
+    The question is asked of the BOOKMARK, never of the git ref, even though
+    the git ref is what a push moved. The two disagree in both directions and
+    only one answer is safe: `prepare_upstream_conflict_resolution` moves the
+    bookmark onto a merge it has not exported yet, so the git ref there is the
+    stale side, and treating it as the truth would rebase that merge away and
+    silently drop the upstream history it carries. Importing first is what
+    makes the bookmark the better answer — it is where a push lands too."""
     if not _branch_exists(main, branch):
         return
-    tip = _git(main, "rev-parse", branch).strip()
     try:
         # The workspace's jj view lags the git side — a push moved the ref
         # without anything here running a jj command.
         _jj(wt, "git", "import")
-        under = _jj(
-            wt, "log", "-r", f"{tip} & ::@", "--no-graph", "-T", "commit_id"
-        ).strip()
-    except ValidationError:
+        # `bookmarks()` rather than the bare name, because the name on its own
+        # is an error exactly when it matters most: a push that lands on top of
+        # what this workspace exported leaves the bookmark CONFLICTED — one
+        # target the pushed commit, the other whatever the working copy was
+        # last rewritten into — and jj refuses to resolve a conflicted name to
+        # a revision. Every target that is not already an ancestor is something
+        # to get under, and the bookmark move at the end of the snapshot is
+        # what settles the conflict.
+        behind = [
+            line
+            for line in _jj(
+                wt,
+                "log",
+                "-r",
+                f'heads(bookmarks(exact:"{branch}") ~ ::@)',
+                "--no-graph",
+                "-T",
+                'commit_id ++ "\n"',
+            ).splitlines()
+            if line.strip()
+        ]
+    except ValidationError as exc:
         # Nothing better to do than carry on: refusing here would wedge every
         # snapshot, and every accept behind them, on a repo jj cannot read.
         logger.warning(
-            "could not tell whether %s is already under %s's working copy — "
-            "snapshotting anyway, so a push that raced this turn may be "
+            "could not tell whether %s is already under %s's working copy (%s) "
+            "— snapshotting anyway, so a push that raced this turn may be "
             "carried back off the branch",
             branch,
             wt,
+            exc,
         )
         return
-    if under:
+    if not behind:
         return
-    _jj(wt, "rebase", "-r", "@", "-d", tip)
+    _jj(wt, "rebase", "-r", "@", *[arg for c in behind for arg in ("-d", c)])
 
 
 def snapshot_worktree(
