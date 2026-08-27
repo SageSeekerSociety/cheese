@@ -141,6 +141,10 @@ export interface RoomTask {
   room_id: string
   title: string
   status: string
+  // 它此刻占没占着这个房间四个槽位里的一个，和从什么时候开始等的。和 `status`
+  // 是两个问题：四条都 open 的房间可能三条在跑一条排队，也可能全都闲着。
+  residency?: 'running' | 'idle'
+  queued_at?: string | null
   owner_handle?: string | null
   created_by?: string | null
   agent_instance_id?: string | null
@@ -152,7 +156,9 @@ export interface RoomTask {
   upgraded_from_block_id?: string | null
   created_at: string
   updated_at: string
-  // 只有项目级那条列表带它（`GET /projects/{id}/tasks`）——房间级的不带。
+  // 项目级那条列表（`GET /projects/{id}/tasks`）和房间级那条（`GET
+  // /topics/{id}/tasks`）都带它——「等人验收」也是安静的，没有它就和「闲着」
+  // 在屏幕上长得一模一样。
   card?: ThreadCard | null
 }
 

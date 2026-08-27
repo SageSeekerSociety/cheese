@@ -15,7 +15,6 @@ import {
   listTopics,
   markTopicRead,
   setTopicTitle,
-  splitTopic,
   unarchiveTopic,
   upgradeBlock,
 } from '@/api'
@@ -384,17 +383,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     return place
   }
 
-  async function split(topicId: string, title: string): Promise<Topic | null> {
-    try {
-      const sub = threadAsPlace(await splitTopic(topicId, title.trim() || '新话题', myHandle()))
-      await refreshTopics()
-      return remember(sub)
-    } catch (e) {
-      reportError(e, '派出支线失败')
-      return null
-    }
-  }
-
   async function upgradeMessage(messageId: string): Promise<Topic | null> {
     try {
       const place = asPlace(await upgradeBlock(messageId, myHandle()))
@@ -442,7 +430,6 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     archive,
     unarchive,
     create,
-    split,
     upgradeMessage,
   }
 })

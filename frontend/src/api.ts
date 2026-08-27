@@ -602,15 +602,6 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
   })
 }
 
-// Split a topic into a sub-topic (芝士的分身 works there). eval A1 / tree.
-// 派出一条支线。回来的是一行 task —— 活挂在**同一个房间**下，不嵌套。
-export function splitTopic(topicId: string, title: string, createdBy: string): Promise<RoomTask> {
-  return request<RoomTask>(`/topics/${encodeURIComponent(topicId)}/split`, {
-    method: 'POST',
-    body: JSON.stringify({ title, created_by: createdBy }),
-  })
-}
-
 // 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
 // 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
 // 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。

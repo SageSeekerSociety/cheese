@@ -24,7 +24,6 @@ vi.mock('@/api', () => ({
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
   markTopicRead: vi.fn().mockResolvedValue(undefined),
   setTopicTitle: vi.fn(),
-  splitTopic: vi.fn(),
   unarchiveTopic: vi.fn(),
   upgradeBlock: vi.fn(),
 }))

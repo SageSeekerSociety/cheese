@@ -54,6 +54,16 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
     },
     {
+      // 在跑的活: 跨房间的一张表。房间总览答的是「这个房间在干什么」，而一个项目
+      // 有上百个房间——「现在整个项目有什么在跑」得一个个点进去才知道，于是没人
+      // 知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回话题列表。
+      name: 'workspace-running',
+      path: 'running',
+      component: () => import('@/views/workspace/RunningWorkView.vue'),
+      props: true,
+      meta: { title: '在跑的活', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
       name: 'workspace-dm',
       path: 'dm/:peer',
       component: () => import('@/views/workspace/DmView.vue'),

@@ -1,6 +1,5 @@
 <script setup lang="ts">
-// 工作面板: the right-hand half of a topic — 平级 tabs, 文档 / 任务 / 现场 / 改动 /
-// 预览. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
+// 工作面板: the right-hand half of a topic — 平级 tabs, 总览 / 现场 / 改动 / 预览. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
 // the drawers' float/pinned duality, their own width slider and the scrim are
 // gone, and 资源 is no longer a panel at all — its numbers live in the topic
 // header's usage popover.
@@ -22,13 +21,12 @@ import type { TopicPhase } from '../lib/topicState'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { getPreview, getTopicWorkSummary, listRoomTasks } from '../api'
-import { roomIdOf } from '../lib/place'
+import { isThread, roomIdOf } from '../lib/place'
 
 import PanelChanges from './panels/PanelChanges.vue'
-import PanelDoc from './panels/PanelDoc.vue'
+import PanelOverview from './panels/PanelOverview.vue'
 import PanelPreview from './panels/PanelPreview.vue'
 import PanelSite from './panels/PanelSite.vue'
-import PanelTasks from './panels/PanelTasks.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -71,7 +69,7 @@ const emit = defineEmits<{
   (e: 'update:tab', key: string): void
 }>()
 
-type TabKey = 'chat' | 'doc' | 'tasks' | 'site' | 'changes' | 'preview'
+type TabKey = 'chat' | 'overview' | 'site' | 'changes' | 'preview'
 interface TabDef {
   key: TabKey
   label: string
@@ -79,21 +77,30 @@ interface TabDef {
 }
 const ALL_TABS: TabDef[] = [
   { key: 'chat', label: '对话', icon: 'mdi-message-outline' },
-  { key: 'doc', label: '文档', icon: 'mdi-file-document-outline' },
-  { key: 'tasks', label: '任务', icon: 'mdi-call-split' },
+  // 文档 和 任务 合成了一格。它们回答的是同一个问题的两半——「这个房间在干什么」
+  // ——分成两格意味着看完一半得先想起来还有另一半，于是大多数人只看文档，房间里
+  // 有几条活在跑就没人知道。
+  { key: 'overview', label: '总览', icon: 'mdi-file-document-outline' },
   { key: 'site', label: '现场', icon: 'mdi-hammer-wrench' },
   { key: 'changes', label: '改动', icon: 'mdi-source-branch' },
   { key: 'preview', label: '预览', icon: 'mdi-eye-outline' },
 ]
 // 地址没指定、阶段也没话说的时候落在哪一格：手机上是对话（你进话题多半是来说话
-// 的），桌面上对话就在旁边那一栏，所以是文档。
-const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'doc'))
+// 的），桌面上对话就在旁边那一栏，所以是总览。
+const defaultTab = computed<TabKey>(() => (props.withChat ? 'chat' : 'overview'))
+// 旧地址还带着 ?tab=doc / ?tab=tasks —— 两个 tab 都并进总览了，所以它们指的就是
+// 总览。链接不该因为我们合并了界面而失效。
+const TAB_ALIASES: Record<string, TabKey> = { doc: 'overview', tasks: 'overview' }
 const active = ref<TabKey>(defaultTab.value)
+/** 打开的是房间里的一条支线，还是房间本身。 */
+const onThread = computed(() => !!props.topic && isThread(props.topic))
 
-/** The URL's answer, if it names a tab that exists. */
+/** The URL's answer, if it names a tab that exists (or one that used to). */
 function tabFromUrl(): TabKey | null {
   const asked = props.tab
-  return ALL_TABS.some((t) => t.key === asked) ? (asked as TabKey) : null
+  if (!asked) return null
+  if (ALL_TABS.some((t) => t.key === asked)) return asked as TabKey
+  return TAB_ALIASES[asked] ?? null
 }
 
 // 窄屏上这条栏会横向滚动，所以「哪一格是选中的」和「你看得见哪一格」不再是同一
@@ -128,7 +135,10 @@ function setTab(key: TabKey) {
 // again unless another topic is opened.
 const settled = ref(false)
 
+// 打开的是一条支线时这两格根本不存在（见 `tabIsOffered`），所以阶段也不能选它们
+// —— 选了就是把界面切到一个不在 tab 栏上的地方，屏幕上一片空白。
 function tabForPhase(phase: TopicPhase): TabKey {
+  if (onThread.value) return defaultTab.value
   if (phase === 'working') return 'site'
   if (phase === 'reviewing' || phase === 'delivering') return 'changes'
   return defaultTab.value
@@ -152,7 +162,7 @@ watch(active, (k) => {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 })
 
-const docRef = ref<InstanceType<typeof PanelDoc> | null>(null)
+const overviewRef = ref<InstanceType<typeof PanelOverview> | null>(null)
 const changesRef = ref<InstanceType<typeof PanelChanges> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
@@ -262,7 +272,7 @@ async function pollThreads() {
   if (!place) return
   const roomId = roomIdOf(place)
   try {
-    // limit: 1 — see PanelTasks. Without it this asks for every thread's whole
+    // limit: 1 — see TaskProgress. Without it this asks for every thread's whole
     // history just to count them.
     const rows = (await listRoomTasks(roomId, { limit: 1 })).data
     if (!props.topic || roomIdOf(props.topic) !== roomId) return
@@ -278,10 +288,11 @@ function tabIsOffered(key: TabKey): boolean {
   // thing you were reading — the same rule as 「信号上 Tab，不抢占视图」.
   if (key === active.value) return true
   if (key === 'chat') return props.withChat
-  if (key === 'doc') return true
-  // 任务 exists once this room has dispatched anything. A room that never did
-  // would get a tab whose entire content is a sentence saying so.
-  if (key === 'tasks') return threads.value.total > 0
+  if (key === 'overview') return true
+  // 一批活共用一棵树，所以「改动」和「现场」只在房间那一层存在。在一条支线上给
+  // 出这两格，给的是它同伴的工作区——同一棵树、同一个会话——那不是这条活的现场，
+  // 是这个房间的，而看的人会以为屏幕上那些改动是这条活做的。
+  if (onThread.value) return false
   // 现场 is where 芝士 works: it is there once the topic has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
@@ -294,9 +305,9 @@ const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(t: TabDef): string {
   if (t.key === 'site' && props.working) return `${t.label}（芝士正在工作）`
-  if (t.key === 'tasks' && threads.value.total) {
+  if (t.key === 'overview' && threads.value.total) {
     const { total, open } = threads.value
-    return open ? `${t.label}（${total} 件，${open} 件进行中）` : `${t.label}（${total} 件）`
+    return open ? `${t.label}（${total} 件活，${open} 件进行中）` : `${t.label}（${total} 件活）`
   }
   if (t.key === 'preview' && previewHasNew.value) return `${t.label}（有新内容）`
   if (t.key === 'changes' && summary.value.changedFiles.length) {
@@ -351,12 +362,12 @@ watch(
 
 // ---- The panel's outward API (TopicView holds a ref) ----
 function pulse() {
-  setTab('doc')
-  void nextTick(() => docRef.value?.pulse())
+  setTab('overview')
+  void nextTick(() => overviewRef.value?.pulse())
 }
 function highlightTurn(turnId: string) {
-  setTab('doc')
-  void nextTick(() => docRef.value?.highlightTurn(turnId))
+  setTab('overview')
+  void nextTick(() => overviewRef.value?.highlightTurn(turnId))
 }
 async function openFile(path: string) {
   setTab('changes')
@@ -402,7 +413,7 @@ defineExpose({ pulse, highlightTurn, openFile })
           <span v-if="t.key === 'preview' && previewHasNew" class="tabbar__dot" />
           <!-- 有几件活在跑。和 改动 一样用数字而不是点：几件在跑本身就是要看的
                那个信息。它不变色——派出去的活不是「你还没看过的东西」。 -->
-          <span v-if="t.key === 'tasks' && threads.total" class="tabbar__count">{{ threads.total }}</span>
+          <span v-if="t.key === 'overview' && threads.total" class="tabbar__count">{{ threads.total }}</span>
           <!-- 改动 is the opposite: how much there is to review is the useful
                part, so the count carries the signal and turns amber when it is
                work you have not looked at yet. -->
@@ -421,23 +432,17 @@ defineExpose({ pulse, highlightTurn, openFile })
         <div v-if="withChat" v-show="active === 'chat'" class="tabpane-chat">
           <slot name="chat" />
         </div>
-        <PanelDoc
-          v-show="active === 'doc'"
-          ref="docRef"
+        <PanelOverview
+          v-show="active === 'overview'"
+          ref="overviewRef"
           :topic="topic"
           :activity-tick="activityTick"
           :topic-list="topicList"
+          :active="active === 'overview'"
+          :refresh-tick="refreshTick"
           @open-topic="emit('open-topic', $event)"
           @mention-click="emit('mention-click', $event)"
           @open-file="openFile"
-        />
-        <PanelTasks
-          v-if="mounted.has('tasks')"
-          v-show="active === 'tasks'"
-          :topic="topic"
-          :active="active === 'tasks'"
-          :refresh-tick="refreshTick"
-          @open-topic="emit('open-topic', $event)"
         />
         <PanelSite
           v-if="mounted.has('site')"

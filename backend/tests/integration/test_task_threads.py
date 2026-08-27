@@ -15,7 +15,10 @@ from pathlib import Path
 
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.models import Project
-from app.domain.room_task.models import Task, WorkTree
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.room_task.models import MAX_RESIDENT_TASKS_PER_ROOM, Task, WorkTree
+from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.services import ResidencyService
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -192,3 +195,93 @@ def test_no_limit_returns_every_thread_whole(client):
 def test_an_unknown_room_is_a_404(client):
     r = client.get(f"/topics/{uuid.uuid4()}/tasks")
     assert r.status_code == 404
+
+
+# --- 房间总览要的那三样：在跑没在跑、排没排队、等不等验收 ----------------------
+#
+# 「现在有什么在动」是打开一个房间的第一个问题，而 open/closed 答不了它：四条
+# 都开着的房间，可能三条在跑一条排队，也可能全都闲着。这三条测的就是这一格资料
+# 从 API 出得来 —— 出不来的话，界面上「在跑」和「闲着」长得一模一样。
+
+
+def test_a_thread_says_whether_it_is_holding_a_slot(client):
+    """在跑 / 闲着，是两个不同的答案，而且都不等于 open。"""
+    ids = _room_with_threads(client)
+
+    async def _start_one() -> None:
+        async with client.test_factory() as s:
+            svc = ResidencyService(s)
+            await svc.touch(await TaskRepository(s).get(ids["talkative"]))
+            await s.commit()
+
+    client.portal.call(_start_one)
+
+    by_title = {t["title"]: t for t in _threads(client, ids["room"], limit=1)}
+    assert by_title["聊得多的活"]["residency"] == "running"
+    assert by_title["没人说话的活"]["residency"] == "idle"
+    # 两条都还开着 —— 所以 status 分不出它们，这正是 residency 存在的理由。
+    assert {t["status"] for t in by_title.values()} == {"open"}
+
+
+def test_a_queued_thread_says_since_when_it_has_been_waiting(client):
+    """排队中要能和「闲着」分开：闲着是没人找它，排队是它想跑但房间满了。
+
+    等了多久是排队这件事唯一有用的附加信息 —— 一个房间满了四条，谁下一个上要
+    看谁等得久，界面上没有这个时间就只能说一句「排队中」。
+    """
+    ids = _room_with_threads(client)
+
+    async def _fill_then_queue() -> None:
+        async with client.test_factory() as s:
+            svc = ResidencyService(s)
+            repo = TaskRepository(s)
+            # 把房间占满，再让已有的那条去排队。
+            for i in range(MAX_RESIDENT_TASKS_PER_ROOM):
+                filler = Task(
+                    project_id=(await repo.get(ids["talkative"])).project_id,
+                    room_id=ids["room"],
+                    tree_id=(await repo.get(ids["talkative"])).tree_id,
+                    title=f"占位 {i}",
+                )
+                s.add(filler)
+                await s.flush()
+                await svc.admit(filler)
+            assert await svc.admit(await repo.get(ids["silent"])) is False
+            await s.commit()
+
+    client.portal.call(_fill_then_queue)
+
+    queued = next(
+        t
+        for t in _threads(client, ids["room"], limit=1)
+        if t["title"] == "没人说话的活"
+    )
+    assert queued["residency"] == "idle", "排队的没有占着槽位"
+    assert queued["queued_at"] is not None, "排队中和闲着必须分得开"
+
+
+def test_a_thread_carries_the_card_it_is_riding_on(client):
+    """等人验收也是安静的 —— 光看 residency 和「闲着」一模一样。"""
+    ids = _room_with_threads(client)
+
+    async def _file_a_card() -> None:
+        async with client.test_factory() as s:
+            task = await TaskRepository(s).get(ids["talkative"])
+            s.add(
+                AcceptCard(
+                    topic_id=ids["room"],
+                    task_id=task.id,
+                    tree_id=task.tree_id,
+                    reviewer_handle="alice",
+                    routing_reason="最懂",
+                    status=AcceptStatus.pending,
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_file_a_card)
+
+    by_title = {t["title"]: t for t in _threads(client, ids["room"], limit=1)}
+    assert by_title["聊得多的活"]["card"]["status"] == "pending"
+    # 没递过卡的那条是 None，不是缺字段 —— 界面靠它区分「没递」和「递了在等」。
+    assert by_title["没人说话的活"]["card"] is None

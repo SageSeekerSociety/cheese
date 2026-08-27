@@ -422,15 +422,30 @@ async def list_room_tasks(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     threads = await TaskService(db).threads_for_room(topic_id, limit=limit)
-    items = [
-        {
-            **TaskOut.model_validate(task).model_dump(mode="json"),
-            "blocks": [
-                BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
-            ],
-        }
-        for task, blocks in threads
-    ]
+    # The card each thread rides on, in ONE query for the whole room (the same
+    # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
+    # 人验收" are indistinguishable on screen — both are quiet — and the room
+    # overview would have to ask per thread to tell them apart.
+    cards = await AcceptCardRepository(db).latest_by_task([t.id for t, _ in threads])
+    items = []
+    for task, blocks in threads:
+        card = cards.get(task.id)
+        items.append(
+            {
+                **TaskOut.model_validate(task).model_dump(mode="json"),
+                "blocks": [
+                    BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
+                ],
+                "card": None
+                if card is None
+                else {
+                    "id": str(card.id),
+                    "status": str(card.status),
+                    "pr_number": card.pr_number,
+                    "pr_url": card.pr_url,
+                },
+            }
+        )
     return ok(page(items, len(items)))
 
 
