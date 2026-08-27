@@ -468,10 +468,16 @@ def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
     jj 自动快照其改动；不同的树互不覆盖。导出一个 git 分支（`branch_for_tree`）
     供采纳/diff——分支名与工作区目录名各自独立派生，见 `_tree_dirname`。
 
-    每棵树都从 base 分支长出来。它以前不是这样：一件活的树从它所在房间的树
+    一棵**新**树从 base 分支长出来。它以前不是这样：一件活的树从它所在房间的树
     fork，因为那件活的提交最后要合回房间那一条分支。现在一批活共用一棵树、
     一起进同一个 PR，没有东西要合回去，所以也没有 fork 点要挑——下一批从 main
-    开始，和任何一个并行的 PR 一样。"""
+    开始，和任何一个并行的 PR 一样。
+
+    但树的分支不一定是新的，因为这个目录不是它唯一的作者：文件不在这里的分身
+    只能用 git 推到它（`api/routes/git_http.py`），而那次推送可能远早于有人第一
+    次需要这个目录。分支已经存在时就从**它**长出来。以前不看这一眼，于是这里
+    先给树铺一个空工作区、再把分支移到那个空提交上——一整批活被一个零文件的
+    提交顶掉，而下一张验收卡正是拿它去开 PR 的。"""
     main = ensure_repo(project_id)
     _ensure_base_commit(main)  # a workspace needs a base commit to fork from
     tree_id = tree_for_place(place_id)
@@ -487,10 +493,18 @@ def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
             pass
         shutil.rmtree(wt, ignore_errors=True)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    _jj(main, "workspace", "add", "--name", _tree_dirname(tree_id), str(wt))
-    # Export a git branch (= jj bookmark) for this topic so merge/diff use git.
-    _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
-    _jj(wt, "git", "export")
+    delivered = _branch_exists(main, branch)
+    add = ["workspace", "add", "--name", _tree_dirname(tree_id)]
+    # A commit id rather than the branch name: git is where the pushed ref
+    # actually is, and a raw id needs no name to survive the trip into jj.
+    if delivered:
+        add += ["--revision", _git(main, "rev-parse", branch).strip()]
+    _jj(main, *add, str(wt))
+    if not delivered:
+        # A tree nobody has written to yet has no branch — give it one, so
+        # merge/diff can go on using git.
+        _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+        _jj(wt, "git", "export")
     _make_world_writable(wt)
     return wt
 
@@ -2425,6 +2439,75 @@ SNAPSHOT_BEFORE_TWO_PHASE = "chore: snapshot workspace before two-phase accept"
 SNAPSHOT_FOR_PUSH_FIX = "chore: snapshot workspace for push-fix"
 
 
+def _put_the_branch_under_the_working_copy(
+    *, main: Path, wt: Path, branch: str
+) -> None:
+    """Make whatever the branch grew elsewhere an ancestor of the working copy,
+    so the bookmark move that follows can only go forwards.
+
+    A tree's branch has two authors. This process writes it by exporting a
+    bookmark; an agent writes it by pushing over the project's git proxy — the
+    only route open to one whose files are not in this worktree. Moving the
+    bookmark from a working copy that never saw that push carries the branch
+    back over it, and a bookmark move says nothing while it does so, so the
+    loss surfaces only as a pull request with an empty diff.
+
+    Nothing to do in the common case, where the branch is exactly where this
+    workspace last left it. When there IS something, rebasing the working copy
+    onto it is the whole repair: this turn's edits keep their content and gain
+    the pushed commits as parents.
+
+    The question is asked of the BOOKMARK, never of the git ref, even though
+    the git ref is what a push moved. The two disagree in both directions and
+    only one answer is safe: `prepare_upstream_conflict_resolution` moves the
+    bookmark onto a merge it has not exported yet, so the git ref there is the
+    stale side, and treating it as the truth would rebase that merge away and
+    silently drop the upstream history it carries. Importing first is what
+    makes the bookmark the better answer — it is where a push lands too."""
+    if not _branch_exists(main, branch):
+        return
+    try:
+        # The workspace's jj view lags the git side — a push moved the ref
+        # without anything here running a jj command.
+        _jj(wt, "git", "import")
+        # `bookmarks()` rather than the bare name, because the name on its own
+        # is an error exactly when it matters most: a push that lands on top of
+        # what this workspace exported leaves the bookmark CONFLICTED — one
+        # target the pushed commit, the other whatever the working copy was
+        # last rewritten into — and jj refuses to resolve a conflicted name to
+        # a revision. Every target that is not already an ancestor is something
+        # to get under, and the bookmark move at the end of the snapshot is
+        # what settles the conflict.
+        behind = [
+            line
+            for line in _jj(
+                wt,
+                "log",
+                "-r",
+                f'heads(bookmarks(exact:"{branch}") ~ ::@)',
+                "--no-graph",
+                "-T",
+                'commit_id ++ "\n"',
+            ).splitlines()
+            if line.strip()
+        ]
+    except ValidationError as exc:
+        # Nothing better to do than carry on: refusing here would wedge every
+        # snapshot, and every accept behind them, on a repo jj cannot read.
+        logger.warning(
+            "could not tell whether %s is already under %s's working copy (%s) "
+            "— snapshotting anyway, so a push that raced this turn may be "
+            "carried back off the branch",
+            branch,
+            wt,
+            exc,
+        )
+        return
+    if not behind:
+        return
+    _jj(wt, "rebase", "-r", "@", *[arg for c in behind for arg in ("-d", c)])
+
+
 def snapshot_worktree(
     project_id: uuid.UUID, topic_id: uuid.UUID, message: str = SNAPSHOT_MESSAGE
 ) -> None:
@@ -2451,6 +2534,9 @@ def snapshot_worktree(
     wt = _ensure_worktree(project_id, topic_id)
     if not _jj(wt, "diff", "-s").strip():
         return  # nothing changed this turn
+    _put_the_branch_under_the_working_copy(
+        main=ensure_repo(project_id), wt=wt, branch=branch
+    )
     held = awaited_tasks.snapshot_hold(topic_id)
     if held is not None:
         message = (

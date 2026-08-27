@@ -114,18 +114,24 @@ def _publish(client, pid: str, tid: str, cid: str) -> None:
     )
 
 
-def test_a_subtopic_split_by_an_agent_opens_its_pr_as_the_human_owner(
+def test_work_an_agent_split_out_delivers_as_the_human_who_owns_the_room(
     client, monkeypatch
 ):
     """验收 1+2: alice owns the room and has connected GitHub, so the PR is
     opened with HER token (not the App's, which is what makes the author
-    `cheesex-app[bot]`) and its body names her."""
+    `cheesex-app[bot]`) and its body names her.
+
+    递卡是房间的事，所以卡从 root 递：分身拆出去的活和它兄弟们的活在同一条分支上，
+    一个 PR 一起交付。**哪一条支线是谁推进的，PR 上看不出来**——单一的
+    `Requested-by:` 装不下一整棵树的人，这是 #615「一个 PR 横跨多条支线」之后就
+    已经存在的事，「只有房间能递卡」只是让它显形。
+    """
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     pid, root = _project(client, owner="alice")
     agent = f"cheese-{uuid.uuid4().hex[:12]}"
-    tid = _split(client, root, by=agent)
-    _publish(client, pid, tid, _card(client, tid))
+    _split(client, root, by=agent)
+    _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
     assert opened["as_user_token"] == "gho_alice"
@@ -142,29 +148,50 @@ def test_the_agent_handle_never_reaches_the_pr_even_when_nobody_connected_github
 
     pid, root = _project(client, owner="alice")
     agent = f"cheese-{uuid.uuid4().hex[:12]}"
-    tid = _split(client, root, by=agent)
-    _publish(client, pid, tid, _card(client, tid))
+    _split(client, root, by=agent)
+    _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
     assert opened["as_user_token"] is None
     assert "Requested-by: alice" in opened["body"]
+    assert agent not in opened["body"]
 
 
-def test_a_room_with_no_human_owner_behaves_exactly_as_before(client, monkeypatch):
-    """验收 4: an ownerless project splits into an ownerless room. Nothing to
-    resolve — the PR must open anyway, falling back to `created_by` verbatim
-    rather than raising or dropping the trailer."""
+def test_a_room_with_no_human_owner_still_opens_its_pr(client, monkeypatch):
+    """验收 4: an ownerless project has an ownerless room. Nothing to resolve —
+    the PR must open anyway rather than raising, and the 分身 handle must not be
+    what fills the gap."""
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     p = client.post("/projects", json={"name": "P"}).json()["data"]
     pid, root = p["id"], p["root_topic_id"]
     agent = f"cheese-{uuid.uuid4().hex[:12]}"
-    tid = _split(client, root, by=agent)
-    _publish(client, pid, tid, _card(client, tid))
+    _split(client, root, by=agent)
+    _publish(client, pid, root, _card(client, root))
 
     [opened] = _FakeClient.opened
     assert opened["as_user_token"] is None
-    assert f"Requested-by: {agent}" in opened["body"]
+    assert agent not in opened["body"]
+
+
+def test_a_thread_cannot_open_a_pr_of_its_own(client, monkeypatch):
+    """上面三条都从房间递卡，是因为支线递不了——这条钉住那个前提。"""
+    _github_world(monkeypatch, connected={"alice": "gho_alice"})
+
+    _, root = _project(client, owner="alice")
+    tid = _split(client, root, by=f"cheese-{uuid.uuid4().hex[:12]}")
+
+    r = client.post(
+        f"/topics/{tid}/accept-card",
+        json={
+            "reviewer_handle": "alice",
+            "routing_reason": "最懂",
+            "change_subject": "fix(accept): credit the human, not the bot",
+        },
+    )
+    assert r.status_code == 422, r.text
+    assert "cheese conclude" in r.json()["message"]
+    assert _FakeClient.opened == []
 
 
 def test_a_topic_a_human_opened_directly_is_untouched(client, monkeypatch):
