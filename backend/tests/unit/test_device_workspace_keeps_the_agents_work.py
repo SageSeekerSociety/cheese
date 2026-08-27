@@ -68,7 +68,9 @@ def _origin_with_a_commit(root: Path) -> str:
 def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess:
     bindir = work.parent / "bin"
     bindir.mkdir(exist_ok=True)
-    (bindir / "cheese-hook").write_text(f'#!/bin/sh\ncat >> "{hook_log}"\necho >> "{hook_log}"\n')
+    (bindir / "cheese-hook").write_text(
+        f'#!/bin/sh\ncat >> "{hook_log}"\necho >> "{hook_log}"\n'
+    )
     (bindir / "cheese-hook").chmod(0o755)
     script = work.parent / "bringup.sh"
     script.write_text(_bringup_body())
@@ -99,9 +101,7 @@ def test_a_clone_killed_midway_is_repaired_instead_of_stepped_over():
         remote = _origin_with_a_commit(root)
         work = root / "work"
         work.mkdir()
-        subprocess.run(
-            ["git", "clone", "-q", remote, str(work)], capture_output=True
-        )
+        subprocess.run(["git", "clone", "-q", remote, str(work)], capture_output=True)
         for leftover in work.iterdir():
             if leftover.name != ".git":
                 leftover.unlink()

@@ -485,7 +485,7 @@ if [ -n "${CHEESE_GIT_REMOTE:-}" ]; then
     if [ -d "$CHEESE_WS_TMP/.git" ] \
        && mv "$CHEESE_WS_TMP/.git" "$CHEESE_WORK/.git" 2>/dev/null; then
       cheese_ws_adopt \
-        || cheese_ws_say "cloned the repository but could not put HEAD on $CHEESE_WS_BRANCH"
+        || cheese_ws_say "cloned it but could not put HEAD on $CHEESE_WS_BRANCH"
     else
       cheese_ws_say "could not clone the repository: ${CHEESE_WS_ERR:-git said nothing}"
     fi
@@ -543,14 +543,18 @@ fi
 snapshot=""
 idx="$CHEESE_WORK/.git/cheese-snapshot-index"
 rm -f "$idx"
-[ -n "$head" ] && { GIT_INDEX_FILE="$idx" git read-tree "$head" >/dev/null 2>&1 || rm -f "$idx"; }
+if [ -n "$head" ]; then
+  GIT_INDEX_FILE="$idx" git read-tree "$head" >/dev/null 2>&1 || rm -f "$idx"
+fi
 tree=""
 if GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1; then
   tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null || true)"
 fi
 rm -f "$idx"
 headtree=""
-[ -n "$head" ] && headtree="$(git rev-parse -q --verify "$head^{tree}" 2>/dev/null || true)"
+if [ -n "$head" ]; then
+  headtree="$(git rev-parse -q --verify "$head^{tree}" 2>/dev/null || true)"
+fi
 if [ -n "$tree" ] && [ "$tree" != "$headtree" ]; then
   if [ -n "$head" ]; then
     snapshot="$(git commit-tree "$tree" -p "$head" \
@@ -567,8 +571,10 @@ if [ -n "$snapshot" ]; then
 fi
 [ -n "$tried" ] || exit 0
 if [ -n "$failed" ]; then status=failed; else status=ok; fi
-printf '{"hook_event_name":"CheeseSync","status":"%s","commit":"%s","snapshot":"%s","branch":"%s"}' \
-  "$status" "$head" "$snapshot" "$branch" | cheese-hook >/dev/null 2>&1 || true
+{
+  printf '{"hook_event_name":"CheeseSync","status":"%s",' "$status"
+  printf '"commit":"%s","snapshot":"%s","branch":"%s"}' "$head" "$snapshot" "$branch"
+} | cheese-hook >/dev/null 2>&1 || true
 """
 
 
