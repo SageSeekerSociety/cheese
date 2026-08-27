@@ -42,7 +42,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import ClaimService, TaskService
 from app.domain.topic.models import Topic, TopicKind, TopicRole, TopicStatus
 from app.domain.topic.repositories import (
     SortOrder,
@@ -87,23 +87,6 @@ def _require_room(parent: Topic) -> None:
     """
     if parent.kind != TopicKind.root:
         raise ValidationError("房间之下是「一件活」，不是另一个房间——用拆活")
-
-
-def _bind_room_branch(*, child_id: uuid.UUID, parent_id: uuid.UUID | None) -> None:
-    """一个房间一条分支：一件活的分支从它所在房间的分支长出来，采信时再并回去。
-
-    Rooms are unaffected — they fork the base branch and reach main through
-    采纳, as they always did. Recorded the instant the row is created, because
-    the fork point is chosen once, when the jj workspace is materialised
-    (`workspace.service._ensure_worktree`), and nothing can move it afterwards.
-
-    No kind check any more: the only caller is the one that opens a thread, so
-    the question "is this child a piece of work" is answered by which function
-    you are in rather than by re-deriving it from a column.
-    """
-    if parent_id is None:
-        return
-    ws.bind_branch_parent(child_id, parent_id)
 
 
 logger = logging.getLogger("cheesex.topic")
@@ -777,7 +760,6 @@ class TopicService:
                 agent_instance_id=parent.agent_instance_id,
             )
             task.upgraded_from_block_id = block.id
-            _bind_room_branch(child_id=task.id, parent_id=parent.id)
             await self._blocks.set_upgraded_to_place(block, task_id=task.id)
             await self._seed_brief_doc(parent, brief, task_id=task.id)
             return Place(room=parent, task=task), True
@@ -842,6 +824,7 @@ class TopicService:
         title: str,
         created_by: str | None = None,
         brief: str | None = None,
+        paths: list[str] | None = None,
         triggered_by: str | None = None,
     ) -> Task:
         """从上往下拆解 (eval A2): open a new thread of work in a room.
@@ -919,9 +902,12 @@ class TopicService:
             # different agent and a different memory.
             agent_instance_id=room.agent_instance_id,
         )
-        # 一个房间一条分支一个 PR: this task's branch forks the room's. Written
-        # here, before anything can materialise the workspace.
-        _bind_room_branch(child_id=task.id, parent_id=room.id)
+        if paths:
+            # 划出这条活要碰的地方。Refusals are NOT raised here: the caller
+            # renders them alongside the warnings, and an exception would carry
+            # only one of the two. A claim that was refused simply is not
+            # recorded — the thread still exists and can narrow it and try again.
+            await ClaimService(self._session).claim(task, paths)
         room_doc = await self._blocks.doc_root(room.id)
         await self._seed_brief_doc(
             room,

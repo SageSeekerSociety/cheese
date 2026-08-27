@@ -44,11 +44,6 @@ async function onCreateTopic(title: string, agentInstanceId?: string | null) {
   if (topic) openTopic(topic.id)
 }
 
-async function onSplitTopic(payload: { topicId: string; title: string }) {
-  const sub = await store.split(payload.topicId, payload.title)
-  if (sub) openTopic(sub.id)
-}
-
 // Archiving the topic you are looking at closes it — go back to the project
 // root rather than leaving a frozen archive open in the content area.
 async function onArchiveTopic(topicId: string) {
@@ -87,6 +82,5 @@ async function onArchiveTopic(topicId: string) {
     @unarchive-topic="store.unarchive"
     @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     @create-topic="onCreateTopic"
-    @split-topic="onSplitTopic"
   />
 </template>

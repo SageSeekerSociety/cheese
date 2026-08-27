@@ -141,6 +141,10 @@ export interface RoomTask {
   room_id: string
   title: string
   status: string
+  // 它此刻占没占着这个房间四个槽位里的一个，和从什么时候开始等的。和 `status`
+  // 是两个问题：四条都 open 的房间可能三条在跑一条排队，也可能全都闲着。
+  residency?: 'running' | 'idle'
+  queued_at?: string | null
   owner_handle?: string | null
   created_by?: string | null
   agent_instance_id?: string | null
@@ -152,7 +156,25 @@ export interface RoomTask {
   upgraded_from_block_id?: string | null
   created_at: string
   updated_at: string
-  // 只有项目级那条列表带它（`GET /projects/{id}/tasks`）——房间级的不带。
+  // 项目级那条列表（`GET /projects/{id}/tasks`）和房间级那条（`GET
+  // /topics/{id}/tasks`）都带它——「等人验收」也是安静的，没有它就和「闲着」
+  // 在屏幕上长得一模一样。
+  card?: ThreadCard | null
+}
+
+/** 一批活 —— 一棵树 = 一个分支 = 一个 PR。房间封口一批、开下一批，所以一个房间
+ *  同时可以有好几棵，但只有一棵是 `open` 的。 */
+export interface RoomTree {
+  id: string
+  status: 'open' | 'sealed' | 'merged'
+  created_at: string
+  sealed_at?: string | null
+  merged_at?: string | null
+  // 快检最后一次说了什么，关于这棵树现在的内容。它谁也不拦（#296 定了由 PR 上
+  // 真的 CI 决定），在这里只是为了让红的那次被将要验收的人看见。
+  last_check_at?: string | null
+  last_check_ok?: boolean | null
+  last_check_detail?: string
   card?: ThreadCard | null
 }
 

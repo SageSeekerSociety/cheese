@@ -98,6 +98,13 @@ function othersHead(container: Element): HTMLElement {
   if (!head) throw new Error('没有找到「其他话题」组头')
   return head
 }
+/** 把某一行下面那一层展开 —— 侧栏默认是收着的，要看子行就得先点开。 */
+async function expand(container: Element, title: string): Promise<void> {
+  const toggle = rowFor(container, title).querySelector('button.subtree-toggle') as HTMLElement | null
+  if (!toggle) throw new Error(`这一行没有展开开关: ${title}`)
+  await fireEvent.click(toggle)
+}
+
 function hasOthersHead(container: Element): boolean {
   return Array.from(container.querySelectorAll('.group-toggle')).some((el) => el.textContent?.includes('其他话题'))
 }
@@ -125,17 +132,25 @@ beforeAll(() => {
 describe('左侧话题列表：按相关性分两组', () => {
   beforeEach(() => localStorage.clear())
 
-  it('我参与的平铺在上面；无关的整棵子树收进默认折叠的「其他话题」', () => {
+  it('我参与的平铺在上面；无关的整棵子树收进默认折叠的「其他话题」', async () => {
     const { container } = mount()
+    // 房间下面那一层默认收着（见 TopicSidebar.collapse.spec），所以上组这里
+    // 只有 mine 那一行；点开才看得到它派出去的活。
+    expect(visibleTitles(container)).toEqual(['mine'])
+    await expand(container, 'mine')
     expect(visibleTitles(container)).toEqual(['mine', 'mine1'])
+
     const head = othersHead(container)
-    // 计数是整组的话题数（含组内的子话题），不是只数顶层。
+    // 计数是整组的话题数（含组内收着的那些），不是只数顶层，也不受折叠影响。
     expect(head.querySelector('.group-count')?.textContent?.trim()).toBe('3')
   })
 
   it('展开以后，下组的行和上组的行是同一种形态', async () => {
     const { container } = mount()
     await fireEvent.click(othersHead(container))
+    await expand(container, 'mine')
+    await expand(container, 'theirs')
+    await expand(container, 'theirs1')
     expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs', 'theirs1', 'theirs1x'])
 
     // 同一种行：树形缩进（每层 20px）、子话题的竖向引导线、16px 状态槽、
@@ -151,13 +166,14 @@ describe('左侧话题列表：按相关性分两组', () => {
     expect(deep.classList.contains('topic-row--archived')).toBe(false)
   })
 
-  it('组内照旧能折叠子话题（折叠开关在下组的行上也在）', async () => {
+  it('组内照旧能展开收起（开关在下组的行上也在）', async () => {
     const { container } = mount()
     await fireEvent.click(othersHead(container))
-    const toggle = rowFor(container, 'theirs').querySelector('button.subtree-toggle') as HTMLElement | null
-    if (!toggle) throw new Error('下组的父话题行没有折叠开关')
-    await fireEvent.click(toggle)
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs'])
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs'])
+    await expand(container, 'theirs')
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs', 'theirs1'])
+    await expand(container, 'theirs')
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs'])
   })
 
   it('组头的未读是一个点，不是数字', () => {
@@ -172,17 +188,23 @@ describe('左侧话题列表：按相关性分两组', () => {
   it('展开以后组头的点让位给行上的真实数字', async () => {
     const { container } = mount({ unreadMap: { theirs1: 3 } })
     await fireEvent.click(othersHead(container))
+    await expand(container, 'theirs')
     expect(othersHead(container).querySelector('.unread-badge--dot')).toBeNull()
     expect(rowFor(container, 'theirs1').querySelector('.unread-badge')?.textContent?.trim()).toBe('3')
   })
 
-  it('awaits_me 为真的话题永远不折叠——即使 i_participate 是假', () => {
+  it('awaits_me 为真的话题不会被收进「其他话题」——即使 i_participate 是假', async () => {
     // 后端保证这个组合不出现（awaits_me ⇒ i_participate），前端不靠这个保证。
     const patched = topics.map((t) => (t.id === 'theirs1' ? ({ ...t, awaits_me: true } as Topic) : t))
     const { container } = mount({ topics: patched })
-    // 整棵 theirs 子树被带上来了，"等我处理"那一行一眼就在。
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs', 'theirs1', 'theirs1x'])
+    // 整棵 theirs 子树被带到上组来了，不再藏在那个折叠的组头后面。
     expect(hasOthersHead(container)).toBe(false)
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs'])
+    // 行本身收着，但"等你处理"冒到了开关上——所以它没有被折叠吞掉。
+    const toggle = rowFor(container, 'theirs').querySelector('button.subtree-toggle') as HTMLElement
+    expect(toggle.classList.contains('subtree-toggle--awaits')).toBe(true)
+    await expand(container, 'theirs')
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs', 'theirs1'])
   })
 
   it('选中的话题落在下组时，只漏出通往它的那条路径，其余仍然收着', () => {
@@ -190,7 +212,7 @@ describe('左侧话题列表：按相关性分两组', () => {
     // 否则"收起来"就名不副实了。（这条和折叠一个父话题时的 reveal 同一个规则。）
     const withSibling = [...topics, topic('theirs2', 'theirs', { i_participate: false })]
     const { container } = mount({ topics: withSibling, selectedTopicId: 'theirs1x' })
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs', 'theirs1', 'theirs1x'])
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs', 'theirs1', 'theirs1x'])
     expect(rowFor(container, 'theirs1x').classList.contains('is-active')).toBe(true)
     // 组头仍然显示"收起来了"，开关不是一颗按了没反应的按钮。
     expect(othersHead(container).textContent).toContain('其他话题')
@@ -202,10 +224,10 @@ describe('左侧话题列表：按相关性分两组', () => {
   it('选中的话题在下组、又把这一组展开开来：整组都在，开关照旧能收回去', async () => {
     const { container } = mount({ selectedTopicId: 'theirs1x' })
     await fireEvent.click(othersHead(container))
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs', 'theirs1', 'theirs1x'])
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs', 'theirs1', 'theirs1x'])
     await fireEvent.click(othersHead(container))
     // 收回去以后仍然看得见选中的那一条路径，别的都收了。
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs', 'theirs1', 'theirs1x'])
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs', 'theirs1', 'theirs1x'])
     expect(localStorage.getItem('cheesex.railOthersOpen.v1:p1')).toBeNull()
   })
 
@@ -216,18 +238,18 @@ describe('左侧话题列表：按相关性分两组', () => {
     first.unmount()
 
     const { container } = mount()
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs', 'theirs1', 'theirs1x'])
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs'])
 
     // 收回去也记住
     await fireEvent.click(othersHead(container))
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1'])
+    expect(visibleTitles(container)).toEqual(['mine'])
     expect(localStorage.getItem('cheesex.railOthersOpen.v1:p1')).toBeNull()
   })
 
   it('没有无关话题时，连组头都不出现', () => {
     const { container } = mount({ topics: topics.filter((t) => !t.id.startsWith('theirs')) })
     expect(hasOthersHead(container)).toBe(false)
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1'])
+    expect(visibleTitles(container)).toEqual(['mine'])
   })
 
   it('一个都不相关时，上组说清楚空的是这一组、不是这个项目', () => {
@@ -246,7 +268,7 @@ describe('左侧话题列表：按相关性分两组', () => {
       return copy as unknown as Topic
     })
     const { container } = mount({ topics: patched })
-    expect(visibleTitles(container)).toEqual(['mine', 'mine1', 'theirs', 'theirs1', 'theirs1x'])
+    expect(visibleTitles(container)).toEqual(['mine', 'theirs'])
     expect(hasOthersHead(container)).toBe(false)
   })
 

@@ -5,10 +5,10 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import {
   ancestorPathIds,
   isMyTopic,
-  loadCollapsedTopics,
+  loadExpandedTopics,
   loadOthersGroupOpen,
   partitionByRelevance,
-  saveCollapsedTopics,
+  saveExpandedTopics,
   saveOthersGroupOpen,
   visibleRows,
 } from './topicTree'
@@ -291,34 +291,40 @@ describe('「其他话题」组展开状态的持久化', () => {
     expect(localStorage.getItem('cheesex.railOthersOpen.v1:p1')).toBeNull()
   })
 
-  it('和折叠集合是两个键，互不干扰', () => {
-    saveCollapsedTopics('p1', new Set(['a']))
+  it('和展开集合是两个键，互不干扰', () => {
+    saveExpandedTopics('p1', new Set(['a']))
     saveOthersGroupOpen('p1', true)
-    expect([...loadCollapsedTopics('p1')]).toEqual(['a'])
+    expect([...loadExpandedTopics('p1')]).toEqual(['a'])
     expect(loadOthersGroupOpen('p1')).toBe(true)
   })
 })
 
-describe('折叠状态的持久化', () => {
+describe('展开状态的持久化', () => {
   beforeEach(() => localStorage.clear())
 
   it('按项目分开存，刷新后还在', () => {
-    saveCollapsedTopics('p1', new Set(['a', 'b']))
-    expect([...loadCollapsedTopics('p1')].sort()).toEqual(['a', 'b'])
-    expect([...loadCollapsedTopics('p2')]).toEqual([])
-    expect([...loadCollapsedTopics(null)]).toEqual([])
+    saveExpandedTopics('p1', new Set(['a', 'b']))
+    expect([...loadExpandedTopics('p1')].sort()).toEqual(['a', 'b'])
+    expect([...loadExpandedTopics('p2')]).toEqual([])
+    expect([...loadExpandedTopics(null)]).toEqual([])
   })
 
-  it('全部展开后不留垃圾', () => {
-    saveCollapsedTopics('p1', new Set(['a']))
-    saveCollapsedTopics('p1', new Set())
-    expect(localStorage.getItem('cheesex.topicCollapsed.v1:p1')).toBeNull()
+  it('全部收起后不留垃圾（键不在 = 默认的收起态）', () => {
+    saveExpandedTopics('p1', new Set(['a']))
+    saveExpandedTopics('p1', new Set())
+    expect(localStorage.getItem('cheesex.topicExpanded.v2:p1')).toBeNull()
   })
 
-  it('存坏了就当没折叠过（宁可多显示，也不要藏掉话题）', () => {
-    localStorage.setItem('cheesex.topicCollapsed.v1:p1', '{broken')
-    expect([...loadCollapsedTopics('p1')]).toEqual([])
-    localStorage.setItem('cheesex.topicCollapsed.v1:p1', '{"not":"an array"}')
-    expect([...loadCollapsedTopics('p1')]).toEqual([])
+  it('存坏了就回到默认的收起态', () => {
+    localStorage.setItem('cheesex.topicExpanded.v2:p1', '{broken')
+    expect([...loadExpandedTopics('p1')]).toEqual([])
+    localStorage.setItem('cheesex.topicExpanded.v2:p1', '{"not":"an array"}')
+    expect([...loadExpandedTopics('p1')]).toEqual([])
+  })
+
+  it('不读旧那把键 —— 它存的是收起来的 id，含义正好相反', () => {
+    // 照旧读会把用户当初收起来的那几个房间变成唯一展开的那几个，其余全藏起来。
+    localStorage.setItem('cheesex.topicCollapsed.v1:p1', JSON.stringify(['a', 'b']))
+    expect([...loadExpandedTopics('p1')]).toEqual([])
   })
 })

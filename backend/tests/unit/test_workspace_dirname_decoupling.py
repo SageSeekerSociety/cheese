@@ -1,6 +1,6 @@
 """工作区目录名与 git 分支名是两件事，改一个不许动到另一个。
 
-**为什么值得钉**：以前它们是一条链——`branch_for_place(topic_id)` 给出
+**为什么值得钉**：以前它们是一条链——`branch_for_tree(topic_id)` 给出
 `topic/<hex8>`，`_worktree_path` 把 `/` 折成 `_` 得到目录名，容器工作目录再由
 目录名拼出来，而设备端的 tmux 会话名是**按工作目录算的 cksum**
 （`agent/device_launch.py`：“retires a stale session whenever the resolved work
@@ -9,13 +9,13 @@ dir changes”）。于是给分支改个名，磁盘上的工作区要搬家、
 上下文全丢。没有任何地方写着这件事。
 
 而且这条链是**偶然**的：`_worktree_path` 拿到的分支名永远是
-`branch_for_place(topic_id)`，`topic/<hex8>` → `topic_<hex8>` 本来就是话题 id
+`branch_for_tree(topic_id)`，`topic/<hex8>` → `topic_<hex8>` 本来就是话题 id
 的纯函数。所以目录名改成直接由 topic_id 派生之后，磁盘上的结果一字不差，零迁移。
 
 下面两组测试就是那条链被剪断后的替代品：
 - 第一组：路径的字面值。期望值是**旧算法写死的产物**，不是重新调用一遍新算法
   ——否则算法怎么改它都绿。磁盘上已经存在的 `topic_<hex8>` 目录靠这组不被搬走。
-- 第二组：把 `branch_for_place` 换掉，路径必须纹丝不动。这一条才是这次改动的
+- 第二组：把 `branch_for_tree` 换掉，路径必须纹丝不动。这一条才是这次改动的
   全部意义所在。
 """
 
@@ -30,7 +30,7 @@ import pytest
 from app.core.config import settings
 from app.domain.workspace import service as ws
 
-# 固定话题 id → 旧算法（branch_for_place(topic).replace("/", "_")）当时产出的
+# 固定话题 id → 旧算法（branch_for_tree(topic).replace("/", "_")）当时产出的
 # 目录名，写死。任何让这一列变动的改动都会搬走线上已经存在的工作区。
 FROZEN = [
     ("733747a3-0000-4000-8000-000000000001", "topic_733747a3"),
@@ -70,7 +70,7 @@ def test_the_container_workdir_is_byte_for_byte_what_it_always_was(
 def test_renaming_the_branch_does_not_move_anything_on_disk(
     workspace_root: Path, monkeypatch
 ):
-    """这次改动的全部意义：`branch_for_place` 返回别的值，路径也不许变。
+    """这次改动的全部意义：`branch_for_tree` 返回别的值，路径也不许变。
 
     改动之前这条断言必然失败——目录名就是分支名折出来的。
     """
@@ -79,7 +79,7 @@ def test_renaming_the_branch_does_not_move_anything_on_disk(
     before_workdir = ws.sandbox_topic_workdir(topic)
 
     monkeypatch.setattr(
-        ws, "branch_for_place", lambda tid: f"fix/some-new-scheme-{tid.hex[:8]}"
+        ws, "branch_for_tree", lambda tid: f"fix/some-new-scheme-{tid.hex[:8]}"
     )
 
     assert ws._worktree_path(project, topic) == before_path  # noqa: SLF001
@@ -104,7 +104,7 @@ def test_renaming_the_branch_does_not_move_a_real_workspace(
     before = ws.sandbox_project_mounts(project, topic)
 
     monkeypatch.setattr(
-        ws, "branch_for_place", lambda tid: f"feat/renamed-{tid.hex[:8]}"
+        ws, "branch_for_tree", lambda tid: f"feat/renamed-{tid.hex[:8]}"
     )
 
     # 目录还在原地（没被搬走、没被重建），挂载参数逐字相同。
@@ -123,14 +123,14 @@ def test_the_git_branch_is_still_named_after_the_branch_function(
 ):
     """反过来的一半：解耦不等于工作区不再导出分支。
 
-    `_ensure_worktree` 建的 bookmark 仍然必须是 `branch_for_place` 说的那个名字
+    `_ensure_worktree` 建的 bookmark 仍然必须是 `branch_for_tree` 说的那个名字
     ——采纳/diff 全走 git 分支，那条线不能跟着目录名一起被剪断。
     """
     if shutil.which("jj") is None:  # pragma: no cover - 环境缺件，不是代码缺陷
         pytest.skip("jj 未安装")
     project, topic = uuid.uuid4(), uuid.uuid4()
     monkeypatch.setattr(
-        ws, "branch_for_place", lambda tid: f"feat/renamed-{tid.hex[:8]}"
+        ws, "branch_for_tree", lambda tid: f"feat/renamed-{tid.hex[:8]}"
     )
 
     wt = ws._ensure_worktree(project, topic)  # noqa: SLF001

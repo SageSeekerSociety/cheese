@@ -254,7 +254,52 @@ def checkpoint_worktree(
     except Exception:  # noqa: BLE001 — git snapshot is best-effort
         logger.warning("snapshot failed for topic %s", topic_id, exc_info=True)
         return "failed"
+    _report_paths_outside_the_claim(project_id, topic_id)
     return "snapshotted"
+
+
+def _report_paths_outside_the_claim(project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
+    """Say when a turn touched ground this piece of work never claimed.
+
+    A claim is an intention and a snapshot is a fact. If nothing ever compares
+    them, the claim is decoration — it would refuse the conflicts it happens to
+    predict and stay silent about the ones that actually happened.
+
+    Reported, never blocked, and never after the fact undone: the work is
+    already committed by the time this runs, and the useful thing is that
+    somebody finds out, not that the commit is punished.
+    """
+    from app.core.background import spawn
+
+    async def _check() -> None:
+        from app.core.db import async_session_factory
+        from app.domain.room_task.services import ClaimService
+
+        try:
+            touched = ws.paths_in_last_snapshot(project_id, topic_id)
+            if not touched:
+                return
+            async with async_session_factory() as session:
+                # By topic id, through the service: a room's own line and work
+                # that claimed nothing both come back empty, and this domain
+                # never has to hold room_task's repository to find that out.
+                surprises = await ClaimService(session).unclaimed_by_topic(
+                    topic_id, touched
+                )
+            if surprises:
+                logger.info(
+                    "task %s touched paths it never claimed: %s",
+                    topic_id,
+                    ", ".join(surprises[:10]),
+                )
+        except Exception:  # noqa: BLE001 — a report must never fail a turn
+            logger.warning(
+                "could not compare touched paths to the claim for %s",
+                topic_id,
+                exc_info=True,
+            )
+
+    spawn(_check(), name=f"claim-check-{topic_id}")
 
 
 def status_snapshot(topic_id: uuid.UUID) -> dict:

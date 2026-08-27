@@ -45,8 +45,10 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
         # The card is the room's own main line, not one thread's — delivery
-        # therefore gets stamped on the room.
+        # therefore gets stamped on the room. It rides no tree either, so
+        # sealing and marking-merged both have nothing to do.
         task_id=None,
+        tree_id=None,
         status=AcceptStatus.pending,
         reviewer_handle="alice",
         routing_reason="最懂",

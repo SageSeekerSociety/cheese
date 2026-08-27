@@ -107,14 +107,6 @@ class Topic(UuidPk, Timestamps, Base):
     # until the topic has run — i.e. until it has an `agent_sessions` row — after
     # which it is frozen, matching the device-affinity boundary.
     compute_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # git branch backing this room. Nothing in the app has ever written it —
-    # the branch a workspace actually sits on is derived (`branch_for_place`) —
-    # so every row is NULL and `cheese status` reported `branch: null` for the
-    # whole life of the column. A task's `branch_name` IS written, at creation;
-    # this one is the shape that column was copied from, kept because a room's
-    # branch may one day want naming and nothing depends on it being absent.
-    branch_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
-
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).

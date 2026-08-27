@@ -54,10 +54,16 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import LockKind, Task
 from app.domain.room_task.place import Place
 from app.domain.room_task.schemas import TaskOut
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import (
+    ClaimService,
+    ResidencyService,
+    RoomLockService,
+    TaskService,
+    WorkTreeService,
+)
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.doc_change import summarize_doc_change
 from app.domain.topic.models import Topic, TopicStatus
@@ -66,8 +72,11 @@ from app.domain.topic.repositories import SortOrder, TopicSortField
 from app.domain.topic.schemas import (
     BackgroundTaskDoneIn,
     BackgroundTaskIn,
+    CheckResultIn,
+    ClaimIn,
     ConclusionIn,
     DocEditIn,
+    LockIn,
     RelayIn,
     SplitIn,
     TopicCreate,
@@ -413,15 +422,84 @@ async def list_room_tasks(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     threads = await TaskService(db).threads_for_room(topic_id, limit=limit)
-    items = [
-        {
-            **TaskOut.model_validate(task).model_dump(mode="json"),
-            "blocks": [
-                BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
-            ],
-        }
-        for task, blocks in threads
-    ]
+    # The card each thread rides on, in ONE query for the whole room (the same
+    # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
+    # 人验收" are indistinguishable on screen — both are quiet — and the room
+    # overview would have to ask per thread to tell them apart.
+    cards = await AcceptCardRepository(db).latest_by_task([t.id for t, _ in threads])
+    items = []
+    for task, blocks in threads:
+        card = cards.get(task.id)
+        items.append(
+            {
+                **TaskOut.model_validate(task).model_dump(mode="json"),
+                "blocks": [
+                    BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
+                ],
+                "card": None
+                if card is None
+                else {
+                    "id": str(card.id),
+                    "status": str(card.status),
+                    "pr_number": card.pr_number,
+                    "pr_url": card.pr_url,
+                },
+            }
+        )
+    return ok(page(items, len(items)))
+
+
+@router.get("/{topic_id}/trees")
+async def list_room_trees(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """This room's batches — newest first, each with the PR it rides on.
+
+    一棵树 = 一个分支 = 一个 PR = 一批活. A room seals one and opens the next, so
+    "is what I write right now going into the batch that is currently under CI,
+    or into the next one" has an answer — and until this endpoint existed, no
+    caller outside the backend could get it. A room whose batch is sealed reads
+    on screen exactly like one that is not, which is how somebody keeps working
+    and wonders why their changes are not on the PR.
+
+    `last_check_*` is the agent's own quick check on this tree's content. It
+    gates nothing (#296 settled that the PR's real CI decides) — it is here so a
+    red check is visible to whoever is about to accept.
+    """
+    topic = await TopicService(db).get_or_404(topic_id)
+    actor = await resolver.resolve(
+        fallback_handle=None, topic_id=topic_id, project_id=topic.project_id
+    )
+    await resolver.authorize_topic(
+        actor, project_id=topic.project_id, topic_id=topic_id
+    )
+    trees = await WorkTreeService(db).history(topic_id)
+    cards = await AcceptCardRepository(db).latest_by_tree([t.id for t in trees])
+    items = []
+    for tree in reversed(trees):
+        card = cards.get(tree.id)
+        items.append(
+            {
+                "id": str(tree.id),
+                "status": str(tree.status),
+                "created_at": tree.created_at,
+                "sealed_at": tree.sealed_at,
+                "merged_at": tree.merged_at,
+                "last_check_at": tree.last_check_at,
+                "last_check_ok": tree.last_check_ok,
+                "last_check_detail": tree.last_check_detail,
+                "card": None
+                if card is None
+                else {
+                    "id": str(card.id),
+                    "status": str(card.status),
+                    "pr_number": card.pr_number,
+                    "pr_url": card.pr_url,
+                },
+            }
+        )
     return ok(page(items, len(items)))
 
 
@@ -1378,6 +1456,7 @@ async def split_topic(
         title=body.title,
         created_by=actor.handle if actor.handle != "anonymous" else body.created_by,
         brief=body.brief,
+        paths=body.paths,
         # 归属跟推进者走: who is DRIVING this room right now. 芝士 splits under her
         # own handle, so `created_by` names the robot and the person who asked for
         # the split is nowhere in the request — the runner is the only place that
@@ -1386,7 +1465,30 @@ async def split_topic(
         # behaves exactly as it did before.
         triggered_by=runner.turn_author_for(topic_id),
     )
+    # 一个房间最多同时开 4 条: over the cap the thread is QUEUED, not refused.
+    # It keeps its brief, its owner and its place in the room; it starts when a
+    # slot frees. Refusing would hand the caller a condition that clears by
+    # itself and nothing useful to do about it.
+    residency = ResidencyService(db)
+    admitted = await residency.admit(task)
+    position = 0 if admitted else await residency.queue_position(task)
+    holders = [] if admitted else await residency.holders(task.room_id)
+
     out = TaskOut.model_validate(task).model_dump(mode="json")
+    out["queued"] = not admitted
+    out["queue_position"] = position
+    # 满额时不能只说「排队中」: the person has to know WHICH four threads are
+    # holding the room, and when each was last active, or they cannot tell
+    # which one to go and finish.
+    out["slots_held_by"] = [
+        {
+            "id": str(t.id),
+            "title": t.title,
+            "owner_handle": t.owner_handle,
+            "last_turn_at": t.last_turn_at.isoformat() if t.last_turn_at else None,
+        }
+        for t in holders
+    ]
     if key is not None:
         await idem.record_result(db, key, out)
     # Commit BEFORE kicking off: the 分身's first turn runs in the background
@@ -1394,8 +1496,125 @@ async def split_topic(
     # idempotency key commits in this same transaction, so a crash between the
     # commit and the kickoff cannot produce a SECOND thread on resume.
     await db.commit()
-    runner.submit_kickoff(chat, task.id)
+    if admitted:
+        runner.submit_kickoff(chat, task.id)
     return ok(out)
+
+
+@router.post("/{topic_id}/check-result")
+async def record_check_result(
+    topic_id: uuid.UUID,
+    body: CheckResultIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Record what the quick check said about this place's tree.
+
+    It gates nothing. #296 settled that a card is a view of a PR and the real
+    CI on that PR decides — a platform-side check voting on delivery is the
+    thing that was retired, and this does not bring it back. What it brings
+    back is the other half: a red check that the person about to accept can
+    SEE. A check whose result goes nowhere is a check nobody bothers to run.
+
+    A timeout is a failure, deliberately. A quick check has a time budget
+    because its value IS the speed; one that quietly grew past the budget and
+    got reported as "inconclusive" would rot into a second full CI.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    trees = WorkTreeService(db)
+    tree = await trees.ensure_open(project_id=place.project_id, room_id=place.room_id)
+    await trees.record_check(tree, ok=body.ok, detail=body.detail)
+    await db.commit()
+    return ok({"recorded": True, "tree_id": str(tree.id)})
+
+
+@router.post("/{topic_id}/claim")
+async def claim_paths(
+    topic_id: uuid.UUID,
+    body: ClaimIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """声明这条活要碰哪些路径 —— and find out who else is already there.
+
+    Additive, because a claim always grows: work reaches files nobody predicted
+    when the brief was written. That is also why this is a call rather than a
+    field in the brief — a brief is written once and cannot be changed.
+
+    Refusals and warnings come back together. Claiming the same FILE as another
+    open piece of work on the same tree is refused (the second write wins in
+    silence, and nothing else would report it); overlapping DIRECTORIES is a
+    warning, because two threads under one package is ordinary and refusing it
+    would make the rule something people route around.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    svc = ClaimService(db)
+    if place.task is None:
+        # A room writes to the same tree as its threads and can overwrite their
+        # files exactly as they can overwrite each other's, so it claims too —
+        # it just has no row of its own to hold the claim, so this reports the
+        # conflicts without recording anything.
+        refusals, warnings = await svc.check(
+            tree_id=place.tree_id or place.room_id,
+            paths=svc.normalise(body.paths),
+            exclude_task_id=None,
+        )
+        return ok({"claimed": [], "refusals": refusals, "warnings": warnings})
+    refusals, warnings = await svc.claim(place.task, body.paths)
+    await db.commit()
+    return ok(
+        {
+            "claimed": [] if refusals else list(place.task.claimed_paths or []),
+            "refusals": refusals,
+            "warnings": warnings,
+        }
+    )
+
+
+@router.post("/{topic_id}/lock")
+async def take_room_lock(
+    topic_id: uuid.UUID,
+    body: LockIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Take one of the room's two locks, or be told who has it.
+
+    Never waits: blocking would spend a whole turn's compute standing still,
+    and the caller has better answers available — write a different file, use
+    `Edit` instead of a whole-file write, come back next turn.
+    """
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    acquired, reason = await RoomLockService(db).acquire(
+        room_id=place.room_id,
+        kind=LockKind(body.kind),
+        resource=body.resource or "",
+        holder_task_id=place.task_id,
+    )
+    await db.commit()
+    return ok({"acquired": acquired, "reason": reason})
+
+
+@router.post("/{topic_id}/unlock")
+async def release_room_lock(
+    topic_id: uuid.UUID,
+    body: LockIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    place = await TopicService(db).place_or_404(topic_id)
+    await _actor_in_place(resolver, place)
+    released = await RoomLockService(db).release(
+        room_id=place.room_id,
+        kind=LockKind(body.kind),
+        resource=body.resource or "",
+        holder_task_id=place.task_id,
+    )
+    await db.commit()
+    return ok({"released": released})
 
 
 @router.post("/{topic_id}/clone-from")
