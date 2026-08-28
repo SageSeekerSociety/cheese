@@ -26,9 +26,9 @@ OTHER_UID="$(( $(id -u) + 1 ))"
 OTHER_GID="$(( $(id -g) + 1 ))"
 
 new_run_dir() {
-  mkdir -p "$ROOT/tmp"
+  mkdir -p "$ROOT/.tmp"
   local dir
-  dir="$(mktemp -d "$ROOT/tmp/ownership.XXXXXX")"
+  dir="$(mktemp -d "$ROOT/.tmp/ownership.XXXXXX")"
   # Pre-create it so a `! grep` assertion proves the call was absent rather than
   # the log file was.
   : > "$dir/docker.log"
