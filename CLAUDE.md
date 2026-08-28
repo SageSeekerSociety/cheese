@@ -36,11 +36,12 @@ mature system pays to protect the users it already has. We do not have them yet,
 so it buys nothing and leaves more to unwind — and each one is a place the next
 reader can mistake for something still in use.
 
-Deletion has to reach the layer that decides what runs. Taking something off the
-surface where a person picks it removes the choice and leaves the path wired —
-and what nobody can select can still be what an unconfigured case gets by
-default. A retirement is finished when the code is gone; confirm it in the code
-that chooses.
+A change is finished when the layer that decides behaviour changes. Removing
+something from the surface where a person picks it leaves the path wired, so
+what nobody can select is still what an unconfigured case runs. Building the
+replacement and leaving the old call site is the same failure inverted: the new
+shape ends up contracted, documented and unreached. Confirm either against the
+code that chooses, not against the surface or the contract.
 
 The corollary is that a thing must be judged by what it does now, not by the
 reason it was created. Mechanisms drift away from their purpose while keeping
