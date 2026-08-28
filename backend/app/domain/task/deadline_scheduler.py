@@ -69,11 +69,6 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
         if len(memberships) < PAGE_SIZE:
             break
 
-    if total_failed > 0:
-        logger.info(
-            "Marked %d task memberships as FAILED due to passed deadline", total_failed
-        )
-
     return total_failed
 
 

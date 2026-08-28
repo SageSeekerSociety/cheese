@@ -1681,8 +1681,8 @@ class AcceptService:
         repo: str,
     ) -> AcceptCard:
         """Push the topic branch, open a NEW real PR, and hand the rest to the
-        scheduler's PrPollRunner (SchedulerService.poll_open_prs /
-        advance_pr_card) — this call does NOT wait for CI. Topic stays
+        periodic pr poll (SchedulerService.poll_open_prs / advance_pr_card) —
+        this call does NOT wait for CI. Topic stays
         active; no merge_topic()/push_back()/archive here (拍板 decision 3:
         archive gates on the PR *and* its triggered deploy both succeeding).
         Distinct from `_accept_via_pr` below (#188 §5.1), which merges a PR

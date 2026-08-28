@@ -57,10 +57,4 @@ class MachineEnrollmentSweeper:
             await session.commit()
         if self._on_ready is not None and ready:
             await self._on_ready(ready)
-        if result["enrolled"] or result["failed"]:
-            logger.info(
-                "enrollment sweep: %s enrolled, %s failed",
-                result["enrolled"],
-                result["failed"],
-            )
         return result

@@ -34,8 +34,8 @@ What is NOT traded away is the COUNT. A burst used to get its summary only from
 the next occurrence of the same fingerprint, so the commonest case — a bug you
 fixed, which by definition stops recurring — kept the first detail line and
 silently lost "it happened 500 times", usually the number that says how bad it
-was. `BackendErrorFlushRunner` ticks `flush_expired` so a window closes on time
-instead of on the next failure. Late, never absent.
+was. `flush_expired` is on the platform's periodic-job list, so a window closes
+on time instead of on the next failure. Late, never absent.
 
 In-memory state matches the platform's single-process reality (same assumption
 as the per-topic chat locks and ``frontend_log``'s intake).

@@ -193,8 +193,8 @@ itself is not re-implemented.
 
 ## What is kept
 
-`PrPollRunner` and `_nudge_pr_fix` (a red check wakes 芝士 to fix it,
-deduplicated per commit).
+The periodic pr poll (`SchedulerService.poll_open_prs`) and `_nudge_pr_fix`
+(a red check wakes 芝士 to fix it, deduplicated per commit).
 
 This paragraph used to also keep the rule that a topic is archived only after
 the deploy workflow reaches completed+success. **That rule was removed by #206
