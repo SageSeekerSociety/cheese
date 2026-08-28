@@ -34,7 +34,7 @@ def test_socket_path_is_per_topic_and_stable():
 
 
 def test_screen_env_carries_the_socket_only_with_a_topic():
-    _, env, _ = device_launch.build_screen_launch(
+    _, env = device_launch.build_screen_launch(
         hook_url="http://h",
         hook_token="t",
         home_dir="/h",
@@ -46,7 +46,7 @@ def test_screen_env_carries_the_socket_only_with_a_topic():
 
     # No topic (a probe / bare screen) means no delivery socket to name; a made-up
     # path would just be a file nobody binds.
-    _, bare, _ = device_launch.build_screen_launch(
+    _, bare = device_launch.build_screen_launch(
         hook_url="http://h",
         hook_token="t",
         home_dir="/h",

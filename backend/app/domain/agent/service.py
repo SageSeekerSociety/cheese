@@ -93,19 +93,6 @@ class AgentUsage:
 
 
 @dataclass
-class AgentDeliveryFailure:
-    """The prompt driver on a device screen gave up delivering the turn's
-    prompt (#445): the cheeselet reports it over its server-call channel the
-    moment it abandons, instead of the failure dying in the connector's local
-    journal while the room stares at silence until the 300s bound. The provider
-    loop intercepts this event — re-sends the prompt immediately and surfaces a
-    visible message — and it is never forwarded to the chat layer."""
-
-    phase: str = ""
-    ticks: int = 0
-
-
-@dataclass
 class AgentSessionInfo:
     """Yielded as soon as the CLI announces the session id — BEFORE the final
     result — so even a turn that dies mid-stream can persist the pointer, and

@@ -3,7 +3,7 @@
 import base64
 import uuid
 
-from app.domain.agent.device_hub import DeviceHub, HubScreen
+from app.domain.agent.device_hub import DeviceHub
 
 
 class FakeDeviceTransport:
@@ -43,12 +43,10 @@ async def test_open_screen_sends_session_create_and_registers_token():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen(
-        "dev1", ["claude"], "//js", env={"K": "V"}, **_screen_args()
-    )
+    screen = await hub.open_screen("dev1", ["claude"], env={"K": "V"}, **_screen_args())
     create = t.sent[-1]
     assert create["t"] == "session.create"
-    assert create["command"] == ["claude"] and create["source"] == "//js"
+    assert create["command"] == ["claude"]
     assert create["env"] == {"K": "V"} and create["screen"] == screen.token
     # The screen is discoverable by its token (attribution) and by sid.
     assert hub.screen_by_token(screen.token) is screen
@@ -72,7 +70,7 @@ async def test_screen_data_fans_out_to_viewers_only():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
     viewer = FakeViewer()
     await hub.attach_viewer("dev1", screen.sid, viewer)
     assert t.sent[-1]["t"] == "screen.subscribe"  # first viewer subscribes
@@ -92,7 +90,7 @@ async def test_call_screen_await_resolved_by_rpc_result():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
     call_id = await hub.call_screen("dev1", screen.sid, "prompt", ["hi"])
     assert t.sent[-1] == {
         "t": "rpc.call",
@@ -117,7 +115,7 @@ async def test_put_file_waits_for_device_file_result():
     hub = DeviceHub()
     transport = FakeDeviceTransport()
     await hub.attach_device("dev1", transport)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
     import asyncio
 
@@ -143,37 +141,20 @@ async def test_put_file_waits_for_device_file_result():
     assert await pending == {"ok": True}
 
 
-async def test_exposed_screen_fn_answered_via_rpc_result():
-    async def echo(hub: DeviceHub, screen: HubScreen, args: list) -> dict:
-        return {"echo": args}
-
-    hub = DeviceHub(screen_fns={"echo": echo})
-    t = FakeDeviceTransport()
-    await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
-    await hub.on_device_message(
-        "dev1",
-        {"t": "rpc.call", "sid": screen.sid, "id": "c1", "name": "echo", "args": [1]},
-    )
-    reply = t.sent[-1]
-    assert reply["t"] == "rpc.result" and reply["id"] == "c1"
-    assert reply["value"] == {"echo": [1]} and reply["error"] == ""
-
-
 async def test_screens_in_project_only_counts_online():
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
     args = _screen_args()
     project = args["project_id"]
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **args)
+    screen = await hub.open_screen("dev1", ["claude"], **args)
     assert hub.screens_in_project(project) == [screen]
     await hub.detach_device("dev1", t)
     assert hub.screens_in_project(project) == []
 
 
 async def test_adopt_screen_reregisters_running_screen_after_restart():
-    # After a server restart the device (frozen cli) re-announces the screens it kept
+    # After a server restart the device re-announces the screens it kept
     # alive; adopting rebinds sid + screen token to the agent identity so viewers and
     # attribution work again without restarting the screen.
     hub = DeviceHub()
@@ -217,13 +198,13 @@ async def test_screens_for_topic_spans_devices_online_or_not():
     await hub.attach_device("dev1", FakeDeviceTransport())
     topic = uuid.uuid4()
     a = await hub.open_screen(
-        "dev1", ["claude"], "//js", **{**_screen_args(), "topic_id": topic}
+        "dev1", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
     # dev2 has no transport (never attached) — its screen is still registered.
     b = await hub.open_screen(
-        "dev2", ["claude"], "//js", **{**_screen_args(), "topic_id": topic}
+        "dev2", ["claude"], **{**_screen_args(), "topic_id": topic}
     )
-    other = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    other = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
     found = {s.sid for s in hub.screens_for_topic(topic)}
     assert found == {a.sid, b.sid}
@@ -233,20 +214,18 @@ async def test_screens_for_topic_spans_devices_online_or_not():
 async def test_reassert_screen_resends_adopt_create_under_same_identity():
     """Re-asserting an existing screen re-sends session.create with `adopt` and the
     SAME sid + screen token (the cli's re-provision path): a live device session
-    hot-reloads the cheeselet; one lost to a connector restart — or to a create that
-    was never delivered — is respawned without changing the screen's identity."""
+    keeps running; one lost to a connector restart — or to a create that was never
+    delivered — is respawned without changing the screen's identity."""
     hub = DeviceHub()
     t = FakeDeviceTransport()
     await hub.attach_device("dev1", t)
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
 
-    await hub.reassert_screen(
-        screen, command=["claude", "--new"], cheeselet_source="//js2", env={"K": "V"}
-    )
+    await hub.reassert_screen(screen, command=["claude", "--new"], env={"K": "V"})
     create = t.sent[-1]
     assert create["t"] == "session.create" and create["adopt"] is True
     assert create["sid"] == screen.sid and create["screen"] == screen.token
-    assert create["command"] == ["claude", "--new"] and create["source"] == "//js2"
+    assert create["command"] == ["claude", "--new"]
     assert create["env"] == {"K": "V"}
     # The registry still resolves the screen by the same sid and token.
     assert hub.screen(screen.sid) is screen
@@ -262,7 +241,7 @@ async def test_session_error_is_logged_with_its_reason(caplog):
 
     hub = DeviceHub()
     await hub.attach_device("dev1", FakeDeviceTransport())
-    screen = await hub.open_screen("dev1", ["claude"], "//js", **_screen_args())
+    screen = await hub.open_screen("dev1", ["claude"], **_screen_args())
     with caplog.at_level(logging.WARNING, logger="app.domain.agent.device_hub"):
         await hub.on_device_message(
             "dev1",

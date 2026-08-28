@@ -74,7 +74,7 @@ class _RecordingHub:
             self.shipped.append(stdin)
         return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
 
-    async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
+    async def open_screen(self, device_id, command, **kw) -> HubScreen:
         screen = HubScreen(
             sid="s1",
             device_id=device_id,

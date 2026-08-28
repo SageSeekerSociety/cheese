@@ -1,4 +1,4 @@
-"""link.Msg wire protocol: constructors + parse round-trip (frozen cli contract)."""
+"""link.Msg wire protocol: constructors + parse round-trip (the cli's contract)."""
 
 import base64
 
@@ -23,8 +23,8 @@ def test_session_create_omits_empty_optionals():
         "cols": 120,
         "rows": 32,
     }
-    # source / env / adopt only present when set (matches Go omitempty).
-    assert "source" not in msg and "env" not in msg and "adopt" not in msg
+    # env / adopt only present when set (matches Go omitempty).
+    assert "env" not in msg and "adopt" not in msg
 
 
 def test_session_create_with_optionals():
@@ -34,11 +34,10 @@ def test_session_create_with_optionals():
         screen_token="tok",
         cols=1,
         rows=1,
-        source="//js",
         env={"A": "B"},
         adopt=True,
     )
-    assert msg["source"] == "//js" and msg["env"] == {"A": "B"} and msg["adopt"] is True
+    assert msg["env"] == {"A": "B"} and msg["adopt"] is True
 
 
 def test_screen_input_base64_encodes():

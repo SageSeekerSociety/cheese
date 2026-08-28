@@ -303,11 +303,10 @@ func startRendezvousClaude(t *testing.T) *rvFixture {
 	t.Cleanup(func() { sess.Close() })
 
 	// Snapshot() serves whatever the poller last captured, and the poller only
-	// starts on the first OnChange registration — which used to happen as a side
-	// effect of loading the cheeselet. There is no cheeselet on this path, so
-	// register a no-op: without it every snapshot is the empty string and the
-	// readiness wait below can only ever time out. (Nothing in production reads
-	// the screen any more; this is purely so the TEST can watch claude boot.)
+	// starts on the first OnChange registration. Nothing in production registers
+	// one — nothing there reads a screen — so this test has to, or every
+	// snapshot is the empty string and the readiness wait below can only ever
+	// time out. Purely so the TEST can watch claude boot.
 	sess.OnChange(func() {})
 
 	pane := func() string { return sess.Snapshot() }

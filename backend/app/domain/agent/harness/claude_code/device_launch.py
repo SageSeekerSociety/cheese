@@ -7,18 +7,17 @@ isn't eaten — spike 坑 #1), (2) a ``settings.json`` wiring Claude Code COMMAN
 to a ``cheese-hook`` forwarder, and (3) the forwarder itself (POSTs each hook's JSON
 to the backend). Then it ``exec``s ``claude --dangerously-skip-permissions``.
 
-Perception is entirely via those hooks (``hook_events.translate_hook``); the minimal
-cheeselet (``cheeselets/claude_min.js``) only types the prompt. The raw screen bytes
-the host relays are for the human viewer only — never parsed.
+Perception is entirely via those hooks (``hook_events.translate_hook``); prompts
+arrive on the rendezvous socket the launcher arms. The raw screen bytes the host
+relays are for the human viewer only — never parsed.
 
 Everything here is pure (string/dict building) so it is unit-testable without a
-device. ``build_screen_launch`` returns ``(command, env, cheeselet_source)`` for
+device. ``build_screen_launch`` returns ``(command, env)`` for
 ``DeviceHub.open_screen``.
 """
 
 import json
 import shlex
-from importlib import resources
 from pathlib import Path
 
 # Perception wiring (settings.json + the cheese-hook forwarder) is the SHARED
@@ -78,15 +77,6 @@ def rendezvous_paths(topic_id: str) -> tuple[str, str]:
     the topic id keeps it at ~32 bytes and still unique per topic."""
     short = topic_id.replace("-", "")[:12]
     return f"/tmp/cheese-rv-{short}.sock", f"/tmp/cheese-rv-{short}.token"
-
-
-def cheeselet_source() -> str:
-    """The minimal cheeselet JS shipped into the screen (types the prompt only)."""
-    return (
-        resources.files("app.domain.agent.cheeselets")
-        .joinpath("claude_min.js")
-        .read_text(encoding="utf-8")
-    )
 
 
 # Reports what a turn cost. Claude Code writes a usage block per assistant
@@ -266,7 +256,7 @@ echo unknown
 # is alive but cannot reach the model".
 #
 # The helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
-# launcher's prefix — and a reused screen is reasserted (a cheeselet hot-reload),
+# launcher's prefix — and a reused screen is reasserted (an adopt-create),
 # never relaunched. So a helper that dies under a still-running `claude` never
 # comes back on its own, and `claude` bakes its HTTPS_PROXY at startup and never
 # re-reads it: every turn thereafter dies with `API Error: Unable to connect to
@@ -790,8 +780,8 @@ fi
 cd "$CHEESE_WORK"
 # Host claude in a PERSISTENT tmux session so it survives a link/screen drop: the
 # session keeps running on the device and re-opening the screen re-attaches to it
-# (same hosting as the local tmux backend; the PTY mirrors the pane for the human
-# viewer and the cheeselet types into it). Direct exec if tmux isn't installed.
+# (the PTY mirrors the pane for the human viewer). Direct exec if tmux isn't
+# installed.
 # Prefix that must complete BEFORE claude: it brings the tunnel helper up and
 # waits for its port, because claude reads HTTPS_PROXY once and calls out
 # immediately. Empty when this deployment has no tunnel, so the direct path
@@ -1107,12 +1097,13 @@ def build_screen_launch(
     git_branch: str | None = None,
     system_prompt: str = "",
     ca_pem: str = "",
-) -> tuple[list[str], dict[str, str], str]:
-    """Assemble ``(command, env, cheeselet_source)`` for ``DeviceHub.open_screen``.
+) -> tuple[list[str], dict[str, str]]:
+    """Assemble ``(command, env)`` for ``DeviceHub.open_screen``.
 
     ``command`` is a self-contained ``bash -lc`` launcher; ``env`` carries the hook
-    wiring + home/work dirs + model + any provider (gateway) vars; ``cheeselet_source``
-    is the minimal prompt-typing driver. When ``cli_url``/``api_base`` and the
+    wiring + home/work dirs + model + any provider (gateway) vars, and — for a
+    screen with a topic — where its rendezvous socket lives. When
+    ``cli_url``/``api_base`` and the
     ``project_id``/``topic_id`` context are given, the launcher also fetches the
     ``cheese`` platform-action CLI (accept cards / docs / decisions / memory) and wires
     its ``CHEESE_*`` env — the same actions the in-container agent has locally."""
@@ -1158,7 +1149,7 @@ def build_screen_launch(
         env["CHEESE_GIT_AUTHOR_NAME"], env["CHEESE_GIT_AUTHOR_EMAIL"] = git_author
     if extra_env:
         env.update(extra_env)
-    return command, env, cheeselet_source()
+    return command, env
 
 
 def ensure_dir(path: str) -> str:

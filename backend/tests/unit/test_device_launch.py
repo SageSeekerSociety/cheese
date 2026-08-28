@@ -24,7 +24,7 @@ def test_hooks_settings_wire_command_hook_to_forwarder():
 
 
 def test_build_screen_launch_shapes_command_and_env():
-    command, env, cheeselet = device_launch.build_screen_launch(
+    command, env = device_launch.build_screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",
@@ -62,8 +62,6 @@ def test_build_screen_launch_shapes_command_and_env():
     # The gates are written by the launch script itself; nothing is passed for a
     # separate interpreter to read back.
     assert "CHEESE_CLAUDE_GATES" not in env
-    # The minimal cheeselet only drives input (no state inference).
-    assert "cheese.expose('prompt'" in cheeselet
 
 
 def test_forwarder_posts_hook_json_with_token():
@@ -121,7 +119,7 @@ def test_no_ca_means_no_ca_block():
 
 
 def test_build_screen_launch_threads_the_ca_through():
-    command, _env, _cheeselet = device_launch.build_screen_launch(
+    command, _env = device_launch.build_screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="t",
         home_dir="/h",
@@ -631,7 +629,7 @@ def _launch_with_tunnel(**overrides):
         "HTTPS_PROXY": "http://127.0.0.1:8445",
     }
     env.update(overrides)
-    command, _env, _cheeselet = device_launch.build_screen_launch(
+    command, _env = device_launch.build_screen_launch(
         hook_url="http://h/sandbox/hooks/T",
         hook_token="scoped-tok",
         home_dir="/dev/home",

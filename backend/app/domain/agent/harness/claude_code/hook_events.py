@@ -28,7 +28,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.domain.agent.service import (
-    AgentDeliveryFailure,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -104,7 +103,7 @@ def _tool_response_text(response: Any) -> str:
     return ""
 
 
-def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
+def translate_hook(hook: dict) -> AgentEvent | None:
     """One hook payload → one AgentEvent, or None when the hook has no
     platform-visible counterpart (e.g. PostToolUse). A returned AgentResult
     signals the end of the turn (the Stop hook)."""
@@ -191,29 +190,6 @@ def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
                 f"⚠️ 开工前这台机器的工作区不对劲，平台动了它：{detail}。"
                 "上一轮没推出去的东西可能不在了，先确认一遍再往下写；"
                 "被换掉的旧仓库放在 .git.broken.* 里，没有删。"
-            )
-        )
-
-    if event == "CheeseDeliveryFailed":
-        # Synthetic (device_hub, from the cheeselet's server call): the prompt
-        # driver abandoned delivery. Surfaced as a typed event the provider
-        # loop intercepts for an immediate re-send (#445) — without this, the
-        # give-up lived only in the connector's journal and the room stared at
-        # silence until the 300s no-output bound.
-        return AgentDeliveryFailure(
-            phase=str(hook.get("phase") or ""),
-            ticks=int(hook.get("ticks") or 0),
-        )
-
-    if event == "CheeseDeliveryRetried":
-        # Synthetic (same channel): delivery eventually succeeded but needed
-        # noticeably many re-issues — the pane's input path is flaky. Visible
-        # so a wobbling machine is seen before it produces a dead turn.
-        tries = int(hook.get("ticks") or 0)
-        return AgentMessage(
-            text=(
-                f"⚠️ 提示词经过 {tries} 次重试才送进这台机器的会话——"
-                "机器的终端链路在抖，值得看一眼。"
             )
         )
 
@@ -323,7 +299,7 @@ class MessageAssembler:
         self._mark_done(message_id)
         return self._assemble(pending)
 
-    def translate(self, hook: dict) -> list[AgentEvent | AgentDeliveryFailure]:
+    def translate(self, hook: dict) -> list[AgentEvent]:
         """Stream-level translation of one hook payload: MessageDisplay folds
         into the assembler (a completed message emerges as ONE event), a Stop
         first drains whatever is still buffered so nothing dies with the

@@ -59,7 +59,6 @@ from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
 from app.domain.agent.service import (
-    AgentDeliveryFailure,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -73,10 +72,6 @@ logger = logging.getLogger(__name__)
 # Screen teardown starts down in a channel while subscriptions stay owned up
 # here. Weak references avoid keeping rebuilt pools and test runtimes alive.
 _RUNTIMES: weakref.WeakSet[object] = weakref.WeakSet()
-
-# How many times the session re-sends an abandoned prompt (#445) before declaring
-# the screen's input path broken and letting the no-output bound take over.
-_MAX_REDELIVERIES = 3
 
 # The hook token lives with the interactive screen. Topic scope prevents a stale
 # token from reaching another topic. Both transports use the same lifetime.
@@ -234,7 +229,7 @@ class HookDelivery:
     """A hook translated by the screen-lifetime consumer."""
 
     hook: dict
-    event: AgentEvent | AgentDeliveryFailure | None
+    event: AgentEvent | None
     eid: str | None = None
 
 
@@ -255,7 +250,6 @@ class SessionActivity:
 
     work_id: uuid.UUID
     queue: asyncio.Queue[HookDelivery]
-    prompt: str | None
     ready: bool | None
     task: asyncio.Task[None] | None = None
 
@@ -334,7 +328,7 @@ async def monitor_session_activity(
     confirm_poll_s: float = CONFIRM_POLL_S,
     on_hook: Callable[[dict], None] | None = None,
     context: str = "",
-) -> AsyncIterator[AgentEvent | AgentDeliveryFailure]:
+) -> AsyncIterator[AgentEvent]:
     """Monitor one active session period until ``Stop`` or a watchdog verdict.
 
     Both transports use this same hook clock after their transport-specific
@@ -448,7 +442,7 @@ async def monitor_session_activity(
             return  # Stop hook → session idle
 
 
-def _is_mid_response(events: list[AgentEvent | AgentDeliveryFailure]) -> bool:
+def _is_mid_response(events: list[AgentEvent]) -> bool:
     """Does this hook prove the session is PART-WAY THROUGH a response?
 
     An activity is what the room reads as 正在处理, and the only thing that
@@ -559,7 +553,7 @@ class SpoolBacklog:
     def unread(self) -> list[HarnessEvent]:
         return self._unread
 
-    def assemble(self, entry: HarnessEvent) -> list[AgentEvent | AgentDeliveryFailure]:
+    def assemble(self, entry: HarnessEvent) -> list[AgentEvent]:
         if not isinstance(entry.record, dict):
             return []
         payload = dict(entry.record)
@@ -761,9 +755,9 @@ class Channel:
     async def send_prompt(self, screen: object, prompt: str) -> bool | None:
         """Deliver the turn's prompt to the ready screen.
 
-        Returns the driver's readiness at delivery time when the transport can
-        know it (the device cheeselet answers ``{ready: bool}``): ``False``
-        means the prompt is HELD until the input box paints — worth a visible
+        Returns the screen's readiness at delivery time when the transport can
+        know it (the device connector answers ``{ready: bool}``): ``False``
+        means the prompt is HELD until the session can take it — worth a visible
         line in the room instead of silence (#445). ``None`` = unknown."""
         raise NotImplementedError
 
@@ -1247,7 +1241,6 @@ class ClaudeCodeRuntime:
                             subscription,
                             attribution,
                             screen,
-                            prompt=None,
                             ready=True,
                         )
                 for event in events:
@@ -1328,7 +1321,6 @@ class ClaudeCodeRuntime:
         attribution: WorkAttribution,
         screen: object,
         *,
-        prompt: str | None,
         ready: bool | None,
         start_task: bool = True,
     ) -> SessionActivity:
@@ -1339,7 +1331,6 @@ class ClaudeCodeRuntime:
         activity = SessionActivity(
             work_id=attribution.work_id,
             queue=asyncio.Queue(),
-            prompt=prompt,
             ready=ready,
         )
         subscription.activity = activity
@@ -1396,7 +1387,6 @@ class ClaudeCodeRuntime:
         """Apply delivery, idle, liveness, and ceiling policy to the screen."""
         tracker = ActivityTracker(last_at=asyncio.get_running_loop().time())
         monitor_task = await self._channel.start_activity_monitor(screen, tracker)
-        redeliveries = 0
         try:
             async for event in monitor_session_activity(
                 queue=activity.queue,
@@ -1413,12 +1403,6 @@ class ClaudeCodeRuntime:
                 confirm_alive=lambda: self._channel.confirm_alive(screen),
                 context=f"topic={subscription.topic_id} subscription-watch",
             ):
-                if isinstance(event, AgentDeliveryFailure):
-                    if activity.prompt is not None:
-                        redeliveries += 1
-                        if redeliveries <= _MAX_REDELIVERIES:
-                            await self._channel.send_prompt(screen, activity.prompt)
-                    continue
                 if not isinstance(event, AgentResult) or not event.is_error:
                     continue
                 attribution = subscription.current_work
@@ -1446,10 +1430,6 @@ class ClaudeCodeRuntime:
             # activity instead of starting one, ``current_work`` stays set so
             # the topic answers every later prompt with 「已有工作正在运行」,
             # and the room keeps its 正在思考 for the life of the process.
-            #
-            # One reachable way in, right above this: a redelivery calls
-            # `send_prompt` on a screen that has since died, and the channel
-            # raises. Losing the turn is correct. Losing the topic is not.
             #
             # Deliberately NOT in a `finally`: on the ordinary path the watch
             # can reach its end before the consumer has finished handing the
@@ -1545,7 +1525,6 @@ class ClaudeCodeRuntime:
             subscription,
             attribution,
             screen,
-            prompt=prompt,
             ready=None,
             start_task=False,
         )
@@ -1659,10 +1638,6 @@ class ClaudeCodeRuntime:
             tracker = ActivityTracker(last_at=asyncio.get_event_loop().time())
             monitor_task = await self._channel.start_activity_monitor(screen, tracker)
             try:
-                # Bounded so a screen whose terminal genuinely eats every write
-                # cannot ping-pong forever: past the cap the failure stays
-                # visible and the turn falls to the no-output bound as before.
-                redeliveries = 0
                 async for event in monitor_session_activity(
                     queue=attribution.queue,
                     idle_suspect_s=self._idle_suspect_s,
@@ -1671,57 +1646,17 @@ class ClaudeCodeRuntime:
                     timeout_message=self._channel.timeout_message,
                     tracker=tracker,
                     confirm_alive=lambda: self._channel.confirm_alive(screen),
-                    # ready=False means the driver HOLDS the prompt until the
-                    # input box paints — a queued prompt is not an undelivered
+                    # ready=False means the screen HOLDS the prompt until the
+                    # session can take it — a queued prompt is not an undelivered
                     # one, so the 25s dead-session verdict does not apply (it
                     # misfired exactly when a wake-up summon landed while the
-                    # previous turn still ran, 2026-08-16 09:21). The driver's
-                    # own give-up (#445 deliveryFailed) and the no-output bound
-                    # keep a genuinely dead screen from waiting forever.
+                    # previous turn still ran, 2026-08-16 09:21). The no-output
+                    # bound keeps a genuinely dead screen from waiting forever.
                     delivery_timeout_s=(
                         self._idle_suspect_s if ready is False else DELIVERY_TIMEOUT_S
                     ),
                     context=f"topic={topic_id} turn={turn_id}",
                 ):
-                    if isinstance(event, AgentDeliveryFailure):
-                        # The driver gave up (#445) — re-send NOW instead of
-                        # letting the room wait out the 300s bound. The event
-                        # itself never reaches the chat layer.
-                        redeliveries += 1
-                        logger.warning(
-                            "prompt redelivery %d/%d (topic=%s, phase=%s, ticks=%d)",
-                            redeliveries,
-                            _MAX_REDELIVERIES,
-                            topic_id,
-                            event.phase,
-                            event.ticks,
-                        )
-                        if redeliveries <= _MAX_REDELIVERIES:
-                            yield AgentMessage(
-                                text=(
-                                    "⚠️ 提示词没能送进机器上的会话"
-                                    f"（{event.phase} 阶段，{event.ticks} 次尝试）"
-                                    "，正在自动重投…"
-                                )
-                            )
-                            try:
-                                await self._channel.send_prompt(screen, prompt)
-                            except ScreenSetupError as exc:
-                                yield AgentResult(
-                                    text=str(exc),
-                                    session_id=resume_session_id,
-                                    is_error=True,
-                                    failure_code=exc.failure_code,
-                                )
-                                return
-                        else:
-                            yield AgentMessage(
-                                text=(
-                                    "⚠️ 提示词多次重投仍未送达——这台机器的"
-                                    "终端链路有问题，本轮将按超时处理。"
-                                )
-                            )
-                        continue
                     yield event
             finally:
                 if monitor_task is not None:

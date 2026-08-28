@@ -973,57 +973,14 @@ async def test_user_prompt_submit_is_reported_to_the_receipt_consumer():
     await provider._close_topic(topic_id)
 
 
-async def test_prompt_redelivery_logs_each_attempt(caplog):
-    import uuid as _uuid
+class _AliveScreen(Channel):
+    """A session that accepts everything and stays up — the ordinary case."""
 
-    router = HookRouter()
-    project_id = _uuid.uuid4()
-    topic_id = _uuid.uuid4()
-    topic_key = str(topic_id)
-    sends: list[str] = []
+    async def ensure_ready(self, **kwargs):
+        return "screen"
 
-    class _FakeChannel(Channel):
-        async def ensure_ready(self, **kwargs):
-            return "screen"
-
-        async def send_prompt(self, screen, prompt):
-            sends.append(prompt)
-            if len(sends) == 1:
-                router.push(
-                    topic_key,
-                    {
-                        "hook_event_name": "CheeseDeliveryFailed",
-                        "phase": "paste",
-                        "ticks": 3,
-                    },
-                )
-            else:
-                router.push(
-                    topic_key,
-                    {"hook_event_name": "Stop", "last_assistant_message": "好"},
-                )
-
-    provider = ClaudeCodeRuntime(
-        _FakeChannel(), router=router, idle_suspect_s=2, hard_ceiling_s=2
-    )
-    with caplog.at_level("WARNING"):
-        events = [
-            e
-            async for e in provider.run_turn(
-                project_id=project_id,
-                topic_id=topic_id,
-                prompt="go",
-                system_prompt="",
-                resume_session_id=None,
-            )
-        ]
-    assert len(sends) == 2  # original + one redelivery
-    assert isinstance(events[-1], AgentResult)
-    assert any(
-        str(topic_id) in r.getMessage() and "redeliver" in r.getMessage()
-        for r in caplog.records
-    )
-    await provider._close_topic(topic_id)
+    async def send_prompt(self, screen, prompt):
+        return True
 
 
 async def test_every_turn_reported_started_is_also_reported_finished():
@@ -1035,47 +992,31 @@ async def test_every_turn_reported_started_is_also_reported_finished():
     costs more than a frame — the topic carries that mark for the life of the
     process, and every prompt after it is refused as 「已有工作正在运行」.
 
-    The turn here dies the way a screen dies mid-turn: the first prompt is
-    never acknowledged, and by the time the session tries again the screen is
-    gone. That is one lost turn. It must not also be a lost topic.
+    The turn here dies the way a turn dies when nothing on the machine answers:
+    no hook ever arrives, the watchdog calls it undelivered, and the consumer
+    that would record that verdict raises on its way to the database. That is
+    one lost turn. It must not also be a lost topic.
     """
     import uuid as _uuid
 
     router = HookRouter()
     project_id, topic_id = _uuid.uuid4(), _uuid.uuid4()
-    topic_key = str(topic_id)
-    sends: list[str] = []
     reported: list[tuple[_uuid.UUID, bool]] = []
 
     async def watch_activity(_project, _topic, work_id, active):
         reported.append((work_id, active))
 
-    class _ScreenThatDiesBeforeTheRetry(Channel):
-        async def ensure_ready(self, **kwargs):
-            return "screen"
-
-        async def send_prompt(self, screen, prompt):
-            sends.append(prompt)
-            if len(sends) == 1:
-                # Typed, never acknowledged — the session will try again.
-                router.push(
-                    topic_key,
-                    {
-                        "hook_event_name": "CheeseDeliveryFailed",
-                        "phase": "paste",
-                        "ticks": 3,
-                    },
-                )
-                return None
-            raise ScreenSetupError("屏幕没了")
+    async def consume_and_fail(*_args, **_kwargs):
+        raise RuntimeError("数据库连接没了")
 
     provider = ClaudeCodeRuntime(
-        _ScreenThatDiesBeforeTheRetry(),
+        _AliveScreen(),
         router=router,
         idle_suspect_s=1,
         hard_ceiling_s=1,
     )
     provider.bind_activity(watch_activity)
+    provider.bind_events(consume_and_fail)
 
     await provider.send(
         SessionRef(project_id=project_id, topic_id=topic_id),
@@ -1104,16 +1045,6 @@ async def test_every_turn_reported_started_is_also_reported_finished():
 # 房间里那句「芝士正在处理…」由一段 activity 撑着，而在正常路径上，只有会话自己
 # 的 Stop 会撤掉它。开的条件和关的条件必须对得上：任何一个钩子都能开、只有 Stop
 # 能关，就是一笔永远平不了的账。
-
-
-class _AliveScreen(Channel):
-    """A session that accepts everything and stays up — the ordinary case."""
-
-    async def ensure_ready(self, **kwargs):
-        return "screen"
-
-    async def send_prompt(self, screen, prompt):
-        return True
 
 
 async def _one_turn(provider, router, topic_key, project_id, topic_id, consumed):

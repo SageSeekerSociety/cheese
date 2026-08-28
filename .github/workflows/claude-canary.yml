@@ -67,13 +67,12 @@ jobs:
         id: pin
         run: |
           pin=$(grep -oE 'CLAUDE_PINNED_VERSION = "[^"]+"' \
-                  backend/app/domain/agent/device_launch.py | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+                  backend/app/domain/agent/harness/claude_code/device_launch.py \
+                  | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          test -n "$pin"  # a canary comparing against an empty pin reports nothing
           echo "version=$pin" >> "$GITHUB_OUTPUT"
           echo "production pin is $pin"
 
-      # Only the rendezvous cases: those are what rides the private protocol.
-      # The cheeselet leg drives a TUI, which is a different (and much slower to
-      # diagnose) kind of breakage, and not what this is watching for.
       - name: Rendezvous e2e against the newest Claude Code
         id: e2e
         working-directory: cli
