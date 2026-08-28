@@ -393,8 +393,8 @@ def api_client(
     # same event loop as our ORM writes / the shared DB connection. We
     # deliberately skip ``with client:`` because it would replace our portal
     # with a fresh one for every test and run lifespan startup/shutdown
-    # repeatedly. The only registered lifespan task (the notification
-    # finalizer) is patched out, so omitting lifespan is safe.
+    # repeatedly — which would also start every periodic job the platform runs
+    # (scheduler/jobs.py), once per test.
     client.portal = _portal  # type: ignore[assignment]
     try:
         yield client
