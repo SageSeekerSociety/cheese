@@ -29,8 +29,7 @@ if TYPE_CHECKING:
 
 
 class ComputeProvider(Protocol):
-    """Where a turn runs: a machine with a workspace on it, and a way to
-    snapshot that workspace afterwards.
+    """Where a turn runs: a machine with a workspace on it.
 
     NOT how a turn runs — that is an ``AgentRuntime``. Which machine and what
     runs on it were one switch for as long as the only harness we drive was also
@@ -98,8 +97,6 @@ class ComputeProvider(Protocol):
         could.
         """
         ...
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None: ...
 
 
 class ComputePool:

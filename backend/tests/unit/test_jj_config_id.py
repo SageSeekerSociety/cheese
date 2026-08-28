@@ -63,7 +63,7 @@ def test_identity_survives_without_per_repo_config(project):
         "-T",
         'author.name() ++ " " ++ author.email()',
     ).strip()
-    assert author == f"{ws.JJ_USER_NAME} {ws.JJ_USER_EMAIL}"
+    assert author == f"{ws.CHEESE_IDENTITY.name} {ws.CHEESE_IDENTITY.email}"
     assert not _config_id(repo).exists()
 
 

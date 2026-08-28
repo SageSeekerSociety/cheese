@@ -66,9 +66,9 @@ def test_pushing_is_enabled_on_the_repo(client):
 def test_a_push_keeps_jj_and_git_from_diverging(client, monkeypatch):
     """jj is colocated on these repos and does not see a push on its own.
 
-    That is not cosmetic: snapshot_worktree moves the topic bookmark with
-    --allow-backwards, so a jj view still pointing at the old commit could drag
-    the branch back over work the machine just pushed.
+    That is not cosmetic: the platform reads files and diffs out of a jj
+    workspace on the same store, and a jj view still pointing at the old commit
+    shows the topic as if the push had never landed.
     """
     import app.api.routes.git_http as git_http
 

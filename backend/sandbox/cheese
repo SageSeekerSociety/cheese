@@ -265,11 +265,6 @@ def _format_status(d: dict) -> str:
             f"后台任务: 「{t.get('label')}」已跑 {t.get('running_s')}s"
             f"（上限 {t.get('timeout_s')}s）；输出: {t.get('log_path')}"
         )
-    if bg.get("snapshot_held_by"):
-        lines.append(
-            f"自动快照: 已暂停，等「{bg['snapshot_held_by']}」跑完再落"
-            "——它还在改工作区，现在提交只会把中间态冻进话题分支。"
-        )
     plat = d.get("platform") or {}
     disk = plat.get("disk")
     if disk:
