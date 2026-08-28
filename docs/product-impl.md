@@ -9,7 +9,7 @@
 
 ## 0. 一句话
 
-CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓库（jj colocate），里面用**话题**组织工作，
+CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓库，里面用**话题**组织工作，
 **芝士**（AI 队友，本体协调 + 分身干活）**在隔离沙箱容器里**（一个房间一个容器，房间里每个话题一个 tmux 会话）用原生工具干活、用 `cheese` CLI 改平台状态，**文档是状态、对话是过程**，
 **采纳即归档即 merge**。后端 FastAPI + PostgreSQL，前端 Vue 3 + Vuetify，AI 走 `claude-agent-sdk`
 路由到智谱 GLM。
@@ -50,10 +50,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 `TopicStatus`：`active`（进行中）/ `archived`（已归档）/ `draft`（草稿）。
 **采纳即归档，归档即工作面冻结**（spec §6.3）：归档房间禁止派活、禁止改文档、禁止升级块、禁止写文件、禁止再递验收卡（Batch A/G/J 在 split / edit_doc / upgrade / write_file / create_card 五处统一加守卫）。
 
-### 1.4 项目 = git 仓库（jj colocate）
+### 1.4 项目 = git 仓库
 
 每个项目在 `workspace_root/<project_id>/` 有一个独立 git 仓库（`backend/app/domain/workspace/service.py`），
-用 Jujutsu (jj) colocate（`.git` + `.jj`），默认分支 `main`。每话题 = 一个 jj workspace = 一个 git 分支；
+默认分支 `main`。每话题 = 一个 git worktree = 一个 git 分支（工作区就检出在那条分支上）；
 产出（代码/报告/数据）= 文件，由干活的分身自己 commit 成提交。详见 §3.10。
 
 ---
@@ -93,7 +93,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 **两层都实时，但是两种不同的实时**（这是过程/状态分离的关键，混成一种会毁掉「文档=稳定状态」）：
 
 - **消息 = 过程：连续流式实时**。todo/状态/流式答案，讲"怎么做"——越快越好、抖动无所谓，token 级跳动。todo 复用 Claude Code 的结构化 **Task 工具**（`TaskCreate`/`TaskUpdate`/`TaskGet`/`TaskList`，v2.1.142 起取代 `TodoWrite`，三态 pending/in_progress/completed；沙箱里芝士原生可用）——平台捕获其事件渲染成活清单，机制同源。
-- **文档 = 状态：就绪式实时（离散、整段、不打扰）**。结论/产物进实况文档（§3.4，`cheese doc set`），讲"结果是什么"。**不是逐字流**：每次 `cheese doc set` = 一个自洽的完整版本就刷新一次（架构天然如此——整文件覆盖 + 一次 jj 提交）；回合中途也可多次更新（先计划后结果），只要每次都自洽。**不打断正在读/编辑文档的人**：用"芝士更新了文档 ⟳"的温和提示，别抢光标/别强行滚动重排。
+- **文档 = 状态：就绪式实时（离散、整段、不打扰）**。结论/产物进实况文档（§3.4，`cheese doc set`），讲"结果是什么"。**不是逐字流**：每次 `cheese doc set` = 一个自洽的完整版本就刷新一次（架构天然如此——整文件覆盖，一次一个完整版本）；回合中途也可多次更新（先计划后结果），只要每次都自洽。**不打断正在读/编辑文档的人**：用"芝士更新了文档 ⟳"的温和提示，别抢光标/别强行滚动重排。
 - **分工纪律**：todo/状态留在消息、结论进文档，**不重复**；消息收尾只给一句小结 + 指向文档，不堆全文（避开 Claude Code `track_progress` 结束塞大段 final summary 的"吵"问题）。这正是 §2.2「对话是过程、文档是状态」的双实时落地。
 - **现状**：✅ 整条消息（`MessageDisplay` 的多次刷新拼成一条）+ 现场工具事件 + 实况文档读写/工具事件刷新面板；🟡 待做：@ 秒回占位消息、把进行中消息结构化成 todo+状态(捕获 Task 工具事件)、文档回合中途增量刷新。
 - **参考 / prior art**：①范式——Anthropic **Claude Tag**（2026-06，常驻 Slack 的 AI 队友：@Claude、一频道一共享实例多人接力、拆 stages、ambient 盯/催、自排任务跨小时·天、审计日志），与本平台的 @芝士/话题/巡检/分身/现场高度同构，CheeseX 可定位为「Claude Tag for 学生项目制学习，但以文档为中心、git 原生、采纳=merge」（[anthropic.com](https://www.anthropic.com/news/introducing-claude-tag)）。②活消息机制——Claude Code 交互模式单条 tracking comment + `- [ ]/- [x]` 清单原地更新 + Task 工具（[github-actions](https://code.claude.com/docs/en/github-actions)、[todo-tracking](https://docs.claude.com/en/docs/agent-sdk/todo-tracking)）。
@@ -101,7 +101,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ### 3.2 芝士（Agent）  ✅ 链路 / 🟡 部分能力
 
 - **是什么**：一个交互式 `claude` 常驻在会话里，平台把提示词写进去，事件经 Claude Code hooks 回流（`AgentRuntime`，`backend/app/domain/agent/harness/`）。喂进去和读回来是分开的：`send` 只回一个「收到了」，回复从游标读——所以后端被换掉，那一轮不会跟着没。
-- **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 jj workspace + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
+- **在沙箱里跑（spec §9.1）**：`claude` 不在宿主机跑，而是在**每话题一个 tmux 会话**里跑，会话在**每房间一个 Docker 容器**内；agent 连同它的**原生工具**（Bash/Read/Write/Edit/Grep/Glob）被容器牢笼隔离。容器常驻、跨回合复用，挂载该话题的 git worktree + 持久 session 目录（`CLAUDE_CONFIG_DIR`）。同一套流程也跑在用户自己入册的机器和租来的云机器上，只差一层 transport。
 - **平台动作走 `cheese` CLI（不走 MCP）**：改平台状态（设实况文档、记决策、记记忆、派活、发通知/决策请求、递验收卡、回流结论、钉里程碑）一律调容器里的 `cheese` CLI（`backend/sandbox/cheese`），它经 REST 打回后端（`host.docker.internal`）。cheese 是一个 **Claude Code Skill**（`backend/sandbox/skills/cheese/SKILL.md`，挂进 `~/.claude/skills`，`setting_sources=["user"]` + `skills=["cheese"]` 自动发现），不是 system-prompt 大块塞工具。代码/产物则直接用原生工具写、跑。
 - **cheese 写接口有 token 鉴权**：`X-Cheese-Token`（每容器注入 `CHEESE_TOKEN`），后端 middleware 只网关 cheese 写路径（`app/main.py:cheese_token_gate`），前端只读这些路径、不受影响。私聊里 `CHEESE_MEMORY_SCOPE=personal` 让 `cheese remember` 写主人个人记忆。
 - **记忆注入**：每轮把项目记忆（私聊则个人记忆）+ 实况文档拼进 system prompt。🟡 会话收尾**自动提取**记忆未做；项目话题里加载**成员个人记忆**未做。
@@ -163,8 +163,8 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.10 Git 工作区 + 沙箱执行  ✅
 
-- **行为**：芝士在话题的隔离工作区里用**原生工具**写产物、跑代码/测试（真执行）。改动由**芝士自己** `git commit` + `git push` 成版本历史——平台不写任何人的工作树，没提交的东西不在分支上、也进不了 PR。**话题=分支=jj workspace=tmux 会话**（容器按**房间**分配，母话题和它派出的 task 共用一个），并行话题互不污染。**采纳=merge**（§3.5）。Git/文件/diff 面板可看。
-- **VCS = Jujutsu (jj) colocate**：每个项目主仓 `jj git init --colocate`（`.git` + `.jj` 并存，git 照常可用），每话题一个 `jj workspace`（取代 git worktree），只用来检出；话题分支用 jj bookmark 导出成 git branch，所以**采纳/diff 仍走 git**（colocation）。`backend/app/domain/workspace/service.py`。
+- **行为**：芝士在话题的隔离工作区里用**原生工具**写产物、跑代码/测试（真执行）。改动由**芝士自己** `git commit` + `git push` 成版本历史——平台不写任何人的工作树，没提交的东西不在分支上、也进不了 PR。**话题=分支=git worktree=tmux 会话**（容器按**房间**分配，母话题和它派出的 task 共用一个），并行话题互不污染。**采纳=merge**（§3.5）。Git/文件/diff 面板可看。
+- **VCS = git**：每个项目一个主仓，每话题一个 `git worktree`，检出在这棵树自己的分支上。分身在容器里那次 `git commit` 直接就把分支往前挪了——没有导出、没有代推、也没有一步会失败的中转；平台只读分支（采纳/diff/PR）。`backend/app/domain/workspace/service.py`。
 - **沙箱执行**：每**房间**一个常驻 Docker 容器（§3.2），`--memory/--cpus/--pids-limit` 是一份**房间**预算（`SANDBOX_MEMORY_GB`/`SANDBOX_CPUS`/`SANDBOX_PIDS_LIMIT`）；房间里每个话题占一个 tmux 会话，各自的话题 id、回调令牌、`CLAUDE_CONFIG_DIR`、工作目录、预览端口都写在会话环境里（`tmux new-session -e`），互不串。agent 的原生 Bash 在容器里跑，碰不到宿主机。`exec_in_sandbox` 另提供 `--network none` 的一次性执行（强隔离场景）。
 - **文件面板（重点：看代码 / 轻量改代码）**：用户很看重**在平台里直接看代码、并能少量改代码**——文档面板的「文件」标签列出**当前话题工作区**的文件树，点开看内容(代码高亮)，可就地小改。所以：文件接口必须带 `?topic=`(读话题 worktree,不是空的 base 仓);芝士产物必须写进工作区(`./`)而非 `/tmp`,否则文件面板看不到、也不进版本库。`GET /api/projects/{id}/{files|file}?topic=` · `DocPanel` 文件标签。
 - **实现**：接口 `GET /api/projects/{id}/{files|file|git/log|git/diff}`（`files|file|git/diff` 带 `?topic=` 看话题工作区/分支；`git/diff` 拒 ref 选项注入）。
@@ -183,7 +183,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **后端**：Python 3.13、FastAPI、SQLAlchemy 2.0 async（asyncpg）、PostgreSQL、Alembic 迁移、Pydantic v2。响应封套 `{code,message,data}`，错误用 `app.core.errors`。
 - **前端**：Vue 3 + TS + Vite + Vuetify 4 + vue-router + TipTap（实况文档）+ marked/DOMPurify。
 - **AI**：`claude-agent-sdk` → `claude` CLI（经 `cli_path` shim 进**每话题 Docker 沙箱**）→ GLM（`ANTHROPIC_BASE_URL`/`AUTH_TOKEN`/`AGENT_MODEL` 在 `backend/.env`，`AGENT_SANDBOX_ENABLED`/`SANDBOX_*` 控沙箱）。平台动作走容器里的 `cheese` CLI（Claude Code Skill）+ token 鉴权；无 MCP。
-- **VCS**：Jujutsu (jj) colocate 每个项目主仓，话题用 jj workspace 检出；提交由分身自己做，git 经 colocation 同时可用（采纳/diff 走 git）。
+- **VCS**：git。每个项目一个主仓，话题用 git worktree 检出在自己的分支上；提交由分身自己做，平台只读分支（采纳/diff 走 git）。
 - **测试**：`backend/tests/`（unit/integration/contract），内存 SQLite + StubAgent，行为测试。当前 **121 passed**，ruff/pyright/vue-tsc 全绿。真模型 smoke 脚本 `backend/scripts/smoke_*.py`，真实全流程 `scripts/sim_real.py`。
 
 ---
@@ -191,7 +191,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ## 5. 实现现状总览
 
 - ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、里程碑逾期、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)。
-- ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = jj workspace（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 经 colocation 走 git。activity/heartbeat/summary/私聊 全路径统一走沙箱+cheese。
+- ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = git worktree（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 走 git。activity/heartbeat/summary/私聊 全路径统一走沙箱+cheese。
 - 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、巡检注入文档/记忆、记忆自动提取/个人记忆入项目话题、总览风险板块、改文档对话事件、资源包发放。
 - ⛔ **依赖外部基础设施**：会议 ASR。
 

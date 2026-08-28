@@ -5,10 +5,10 @@ only a small code + copy contract that the frontend can render safely.
 
 Two kinds of failure arrive here and they are recognised differently:
 
-- **Somebody else's failure** — a full disk, a missing docker image, jj refusing
-  a store file. The platform did not write those sentences and cannot make them
-  structured, so it matches their text. That is reading a foreign format, which
-  is what a parser is for.
+- **Somebody else's failure** — a full disk, a missing docker image, docker
+  refusing to start. The platform did not write those sentences and cannot make
+  them structured, so it matches their text. That is reading a foreign format,
+  which is what a parser is for.
 - **The platform's own failure** — the prompt never reached the session, the
   turn hit its ceiling, the pinned machine is not answering. These used to be
   recognised the same way, by looking for a fragment of a sentence the platform
@@ -26,13 +26,6 @@ from dataclasses import dataclass
 STORAGE_EXHAUSTED_CODE = "storage_exhausted"
 RUNTIME_IMAGE_MISSING_CODE = "runtime_image_missing"
 WORKSPACE_VCS_PERMS_CODE = "workspace_vcs_perms"
-# jj's own wording, plus the backend's translation of it (workspace/service.py).
-# Either one reaching here means a metadata file in the store is owned by another
-# uid — a chmod-shaped problem that used to render as "AI 服务返回错误".
-_VCS_PERMS_MARKERS = (
-    "failed to determine the secure config",
-    "工作区版本库权限异常",
-)
 HOST_UNREACHABLE_CODE = "host_unreachable"
 SUBSCRIPTION_CREDENTIAL_EXPIRED_CODE = "subscription_credential_expired"
 PROMPT_UNDELIVERED_CODE = "prompt_undelivered"
@@ -179,12 +172,12 @@ SUBSCRIPTION_CREDENTIAL_EXPIRED = PlatformFailure(
 WORKSPACE_VCS_PERMS = PlatformFailure(
     code=WORKSPACE_VCS_PERMS_CODE,
     title="工作区版本库权限异常",
-    content="本轮没能开始：工作区版本库有个元数据文件平台读不到，话题起不来。",
+    content="本轮没能开始：工作区版本库的属主不是平台进程，话题起不来。",
     detail=(
-        "那个文件的属主不是平台进程，平台读不到它，话题就起不来。"
+        "版本库目录属于另一个系统用户，平台进不去，话题就起不来。"
         "项目文件和已提交的改动都没有受影响，版本历史也没有动过。"
-        "平台会在下一次访问时自动清掉这个文件并恢复，"
-        "请稍后再 @芝士 重试；若反复出现，请把这条提示转给管理员。"
+        "这要管理员在机器上改一次属主（deploy/fix-workspace-ownership.sh），"
+        "平台自己绕不过去——请把这条提示转给管理员，修好后再 @芝士 重试。"
     ),
     retryable=True,
 )
@@ -243,26 +236,6 @@ ALL_FAILURES = (
 # this off the wire (error frames carry only a code) to tell "this box is suspect"
 # from "this run went wrong".
 HOST_SCOPED_CODES = frozenset(f.code for f in ALL_FAILURES if f.host_scoped)
-
-
-def _text_is_workspace_vcs_perms(text: str) -> bool:
-    lowered = text.lower()
-    return any(marker in lowered for marker in _VCS_PERMS_MARKERS)
-
-
-def is_workspace_vcs_perms(value: BaseException | str) -> bool:
-    """Identify the cross-uid jj metadata failure without leaking a traceback."""
-    if isinstance(value, str):
-        return _text_is_workspace_vcs_perms(value)
-
-    seen: set[int] = set()
-    current: BaseException | None = value
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        if _text_is_workspace_vcs_perms(str(current)):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
 
 
 def _text_is_storage_exhausted(text: str) -> bool:
@@ -347,6 +320,4 @@ def classify_platform_failure(
         return STORAGE_EXHAUSTED
     if is_runtime_image_missing(value):
         return RUNTIME_IMAGE_MISSING
-    if is_workspace_vcs_perms(value):
-        return WORKSPACE_VCS_PERMS
     return None

@@ -298,17 +298,21 @@ creating a database without naming the encoding, which is the rule above.
 
 ## The backend runs as uid 1000 — and must keep doing so
 
-The backend process and the agent inside a sandbox container share one jj store:
-`ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.jj`/`.git` into every
-sandbox container, read-write. jj writes its store objects — `.jj/repo/config-id`
-above all — with a **hardcoded 0600**, so if the two sides run as different uids,
-whichever writes first locks the other out of every jj command
-(`Failed to determine the secure config for a repo … Permission denied`). That is
-not a theoretical risk: both directions have hit production — the file panel
-422ing for every topic in a project, and jj being unusable inside sandboxes.
+The backend process and the agent inside a sandbox container share one git
+store: `ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.git` into
+every sandbox container, read-write — and **both sides commit into it**, since
+the agent's own commit in its worktree is how a topic branch moves. git creates
+object directories 0755 and loose objects 0444, owned by whoever wrote them, so
+if the two sides run as different uids the second one can read every object and
+add none: its commit fails on a directory it does not own, and the backend's
+reads fail on a store it cannot enter (which git reports as `not a git
+repository`, not as a permission error). Both directions have hit production —
+the file panel 422ing for every topic in a project, and an agent whose work
+could not leave the container.
 
-umask, a shared group, and default ACLs are all powerless against a mode the
-writer sets explicitly. The only fix is that both sides ARE the same uid:
+`core.sharedRepository` is git's supported way to widen those modes, so this
+constraint is negotiable — but nothing negotiates it today, so the fix is that
+both sides ARE the same uid:
 
 - sandbox: `node:22` + `USER node` = **1000**, started with `--user node`;
   `backend/sandbox/Dockerfile` asserts the uid at build time.
@@ -318,7 +322,7 @@ writer sets explicitly. The only fix is that both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where jj keeps the per-repo secure config that `config-id` points at) hold files
+where git reads its global config from) hold files
 written by the pre-2026-08 backend as uid 1001. `deploy/deploy-docker.sh` hands
 them over once via `deploy/fix-workspace-ownership.sh` before the swap —
 idempotent, marker-guarded, and it runs the chown in a throwaway root container

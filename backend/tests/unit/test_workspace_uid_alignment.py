@@ -1,25 +1,24 @@
-"""The backend and the sandbox agent must run as ONE uid over the shared jj store.
+"""The backend and the sandbox agent must run as ONE uid over the shared store.
 
-`ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.jj`/`.git` into every
-sandbox container read-write, so the backend process and the in-container agent
-write to the same store. jj creates its store objects — `.jj/repo/config-id`
-above all — with a hardcoded 0600 (a tempfile that gets persisted, NOT
-`0666 & ~umask`), so under two uids whichever side writes first locks the other
-out of EVERY jj command: "Failed to determine the secure config for a repo …
-Permission denied". Backend-side that reached users as a 422 on the file panel of
-every topic in the project; sandbox-side as jj being unusable in the container.
-Both directions actually happened in production.
+`ws.sandbox_vcs_mounts` bind-mounts a project's main-repo `.git` into every
+sandbox container read-write, and both sides WRITE it: the agent's own
+`git commit` in its worktree is what moves a topic branch, while the backend
+merges, diffs and pushes out of the same store. git creates object directories
+0755 and loose objects 0444, owned by whoever wrote them, so under two uids the
+second one can read everything and add nothing — its commit fails on an objects
+directory it does not own. Backend-side, being locked out reaches users as a 422
+on the file panel of every topic in the project.
 
-No umask, shared group, or default ACL can widen a mode the writer sets
-explicitly, so the fix is the identity itself: backend and sandbox share
-`ws.AGENT_UID`. These tests pin the three places that has to hold — the two
-image and its users — plus the behaviour that broke: files stay readable
-after the agent uses jj, and edits pass back and forth between the two sides.
+`core.sharedRepository` could widen those modes, so this is negotiable in a way
+the jj store it replaced never was — but nothing negotiates it today, so the fix
+is still the identity itself: backend and sandbox share `ws.AGENT_UID`. These
+tests pin the two images that has to hold across, plus the behaviour that broke:
+the two sides' files stay usable by each other, and a store this process cannot
+enter says so instead of reading like a missing file.
 """
 
 import os
 import re
-import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -32,9 +31,6 @@ from app.domain.workspace import service as ws
 BACKEND_DOCKERFILE = Path(__file__).resolve().parents[2] / "Dockerfile"
 SANDBOX_DOCKERFILE = Path(__file__).resolve().parents[2] / "sandbox" / "Dockerfile"
 
-needs_jj = pytest.mark.skipif(
-    shutil.which("jj") is None, reason="jj is not installed in this environment"
-)
 # root ignores file modes, so the permission-denied half cannot be observed there.
 not_root = pytest.mark.skipif(
     os.getuid() == 0, reason="running as root — file modes are not enforced"
@@ -47,11 +43,11 @@ def project(tmp_path, monkeypatch) -> uuid.UUID:
     return uuid.uuid4()
 
 
-def _agent_jj(cwd: Path, *args: str) -> subprocess.CompletedProcess:
-    """A jj command the way the agent runs it — from inside the topic worktree,
+def _agent_git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    """A git command the way the agent runs it — from inside the topic worktree,
     against the shared store."""
     return subprocess.run(
-        ["jj", "--no-pager", *args], cwd=cwd, capture_output=True, text=True, check=True
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
     )
 
 
@@ -84,51 +80,49 @@ def test_sandbox_image_pins_node_to_the_agent_uid():
 # --- the behaviour that broke ---------------------------------------------
 
 
-@needs_jj
-def test_files_stay_readable_after_the_agent_runs_jj(project):
-    """The regression: the agent using jj in its worktree writes `config-id` into
-    the SHARED store, and every later backend read goes through jj
-    (`_tree` → `_catch_up_with_branch` → `jj diff`). One uid → still readable."""
+def test_the_agents_commit_reaches_the_backend_through_the_shared_store(project):
+    """One uid means the agent can write the store the backend owns — and that
+    write is the whole delivery mechanism now: the commit it makes in its own
+    worktree IS the topic branch moving, with nothing in between."""
     topic = uuid.uuid4()
     wt = ws.topic_worktree(project, topic)
     (wt / "note.md").write_text("hello\n", encoding="utf-8")
 
-    _agent_jj(wt, "config", "set", "--repo", "user.name", "芝士")
-    _agent_jj(wt, "status")
-
-    config_id = ws._repo(project) / ".jj" / "repo" / "config-id"  # noqa: SLF001
-    assert config_id.is_file(), "jj no longer writes config-id — re-check the store"
-    assert config_id.stat().st_uid == os.getuid(), (
-        "the shared store is owned by another uid — every jj call will now fail"
+    _agent_git(wt, "add", "-A")
+    _agent_git(
+        wt,
+        "-c",
+        "user.name=芝士",
+        "-c",
+        "user.email=cheese@zhishi.local",
+        "commit",
+        "-m",
+        "feat: work from the agent",
     )
 
+    assert "note.md" in ws.topic_changed_files(project, topic)
     assert "note.md" in [f["path"] for f in ws.list_files(project, topic_id=topic)]
     assert ws.read_file(project, "note.md", topic_id=topic) == "hello\n"
-    assert ws.read_file_bytes(project, "note.md", topic_id=topic) == b"hello\n"
 
 
-@needs_jj
 @not_root
-def test_unreadable_store_names_the_uid_split_instead_of_dumping_jj_output(project):
-    """When it does go wrong, the file panel must say why. This used to surface
-    as `jj diff failed: Internal error…`, which reads like "file not found" and
-    is why a project-wide outage went undiagnosed.
+def test_a_store_it_cannot_enter_names_the_uid_split(project):
+    """When it does go wrong, the file panel must say why.
 
-    `config-id` is deliberately NOT the probe here: `_jj` now deletes that one
-    before every call (its own remedy, added upstream), so it can no longer
-    reach a user. Any OTHER unreadable file in the shared store still can, and
-    that is the shape a uid split takes once config-id is handled."""
+    git does not report EACCES here: it validates the gitdir by reading what is
+    inside, so a store owned by another uid comes back as `fatal: not a git
+    repository`, which reads like the files are simply missing — and that
+    reading is why a project-wide outage once went undiagnosed."""
     topic = uuid.uuid4()
-    wt = ws.topic_worktree(project, topic)
-    (wt / "note.md").write_text("hello\n", encoding="utf-8")
+    ws.topic_worktree(project, topic)
 
-    op_store = ws._jj_store(ws._repo(project)) / "op_store"  # noqa: SLF001
-    op_store.chmod(0o000)  # what another uid's 0600 looks like from this process
+    store = ws._repo(project) / ".git"  # noqa: SLF001
+    store.chmod(0o000)  # what another uid's directory looks like from here
     try:
         with pytest.raises(ws.WorkspacePermissionError) as excinfo:
-            ws.list_files(project, topic_id=topic)
+            ws.topic_diff(project, topic)
     finally:
-        op_store.chmod(0o755)
+        store.chmod(0o755)
 
     message = str(excinfo.value)
     assert str(ws.AGENT_UID) in message
@@ -136,7 +130,6 @@ def test_unreadable_store_names_the_uid_split_instead_of_dumping_jj_output(proje
     assert excinfo.value.code == 422
 
 
-@needs_jj
 def test_human_can_save_a_file_the_agent_just_created(project):
     """人改文件即指令, first half: 芝士 creates a file with its native tools (0644,
     its own uid), the human saves over it from the file panel. Under a uid split
@@ -153,7 +146,6 @@ def test_human_can_save_a_file_the_agent_just_created(project):
     assert created.read_text(encoding="utf-8") == "edited by 人\n"
 
 
-@needs_jj
 def test_agent_can_modify_a_file_the_human_saved(project):
     """人改文件即指令, second half: the file the human saved must still be the
     agent's to edit on its next turn."""
@@ -170,7 +162,6 @@ def test_agent_can_modify_a_file_the_human_saved(project):
     assert "appended by 芝士" in ws.read_file(project, "docs/human.md", topic_id=topic)
 
 
-@needs_jj
 @not_root
 def test_unwritable_file_is_a_clean_422_not_a_500(project):
     """A save that genuinely cannot proceed must still be an error the panel can
@@ -193,24 +184,21 @@ def test_unwritable_file_is_a_clean_422_not_a_500(project):
 # --- the boot-time audit ---------------------------------------------------
 
 
-@needs_jj
 def test_ownership_audit_is_quiet_on_a_healthy_workspace(project):
     topic = uuid.uuid4()
     ws.topic_worktree(project, topic)
     assert ws.audit_workspace_ownership() == []
 
 
-@needs_jj
 @not_root
-def test_ownership_audit_names_a_store_this_process_cannot_read(project):
+def test_ownership_audit_names_a_store_this_process_cannot_use(project):
     topic = uuid.uuid4()
-    wt = ws.topic_worktree(project, topic)
-    _agent_jj(wt, "config", "set", "--repo", "user.name", "芝士")
-    config_id = ws._repo(project) / ".jj" / "repo" / "config-id"  # noqa: SLF001
-    config_id.chmod(0o000)
+    ws.topic_worktree(project, topic)
+    store = ws._repo(project) / ".git"  # noqa: SLF001
+    store.chmod(0o000)
     try:
         problems = ws.audit_workspace_ownership()
     finally:
-        config_id.chmod(0o600)
+        store.chmod(0o755)
     assert len(problems) == 1
-    assert "config-id" in problems[0]
+    assert str(store) in problems[0]

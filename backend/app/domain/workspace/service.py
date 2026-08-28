@@ -26,6 +26,7 @@ from pathlib import Path
 from app.core.background import spawn
 from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
+from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
 from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
 from app.domain.workspace.textfile import (
@@ -175,7 +176,7 @@ def _git(
         detail = result.stderr.strip() or result.stdout.strip()
         # The main repo's `.git` is bind-mounted into every sandbox
         # (sandbox_vcs_mounts), so a uid split breaks git here too.
-        if _permission_denied(detail):
+        if _permission_denied(detail) or _names_a_store_it_cannot_enter(detail, repo):
             raise WorkspacePermissionError(_uid_split_hint(f"git {args[0]}: {detail}"))
         raise ValidationError(f"git {args[0]} failed: {detail}")
     return result.stdout
@@ -187,7 +188,13 @@ class WorkspacePermissionError(ValidationError):
     cause: this is the shape a uid split takes, and it used to reach the file
     panel as a bare "failed" — indistinguishable from "the file is missing",
     which is why it went undiagnosed for a whole project.
+
+    Carries its classification rather than leaving one to be recognised from
+    the wording below: this is the platform's own copy, and copy that a
+    classifier greps is copy nobody can edit.
     """
+
+    failure_code = WORKSPACE_VCS_PERMS_CODE
 
 
 # Match the OS error rather than the wording of any one command's message.
@@ -196,6 +203,39 @@ _PERMISSION_SIGNS = ("Permission denied", "os error 13", "Operation not permitte
 
 def _permission_denied(text: str) -> bool:
     return any(sign in text for sign in _PERMISSION_SIGNS)
+
+
+def _store_of(tree: Path) -> Path:
+    """The directory git uses as this tree's repository: `.git` itself for a
+    main repo, or wherever a worktree's one-line `.git` pointer leads."""
+    marker = tree / ".git"
+    try:
+        if marker.is_file():
+            pointer = marker.read_text().split(":", 1)[1].strip()
+            return Path(os.path.normpath(tree / pointer))
+    except (OSError, IndexError):
+        pass
+    return marker
+
+
+def _names_a_store_it_cannot_enter(detail: str, tree: Path) -> bool:
+    """Whether a git failure is really a uid split wearing the wrong words.
+
+    git does not report EACCES when it cannot get into a repository. It
+    validates a gitdir by reading what is inside, and an unreadable one fails
+    that check — so a store another uid owns comes back as `fatal: not a git
+    repository`, which reads like the repository is gone. It is not gone: it is
+    right there and this process cannot enter it. Look at the store the command
+    ran against (walking up to whatever is still visible, since the wall itself
+    hides everything behind it) and tell the two apart.
+    """
+    if "not a git repository" not in detail.lower():
+        return False
+    store = _store_of(tree)
+    for candidate in (store, *store.parents):
+        if candidate.exists():
+            return not os.access(candidate, os.R_OK | os.X_OK)
+    return False
 
 
 def _uid_split_hint(detail: str) -> str:

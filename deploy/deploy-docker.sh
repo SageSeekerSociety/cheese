@@ -373,13 +373,12 @@ log "running DB migrations (alembic upgrade head)…"
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap"
 
 # The backend now runs as the same uid as the sandbox's `node` (1000) so the two
-# stop locking each other out of the shared jj store — see
+# stop locking each other out of the shared git store — see
 # fix-workspace-ownership.sh. Files the old uid (1001) left behind have to change
 # hands once, BEFORE the new backend starts and finds it cannot read them.
 # Idempotent: a marker in each path makes later deploys a no-op.
 # APPHOME matters as much as the workspaces themselves: it is the backend's HOME,
-# and jj keeps its per-repo secure config there (the other half of the
-# `.jj/repo/config-id` pointer).
+# and git reads its global config out of there.
 #
 # ORDER MATTERS, and it is why this block sits here rather than before the
 # migration. Handing 2.2M files to another uid is the one step of this deploy

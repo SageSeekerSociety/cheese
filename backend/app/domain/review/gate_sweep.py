@@ -59,7 +59,7 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import GATE_ABANDONED_PREFIX
 from app.domain.topic.repositories import TopicRepository
 
-#: 检查自己的硬上限之外再给的余量：工作区准备（jj checkout 可能很慢）和排队都
+#: 检查自己的硬上限之外再给的余量：工作区准备（检出可能很慢）和排队都
 #: 落在这里。10 分钟 —— 实测健康的闸门是 17–23 秒，所以这已经宽出两个数量级，
 #: 而坏掉的卡从 2 小时 44 分（观测值）缩到 20 分钟被发现。
 GATE_STALE_GRACE_S = 600

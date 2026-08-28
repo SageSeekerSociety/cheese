@@ -79,8 +79,8 @@ logger = logging.getLogger("cheesex.review")
 # 不带 emoji：卡自己按 `note_level` 画轻重（前端 TopicAcceptCard），开头再放一个
 # 表情就是同一件事说两遍——一遍是结构，一遍是屏幕阅读器会念出来的一个字符。
 #: 本地话题分支与 PR 分支分叉 (采纳即合并 #296, 2026-08-12). `push_topic_branch_
-#: for_github_pr` 是**非强制**推送，一旦本地分支被 jj rewind / rebase 挪到了 PR
-#: 分支的祖先或旁支上（bookmark set --allow-backwards 允许回退），plain push 就会
+#: for_github_pr` 是**非强制**推送，一旦本地分支被 rebase / reset 挪到了 PR
+#: 分支的祖先或旁支上，plain push 就会
 #: 被 GitHub 以 non-fast-forward 拒绝——而轮询每 60 秒无脑重试这条注定失败的推送，
 #: 就是 card 946bf5de 每 ~70 秒失败一次的死循环。检测到不能快进就**不推**，留一条
 #: note 交给芝士在工作区把 PR 分支合并进来，而不是替它强推覆盖 PR 上的提交。
@@ -1488,7 +1488,7 @@ class AcceptService:
 
         采纳即合并 (#296): `push_topic_branch_for_github_pr` pushes WITHOUT
         --force, so a local head that is behind or diverged from the remote PR
-        branch (a jj rewind moved the bookmark backwards) can never land — GitHub
+        branch (a reset moved the branch backwards) can never land — GitHub
         rejects it non-fast-forward. Re-attempting that push every poll tick is
         the loop this guards. Fails CLOSED: if the remote commit isn't even
         present locally to compare (git errors, exit ≠ 0/1), treat it as "cannot

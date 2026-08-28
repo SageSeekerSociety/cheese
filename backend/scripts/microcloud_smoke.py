@@ -384,7 +384,7 @@ def ssh_probe(ip: str, login_user: str, cheese_base: str) -> str:
         # hosts sessions in tmux, and the agent clones/pushes with git. Enrollment
         # installs them if missing, so probing here is how we tell whether the
         # TEMPLATE supplies them or every machine pays for an apt install.
-        " for t in git tmux jj; do"
+        " for t in git tmux; do"
         " echo $t=$(command -v $t >/dev/null 2>&1 && $t --version 2>&1"
         " | head -1 || echo MISSING); done;"
         " echo ARCH=$(uname -m);"
