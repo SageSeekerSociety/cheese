@@ -24,9 +24,25 @@
 
 所以问的不是"这样能不能 work"，而是：**这步在用户机器上做错了，谁会发现？** 答案若是"他，几周后，且不会联想到我们"，换做法。
 
-### 已知未修的耦合
+### agent 会话住在 connector 自己的 tmux server 里
 
-启动器起 claude 用 **tmux 默认 server**（`unset TMUX` 之后），不是 connector 的私有 socket。他 `tmux kill-server` 会带走所有 agent 会话，反之亦然。修好之前，**任何"重启一下 connector"都要按"会杀掉所有会话"对待**：`systemctl stop` 会（`KillServer` 在 deferred 里），`systemctl kill` 也会（打整个 cgroup）。
+启动器起的内层 `claude` 会话，在 **connector 的私有 tmux server** 上，不在机主的默认 server 上。socket 不靠任何约定传递：这段启动器本来就跑在 connector 的一个 pane 里，tmux 把 socket 路径放在 `$TMUX` 的第一段（`<socket>,<pid>,<session>`），读出来即可（读完才 `unset TMUX`——从 pane 里 attach 必须先去掉它）。于是他的 `tmux ls` 看不见我们，他的 `tmux kill-server` 带不走 agent，我们的清理也碰不到他的会话。
+
+在默认 server 上发现同名的 `cheese_*` 会话，启动器直接杀掉再起自己的：那会话是我们放的，它握着这个话题的 rendezvous socket、spool 和工作树，留着就等于同一个话题有两个 claude 在应答。
+
+**"重启一下 connector"是非破坏性操作**，靠三件事一起成立，缺一件就不成立：
+
+| | 没有它会怎样 |
+|---|---|
+| 会话在我们自己的 socket 上 | 机主一句 `tmux kill-server` 就全清；反过来我们也清他的 |
+| connector 退出时只**释放**不拆（放开 viewer pty / rendezvous 连接 / runtime，tmux 会话原样留着） | `systemctl stop` 走 deferred 拆除路径，屏幕全没 |
+| unit 里的 `KillMode=process` | systemd 默认 `control-group`，`stop`/`restart` 一律 SIGTERM 整个 cgroup，而 tmux server 就在里面（2026-08-17 实测：一次带走 20 个会话，6 个正在干活） |
+
+下次启动会 re-adopt 活着的会话（`HasSession` 分支），drainer 继续重投它 spool 下来的 hook，viewer 重新 attach 回原来那个 pane。
+
+**真的要结束会话的动作是另外几个**，它们说了就得算数：`cheese link disconnect`、`cheese link no-auto-connect`、`cheese uninstall`（这条尤其——机器不是我们的，不能留东西），以及服务端关掉某块屏幕。
+
+unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖已存在的 unit，所以是先 uninstall 再 install），否则老版本装出来的 unit 会一直活着，而这类"发布悄悄没生效"正是 #501 的形状。
 
 ---
 

@@ -88,10 +88,11 @@ func newService(cfgPath string, userService bool) (ksvc.Service, error) {
 		DisplayName: displayName,
 		Description: description,
 		Arguments:   []string{"run", "--config", cfgPath},
+		Option:      ksvc.KeyValue{"SystemdScript": systemdScript},
 	}
 	if userService {
 		// A per-user service (systemd --user / launchd LaunchAgent): no root or polkit.
-		cfg.Option = ksvc.KeyValue{"UserService": true}
+		cfg.Option["UserService"] = true
 	} else if u := os.Getenv("SUDO_USER"); u != "" && u != "root" {
 		// A *system* unit that starts at boot with nobody logged in — but run it AS the
 		// invoking user so it uses that user's home (config + private tmux) and gets a
@@ -101,6 +102,61 @@ func newService(cfgPath string, userService bool) (ksvc.Service, error) {
 	}
 	return ksvc.New(&program{cfgPath: cfgPath}, cfg)
 }
+
+// systemdScript is the unit we install. It is kardianos's own template with one
+// line added — `KillMode=process` — and that line is the whole reason we carry a
+// template at all.
+//
+// systemd's default, KillMode=control-group, SIGTERMs every process in the
+// unit's cgroup on stop. The connector's tmux server is in that cgroup (it was
+// forked from this process), and so is every `claude` inside it. So `systemctl
+// stop cheese`, `systemctl restart cheese`, and a reboot each took down every
+// session on the machine, no matter what this program's own exit path did —
+// which made "just restart the connector" a destructive act, in the one place
+// nobody looks for one.
+//
+// With KillMode=process systemd signals the main process and nothing else. The
+// connector stops; the tmux server and the sessions inside it keep running; the
+// next start re-adopts them. Ending them is left to the verbs that say they end
+// them (`cheese link disconnect`, `cheese uninstall`).
+//
+// The template renders against kardianos's own field set and funcs (cmd,
+// cmdEscape), at install time, straight into the unit directory — so a field
+// name that no longer matches silently drops a line from a real machine's unit
+// and nothing fails earlier. systemdunit_test.go renders it and reads the unit.
+const systemdScript = `[Unit]
+Description={{.Description}}
+ConditionFileIsExecutable={{.Path|cmdEscape}}
+{{range $i, $dep := .Dependencies}}
+{{$dep}} {{end}}
+
+[Service]
+StartLimitInterval=5
+StartLimitBurst=10
+ExecStart={{.Path|cmdEscape}}{{range .Arguments}} {{.|cmd}}{{end}}
+{{if .ChRoot}}RootDirectory={{.ChRoot|cmd}}{{end}}
+{{if .WorkingDirectory}}WorkingDirectory={{.WorkingDirectory|cmdEscape}}{{end}}
+{{if .UserName}}User={{.UserName}}{{end}}
+{{if .ReloadSignal}}ExecReload=/bin/kill -{{.ReloadSignal}} "$MAINPID"{{end}}
+{{if .PIDFile}}PIDFile={{.PIDFile|cmd}}{{end}}
+{{if and .LogOutput .HasOutputFileSupport -}}
+StandardOutput=file:{{.LogDirectory}}/{{.Name}}.out
+StandardError=file:{{.LogDirectory}}/{{.Name}}.err
+{{- end}}
+{{if gt .LimitNOFILE -1 }}LimitNOFILE={{.LimitNOFILE}}{{end}}
+{{if .Restart}}Restart={{.Restart}}{{end}}
+{{if .SuccessExitStatus}}SuccessExitStatus={{.SuccessExitStatus}}{{end}}
+KillMode=process
+RestartSec=120
+EnvironmentFile=-/etc/sysconfig/{{.Name}}
+
+{{range $k, $v := .EnvVars -}}
+Environment={{$k}}={{$v}}
+{{end -}}
+
+[Install]
+WantedBy=multi-user.target
+`
 
 // serviceRunsAs is the account the installed unit will run under: the invoking
 // user normally, and SUDO_USER for a system unit installed with sudo (mirroring
@@ -183,16 +239,33 @@ func selfUpdatableIn(dir string, uid int, name string) error {
 
 // Control runs an install/uninstall/start/stop/restart action against the service.
 func Control(cfgPath, action string) error {
-	if action == "install" {
-		if err := checkSelfUpdatable(); err != nil {
-			return err
-		}
-	}
 	s, err := New(cfgPath)
 	if err != nil {
 		return err
 	}
-	return ksvc.Control(s, action)
+	if action != "install" {
+		return ksvc.Control(s, action)
+	}
+	if err := checkSelfUpdatable(); err != nil {
+		return err
+	}
+	// An install over an existing unit REPLACES its definition. kardianos refuses
+	// to overwrite ("Init already exists"), and `cheese link connect` installs on
+	// every run and ignores the error — so a unit written by an older build would
+	// outlive every reinstall and every self-update, and the machine would keep
+	// the old definition forever with nothing anywhere saying so. That is #501's
+	// shape exactly: a rollout that silently does not take. The service manager's
+	// idea of how to stop us is not something we can afford to leave stale.
+	//
+	// Uninstall only AFTER the install refused, so a working unit is never
+	// removed on any path that was not already about to rewrite it.
+	if err := ksvc.Control(s, "install"); err == nil {
+		return nil
+	}
+	if err := ksvc.Control(s, "uninstall"); err != nil {
+		return err
+	}
+	return ksvc.Control(s, "install")
 }
 
 // RunForeground runs the host in the current process (used by `cheese run`).
