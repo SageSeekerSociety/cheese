@@ -11,7 +11,7 @@
 | [`design-system.md`](design-system.md) | 前端视觉唯一规范：亮/暗双色板、圆角/字号/间距档位、琥珀用在哪 |
 | [`device-self-hosting.md`](device-self-hosting.md) | 自托管设备：**§0 是"别人的机器"约束**，其余是接入流程与排障 |
 | [`workflows.md`](workflows.md) | 这个项目实际怎么开发、测试、迭代 UI |
-| [`testing-without-docker.md`](testing-without-docker.md) | 没有 docker 的机器上怎么跑全量测试；三个环境缺口别再重新诊断（#516） |
+| [`testing-without-docker.md`](testing-without-docker.md) | 没有 docker 的机器上怎么跑全量测试；provider 凭据那条红别再重新诊断 |
 
 ## 当前是什么样（描述现状）
 

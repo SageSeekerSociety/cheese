@@ -84,7 +84,7 @@ redis_running() { "$REDIS_BIN/redis-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/de
 # their own code before suspecting the database. So: prove identity before
 # reusing, and refuse loudly when it cannot be proven.
 
-# bash's own TCP redirection — no `nc`/`ss`/procps in the sandbox. If the shell
+# bash's own TCP redirection — no `nc`/`ss` in the sandbox. If the shell
 # was built without it the probe just fails, degrading to the old behaviour.
 port_in_use() { (exec 3<>"/dev/tcp/127.0.0.1/$1") >/dev/null 2>&1; }
 
