@@ -83,6 +83,14 @@ def _configure_for_push(repo: Path) -> None:
         subprocess.run(
             ["git", "config", key, value], cwd=repo, capture_output=True, check=False
         )
+    # A topic whose directory was deleted out of band — disk cleanup, an
+    # operator, a wiped volume — leaves its branch registered to a worktree that
+    # is not there, and `updateInstead` then fails trying to enter it: every
+    # push to that branch is rejected, silently, forever. Pruning here costs a
+    # directory scan and makes the dead entry stop mattering.
+    subprocess.run(
+        ["git", "worktree", "prune"], cwd=repo, capture_output=True, check=False
+    )
 
 
 async def _cgi(

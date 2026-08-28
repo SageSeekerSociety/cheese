@@ -91,3 +91,45 @@ def test_a_push_reaches_the_files_the_panel_reads(client):
     assert "from_machine.txt" in [
         f["path"] for f in ws.list_files(project, topic_id=topic)
     ]
+
+
+def test_a_push_still_lands_after_the_worktree_directory_is_deleted(client):
+    """Disk cleanup must not quietly stop a machine from delivering.
+
+    A topic's branch is checked out in a worktree, so git resolves a push
+    against that directory. Delete it out of band — an operator reclaiming
+    space, a wiped volume — and the branch is still registered to a directory
+    that is not there: git fails trying to enter it and rejects every later
+    push. The machine cannot report that (`cheese-sync` is a Stop hook), so the
+    agent would go on working and delivering nothing at all.
+    """
+    import shutil
+
+    from app.domain.workspace import service as ws
+    from tests.machine_work import machine_commits
+
+    pid = _project(client)
+    project, topic = uuid.UUID(pid), uuid.uuid4()
+    worktree = ws.topic_worktree(project, topic)
+    shutil.rmtree(worktree)
+
+    client.get(
+        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
+        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
+    )
+    machine_commits(project, topic, {"delivered.txt": "the work\n"})
+
+    listed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(ws.ensure_repo(project)),
+            "ls-tree",
+            "--name-only",
+            ws.branch_for_tree(topic),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "delivered.txt" in listed
