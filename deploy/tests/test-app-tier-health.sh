@@ -11,8 +11,8 @@ FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
 # reason nor permission to create — so every deploy in this file gets one
 # inside the test tree. Exported once rather than per case: a future test that
 # forgets it would not fail here, it would fail on someone's machine.
-export VIKING_HOST_PATH="$ROOT/tmp/viking-$$"
-trap 'rm -rf "$ROOT/tmp/viking-$$"' EXIT
+export VIKING_HOST_PATH="$ROOT/.tmp/viking-$$"
+trap 'rm -rf "$ROOT/.tmp/viking-$$"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -20,8 +20,8 @@ fail() {
 }
 
 test_deploy_rejects_absent_frontend() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/app-tier-deploy.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=frontend_absent \
     APP_TIER_MAIN_SHA=testsha \
@@ -38,8 +38,8 @@ test_deploy_rejects_absent_frontend() {
 }
 
 test_deploy_accepts_healthy_pair() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/app-tier-deploy.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-tier-deploy.XXXXXX")"
   if ! PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -56,8 +56,8 @@ test_deploy_accepts_healthy_pair() {
 }
 
 test_deploy_keeps_agent_runtime_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/runtime-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/runtime-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -89,8 +89,8 @@ test_deploy_keeps_agent_runtime_images() {
 }
 
 test_deploy_retains_ci_service_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/ci-service-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/ci-service-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -123,8 +123,8 @@ test_deploy_retains_ci_service_images() {
 }
 
 test_app_only_deploy_does_not_require_agent_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/app-only-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/app-only-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -145,8 +145,8 @@ test_app_only_deploy_does_not_require_agent_images() {
 }
 
 test_local_app_images_skip_registry_pull() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/local-app-images.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/local-app-images.XXXXXX")"
   docker_log="$run_dir/docker.log"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -173,8 +173,8 @@ test_local_app_images_skip_registry_pull() {
 }
 
 test_local_app_images_must_exist() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/local-app-missing.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/local-app-missing.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=local_image_missing \
@@ -198,8 +198,8 @@ test_local_app_images_must_exist() {
 }
 
 test_pull_retries_transient_failure() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/pull-retry.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-retry.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if ! PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -233,8 +233,8 @@ test_pull_retries_transient_failure() {
 }
 
 test_exhausted_pull_retries_still_fail_the_deploy() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/pull-exhausted.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/pull-exhausted.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
@@ -266,8 +266,8 @@ test_exhausted_pull_retries_still_fail_the_deploy() {
 }
 
 test_failed_deploy_reclaims_disk() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/failed-reclaim.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/failed-reclaim.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=frontend_absent \
@@ -290,8 +290,8 @@ test_failed_deploy_reclaims_disk() {
 }
 
 test_deploy_logs_disk_watermarks() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/disk-watermark.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/disk-watermark.XXXXXX")"
   PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=healthy \
     APP_TIER_MAIN_SHA=testsha \
@@ -310,8 +310,8 @@ test_deploy_logs_disk_watermarks() {
 }
 
 test_rollback_restores_exact_previous_images() {
-  mkdir -p "$ROOT/tmp"
-  run_dir="$(mktemp -d "$ROOT/tmp/exact-rollback.XXXXXX")"
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/exact-rollback.XXXXXX")"
   docker_log="$run_dir/docker.log"
   if PATH="$FAKE_BIN:$PATH" \
     APP_TIER_SCENARIO=rollback \
@@ -368,9 +368,9 @@ ownership_run() {
 log_line() { grep -n -- "$2" "$1" 2>/dev/null | head -n 1 | cut -d: -f1 || true; }
 
 new_ownership_run_dir() {
-  mkdir -p "$ROOT/tmp"
+  mkdir -p "$ROOT/.tmp"
   local dir
-  dir="$(mktemp -d "$ROOT/tmp/ownership-order.XXXXXX")"
+  dir="$(mktemp -d "$ROOT/.tmp/ownership-order.XXXXXX")"
   # viking is deliberately NOT created: the deploy script makes it, and these
   # tests are the only place that would notice if it stopped.
   mkdir -p "$dir/workspaces" "$dir/uploads" "$dir/apphome"
@@ -475,8 +475,8 @@ test_operator_uses_registry_sha_width() {
 # job that gates deploy/ changes.
 workflow_script() {
   local parser
-  mkdir -p "$ROOT/tmp"
-  parser="$(mktemp "$ROOT/tmp/drift-step.XXXXXX.py")"
+  mkdir -p "$ROOT/.tmp"
+  parser="$(mktemp "$ROOT/.tmp/drift-step.XXXXXX.py")"
   cat > "$parser" <<'PY'
 import sys
 from pathlib import Path
