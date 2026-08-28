@@ -640,6 +640,26 @@ class Channel:
     # name.
     provisions_machine: bool = False
 
+    # Does this channel assemble the machine's model environment itself? True
+    # means the platform sends the model CHOICE and nothing else: no base_url,
+    # no provider credential, no alias pins — the channel builds them where the
+    # machine is, and the turn's supply route is the deployment's (the metering
+    # proxy under a subscription, /llm otherwise). False means the channel is
+    # handed the resolved profile env instead.
+    #
+    # A capability, not a name. The turn path decided this by NAME twice, and
+    # each time the name aged into a list of the channels that happened to have
+    # the trick on the day it was written: the next channel to learn it — or to
+    # inherit it wholesale — was never added. Nothing failed loudly when that
+    # happened. The turn ran, on the wrong supply's meter and with a --model
+    # flag the supply does not serve, and only the invoice said so.
+    #
+    # Any channel whose machine is not this process MUST say True. Saying False
+    # ships it ``profile.full_env()`` — a base_url only this box can resolve and
+    # a real provider key — onto hardware over a network, which is the leak the
+    # split exists to prevent.
+    builds_model_env: bool = False
+
     # How big the machine behind this channel is, when we are the ones who set
     # it. None means the channel genuinely does not know — an enrolled machine
     # belongs to someone else — and the prompt then says nothing rather than
@@ -884,6 +904,10 @@ class ClaudeCodeRuntime:
     @property
     def provisions_machine(self) -> bool:
         return self._channel.provisions_machine
+
+    @property
+    def builds_model_env(self) -> bool:
+        return self._channel.builds_model_env
 
     def available(self) -> bool:
         return self._channel.available()
