@@ -502,7 +502,7 @@ const fetch2FAStatus = async () => {
 }
 
 // 修改 onMounted
-onMounted(() => {
+onMounted(async () => {
   webAuthnSupported.value = browserSupportsWebAuthn()
   if (webAuthnSupported.value) {
     fetchPasskeys()
@@ -512,9 +512,10 @@ onMounted(() => {
   // 检查 sudo store 中是否存在重试操作
   const sudoStore = useSudoStore()
   if (sudoStore.retryOperation && sudoStore.isVerified) {
-    console.log('重试操作:', sudoStore.retryOperation)
+    // 不打印 retryOperation：changePassword 的 opData 里装着用户刚输入的新密码，
+    // 打出来就等于把明文密码留在浏览器控制台里。
     const opKey = sudoStore.retryOperation.opKey
-    const retryOperations: Record<string, () => void> = {
+    const retryOperations: Record<string, () => void | Promise<void>> = {
       disableTOTP: handleDisableTOTP,
       generateBackupCodes: handleConfirmGenerateBackupCodes,
       addPasskey: handleAddPasskey,
@@ -548,8 +549,10 @@ onMounted(() => {
         }
       },
     }
+    // 等这次重试真的跑完再清。清除会把票和 opData 一起抹掉，而重试是在
+    // 第一个 await 之后才去读它们的——不等，就是让操作去读自己刚被清掉的输入。
     if (retryOperations[opKey]) {
-      retryOperations[opKey]()
+      await retryOperations[opKey]()
     }
     sudoStore.clearRetryState()
   }
@@ -631,11 +634,11 @@ const handleDisableTOTP = async () => {
   loading.value = true
   try {
     await withSudo(
-      async () => {
-        await UserApi.disableTOTP(currentUserId.value!)
+      async (sudoTicket) => {
+        await UserApi.disableTOTP(currentUserId.value!, sudoTicket)
         await fetch2FAStatus() // 确保状态更新
         showDisableDialog.value = false
-        toast.success('双重验证已禁用')
+        toast.success('双重验证已禁用，通知已发送到你的邮箱')
       },
       'disableTOTP',
       null,
