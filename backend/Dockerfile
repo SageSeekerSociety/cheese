@@ -171,8 +171,10 @@ WORKDIR /app
 # Agent workspace toolchain: worktrees are managed with jj (colocated git) by
 # the backend process itself, and sandboxed turns spawn SIBLING containers
 # through the host's docker.sock — so the image needs the docker CLI (client
-# only, no daemon). Same jj install as backend/sandbox/Dockerfile.
-ARG JJ_VERSION=0.42.0
+# only, no daemon). Same jj install as backend/sandbox/Dockerfile — and the same
+# VERSION, which is not cosmetic: the backend process and the in-container agent
+# work one shared jj store, so two jj builds meet on the same files.
+ARG JJ_VERSION=0.43.0
 RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
       | tar xz -C /usr/local/bin ./jj \
     && jj --version

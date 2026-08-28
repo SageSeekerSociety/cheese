@@ -55,7 +55,7 @@ err "Port ${RELAY_MAIN} is already in use; refusing to report a stale relay as t
 
 我们的 dev-db.sh 相反，是 `log "postgres already running on port $PG_PORT"` 然后**复用**。在沙箱里这通常没事（就是我们自己上一轮留下的），但它复用的是"端口上有个 PG"，不是"端口上有个**我们的** PG"——一旦复用到了一个 schema 不对、或迁移版本更老的实例，症状会表现成一堆莫名其妙的测试失败，而不是一句"端口被占"。这是个**真实的误诊放大器**，成本也低：复用前确认一下 role/库名/数据目录对得上，对不上就报错退出。建议改，但不在本轮。
 
-**(b) tmux 守护那段值得知道，但不适用于我们。** buzz 用 tmux 起 relay 而不是前台，注释解释了原因：脚本从临时 shell 调起，进程组被回收会在几秒后 SIGTERM 掉前台进程。我们的 dev-db.sh 用 `pg_ctl start` 和 redis 自己的 daemonize，本来就正确脱离了，不需要这招。而且沙箱**没有 procps**（见 <&CLAUDE.md>），任何依赖 `kill`/`pgrep`/tmux 的方案在这里反而会碎。
+**(b) tmux 守护那段值得知道，但不适用于我们。** buzz 用 tmux 起 relay 而不是前台，注释解释了原因：脚本从临时 shell 调起，进程组被回收会在几秒后 SIGTERM 掉前台进程。我们的 dev-db.sh 用 `pg_ctl start` 和 redis 自己的 daemonize，本来就正确脱离了，不需要这招。
 
 **(c) 我们在 DB 隔离上比它强，不用自卑。** buzz 是"每次启动重置整个 schema"这种粗粒度做法。我们的 <&backend/tests/conftest.py> 是按迁移历史指纹建 template 库、per-worker clone、每个测试 truncate——粒度和并行度都高一档。这块没有可抄的。
 
