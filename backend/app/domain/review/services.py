@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Final, NoReturn
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -120,14 +120,14 @@ class _GitHubCredentials:
     """驱动一张 `pr_open` 卡所需的 GitHub 凭据 —— **两把钥匙，不是一把**。
 
     个人 token 那条路上它们是同一个字符串（一个 OAuth token 什么都能干）。App
-    这条路上它们不是，而且分不开就会坏：`GitHubAppTokens.write_token()` 请求的是
-    `contents:write` + `pull_requests:write` + `metadata:read`，**没有 `checks`**
-    （`_WRITE_PERMISSIONS`，故意的：写权限不该顺带把「读检查」也捆进去；
-    `GitHubPRClient.check_runs` 早就为此改用只读 mint 了）。拿写 token 去读
-    `/commits/{ref}/check-runs` 会 403 —— 而轮询器把它当成一次 GitHub 抖动，下一
-    轮再来，于是卡永远停在 `pr_open`，卡面上什么都不会写。
+    这条路上它们不是，而且分不开就会坏：`GitHubAppTokens.write_token()` 逐项写死了
+    `contents:write` + `pull_requests:write` + `workflows:write` + `metadata:read`
+    （`_WRITE_PERMISSIONS`，为的是某项被撤销时在铸币那一刻就报出来），**里面没有
+    `checks`**。拿它去读 `/commits/{ref}/check-runs` 会 403 —— 而轮询器把它当成一次
+    GitHub 抖动，下一轮再来，于是卡永远停在 `pr_open`，卡面上什么都不会写。
 
-    所以：GET 用 `read`，推分支和合并用 `write`。
+    所以：GET 用 `read`（`installation_token()`，带 `checks:read`），推分支和合并用
+    `write`。
     """
 
     write: str
@@ -156,8 +156,8 @@ def _ci_log_howto(repo_full_name: str) -> str:
 
     The excerpt above it is deliberately short, so the message has to say how
     to get the whole thing — and that path was undocumented everywhere 芝士
-    can read (not in `.claude/`, not in `CLAUDE.md`): the read-only token is
-    a `cheese gh-token` away, but nothing told it so, and nothing told it the
+    can read (not in `.claude/`, not in `CLAUDE.md`): the token is a
+    `cheese gh-token` away, but nothing told it so, and nothing told it the
     repo's name either, which `gh api repos/:owner/:repo/...` needs. Both are
     in hand right here, at the one moment they're wanted.
     """
@@ -166,7 +166,7 @@ def _ci_log_howto(repo_full_name: str) -> str:
         "上面是失败 job 的名字、Actions 页面链接，以及日志里错误行附近的片段。"
         "要看完整日志，在本话题的工作区里跑：\n"
         "```bash\n"
-        "export GH_TOKEN=$(cheese gh-token)   # 只读 token，约 1 小时过期\n"
+        "export GH_TOKEN=$(cheese gh-token)   # 本仓库的 GitHub token，约 1 小时过期\n"
         f"gh api repos/{repo}/actions/jobs/<job_id>/logs\n"
         "```\n"
         "（`<job_id>` 就是上面 Actions 链接里 `/job/` 后面那串数字；"
@@ -203,16 +203,24 @@ def _describe_token_unavailable(reason: str | None) -> str:
     )
 
 
-# ---- CI 镜像与 405 如实转译 (#362, 对齐 GitHub) ------------------------------
+# ---- forge 说没过就不合，405 如实转译 (#362 的姿态翻面) ----------------------
 #
-# 平台对可合并性的全部立场：问 forge、显示 forge 说的、转译 forge 拒绝的原因—
-# 自己永远不发明拦截。GitHub 在没有 branch protection 时（本仓是 free plan 私有
-# 仓库，required status checks 配不了——admin 实测 403 "Upgrade to Pro"，
-# 2026-08-13）红着的 checks 照样能 merge：它做的是把检查状态醒目摆在 merge 按钮
-# 上方，把决定留给人。平台持同一姿态：采纳界面在点击前展示 /pr-checks 的实时
-# 状态（前端 WorkspaceView 的 PR chip + 每条 check 行），合并时再读一次并把
-# 当时的状态原样写进卡片 note 和房间通知——人看着红点采纳是合法决定，但那个
-# 决定必须留痕。
+# 平台不跑检查，只读结论（docs/agent-principles.md 原则六）。这一段说的是读到之后
+# 怎么办，而答案在这里翻了个面：以前是合并前读一次 check-runs、把状态原样写进卡片
+# 和房间、然后照合；现在**结论不是绿的，平台就不合**。
+#
+# 判据只有一句「forge 说这个 PR 的检查过没过」，不认名字。按某一道具名检查判死活，
+# 等于要求每个被托管的仓库都得配上那道检查才配被采纳，而仓库不该为了被托管而改变
+# （CLAUDE.md）。于是没配 CI 的仓库不受影响：没有检查就没有红，那里的采纳本来就
+# 纯粹是人的判断 (#363)。
+#
+# 为什么不再照 GitHub merge box 那样「把红点摆出来、决定留给人」：在那个页面上按
+# 按钮的人和红点在同一屏，合并的也是他自己的手。平台这边按下去的是「采纳」，推分
+# 支和调合并 API 都由平台代劳——中间隔着的这段距离正是 PR #414 的形状：PR 开出 25
+# 秒就被合了，最后一项检查比合并晚 16 分钟。一句事后 note 填不上这段距离。
+#
+# 红着合有时候是对的（CI 基础设施抽风、与本次改动无关的既有失败），出口是署名的
+# 那一个：`merge_despite_checks`（卡片上的「人工放行」）。默认拒绝、显式放行。
 
 
 #: check-run conclusions that read as green. `neutral` and `skipped` are
@@ -221,15 +229,36 @@ def _describe_token_unavailable(reason: str | None) -> str:
 #: as red.
 _GREEN_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 
+#: forge 对这个 PR 的结论。`unreadable` 是「平台没读到」，它和「读到了，是红的」
+#: 必须分开：把前者写成后者，事后追责会照着一条从没发生过的判断去问人（
+#: `_force_merge_verdict` 为同一个理由存在）。
+CHECKS_GREEN: Final = "green"
+CHECKS_RED: Final = "red"
+CHECKS_RUNNING: Final = "running"
+CHECKS_NONE: Final = "none"
+CHECKS_UNREADABLE: Final = "unreadable"
 
-def _checks_summary(checks: list[dict] | None) -> str:
-    """One line mirroring the forge's check state at merge time — GitHub
-    merge-box style, for the card note and the room notification. Never used
-    to block anything."""
+
+@dataclass(frozen=True)
+class _ChecksVerdict:
+    """forge 此刻的结论，加上给人看的那一句。
+
+    `mergeable` 是平台合不合的唯一判据：检查全绿，或者这个仓库压根没有检查。"""
+
+    state: str
+    line: str
+
+    @property
+    def mergeable(self) -> bool:
+        return self.state in (CHECKS_GREEN, CHECKS_NONE)
+
+
+def _read_checks(checks: list[dict] | None) -> _ChecksVerdict:
+    """把 forge 的 check-runs 读成一个结论 —— 平台自己不判断代码好坏，只翻译。"""
     if checks is None:
-        return "合并前未能读取 CI 检查状态"
+        return _ChecksVerdict(CHECKS_UNREADABLE, "未能读取 CI 检查状态")
     if not checks:
-        return "该 PR 没有任何 CI 检查"
+        return _ChecksVerdict(CHECKS_NONE, "该 PR 没有任何 CI 检查")
     not_green = [
         c
         for c in checks
@@ -237,7 +266,7 @@ def _checks_summary(checks: list[dict] | None) -> str:
         or (c.get("conclusion") or "") not in _GREEN_CHECK_CONCLUSIONS
     ]
     if not not_green:
-        return f"CI 检查全绿（{len(checks)} 项）"
+        return _ChecksVerdict(CHECKS_GREEN, f"CI 检查全绿（{len(checks)} 项）")
     red = [c for c in not_green if c.get("status") == "completed"]
     running = [c for c in not_green if c.get("status") != "completed"]
     parts = []
@@ -245,7 +274,35 @@ def _checks_summary(checks: list[dict] | None) -> str:
         parts.append("未通过：" + "、".join(str(c.get("name")) for c in red[:5]))
     if running:
         parts.append("还在跑：" + "、".join(str(c.get("name")) for c in running[:5]))
-    return f"CI 检查未全绿（{'；'.join(parts)}）"
+    return _ChecksVerdict(
+        CHECKS_RED if red else CHECKS_RUNNING,
+        f"CI 检查未全绿（{'；'.join(parts)}）",
+    )
+
+
+#: 平台没合这个 PR 时房间里的那一行，加上它的分类码。`who` 回答「谁在管这件事」：
+#: 红了是芝士接着修，另外两种是平台自己还会再来。三种都不新造 event_type——契约里
+#: 已有的两个码说的正是这两件事（platform_notices），而那份契约是前后端共用的。
+_HOLD_NOTICES: Final = {
+    CHECKS_RED: (
+        "PR #{n} 的检查没通过，平台没有合并",
+        EVENT_CI_FAILED,
+        SEVERITY_WARN,
+        WHO_CHEESE,
+    ),
+    CHECKS_RUNNING: (
+        "PR #{n} 的检查还在跑，平台等它跑完",
+        EVENT_ACCEPT_AUTHORIZED,
+        SEVERITY_INFO,
+        WHO_PLATFORM,
+    ),
+    CHECKS_UNREADABLE: (
+        "读不到 PR #{n} 的检查结论，平台没有合并",
+        EVENT_ACCEPT_AUTHORIZED,
+        SEVERITY_WARN,
+        WHO_PLATFORM,
+    ),
+}
 
 
 def _github_merge_refusal_message(exc: BaseException) -> str:
@@ -1760,7 +1817,7 @@ class AcceptService:
             return None, "平台 GitHub App 对这个项目不可用"
         try:
             write, _ = await tokens.write_token()
-            read, _ = await tokens.readonly_token()
+            read, _ = await tokens.installation_token()
         except Exception as exc:  # noqa: BLE001 — pause this tick, don't crash
             return None, f"平台 GitHub App 取 token 失败（{type(exc).__name__}）"
         return _GitHubCredentials(write=write, read=read), ""
@@ -2904,16 +2961,15 @@ class AcceptService:
     ) -> AcceptCard:
         """App forge (App 采纳等 CI 再合)：采纳把卡送进 `pr_open`，**不合并**。
 
-        这是这条路上「合并」和「授权」的分家。在此之前 `_accept_via_pr` 读一次
-        check-runs、把状态写进 note，然后立刻调合并 API —— 那句 note 是如实留痕，
-        不是拦截，所以 PR #414 在开出 25 秒后就进了 main，而最后一项检查比合并晚
-        了 16 分钟。绿是运气，门禁根本没等。
+        这是这条路上「合并」和「授权」的分家。在此之前采纳是读一次 check-runs、
+        把状态写进 note，然后立刻调合并 API —— 那句 note 是如实留痕，不是拦截，
+        所以 PR #414 在开出 25 秒后就进了 main，而最后一项检查比合并晚了 16 分钟。
+        绿是运气，门禁根本没等。
 
-        改法不是新造一道闸门（andy 在 #362 定的原则是 mirror, don't gate，而
-        andy 的前置闸门早已退役、代码也已删除），而是让这条路也走
-        `github_user` 早就在走的两阶段：人点采纳 = 授权「以我的名义把这份改动送
-        进 CI，全绿且没超出授权范围就合」，剩下的交给 `advance_pr_card`。等 CI
-        全绿再合，读的正是 forge 自己的检查结论——这恰恰是 mirror。
+        改法不是让平台自己重算一遍可合并性（andy 退役掉的前置闸门就是那个，代码
+        也已删除），而是让这条路走 `github_user` 早就在走的两阶段：人点采纳 =
+        授权「以我的名义把这份改动送进 CI，全绿且没超出授权范围就合」，剩下的交给
+        `advance_pr_card`。等 CI 全绿再合，读的正是 forge 自己的检查结论。
 
         轮询器要的四个字段在这里一次补齐（`pr_repo` / `pr_head_sha` /
         `pr_authorized_sha`，外加 `pr_merged_at=None`）。App 这条路此前只写
@@ -3072,15 +3128,18 @@ class AcceptService:
         personal-token / unbound world: a card carrying a `pr_number` on a
         project whose forge is NOT `github_app`.
 
-        Mergeability posture (#362, 对齐 GitHub — see the module comment above
-        `_checks_summary`): right before merging, the PR's check-runs are read
-        once and their state is mirrored into the accept's note and room
-        notification — never used to block. A 405 from the merge API is
-        translated faithfully: a genuine conflict goes to the conflict flow
-        (芝士 dispatched to resolve), anything else (draft, required reviews,
-        …) surfaces GitHub's own message and stops the accept — sending 芝士
-        to "resolve" a conflict that does not exist wastes a turn and writes
-        a false history on the card.
+        Mergeability posture (see the module comment above `_read_checks`):
+        right before merging, the PR's check-runs are read once, and a verdict
+        that is not green STOPS the merge — the card goes to `pr_open` and
+        waits (`_hold_pr_for_checks`) instead of landing a change the forge
+        has not passed. Green, or a repository with no checks at all, merges
+        here and now.
+
+        A 405 from the merge API is translated faithfully: a genuine conflict
+        goes to the conflict flow (芝士 dispatched to resolve), anything else
+        (draft, required reviews, …) surfaces GitHub's own message and stops
+        the accept — sending 芝士 to "resolve" a conflict that does not exist
+        wastes a turn and writes a false history on the card.
         """
         from app.domain.agent.github_app import github_app_tokens_for_project
         from app.domain.review.github_pr import (
@@ -3098,8 +3157,15 @@ class AcceptService:
         parsed = parse_github_repo(upstream)
         if tokens is None or parsed is None:
             return None, ""  # App unconfigured / upstream changed since PR opened
+        owner, repo_name = parsed
         client = GitHubPRClient(*parsed, tokens)
         branch = ws.branch_for_tree(ws.tree_for_place(topic.id))
+        # (verdict, post-push head sha) when the checks said no. Decided inside
+        # the try below but acted on AFTER it: the `except Exception` there
+        # falls back to the LOCAL merge, and a stop raised from inside it would
+        # be caught and turned into exactly the direct push to main this gate
+        # exists to prevent.
+        hold: tuple[_ChecksVerdict, str] | None = None
 
         try:
             # Someone may have handled the PR on GitHub directly — respect it.
@@ -3124,28 +3190,42 @@ class AcceptService:
             await asyncio.to_thread(
                 ws.push_topic_branch, topic.project_id, topic.id, token
             )
-            # CI 镜像 (#362): read the branch tip's check-runs once and carry
-            # their state into the note/notification below — the human saw the
-            # same state in the accept UI (/pr-checks) before clicking, and
-            # the platform never blocks on it. A failed read must not block
-            # the merge either; it is reported as exactly that.
+            # 读一次 forge 的结论。读不到是它自己的一种结论（`unreadable`），
+            # 不是「当作绿的照合」——平台合的必须是 forge 真答过的那个绿。
             try:
                 checks = await client.check_runs(branch)
-            except Exception:  # noqa: BLE001 — mirror-only, never blocks the accept
+            except Exception:  # noqa: BLE001 — 读不到也是一种结论，见 _read_checks
                 logger.exception("pre-merge check-runs read failed for PR #%s", number)
                 checks = None
-            checks_line = _checks_summary(checks)
-            # Same builders as every other merge path: this is the squash
-            # commit that lands on the default branch, and it used to say
-            # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
-            # body — the branch it came from and who clicked, but nothing at
-            # all about what changed.
-            who = await identity.attribution(self._session, topic, task_id=card.task_id)
-            await client.merge_pr(
-                number,
-                title=pr_text.merge_commit_title(card, topic, number),
-                message=pr_text.merge_commit_message(topic, decided_by, card, who),
-            )
+            verdict = _read_checks(checks)
+            if not verdict.mergeable:
+                # 轮询器和人工放行都要 head sha，而且要**推完之后**的那个：授权
+                # 基线冻的是人此刻批的这一份改动，冻成推送前的 commit 会让第一轮
+                # 就误报越界。上面那次 pr_view 早于 push，不能拿来用。
+                #
+                # 读不到就留空、交给下面那句可见地停下：让它抛出去会被这个 try
+                # 的兜底翻译成「退回本地合并」，也就是把这个没过检查的 PR 绕开
+                # 直推上游——这道闸门要拦的正是那一下。
+                try:
+                    fresh = await client.pr_view(number)
+                except Exception:  # noqa: BLE001 — 见上：绝不能落进兜底分支
+                    logger.exception("post-push PR read failed for PR #%s", number)
+                    fresh = {}
+                hold = (verdict, str((fresh.get("head") or {}).get("sha") or ""))
+            else:
+                # Same builders as every other merge path: this is the squash
+                # commit that lands on the default branch, and it used to say
+                # "采纳 topic/8f3a… → main (#7)" with the reviewer's handle for a
+                # body — the branch it came from and who clicked, but nothing at
+                # all about what changed.
+                who = await identity.attribution(
+                    self._session, topic, task_id=card.task_id
+                )
+                await client.merge_pr(
+                    number,
+                    title=pr_text.merge_commit_title(card, topic, number),
+                    message=pr_text.merge_commit_message(topic, decided_by, card, who),
+                )
         except GitHubPRMergeBlocked as blocked:
             # 405 covers a whole family of "cannot merge right now" reasons
             # (real conflict, draft, required reviews, …). 如实转译 (#362):
@@ -3214,16 +3294,117 @@ class AcceptService:
             )
             return None, f"PR #{number} 采纳失败：{exc}"[:300]
 
+        if hold is not None:
+            verdict, head_sha = hold
+            if not head_sha:
+                # 挂不上轮询的卡会永远停在 `pr_open` 而界面上看不出来，所以宁可
+                # 让这次采纳可见地停下、可重试——绝不因为「读不到 head」就退回去
+                # 把一份没过检查的改动直推上游。
+                await self._stop_accept_pr_unavailable(
+                    card,
+                    topic,
+                    f"PR #{number} {verdict.line}，而平台读不到它的 head commit，"
+                    "没法把这张卡挂到轮询上等检查",
+                )
+            return await self._hold_pr_for_checks(
+                card,
+                topic,
+                decided_by,
+                number=number,
+                repo_full_name=f"{owner}/{repo_name}",
+                head_sha=head_sha,
+                verdict=verdict,
+            ), ""
+
         settled = await self._settle_pr_accept(
             card,
             topic,
             decided_by,
-            # 合并那一刻 forge 检查状态的留痕 (#362): a red or absent CI at
-            # merge time was the human's call to make — but the call and its
-            # context must be readable on the card afterwards.
-            note=f"已通过 PR #{number} 合并到上游（合并时{checks_line}）",
+            # 合并那一刻 forge 检查状态的留痕：走到这里只剩两种结论——全绿，或者
+            # 这个仓库根本没有检查。后一句尤其要留：#362 那四层静默失效的最后一
+            # 层，就是事后没人说得出「这次合并没有任何检查把关」。
+            note=f"已通过 PR #{number} 合并到上游（合并时{verdict.line}）",
         )
         return settled, ""
+
+    async def _hold_pr_for_checks(
+        self,
+        card: AcceptCard,
+        topic: Topic,
+        decided_by: str,
+        *,
+        number: int,
+        repo_full_name: str,
+        head_sha: str,
+        verdict: _ChecksVerdict,
+    ) -> AcceptCard:
+        """forge 没给出全绿的结论 —— 这次采纳不合并，卡挂到 `pr_open` 上等它。
+
+        为什么是「等」而不是「拒了、让人过会儿再点一次」：CI 要跑十几分钟，让人守
+        着标签页重新点，是把平台的活派给人；而平台等 CI 的机器是现成的
+        （`SchedulerService.poll_open_prs` → `advance_pr_card`），另外两条采纳路
+        （App 与两阶段）也早就是这么等的。同一个「采纳」按钮在不同项目上意味着不
+        同的事，才是真正没法向人解释的产品。
+
+        红和「还在跑」落在同一个状态上，因为对这张卡来说是同一件事：等它转绿。差
+        别只在谁接着动手——红了，轮询器下一轮就把失败详情递给芝士去修。这里不抢它
+        的活，note 也**不能**写成 `checks_failed`：那个码正是 `_nudge_pr_fix` 的去
+        重条件，提前写上去会让那次 nudge 被当成重复的咽掉，于是芝士永远收不到。
+
+        要红着合的出口是现成的、署名的那一个：`merge_despite_checks`（卡片上的
+        「人工放行」）。它只认 `pr_open` 的卡——这也是这里必须把卡挂上去、而不是
+        原地报错的原因：原地报错的话，房间里那句「可以人工放行」就是假的。
+
+        轮询器要的字段一次补齐（`pr_repo` / `pr_head_sha` / `pr_authorized_sha` /
+        `pr_merged_at`），缺任何一个它只 log 一行 error 就 return，卡会永远停在
+        `pr_open` 而界面上看不出来。授权基线冻的是**推完之后**那个 commit：人批的
+        是工作区此刻这一份。
+        """
+        await self._repo.add_approval(card.id, decided_by)
+        now = datetime.now(UTC)
+        card.status = AcceptStatus.pr_open
+        await self._seal_cards_tree(card)
+        card.decided_by = decided_by
+        card.decided_at = now
+        card.pr_repo = repo_full_name
+        card.pr_head_sha = head_sha
+        card.pr_authorized_sha = head_sha
+        card.pr_merged_at = None
+        notes.record(
+            card,
+            notes.NoteCode.waiting_checks,
+            f"{WAITING_CHECKS_PREFIX}（刚开始等）：PR #{number} {verdict.line}，"
+            "平台只合 forge 说全绿的 PR；转绿后自动合并，要现在就合用卡片上的"
+            f"「人工放行」：{card.pr_url or ''}",
+        )
+        await self._session.flush()
+        await self._session.refresh(card)
+        logger.info(
+            "card %s: PR #%s not merged at accept time (%s) — now waiting at pr_open",
+            card.id,
+            number,
+            verdict.state,
+        )
+        headline, event, severity, who = _HOLD_NOTICES[verdict.state]
+        self._notify_merge_result(
+            topic,
+            headline.format(n=number),
+            meta=notice(
+                event,
+                severity=severity,
+                who=who,
+                detail=(
+                    f"{verdict.line}。\n"
+                    "话题保持活跃，卡进入等检查：转绿后平台自动合并；红着的话芝士"
+                    "会收到失败详情去修，修完检查重新跑。\n"
+                    "要现在就合，用卡片上的「人工放行」——平台会记下是谁、什么"
+                    "时候、当时检查是什么状态、以及理由。\n"
+                    f"{card.pr_url or ''}"
+                ),
+                detail_label="为什么没有合并",
+            ),
+        )
+        return card
 
     async def _settle_pr_accept(
         self, card: AcceptCard, topic: Topic, decided_by: str, *, note: str
@@ -3324,14 +3505,13 @@ class AcceptService:
     async def merge_despite_checks(
         self, *, card_id: uuid.UUID, decided_by: str, reason: str = ""
     ) -> AcceptCard:
-        """约束二 (App 采纳等 CI 再合)：人明知检查没全绿，仍然决定合并——**署名的**
-        显式出口。
+        """人明知检查没全绿，仍然决定合并——**署名的**显式出口。
 
         为什么必须有：红着合有时候是对的。CI 基础设施抽风、与本次改动无关的既有
         失败、赶时间的热修——真正不能接受的不是「红着合」，而是**没有人做过这个
-        决定**。这正是这次改动要终结的东西：`_accept_via_pr` 读一次检查、把
-        「合并时 CI 检查未全绿」写进 note，然后照合——默认放行、事后留痕。这条
-        出口把它翻过来：**默认拒绝、显式放行**，而且放行必须签字。
+        决定**。平台自己的默认因此是拒绝（`_hold_pr_for_checks` 与
+        `_advance_pr_checks`：forge 说没过就不合），而这条出口是另一半：**显式
+        放行，且放行必须签字**。
 
         为什么不是把 andy 已经退役的前置闸门造回来（#296 退役,runner 与
         `run_check_command` 都已删除）：平台不重算「这段代码好不好」，它只是把

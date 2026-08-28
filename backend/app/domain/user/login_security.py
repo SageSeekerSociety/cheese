@@ -36,6 +36,14 @@ BACKUP_CODE_LOCKOUT_PREFIX = "cheese:2fa_backup_lockout:"
 # at the login screen shrink the step-up allowance.
 STEP_UP_2FA_ATTEMPTS_PREFIX = "cheese:2fa_stepup_attempts:"
 STEP_UP_2FA_LOCKOUT_PREFIX = "cheese:2fa_stepup_lockout:"
+# Re-proving the *password* inside a live session (``/auth/sudo`` methods
+# password and srp) is a third budget again. It cannot share the login one,
+# which is keyed by username and cleared by every successful sign-in, and it
+# must not share the step-up 2FA one: a password typo would then spend the
+# allowance for the other factor, and each factor is supposed to survive the
+# other being ground down.
+STEP_UP_PASSWORD_ATTEMPTS_PREFIX = "cheese:sudo_password_attempts:"
+STEP_UP_PASSWORD_LOCKOUT_PREFIX = "cheese:sudo_password_lockout:"
 TOTP_SECRET_PREFIX = "cheese:totp_secret:"
 TOTP_BACKUP_PREFIX = "cheese:totp_backup:"
 TOTP_ALWAYS_PREFIX = "cheese:totp_always:"
@@ -54,6 +62,9 @@ MAX_BACKUP_CODE_ATTEMPTS = 3
 # different attacks and either can be tightened without dragging the other
 # along. Same number today because the credential and its entropy are the same.
 MAX_STEP_UP_2FA_ATTEMPTS = 5
+# Same figure as the login budget, for the same credential — but its own knob,
+# because the two bound different attacks.
+MAX_STEP_UP_PASSWORD_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 15 * 60
 PASSWORD_RESET_TTL = 30 * 60
 SESSION_TTL = 30 * 24 * 60 * 60
@@ -175,22 +186,40 @@ class BackupCodeRateLimiter(LoginRateLimiter):
 class StepUpTwoFactorRateLimiter(LoginRateLimiter):
     """Budget for re-proving 2FA inside an existing session (#389).
 
-    Covers ``/auth/sudo`` (method=totp) and ``/{userId}/2fa/disable``, which
-    check the same TOTP secret as login but against an attacker who already
-    holds a live session rather than a leaked password. ``/2fa/disable`` is the
-    one entrance where guessing right ends 2FA for good, so leaving it
-    uncounted let a stolen session grind the second factor off the account.
+    Covers ``/auth/sudo`` (method=totp), which checks the same TOTP secret as
+    login but against an attacker who already holds a live session rather than
+    a leaked password. That is the whole surface: ``/{userId}/2fa/disable``
+    takes no code of its own, only the ticket sudo hands out, so there is one
+    place to guess and it is this one.
 
-    One budget covers both entrances because they are two halves of one
-    operation — the client puts sudo in front of disable — and separate ones
-    would just hand the same attacker a second full allowance for switching
-    URL. Separate from the *login* budget, though: see the prefix comment.
+    Separate from the *login* budget: see the prefix comment.
     """
 
     _attempts_prefix = STEP_UP_2FA_ATTEMPTS_PREFIX
     _lockout_prefix = STEP_UP_2FA_LOCKOUT_PREFIX
     _max_attempts = MAX_STEP_UP_2FA_ATTEMPTS
     _what = "2fa step-up"
+
+
+class StepUpPasswordRateLimiter(LoginRateLimiter):
+    """Budget for re-proving the password inside an existing session (#389).
+
+    Covers both shapes ``/auth/sudo`` accepts the password in — the bcrypt
+    comparison and the SRP proof. They are one credential reached two ways,
+    so one budget: counting them apart would hand whoever stole a session a
+    second full allowance for switching protocol, and the client picks the
+    protocol on the account's behalf anyway.
+
+    SRP initialisation is not charged. It reveals the salt and a server
+    ephemeral to someone who already holds the session, and proves nothing —
+    charging it would let a client that starts a handshake and abandons it
+    lock the owner out of the one they mean to finish.
+    """
+
+    _attempts_prefix = STEP_UP_PASSWORD_ATTEMPTS_PREFIX
+    _lockout_prefix = STEP_UP_PASSWORD_LOCKOUT_PREFIX
+    _max_attempts = MAX_STEP_UP_PASSWORD_ATTEMPTS
+    _what = "password step-up"
 
 
 class TOTPService:

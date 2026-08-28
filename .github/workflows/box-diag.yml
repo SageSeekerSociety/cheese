@@ -120,6 +120,34 @@ jobs:
           done
           echo "===== who owns :8081 / :8091 ====="
           docker ps --format '{{.Names}}  {{.Ports}}' | grep -E '8081|8091|18081' || true
+      - name: Public entrypoint (cloudflared connector)
+        # okcheese.com reaches this box through ONE cloudflared connector running
+        # here as a systemd unit. When that connector dies the edge serves 530 to
+        # every visitor while the box itself stays perfectly healthy — deploys go
+        # green, healthz answers, containers run — so nothing else in this file
+        # can tell the difference between "the site is down" and "the site is up".
+        #
+        # The 2026-08-25 outage burned three days on exactly that gap: the tunnel
+        # was down and the only way in was a key/route combination no single host
+        # had. The connector runs HERE, and the runner is already here.
+        #
+        # Reads only: unit state, why it last failed, and whether this box can
+        # still open the outbound TCP session the connector needs. No restart,
+        # no config edit — a probe that repairs is a probe nobody can run safely
+        # while they are still trying to understand the failure.
+        run: |
+          systemctl is-active cloudflared 2>&1 || true
+          systemctl show cloudflared -p ActiveState -p SubState -p Result \
+            -p NRestarts -p ExecMainStartTimestamp 2>&1 || true
+          journalctl -u cloudflared --since -6h --no-pager 2>&1 | tail -80 || true
+          echo "===== egress to the tunnel edge (TCP 7844, http2 protocol) ====="
+          for ip in 198.41.192.167 198.41.200.113; do
+            timeout 8 bash -c "cat < /dev/null > /dev/tcp/$ip/7844" \
+              && echo "$ip:7844 reachable" || echo "$ip:7844 UNREACHABLE"
+          done
+          echo "===== resolver + default route ====="
+          cat /etc/resolv.conf 2>&1 | grep -v '^#' || true
+          ip route show default 2>&1 || true
 
   prod-box:
     runs-on: [self-hosted, cheese-prod]
