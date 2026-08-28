@@ -151,13 +151,15 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 ```
 设备侧                                          后端侧
 claude COMMAND hooks                            /sandbox/hooks/{topic_id}
-  → ~/.claude/cheese-hook 转发器                  → 共享 hook_router
-  → 先写本地 spool (~/.claude/cheese-spool,        → translate_hook → AgentEvent
-     CHEESE_HOOK_SPOOL_ONLY=1)                  → code:200 = 推给活 turn 或存进 topic
-  → 后台 drainer 用 curl POST                       的服务端 spool，等下次 reconcile
-     {CONNECTOR_PUBLIC_BASE}/sandbox/hooks/{topic}
+  → ~/.claude/cheese-hook 转发器                  → 先写 topic 的服务端 spool
+  → 先写本地 spool (~/.claude/cheese-spool,        → 再推给活 turn（hook_router →
+     CHEESE_HOOK_SPOOL_ONLY=1)                       translate_hook → AgentEvent）
+  → 后台 drainer 用 curl POST                     → code:200 = 已落到我们盘上
+     {CONNECTOR_PUBLIC_BASE}/sandbox/hooks/{topic}    （drainer 见 200 才删本地副本）
      带 X-Cheese-Token + X-Cheese-Event-Id      （按 event-id 去重）
 ```
+
+**200 = 这条事件已经在我们自己的盘上。** drainer 见 200 就删掉设备上的副本，所以后端在落盘之前给的任何 ack 都是在拿一台**别人的机器**（§0）当我们的持久层：它可以离线、被擦、被机主删掉。落盘失败、缺 `X-Cheese-Event-Id`、token 里没有项目，一律回非 200——事件留在它还存在的地方，drainer 下一轮再来。
 
 - **事件没回来**：先看设备侧 spool 目录有没有堆积——后端不可达时 drainer 会一直重试，24h 过期清理；spool 堆积 = 设备到后端的回连断了。再看 `CONNECTOR_PUBLIC_BASE` 设备是否可达、scoped token 对不对。
 - **事件丢序/重复**：后端按 `X-Cheese-Event-Id` 去重；durable 投递保证一次 link/后端抖动不丢事件，但可能重投，消费侧需幂等。

@@ -188,9 +188,10 @@ def write_cursor(spool: Path, name: str) -> None:
 def append(spool: Path, eid: str, payload: dict) -> None:
     """Atomically add one hook payload to the spool (same ``<seq>.<eid>`` naming
     the cheese-hook forwarder uses — temp + rename). Server-side twin of the
-    forwarder's write: the /sandbox/hooks endpoint parks an event that arrived
-    with NO turn listening, so a later read materializes it as history instead
-    of it being dropped (or replayed into a live queue)."""
+    forwarder's write: the /sandbox/hooks endpoint records EVERY event here
+    before it acks, because the ack is what lets the sender delete its own copy.
+    Idempotent by event-id downstream, so the same event arriving twice (a
+    forwarder's copy and ours, or a redelivery) costs a file and nothing else."""
     spool.mkdir(parents=True, exist_ok=True)
     key = next_key(spool)
     tmp = spool / f".tmp.{eid}"
