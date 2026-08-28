@@ -36,12 +36,13 @@ mature system pays to protect the users it already has. We do not have them yet,
 so it buys nothing and leaves more to unwind — and each one is a place the next
 reader can mistake for something still in use.
 
-A change is finished when the layer that decides behaviour changes. Removing
-something from the surface where a person picks it leaves the path wired, so
-what nobody can select is still what an unconfigured case runs. Building the
-replacement and leaving the old call site is the same failure inverted: the new
-shape ends up contracted, documented and unreached. Confirm either against the
-code that chooses, not against the surface or the contract.
+Retiring something means deleting its code, and adopting a replacement means
+deleting what it replaced. Short of that the path stays wired: what nobody can
+select is still what an unconfigured case runs, and a new shape can be
+contracted, documented and never reached while the old call site serves every
+request. Both read as done to anyone checking the surface, which is what makes
+them worth naming — the change is finished when the code that chooses changes,
+so check there and not in the menu, the contract or the doc.
 
 The corollary is that a thing must be judged by what it does now, not by the
 reason it was created. Mechanisms drift away from their purpose while keeping
