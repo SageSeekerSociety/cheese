@@ -19,6 +19,7 @@
 |---|---|
 | [`product-impl.md`](product-impl.md) | 当前真实落地的产品行为与实现方式 |
 | [`infrastructure.md`](infrastructure.md) | 这个应用跑在哪、怎么发布、数据在哪 |
+| [`where-a-turn-runs.md`](where-a-turn-runs.md) | 一轮活落在哪台机器上：三条执行路，以及**能选的和实际跑的不是一回事** |
 | [`spec.md`](spec.md) | Cheese 2.0 产品与实现 Spec |
 | [`evals.md`](evals.md) | 评测配套 |
 | [`feishu-lark.md`](feishu-lark.md) | lark-cli 团队配置：飞书操作走 `--profile cheese`，含踩坑速查 |
