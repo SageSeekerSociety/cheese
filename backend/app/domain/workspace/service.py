@@ -1,9 +1,14 @@
 """Project workspace — a git repo per project (spec §6.3: 所有产出都是 git).
 
-每个 project = 一个 git 仓,主仓用 Jujutsu (jj) colocate(`.git` + `.jj` 并存),
-每个话题 = 一个 jj workspace(取代 git worktree)。这样沙箱容器里的原生
-Bash/Write/Edit 改动会被 jj 自动快照(无需手动 commit),而 git 侧照常工作:
-话题分支用 jj bookmark 导出成 git branch,采纳/diff 仍走 git(colocation)。
+每个 project = 一个 git 仓,每棵树 = 一个工作区目录 + 一条 git 分支
+(`branch_for_tree`)。**提交这一步不在这里**:干活的分身在自己的机器上
+`git commit`,再把分支推回来(`api/routes/git_http.py`)。这个模块读那条分支
+——diff、采纳、推 PR 全是分支上的提交——并维护一份跟着它走的检出,供文件面板
+和合并使用。
+
+主仓是 jj colocate 的(`.git` + `.jj` 并存),话题工作区是 jj workspace,分支
+以 bookmark 的形式导出成 git branch。这套只用来**检出**:平台不再往任何人的
+工作树里写提交。
 """
 
 import contextlib
@@ -22,12 +27,7 @@ from app.core.config import settings
 from app.core.errors import ConflictError, ValidationError
 from app.domain.workspace import identity as identity_mod
 from app.domain.workspace.dogfood_notices import watch_dogfood_push
-from app.domain.workspace.identity import (
-    CHEESE_EMAIL,
-    CHEESE_IDENTITY,
-    CHEESE_NAME,
-    GitIdentity,
-)
+from app.domain.workspace.identity import CHEESE_IDENTITY
 from app.domain.workspace.textfile import (
     MAX_TEXT_BYTES,
     content_version,
@@ -273,10 +273,6 @@ def _share_jj_modes(repo: Path, since: float = 0.0) -> None:
         pass
 
 
-JJ_USER_NAME = CHEESE_NAME
-JJ_USER_EMAIL = CHEESE_EMAIL
-
-
 def _drop_repo_config_id(store: Path) -> None:
     """Delete the store's `config-id` if one exists — the file that took every
     topic on the platform down at 11:39.
@@ -330,12 +326,10 @@ def _jj_failure_message(command: str, detail: str, repo: Path) -> str:
     return f"jj {command} failed: {detail}"
 
 
-def _jj(repo: Path, *args: str, identity: GitIdentity | None = None) -> str:
-    """`identity` overrides who the commit belongs to — see workspace/identity.py.
-    jj has one identity knob (JJ_USER/JJ_EMAIL sets author AND committer; 0.43
-    has no `--author`), so an overridden call attributes the commit wholly to
-    that person. Only the topic snapshot passes one; everything the platform
-    does on its own behalf (base commit, upstream merge) stays 芝士."""
+def _jj(repo: Path, *args: str) -> str:
+    """Run one jj command in `repo`. Everything reached from here is the
+    platform acting on its own behalf (checkout, base commit, upstream merge),
+    so the identity is always 芝士."""
     started = time.time() - 1  # -1s: filesystem mtime vs clock granularity slack
     # Before every call, not once at setup: a jj run by any other uid (an agent
     # in a sandbox) recreates config-id and locks the backend out mid-flight.
@@ -350,8 +344,8 @@ def _jj(repo: Path, *args: str, identity: GitIdentity | None = None) -> str:
         # `--repo` is the one thing that creates config-id in the first place.
         env={
             **os.environ,
-            "JJ_USER": (identity or CHEESE_IDENTITY).name,
-            "JJ_EMAIL": (identity or CHEESE_IDENTITY).email,
+            "JJ_USER": CHEESE_IDENTITY.name,
+            "JJ_EMAIL": CHEESE_IDENTITY.email,
         },
     )
     # Before the returncode check: a FAILED jj call still writes operations, and
@@ -369,8 +363,8 @@ def _jj(repo: Path, *args: str, identity: GitIdentity | None = None) -> str:
 
 
 def _ensure_jj(repo: Path) -> None:
-    """Colocate a jj repo onto the git repo (idempotent). jj then auto-snapshots
-    the working copy, while git refs stay live for merge/diff."""
+    """Colocate a jj repo onto the git repo (idempotent), so a tree can be
+    checked out as a jj workspace while git refs stay live for merge/diff."""
     if (repo / ".jj").exists():
         return
     _jj(repo, "git", "init", "--colocate")
@@ -464,9 +458,9 @@ def _worktree_path(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
 
 
 def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
-    """每棵树一个独立 jj workspace（沙箱地基）：一批活在同一个工作目录里干，
-    jj 自动快照其改动；不同的树互不覆盖。导出一个 git 分支（`branch_for_tree`）
-    供采纳/diff——分支名与工作区目录名各自独立派生，见 `_tree_dirname`。
+    """每棵树一个独立 jj workspace：一批活共用一个工作目录，不同的树互不覆盖。
+    导出一个 git 分支（`branch_for_tree`）供采纳/diff——分支名与工作区目录名
+    各自独立派生，见 `_tree_dirname`。
 
     一棵**新**树从 base 分支长出来。它以前不是这样：一件活的树从它所在房间的树
     fork，因为那件活的提交最后要合回房间那一条分支。现在一批活共用一棵树、
@@ -862,9 +856,8 @@ def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> bool:
 
     Returns whether the workspace now sits on the branch tip. False is not an
     error — it is "the workspace declined, it holds something a person cares
-    about" — but a caller that just MOVED the branch has to know, because the
-    next `snapshot_worktree` sets the bookmark from this workspace and would
-    carry the branch back off whatever it missed.
+    about" — but it is worth knowing to a caller that just moved the branch,
+    since the files it reads out of here are then a version behind the ref.
     """
     repo = ensure_repo(project_id)
     try:
@@ -888,7 +881,13 @@ def _catch_up_with_branch(project_id: uuid.UUID, wt: Path, branch: str) -> bool:
     if current and ancestor.returncode != 0:
         return False
     _jj(wt, "git", "import")
-    _jj(wt, "new", branch)
+    # The commit id, never the bookmark's name: a push lands on the git ref, and
+    # where this workspace had also moved the bookmark itself (the conflict
+    # materialisation in `prepare_conflict_resolution`) jj holds the name
+    # CONFLICTED and refuses to resolve it to a revision at all — which wedges
+    # every later read of this workspace. git is the side that was written, so
+    # git is the answer, and a raw id needs no name to survive the trip into jj.
+    _jj(wt, "new", tip)
     return True
 
 
@@ -1135,28 +1134,6 @@ def topic_diff(project_id: uuid.UUID, topic_id: uuid.UUID) -> str:
     return _git(repo, "diff", f"{_diff_base(repo)}...{branch}")
 
 
-def paths_in_last_snapshot(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
-    """What the most recent commit on this place's tree actually changed.
-
-    Attribution needs a window narrower than the branch: a tree carries a whole
-    batch, so "what changed on the branch" is the batch's answer, not this
-    thread's. One commit IS one turn — the snapshot boundary — so its own diff is
-    the closest thing to "what did this piece of work just touch".
-
-    Empty when the branch has no parent commit to compare against (a first
-    commit), which reads as "nothing to attribute" rather than "everything".
-    """
-    repo = ensure_repo(project_id)
-    branch = branch_for_tree(tree_for_place(topic_id))
-    if not _branch_exists(repo, branch):
-        return []
-    try:
-        out = _git(repo, "diff", "--name-only", f"{branch}~1", branch)
-    except ValidationError:
-        return []
-    return [line.strip() for line in out.splitlines() if line.strip()]
-
-
 def topic_changed_files(project_id: uuid.UUID, topic_id: uuid.UUID) -> list[str]:
     """Paths a topic's branch changes relative to what it grew out of — the same
     range :func:`topic_diff` renders, named only.
@@ -1335,12 +1312,10 @@ def _warn_about_discarded_changes(repo: Path) -> None:
     Discarding is the sync's whole point — the shared directory mirrors the
     base tip and is not where work is kept. But it is not read-only either:
     `write_file` and `exec_in_sandbox` both write straight into it when called
-    with `topic_id=None`, and nothing ever commits those writes (the only
-    snapshot path, `snapshot_worktree`, requires a topic and runs in that
-    topic's own jj worktree). So a discard here can silently destroy something
-    a human typed in the 文件 panel. Failing loudly was at least visible;
-    deleting silently would be a net loss, since it is the harder of the two
-    to diagnose after the fact.
+    with `topic_id=None`, and nothing ever commits those writes. So a discard
+    here can silently destroy something a human typed in the 文件 panel.
+    Failing loudly was at least visible; deleting silently would be a net loss,
+    since it is the harder of the two to diagnose after the fact.
 
     Best-effort by construction: a status that fails must never become the
     thing that wedges the sync, so every error is swallowed. Tracked
@@ -1542,18 +1517,13 @@ def _merge_ref_into_base(
 def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
 
-    On conflict it aborts and reports, never half-merges. It does raise for one
-    thing: a working copy whose pending edits could not be folded into the
-    branch, because merging then delivers something the reviewer never saw."""
+    Whatever is on the branch is what gets merged, and nothing is added to it on
+    the way in. Work that was never committed was never delivered — the person
+    who wrote it decides when it becomes a commit, and until they do it is not
+    in the diff anyone reviewed either.
+
+    On conflict it aborts and reports, never half-merges."""
     repo = ensure_repo(project_id)
-    # Fold any pending working-copy changes into the branch first: a human may
-    # have edited files (人改文件即指令) with no agent turn afterwards to
-    # snapshot them — accepting must deliver what the reviewer actually saw.
-    #
-    # A fold that FAILS raises out of here rather than being swallowed, and the
-    # caller already knows what to do with that: it refuses the accept and says
-    # so in the room, instead of merging a branch this turn never reached.
-    commit_pending_work(project_id, topic_id, SNAPSHOT_BEFORE_ACCEPT)
     branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo, branch):
         return {"merged": False, "noop": True, "reason": "no topic branch"}
@@ -1759,24 +1729,37 @@ def prepare_conflict_resolution(
     project_id: uuid.UUID, topic_id: uuid.UUID
 ) -> list[str]:
     """采纳冲突 → 派芝士解决的前置：在话题的 jj workspace 里创建 branch×base 的
-    合并提交，冲突以标记形式materialize 在文件里；返回冲突文件列表。芝士改完文件、
-    平台照常快照（merge commit 连同解决一起入 bookmark），重试采纳即可干净合并。"""
+    合并提交，冲突以标记形式materialize 在文件里；返回冲突文件列表。这个合并进
+    话题分支，芝士在自己那份检出里解决冲突、提交、推回来，重试采纳即可干净合并。"""
+    repo = ensure_repo(project_id)
     branch = branch_for_tree(tree_for_place(topic_id))
     wt = _ensure_worktree(project_id, topic_id)
-    base = _base_branch(ensure_repo(project_id))
-    # The workspace's jj view lags the git side — pull the base branch's latest
-    # commits in first, or the merge would use a stale bookmark (and possibly
-    # see no conflict at all).
+    base = _base_branch(repo)
+    # The workspace's jj view lags the git side — pull the latest commits in
+    # first, or the merge would run against a stale view (and possibly see no
+    # conflict at all).
     try:
         _jj(wt, "git", "import")
     except ValidationError:
         pass
-    _jj(wt, "new", branch, base)
+    # Commit ids rather than names, for the reason `_catch_up_with_branch` gives:
+    # a bookmark this workspace moved and a machine then pushed over is
+    # CONFLICTED, and jj will not resolve a conflicted name to a revision.
+    _jj(
+        wt,
+        "new",
+        _git(repo, "rev-parse", branch).strip(),
+        _git(repo, "rev-parse", base).strip(),
+    )
     out = _jj(wt, "resolve", "--list")
     files = [line.split()[0] for line in out.splitlines() if line.strip()]
-    # Move the bookmark onto the (conflicted) merge so the snapshot/export path
-    # keeps working; the resolution edits amend this same commit.
+    # Move the bookmark onto the (conflicted) merge and export it, so the
+    # conflict is ON THE BRANCH — which is where whoever resolves it pulls from.
+    # The export is not optional: a secondary jj workspace has no `.git` of its
+    # own, so nothing auto-exports it, and an unexported merge leaves the
+    # resolver looking at a branch that has no conflict on it at all.
     _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+    _jj(wt, "git", "export")
     return files
 
 
@@ -1812,12 +1795,16 @@ def prepare_upstream_conflict_resolution(
         _jj(wt, "git", "import")
     except ValidationError:
         pass
-    _jj(wt, "new", base, upstream_sha)
+    _jj(wt, "new", _git(repo, "rev-parse", base).strip(), upstream_sha)
     out = _jj(wt, "resolve", "--list")
     files = [line.split()[0] for line in out.splitlines() if line.strip()]
-    # Move the bookmark onto the (conflicted) merge so the snapshot/export path
-    # keeps working; the resolution edits amend this same commit.
+    # Move the bookmark onto the (conflicted) merge and export it, so the
+    # conflict is ON THE BRANCH — which is where whoever resolves it pulls from.
+    # The export is not optional: a secondary jj workspace has no `.git` of its
+    # own, so nothing auto-exports it, and an unexported merge leaves the
+    # resolver looking at a branch that has no conflict on it at all.
     _jj(wt, "bookmark", "set", branch, "-r", "@", "--allow-backwards")
+    _jj(wt, "git", "export")
     return files
 
 
@@ -1953,14 +1940,12 @@ def _token_push_env(token: str) -> dict[str, str]:
 def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) -> str:
     """Push the topic's branch to the upstream (PR-based accept, #188 §5.1).
 
-    Snapshots the worktree first so the PR head is exactly what the reviewer
-    sees. --force-with-lease: a re-push after a conflict fix must move the
-    remote branch, but never trample one somebody else moved."""
+    The branch as it stands is what the PR carries. --force-with-lease: a
+    re-push after a conflict fix must move the remote branch, but never trample
+    one somebody else moved."""
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         raise ValidationError("未关联上游仓库，无法推分支")
-    # Raises rather than publishing a PR head that is missing this turn.
-    commit_pending_work(project_id, topic_id, SNAPSHOT_FOR_PR)
     branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo, branch):
         raise ValidationError("话题没有分支，无法推送")
@@ -2168,14 +2153,9 @@ def _catch_up_topic_workspace(
     project_id: uuid.UUID, topic_id: uuid.UUID, branch: str
 ) -> None:
     """Let the topic's jj workspace see a commit that reached its git branch
-    from outside (here: the sync merge above).
-
-    Not cosmetic. The workspace's bookmark would otherwise still point at the
-    pre-merge commit, and the next `snapshot_worktree` moves that bookmark to a
-    child of it with `--allow-backwards` — dropping the merge from the branch
-    and turning the following re-push into a rejected non-fast-forward. Purely
-    best-effort: the git ref is what gets pushed, so a jj hiccup must not fail
-    the push."""
+    from outside (here: the sync merge above), so the files the panel reads out
+    of it are the ones the push carried. Purely best-effort: the git ref is what
+    gets pushed, so a jj hiccup must not fail the push."""
     wt = _worktree_path(project_id, topic_id)
     if not (wt / ".jj").exists():
         return  # no workspace yet — nothing to catch up
@@ -2225,10 +2205,6 @@ def push_topic_branch_for_github_pr(
     before. Syncing only after a rejection keeps the happy path (including the
     60s re-push poll) exactly as cheap as it was — no fetch, no extra commit."""
     repo_path = ensure_repo(project_id)
-    # Raises like any other push failure here, and the callers already handle
-    # that: the re-push poller records it on the card and retries next tick, the
-    # open-a-PR path stops the accept.
-    commit_pending_work(project_id, topic_id, SNAPSHOT_BEFORE_TWO_PHASE)
     branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
@@ -2370,176 +2346,6 @@ def await_log_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     survives the container being rebuilt under it. Mirrors spool_dir's base so
     both sides agree on ONE location."""
     return identity_mod.session_dir(project_id, topic_id) / "cheese-await"
-
-
-def has_worktree(project_id: uuid.UUID, topic_id: uuid.UUID) -> bool:
-    """Whether this topic already has a jj workspace on disk. Read-only probe:
-    unlike `_ensure_worktree` it creates nothing, so a caller that only wants to
-    snapshot existing work can ask without conjuring a repo as a side effect."""
-    return (_worktree_path(project_id, topic_id) / ".jj").exists()
-
-
-# ---- Automatic commit messages ---------------------------------------------
-#
-# These are commits nobody wrote by hand, and they end up in the history a human
-# reads. They used to be Chinese in-house jargon ("芝士 edits（后台任务「…」结束后
-# 的最终态）") — unreadable to anyone outside the platform, and nothing a git tool
-# can parse. Conventional Commits, English, imperative, subject under 72 chars:
-# the same rule the agent itself is held to (CLAUDE.md 的「提交与 PR 规范」).
-#
-# `chore` is the honest type: a snapshot is not itself a feature or a fix, it is
-# the platform preserving whatever state the workspace is in. What the change
-# actually IS gets said once, in the squash commit that lands on main
-# (review/services.py 的 `_pr_merge_commit_title`).
-SNAPSHOT_MESSAGE = "chore: snapshot workspace after agent turn"
-SNAPSHOT_BEFORE_ACCEPT = "chore: snapshot workspace before accept"
-SNAPSHOT_FOR_PR = "chore: snapshot workspace for pull request"
-SNAPSHOT_BEFORE_TWO_PHASE = "chore: snapshot workspace before two-phase accept"
-SNAPSHOT_FOR_PUSH_FIX = "chore: snapshot workspace for push-fix"
-
-
-def _put_the_branch_under_the_working_copy(
-    *, main: Path, wt: Path, branch: str
-) -> None:
-    """Make whatever the branch grew elsewhere an ancestor of the working copy,
-    so the bookmark move that follows can only go forwards.
-
-    A tree's branch has two authors. This process writes it by exporting a
-    bookmark; an agent writes it by pushing over the project's git proxy — the
-    only route open to one whose files are not in this worktree. Moving the
-    bookmark from a working copy that never saw that push carries the branch
-    back over it, and a bookmark move says nothing while it does so, so the
-    loss surfaces only as a pull request with an empty diff.
-
-    Nothing to do in the common case, where the branch is exactly where this
-    workspace last left it. When there IS something, rebasing the working copy
-    onto it is the whole repair: this turn's edits keep their content and gain
-    the pushed commits as parents.
-
-    The question is asked of the BOOKMARK, never of the git ref, even though
-    the git ref is what a push moved. The two disagree in both directions and
-    only one answer is safe: `prepare_upstream_conflict_resolution` moves the
-    bookmark onto a merge it has not exported yet, so the git ref there is the
-    stale side, and treating it as the truth would rebase that merge away and
-    silently drop the upstream history it carries. Importing first is what
-    makes the bookmark the better answer — it is where a push lands too."""
-    if not _branch_exists(main, branch):
-        return
-    try:
-        # The workspace's jj view lags the git side — a push moved the ref
-        # without anything here running a jj command.
-        _jj(wt, "git", "import")
-        # `bookmarks()` rather than the bare name, because the name on its own
-        # is an error exactly when it matters most: a push that lands on top of
-        # what this workspace exported leaves the bookmark CONFLICTED — one
-        # target the pushed commit, the other whatever the working copy was
-        # last rewritten into — and jj refuses to resolve a conflicted name to
-        # a revision. Every target that is not already an ancestor is something
-        # to get under, and the bookmark move at the end of the snapshot is
-        # what settles the conflict.
-        behind = [
-            line
-            for line in _jj(
-                wt,
-                "log",
-                "-r",
-                f'heads(bookmarks(exact:"{branch}") ~ ::@)',
-                "--no-graph",
-                "-T",
-                'commit_id ++ "\n"',
-            ).splitlines()
-            if line.strip()
-        ]
-    except ValidationError as exc:
-        # Nothing better to do than carry on: refusing here would wedge every
-        # snapshot, and every accept behind them, on a repo jj cannot read.
-        logger.warning(
-            "could not tell whether %s is already under %s's working copy (%s) "
-            "— snapshotting anyway, so a push that raced this turn may be "
-            "carried back off the branch",
-            branch,
-            wt,
-            exc,
-        )
-        return
-    if not behind:
-        return
-    _jj(wt, "rebase", "-r", "@", *[arg for c in behind for arg in ("-d", c)])
-
-
-def snapshot_worktree(
-    project_id: uuid.UUID, topic_id: uuid.UUID, message: str = SNAPSHOT_MESSAGE
-) -> None:
-    """Snapshot whatever the agent changed in the topic's workspace this turn as a
-    jj commit, so native Bash/Write/Edit edits become version history (no manual
-    commit needed). The topic's git branch (bookmark) is moved to the new commit
-    so 采纳/diff still work via git.
-
-    Authored by the human the topic belongs to when they have a linked GitHub
-    account (`workspace/identity.py`), 芝士 otherwise — an unlinkable address is
-    why these commits showed up on GitHub as a grey name with no avatar.
-
-    A snapshot taken while `cheese await` has a command in flight can only catch a
-    half-written worktree, so the automatic post-turn one is HELD instead
-    (`awaited_tasks.checkpoint_worktree`). What still reaches here during a hold
-    are the paths a human is waiting on — before-accept, PR — where refusing
-    would wedge the accept. Those commit, but say so in the message rather than
-    passing a mid-command tree off as a settled one. It goes in the BODY: the
-    subject line is a Conventional Commits subject and a parenthetical warning
-    glued onto it would blow past 72 chars and read as part of the change."""
-    from app.domain.agent import awaited_tasks  # local: it imports this module
-
-    branch = branch_for_tree(tree_for_place(topic_id))
-    wt = _ensure_worktree(project_id, topic_id)
-    if not _jj(wt, "diff", "-s").strip():
-        return  # nothing changed this turn
-    _put_the_branch_under_the_working_copy(
-        main=ensure_repo(project_id), wt=wt, branch=branch
-    )
-    held = awaited_tasks.snapshot_hold(topic_id)
-    if held is not None:
-        message = (
-            f"{message}\n\n"
-            f"Taken while the background task {held.label!r} was still running, "
-            "so this tree may be a mid-command state."
-        )
-    _jj(wt, "commit", "-m", message)
-    # The just-committed work is @- (jj commit started a fresh empty @).
-    #
-    # Authorship is a SECOND step, not an env var on the commit above: jj stamps
-    # the author when the working-copy commit is CREATED — which happened at the
-    # end of the previous turn — so JJ_USER at `jj commit` time changes nothing.
-    # `metaedit --update-author` rewrites it afterwards, and the bookmark is set
-    # after that so it lands on the rewritten commit rather than the discarded
-    # one.
-    author = identity_mod.read(project_id, topic_id)
-    if author is not None:
-        _jj(wt, "metaedit", "--update-author", "-r", "@-", identity=author)
-    _jj(wt, "bookmark", "set", branch, "-r", "@-", "--allow-backwards")
-    _jj(wt, "git", "export")
-
-
-def commit_pending_work(
-    project_id: uuid.UUID, place_id: uuid.UUID, message: str
-) -> None:
-    """Fold whatever is sitting in this place's working copy into its branch,
-    for the human-triggered paths that must deliver what the reviewer saw:
-    accept, opening or updating a PR, an explicit push-fix.
-
-    A place with no workspace has nothing to fold and returns quietly. Anything
-    else RAISES.
-
-    That distinction is the whole function. It used to be a `try/except
-    ValidationError: pass` at each call site, whose comment said "no workspace
-    yet — nothing pending to fold" — but a workspace that has gone stale raises
-    exactly the same exception, and so does every other way jj can fail. So the
-    four paths treated "the work was lost" as "there was never any work" and
-    carried on: the branch stayed where it was, the card's diff and the PR were
-    computed from that branch, and the merge landed without this turn in it.
-    Nothing anywhere said so. `has_worktree` is a read-only probe, so asking it
-    the harmless question first leaves the failure with nobody to swallow it."""
-    if has_worktree(project_id, place_id):
-        snapshot_worktree(project_id, place_id, message)
 
 
 # `docker info` costs ~50ms, and the answer changes only when someone starts or

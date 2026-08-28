@@ -1,6 +1,8 @@
 <script setup lang="ts">
 // 预览 tab (spec §9.1): the artifact 芝士 pointed at (`cheese artifact`),
-// rendered by its mimeType. The platform NEVER guesses a preview.
+// rendered by its mimeType — or the app it started (`cheese serve`), iframed
+// through the backend's reverse proxy onto that machine's preview tunnel. The
+// platform NEVER guesses a preview.
 //
 // The 「有新内容」 dot does NOT live here: it has to be right even while this tab
 // is closed, which makes it a signal, and signals belong to WorkPanel. This
@@ -10,7 +12,7 @@ import type { FileContent, PreviewInfo } from '../../cx_types'
 
 import { onBeforeUnmount, ref, watch } from 'vue'
 
-import { BASE as API_BASE, getPreview, readFile } from '../../api'
+import { BASE as API_BASE, getPreview, primeAppPreview, readFile } from '../../api'
 
 const props = withDefaults(
   defineProps<{
@@ -38,7 +40,14 @@ const refreshing = ref(false)
 const previewFile = ref<FileContent | null>(null)
 const previewMime = ref<string>('text/html')
 const previewNamed = ref(false)
-// What 芝士 named — so a read failure can say WHICH artifact broke.
+// 运行环境预览: the agent declared a RUNNING app (`cheese serve`) — iframe the
+// backend's reverse-proxy path instead of rendering file content. Null while the
+// app isn't answering; `previewTunnelUp` then says whether the machine is even
+// carrying a preview out, so the two cases can read differently.
+const previewAppUrl = ref<string | null>(null)
+const previewAppNote = ref<string>('')
+const previewTunnelUp = ref(false)
+// What 芝士 named, app or file — so a read failure can say WHICH artifact broke.
 const previewNamedPath = ref<string>('')
 // Failures, kept apart from "nothing is set". Collapsing them (the old
 // `.catch(() => null)` on both calls) reported every backend error and every
@@ -55,7 +64,9 @@ const previewReadError = ref<string | null>(null)
 const previewFull = ref(false)
 
 function openPreviewInNewTab() {
-  if (previewFile.value && props.topicId) {
+  if (previewAppUrl.value) {
+    window.open(previewAppUrl.value, '_blank', 'noopener')
+  } else if (previewFile.value && props.topicId) {
     // Served with CSP sandbox (opaque origin) — a real tab, not our origin.
     window.open(`${API_BASE}/topics/${props.topicId}/preview/raw`, '_blank', 'noopener')
   }
@@ -68,10 +79,14 @@ async function load(opts: { silent?: boolean } = {}) {
   if (opts.silent) refreshing.value = true
   else loading.value = true
   try {
-    // A silent re-fetch must NOT blank these first: each value below is only
-    // assigned when it actually changed, so the artifact on screen is not
-    // re-rendered (losing whatever state the reader built up in it) every tick.
+    // A silent re-fetch must NOT blank these first. Clearing `previewAppUrl`
+    // unmounts the iframe, so the running app the reader is looking at would
+    // reload from scratch every refresh tick; below, each value is only assigned
+    // when it actually changed, for the same reason.
     if (!opts.silent) {
+      previewAppUrl.value = null
+      previewAppNote.value = ''
+      previewTunnelUp.value = false
       previewError.value = null
       previewReadError.value = null
       previewNamedPath.value = ''
@@ -90,10 +105,38 @@ async function load(opts: { silent?: boolean } = {}) {
     if (props.topicId !== tid) return
     previewError.value = null
     emit('loaded', art?.artifact_id ?? null)
-    if (art) {
+    if (art && art.kind === 'app') {
+      previewNamed.value = true
+      previewAppNote.value = art.path
+      previewNamedPath.value = art.path
+      previewTunnelUp.value = !!art.tunnel_up
+      previewReadError.value = null
+      previewFile.value = null
+      // Only on a url the frame does not already have: the proxy re-attaches the
+      // cookie on every request it forwards, so an app already on screen keeps
+      // its own credential alive and re-priming it each refresh tick would be a
+      // request that buys nothing.
+      if (art.url && art.url !== previewAppUrl.value) {
+        // The frame carries no credential of its own (a ?token= would be
+        // readable by whatever the agent is serving), so hand the browser the
+        // scoped cookie FIRST — otherwise its very first request 404s and the
+        // panel is back to showing a white box.
+        try {
+          await primeAppPreview(tid)
+        } catch (e) {
+          if (props.topicId !== tid) return
+          previewError.value = e instanceof Error ? e.message : '预览授权失败'
+          return
+        }
+        if (props.topicId !== tid) return
+      }
+      previewAppUrl.value = art.url ?? null
+    } else if (art) {
       previewNamed.value = true
       previewNamedPath.value = art.path
       previewMime.value = art.mime || 'text/html'
+      previewAppUrl.value = null
+      previewAppNote.value = ''
       try {
         const content = await readFile(pid, art.path, tid)
         // Guard against a topic switch mid-flight — this await was the one fetch
@@ -115,6 +158,7 @@ async function load(opts: { silent?: boolean } = {}) {
     } else {
       previewNamed.value = false
       previewFile.value = null
+      previewAppUrl.value = null
     }
   } finally {
     if (props.topicId === tid) {
@@ -169,6 +213,8 @@ onBeforeUnmount(stopAutoRefresh)
 watch(
   () => props.topicId,
   () => {
+    previewAppUrl.value = null
+    previewAppNote.value = ''
     previewNamedPath.value = ''
     previewFile.value = null
     previewError.value = null
@@ -184,7 +230,7 @@ watch(
   <div class="panel-preview">
     <div class="preview-head">
       <v-spacer />
-      <template v-if="previewFile">
+      <template v-if="previewAppUrl || previewFile">
         <v-btn
           icon="mdi-open-in-new"
           size="small"
@@ -217,7 +263,19 @@ watch(
       <v-progress-circular indeterminate color="primary" size="28" />
     </div>
 
-    <div v-if="previewError" class="text-center text-medium-emphasis py-8">
+    <div v-else-if="previewAppUrl" class="preview-wrap">
+      <!-- 运行环境预览: the live app, carried out of its machine over the tunnel -->
+      <div class="preview-bar text-caption px-3 pt-2">
+        <span class="text-medium-emphasis">{{ previewAppNote }}</span>
+        <v-chip size="x-small" variant="tonal" class="ms-2">运行中的应用</v-chip>
+      </div>
+      <!-- The app rides the backend's reverse proxy, so it is on OUR origin:
+           allow-same-origin would hand whatever the agent is serving our
+           localStorage (session token) and our API cookies. Opaque origin only —
+           same posture as the file artifact below. -->
+      <iframe class="preview-frame" :src="previewAppUrl ?? undefined" sandbox="allow-scripts allow-forms" />
+    </div>
+    <div v-else-if="previewError" class="text-center text-medium-emphasis py-8">
       <v-icon size="32" class="text-error mb-2">mdi-alert-circle-outline</v-icon>
       <div>预览加载失败</div>
       <div class="text-caption mt-1">平台没能返回这个话题的预览：{{ previewError }}</div>
@@ -227,6 +285,20 @@ watch(
       <div>指定的文件读不到</div>
       <div class="text-caption mt-1">
         芝士指定了 {{ previewNamedPath || '一个文件' }}，但它现在读不出来：{{ previewReadError }}
+      </div>
+    </div>
+    <div v-else-if="previewNamed && previewAppNote" class="text-center text-medium-emphasis py-8">
+      <!-- Two states, and they are not interchangeable: the machine is not
+           carrying a preview out at all, or it is and the app behind it is
+           gone. Collapsing them told people to summon 芝士 again for a tunnel
+           that no summon brings back. -->
+      <v-icon size="32" class="text-disabled mb-2">mdi-lan-disconnect</v-icon>
+      <div>应用暂时不在线</div>
+      <div v-if="previewTunnelUp" class="text-caption mt-1">
+        那台机器还连着，但登记的端口上没有服务在应答。芝士启动的服务多半已经退出，再 @ 它一次即可重新拉起。
+      </div>
+      <div v-else class="text-caption mt-1">
+        跑这个话题的机器现在没有把预览通道拨出来（机器离线，或者这一轮还没开始）。再 @ 芝士一次即可重新拉起。
       </div>
     </div>
     <div v-else-if="previewFile" class="preview-wrap">
@@ -253,7 +325,9 @@ watch(
     <v-dialog v-model="previewFull" fullscreen transition="dialog-bottom-transition">
       <div class="preview-full">
         <div class="preview-full__bar">
-          <span class="preview-full__title">{{ previewFile?.path }}</span>
+          <span class="preview-full__title">
+            {{ previewAppUrl ? previewAppNote || '运行中的应用' : previewFile?.path }}
+          </span>
           <v-spacer />
           <v-btn
             icon="mdi-open-in-new"
@@ -266,7 +340,13 @@ watch(
           <v-btn icon="mdi-close" size="small" variant="text" class="c-muted" @click="previewFull = false" />
         </div>
         <iframe
-          v-if="previewFile"
+          v-if="previewAppUrl"
+          class="preview-full__frame"
+          :src="previewAppUrl"
+          sandbox="allow-scripts allow-forms"
+        />
+        <iframe
+          v-else-if="previewFile"
           class="preview-full__frame"
           :srcdoc="previewFile.content ?? ''"
           sandbox="allow-scripts"

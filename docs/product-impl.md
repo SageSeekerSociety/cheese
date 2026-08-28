@@ -54,7 +54,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 每个项目在 `workspace_root/<project_id>/` 有一个独立 git 仓库（`backend/app/domain/workspace/service.py`），
 用 Jujutsu (jj) colocate（`.git` + `.jj`），默认分支 `main`。每话题 = 一个 jj workspace = 一个 git 分支；
-产出（代码/报告/数据）= 文件，由 jj 自动快照成提交。详见 §3.10。
+产出（代码/报告/数据）= 文件，由干活的分身自己 commit 成提交。详见 §3.10。
 
 ---
 
@@ -163,10 +163,10 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.10 Git 工作区 + 沙箱执行  ✅
 
-- **行为**：芝士在话题的隔离工作区里用**原生工具**写产物、跑代码/测试（真执行，在容器里）。改动由平台**自动快照**成版本历史（无需手动提交）。**话题=分支=jj workspace=tmux 会话**（容器按**房间**分配，母话题和它派出的 task 共用一个），并行话题互不污染。**采纳=merge**（§3.5）。Git/文件/diff 面板可看。
-- **VCS = Jujutsu (jj) colocate**：每个项目主仓 `jj git init --colocate`（`.git` + `.jj` 并存，git 照常可用），每话题一个 `jj workspace`（取代 git worktree）。回合末 `snapshot_worktree` 把原生编辑做成一次 `jj commit`，话题分支用 jj bookmark 导出成 git branch，所以**采纳/diff 仍走 git**（colocation）。`backend/app/domain/workspace/service.py`。
+- **行为**：芝士在话题的隔离工作区里用**原生工具**写产物、跑代码/测试（真执行）。改动由**芝士自己** `git commit` + `git push` 成版本历史——平台不写任何人的工作树，没提交的东西不在分支上、也进不了 PR。**话题=分支=jj workspace=tmux 会话**（容器按**房间**分配，母话题和它派出的 task 共用一个），并行话题互不污染。**采纳=merge**（§3.5）。Git/文件/diff 面板可看。
+- **VCS = Jujutsu (jj) colocate**：每个项目主仓 `jj git init --colocate`（`.git` + `.jj` 并存，git 照常可用），每话题一个 `jj workspace`（取代 git worktree），只用来检出；话题分支用 jj bookmark 导出成 git branch，所以**采纳/diff 仍走 git**（colocation）。`backend/app/domain/workspace/service.py`。
 - **沙箱执行**：每**房间**一个常驻 Docker 容器（§3.2），`--memory/--cpus/--pids-limit` 是一份**房间**预算（`SANDBOX_MEMORY_GB`/`SANDBOX_CPUS`/`SANDBOX_PIDS_LIMIT`）；房间里每个话题占一个 tmux 会话，各自的话题 id、回调令牌、`CLAUDE_CONFIG_DIR`、工作目录、预览端口都写在会话环境里（`tmux new-session -e`），互不串。agent 的原生 Bash 在容器里跑，碰不到宿主机。`exec_in_sandbox` 另提供 `--network none` 的一次性执行（强隔离场景）。
-- **文件面板（重点：看代码 / 轻量改代码）**：用户很看重**在平台里直接看代码、并能少量改代码**——文档面板的「文件」标签列出**当前话题工作区**的文件树，点开看内容(代码高亮)，未来支持就地小改并自动快照。所以：文件接口必须带 `?topic=`(读话题 worktree,不是空的 base 仓);芝士产物必须写进工作区(`./`)而非 `/tmp`,否则文件面板看不到、也不进版本库。`GET /api/projects/{id}/{files|file}?topic=` · `DocPanel` 文件标签。
+- **文件面板（重点：看代码 / 轻量改代码）**：用户很看重**在平台里直接看代码、并能少量改代码**——文档面板的「文件」标签列出**当前话题工作区**的文件树，点开看内容(代码高亮)，可就地小改。所以：文件接口必须带 `?topic=`(读话题 worktree,不是空的 base 仓);芝士产物必须写进工作区(`./`)而非 `/tmp`,否则文件面板看不到、也不进版本库。`GET /api/projects/{id}/{files|file}?topic=` · `DocPanel` 文件标签。
 - **实现**：接口 `GET /api/projects/{id}/{files|file|git/log|git/diff}`（`files|file|git/diff` 带 `?topic=` 看话题工作区/分支；`git/diff` 拒 ref 选项注入）。
 
 ### 3.11 Space / Task Template / Task  ✅ 协议侧 / 🟡 资源侧
@@ -183,7 +183,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 - **后端**：Python 3.13、FastAPI、SQLAlchemy 2.0 async（asyncpg）、PostgreSQL、Alembic 迁移、Pydantic v2。响应封套 `{code,message,data}`，错误用 `app.core.errors`。
 - **前端**：Vue 3 + TS + Vite + Vuetify 4 + vue-router + TipTap（实况文档）+ marked/DOMPurify。
 - **AI**：`claude-agent-sdk` → `claude` CLI（经 `cli_path` shim 进**每话题 Docker 沙箱**）→ GLM（`ANTHROPIC_BASE_URL`/`AUTH_TOKEN`/`AGENT_MODEL` 在 `backend/.env`，`AGENT_SANDBOX_ENABLED`/`SANDBOX_*` 控沙箱）。平台动作走容器里的 `cheese` CLI（Claude Code Skill）+ token 鉴权；无 MCP。
-- **VCS**：Jujutsu (jj) colocate 每个项目主仓，话题用 jj workspace + 自动快照；git 经 colocation 同时可用（采纳/diff 走 git）。
+- **VCS**：Jujutsu (jj) colocate 每个项目主仓，话题用 jj workspace 检出；提交由分身自己做，git 经 colocation 同时可用（采纳/diff 走 git）。
 - **测试**：`backend/tests/`（unit/integration/contract），内存 SQLite + StubAgent，行为测试。当前 **121 passed**，ruff/pyright/vue-tsc 全绿。真模型 smoke 脚本 `backend/scripts/smoke_*.py`，真实全流程 `scripts/sim_real.py`。
 
 ---
@@ -191,7 +191,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 ## 5. 实现现状总览
 
 - ✅ **完整**：三层话题树、双树块 schema、对话/召唤/全消息感知+发言者标签、实况文档读写、验收状态机(单卡/归档冻结/撤销鉴权/采纳=merge)、通知分级/收件箱/拍板/限流、里程碑逾期、仪表盘度量、Space/Task 协议链接/断开、项目文档保留左栏、栏宽拖拽、工具钉住、现场(Claude Code 风格)。
-- ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = jj workspace（原生编辑自动快照）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 经 colocation 走 git。activity/heartbeat/summary/私聊 全路径统一走沙箱+cheese。
+- ✅ **沙箱架构**：每话题在隔离 Docker 容器里跑 claude + 原生工具（真代码执行）；平台动作走 cheese CLI（Claude Code Skill）+ token 鉴权，已删 MCP；每话题 = jj workspace（分身自己提交推送）= 常驻容器里的一个 tmux 会话（跨回合复用），容器按房间共用；采纳/diff 经 colocation 走 git。activity/heartbeat/summary/私聊 全路径统一走沙箱+cheese。
 - 🟡 **部分**：结论回流写回父文档+通知本体、拆解活引用(A2)、巡检注入文档/记忆、记忆自动提取/个人记忆入项目话题、总览风险板块、改文档对话事件、资源包发放。
 - ⛔ **依赖外部基础设施**：会议 ASR。
 

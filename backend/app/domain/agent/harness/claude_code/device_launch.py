@@ -24,7 +24,8 @@ from pathlib import Path
 # substrate — identical for the local (tmux) and remote (device) backends so it
 # can't drift (fusion-design §8.6). Re-exported here (`hooks_settings`) because
 # this module's launcher and its callers build on it.
-from app.domain.agent import machine_tunnel
+from app.core.config import GATEWAY_MOUNT
+from app.domain.agent import machine_tunnel, preview_tunnel
 from app.domain.agent.harness.claude_code.cli import CLAUDE_BASE_CMD
 from app.domain.agent.harness.claude_code.hooks_substrate import CHEESE_HOOK_SCRIPT
 from app.domain.agent.harness.claude_code.session_launch import hooks_settings
@@ -368,6 +369,52 @@ WAITPY
 """
 
 
+# Brings 运行环境预览's helper up, and does nothing at all until an agent has asked
+# for a preview. The port file is that ask: `cheese serve` writes it and then runs
+# this script, and every later launch re-runs it so a preview that was declared
+# once survives a helper's death (a machine reboot, a killed process) without the
+# agent having to declare it again.
+#
+# Adopt-if-alive on the same cksum, for the same reason the tunnel helper does:
+# the launcher rewrites cheese-preview.py on every launch, so a shipped fix would
+# otherwise never reach a machine whose helper is still running — it would keep
+# serving the old code indefinitely with nothing looking wrong.
+#
+# No readiness wait here (unlike the tunnel's): nothing on this machine is
+# blocked on the tunnel being up. The one caller that needs it up — `cheese serve`
+# declaring the preview — waits on the BACKEND side, where the helper's arrival is
+# actually observable.
+CHEESE_PREVIEW_UP = """#!/bin/sh
+# $1, optional: the port to declare before bringing the helper up. `cheese serve`
+# passes it and nothing else does, which is what keeps the file layout of the
+# preview helper entirely inside the launcher — the CLI knows only this script.
+PORTF="$HOME/.claude/cheese-preview.port"
+PIDF="$HOME/.claude/cheese-preview.pid"
+STAMPF="$HOME/.claude/cheese-preview.stamp"
+if [ -n "$1" ]; then
+  printf '%s\\n' "$1" > "$PORTF.tmp" && mv "$PORTF.tmp" "$PORTF"
+fi
+[ -s "$PORTF" ] || exit 0
+[ -n "${CHEESE_PREVIEW_URL:-}" ] || exit 0
+WANT="$(cksum "$HOME/.claude/cheese-preview.py" 2>/dev/null | cut -d" " -f1)"
+HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
+PID="$(cat "$PIDF" 2>/dev/null || true)"
+if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ]; then
+    exit 0
+  fi
+  kill "$PID" 2>/dev/null || true
+fi
+python3 "$HOME/.claude/cheese-preview.py" \\
+  --url "$CHEESE_PREVIEW_URL" \\
+  --token-file "$HOME/.claude/cheese-preview.token" \\
+  --port-file "$PORTF" \\
+  >"$HOME/.claude/cheese-preview.log" 2>&1 &
+echo $! > "$PIDF"
+printf '%s\\n' "$WANT" > "$STAMPF"
+"""
+
+
 CHEESE_DRAIN_SCRIPT = """#!/bin/sh
 echo $$ > "$0.pid" 2>/dev/null || true
 while true; do
@@ -612,6 +659,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     # only one version of it to be wrong.
     tunnel_helper = Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n"
     tunnel_up = CHEESE_TUNNEL_UP
+    preview_helper = Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n"
+    preview_up = CHEESE_PREVIEW_UP
     settings_json = json.dumps(
         hooks_settings(
             ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"]
@@ -777,6 +826,28 @@ TUNNELTOK
 {tunnel_up}TUNNELUP
   chmod +x "$HOME/.claude/cheese-tunnel-up"
 fi
+# 运行环境预览's helper. Written on EVERY launch, token included and for the same
+# reason as the tunnel's: the helper re-reads the token per connection, so
+# replacing this file is how a refreshed credential reaches a still-running one.
+# Nothing is STARTED here — the up script is a no-op until an agent has declared
+# a port with `cheese serve`, so a machine that never previews anything pays for
+# no process.
+if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
+  cat > "$HOME/.claude/cheese-preview.py" <<'PREVIEWPY'
+{preview_helper}PREVIEWPY
+  cat > "$HOME/.claude/cheese-preview.token.tmp" <<PREVIEWTOK
+$CHEESE_TOKEN
+PREVIEWTOK
+  chmod 600 "$HOME/.claude/cheese-preview.token.tmp"
+  mv "$HOME/.claude/cheese-preview.token.tmp" "$HOME/.claude/cheese-preview.token"
+  cat > "$HOME/.claude/cheese-preview-up" <<'PREVIEWUP'
+{preview_up}PREVIEWUP
+  chmod +x "$HOME/.claude/cheese-preview-up"
+  # The ONE thing `cheese serve` needs to know about the preview helper. Exported
+  # rather than reconstructed on the CLI's side: the server cannot know the
+  # device user's home, and a path written down twice is a path that drifts.
+  export CHEESE_PREVIEW_UP="$HOME/.claude/cheese-preview-up"
+fi
 cd "$CHEESE_WORK"
 # Host claude in a PERSISTENT tmux session so it survives a link/screen drop: the
 # session keeps running on the device and re-opening the screen re-attaches to it
@@ -789,6 +860,14 @@ cd "$CHEESE_WORK"
 TUP=""
 if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
   TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"
+fi
+# Same shape for the preview helper, and it is genuinely a prefix rather than a
+# background job of its own: the script backgrounds the helper and returns at
+# once, and it exits without doing anything at all when no preview was ever
+# declared here.
+PUP=""
+if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
+  PUP="sh \\"$HOME/.claude/cheese-preview-up\\" >/dev/null 2>&1;"
 fi
 # --- prompt delivery: the rendezvous socket, and the version floor under it ---
 # Prompts reach this claude over a unix socket it binds ITSELF (three env vars
@@ -957,6 +1036,18 @@ if command -v tmux >/dev/null 2>&1; then
          CHEESE_TUNNEL_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
         || true
     fi
+    # A preview declared on an earlier turn outlives the helper that carried it
+    # (a killed process, a machine reboot), and the room would then show a dead
+    # panel for an app that is still running. The up script adopts a live helper
+    # and is a no-op when nobody ever declared a port, so running it on every
+    # adopt costs a `cksum` and restores a preview that would otherwise need the
+    # agent to declare it again.
+    if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
+      atmux new-window -d -t "$SESSION" -n cheese-preview \\
+        "CHEESE_PREVIEW_URL=$CHEESE_PREVIEW_URL \\
+         exec sh \\"$HOME/.claude/cheese-preview-up\\"" \\
+        || true
+    fi
     DRAIN_PID="$(cat "$HOME/.claude/cheese-drain.pid" 2>/dev/null || true)"
     if [ -z "$DRAIN_PID" ] || ! kill -0 "$DRAIN_PID" 2>/dev/null; then
       TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
@@ -1017,7 +1108,10 @@ if command -v tmux >/dev/null 2>&1; then
       "CHEESE_TOPIC=$CHEESE_TOPIC" "CHEESE_AUTHOR=$CHEESE_AUTHOR" \\
       "CHEESE_CLI_URL=$CHEESE_CLI_URL" \\
       "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL" \\
-      "CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT"; do
+      "CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT" \\
+      "CHEESE_PREVIEW_URL=$CHEESE_PREVIEW_URL" \\
+      "CHEESE_PREVIEW_UP=$CHEESE_PREVIEW_UP" \\
+      "CHEESE_APP_BASE=$CHEESE_APP_BASE"; do
       # An empty value = a var this launch didn't set; skip it (a same-mode box's
       # frozen-global copy already matches, and forcing empty could flip modes).
       case "$_kv" in *=) ;; *) set -- "$@" -e "$_kv" ;; esac
@@ -1044,7 +1138,7 @@ for k, v in os.environ.items():
     SRCENV=""
     [ -s "$ENVF" ] && SRCENV=". \\"$ENVF\\"; "
     DRAINCMD="sh \\"$HOME/.claude/cheese-drain\\" >/dev/null 2>&1"
-    set -- "$@" "$SRCENV$TUP $DRAINCMD & exec $CLAUDE"
+    set -- "$@" "$SRCENV$TUP$PUP $DRAINCMD & exec $CLAUDE"
     # Fall back to a plain create ONLY when this tmux predates -e (< 3.0 says
     # "unknown flag" / prints usage). Any OTHER create failure fails LOUDLY:
     # the old catch-everything fallback turned a transient server error into a
@@ -1056,7 +1150,7 @@ for k, v in os.environ.items():
       case "$_ERR" in
         *"unknown flag"*|*"usage:"*|*"invalid option"*)
           atmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
-            "$SRCENV$TUP $DRAINCMD & exec $CLAUDE"
+            "$SRCENV$TUP$PUP $DRAINCMD & exec $CLAUDE"
           ;;
         *)
           echo "cheese-launch: tmux new-session failed: $_ERR" >&2
@@ -1072,6 +1166,9 @@ else
   # right here genuinely shares its fate; same-life-same-death holds as is.
   if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
     sh "$HOME/.claude/cheese-tunnel-up" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
+    sh "$HOME/.claude/cheese-preview-up" >/dev/null 2>&1 || true
   fi
   sh "$HOME/.claude/cheese-drain" >/dev/null 2>&1 &
   eval "exec $CLAUDE"
@@ -1129,6 +1226,11 @@ def build_screen_launch(
         env["CHEESE_PROJECT"] = project_id
     if topic_id:
         env["CHEESE_TOPIC"] = topic_id
+        # Where a preview of this place's running app will be mounted for the
+        # browser. The agent needs it BEFORE it starts a dev server, because a
+        # server that emits root-absolute asset URLs (vite's `/@vite/client`)
+        # has to be started under this base or the panel shows a white frame.
+        env["CHEESE_APP_BASE"] = f"{GATEWAY_MOUNT}/topics/{topic_id}/app/"
         # Where this screen's prompts arrive. The launcher turns these two into
         # Claude Code's own CLAUDE_BG_* trio and mints the token; the connector
         # reads the same two to dial. Keyed on the topic so an adopted screen

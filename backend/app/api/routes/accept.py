@@ -114,12 +114,10 @@ async def create_accept_card(
 
 @router.post("/topics/{topic_id}/push-fix")
 async def push_fix(topic_id: uuid.UUID, db: DbSession) -> dict:
-    """Push this place's workspace to the PR it is riding, right now.
+    """Put this place's branch on the PR it is riding, right now.
 
-    The counterpart to the snapshot that used to happen on every CI poll: the
-    poller no longer commits on a timer (see
-    `AcceptService._local_topic_branch_head`), so a fix reaches the PR when the
-    agent says it is a fix — not sixty seconds after it touched any file at all.
+    The agent commits and pushes its own work; this is how it then says the
+    branch is worth showing, instead of waiting out the next CI poll.
 
     `topic_id` is a PLACE. A thread pushes the tree it shares with its room,
     which is the same tree either way; naming the place keeps the per-turn token

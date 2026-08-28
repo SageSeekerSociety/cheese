@@ -5,7 +5,7 @@ Every commit the platform makes used to be authored by `芝士
 GitHub the work showed up as a grey unlinked name: no avatar, no link, no
 contribution credit for the person who asked for it and approved it. This module
 resolves the human behind a topic to a git identity GitHub *can* link, and
-persists it next to the workspace so the synchronous snapshot path (which has no
+persists it next to the workspace so the synchronous launch path (which has no
 DB session) can read it.
 
 The address is GitHub's `<id>+<login>@users.noreply.github.com` form. It is the
@@ -27,10 +27,9 @@ of THEIR turns belong to them (`TopicService.dispatch_task`). The person who
 asked in the first place still did something, so they come back as
 `Co-authored-by:`; see `coauthor_handles`.
 
-One knob, not two: git carries author and committer separately, but jj 0.43 sets
-both from JJ_USER/JJ_EMAIL and has no `--author`. So an attributed commit is
-attributed wholly, and there is no place to record "committed by 芝士" on the
-commit itself.
+Author and committer are two knobs, and they carry different facts: the author is
+the human this work belongs to (`GIT_AUTHOR_*`), the committer is 芝士, which is
+who actually ran `git commit` (`GIT_COMMITTER_*`).
 """
 
 import json
@@ -319,7 +318,7 @@ async def _identity_of(session: Any, handle: str | None) -> GitIdentity | None:
 
 def read(project_id: uuid.UUID, topic_id: uuid.UUID) -> GitIdentity | None:
     """The remembered author for this topic. Synchronous and DB-free on purpose:
-    `snapshot_worktree` runs in a worker thread with no session."""
+    the machine that commits reads it while launching a screen, with no session."""
     try:
         raw = identity_path(project_id, topic_id).read_text("utf-8")
     except OSError:

@@ -54,17 +54,14 @@ def _card(
 def _commit_to_topic_branch(project_id: str, topic_id: str, text: str) -> None:
     """在这个话题的分支上再落一个提交 —— 也就是「房间里又干了一件活」。
 
-    直接写工作区再让平台快照，是这条路径在真实使用里的样子：人和分身都不手动
-    commit，改动由平台折成提交。
+    分身在自己的机器上提交、把分支推回来，是这条路径在真实使用里的样子。
     """
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
+    from tests.machine_work import machine_commits
 
     pid, tid = _uuid.UUID(project_id), _uuid.UUID(topic_id)
-    worktree = ws._ensure_worktree(pid, tid)
-    (worktree / "next-task.txt").write_text(text, encoding="utf-8")
-    ws.snapshot_worktree(pid, tid)
+    machine_commits(pid, tid, {"next-task.txt": text})
 
 
 def _accept(client, card_id: str, by: str = "alice"):

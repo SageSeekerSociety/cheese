@@ -674,7 +674,7 @@ def test_the_helper_starts_inside_the_session_and_before_claude():
     claude reads HTTPS_PROXY once and calls out immediately, so a helper that is
     still binding loses that race and the screen boots unauthenticated."""
     script = _launch_with_tunnel()
-    assert "$TUP $DRAINCMD & exec $CLAUDE" in script
+    assert "$TUP$PUP $DRAINCMD & exec $CLAUDE" in script
     assert 'TUP="sh \\"$HOME/.claude/cheese-tunnel-up\\" >/dev/null 2>&1;"' in script
     # The wait itself, in the up-script — and NOT via bash's /dev/tcp: this runs
     # under `sh`, which is dash on the machine images, where that redirect fails
@@ -1050,3 +1050,85 @@ def test_an_old_tmux_without_dash_e_still_gets_the_fallback(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert "fallback-done" in calls.read_text()
+
+
+# --- 运行环境预览: the preview helper shipped alongside the tunnel's -------------
+
+
+def _launch_with_preview(**overrides):
+    return _launch_with_tunnel(
+        CHEESE_PREVIEW_URL="wss://gw.example/api/preview/tunnel", **overrides
+    )
+
+
+def test_the_preview_helper_and_its_token_are_written_every_launch():
+    """Same reasoning as the tunnel helper's: it re-reads the token per
+    connection, so rewriting the file is how a refreshed credential reaches a
+    helper that is already running."""
+    script = _launch_with_preview()
+    assert 'cat > "$HOME/.claude/cheese-preview.py"' in script
+    # The real module, not a paraphrase of it.
+    assert "class PortSource:" in script and "OP_WS_OPEN" in script
+    # Written atomically and mode-restricted: it holds a scoped token.
+    assert 'chmod 600 "$HOME/.claude/cheese-preview.token.tmp"' in script
+
+
+def test_a_deployment_without_a_preview_url_writes_and_runs_none_of_it():
+    script = _launch_with_tunnel(CHEESE_PREVIEW_URL="")
+    assert 'PUP=""' in script
+    assert 'if [ -n "${CHEESE_PREVIEW_URL:-}" ]; then' in script
+
+
+def test_the_preview_up_script_is_valid_shell_under_dash_too():
+    """It runs under `sh` (dash on the machine images) and is nested inside a
+    heredoc inside an f-string, so `bash -n` on the outer script never parses
+    it — extracting it is the only way this is checked at all."""
+    checked = subprocess.run(
+        ["sh", "-n"],
+        input=device_launch.CHEESE_PREVIEW_UP,
+        text=True,
+        capture_output=True,
+    )
+    assert checked.returncode == 0, checked.stderr
+
+
+def test_a_machine_that_never_previews_anything_runs_no_helper(tmp_path):
+    """The point of the port file: a preview costs a process only once somebody
+    has asked for one. Starting the helper on every screen would put an idle
+    python on every enrolled laptop for a feature most topics never use."""
+    (tmp_path / ".claude").mkdir()
+    result = subprocess.run(
+        ["sh", "-c", device_launch.CHEESE_PREVIEW_UP],
+        env={
+            "HOME": str(tmp_path),
+            "PATH": os.environ["PATH"],
+            "CHEESE_PREVIEW_URL": "wss://gw.example/api/preview/tunnel",
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / ".claude/cheese-preview.pid").exists()
+
+
+def test_declaring_a_port_writes_it_on_the_machine(tmp_path):
+    """`cheese serve` hands the port to this script and to nothing else. The
+    file it lands in is the only address the helper will ever dial, so nothing
+    the platform sends can move it — the whole reason the port is not a field on
+    the wire. (No CHEESE_PREVIEW_URL here, so the helper itself never starts;
+    what is under test is where the port ends up.)"""
+    (tmp_path / ".claude").mkdir()
+    result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            device_launch.CHEESE_PREVIEW_UP + "\n",
+            "cheese-preview-up",
+            "5173",
+        ],
+        env={"HOME": str(tmp_path), "PATH": os.environ["PATH"]},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / ".claude/cheese-preview.port").read_text().strip() == "5173"

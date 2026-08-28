@@ -29,6 +29,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
+from tests.machine_work import machine_commits
 
 WORKFLOW = ".github/workflows/e2e.yml"
 _E2E_V2 = "name: e2e\n# v2\n"
@@ -131,13 +132,8 @@ def _advance_github(tmp_path: Path, bare: Path, files: dict[str, str]) -> None:
 
 
 def _topic_commit(pid: uuid.UUID, tid: uuid.UUID, rel: str, content: str) -> None:
-    """A sandbox turn: native tools write into the topic's workspace, the
-    platform snapshots it onto the topic branch."""
-    wt = ws.topic_worktree(pid, tid)
-    target = wt / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    ws.snapshot_worktree(pid, tid, "芝士 edits")
+    """A turn: the machine writes the file, commits it, and pushes the branch."""
+    machine_commits(pid, tid, {rel: content}, "芝士 edits")
 
 
 def _use_github(monkeypatch, bare: Path) -> None:

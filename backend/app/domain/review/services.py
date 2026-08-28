@@ -1928,14 +1928,12 @@ class AcceptService:
             await trees.mark_merged(tree)
 
     async def push_fix(self, place_id: uuid.UUID) -> dict:
-        """Push what is in this place's workspace to the PR it is riding, NOW.
+        """Put this place's branch on the PR it is riding, NOW.
 
-        This is the intentional half of the pair whose accidental half was
-        removed from `_local_topic_branch_head`: the poller no longer commits
-        on a timer, so an agent that just fixed a red check says so instead of
-        waiting for a snapshot it did not ask for. The difference is not speed
-        — it is that a push now corresponds to somebody deciding the tree is
-        worth showing.
+        The agent commits its own work and pushes the branch back here; this is
+        how it then says "put that on the PR now" rather than waiting for the
+        next poll. A push corresponds to somebody deciding the work is worth
+        showing.
 
         Returns a dict the CLI prints verbatim rather than raising for the
         ordinary "nothing to do" answers: no card, no PR, nothing new to push.
@@ -1956,29 +1954,6 @@ class AcceptService:
         creds, reason = await self._pr_poll_credentials(card, topic)
         if creds is None:
             return {"pushed": False, "reason": f"拿不到可用的 GitHub 凭据：{reason}"}
-
-        from app.domain.workspace import service as ws
-
-        # Fold the working tree into a commit FIRST — that is the whole point of
-        # an explicit push: the caller means "what is on disk right now".
-        #
-        # A fold that fails is this whole request failing: answering "pushed" to
-        # it would tell the agent its fix is on the PR while the commit was
-        # never made, and it would go back to waiting for CI on a head that
-        # never moved. `commit_pending_work` is what keeps that apart from the
-        # genuinely empty case.
-        try:
-            await asyncio.to_thread(
-                ws.commit_pending_work,
-                topic.project_id,
-                place_id,
-                ws.SNAPSHOT_FOR_PUSH_FIX,
-            )
-        except ValidationError as exc:
-            return {
-                "pushed": False,
-                "reason": f"工作区没能提交，所以没有推送：{exc}",
-            }
 
         from app.domain.review import github_pr
 
@@ -2007,7 +1982,7 @@ class AcceptService:
             "pushed": pushed,
             "pr_number": card.pr_number,
             "pr_url": card.pr_url,
-            "reason": "" if pushed else "工作区没有 PR 还不知道的提交",
+            "reason": "" if pushed else "分支上没有 PR 还不知道的提交",
         }
 
     async def note_poll_crashed(self, card_id: uuid.UUID, exc: BaseException) -> None:

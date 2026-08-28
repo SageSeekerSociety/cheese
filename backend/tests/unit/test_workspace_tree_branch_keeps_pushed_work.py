@@ -1,20 +1,17 @@
-"""一棵树的分支是从两侧写的，交付时两侧必须汇合。
+"""一棵树的分支只有一个作者：干活的那台机器。
 
-The backend writes a tree's branch by snapshotting its own jj workspace. An
-agent writes the same branch by pushing over the project's git proxy
-(`/projects/{id}/git`) — which is the only route it has when its files do not
-live in the backend's worktree at all, and the route any agent may take just to
-be sure its work is on the branch before a card is filed.
+An agent writes its tree's branch by pushing over the project's git proxy
+(`/projects/{id}/git`) — its files do not live in the backend's worktree at all.
+The backend's worktree is made lazily (a file panel, a diff) and only ever read,
+so by the time it exists the branch can already carry commits it has never seen.
 
-So by the time a card is filed the branch can carry commits the backend's
-worktree has never seen, and it may carry them before that worktree exists.
-Filing the card pushes this branch to GitHub, and the PR is worth exactly what
-survives that meeting.
+Filing a card pushes that branch to GitHub, and the PR is worth exactly what the
+branch carries.
 
-These are functional tests against real git and jj repositories on disk.
-Nothing here reads the implementation: every assertion is about a file's
-content in the bare repo standing in for GitHub, about the files visible in the
-worktree, or about where the tree's branch points afterwards.
+These are functional tests against real repositories on disk. Nothing here reads
+the implementation: every assertion is about a file's content in the bare repo
+standing in for GitHub, about the files visible in the worktree, or about where
+the tree's branch points afterwards.
 """
 
 import subprocess
@@ -148,47 +145,3 @@ def test_first_worktree_joins_the_work_the_branch_already_carries(tmp_path, proj
 
     assert _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip() == pushed
     assert (wt / "src" / "app.py").read_text(encoding="utf-8") == "print('hi')\n"
-
-
-def test_a_later_snapshot_adds_to_the_pushed_work(tmp_path, project):
-    """A turn that runs after the push must extend the branch, not replace it —
-    otherwise the fix above only moves the loss one step later."""
-    pid, repo = project
-    tid = uuid.uuid4()
-    pushed = _push_over_the_git_proxy(
-        tmp_path, repo, tid, {"src/app.py": "print('hi')\n"}
-    )
-
-    wt = ws.topic_worktree(pid, tid)
-    (wt / "src" / "extra.py").write_text("x = 1\n", encoding="utf-8")
-    ws.snapshot_worktree(pid, tid, "chore: snapshot workspace after agent turn")
-
-    head = _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip()
-    assert head != pushed
-    assert _contains(repo, pushed, head), "the pushed commit was dropped"
-    assert _run(repo, "show", f"{head}:src/app.py") == "print('hi')\n"
-    assert _run(repo, "show", f"{head}:src/extra.py") == "x = 1\n"
-
-
-def test_a_snapshot_keeps_work_pushed_after_the_worktree_existed(tmp_path, project):
-    """The same meeting, in the other order: the worktree is made first (a file
-    panel, a sandbox launch), and the push arrives afterwards. A snapshot taken
-    later must not carry the branch back to where this workspace last left it."""
-    pid, repo = project
-    tid = uuid.uuid4()
-
-    wt = ws.topic_worktree(pid, tid)
-    (wt / "early.py").write_text("early = 1\n", encoding="utf-8")
-    ws.snapshot_worktree(pid, tid, "chore: snapshot workspace after agent turn")
-
-    pushed = _push_over_the_git_proxy(
-        tmp_path, repo, tid, {"src/app.py": "print('hi')\n"}
-    )
-
-    (wt / "late.py").write_text("late = 1\n", encoding="utf-8")
-    ws.snapshot_worktree(pid, tid, "chore: snapshot workspace after agent turn")
-
-    head = _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip()
-    assert _contains(repo, pushed, head), "the pushed commit was dropped"
-    assert _run(repo, "show", f"{head}:src/app.py") == "print('hi')\n"
-    assert _run(repo, "show", f"{head}:late.py") == "late = 1\n"

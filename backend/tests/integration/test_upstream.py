@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.conftest import stub_compute
+from tests.machine_work import machine_commits
 
 
 def _owner(client, handle: str = "alice") -> dict[str, str]:
@@ -138,8 +139,6 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
     import time
     import uuid as _uuid
 
-    from app.domain.workspace import service as ws
-
     up = _make_upstream(tmp_path)
     marker = up / "hook-ran.txt"
     hook = up / "scripts" / "on-dogfood-push.sh"
@@ -154,11 +153,10 @@ def test_accept_pushes_back_and_fires_hook(client, tmp_path):
     )
     tid = r.json()["data"]["id"]
 
-    # Simulate a sandbox turn's edit, then run the accept flow end-to-end.
+    # Simulate a turn's edit, committed and pushed by the machine that made it,
+    # then run the accept flow end-to-end.
     puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
-    wt = ws.topic_worktree(puid, tuid)
-    (wt / "work.txt").write_text("accepted work\n")
-    ws.snapshot_worktree(puid, tuid)
+    machine_commits(puid, tuid, {"work.txt": "accepted work\n"})
 
     card = client.post(
         f"/topics/{tid}/accept-card",
@@ -206,9 +204,8 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
 
     # Branch edits f.txt one way…
+    machine_commits(puid, tuid, {"f.txt": "branch version\n"})
     wt = ws.topic_worktree(puid, tuid)
-    (wt / "f.txt").write_text("branch version\n")
-    ws.snapshot_worktree(puid, tuid)
     # …and base edits it the other way → guaranteed conflict.
     repo = ws.ensure_repo(puid)
     (repo / "f.txt").write_text("base version\n")
@@ -241,9 +238,8 @@ def test_accept_conflict_is_a_state_not_a_lie(client):
     content = (wt / "f.txt").read_text()
     assert "<<<<<<<" in content or "base version" in content
 
-    # Simulate 芝士 resolving: write the merged truth, snapshot.
-    (wt / "f.txt").write_text("merged version\n")
-    ws.snapshot_worktree(puid, tuid, "解决采纳冲突")
+    # 芝士 resolves it where it works — its own clone — and pushes the branch.
+    machine_commits(puid, tuid, {"f.txt": "merged version\n"}, "解决采纳冲突")
 
     # Retry accept → clean merge, delivered (not archived), base has the resolution.
     r = client.post(
@@ -300,9 +296,8 @@ def test_upstream_conflict_materializes_and_accepting_completes_the_sync(
     assert "<<<<<<<" in body
     assert "local version" in body and "hi from upstream" in body
 
-    # 芝士 resolves; the platform snapshots as it does after any turn.
-    (ws.topic_worktree(puid, tuid) / "hello.txt").write_text("merged by hand\n")
-    ws.snapshot_worktree(puid, tuid, "解决同步上游冲突")
+    # 芝士 resolves it where it works — its own clone — and pushes the branch.
+    machine_commits(puid, tuid, {"hello.txt": "merged by hand\n"}, "解决同步上游冲突")
 
     card = client.post(
         f"/topics/{tid}/accept-card",

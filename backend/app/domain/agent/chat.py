@@ -2256,9 +2256,6 @@ class ChatService:
                 await blocks.mark_consumed(list(state.pending_ids), state.work_id)
             await session.commit()
 
-        state.provider.checkpoint(state.project_id, state.topic_id)
-        # AFTER the checkpoint: that is what turns this turn's edits into the
-        # commit the summary is about.
         changeset = await self._turn_changeset(
             state.project_id,
             state.topic_id,
@@ -2273,6 +2270,7 @@ class ChatService:
             )
             if payload is not None:
                 action_frames.append({"type": "event_block", "block": payload})
+            await self._report_paths_outside_the_claim(state.topic_id, changeset)
         if not result.is_error:
             self._schedule_memory_extraction(
                 topic_id=state.topic_id,
@@ -2773,10 +2771,10 @@ class ChatService:
     ) -> _Changeset | None:
         """This turn's net effect on the topic branch, or None when there is none.
 
-        Called AFTER the provider's checkpoint, which is what turns the turn's
-        native edits into a commit — so "the commits that were not there at turn
-        start" is exactly this turn's work. Best-effort and off the event loop:
-        the numbers are a courtesy, and no turn should die (or stall) over them.
+        The agent commits and pushes its own work, so "the commits that were not
+        there at turn start" is exactly what this turn delivered. Best-effort and
+        off the event loop: the numbers are a courtesy, and no turn should die
+        (or stall) over them.
         """
         if known_commits is None:
             return None
@@ -2831,6 +2829,45 @@ class ChatService:
         except Exception:  # noqa: BLE001 — no baseline just means no summary
             logger.warning("commit baseline unreadable for topic %s", topic_id)
             return None
+
+    async def _report_paths_outside_the_claim(
+        self, topic_id: uuid.UUID, changeset: _Changeset
+    ) -> None:
+        """Say when a turn touched ground this piece of work never claimed.
+
+        A claim is an intention and a commit is a fact. If nothing ever compares
+        them, the claim is decoration — it would refuse the conflicts it happens
+        to predict and stay silent about the ones that actually happened.
+
+        Reported, never blocked, and never after the fact undone: the work is
+        committed and pushed by the time this runs, and the useful thing is that
+        somebody finds out, not that the commit is punished.
+        """
+        from app.domain.room_task.services import ClaimService
+
+        try:
+            touched = [f["path"] for f in changeset.files]
+            if not touched:
+                return
+            async with self._sessions() as session:
+                # By topic id, through the service: a room's own line and work
+                # that claimed nothing both come back empty, and this domain
+                # never has to hold room_task's repository to find that out.
+                surprises = await ClaimService(session).unclaimed_by_topic(
+                    topic_id, touched
+                )
+            if surprises:
+                logger.info(
+                    "task %s touched paths it never claimed: %s",
+                    topic_id,
+                    ", ".join(surprises[:10]),
+                )
+        except Exception:  # noqa: BLE001 — a report must never fail a turn
+            logger.warning(
+                "could not compare touched paths to the claim for %s",
+                topic_id,
+                exc_info=True,
+            )
 
     async def _persist_change_summary(
         self,

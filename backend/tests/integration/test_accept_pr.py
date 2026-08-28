@@ -27,6 +27,7 @@ from app.domain.review import github_pr
 from app.domain.workspace import service as ws
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import room_text, session_auth_headers
+from tests.machine_work import machine_commits
 
 
 def _make_project(client) -> str:
@@ -636,9 +637,9 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
     workspace used to sit local forever — nothing ever pushed it to the PR
     branch (the platform's own `push_topic_branch_for_github_pr` was only
     ever called once, at PR-open time). This exercises the REAL local git
-    plumbing that now detects and re-pushes it: `ensure_repo`/
-    `branch_for_tree`/`snapshot_worktree` run for real against a real
-    jj-colocated repo. Only the actual network hop to github.com is faked
+    plumbing that now detects and re-pushes it: the machine's own commit lands on
+    the branch, and `ensure_repo`/`branch_for_tree` run for real against a real
+    repo. Only the actual network hop to github.com is faked
     (the sandbox has no route there — see docs/topics for that constraint);
     the fake still computes the pushed head_sha via a real `git rev-parse`,
     exactly like the production function does. Also proves the platform does
@@ -662,10 +663,8 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         tid = _make_topic(client, pid)
         puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
 
-        # 芝士 does real work in its workspace before the card is even accepted.
-        wt = ws.topic_worktree(puid, tuid)
-        (wt / "work.txt").write_text("first pass\n")
-        ws.snapshot_worktree(puid, tuid)
+        # 芝士 does real work on its machine before the card is even accepted.
+        machine_commits(puid, tuid, {"work.txt": "first pass\n"})
         first_head = _real_git_head(puid, tuid)
 
         cid = _make_card(client, tid)
@@ -688,15 +687,13 @@ def test_repush_pushes_new_local_commit_and_updates_pr_head_sha(client, monkeypa
         assert len(push_calls) == 1
         assert _cards_for_topic(client, tid)[0]["pr_head_sha"] == first_head
 
-        # 芝士 fixes something. A plain edit is NOT a push: the poller stopped
-        # committing on a timer, because every write it swept up moved the PR
-        # and `cancel-in-progress` killed the CI run checking it.
-        (wt / "work.txt").write_text("fixed\n")
+        # 芝士 fixes something: it commits on its own machine and pushes the
+        # branch back. Nothing on the platform made that commit — the poller
+        # stopped committing on a timer, because every write it swept up moved
+        # the PR and `cancel-in-progress` killed the CI run checking it.
+        machine_commits(puid, tuid, {"work.txt": "fixed\n"})
 
-        _poll(client)
-        assert len(push_calls) == 1, "轮询不再替人提交，所以不该产生新的推送"
-
-        # Saying so is what pushes it.
+        # Saying so is what puts it on the PR without waiting for the next tick.
         pushed = client.post(
             f"/topics/{tid}/push-fix", headers=session_auth_headers("alice")
         ).json()["data"]
@@ -746,9 +743,7 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
         tid = _make_topic(client, pid)
         puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
 
-        wt = ws.topic_worktree(puid, tuid)
-        (wt / "work.txt").write_text("first pass\n")
-        ws.snapshot_worktree(puid, tuid)
+        machine_commits(puid, tuid, {"work.txt": "first pass\n"})
         first_head = _real_git_head(puid, tuid)
 
         cid = _make_card(client, tid)
@@ -762,11 +757,9 @@ def test_repush_failure_degrades_without_failing_the_card(client, monkeypatch):
 
         # 芝士 fixes something and commits it, then the token goes bad before
         # the platform can re-push it (expired token / network hiccup / non-ff
-        # — same degrade contract either way). The commit is explicit because
-        # the poller no longer makes one: it reads the branch head, it does not
-        # move it.
-        (wt / "work.txt").write_text("fixed\n")
-        ws.snapshot_worktree(puid, tuid)
+        # — same degrade contract either way). The commit is the agent's own:
+        # the poller reads the branch head, it does not move it.
+        machine_commits(puid, tuid, {"work.txt": "fixed\n"})
         holder["fail"] = True
 
         result = _poll(client)
@@ -896,12 +889,9 @@ def test_remote_head_ff_from_local_reads_real_git_ancestry(client):
     tid = _make_topic(client, pid)
     puid, tuid = _uuid.UUID(pid), _uuid.UUID(tid)
 
-    wt = ws.topic_worktree(puid, tuid)
-    (wt / "a.txt").write_text("1\n")
-    ws.snapshot_worktree(puid, tuid)
+    machine_commits(puid, tuid, {"a.txt": "1\n"})
     head1 = _real_git_head(puid, tuid)
-    (wt / "a.txt").write_text("2\n")
-    ws.snapshot_worktree(puid, tuid)
+    machine_commits(puid, tuid, {"a.txt": "2\n"})
     head2 = _real_git_head(puid, tuid)
     assert head1 != head2
 

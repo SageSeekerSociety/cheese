@@ -1,8 +1,9 @@
-"""Project workspace — jj-backed per-topic workspaces + git merge/diff (Phase 4).
+"""Project workspace — per-topic workspaces + git merge/diff (Phase 4).
 
-Files are authored by the sandbox's native tools (Bash/Write/Edit) inside the
-topic's jj workspace; the platform snapshots them with ``snapshot_worktree``.
-These tests simulate that by writing into the workspace dir then snapshotting.
+Files are authored by native tools (Bash/Write/Edit) on the machine the turn ran
+on, which commits and pushes the topic branch back. These tests do the same
+(`tests.machine_work`) rather than writing into the platform's own checkout,
+because that checkout is only ever read.
 """
 
 import subprocess
@@ -12,6 +13,7 @@ import pytest
 
 from app.core.errors import ValidationError
 from app.domain.workspace import service as ws
+from tests.machine_work import machine_commits
 
 
 def _mkproject(client) -> uuid.UUID:
@@ -28,13 +30,8 @@ def _owner(client) -> dict[str, str]:
 
 
 def _native_edit(pid: uuid.UUID, topic_id: uuid.UUID, path: str, content: str) -> None:
-    """Simulate a sandbox turn: native tools write a file into the topic's jj
-    workspace, then the platform snapshots it (as converse does after a turn)."""
-    wt = ws.topic_worktree(pid, topic_id)
-    target = wt / path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(content, encoding="utf-8")
-    ws.snapshot_worktree(pid, topic_id)
+    """One turn: the machine writes a file, commits it, and pushes the branch."""
+    machine_commits(pid, topic_id, {path: content})
 
 
 def test_native_edit_versioned_and_browsable(client):
@@ -172,16 +169,19 @@ def test_git_diff_rejects_option_injection(client):
     assert r.status_code == 422
 
 
-def test_merge_folds_unsnapshotted_human_edits(client):
-    """采纳前快照: a human edit (人改文件即指令) with no agent turn afterwards
-    must still be delivered by the accept-merge."""
+def test_merge_delivers_the_branch_and_nothing_else(client):
+    """采纳 = 合并那个分支。An edit sitting in the checkout uncommitted was never
+    delivered, and the merge must not quietly deliver it for whoever wrote it."""
     pid = _mkproject(client)
     tid = uuid.uuid4()
+    _native_edit(pid, tid, "committed.txt", "pushed by the machine\n")
     wt = ws.topic_worktree(pid, tid)
-    (wt / "human.txt").write_text("edited by hand\n", encoding="utf-8")
-    # NO snapshot_worktree here — merge itself must fold the pending change.
+    (wt / "human.txt").write_text("edited by hand, never committed\n", encoding="utf-8")
+
     assert ws.merge_topic(pid, tid)["merged"] is True
-    assert "edited by hand" in ws.read_file(pid, "human.txt")
+    assert "pushed by the machine" in ws.read_file(pid, "committed.txt")
+    with pytest.raises(ValidationError):
+        ws.read_file(pid, "human.txt")
 
 
 def test_merge_leaves_no_worktree_debris(client):
@@ -194,9 +194,7 @@ def test_merge_leaves_no_worktree_debris(client):
     assert ws.merge_topic(pid, ok_tid)["merged"] is True
 
     # A guaranteed conflict: branch and base disagree on the same file.
-    wt = ws.topic_worktree(pid, conflict_tid)
-    (wt / "f.txt").write_text("branch version\n", encoding="utf-8")
-    ws.snapshot_worktree(pid, conflict_tid)
+    _native_edit(pid, conflict_tid, "f.txt", "branch version\n")
     repo = ws.ensure_repo(pid)
     (repo / "f.txt").write_text("base version\n", encoding="utf-8")
     import subprocess
