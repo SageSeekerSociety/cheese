@@ -339,6 +339,13 @@ class DeviceChannel(Channel):
     ``ClaudeCodeRuntime``."""
 
     name = "device"
+    # ``_ensure_screen`` below builds the whole model environment on the machine
+    # — the metering-proxy env under a subscription, the backend's /llm route and
+    # a scoped token without one. Either way the machine holds no provider
+    # credential, so the platform must hand this transport the model choice and
+    # nothing else. Every transport that reaches a machine over a link inherits
+    # this build, and inherits the declaration with it.
+    builds_model_env = True
     needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
     timeout_message = "device 轮次超时"
 
@@ -655,12 +662,14 @@ class DeviceChannel(Channel):
         work_dir = self._work_dir(project_id, topic_id)
         ca_pem = ""
         if settings.subscription_enabled:
-            # Every device request runs on the subscription through the metering
-            # proxy, the
-            # same path the local tmux container takes (#325 G2). The machine
-            # holds no real credential either way: the env ships a scoped cheese
-            # token as the fake login, the proxy verifies it and injects the real
-            # token backend-side. The gateway route (/llm → LiteLLM) is NOT a
+            # Every request from every machine reached this way runs on the
+            # subscription through the metering proxy — an enrolled device and a
+            # leased Cloud box alike, since both are launched from right here
+            # (#325 G2). This is what ``builds_model_env`` declares: the platform
+            # sends the model choice, and the env around it is assembled below.
+            # The machine holds no real credential either way: the env ships a
+            # scoped cheese token as the fake login, the proxy verifies it and
+            # injects the real token backend-side. The gateway route is NOT a
             # fallback here — falling back silently is exactly the model swap
             # this branch exists to kill (dev shipped device screens with
             # CLAUDE_MODEL=deepseek-chat while users thought they were talking

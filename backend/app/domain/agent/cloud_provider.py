@@ -35,6 +35,13 @@ class CloudChannel(DeviceChannel):
     Cloud machine IS a device, reached over the same link with the same screen —
     only WHICH device is different. What used to be re-inherited per transport
     was the harness, and that now lives above the seam for both of these.
+
+    Everything overridden below answers one question — WHICH machine, and is it
+    up yet. None of it touches the model environment: ``builds_model_env`` is
+    inherited because ``_ensure_screen`` is, so a leased machine takes the same
+    supply route and the same --model alias an enrolled one takes. Code that
+    asks which of the two a turn is on in order to answer THAT is asking the
+    wrong question.
     """
 
     name = "cloud"
