@@ -1,4 +1,4 @@
-"""母子传话 (父话题 ↔ 直接子话题): an explicit channel that actually WAKES the
+"""上下传话 (房间 ↔ 它派出的支线): an explicit channel that actually WAKES the
 other side.
 
 Why this exists as its own thing rather than "just post a comment there".
@@ -12,11 +12,12 @@ from the calling side: the write succeeded.
 
 Two rules this module exists to enforce:
 
-**Direction.** Only 父 → 直接子 and 子 → 父. Not "any topic to any topic" — the
-platform's isolation unit is the topic, and a general topic-to-topic mailbox
-hands every 分身 a way to reach every other one. The parent/child edge is the one
-relationship that is already a supervision relationship, so it is the only one
-that gets a channel. Note that the per-turn token gate CANNOT enforce this: a
+**Direction.** Only 房间 → 它派出的支线 and 支线 → 它所在的房间. Not "any place
+to any place" — the platform's isolation unit is the place, and a general
+place-to-place mailbox hands every 分身 a way to reach every other one. The
+room/thread edge is the one relationship that is already a supervision
+relationship, so it is the only one that gets a channel. Note that the per-turn
+token gate CANNOT enforce this: a
 project-scoped agent credential opens the gate for every topic of its project
 (see `is_valid_cheese_token`). The direction check here is the boundary, and the
 gate entry only proves the caller is *some* agent of this project.
@@ -40,16 +41,20 @@ from collections.abc import Callable
 
 from app.core.errors import NotFoundError, ValidationError
 from app.domain.block.models import Block
-from app.domain.topic.models import Topic, TopicStatus
-from app.domain.topic.repositories import TopicRepository
+from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.room_task.services import TaskService
+from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 
 #: 一条传话的长度上限。传话是「追加一条要求」，不是搬运一篇文档 —— 长的东西
 #: 属于实况文档，那边两侧都读得到。
 MAX_RELAY_CHARS = 4000
 
-#: `target` 的别名：子话题不用知道母话题叫什么就能回话。
-PARENT_ALIASES = frozenset({"parent", "母话题", "父话题", "上级", "up"})
+#: `target` 的别名：一条支线不用知道房间叫什么就能回话。
+#:
+#: 「母话题/父话题」留着是**认输入**，不是留旧形状：分身手里可能还带着老措辞的
+#: 记忆和习惯，把它们判成「没有这个地点」只会让人以为通道坏了。
+PARENT_ALIASES = frozenset({"parent", "母话题", "父话题", "房间", "上级", "up"})
 
 
 class RelayDirection:
@@ -74,8 +79,8 @@ class RelayDelivery:
     ARCHIVED = "archived"
 
 
-def _title_matches(topic: Topic, needle: str) -> bool:
-    return topic.title.strip() == needle or needle in topic.title
+def _title_matches(place: Place, needle: str) -> bool:
+    return place.title.strip() == needle or needle in place.title
 
 
 def _strip_ref_token(raw: str) -> str:
@@ -92,80 +97,84 @@ def _strip_ref_token(raw: str) -> str:
 
 
 class TopicRelayService:
-    """Write one topic's message into the topic on the other end of the
-    parent/child edge, and report who should be woken."""
+    """Write one place's message into the place on the other end of the
+    room/thread edge, and report who should be woken."""
 
     def __init__(self, session) -> None:
         self._session = session
-        self._topics = TopicRepository(session)
+        self._places = PlaceResolver(session)
+        self._tasks = TaskService(session)
 
-    async def resolve_target(self, *, sender: Topic, target: str) -> Topic:
-        """The topic ``target`` names, restricted to sender's parent + children.
+    async def _reachable(self, sender: Place) -> tuple[list[Place], Place | None]:
+        """Everywhere *sender* may write, and its "up" end if it has one.
 
-        Resolution is deliberately scoped to the reachable set rather than "look
-        this title up in the project": a lookup over every topic would answer
-        "does a topic called X exist" to a caller that may not reach X, and the
-        friendly `@标题` form is only useful for the handful of topics on this
-        edge anyway.
+        A room reaches the threads it dispatched; a thread reaches its room. The
+        set is small on purpose — a lookup over every place would answer "does a
+        place called X exist" to a caller that may not reach X.
         """
+        if sender.task is not None:
+            up = Place(room=sender.room)
+            return [up], up
+        threads = await self._tasks.threads_for_room(sender.room_id, limit=0)
+        return [Place(room=sender.room, task=t) for t, _ in threads], None
+
+    async def resolve_target(self, *, sender: Place, target: str) -> Place:
+        """The place ``target`` names, restricted to what *sender* can reach."""
         wanted = _strip_ref_token(target)
         if not wanted:
-            raise ValidationError("要发给谁？给一个子话题（或母话题）的 id 或标题")
-        candidates: list[Topic] = list(await self._topics.list_children(sender.id))
-        parent: Topic | None = None
-        if sender.parent_id is not None:
-            parent = await self._topics.get(sender.parent_id)
-            if parent is not None:
-                candidates.append(parent)
-        # 回话不该要求先查到母话题叫什么：`cheese tell parent "..."` 就够了。
+            raise ValidationError("要发给谁？给一条支线（或这个房间）的 id 或标题")
+        candidates, parent = await self._reachable(sender)
+        # 回话不该要求先查到房间叫什么：`cheese tell parent "..."` 就够了。
         if wanted.lower() in PARENT_ALIASES or wanted in PARENT_ALIASES:
             if parent is None:
-                raise ValidationError("这个话题没有母话题")
+                raise ValidationError("这是房间，它上面没有可以回话的地方")
             return parent
         try:
             wanted_id = uuid.UUID(wanted)
         except ValueError:
             wanted_id = None
         if wanted_id is not None:
-            for topic in candidates:
-                if topic.id == wanted_id:
-                    return topic
+            for place in candidates:
+                if place.id == wanted_id:
+                    return place
             # A real id that is not on this edge is the interesting failure: say
             # WHY, or the caller retries the same call believing it mistyped.
-            if await self._topics.get(wanted_id) is not None:
+            if await self._places.resolve(wanted_id) is not None:
                 raise ValidationError(
-                    "传话只能发给你的直接子话题或你的母话题。"
-                    "这个话题跟你没有父子关系，发不过去。"
+                    "传话只能发给你派出的支线，或你所在的房间。"
+                    "这个地点跟你没有上下关系，发不过去。"
                 )
-            raise NotFoundError("没有这个话题")
+            raise NotFoundError("没有这个地点")
         exact = [t for t in candidates if t.title.strip() == wanted]
         loose = exact or [t for t in candidates if _title_matches(t, wanted)]
         if not loose:
             raise ValidationError(
-                f"你的子话题/母话题里没有叫「{wanted}」的。"
+                f"你派出的支线/你所在的房间里没有叫「{wanted}」的。"
                 "可选的是：" + ("、".join(t.title for t in candidates) or "（没有）")
             )
         if len(loose) > 1:
             raise ValidationError(
-                f"「{wanted}」对上了多个话题（{'、'.join(t.title for t in loose)}），"
+                f"「{wanted}」对上了多个地点（{'、'.join(t.title for t in loose)}），"
                 "用 id 指明是哪个"
             )
         return loose[0]
 
     @staticmethod
-    def direction(*, sender: Topic, target: Topic) -> str:
-        """Reject anything that is not the parent/child edge."""
-        if target.parent_id == sender.id:
-            return RelayDirection.TO_CHILD
-        if sender.parent_id == target.id:
-            return RelayDirection.TO_PARENT
+    def direction(*, sender: Place, target: Place) -> str:
+        """Reject anything that is not the room/thread edge."""
+        if sender.task is None and target.task is not None:
+            if target.room_id == sender.room_id:
+                return RelayDirection.TO_CHILD
+        elif sender.task is not None and target.task is None:
+            if target.room_id == sender.room_id:
+                return RelayDirection.TO_PARENT
         raise ValidationError(
-            "传话只能发给你的直接子话题或你的母话题。"
-            "两个没有父子关系的话题之间不通 —— 那等于放弃话题级隔离。"
+            "传话只能发给你派出的支线，或你所在的房间。"
+            "两个没有上下关系的地点之间不通 —— 那等于放弃地点级隔离。"
         )
 
     async def relay(
-        self, *, sender: Topic, target: Topic, content: str
+        self, *, sender: Place, target: Place, content: str
     ) -> tuple[Block, str]:
         """Land the message in ``target``'s timeline. Returns (block, direction).
 
@@ -181,7 +190,7 @@ class TopicRelayService:
                 "长的东西写进实况文档，那边读得到。"
             )
         direction = self.direction(sender=sender, target=target)
-        label = "母话题追加" if direction == RelayDirection.TO_CHILD else "子话题来信"
+        label = "房间追加" if direction == RelayDirection.TO_CHILD else "支线来信"
         block = await TopicService(self._session).add_relay_block(
             target=target, sender=sender, label=label, text=text
         )
@@ -197,10 +206,10 @@ def inline_line(*, direction: str, sender_title: str, message: str) -> str:
     """
     if direction == RelayDirection.TO_CHILD:
         return (
-            f"母话题「{sender_title}」追加了一条要求（**跟简报冲突时以这条为准**）："
+            f"房间「{sender_title}」追加了一条要求（**跟简报冲突时以这条为准**）："
             f"{message}"
         )
-    return f"子话题「{sender_title}」来信：{message}"
+    return f"支线「{sender_title}」来信：{message}"
 
 
 def relay_prompt(
@@ -220,7 +229,7 @@ def relay_prompt(
     )
     if direction == RelayDirection.TO_CHILD:
         return (
-            f"母话题「{sender_title}」给你追加了要求/说明。{extra}原话：\n"
+            f"房间「{sender_title}」给你追加了要求/说明。{extra}原话：\n"
             f"{body}\n\n"
             "任务简报是一次性的、写完就改不了，所以这条是后来补上的："
             "**跟简报冲突时以这条为准**。先判断它跟你手上的活是什么关系 —— "
@@ -229,7 +238,7 @@ def relay_prompt(
             f"要回话用 `cheese tell '<#{sender_id}>' \"...\"`。"
         )
     return (
-        f"子话题「{sender_title}」给你发来一条消息。{extra}原话：\n"
+        f"支线「{sender_title}」给你发来一条消息。{extra}原话：\n"
         f"{body}\n\n"
         "这不是结论回流，没有结论卡要结算 —— 它要么是在问你，要么是在报一个"
         "中途发现。该拍板就拍板，该回话就用 "
@@ -296,7 +305,7 @@ async def deliver_or_wake(
     *,
     chat,
     runner,
-    target: Topic,
+    target: Place,
     direction: str,
     sender_title: str,
     sender_id: uuid.UUID,
@@ -310,7 +319,8 @@ async def deliver_or_wake(
     Returns a `RelayDelivery` value. The three live tiers are tried in order:
     inject into the running turn → start a turn → ride the wake already queued.
     """
-    if target.status == TopicStatus.archived:
+    # A frozen ROOM freezes its threads with it: the work面 is the room's.
+    if target.room.status == TopicStatus.archived:
         return RelayDelivery.ARCHIVED
     # Tier 1: 对方正在跑 → 插进去，秒级。False everywhere the transport has no
     # live screen (SDK/per-turn providers), which is not a failure — it is the
@@ -339,14 +349,14 @@ async def deliver_or_wake(
 
 def _relay_author(direction: str) -> str:
     """Who the injected line is attributed to on the receiving screen."""
-    return "母话题" if direction == RelayDirection.TO_CHILD else "子话题"
+    return "房间" if direction == RelayDirection.TO_CHILD else "支线"
 
 
 def wake_target(
     *,
     runner,
     chat,
-    target: Topic,
+    target: Place,
     direction: str,
     sender_title: str,
     sender_id: uuid.UUID,
@@ -356,11 +366,11 @@ def wake_target(
 ) -> bool:
     """Wake ``target`` for this relay unless a wake already owns it.
 
-    Returns True when a turn was started now. False means either the topic is
+    Returns True when a turn was started now. False means either the room is
     archived (nothing to wake) or the message was folded into a wake already in
     flight — both are success from the sender's side; the response says which.
     """
-    if target.status == TopicStatus.archived:
+    if target.room.status == TopicStatus.archived:
         return False
     queue = coalescer if coalescer is not None else wake_queue
     batch = queue.offer(target.id, message)
@@ -409,7 +419,7 @@ def _submit_wake(
             submit=submit,
         )
 
-    line = "母话题追加了要求" if direction == RelayDirection.TO_CHILD else "子话题来信"
+    line = "房间追加了要求" if direction == RelayDirection.TO_CHILD else "支线来信"
     do_submit = submit if submit is not None else runner.submit
     do_submit(
         chat,
@@ -422,7 +432,7 @@ def _submit_wake(
             messages=batch,
         ),
         summon=True,
-        nudge_event=f"📨 {line}（来自「{sender_title}」）",
+        nudge_event=f"{line}（来自「{sender_title}」）",
         on_done=_drain,
     )
 

@@ -33,6 +33,12 @@ def _last_activity() -> ColumnElement[datetime]:
     A topic with no blocks yet falls back to its own creation — "nothing has
     happened since it was made" is the truth for a room nobody has spoken in,
     and it keeps the value non-null so sorting and filtering stay total.
+
+    Threads COUNT here, and that is deliberate: a room whose work is running is
+    alive, and the normal state of such a room is that its own line is quiet.
+    Note this is the opposite call from `unread_counts` below — same join, same
+    two tables, opposite answer, because "is this place alive" and "is there
+    something here for me to read" are different questions.
     """
     newest_block = (
         select(func.max(Block.created_at))
@@ -69,6 +75,7 @@ class TopicRepository:
         kind: TopicKind = TopicKind.topic,
         created_by: str | None = None,
         upgraded_from_block_id: uuid.UUID | None = None,
+        agent_instance_id: uuid.UUID | None = None,
     ) -> Topic:
         topic = Topic(
             project_id=project_id,
@@ -77,6 +84,7 @@ class TopicRepository:
             kind=kind,
             created_by=created_by,
             upgraded_from_block_id=upgraded_from_block_id,
+            agent_instance_id=agent_instance_id,
         )
         self._session.add(topic)
         await self._session.flush()
@@ -190,10 +198,6 @@ class TopicRepository:
         )
         return int((await self._session.scalar(stmt)) or 0)
 
-    async def set_session_id(self, topic: Topic, session_id: str) -> None:
-        topic.session_id = session_id
-        await self._session.flush()
-
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 
     async def unread_counts(
@@ -201,10 +205,17 @@ class TopicRepository:
     ) -> dict[uuid.UUID, int]:
         """Unread message count per topic for one user, in one query.
 
-        Unread = message blocks authored by OTHERS, created after the user's
-        read cursor (no cursor = all of them). Only kind=message counts —
-        doc edits / events / decisions have their own surfaces. Other
-        people's private chats are excluded.
+        Unread = message blocks authored by OTHERS on the room's OWN line,
+        created after the user's read cursor (no cursor = all of them). Only
+        kind=message counts — doc edits / events / decisions have their own
+        surfaces. Other people's private chats are excluded.
+
+        Threads are excluded (`task_id IS NULL`), and that is the opposite call
+        from `last_activity_at` one screen over, which DOES count them. The two
+        answer different questions: a room with work running in it is alive and
+        should sort up, but a badge that lights every time any 分身 says anything
+        is a badge people learn to ignore. Reading the room does not mean you
+        read every thread in it either — the cursor is the room's.
         """
         stmt = (
             select(Block.topic_id, func.count())
@@ -224,6 +235,7 @@ class TopicRepository:
                     Topic.private_peer == user_handle,
                 ),
                 Block.kind == BlockKind.message,
+                Block.task_id.is_(None),
                 Block.author != user_handle,
                 or_(
                     TopicReadState.last_read_at.is_(None),
@@ -266,6 +278,10 @@ class TopicRepository:
                     Topic.private_peer == user_handle,
                 ),
                 Block.kind == BlockKind.message,
+                # A private room has threads too — resolving an upstream
+                # conflict opens one there — and the same rule applies: the
+                # badge is about the room's own line.
+                Block.task_id.is_(None),
                 Block.author != user_handle,
                 or_(
                     TopicReadState.last_read_at.is_(None),
@@ -304,30 +320,47 @@ class TopicRepository:
 
 
 class TopicProgressRepository:
-    """进度层 storage: the topic's checklist, one row per topic (#187)."""
+    """进度层 storage: one checklist per place — a room's main line, or a
+    thread in it (#187)."""
 
     def __init__(self, session: AsyncSession):
         self._session = session
 
-    async def get(self, topic_id: uuid.UUID) -> TopicProgress | None:
-        return await self._session.get(TopicProgress, topic_id)
+    async def get(
+        self, topic_id: uuid.UUID, *, task_id: uuid.UUID | None = None
+    ) -> TopicProgress | None:
+        stmt = select(TopicProgress).where(
+            TopicProgress.topic_id == topic_id,
+            TopicProgress.task_id.is_(None)
+            if task_id is None
+            else TopicProgress.task_id == task_id,
+        )
+        return (await self._session.scalars(stmt)).first()
 
     async def save(
         self,
         topic_id: uuid.UUID,
         items: list[dict],
         *,
+        task_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
     ) -> TopicProgress:
-        """Overwrite this topic's checklist (upsert).
+        """Overwrite this place's checklist (upsert).
 
         Current state, not history — the conversation timeline is where history
         lives. Callers hand over a fresh list each time; the row is rewritten so
         a reader never sees a half-applied checklist.
+
+        Looked up by (room, thread) rather than by primary key: `topic_id` used
+        to BE the key and cannot be any more, because a thread's row is
+        identified by the pair and a primary key cannot hold the NULL that means
+        "the room's own main line".
         """
-        row = await self._session.get(TopicProgress, topic_id)
+        row = await self.get(topic_id, task_id=task_id)
         if row is None:
-            row = TopicProgress(topic_id=topic_id, items=[], turn_id=turn_id)
+            row = TopicProgress(
+                topic_id=topic_id, task_id=task_id, items=[], turn_id=turn_id
+            )
             self._session.add(row)
         # Rebind rather than mutate: SQLAlchemy does not track in-place edits of
         # a plain JSON column, so an appended item would silently not be saved.

@@ -4,13 +4,38 @@ eid="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || echo "$$-$(date +%s%N)")"
 if [ -n "$CHEESE_HOOK_SPOOL" ]; then
   mkdir -p "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
   # Shared bind mount: node (sandbox uid 1000) writes while cheese (backend uid
-  # 1001) reconciles, parks, and removes events. Keep the directory shared even
-  # if it had to be recreated after session setup.
+  # 1001) reads, parks, and prunes events. Keep the directory shared even if it
+  # had to be recreated after session setup.
   chmod 0777 "$CHEESE_HOOK_SPOOL" 2>/dev/null || true
+  _n="$(cat "$CHEESE_HOOK_SPOOL/.seq" 2>/dev/null)"
+  case "$_n" in
+    ''|*[!0-9]*)
+      # No usable hint. The glob expands in ascending order and every name is
+      # the same width, so the last one that parses is the highest.
+      _n=0
+      for _f in "$CHEESE_HOOK_SPOOL"/[0-9]*; do
+        [ -e "$_f" ] || continue
+        _b="${_f##*/}"
+        _b="${_b%%.*}"
+        case "$_b" in ''|*[!0-9]*) continue;; esac
+        _n="$_b"
+      done
+      # $(( )) reads a zero-padded number as octal; strip the pad first.
+      while :; do case "$_n" in 0?*) _n="${_n#0}";; *) break;; esac; done
+      ;;
+  esac
+  while :; do
+    _n=$((_n + 1))
+    _key="$(printf '%019d' "$_n")"
+    # noclobber makes this O_EXCL: one writer owns the number, the rest retry.
+    if (set -C; : > "$CHEESE_HOOK_SPOOL/.n$_key") 2>/dev/null; then break; fi
+  done
+  printf '%s' "$_n" > "$CHEESE_HOOK_SPOOL/.seqt.$$" 2>/dev/null &&
+    mv "$CHEESE_HOOK_SPOOL/.seqt.$$" "$CHEESE_HOOK_SPOOL/.seq" 2>/dev/null
+  rm -f "$CHEESE_HOOK_SPOOL/.seqt.$$" 2>/dev/null
   _tmp="$CHEESE_HOOK_SPOOL/.tmp.$eid"
-  _dst="$CHEESE_HOOK_SPOOL/$(date +%s%N 2>/dev/null).$eid"
   if printf '%s' "$body" > "$_tmp" 2>/dev/null; then
-    mv "$_tmp" "$_dst" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
+    mv "$_tmp" "$CHEESE_HOOK_SPOOL/$_key.$eid" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
   fi
 fi
 # On the device a background drainer is the sole sender (CHEESE_HOOK_SPOOL_ONLY set);

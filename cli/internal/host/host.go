@@ -97,13 +97,23 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 	}, nil
 }
 
-// Run connects and serves screens until ctx is cancelled, then tears down.
+// Run connects and serves screens until ctx is cancelled, then LETS GO of them:
+// it releases what this process owns (viewer ptys, rendezvous clients, runtimes)
+// and leaves every tmux session running.
+//
+// Stopping the connector is not a decision to end anybody's work. The service
+// manager stops this process to restart it, to apply an update, on a reboot —
+// and a turn mid-flight on this machine has nothing to do with any of that. So
+// the exit path releases and the sessions live on; the next run re-adopts them
+// (createSession's HasSession branch), the drainer keeps retrying the hooks it
+// spooled, and the viewer reattaches to the pane it left. Ending a session is a
+// separate, explicit act: the server closing a screen, or the operator running
+// `cheese link disconnect` / `cheese uninstall`, which tear the server down.
 func (h *Host) Run(ctx context.Context) error {
 	h.ctx = ctx
 	h.publishState()
 	defer h.clearState()
-	defer h.closeAll()
-	defer h.tm.KillServer()
+	defer h.releaseAll()
 
 	// A manual `cheese update` signals the running service with SIGUSR2 so the
 	// update happens INSIDE this process (which then hands off via syscall.Exec,
@@ -128,12 +138,11 @@ func (h *Host) Run(ctx context.Context) error {
 }
 
 // performUpdate updates the `cheese` binary in place and hands this process off to
-// it, WITHOUT tearing down the private tmux (so the hosted tasks survive). It runs
-// inside the live service process: download + verify + atomic replace, then
-// syscall.Exec into the new binary — which REPLACES the process image, so the
-// deferred KillServer never runs and tmux + tasks live on; the new binary
-// reconnects and re-adopts the surviving screens. Any failure keeps the current
-// process running unchanged (a failed update must never kill live tasks).
+// it. It runs inside the live service process: download + verify + atomic
+// replace, then syscall.Exec into the new binary — which REPLACES the process
+// image, so even the release path below never runs; the new binary reconnects
+// and re-adopts the surviving screens. Any failure keeps the current process
+// running unchanged (a failed update must never kill live tasks).
 func (h *Host) performUpdate() {
 	if !h.updating.CompareAndSwap(false, true) {
 		return // an update is already in flight
@@ -159,7 +168,7 @@ func (h *Host) performUpdate() {
 		return
 	}
 	// Detach any live viewer pty clients (but NOT the tmux sessions) before the exec.
-	// syscall.Exec skips the deferred closeAll, so an attached viewer's tmux client
+	// syscall.Exec skips the deferred releaseAll, so an attached viewer's tmux client
 	// (a child process) would otherwise survive as an ORPHAN still attached to the
 	// session — and with `window-size latest` it fights the fresh viewer the new
 	// binary attaches, leaving 现场 garbled/unopenable. Closing the client here only
@@ -167,9 +176,10 @@ func (h *Host) performUpdate() {
 	// the new binary re-adopts it, then a re-subscribe attaches a clean single viewer.
 	h.closeViewerClients()
 	fmt.Fprintln(os.Stderr, "cheese: binary updated in place; handing off to the new build (tasks preserved)…")
-	// syscall.Exec replaces the process image: deferred functions (KillServer!) do
-	// NOT run, so the private tmux and every hosted task survive; the new image
-	// reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
+	// syscall.Exec replaces the process image, so the viewer relays this process
+	// owns are the only thing that has to be let go by hand; the private tmux and
+	// every hosted task survive as they do across an ordinary stop, and the new
+	// image reconnects and re-adopts them. If exec fails we deliberately do NOT exit —
 	// the tasks must live on; the already-replaced binary applies on next restart.
 	if err := syscall.Exec(self, os.Args, os.Environ()); err != nil {
 		fmt.Fprintf(os.Stderr, "cheese: exec into new binary failed (applies on next restart): %v\n", err)
@@ -389,17 +399,23 @@ func (h *Host) closeViewerClients() {
 	}
 }
 
-func (h *Host) closeAll() {
+// releaseAll lets go of every screen without ending any of it: the tmux sessions
+// (and the tmux server) keep running, so a stop/restart of this process is not a
+// decision about anybody's in-flight turn.
+func (h *Host) releaseAll() {
 	h.mu.Lock()
 	all := h.sessions
 	h.sessions = map[string]*sess{}
 	h.mu.Unlock()
 	for _, s := range all {
-		h.teardown(s)
+		h.release(s)
 	}
 }
 
-func (h *Host) teardown(s *sess) {
+// release drops what this PROCESS owns for a screen — the viewer's pty client,
+// the rendezvous connection, the driver runtime. Nothing here outlives the
+// process anyway, and none of it is the screen's work.
+func (h *Host) release(s *sess) {
 	if s == nil {
 		return
 	}
@@ -413,6 +429,15 @@ func (h *Host) teardown(s *sess) {
 	}
 	s.rvMu.Unlock()
 	s.cancel()
+}
+
+// teardown ends a screen for good: release, then kill the tmux session with the
+// program in it. Only for a close the SERVER asked for.
+func (h *Host) teardown(s *sess) {
+	if s == nil {
+		return
+	}
+	h.release(s)
 	_ = s.term.Close()
 }
 

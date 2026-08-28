@@ -62,8 +62,8 @@ def test_storage_failure_payload_is_stable_and_sanitized():
 
 def test_missing_runtime_image_is_a_sanitized_platform_event():
     failure = classify_platform_failure(
-        "tmux container create failed: Unable to find image "
-        "'cheesex-agent-tmux:latest' locally: pull access denied"
+        "screen setup failed: Unable to find image "
+        "'cheesex-agent-sandbox:latest' locally: pull access denied"
     )
 
     assert failure is not None
@@ -72,7 +72,7 @@ def test_missing_runtime_image_is_a_sanitized_platform_event():
         "event_type": "platform_error",
         "code": "runtime_image_missing",
         "severity": "error",
-        "title": "Agent 运行组件暂时缺失",
+        "title": "运行环境镜像暂时不可用",
         "retryable": True,
         "detail": (
             "本轮还没有开始执行，项目文件没有受到影响。"
@@ -158,13 +158,10 @@ def test_prompt_undelivered_is_not_blamed_on_the_ai_service():
     from app.domain.agent.platform_failures import (
         PROMPT_UNDELIVERED,
         PROMPT_UNDELIVERED_CODE,
-        PROMPT_UNDELIVERED_MESSAGE,
         classify_platform_failure,
     )
 
-    failure = classify_platform_failure(PROMPT_UNDELIVERED_MESSAGE)
-    assert failure is not None
-    assert failure.code == PROMPT_UNDELIVERED_CODE
+    failure = classify_platform_failure("", code=PROMPT_UNDELIVERED_CODE)
     assert failure is PROMPT_UNDELIVERED
     assert "AI 服务" not in failure.content
     assert failure.retryable is True
@@ -174,44 +171,59 @@ def test_prompt_undelivered_is_not_blamed_on_the_ai_service():
     assert failure.host_scoped is False
 
 
-def test_turn_timeout_is_recognised_behind_each_transport_prefix():
-    """Both hooks backends prefix their transport onto the sentence, so the
-    classifier has to match the shared tail. A backend that renamed its message
-    and lost the marker would silently go back to 「AI 服务返回错误」."""
+def test_the_platforms_own_wording_no_longer_decides_anything():
+    """平台自己写的那三句话，改成什么样都不再影响分类——反过来，别处冒出一句
+    长得像的文字也不会被误判成它。
+
+    这正是过去做不到的：判断读的就是这句话的开头/片段，于是文案既不能改、也
+    不能缩，而任何一处巧合的措辞都能冒名顶替。
+    """
     from app.domain.agent.platform_failures import (
-        TURN_TIMEOUT,
-        TURN_TIMEOUT_MARKER,
+        DEVICE_OFFLINE_MESSAGE,
+        PROMPT_UNDELIVERED_MESSAGE,
+        TURN_TIMEOUT_MESSAGE,
         classify_platform_failure,
     )
 
-    for message in (
-        TURN_TIMEOUT_MARKER,
-        f"tmux {TURN_TIMEOUT_MARKER}",
-        f"device {TURN_TIMEOUT_MARKER}",
+    for sentence in (
+        PROMPT_UNDELIVERED_MESSAGE,
+        TURN_TIMEOUT_MESSAGE,
+        DEVICE_OFFLINE_MESSAGE,
+        f"tmux {TURN_TIMEOUT_MESSAGE}",
     ):
-        assert classify_platform_failure(message) is TURN_TIMEOUT, message
-    assert "AI 服务" not in TURN_TIMEOUT.content
-    assert TURN_TIMEOUT.host_scoped is False
+        assert classify_platform_failure(sentence) is None, sentence
 
 
-def test_every_hooks_backend_keeps_the_timeout_marker():
-    """The wiring, not the copy: if a subclass hardcodes its own sentence again
-    the classification is lost, and nothing else in the suite would notice."""
-    from app.domain.agent.device_provider import DeviceProvider
-    from app.domain.agent.hooks_substrate import HooksSessionProvider
-    from app.domain.agent.platform_failures import TURN_TIMEOUT_MARKER
-    from app.domain.agent.tmux_provider import TmuxHooksProvider
+def test_an_offline_device_declares_itself_through_a_wrapping_raise():
+    """设备连不上是平台自己判定的，所以异常自己带着码——而且要能穿过包装。
 
-    for provider in (HooksSessionProvider, TmuxHooksProvider, DeviceProvider):
-        assert TURN_TIMEOUT_MARKER in provider._timeout_message, provider.__name__
-
-
-def test_undelivered_message_is_the_classified_one():
-    """The session monitor's delivery failure must match the classifier."""
-    from app.domain.agent.hooks_substrate import UNDELIVERED_MESSAGE
+    抛出的地方和把它变成一条轮次结果的地方隔着好几层，中间常有 `raise X from
+    exc`：码只看最外层就会在这里丢掉。
+    """
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
     from app.domain.agent.platform_failures import (
-        PROMPT_UNDELIVERED,
+        DEVICE_OFFLINE_MESSAGE,
+        HOST_UNREACHABLE,
+        HOST_UNREACHABLE_CODE,
         classify_platform_failure,
     )
 
-    assert classify_platform_failure(UNDELIVERED_MESSAGE) is PROMPT_UNDELIVERED
+    inner = ScreenSetupError(DEVICE_OFFLINE_MESSAGE, failure_code=HOST_UNREACHABLE_CODE)
+    assert classify_platform_failure(inner) is HOST_UNREACHABLE
+
+    try:
+        try:
+            raise inner
+        except ScreenSetupError as exc:
+            raise RuntimeError("包了一层") from exc
+    except RuntimeError as wrapped:
+        assert classify_platform_failure(wrapped) is HOST_UNREACHABLE
+
+
+def test_a_setup_failure_the_platform_cannot_name_stays_unnamed():
+    """没有码的 ScreenSetupError（比如「这个话题上已有工作正在运行」）不该被
+    硬塞进某个分类里——不知道就是不知道，runtime 有专门的一条路走它。"""
+    from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
+    from app.domain.agent.platform_failures import classify_platform_failure
+
+    assert classify_platform_failure(ScreenSetupError("说不清的失败")) is None

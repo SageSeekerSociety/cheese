@@ -10,6 +10,7 @@ import uuid
 
 import pytest
 
+from app.domain.room_task.place import Place
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.relay import (
     RelayDelivery,
@@ -29,6 +30,13 @@ class _FakeTopic:
         self.title = "子活"
         self.project_id = uuid.uuid4()
         self.parent_id = None
+
+
+def _fake_place(status=TopicStatus.active) -> Place:
+    """A relay is delivered to a PLACE, not to a topic row. Coalescing is the
+    room's own main line either way — what it owns is one place's wake window —
+    so these hand over a room with no thread on it."""
+    return Place(room=_FakeTopic(status))
 
 
 class _RecordingSubmit:
@@ -65,7 +73,7 @@ def _wake(topic, message, submit, coalescer) -> bool:
 
 
 def test_first_relay_wakes_immediately():
-    submit, queue, topic = _RecordingSubmit(), WakeCoalescer(), _FakeTopic()
+    submit, queue, topic = _RecordingSubmit(), WakeCoalescer(), _fake_place()
 
     assert _wake(topic, "第一条", submit, queue) is True
     assert len(submit.calls) == 1
@@ -75,7 +83,7 @@ def test_first_relay_wakes_immediately():
 
 
 def test_a_burst_costs_one_extra_turn_not_three():
-    submit, queue, topic = _RecordingSubmit(), WakeCoalescer(), _FakeTopic()
+    submit, queue, topic = _RecordingSubmit(), WakeCoalescer(), _fake_place()
 
     assert _wake(topic, "一", submit, queue) is True
     # Everything that arrives while that turn runs rides its follow-up.
@@ -95,7 +103,7 @@ def test_a_burst_costs_one_extra_turn_not_three():
 
 def test_nothing_is_dropped_and_the_queue_drains():
     """The end of the burst releases ownership: the next relay wakes again."""
-    submit, queue, topic = _RecordingSubmit(), WakeCoalescer(), _FakeTopic()
+    submit, queue, topic = _RecordingSubmit(), WakeCoalescer(), _fake_place()
 
     _wake(topic, "一", submit, queue)
     _wake(topic, "二", submit, queue)
@@ -113,7 +121,7 @@ def test_nothing_is_dropped_and_the_queue_drains():
 
 def test_two_topics_do_not_share_a_window():
     submit, queue = _RecordingSubmit(), WakeCoalescer()
-    a, b = _FakeTopic(), _FakeTopic()
+    a, b = _fake_place(), _fake_place()
 
     assert _wake(a, "给A", submit, queue) is True
     assert _wake(b, "给B", submit, queue) is True
@@ -122,7 +130,7 @@ def test_two_topics_do_not_share_a_window():
 
 def test_archived_target_is_never_woken():
     submit, queue = _RecordingSubmit(), WakeCoalescer()
-    archived = _FakeTopic(status=TopicStatus.archived)
+    archived = _fake_place(status=TopicStatus.archived)
 
     assert _wake(archived, "还有一件事", submit, queue) is False
     assert submit.calls == []
@@ -170,7 +178,7 @@ async def test_a_running_target_gets_the_line_injected_not_a_new_turn():
         _FakeChat(live=True),
         _RecordingSubmit(),
         WakeCoalescer(),
-        _FakeTopic(),
+        _fake_place(),
     )
 
     assert (
@@ -179,7 +187,10 @@ async def test_a_running_target_gets_the_line_injected_not_a_new_turn():
     assert submit.calls == []  # no extra turn was spent
     _topic_id, line, author = chat.injected[0]
     assert "口径改了" in line
-    assert "母话题" in author
+    # Where it came from is in the line itself; the author slot carries which
+    # WAY it came, so the receiver can weigh it without knowing any titles.
+    assert "母话题" in line
+    assert author == "房间"
     # Injection must not claim ownership of the topic — the next relay is free to
     # take whichever path is fastest THEN.
     assert queue.buffered(topic.id) == 0
@@ -196,7 +207,7 @@ async def test_no_live_screen_falls_back_to_a_turn_then_to_merging():
         _FakeChat(live=False),
         _RecordingSubmit(),
         WakeCoalescer(),
-        _FakeTopic(),
+        _fake_place(),
     )
 
     assert await _deliver(topic, "一", chat, submit, queue) == RelayDelivery.WOKE
@@ -207,7 +218,7 @@ async def test_no_live_screen_falls_back_to_a_turn_then_to_merging():
 @pytest.mark.anyio
 async def test_archived_target_is_not_even_offered_to_the_live_screen():
     chat, submit, queue = _FakeChat(live=True), _RecordingSubmit(), WakeCoalescer()
-    archived = _FakeTopic(status=TopicStatus.archived)
+    archived = _fake_place(status=TopicStatus.archived)
 
     assert await _deliver(archived, "x", chat, submit, queue) == RelayDelivery.ARCHIVED
     assert chat.injected == []

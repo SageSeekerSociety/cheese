@@ -39,18 +39,27 @@ def test_api_subcommand_parses_method_and_path(monkeypatch):
     cli = _load()
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        cli, "_raw_request", lambda m, p, d: captured.update(method=m, path=p, data=d)
+        cli,
+        "_raw_request",
+        lambda m, p, d, o=None: captured.update(method=m, path=p, data=d, out=o),
     )
     monkeypatch.setattr(cli.sys, "argv", ["cheese", "api", "GET", "/topics/x/blocks"])
     cli.main()
-    assert captured == {"method": "GET", "path": "/topics/x/blocks", "data": None}
+    assert captured == {
+        "method": "GET",
+        "path": "/topics/x/blocks",
+        "data": None,
+        "out": None,
+    }
 
 
 def test_api_subcommand_passes_data(monkeypatch):
     cli = _load()
     captured: dict[str, object] = {}
     monkeypatch.setattr(
-        cli, "_raw_request", lambda m, p, d: captured.update(method=m, path=p, data=d)
+        cli,
+        "_raw_request",
+        lambda m, p, d, o=None: captured.update(method=m, path=p, data=d, out=o),
     )
     monkeypatch.setattr(
         cli.sys,
@@ -163,43 +172,23 @@ def test_format_status_renders_cards_and_waterlines():
 
 
 def test_format_status_never_renders_a_live_countdown():
-    """turn 活跃度检测 (2026-08-09): a literal "还剩 Ns" figure was observed
-    making the agent rush against what's only meant to be a wedged-turn safety
-    net — the three-state rendering must never reintroduce it."""
+    """A literal "还剩 Ns" figure was observed making the agent rush against what
+    is only meant to be a wedged-turn safety net. Neither running state may
+    reintroduce it."""
     cli = _load()
     for turn in (
-        {"status": "running", "near_ceiling": False, "activity": None},
-        {"status": "running", "near_ceiling": True, "activity": None},
-        {
-            "status": "running",
-            "near_ceiling": False,
-            "activity": {"idle_for_s": 400, "suspect_since_s_ago": 120},
-        },
+        {"status": "running", "near_ceiling": False},
+        {"status": "running", "near_ceiling": True},
     ):
         out = cli._format_status(_status_payload(turn))
         assert "还剩" not in out
         assert "budget" not in out
 
 
-def test_format_status_renders_idle_suspect_state():
-    cli = _load()
-    out = cli._format_status(
-        _status_payload(
-            {
-                "status": "running",
-                "near_ceiling": False,
-                "activity": {"idle_for_s": 320, "suspect_since_s_ago": 120},
-            }
-        )
-    )
-    assert "疑似卡死" in out
-    assert "2 分钟" in out  # 120s → 2min, rounded
-
-
 def test_format_status_renders_near_ceiling_state():
     cli = _load()
     out = cli._format_status(
-        _status_payload({"status": "running", "near_ceiling": True, "activity": None})
+        _status_payload({"status": "running", "near_ceiling": True})
     )
     assert "接近硬顶" in out
 
@@ -508,7 +497,10 @@ class _FakeHTTPResponse:
         return False
 
 
-def _run_gh_token(cli, monkeypatch, permissions: str) -> None:
+def _run_gh_token(
+    cli, monkeypatch, permissions: str, *, in_git_worktree: bool = True
+) -> None:
+    monkeypatch.setattr(cli, "_in_a_git_worktree", lambda: in_git_worktree)
     monkeypatch.setattr(
         cli.urllib.request,
         "urlopen",
@@ -534,7 +526,8 @@ def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsy
     _run_gh_token(
         cli,
         monkeypatch,
-        "read-only: actions, checks, contents, issues, metadata, pull_requests",
+        "actions: read, checks: read, contents: read, issues: read, "
+        "metadata: read, pull_requests: read",
     )
 
     out, err = capsys.readouterr()
@@ -544,17 +537,61 @@ def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsy
     assert "repos/acme/widgets/contents/<path>" in err
 
 
+def test_gh_token_spells_out_pushing_and_opening_a_pr_when_it_may(monkeypatch, capsys):
+    """Same lesson one step further along. Reading what it may do is only half
+    the job — an agent that can push and open its own PR but was never shown
+    the two commands hands the last step back to a human, which is exactly the
+    stall the read-only token used to cause."""
+    cli = _load()
+    _run_gh_token(
+        cli,
+        monkeypatch,
+        "actions: read, checks: read, contents: write, metadata: read, "
+        "pull_requests: write, workflows: write",
+    )
+
+    _out, err = capsys.readouterr()
+    assert "git push https://x-access-token:$GH_TOKEN@github.com/acme/widgets" in err
+    assert "gh api repos/acme/widgets/pulls -f head=" in err
+
+
+def test_gh_token_does_not_offer_a_push_where_there_is_nothing_to_push_from(
+    monkeypatch, capsys
+):
+    """A jj topic workspace has no `.git`, so `git push` cannot run there
+    whatever the token carries. Printing it anyway produces `not a git
+    repository`, which reads like the credential is at fault — so say which
+    one it is instead."""
+    cli = _load()
+    _run_gh_token(
+        cli,
+        monkeypatch,
+        "contents: write, metadata: read, pull_requests: write",
+        in_git_worktree=False,
+    )
+
+    _out, err = capsys.readouterr()
+    assert "git push" not in err
+    assert "没有 .git" in err
+    # The PR recipe is API-only, so it still works from a jj workspace.
+    assert "gh api repos/acme/widgets/pulls -f head=" in err
+
+
 def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):
     """An advertised recipe that 403s is worse than no recipe — it burns a turn
-    and teaches the agent the wrong lesson about what it may read."""
+    and teaches the agent the wrong lesson about what it may do. A read-level
+    grant is one of those: `contents: read` must not produce a push recipe."""
     cli = _load()
-    _run_gh_token(cli, monkeypatch, "read-only: actions, checks, metadata")
+    _run_gh_token(
+        cli, monkeypatch, "actions: read, checks: read, contents: read, metadata: read"
+    )
 
     _out, err = capsys.readouterr()
     assert "issues/<n>" not in err
     assert "pulls/<n>" not in err
+    assert "git push" not in err
     assert "check-runs" in err  # what it CAN do is still spelled out
-    assert "read-only: actions, checks, metadata" in err
+    assert "contents: read" in err
 
 
 def _is_subparsers(action):
@@ -568,3 +605,103 @@ def _subparsers_or_empty(parser):
         return _subparsers(parser)
     except AssertionError:
         return []
+
+
+# --- 实况文档的写入版本 ---------------------------------------------------
+#
+# The living doc is replaced whole, so a `doc set` based on a version somebody
+# has already moved past destroys their edit outright. The CLI's job is to make
+# the version a fact about what the agent READ, never something it can state.
+
+
+def _doc_cli(monkeypatch, tmp_path, calls):
+    cli = _load()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(cli, "AUTHOR", "cheese")
+
+    def fake_call(method, path, body=None, **kwargs):
+        calls.append((method, path, body))
+        if method == "GET":
+            return {"data": {"content": "# 现在的文档", "doc_version": 7}}
+        return {"data": {"doc_version": 8}}
+
+    monkeypatch.setattr(cli, "_call", fake_call)
+    return cli
+
+
+def test_a_set_without_a_read_claims_no_version(monkeypatch, tmp_path, capsys):
+    """Never having read the doc is version 0 — which the platform accepts only
+    when there is no doc yet. Writing over a document you have not read is the
+    whole failure, so the CLI must not invent a number that lets it through."""
+    calls: list[tuple] = []
+    cli = _doc_cli(monkeypatch, tmp_path, calls)
+    doc = tmp_path / "d.md"
+    doc.write_text("# 我写的", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+
+    cli.main()
+
+    assert calls[-1][2]["expected_version"] == 0
+
+
+def test_a_set_writes_against_the_version_get_showed(monkeypatch, tmp_path, capsys):
+    """`doc get` is what earns the write: the version it printed is the one the
+    following `doc set` is based on."""
+    calls: list[tuple] = []
+    cli = _doc_cli(monkeypatch, tmp_path, calls)
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "get"])
+    cli.main()
+    assert "# 现在的文档" in capsys.readouterr().out
+
+    doc = tmp_path / "d.md"
+    doc.write_text("# 现在的文档\n\n加一段", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+    cli.main()
+
+    assert calls[-1][2]["expected_version"] == 7
+
+
+def test_a_refused_set_says_how_to_recover(monkeypatch, tmp_path, capsys):
+    """A rejection has to leave the agent knowing what to do next. Retrying the
+    same file is refused identically, forever — the way out is re-reading."""
+    cli = _load()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(cli, "TOPIC", "t-1")
+    monkeypatch.setattr(
+        cli,
+        "_call",
+        lambda *a, **k: {
+            "ok": False,
+            "status": 409,
+            "error": {"data": {"doc_version": 9}},
+        },
+    )
+    doc = tmp_path / "d.md"
+    doc.write_text("# 旧的", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "第 9 版" in err
+    assert "cheese doc get" in err
+
+
+def test_a_won_set_remembers_the_version_it_produced(monkeypatch, tmp_path, capsys):
+    """Two `doc set` calls in one turn is normal. The second is based on what
+    the first produced — asking the agent to re-read its own write would be
+    ceremony, and forgetting would reject it."""
+    calls: list[tuple] = []
+    cli = _doc_cli(monkeypatch, tmp_path, calls)
+    doc = tmp_path / "d.md"
+    doc.write_text("# 一稿", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "get"])
+    cli.main()
+    monkeypatch.setattr(cli.sys, "argv", ["cheese", "doc", "set", str(doc)])
+    cli.main()
+    cli.main()
+
+    assert [c[2]["expected_version"] for c in calls if c[0] == "PUT"] == [7, 8]

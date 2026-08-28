@@ -11,7 +11,7 @@ import urllib.request
 
 from playwright.async_api import async_playwright
 
-# The self-contained tmux dogfood stack (SQLite): frontend 5174 → backend 8097.
+# The self-contained dogfood stack (SQLite): frontend 5174 → backend 8097.
 # (8099/5173 is the long-running Postgres stack and must not be restarted.)
 API = os.environ.get("PROBE_API", "http://127.0.0.1:8097")
 BASE = os.environ.get("PROBE_BASE", "http://localhost:5174")

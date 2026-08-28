@@ -2,13 +2,13 @@
 // ApiEnvelope; these helpers unwrap `data` and surface non-200 codes as errors.
 import type {
   AcceptCard,
+  AgentType,
   ApiEnvelope,
   Block,
   ChatAttachment,
   ComputeProfiles,
   Contributions,
   ExecProfiles,
-  ExpertRole,
   FileContent,
   GitCommit,
   GithubConnection,
@@ -22,10 +22,13 @@ import type {
   PrChecks,
   PreviewInfo,
   Project,
+  ProjectAgent,
   ProjectCredits,
   ProjectMemberRow,
   ProjectOverview,
   ReactionAgg,
+  RoomTask,
+  RoomTree,
   SandboxImageInfo,
   Topic,
   TopicComputeProfile,
@@ -38,7 +41,9 @@ import type {
   UserProfile,
   WorkspaceFile,
 } from './cx_types'
+import type { PlacePayload } from './lib/place'
 
+import { isThreadPayload } from './lib/place'
 import { TOPIC_TITLE_MAX_LENGTH } from './lib/topicTitle'
 
 export { TOPIC_TITLE_MAX_LENGTH }
@@ -102,6 +107,14 @@ export class ApiError extends Error {
     super(message)
     this.name = 'ApiError'
   }
+}
+
+// A page whose backend ships separately has to tell "this feature is not
+// deployed here yet" apart from "it is deployed and it failed" — otherwise the
+// first render of a not-yet-merged API is an error banner that reads like a bug.
+// 404/405 is the only honest signal for it: the route does not exist.
+export function isEndpointMissing(e: unknown): boolean {
+  return e instanceof ApiError && (e.status === 404 || e.status === 405)
 }
 
 // How close to expiry is "about to expire". The refresh below is what keeps a
@@ -482,12 +495,71 @@ export function listTopics(
   return request<ListPayload<Topic>>(`/topics?${q.toString()}`)
 }
 
-export function createTopic(projectId: string, title: string, parentId?: string): Promise<Topic> {
+// 整个项目的支线，每条带着它当前骑的那张验收卡。侧栏要画「房间 → 它派出去的活
+// → 那件活的 PR」这棵树，而按房间问是一个房间一个请求（这里有一百七十多个）。
+export function listProjectTasks(projectId: string): Promise<ListPayload<RoomTask>> {
+  return request<ListPayload<RoomTask>>(`/projects/${encodeURIComponent(projectId)}/tasks`)
+}
+
+/** 一个房间的一批批活（树），最新的在前。一棵树 = 一个分支 = 一个 PR = 一批活。
+ *
+ *  房间会封口一批、开下一批，所以「我现在写的东西进的是哪一批」才有答案 —— 封了
+ *  口的房间和没封口的在屏幕上长得一模一样，是「我改了半天，改动怎么不在 PR 上」
+ *  的来源。 */
+export function listRoomTrees(roomId: string): Promise<ListPayload<RoomTree>> {
+  return request<ListPayload<RoomTree>>(`/topics/${encodeURIComponent(roomId)}/trees`)
+}
+
+export function listRoomTasks(
+  roomId: string,
+  // 每条支线最多带回多少块对话。标记只要支线本身，所以取 1 —— 不传的话后端会把
+  // 房间里每条支线的全部历史都吐回来（它自己的 docstring 说明了为什么没有默认上限）。
+  opts?: { limit?: number }
+): Promise<ListPayload<RoomTask & { blocks: Block[] }>> {
+  const q = new URLSearchParams()
+  if (opts?.limit != null) q.set('limit', String(opts.limit))
+  const query = q.toString() ? `?${q.toString()}` : ''
+  return request<ListPayload<RoomTask & { blocks: Block[] }>>(`/topics/${encodeURIComponent(roomId)}/tasks${query}`)
+}
+
+export function createTopic(
+  projectId: string,
+  title: string,
+  parentId?: string,
+  // 谁在这个话题里干活。不传 = 跟着项目的默认走，而且**继续跟着**它变 —— 这和
+  // 「把当前默认抄一份存下来」不是一回事，后者会在换默认时留下一批不动的旧话题。
+  agentInstanceId?: string | null
+): Promise<Topic> {
   const body: Record<string, string> = { project_id: projectId, title }
   if (parentId) body.parent_id = parentId
+  if (agentInstanceId) body.agent_instance_id = agentInstanceId
   return request<Topic>('/topics', {
     method: 'POST',
     body: JSON.stringify(body),
+  })
+}
+
+// ---- 话题用哪个 AI 队友 ----
+
+export interface TopicAgent {
+  topic_id: string
+  instance_id: string | null
+  handle: string
+  type_name: string | null
+  display_name: string
+  /** true = 这个话题没自己选过，跟着项目默认走（换了默认它会跟着换） */
+  inherited: boolean
+}
+
+export function getTopicAgent(topicId: string): Promise<TopicAgent> {
+  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`)
+}
+
+// instance_id: null = 交还给项目默认。
+export function setTopicAgent(topicId: string, instanceId: string | null): Promise<TopicAgent> {
+  return request<TopicAgent>(`/topics/${encodeURIComponent(topicId)}/agent`, {
+    method: 'PUT',
+    body: JSON.stringify({ instance_id: instanceId }),
   })
 }
 
@@ -540,18 +612,11 @@ export function unarchiveTopic(topicId: string, by: string): Promise<Topic> {
   })
 }
 
-// Split a topic into a sub-topic (芝士的分身 works there). eval A1 / tree.
-export function splitTopic(topicId: string, title: string, createdBy: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/split`, {
-    method: 'POST',
-    body: JSON.stringify({ title, created_by: createdBy }),
-  })
-}
-
-// Upgrade a message block into its own topic (eval A1). `blockId` is the
-// message's block id. Returns the newly created topic.
-export function upgradeBlock(blockId: string, createdBy: string): Promise<Topic> {
-  return request<Topic>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
+// 把一条消息升级成它自己的地点 (eval A1)。`blockId` 是那条消息的 block id。
+// 房间里的消息升级出来的是一条**支线**；私聊里的升级出来的是一个真房间——私聊
+// 不在话题树里，支线在那儿没人打得开。所以回答有两种形状。
+export function upgradeBlock(blockId: string, createdBy: string): Promise<PlacePayload> {
+  return request<PlacePayload>(`/blocks/${encodeURIComponent(blockId)}/upgrade`, {
     method: 'POST',
     body: JSON.stringify({ created_by: createdBy }),
   })
@@ -655,28 +720,122 @@ export function setTopicComputeProfile(
   })
 }
 
-// 专家角色 (spec §8.2): merged catalog — built-in file-library roles + custom
-// (DB) roles; a custom role shadows a built-in with the same name.
-export function listRoles(): Promise<ListPayload<ExpertRole>> {
-  return request<ListPayload<ExpertRole>>('/roles')
+// Which type the project's default agent wears; an empty name clears it. The
+// agent itself stays — and so does the memory it has been accumulating.
+export function setProjectAgentType(projectId: string, typeName: string): Promise<ProjectAgent> {
+  return request(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
+    method: 'PUT',
+    body: JSON.stringify({ type_name: typeName }),
+  })
 }
-export function createRole(payload: {
-  name: string
-  title: string
+
+// ---- AI 队友 (agent 类型与实例) ----
+//
+// 「不能停用最后一个」and the like are the backend's to enforce; these are plain
+// transports. What they must NOT do is paper over a missing endpoint: the agent
+// backend lands separately, so a 404 here has to reach the caller as a 404 (see
+// `isEndpointMissing`) rather than as an empty list that reads like "no agents".
+
+// 一个字段要么给得出选项，要么说得出为什么给不出 —— 没有第三种。后端是唯一
+// 事实源（backend/app/domain/agent_type/options.py），这里不留第二份清单：某个
+// 字段哪天真的接上了运行链路，改那边一处，编辑器自己就跟着变。
+export interface AgentFieldChoice {
+  id: string
+  label: string
   description: string
-  body: string
+  default: boolean
+}
+
+export interface AgentFieldOptions {
+  /** 'choosable' = choices 就是全部会生效的取值；'unavailable' = 见 reason/note */
+  state: 'choosable' | 'unavailable'
+  choices: AgentFieldChoice[]
+  reason: string
+  note: string
+}
+
+export type AgentTypeOptions = Record<string, AgentFieldOptions>
+
+export function getAgentTypeOptions(): Promise<AgentTypeOptions> {
+  return request<AgentTypeOptions>('/agent-types/options')
+}
+
+// The merged type catalog: platform presets + this project's custom types.
+export function listAgentTypes(): Promise<ListPayload<AgentType>> {
+  return request<ListPayload<AgentType>>('/agent-types')
+}
+
+export interface AgentTypeInput {
+  title?: string
+  description?: string
+  body?: string
+  skills?: string[]
+  mcp_servers?: string[]
+  model?: string | null
+  effort?: string | null
+  harness?: string | null
+  // Who authored the type — the backend records it and shows it in the catalog.
   created_by?: string
-}): Promise<ExpertRole> {
-  return request<ExpertRole>('/roles', {
+}
+
+export function createAgentType(payload: AgentTypeInput & { name: string; body: string }): Promise<AgentType> {
+  return request<AgentType>('/agent-types', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function updateAgentType(name: string, payload: AgentTypeInput): Promise<AgentType> {
+  return request<AgentType>(`/agent-types/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+// The agents this project has. A project that never configured one still gets a
+// row back — the implicit 芝士, `configured: false` — because it is really
+// working in every room and owns a real memory pool.
+export function listProjectAgents(projectId: string): Promise<ListPayload<ProjectAgent>> {
+  return request<ListPayload<ProjectAgent>>(`/projects/${encodeURIComponent(projectId)}/agents`)
+}
+
+export function createProjectAgent(
+  projectId: string,
+  payload: { display_name: string; handle?: string; type_name?: string | null }
+): Promise<ProjectAgent> {
+  return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })
 }
-// Which persona 芝士 loads for this project; empty role clears it.
-export function setProjectExpertRole(projectId: string, role: string): Promise<{ current: string | null }> {
-  return request(`/projects/${encodeURIComponent(projectId)}/expert-role`, {
+
+export function updateProjectAgent(
+  projectId: string,
+  agentId: string,
+  payload: { display_name?: string; type_name?: string | null }
+): Promise<ProjectAgent> {
+  return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`, {
     method: 'PUT',
-    body: JSON.stringify({ role }),
+    body: JSON.stringify(payload),
+  })
+}
+
+// 停用 — not a physical delete. Topics already using it keep working and its
+// memory is kept; it just stops being选得到 for new ones.
+export function deactivateProjectAgent(projectId: string, agentId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(
+    `/projects/${encodeURIComponent(projectId)}/agents/${encodeURIComponent(agentId)}`,
+    { method: 'DELETE' }
+  )
+}
+
+// Which agent a new topic gets. `instance_id` picks a different agent (a
+// different memory pool); `type_name` re-skins the one the project already has,
+// so the pool it has been filling stays its own.
+export function setProjectDefaultAgent(
+  projectId: string,
+  body: { instance_id?: string | null; type_name?: string | null }
+): Promise<ProjectAgent> {
+  return request<ProjectAgent>(`/projects/${encodeURIComponent(projectId)}/default-agent`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
   })
 }
 
@@ -841,10 +1000,15 @@ export function getProgress(topicId: string): Promise<TopicProgress> {
 
 // PUT upserts the living doc and appends a "📝 编辑了文档" event to the
 // conversation. Returns the doc Block.
-export function putDoc(topicId: string, content: string, author: string): Promise<Block> {
+//
+// `expectedVersion` is the doc_version this edit is based on (0 = "there is no
+// doc yet"). The doc is only ever written whole, so the write is conditional on
+// it: if 芝士 set the doc in between, the backend answers 409 instead of letting
+// this save erase what it wrote.
+export function putDoc(topicId: string, content: string, author: string, expectedVersion: number): Promise<Block> {
   return request<Block>(`/topics/${encodeURIComponent(topicId)}/doc`, {
     method: 'PUT',
-    body: JSON.stringify({ content, author }),
+    body: JSON.stringify({ content, author, expected_version: expectedVersion }),
   })
 }
 
@@ -907,49 +1071,34 @@ export function deleteMemory(entryId: string): Promise<{ deleted: string }> {
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
 
-// 现场 (施工现场): 芝士's messages + 🔧 event lines for a topic (read-only).
-export function getTranscript(topicId: string): Promise<ListPayload<Block>> {
-  return request<ListPayload<Block>>(`/topics/${encodeURIComponent(topicId)}/transcript`)
+// 现场 (施工现场): a topic's tool/event record (read-only), newest window first.
+// Paged: events are the most numerous kind of block (one per tool call), so an
+// unpaged 现场 is the largest request the app can make and it only grows.
+export const SITE_PAGE_SIZE = 120
+export function getTranscript(
+  topicId: string,
+  opts: { limit?: number; before?: string } = {}
+): Promise<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }> {
+  const q = new URLSearchParams()
+  if (opts.limit != null) q.set('limit', String(opts.limit))
+  if (opts.before) q.set('before', opts.before)
+  const qs = q.toString()
+  return request<ListPayload<Block> & { has_more?: boolean; oldest_id?: string | null }>(
+    `/topics/${encodeURIComponent(topicId)}/transcript${qs ? `?${qs}` : ''}`
+  )
 }
 
-// 现场实时终端 (施工现场): whether this topic has an embeddable read-only
-// terminal (only under the tmux agent backend, container up) and its iframe URL.
+// 现场实时终端 (施工现场): whether this topic has a live pane to watch, and the
+// screen WebSocket ("/connector/session/{sid}/screen") the 现场 renders with
+// DeviceLiveViewer. A turn runs on a machine we reach only over that link.
 export interface TerminalInfo {
   available: boolean
-  backend: string
-  url?: string
-  // Device-hosted topics: no proxied ttyd, but a live screen WebSocket
-  // ("/connector/session/{sid}/screen") the 现场 renders with DeviceLiveViewer.
   ws?: string
 }
 export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
 }
 
-// The 现场 terminal and 运行环境预览 are backend reverse proxies loaded by an
-// <iframe>, and a browser can set no header on one — so the session token rides
-// as ?token=, exactly like the device-screen WebSocket above. Without it the
-// proxy 404s and the panel shows a white box; the backend's own status endpoint
-// applies the same check, so a signed-out viewer is told "unavailable" and falls
-// back to the timeline instead of embedding a frame that cannot load.
-// 运行环境预览 authenticates its iframe differently, and on purpose: the frame
-// renders whatever 芝士 chose to serve, and a ?token= in the URL is readable by
-// that page's own JS (location.search) even sandboxed — so instead this call,
-// which DOES carry the Authorization header, leaves an HttpOnly path-scoped
-// cookie that the iframe's same-origin requests present by themselves.
-export function primeAppPreview(topicId: string): Promise<{ ready: boolean }> {
-  return request<{ ready: boolean }>(`/topics/${encodeURIComponent(topicId)}/app-session`)
-}
-
-export function withSessionToken(url: string): string {
-  const token = authToken()
-  if (!token) return url
-  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
-}
-
-// Git: commit log + diff. With `topicId` these are THIS topic's own commits and
-// the full diff its 采纳 would merge; without it, the project repo's. The 话题
-// panel must always pass it — the project-level answer is other topics' work.
 export function getGitLog(projectId: string, topicId?: string | null): Promise<ListPayload<GitCommit>> {
   const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)
@@ -1144,11 +1293,17 @@ export function removeTopicMember(topicId: string, handle: string, actor: string
   )
 }
 
-// Re-fetch a single topic (after accept it becomes archived). There's no
-// single-topic GET, so we pull the project's topic list and pick it out.
-export async function getTopic(projectId: string, topicId: string): Promise<Topic | null> {
-  const payload = await listTopics(projectId)
-  return payload.data.find((t) => t.id === topicId) ?? null
+// 一个 id 指向一个「地点」——房间答 Topic，支线答 RoomTask (lib/place.ts)。
+// 打开一条支线只有这一条路：侧栏那份列表只查 topics 表，支线从来不在里面。
+export function getPlace(placeId: string): Promise<PlacePayload> {
+  return request<PlacePayload>(`/topics/${encodeURIComponent(placeId)}`)
+}
+
+// Re-fetch a single ROOM (after accept it becomes archived). Null for a thread:
+// the caller patches a row in the rail's list, and threads have no row there.
+export async function getTopic(topicId: string): Promise<Topic | null> {
+  const place = await getPlace(topicId)
+  return isThreadPayload(place) ? null : place
 }
 
 // ---- 日历 / 里程碑 (§7.2) ----

@@ -138,7 +138,22 @@ def configure_logging() -> None:
         foreign_pre_chain=pre_chain,
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-            structlog.dev.ConsoleRenderer(colors=False),
+            # A plain traceback, chosen explicitly. ConsoleRenderer's default is
+            # whatever it can find: with rich importable it renders through rich
+            # with show_locals=True, and every frame's locals get pretty-printed
+            # into the stream. A FastAPI handler's locals hold the resolved
+            # Dependant tree, so ONE unhandled exception becomes tens of
+            # thousands of lines, rendered and written synchronously on the event
+            # loop. That is not slow logging, it is an outage: on 2026-08-20 the
+            # dev box served nothing at all — /healthz included, so compose's
+            # health gate could not even recreate the container — and each
+            # timed-out request raised again and re-armed it.
+            #
+            # rich reaches the image transitively (openviking → typer → rich), so
+            # this cannot be left to whether it happens to be installed.
+            structlog.dev.ConsoleRenderer(
+                colors=False, exception_formatter=structlog.dev.plain_traceback
+            ),
         ],
     )
     handler = logging.StreamHandler()

@@ -62,8 +62,7 @@ CI_POSTGRES_IMAGE="${CI_POSTGRES_IMAGE:-mirror.gcr.io/paradedb/paradedb:v0.18.8-
 CI_REDIS_IMAGE="${CI_REDIS_IMAGE:-mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9}"
 export IMAGE_TAG="$SHA"
 export SANDBOX_IMAGE="${SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:$SHA}"
-export TMUX_SANDBOX_IMAGE="${TMUX_SANDBOX_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox-tmux:$SHA}"
-export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$TMUX_SANDBOX_IMAGE}"
+export QUALITY_GATE_IMAGE="${QUALITY_GATE_IMAGE:-$SANDBOX_IMAGE}"
 
 # Optional overlay compose files layered on top of the base (space-separated).
 # Bare names resolve against the committed compose dir; absolute paths pass
@@ -116,10 +115,10 @@ done
 # producing NOTHING: no output, no tools, indistinguishable from a model that
 # never spoke, which is exactly why this cost a full day to find (#316).
 #
-# The backend now rebuilds such a box and says so at boot, but the box loses its
-# tmux session to do it — so this is still worth catching one layer earlier,
-# where someone is actually watching. Warn, never fail: a deploy that refuses to
-# proceed over a config preference is a worse outage than the one it prevents.
+# Restarting a screen to re-sign it costs that topic its conversation — so this
+# is still worth catching one layer earlier, where someone is actually watching.
+# Warn, never fail: a deploy that refuses to proceed over a config preference is
+# a worse outage than the one it prevents.
 #
 # Only greps for the key's presence — the value is a secret and never printed.
 # Not applicable to app-only boxes (prod), which run no sibling containers.
@@ -128,8 +127,8 @@ if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   if [ -r "$_envf" ] && ! grep -Eq '^[[:space:]]*SANDBOX_TOKEN=.+' "$_envf"; then
     log "WARNING: SANDBOX_TOKEN is not pinned in $_envf — the scoped-token"
     log "         signing secret is regenerated on every restart, so every"
-    log "         existing sandbox's hook token stops verifying and its box"
-    log "         must be rebuilt (losing that topic's tmux session). Pin it"
+    log "         live screen's hook token stops verifying and the screen must"
+    log "         be restarted (losing that topic's conversation). Pin it"
     log "         (and keep the metering proxy's CHEESE_SCOPED_SECRET equal)."
   fi
 fi
@@ -348,16 +347,10 @@ case "$APP_IMAGE_SOURCE" in
 esac
 
 # Runtime images are launched on demand through docker.sock, so compose cannot
-# pull or retain them for us. Pull both execution paths and run the same minimum
-# binary check a real tmux turn needs BEFORE touching the live app.
+# pull or retain them for us.
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   log "pulling agent runtime images…"
-  retry_pull "SDK sandbox image pull ($SANDBOX_IMAGE)" docker pull "$SANDBOX_IMAGE"
-  retry_pull "tmux sandbox image pull ($TMUX_SANDBOX_IMAGE)" \
-    docker pull "$TMUX_SANDBOX_IMAGE"
-  docker run --rm --entrypoint sh "$TMUX_SANDBOX_IMAGE" -c \
-    'command -v tmux >/dev/null && command -v ttyd >/dev/null && command -v cheese >/dev/null' \
-    || fail "tmux sandbox smoke test failed: $TMUX_SANDBOX_IMAGE"
+  retry_pull "sandbox image pull ($SANDBOX_IMAGE)" docker pull "$SANDBOX_IMAGE"
 
   # `docker image prune -a` considers an on-demand image unused when no turn is
   # active. Stopped zero-cost containers make the desired runtime images explicit
@@ -373,7 +366,6 @@ if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
       || fail "could not retain $kind runtime image: $image"
   }
   prepare_image_retainer sandbox "$SANDBOX_IMAGE"
-  prepare_image_retainer tmux "$TMUX_SANDBOX_IMAGE"
 fi
 
 log_disk "after pull"
@@ -493,7 +485,6 @@ promote_image_retainer() {
 }
 if [ "$AGENT_RUNTIME_IMAGES_REQUIRED" = true ]; then
   promote_image_retainer sandbox
-  promote_image_retainer tmux
 fi
 
 # Reclaim disk from superseded per-commit images: every deploy pulls a fresh
@@ -501,8 +492,8 @@ fi
 # 100% (2026-07-18) and CD wedged for a day. Best-effort, never fails a deploy.
 # NOT time-filtered: under a busy merge day every image is "too new" to prune
 # and the disk fills anyway (happened twice on 2026-07-18/19 — 8 image sets in
-# an afternoon). Keep what running containers and the two explicit runtime-image
-# retainers use; rollback re-pulls superseded images from ghcr.
+# an afternoon). Keep what running containers and the explicit runtime-image
+# retainer uses; rollback re-pulls superseded images from ghcr.
 #
 # Done inline rather than left to the EXIT trap so the reclaim and its disk
 # watermark still print before "DEPLOY OK"; clearing RECLAIM_PENDING is what

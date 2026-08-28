@@ -26,7 +26,6 @@ class ProjectRepository:
         name: str,
         owner_handle: str | None = None,
         ai_mode: AiMode = AiMode.collaborative,
-        expert_role: str | None = None,
         team_id: int | None = None,
         external_task_id: int | None = None,
     ) -> Project:
@@ -34,7 +33,6 @@ class ProjectRepository:
             name=name,
             owner_handle=owner_handle,
             ai_mode=ai_mode,
-            expert_role=expert_role,
             team_id=team_id,
             external_task_id=external_task_id,
         )

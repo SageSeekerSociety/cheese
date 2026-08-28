@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import stub_compute
+
 
 def _owner(client, handle: str = "alice") -> dict[str, str]:
     """The file routes return the source, so they need a caller with a claim on
@@ -356,9 +358,14 @@ def test_sync_conflict_dispatches_cheese_at_the_materialized_merge(client, tmp_p
     assert d["dispatched"]["files"] == ["hello.txt"]
     tid = d["dispatched"]["topic_id"]
 
-    # The task is real, carries the conflict in its workspace, and hangs under
-    # the caller's 1:1 room rather than polluting the project's topic list.
-    t = client.get(f"/topics/{tid}").json()["data"]
+    # The work is real, carries the conflict in its workspace, and hangs in the
+    # caller's 1:1 room rather than polluting the project's topic list.
+    #
+    # Read AS alice: it is a thread in a private room, and reading a thread is
+    # authorized against the room it lives in — which is the point of a private
+    # room. An anonymous read used to pass because the work was its own topic
+    # and the private-ness stopped at the parent.
+    t = client.get(f"/topics/{tid}", headers=_owner(client, "alice")).json()["data"]
     assert t["title"] == "解决同步上游冲突"
     body = (ws.topic_worktree(puid, _uuid.UUID(tid)) / "hello.txt").read_text()
     assert "<<<<<<<" in body
@@ -429,7 +436,6 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
     import uuid as _uuid
 
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.service import AgentService
     from app.domain.scheduler.service import SchedulerService
     from app.domain.workspace import service as ws
 
@@ -439,9 +445,9 @@ async def test_scheduler_syncs_linked_upstreams_with_nobody_pressing_the_button(
 
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=AgentService(model="stub"),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     result = await SchedulerService(chat_service=chat).sync_upstreams()
 
@@ -459,7 +465,6 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
     import uuid as _uuid
 
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.service import AgentService
     from app.domain.scheduler.service import SchedulerService
     from app.domain.workspace import service as ws
 
@@ -476,9 +481,9 @@ async def test_scheduler_hands_a_conflicting_sync_to_cheese(client, tmp_path):
 
     chat = ChatService(
         session_factory=client.test_factory,
-        agent=AgentService(model="stub"),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     result = await SchedulerService(chat_service=chat).sync_upstreams()
 

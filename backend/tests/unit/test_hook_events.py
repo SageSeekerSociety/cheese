@@ -1,8 +1,11 @@
 """Hook → AgentEvent translation + the per-topic hook queue router."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
-from app.domain.agent.hook_events import (
+from app.domain.agent.harness.claude_code.hook_events import (
+    RECORDED_AT_KEY,
     HookRouter,
     MessageAssembler,
     translate_hook,
@@ -280,3 +283,69 @@ def test_drain_suppresses_blank_partials():
     asm = MessageAssembler()
     assert asm.add(_flush("m1", 0, "   ", eid="e0")) is None
     assert asm.drain() == []
+
+
+# --- 说出口的时刻，不是拼装完成的时刻 -----------------------------------------
+# A message is only known to be COMPLETE once something after it arrives, so the
+# moment assembly finishes is systematically later than the moment 芝士 said the
+# words — by however long the tool call that follows took to reach us. The room
+# sorts on the block's timestamp, so using the later one files a message behind
+# the tool call it actually introduced (observed live: 「先看代码链路。」 rendered
+# between the two greps it announced).
+
+
+def _stamped(mid: str, idx: int, delta: str, *, final: bool, at=None) -> dict:
+    hook = _flush(mid, idx, delta, final=final)
+    if at is not None:
+        hook[RECORDED_AT_KEY] = at
+    return hook
+
+
+def test_an_assembled_message_is_stamped_when_it_started_not_when_it_finished():
+    started = datetime(2026, 8, 23, 15, 57, 47, tzinfo=UTC)
+    finished = datetime(2026, 8, 23, 15, 58, 30, tzinfo=UTC)
+    assembler = MessageAssembler()
+
+    assert assembler.add(_stamped("m1", 0, "先看", final=False, at=started)) is None
+    message = assembler.add(_stamped("m1", 1, "代码链路。", final=True, at=finished))
+
+    assert isinstance(message, AgentMessage)
+    assert message.text == "先看代码链路。"
+    assert message.at == started
+
+
+def test_a_flush_that_arrives_late_does_not_move_the_message_later():
+    """Flushes can arrive out of order — a retried spool file lands after the
+    ones behind it. The stamp is the earliest, not the first one handled."""
+    early = datetime(2026, 8, 23, 15, 57, 47, tzinfo=UTC)
+    late = datetime(2026, 8, 23, 15, 57, 49, tzinfo=UTC)
+    assembler = MessageAssembler()
+
+    assert assembler.add(_stamped("m1", 1, "世界", final=True, at=late)) is None
+    message = assembler.add(_stamped("m1", 0, "你好", final=False, at=early))
+
+    assert isinstance(message, AgentMessage)
+    assert message.at == early
+
+
+def test_a_message_drained_by_a_stop_keeps_its_own_start_time():
+    started = datetime(2026, 8, 23, 15, 57, 47, tzinfo=UTC)
+    assembler = MessageAssembler()
+    assembler.add(_stamped("m1", 0, "半句话", final=False, at=started))
+
+    events = assembler.translate(
+        {"hook_event_name": "Stop", RECORDED_AT_KEY: started + timedelta(minutes=5)}
+    )
+
+    drained = [e for e in events if isinstance(e, AgentMessage)]
+    assert [m.at for m in drained] == [started]
+
+
+def test_an_unstamped_hook_falls_back_to_now():
+    """The live path handles a hook as it arrives, so it stamps nothing and
+    'now' is the honest answer. Only a backfill pass has to say otherwise."""
+    before = datetime.now(UTC)
+    message = MessageAssembler().add(_stamped("m1", 0, "你好", final=True))
+    assert isinstance(message, AgentMessage)
+    assert message.at is not None
+    assert before <= message.at <= datetime.now(UTC)

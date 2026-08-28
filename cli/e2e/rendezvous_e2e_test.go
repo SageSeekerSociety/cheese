@@ -274,6 +274,7 @@ func startRendezvousClaude(t *testing.T) *rvFixture {
 	sock := filepath.Join(sockDir, "s.sock")
 	const token = "e2e-rendezvous-token"
 
+	isolateTmux(t)
 	m, err := terminal.NewManager()
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -605,6 +606,7 @@ func TestRendezvousAbsentWithoutTheBackendSwitch(t *testing.T) {
 	defer os.RemoveAll(sockDir)
 	sock := filepath.Join(sockDir, "s.sock")
 
+	isolateTmux(t)
 	m, err := terminal.NewManager()
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)

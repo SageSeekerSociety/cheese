@@ -61,8 +61,10 @@ def test_upgrade_block_to_topic(client):
     assert r.status_code == 200
     _wait_work_idle()  # kickoff runs in the background; don't race its writes
     new_topic = r.json()["data"]
-    assert new_topic["parent_id"] == topic["id"]
-    assert new_topic["kind"] == "task"  # work inside a room, not a nested room
+    # Work inside the room, not a room of its own: upgrading a message in a room
+    # dispatches a thread, and a thread names its room rather than a parent in a
+    # tree — work does not nest, so there is no tree left to be in.
+    assert new_topic["room_id"] == topic["id"]
 
     # The upgraded block IS the task: preset verbatim as the new topic's doc.
     doc = client.get(f"/topics/{new_topic['id']}/doc").json()["data"]
@@ -89,9 +91,9 @@ def test_upgrade_block_to_topic(client):
 
 
 def test_upgrade_doc_node_to_subtopic(client):
-    # 自上而下拆解 (eval A2): a paragraph in the parent doc is upgraded into a
-    # nested subtopic, and the node stays in place as a live-ref (its
-    # upgraded_to_topic_id points at the new subtopic).
+    # 自上而下拆解 (eval A2): a paragraph in the room's doc is upgraded into a
+    # thread of work, and the node stays in place as a live-ref (its
+    # upgraded_to_task_id points at the new thread).
     p = _project(client)
     topic = client.post(
         "/topics", json={"project_id": p["id"], "title": "推荐系统"}
@@ -102,6 +104,7 @@ def test_upgrade_doc_node_to_subtopic(client):
         json={
             "content": "## 拆解\n\n数据清洗\n\n特征工程\n\n模型训练",
             "author": "user-1",
+            "expected_version": 0,
         },
     )
     nodes = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
@@ -112,13 +115,16 @@ def test_upgrade_doc_node_to_subtopic(client):
     assert r.status_code == 200
     _wait_work_idle()
     sub = r.json()["data"]
-    assert sub["parent_id"] == topic["id"]
-    assert sub["kind"] == "task"
+    assert sub["room_id"] == topic["id"]
 
     # The doc node is now a live-ref to the subtopic, in place.
     nodes2 = client.get(f"/topics/{topic['id']}/docs").json()["data"]["data"]
     ref = next(n for n in nodes2 if n["id"] == target["id"])
-    assert ref["upgraded_to_topic_id"] == sub["id"]
+    # The link points at the THREAD now. Two columns rather than one holding
+    # either kind of id: both are real foreign keys, and a single untyped column
+    # would be a pointer the database cannot check into a table it cannot name.
+    assert ref["upgraded_to_task_id"] == sub["id"]
+    assert ref["upgraded_to_topic_id"] is None
     assert ref["content"] == "特征工程"  # text unchanged; only the link is added
 
 
@@ -143,7 +149,7 @@ def test_archived_topic_is_frozen(client):
     # Editing the frozen topic's doc is rejected.
     r = client.put(
         f"/topics/{topic['id']}/doc",
-        json={"content": "改一下", "author": "alice"},
+        json={"content": "改一下", "author": "alice", "expected_version": 0},
     )
     assert r.status_code == 422
 
@@ -196,7 +202,11 @@ def test_split_seeds_brief_doc_and_kicks_off_the_分身(client):
     ).json()["data"]
     client.put(
         f"/topics/{topic['id']}/doc",
-        json={"content": "## 目标\n\n给校园二手书平台做推荐", "author": "user-1"},
+        json={
+            "content": "## 目标\n\n给校园二手书平台做推荐",
+            "author": "user-1",
+            "expected_version": 0,
+        },
     )
 
     sub = client.post(
@@ -253,15 +263,18 @@ def test_split_and_return_conclusion(client):
     sub = client.post(
         f"/topics/{topic['id']}/split", json={"title": "实现数据清洗"}
     ).json()["data"]
-    assert sub["parent_id"] == topic["id"]
-    assert sub["kind"] == "task"
+    # A thread in the room, not a room of its own: it names the room it hangs
+    # in, and it opens as work that is still going.
+    assert sub["room_id"] == topic["id"]
+    assert sub["status"] == "open"
     # Let the 分身's auto-kickoff finish before writing more to the shared
     # in-memory DB (otherwise the two interleave on one SQLite connection).
     _wait_work_idle()
 
-    # Sub-topic shows up under children.
-    children = client.get(f"/topics/{topic['id']}/children").json()["data"]["data"]
-    assert any(c["id"] == sub["id"] for c in children)
+    # It shows up in the room's task list — `children` is rooms under rooms,
+    # which is exactly what a thread is not.
+    tasks = client.get(f"/topics/{topic['id']}/tasks").json()["data"]["data"]
+    assert any(t["id"] == sub["id"] for t in tasks)
 
     # Conclusion flows back to the parent topic.
     r = client.post(
@@ -288,7 +301,7 @@ def test_split_and_return_conclusion(client):
     # C4: the conclusion is also woven into the parent's living doc …
     doc = client.get(f"/topics/{topic['id']}/doc").json()["data"]
     assert doc is not None and "数据清洗完成" in doc["content"]
-    assert "子话题结论" in doc["content"]
+    assert "支线结论" in doc["content"]
     # … and the coordinator (本体) is notified.
     notifs = client.get(f"/projects/{p['id']}/alerts").json()["data"]["data"]
     assert any("实现数据清洗" in n["title"] for n in notifs)

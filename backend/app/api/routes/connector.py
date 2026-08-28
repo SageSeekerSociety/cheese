@@ -213,7 +213,7 @@ async def agent_socket(
     try:
         from app.api.deps import get_chat_service
 
-        await get_chat_service().recover_hook_subscriptions(device.device_id)
+        await get_chat_service().recover_sessions(device.device_id)
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception(
             "hook subscription recovery failed for device %s", device.device_id
@@ -228,7 +228,8 @@ async def agent_socket(
         await device_hub.detach_device(device.device_id, transport)
 
 
-# --- 现场 viewer: a browser watches a device screen's real terminal (read-only) ----
+# --- 现场 viewer: a browser watches a device screen's real terminal, and can type
+# into it. Read-only is where this is GOING (see docs/where-a-turn-runs.md §6) --
 
 
 class _WebSocketViewerTransport:

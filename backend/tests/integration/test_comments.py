@@ -40,7 +40,7 @@ def test_comment_anchors_to_doc_node_and_is_not_in_timeline(client):
     # Build the doc tree, grab a node to anchor to.
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 目标\n\n做推荐系统", "author": "u"},
+        json={"content": "# 目标\n\n做推荐系统", "author": "u", "expected_version": 0},
     )
     nodes = client.get(f"/topics/{tid}/docs").json()["data"]["data"]
     anchor = nodes[0]["id"]
@@ -66,7 +66,11 @@ def test_comment_stores_selected_quote(client):
     tid = _topic(client)
     client.put(
         f"/topics/{tid}/doc",
-        json={"content": "# 目标\n\n做一个课程推荐系统", "author": "u"},
+        json={
+            "content": "# 目标\n\n做一个课程推荐系统",
+            "author": "u",
+            "expected_version": 0,
+        },
     )
     nodes = client.get(f"/topics/{tid}/docs").json()["data"]["data"]
     anchor = nodes[1]["id"]  # the paragraph node
@@ -96,7 +100,10 @@ def test_comment_requires_content(client):
 def test_comment_rejects_foreign_anchor(client):
     tid = _topic(client)
     other = _topic(client)
-    client.put(f"/topics/{other}/doc", json={"content": "# X", "author": "u"})
+    client.put(
+        f"/topics/{other}/doc",
+        json={"content": "# X", "author": "u", "expected_version": 0},
+    )
     foreign = client.get(f"/topics/{other}/docs").json()["data"]["data"][0]["id"]
     r = client.post(f"/topics/{tid}/comments", json={"anchor": foreign, "content": "x"})
     assert r.status_code == 422

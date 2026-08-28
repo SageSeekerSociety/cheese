@@ -1,13 +1,13 @@
-"""The GitHub App minter: sandboxes get read-only, short-lived, cached tokens.
+"""The GitHub App minter: agents get short-lived, cached, unshrunk tokens.
 
 Functional: a real RSA key signs the app JWT, a mock GitHub verifies what the
-minter sends (narrowed permissions, correct installation), and the cache is
+minter sends (which permissions, which installation), and the cache is
 observable through how many mints reach "GitHub".
 
-The permission narrowing is the load-bearing part. GitHub rejects the *whole*
-mint with 422 when any requested permission was never granted to the
-installation, so what the sandbox asks for has to be intersected with what the
-App actually holds — and the intersection must never let a write level through.
+Matching the installation's grants is the load-bearing part. GitHub rejects the
+*whole* mint with 422 when any requested permission was never granted, so
+asking for exactly the grant map is the one request that always survives — and
+it means an admin adding a permission reaches agents with no deploy.
 """
 
 import json
@@ -24,7 +24,7 @@ from app.domain.agent.github_app import GitHubAppError, GitHubAppTokens
 
 # What `cheesex-app` was actually granted on SageSeekerSociety, read off
 # `GET /orgs/{org}/installations` on 2026-08-12. Note what is NOT here:
-# `issues`. Until an org admin adds it, no sandbox token can carry it, and
+# `issues`. Until an org admin adds it, no agent token can carry it, and
 # asking anyway would 422 the mint and take CI-log reading down with it.
 _CHEESEX_APP_GRANTS = {
     "actions": "read",
@@ -99,7 +99,7 @@ def _iso_in(seconds: float) -> str:
 
 
 @pytest.mark.anyio
-async def test_mint_asks_for_read_on_everything_the_app_grants(rsa_key_pem):
+async def test_mint_asks_for_everything_the_app_grants(rsa_key_pem):
     key_path, public = rsa_key_pem
     mints: list[dict] = []
     minter = GitHubAppTokens(
@@ -108,29 +108,34 @@ async def test_mint_asks_for_read_on_everything_the_app_grants(rsa_key_pem):
         installation_id=152342238,
         transport=_github(mints, public),
     )
-    token, expires_at = await minter.readonly_token()
+    token, expires_at = await minter.installation_token()
 
     assert token == "ghs_test_1"
     assert expires_at  # ISO string
     [mint] = mints
     assert mint["claims"]["iss"] == "4533864"
-    # contents and pull_requests are DOWNGRADED (the App holds write), issues
-    # is dropped entirely (the App holds nothing), workflows is never wanted.
-    assert mint["body"] == {
-        "permissions": {
-            "actions": "read",
-            "checks": "read",
-            "contents": "read",
-            "metadata": "read",
-            "pull_requests": "read",
-        }
-    }
+    # Nothing is downgraded and nothing is dropped: what the installation holds
+    # is what the token carries.
+    assert mint["body"] == {"permissions": _CHEESEX_APP_GRANTS}
     assert "/app/installations/152342238/access_tokens" in mint["url"]
 
 
 @pytest.mark.anyio
-async def test_a_sandbox_token_never_asks_for_write(rsa_key_pem):
-    """Even when the installation would happily hand over write on everything."""
+async def test_an_agent_token_asks_for_write_when_the_installation_holds_it(
+    rsa_key_pem,
+):
+    """This test used to assert the exact opposite — that every level asked for
+    was `read`, and that `workflows` and `administration` were absent whatever
+    the installation held. That was the one line between an agent and the App's
+    write grants, and it is deliberately gone (Zhifei, 2026-08-27).
+
+    The reason it is not merely relaxed but inverted: with a read-only token an
+    agent cannot push its own branch or open its own PR, so the last step of
+    every piece of work is handed back to a human or to the backend. The
+    platform's stalls have all come from a credential being too small
+    (`docs/agent-principles.md` §2), so the credential now carries the
+    installation's grants verbatim — including any an admin adds later, which
+    is why the generous map below is asserted in full rather than filtered."""
     key_path, public = rsa_key_pem
     mints: list[dict] = []
     generous = dict.fromkeys(
@@ -143,16 +148,10 @@ async def test_a_sandbox_token_never_asks_for_write(rsa_key_pem):
         installation_id=2,
         transport=_github(mints, public, granted=generous),
     )
-    await minter.readonly_token()
+    await minter.installation_token()
 
     [mint] = mints
-    asked = mint["body"]["permissions"]
-    assert set(asked.values()) == {"read"}, asked
-    # Named individually because these two are not merely write-level: they
-    # would let an agent rewrite the CI that gates its own work, and change the
-    # repo's settings. Neither belongs in the sandbox set at any level.
-    assert "workflows" not in asked
-    assert "administration" not in asked
+    assert mint["body"]["permissions"] == generous
 
 
 @pytest.mark.anyio
@@ -160,25 +159,17 @@ async def test_issues_read_arrives_with_the_grant_no_deploy_needed(rsa_key_pem):
     """The org-admin half of this change needs no code half."""
     key_path, public = rsa_key_pem
     mints: list[dict] = []
+    granted = _CHEESEX_APP_GRANTS | {"issues": "read"}
     minter = GitHubAppTokens(
         app_id=1,
         private_key_path=key_path,
         installation_id=2,
-        transport=_github(
-            mints, public, granted=_CHEESEX_APP_GRANTS | {"issues": "read"}
-        ),
+        transport=_github(mints, public, granted=granted),
     )
-    await minter.readonly_token()
+    await minter.installation_token()
 
     assert mints[0]["body"]["permissions"]["issues"] == "read"
-    assert await minter.sandbox_permissions() == {
-        "actions": "read",
-        "checks": "read",
-        "contents": "read",
-        "issues": "read",
-        "metadata": "read",
-        "pull_requests": "read",
-    }
+    assert await minter.granted_permissions() == granted
 
 
 @pytest.mark.anyio
@@ -194,8 +185,8 @@ async def test_reported_permissions_match_what_was_minted(rsa_key_pem):
         installation_id=2,
         transport=_github(mints, public, grant_lookups=lookups),
     )
-    await minter.readonly_token()
-    reported = await minter.sandbox_permissions()
+    await minter.installation_token()
+    reported = await minter.granted_permissions()
 
     assert reported == mints[0]["body"]["permissions"]
     assert "issues" not in reported  # honest about what is missing today
@@ -204,8 +195,9 @@ async def test_reported_permissions_match_what_was_minted(rsa_key_pem):
 
 @pytest.mark.anyio
 async def test_write_token_is_sent_unnarrowed(rsa_key_pem):
-    """The backend's own write mint must fail loudly at GitHub if a grant was
-    revoked, not quietly come back weaker and die later at `git push`."""
+    """The write mint names its permissions instead of taking the grant map, so
+    that a revoked one fails loudly at GitHub rather than quietly coming back
+    weaker and dying later at `git push`."""
     key_path, public = rsa_key_pem
     mints: list[dict] = []
     lookups: list[str] = []
@@ -241,8 +233,8 @@ async def test_token_is_cached_until_near_expiry(rsa_key_pem):
         installation_id=2,
         transport=_github(mints, public, grant_lookups=lookups),
     )
-    first, _ = await minter.readonly_token()
-    second, _ = await minter.readonly_token()
+    first, _ = await minter.installation_token()
+    second, _ = await minter.installation_token()
     assert first == second
     assert len(mints) == 1  # the burst cost one upstream mint
     assert len(lookups) == 1  # and one permission lookup, not one per call
@@ -260,8 +252,8 @@ async def test_near_expiry_token_is_reminted(rsa_key_pem):
         installation_id=2,
         transport=_github(mints, public, expires_in_s=600),
     )
-    first, _ = await minter.readonly_token()
-    second, _ = await minter.readonly_token()
+    first, _ = await minter.installation_token()
+    second, _ = await minter.installation_token()
     assert len(mints) == 2
     assert second != first
 
@@ -278,7 +270,7 @@ async def test_github_refusal_surfaces_as_an_error(rsa_key_pem):
         ),
     )
     with pytest.raises(GitHubAppError, match="401"):
-        await minter.readonly_token()
+        await minter.installation_token()
 
 
 @pytest.mark.anyio
@@ -302,8 +294,8 @@ async def test_a_blip_reading_grants_does_not_shrink_the_token(
             outage=outage,
         ),
     )
-    before = await minter.sandbox_permissions()
+    before = await minter.granted_permissions()
     assert "issues" in before
 
     outage["on"] = True
-    assert await minter.sandbox_permissions() == before
+    assert await minter.granted_permissions() == before

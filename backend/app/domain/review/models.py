@@ -23,6 +23,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+from app.domain.review.notes import NoteCode
 
 
 class AcceptStatus(enum.StrEnum):
@@ -69,8 +70,25 @@ class GateOutcome(enum.StrEnum):
 class AcceptCard(UuidPk, Timestamps, Base):
     __tablename__ = "accept_cards"
 
+    # The room the card is read in. A card filed for a piece of work names its
+    # thread below; a card filed for the room itself leaves that NULL.
     topic_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("topics.id", ondelete="CASCADE"), index=True
+    )
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    # 这张卡交付的是哪一棵树 —— 一棵树 = 一个分支 = 一个 PR = 一批活. The room
+    # is where the card is READ; the tree is what it delivers, and with more
+    # than one tree per room those stop being the same answer. "One card at a
+    # time" is a rule about not running two PRs on one branch, so it is scoped
+    # here rather than to the room — scoping it to the room would mean a room
+    # could never open a second PR, which is what a second tree was for.
+    #
+    # Nullable: `SET NULL`, so a card outlives the tree it delivered, and a
+    # historical card whose tree was never created has no honest value.
+    tree_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("work_trees.id", ondelete="SET NULL"), nullable=True, index=True
     )
     # Routed reviewer (spec C5): the specific person asked to accept.
     reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)
@@ -95,6 +113,18 @@ class AcceptCard(UuidPk, Timestamps, Base):
         DateTime(timezone=True), nullable=True
     )
     note: Mapped[str] = mapped_column(Text, default="")
+    # 卡此刻停在什么上 (review/notes.py)。`note` 是给人看的一句话，这一列是给代码
+    # 看的状态——两者分开的理由：它们过去是同一个字段，判断靠 `note.startswith(带
+    # emoji 的前缀)`，于是改一句文案就能改掉一次判断，而没有任何东西会红。NULL =
+    # 这条 note 只是一句交代，没有代码要据此分支。
+    note_code: Mapped[NoteCode | None] = mapped_column(
+        Enum(NoteCode, native_enum=False, length=32), nullable=True
+    )
+    # 平台已经替这张卡自动换过几次基。封顶用 (review/services.py)：换基换不上来说
+    # 明 main 移动得比 CI 还快，得叫人。曾经是数 `note` 里 `⟲` 的个数，而 `note`
+    # 每被别的状态覆写一次、每被换基自己推动 head 一次就清空——计数器归零，上限
+    # 永远够不着，平台无限换基下去。
+    rebase_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     # 机器闸门 (eval C2): when the project's check_command STARTED running for
     # this card. Deliberately not "when the card was filed" (that is
     # `created_at`) — the gap between the two is queueing + worktree

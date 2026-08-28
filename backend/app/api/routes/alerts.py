@@ -27,6 +27,7 @@ from app.domain.alert.schemas import (
     ResolveIn,
 )
 from app.domain.alert.services import AlertService
+from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="", tags=["alerts"])
 
@@ -61,6 +62,18 @@ async def create_notification(
     route checks the credential itself rather than leaning on the middleware
     gate alone (see ``require_verified_caller``)."""
     await resolver.require_verified_caller(project_id=project_id)
+    # `alerts.topic_id` is a FK to `topics`, and a thread is not a row there —
+    # so the place id every agent has (`$CHEESE_TOPIC`, a thread's id for a
+    # 分身) violated the constraint and `cheese notify` 500ed for all of them.
+    # An alert is addressed to a person rather than to a place, so the room is
+    # the honest thing to point it at. It is a narrowing: answering a decision
+    # request posts 【决策】back into this topic, so a thread's question is
+    # answered in the room around it instead of in the thread. Carrying the
+    # thread would take a `task_id` column of its own, the way blocks and usage
+    # already have one.
+    topic_id = body.topic_id
+    if topic_id is not None:
+        topic_id = (await TopicService(db).place_or_404(topic_id)).room_id
     alert = await AlertService(db).create(
         project_id=project_id,
         level=body.level,
@@ -68,7 +81,7 @@ async def create_notification(
         title=body.title,
         body=body.body,
         target_handle=body.target_handle,
-        topic_id=body.topic_id,
+        topic_id=topic_id,
         payload=body.payload,
     )
     return ok(_dump(alert))

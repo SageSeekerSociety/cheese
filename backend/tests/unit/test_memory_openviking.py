@@ -10,7 +10,7 @@ import pytest
 from app.api.routes.memory import _decode_uri, _encode_uri
 from app.core.config import settings
 from app.core.errors import ValidationError
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.models import MemoryLayer, MemoryScope
 from app.domain.memory.openviking_store import (
     OpenVikingMemoryStore,
     _OpenVikingRuntime,
@@ -48,6 +48,27 @@ def test_memories_uri_shape():
     assert memories_uri(MemoryScope.user, "andyl") == (
         "viking://user/user-andyl/memories"
     )
+
+
+def test_the_core_layer_lives_in_a_space_of_its_own():
+    """OpenViking's extractor owns placement and wording inside a space, so a
+    marker written into a card could not be trusted later. Which space a card
+    is in is ours — and it is also what makes reading the whole core layer back
+    (once per turn, in full) a listing instead of a search."""
+    facts = memories_uri(MemoryScope.user, "andyl")
+    core = memories_uri(MemoryScope.user, "andyl", MemoryLayer.core)
+
+    assert core != facts
+    assert core == "viking://user/user-andyl-core/memories"
+
+
+@pytest.mark.anyio
+async def test_a_core_card_is_still_prunable():
+    """The memory page lists both layers, so its delete has to reach both."""
+    from app.domain.memory.openviking_store import _URI_RE
+
+    uri = f"{memories_uri(MemoryScope.user, 'andyl', MemoryLayer.core)}/events/x.md"
+    assert _URI_RE.match(uri) is not None
 
 
 # --- ov.conf generation ---------------------------------------------------
@@ -141,6 +162,7 @@ async def test_openviking_listing_covers_a_named_agent_pool(monkeypatch):
                 "rel_path": "events/x.md",
                 "abstract": f"{scope.value} 记的",
                 "mod_time": "2026-01-01T00:00:00+00:00",
+                "layer": "fact",
             }
         ]
 

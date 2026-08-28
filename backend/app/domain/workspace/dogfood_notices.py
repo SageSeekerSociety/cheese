@@ -7,7 +7,7 @@ background and, once it exits, posts what actually happened (deployed /
 rolled back / unknown) into the topic's timeline, so whoever accepted the
 card learns the outcome without SSHing into the dev box.
 
-Unlike sandbox_notices' pure best-effort style, a dropped notice here is worse
+Unlike a courtesy notice's pure best-effort style, a dropped notice here is worse
 (it's the only signal the accepted card silently rolled back), so delivery is
 retried before giving up.
 """
@@ -19,6 +19,16 @@ import uuid
 from pathlib import Path
 
 from app.core.db import async_session_factory
+from app.domain.agent.platform_notices import (
+    EVENT_DEPLOY_DONE,
+    EVENT_DEPLOY_FAILED,
+    SEVERITY_ERROR,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.agent.runtime import get_broker
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -56,7 +66,7 @@ async def watch_dogfood_push(
             "failed to collect on-dogfood-push.sh output for topic %s", topic_id
         )
         text = None
-    await _post_with_retries(topic_id, _compose_message(text, branch))
+    await _post_with_retries(topic_id, *_compose_message(text, branch))
 
 
 async def _wait_for_output(
@@ -79,25 +89,58 @@ async def _wait_for_output(
         return None
 
 
-def _compose_message(text: str | None, branch: str) -> str:
+def _compose_message(text: str | None, branch: str) -> tuple[str, dict]:
+    """房间那一行 + 展开区。改动去了哪、要人做什么，都在展开区里。"""
+    kept = f"改动保留在 {branch} 分支，没有丢。"
     if text is None:
         return (
-            "⚠️ 部署结果未知：采纳后触发的部署脚本没有在预期时间内结束，或日志读取"
-            f"失败，无法确认改动（分支 {branch}）是否已部署，请人工检查 "
-            "tmp_dogfood_push.log。"
+            "部署结果未知",
+            notice(
+                EVENT_DEPLOY_FAILED,
+                severity=SEVERITY_WARN,
+                who=WHO_HUMAN,
+                detail=(
+                    "采纳后触发的部署脚本没有在预期时间内结束，或日志读不出来，"
+                    f"无法确认分支 {branch} 是否已经部署。"
+                    "请人工检查 tmp_dogfood_push.log。"
+                ),
+                detail_label="怎么查",
+            ),
         )
     if _DONE_MARKER in text:
-        return f"✅ 部署成功，现在线上运行的是 commit {_extract_commit(text)}。"
+        commit = _extract_commit(text)
+        return (
+            "部署成功",
+            notice(
+                EVENT_DEPLOY_DONE,
+                severity=SEVERITY_INFO,
+                who=WHO_PLATFORM,
+                detail=f"现在线上运行的是 commit {commit}。",
+                detail_label="部署了什么",
+            ),
+        )
     reason = _last_reason_line(text)
     if _CONFLICT_MARKER in reason or _LOCK_TIMEOUT_MARKER in reason:
         return (
-            f"❌ 采纳后的部署未能完成：{reason}\n改动保留在 {branch} 分支，没有丢，"
-            "需要人工排查。"
+            "采纳后的部署未能完成",
+            notice(
+                EVENT_DEPLOY_FAILED,
+                severity=SEVERITY_ERROR,
+                who=WHO_HUMAN,
+                detail=f"{reason}\n{kept}需要人工排查。",
+                detail_label="部署日志",
+            ),
         )
     # ROLLBACK, or any other outcome we don't recognize — never claim success.
     return (
-        f"⚠️ 检查未通过，已回滚：{reason}\n改动保留在 {branch} 分支，没有丢，"
-        "需要人工排查为什么检查没过。"
+        "检查未通过，部署已回滚",
+        notice(
+            EVENT_DEPLOY_FAILED,
+            severity=SEVERITY_ERROR,
+            who=WHO_HUMAN,
+            detail=f"{reason}\n{kept}需要人工排查为什么检查没过。",
+            detail_label="部署日志",
+        ),
     )
 
 
@@ -118,7 +161,7 @@ def _last_reason_line(text: str) -> str:
     return lines[-1] if lines else "（日志为空）"
 
 
-async def _post_with_retries(topic_id: uuid.UUID, content: str) -> None:
+async def _post_with_retries(topic_id: uuid.UUID, content: str, meta: dict) -> None:
     last_exc: Exception | None = None
     for delay in _RETRY_DELAYS_SECONDS:
         if delay:
@@ -135,6 +178,7 @@ async def _post_with_retries(topic_id: uuid.UUID, content: str) -> None:
                     author_type=AuthorType.system,
                     content=content,
                     kind=BlockKind.event,
+                    meta=meta,
                 )
                 payload = BlockOut.model_validate(block).model_dump(mode="json")
                 await session.commit()

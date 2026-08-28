@@ -37,6 +37,6 @@ curl -sSL https://github.com/jj-vcs/jj/releases/download/v0.43.0/jj-v0.43.0-x86_
 
 **别再花时间重新诊断它们**。三个都由 [#516](https://github.com/SageSeekerSociety/cheese/issues/516) 跟踪——正确的修法是把它们装进镜像,而不是让每个仓库在自己的文档里教人绕开。
 
-- **没有 procps**（`ps`/`pgrep`/`kill` 这些二进制不存在;bash 的 `kill` 只是内建）→ `test_machine_service.py`、`test_tmux_control.py` 里报 `FileNotFoundError: 'kill'`。
+- **没有 procps**（`ps`/`pgrep`/`kill` 这些二进制不存在;bash 的 `kill` 只是内建）→ `test_machine_service.py` 里报 `FileNotFoundError: 'kill'`。
 - **没有 openssh-client**（`ssh-keygen` 不存在）→ `test_machine_service.py` 里 21 个失败,报 `FileNotFoundError: 'ssh-keygen'`。和 procps 那个缺口在同一个文件里,所以两者看起来像一坨 22 个失败——它们不是一回事。
 - **没有 provider 凭据** → 1 个失败,`test_market_api.py::test_market_lists_ai_and_compute_pools`。一个 profile 的 `available` 是 `bool(auth_token or oauth_token)`（`app/domain/agent/profiles.py`）,所以 `settings.anthropic_auth_token` 没设时,默认 AI 池诚实地报告不可用。随便给个非空值就解决——`ANTHROPIC_AUTH_TOKEN=dummy-for-test uv run pytest tests/integration/test_market_api.py` 就绿了,过程中不会真去调 provider。

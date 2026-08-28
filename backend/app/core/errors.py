@@ -117,6 +117,17 @@ class PermissionDeniedError(ForbiddenError):
         super().__init__(message, data)
 
 
+class SudoRequiredError(ForbiddenError):
+    """This operation needs a fresh re-authentication, not just a session.
+
+    Distinct from a plain 403 because the client's answer is different: there
+    is nothing wrong with who is asking, so the fix is to send them through
+    the re-authentication screen and retry, not to tell them they lack
+    permission. The class name travels in the response body, which is what
+    the web client keys on.
+    """
+
+
 class TokenExpiredError(BaseError):
     def __init__(self, message: str = "Token has expired") -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)
@@ -213,6 +224,10 @@ async def validation_exception_handler(
 # ---------------------------------------------------------------------------
 from fastapi import FastAPI  # noqa: E402
 
+from app.core.obs import get_logger  # noqa: E402
+
+_log = get_logger("app.errors")
+
 
 class AppError(Exception):
     """Base for cheesex client-facing errors (kept for our agent/topic layer)."""
@@ -251,6 +266,34 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.code,
             content={"code": exc.code, "message": exc.message, "data": None},
+        )
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        """Anything no handler above claimed.
+
+        Without this, Starlette answers with a 21-byte ``Internal Server Error``
+        in plain text — a shape no client of ours can read, from a failure
+        nobody logged. The two facts that make such a 500 diagnosable are the
+        traceback in the backend's log and the same ``{code, message, data}``
+        envelope every other error uses, so the frontend reports 「出错了」
+        rather than parsing a JSON that isn't there.
+
+        The message is deliberately generic: what actually went wrong belongs in
+        the log, not in a response to whoever asked."""
+        _log.exception(
+            "unhandled_error",
+            path=request.url.path,
+            method=request.method,
+            error=type(exc).__name__,
+        )
+        return JSONResponse(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "code": HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": "服务器内部错误",
+                "data": None,
+            },
         )
 
     app.add_exception_handler(BaseError, base_error_handler)  # type: ignore[arg-type]

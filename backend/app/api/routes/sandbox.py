@@ -1,9 +1,13 @@
-"""Sandbox-facing endpoints for the tmux agent backend.
+"""Claude Code's way in: the hook endpoint, and the CLI a device fetches.
 
-The interactive `claude` running inside a topic's container posts Claude Code
-HTTP hooks here (settings.json `"type": "http"` hooks). This endpoint verifies a
-per-topic scoped token (same auth as the cheese CLI — app.core.sandbox_auth) and
-routes the hook payload into the topic's live screen subscription (HookRouter).
+Every screen running this harness — in a container here or on someone's enrolled
+machine — posts its hooks to this route, which verifies a per-topic scoped token
+(same auth as the cheese CLI — app.core.sandbox_auth), writes the event to that
+topic's spool, and hands the payload to its live subscription (HookRouter).
+
+This is the adapter's outward edge and it is meant to be one: a harness that
+senses itself some other way brings its own ingress rather than being squeezed
+through this one.
 
 It lives OUTSIDE /api on purpose: the cheese_token_gate middleware only guards
 /api write paths, so this route does its own token check.
@@ -19,9 +23,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import is_valid_cheese_token, scoped_token_claims
-from app.domain.agent import event_spool
 from app.domain.agent.chat import ChatService
-from app.domain.agent.hook_events import hook_router
+from app.domain.agent.harness.claude_code import append_event, hook_router
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger(__name__)
@@ -78,9 +81,22 @@ async def receive_hook(
     x_cheese_token: str = Header(default=""),
     x_cheese_event_id: str = Header(default=""),
 ) -> dict | JSONResponse:
-    """Receive one Claude Code hook for `topic_id` and hand it to that topic's
-    live screen. Responds fast (the container's hook call blocks on this): an
-    empty 200 body = "no decision", so a PreToolUse hook proceeds normally."""
+    """Record one Claude Code hook for `topic_id`, then hand it to that topic's
+    live screen.
+
+    **200 means the event is on OUR disk.** The sender treats the ack as
+    permission to delete its own copy — the device drainer does exactly that —
+    and until this route has written the spool, the only copy in the world is on
+    a machine we do not own (docs/device-self-hosting.md §0): it can go offline,
+    be wiped, or be deleted by the person who owns it. An in-memory queue is not
+    somewhere an event has been put; a process that dies between the ack and the
+    consumer takes the only remaining copy with it, and a lost `Stop` leaves that
+    turn showing as never finished. So the write comes first and its failure is
+    said out loud, because a non-200 is what keeps the event where it still
+    exists.
+
+    Responds fast (the container's hook call blocks on this): an empty 200 body =
+    "no decision", so a PreToolUse hook proceeds normally."""
     if not is_valid_cheese_token(x_cheese_token, topic_id=topic_id):
         # Say so. A rejected hook used to vanish here with no trace at all, and
         # that silence is the whole reason a deaf sandbox took days to find: the
@@ -92,8 +108,7 @@ async def receive_hook(
         # to drop quietly — it is our own agent, locked out.
         logger.warning(
             "sandbox hook rejected: token does not verify for topic %s "
-            "(box likely baked before a backend restart — see tmux_provider."
-            "_hook_token_dead)",
+            "(screen likely launched before a backend restart)",
             topic_id,
         )
         return JSONResponse(
@@ -109,33 +124,53 @@ async def receive_hook(
             {"code": 400, "message": "hook body must be a JSON object", "data": None},
             status_code=400,
         )
-    # Carry the forwarder's stable per-event id so the durable-spool reconcile can
-    # dedup this live delivery against the same event's spooled copy (idempotency).
-    if x_cheese_event_id:
-        payload["_eid"] = x_cheese_event_id
-    delivered = hook_router.push(topic_id, payload)
-    if not delivered and x_cheese_event_id:
-        # No live screen is subscribed. Park it in the
-        # topic's server-side spool so a reconcile materializes it as HISTORY —
-        # never dropped, and never replayed into a later live queue (a stale
-        # Stop would end the wrong turn). Idempotent by event-id, so a
-        # container-side spooled copy of the same event stays a no-op. Then
-        # schedule the settle that drains it: an orphaned turn's claude keeps
-        # working after a backend restart (#316), and with the sweep no longer
-        # re-prompting it, "the next turn's reconcile" may otherwise be never —
-        # its progress, and the Stop that finishes the turn, land via this.
-        claims = scoped_token_claims(x_cheese_token)
-        project = str(claims.get("p") or "") if claims else ""
+    # What the event has to be filed under. The id is the sender's stable name
+    # for it — the spool's filename, the dedup key between a live delivery and
+    # its spooled twin, and what a redelivery is recognised by; the project comes
+    # from the token because the spool is per topic under it. Without either
+    # there is nowhere to put this and nothing to call it, so the answer is the
+    # honest one rather than an ack for an event we cannot keep.
+    claims = scoped_token_claims(x_cheese_token)
+    project = str(claims.get("p") or "") if claims else ""
+    spool = None
+    if x_cheese_event_id and project:
         try:
-            event_spool.append(
-                ws.spool_dir(uuid.UUID(project), uuid.UUID(topic_id)),
-                x_cheese_event_id,
-                payload,
-            )
-            # Give a reconnecting screen first claim; settle remains the
-            # backstop when the screen never returns.
-            chat.schedule_spool_settle(uuid.UUID(topic_id), delay_s=10.0)
-        except Exception:  # noqa: BLE001 — parking is best-effort, reply stays 200
-            logger.warning("hook park failed for topic %s", topic_id, exc_info=True)
-    # Still 200 either way so claude doesn't treat it as a hook failure.
+            spool = ws.spool_dir(uuid.UUID(project), uuid.UUID(topic_id))
+        except ValueError:
+            spool = None
+    if spool is None:
+        logger.warning(
+            "sandbox hook not recorded for topic %s: it arrived without an event "
+            "id or without a project-scoped token, so there is nowhere to file it",
+            topic_id,
+        )
+        return JSONResponse(
+            {
+                "code": 400,
+                "message": "hook needs X-Cheese-Event-Id and a project-scoped token",
+                "data": None,
+            },
+            status_code=400,
+        )
+    payload["_eid"] = x_cheese_event_id
+    try:
+        append_event(spool, x_cheese_event_id, payload)
+    except OSError:
+        # Nothing else holds this event yet, so refusing the ack is the whole
+        # point: the sender keeps its copy and comes back with it.
+        logger.warning("hook spool write failed for topic %s", topic_id, exc_info=True)
+        return JSONResponse(
+            {"code": 503, "message": "hook could not be recorded", "data": None},
+            status_code=503,
+        )
+    delivered = hook_router.push(topic_id, payload)
+    if not delivered:
+        # No live screen is subscribed, so nothing will read what was just
+        # written until something goes looking. Schedule that: an orphaned turn's
+        # claude keeps working after a backend restart (#316), and with the sweep
+        # no longer re-prompting it, "the next turn's reconcile" may otherwise be
+        # never — its progress, and the Stop that finishes the turn, land via
+        # this. Delayed, so a reconnecting screen gets first claim; settle is the
+        # backstop for when it never returns.
+        chat.schedule_spool_settle(uuid.UUID(topic_id), delay_s=10.0)
     return {"code": 200, "message": "ok", "data": {"delivered": delivered}}

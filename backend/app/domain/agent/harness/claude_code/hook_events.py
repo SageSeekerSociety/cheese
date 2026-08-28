@@ -1,0 +1,451 @@
+"""Claude Code hooks → AgentEvent (tmux backend).
+
+The interactive `claude` running in a tmux session emits structured events via
+Claude Code hooks. (Command hooks, not HTTP: Claude Code blocks HTTP hooks to
+non-loopback targets, so a baked `cheese-hook` script reads the hook JSON on
+stdin and POSTs it to /sandbox/hooks/{topic}.) This module is the pure,
+docker-free core of the tmux backend:
+
+- ``translate_hook`` maps ONE hook payload to an AgentEvent (spec §9.1: the
+  platform observes 芝士 through structured events, never by parsing prose).
+- ``HookRouter`` fans hook POSTs (from the /sandbox/hooks endpoint) to the
+  long-lived sink owned by that topic's interactive screen.
+
+Event mapping:
+  SessionStart{session_id}                → AgentSessionInfo
+  PreToolUse{tool_name, tool_input}       → AgentToolUse
+  MessageDisplay{message_id,index,final,delta}
+      —— MessageAssembler ——              → AgentMessage (one WHOLE message,
+                                            assembled from its line-batch
+                                            flushes; see the class docstring)
+  PostToolUse{tool_name, tool_response}   → AgentToolResult (subagents only)
+  Stop{last_assistant_message, ...}       → AgentResult (ends the turn stream)
+"""
+
+import asyncio
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from app.domain.agent.service import (
+    AgentDeliveryFailure,
+    AgentEvent,
+    AgentMessage,
+    AgentResult,
+    AgentSessionInfo,
+    AgentToolResult,
+    AgentToolUse,
+    AgentUsage,
+)
+from app.domain.usage.tokens import input_output_tokens
+
+#: Key a caller may stamp on a hook payload to say when the harness actually
+#: recorded it. The live path leaves it off — the hook is being handled as it
+#: arrives, so "now" IS the time. A spool reconcile pass sets it, because there
+#: the events are minutes or hours old and "now" would file every recovered
+#: message at the bottom of a conversation it belongs in the middle of.
+RECORDED_AT_KEY = "_at"
+
+
+def _flush_time(hook: dict) -> datetime:
+    """When this hook payload happened."""
+    stamped = hook.get(RECORDED_AT_KEY)
+    return stamped if isinstance(stamped, datetime) else datetime.now(UTC)
+
+
+# The tools whose RETURN value the room needs (see AgentToolResult): a subagent
+# reports only to whoever spawned it, so without this the timeline shows the
+# question and never the answer. Both names are live — `Task` is the older CLI's
+# name for `Agent` and either can arrive depending on the box's image age.
+_SUBAGENT_TOOLS = {"Task", "Agent"}
+
+
+def _hook_event_name(hook: dict) -> str:
+    """The hook's event name. Claude Code sends `hook_event_name`; accept the
+    camelCase alias too so a payload-shape change doesn't silently break us."""
+    return str(hook.get("hook_event_name") or hook.get("hookEventName") or "")
+
+
+def _usage_from_hook(hook: dict) -> AgentUsage:
+    """Best-effort token accounting from a Stop payload. Interactive hooks don't
+    reliably carry usage, so this is zero unless a `usage` dict is present — the
+    turn is never blocked on missing usage (design note: 拿不到就置 0)."""
+    usage = hook.get("usage")
+    if not isinstance(usage, dict):
+        return AgentUsage()
+    # Anthropic-shaped payload: cache buckets fold into input (usage.tokens).
+    input_tokens, output_tokens = input_output_tokens(usage)
+    return AgentUsage(
+        model=str(usage.get("model") or ""),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=float(usage.get("cost_usd") or 0.0),
+    )
+
+
+def _tool_response_text(response: Any) -> str:
+    """The text a tool returned, out of whichever shape Claude Code used.
+
+    Deliberately shape-tolerant rather than shape-asserting: the payload for the
+    subagent tools has been a plain string, a list of content blocks, and a dict
+    wrapping that list at different CLI versions, and a hook we cannot read is
+    indistinguishable in the room from a subagent that returned nothing.
+    """
+    if isinstance(response, str):
+        return response.strip()
+    if isinstance(response, dict):
+        for key in ("content", "text", "output", "result"):
+            if key in response:
+                return _tool_response_text(response[key])
+        return ""
+    if isinstance(response, list):
+        parts = [_tool_response_text(item) for item in response]
+        return "\n".join(part for part in parts if part).strip()
+    return ""
+
+
+def translate_hook(hook: dict) -> AgentEvent | AgentDeliveryFailure | None:
+    """One hook payload → one AgentEvent, or None when the hook has no
+    platform-visible counterpart (e.g. PostToolUse). A returned AgentResult
+    signals the end of the turn (the Stop hook)."""
+    event = _hook_event_name(hook)
+
+    if event == "SessionStart":
+        sid = hook.get("session_id")
+        return AgentSessionInfo(session_id=str(sid)) if sid else None
+
+    if event == "PreToolUse":
+        tool_input = hook.get("tool_input")
+        eid = hook.get("_eid")
+        return AgentToolUse(
+            name=str(hook.get("tool_name") or ""),
+            input=tool_input if isinstance(tool_input, dict) else {},
+            eid=eid if isinstance(eid, str) else None,
+        )
+
+    if event == "PostToolUse":
+        # Only the subagent tools. Surfacing every tool's return would double the
+        # 现场 timeline to say what its effect already says, and a Read's return
+        # is the whole file — the room is for people to read.
+        name = str(hook.get("tool_name") or "")
+        if name not in _SUBAGENT_TOOLS:
+            return None
+        text = _tool_response_text(hook.get("tool_response"))
+        if not text:
+            return None
+        tool_input = hook.get("tool_input")
+        eid = hook.get("_eid")
+        return AgentToolResult(
+            name=name,
+            text=text,
+            description=(
+                str(tool_input.get("description") or "")
+                if isinstance(tool_input, dict)
+                else ""
+            ),
+            eid=eid if isinstance(eid, str) else None,
+        )
+
+    if event == "MessageDisplay":
+        # One FLUSH of a streaming message, not a whole message — a hook
+        # STREAM must route MessageDisplay through MessageAssembler. This
+        # branch survives as the one-hook-one-message fallback for payloads
+        # without the flush fields (older Claude Code, hand-built tests).
+        text = hook.get("delta")
+        if isinstance(text, str) and text.strip():
+            eid = hook.get("_eid")
+            return AgentMessage(text=text, eid=eid if isinstance(eid, str) else None)
+        return None
+
+    if event == "CheeseSync":
+        # A machine that owns its tree reports whether its push landed. Only the
+        # failure is surfaced: on success the work is already visible in the
+        # branch, and a message per turn saying so would be noise that trains
+        # people to skip it.
+        #
+        # This has to reach the human. A turn that ends with its work still on
+        # the machine looks identical to one that succeeded — that is what let a
+        # rejected push read as a completed turn until the machine was deleted
+        # and the work went with it.
+        if str(hook.get("status")) == "failed":
+            branch = hook.get("branch") or "the topic branch"
+            return AgentMessage(
+                text=(
+                    f"⚠️ 这轮的改动没能推回 {branch}——它还留在那台机器上，"
+                    "采纳和 diff 现在看不到它。请重试本轮；若机器被回收，改动会丢失。"
+                )
+            )
+        return None
+
+    if event == "CheeseWorkspace":
+        # The launcher had to repair, replace, or give up on the machine's
+        # checkout before the turn could start. Always surfaced: this is the one
+        # moment where the workspace an agent is about to trust is not the
+        # workspace it left, and a repair that says nothing is how a turn spends
+        # itself rewriting work that was still sitting there.
+        detail = str(hook.get("detail") or "").strip()
+        if not detail:
+            return None
+        return AgentMessage(
+            text=(
+                f"⚠️ 开工前这台机器的工作区不对劲，平台动了它：{detail}。"
+                "上一轮没推出去的东西可能不在了，先确认一遍再往下写；"
+                "被换掉的旧仓库放在 .git.broken.* 里，没有删。"
+            )
+        )
+
+    if event == "CheeseDeliveryFailed":
+        # Synthetic (device_hub, from the cheeselet's server call): the prompt
+        # driver abandoned delivery. Surfaced as a typed event the provider
+        # loop intercepts for an immediate re-send (#445) — without this, the
+        # give-up lived only in the connector's journal and the room stared at
+        # silence until the 300s no-output bound.
+        return AgentDeliveryFailure(
+            phase=str(hook.get("phase") or ""),
+            ticks=int(hook.get("ticks") or 0),
+        )
+
+    if event == "CheeseDeliveryRetried":
+        # Synthetic (same channel): delivery eventually succeeded but needed
+        # noticeably many re-issues — the pane's input path is flaky. Visible
+        # so a wobbling machine is seen before it produces a dead turn.
+        tries = int(hook.get("ticks") or 0)
+        return AgentMessage(
+            text=(
+                f"⚠️ 提示词经过 {tries} 次重试才送进这台机器的会话——"
+                "机器的终端链路在抖，值得看一眼。"
+            )
+        )
+
+    if event == "Stop":
+        sid = hook.get("session_id")
+        return AgentResult(
+            text=str(hook.get("last_assistant_message") or ""),
+            session_id=str(sid) if sid else None,
+            usage=_usage_from_hook(hook),
+        )
+
+    # Any unmapped event: nothing to surface.
+    return None
+
+
+@dataclass
+class _PendingMessage:
+    """Flushes of one streaming assistant message, keyed by flush index."""
+
+    deltas: dict[int, str] = field(default_factory=dict)
+    eids: dict[int, str | None] = field(default_factory=dict)
+    final_index: int | None = None
+    #: When the first flush of this message arrived — the moment 芝士 started
+    #: saying it, which is where it belongs in the timeline. Assembly finishes
+    #: later (a message is only known to be whole once something after it
+    #: arrives), so the completion time would file it after events it actually
+    #: preceded.
+    started_at: datetime | None = None
+
+
+class MessageAssembler:
+    """Reassemble MessageDisplay flushes into whole assistant messages.
+
+    Claude Code fires MessageDisplay once per batch of newly completed lines
+    while a message streams — NOT once per message (the spike read one flush
+    per message because its replies fit one batch; a 60-line reply arrives as
+    ~9 flushes). The payload carries the reassembly key: ``message_id`` (stable
+    across the message's flushes), ``index`` (increments per flush), ``final``
+    (exactly one flush per message), and ``delta`` (the new lines, newlines
+    included — concatenating deltas in index order reconstructs the message
+    verbatim). Verified against 2.1.224, the pinned device version, and 2.1.233.
+
+    Persisting each flush as its own chat message is what split one reply into
+    several bubbles — and what then defeated every whole-text dedup downstream,
+    because the Stop hook's ``last_assistant_message`` never matches a fragment,
+    so the full text landed AGAIN next to its own pieces. The SDK backend fixed
+    the same shape in #170 by buffering fragments to a semantic boundary; this
+    is the hooks-path equivalent, with ``final`` as the boundary.
+
+    Also absorbs at-least-once redelivery: a flush re-POSTed after a lost ack
+    arrives with the same (message_id, index) and is dropped, whether its
+    message is still pending or already assembled. Flushes may arrive out of
+    order (the drainer retries a failed file while later ones already landed);
+    a message completes only when every index up to ``final`` is present.
+
+    Payloads without the flush fields (an older Claude Code) keep the
+    historical one-hook-one-message behavior. One instance per hook stream
+    (screen subscription / spool reconcile pass); event-loop only.
+    """
+
+    # Assembled message ids kept for late-redelivery dedup. A session streams
+    # messages one at a time, so even a small window is generous.
+    _DONE_CAP = 256
+
+    def __init__(self) -> None:
+        self._pending: dict[str, _PendingMessage] = {}
+        self._done: dict[str, None] = {}
+
+    def add(self, hook: dict) -> AgentMessage | None:
+        """Fold one MessageDisplay payload in. Returns the completed message,
+        or None while it is still streaming (or the payload was blank or a
+        duplicate)."""
+        delta = hook.get("delta")
+        text = delta if isinstance(delta, str) else ""
+        eid_value = hook.get("_eid")
+        eid = eid_value if isinstance(eid_value, str) else None
+        message_id = hook.get("message_id")
+        final = hook.get("final")
+        index = hook.get("index")
+        at = _flush_time(hook)
+        if (
+            not isinstance(message_id, str)
+            or not isinstance(final, bool)
+            or not isinstance(index, int)
+        ):
+            if not text.strip():
+                return None
+            return AgentMessage(text=text, eid=eid, eids=(eid,) if eid else (), at=at)
+        if message_id in self._done:
+            return None
+        pending = self._pending.setdefault(message_id, _PendingMessage())
+        if index in pending.deltas:
+            return None
+        pending.deltas[index] = text
+        pending.eids[index] = eid
+        # Earliest wins: flushes can arrive out of order (a retried spool file
+        # lands after later ones), and what this records is when the message
+        # STARTED, not which flush happened to be handled first.
+        if pending.started_at is None or at < pending.started_at:
+            pending.started_at = at
+        if final:
+            pending.final_index = index
+        last = pending.final_index
+        if last is None or any(i not in pending.deltas for i in range(last)):
+            return None
+        del self._pending[message_id]
+        self._mark_done(message_id)
+        return self._assemble(pending)
+
+    def translate(self, hook: dict) -> list[AgentEvent | AgentDeliveryFailure]:
+        """Stream-level translation of one hook payload: MessageDisplay folds
+        into the assembler (a completed message emerges as ONE event), a Stop
+        first drains whatever is still buffered so nothing dies with the
+        buffer, and every other hook passes through ``translate_hook``."""
+        if _hook_event_name(hook) == "MessageDisplay":
+            message = self.add(hook)
+            return [message] if message is not None else []
+        event = translate_hook(hook)
+        if event is None:
+            return []
+        if isinstance(event, AgentResult):
+            return [*self.drain(), event]
+        return [event]
+
+    def drain(self) -> list[AgentMessage]:
+        """Assemble every still-pending message from the flushes that did
+        arrive (gaps collapsed), oldest first. For Stop / turn end: buffered
+        content must land rather than die with the buffer."""
+        drained: list[AgentMessage] = []
+        for message_id, pending in self._pending.items():
+            self._mark_done(message_id)
+            message = self._assemble(pending)
+            if message is not None:
+                drained.append(message)
+        self._pending.clear()
+        return drained
+
+    def pending_eids(self) -> set[str]:
+        """Event ids buffered toward messages that have not completed yet —
+        what a spool reconcile must NOT delete, so the flushes survive to the
+        pass where their message completes."""
+        return {
+            eid
+            for pending in self._pending.values()
+            for eid in pending.eids.values()
+            if eid is not None
+        }
+
+    def _mark_done(self, message_id: str) -> None:
+        self._done[message_id] = None
+        while len(self._done) > self._DONE_CAP:
+            del self._done[next(iter(self._done))]
+
+    @staticmethod
+    def _assemble(pending: _PendingMessage) -> AgentMessage | None:
+        indices = sorted(pending.deltas)
+        text = "".join(pending.deltas[i] for i in indices)
+        if not text.strip():
+            return None
+        eids = tuple(eid for i in indices if (eid := pending.eids[i]) is not None)
+        return AgentMessage(
+            text=text,
+            eid=eids[0] if eids else None,
+            eids=eids,
+            at=pending.started_at,
+        )
+
+
+@dataclass(eq=False)
+class HookSink:
+    """One screen-lifetime hook inbox."""
+
+    queue: asyncio.Queue[dict] = field(default_factory=asyncio.Queue)
+
+
+class HookRouter:
+    """Process-global router from topic id to a screen-lifetime hook sink.
+
+    The endpoint and provider run on the same asyncio loop, so ``put_nowait`` is
+    safe. Re-subscribing is idempotent: a second caller gets the existing sink
+    instead of replacing it and starving its consumer.
+    """
+
+    def __init__(self) -> None:
+        self._sinks: dict[str, HookSink] = {}
+
+    def subscribe(self, topic_id: str) -> HookSink:
+        """Return the topic's stable sink, creating it on first live screen."""
+        sink = self._sinks.get(topic_id)
+        if sink is None:
+            sink = HookSink()
+            self._sinks[topic_id] = sink
+        return sink
+
+    def unsubscribe(self, topic_id: str, sink: HookSink) -> None:
+        """Release a screen's sink without evicting a newer replacement."""
+        if self._sinks.get(topic_id) is sink:
+            self._sinks.pop(topic_id, None)
+
+    def push(self, topic_id: str, hook: dict) -> bool:
+        """Enqueue a hook payload for the topic's subscribed screen."""
+        sink = self._sinks.get(topic_id)
+        if sink is None:
+            return False
+        sink.queue.put_nowait(hook)
+        return True
+
+
+# Shared singleton: the endpoint and the provider import this same instance.
+hook_router = HookRouter()
+
+
+def usage_from_hook(hook: dict) -> AgentUsage | None:
+    """A turn's real token counts, carried back from the machine.
+
+    Deliberately NOT part of ``translate_hook``: usage is not an event in the
+    turn's stream, it is a fact about the turn. Returning it from there made the
+    type checker object, and the objection was right — the caller records it,
+    the UI never shows it.
+    """
+    # The machine is the only place these numbers exist — Claude Code writes
+    # a usage block per assistant message and the transcript dies with the
+    # host. Carrying them back is what turns "300 RMB went somewhere" into a
+    # per-project, per-turn figure.
+    # Cache reads are NOT free and they dominate; AgentUsage has no cache field,
+    # so they fold into the input count (app.domain.usage.tokens — the same
+    # arithmetic every supply uses).
+    input_tokens, output_tokens = input_output_tokens(hook, dialect="hook")
+    if input_tokens + output_tokens <= 0:
+        return None
+    return AgentUsage(
+        model=str(hook.get("model") or "unknown"),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )

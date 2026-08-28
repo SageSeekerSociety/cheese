@@ -19,10 +19,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: "10m"
-        max-file: "3"
+        tag: "{{.Name}}"
 
   valkey:
     image: valkey/valkey:8.0.2
@@ -38,10 +37,9 @@ services:
       start_period: 10s
     restart: unless-stopped
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: "10m"
-        max-file: "3"
+        tag: "{{.Name}}"
 
   backend:
     image: ghcr.io/sageseekersociety/cheese/backend:${IMAGE_TAG:-main}
@@ -77,10 +75,9 @@ services:
       retries: 3
     restart: unless-stopped
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: "10m"
-        max-file: "3"
+        tag: "{{.Name}}"
 
   frontend:
     image: ghcr.io/sageseekersociety/cheese/frontend:${IMAGE_TAG:-main}
@@ -104,10 +101,9 @@ services:
       retries: 3
     restart: unless-stopped
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: "10m"
-        max-file: "3"
+        tag: "{{.Name}}"
 
 volumes:
   postgres_data:

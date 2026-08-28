@@ -37,7 +37,14 @@ elif _db_url.startswith("postgresql+psycopg2://"):
 # env var BEFORE any app import. Production keeps the default QueuePool: one
 # process, one loop, one pool.
 _engine_kwargs: dict[str, Any] = (
-    {"poolclass": NullPool} if os.environ.get("CHEESEX_TEST_NULLPOOL") else {}
+    {"poolclass": NullPool}
+    if os.environ.get("CHEESEX_TEST_NULLPOOL")
+    else {
+        "pool_size": settings.db_pool_size,
+        "max_overflow": settings.db_max_overflow,
+        "pool_timeout": settings.db_pool_timeout_s,
+        "pool_pre_ping": settings.db_pool_pre_ping,
+    }
 )
 
 

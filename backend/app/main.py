@@ -43,6 +43,7 @@ from app.core.sandbox_auth import (
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_PLATFORM
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -54,21 +55,15 @@ configure_logging()
 async def lifespan(_: FastAPI):
     # Schema is managed by Alembic migrations. Start the deterministic scheduler
     # loop (定期巡检 / lifecycle, spec §9.1) — no-op unless the interval is set.
-    # Per-topic sandbox containers are long-lived and REUSED across backend
-    # restarts: their mounts are stable host paths (worktree + session dirs), so
-    # a redeploy must NOT reap them — that killed in-flight work and raced the
-    # first turns after a restart. The claude-sbx shim validates each container
-    # against the project's current image and recreates it only when the image
-    # changed. (reap_sandbox_containers stays available as an ops tool.)
     # Orphan sweep: resume turns the previous process died with (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
-    # ...and that reuse is exactly why the hook credential must survive a
-    # restart: a box's token is baked into the environment of its long-running
-    # `claude` at launch and never refreshed. An unpinned SANDBOX_TOKEN used to
-    # mean a fresh random secret per PROCESS, so every restart silently
-    # invalidated every existing box at once — that is fixed at the root now
-    # (`Settings.sandbox_signing_secret` derives a stable secret from
-    # jwt_secret), and there is nothing left to warn about here.
+    # A screen outlives this process, which is exactly why the hook credential
+    # must survive a restart: its token is baked into the environment of the
+    # long-running `claude` at launch and never refreshed. An unpinned
+    # SANDBOX_TOKEN used to mean a fresh random secret per PROCESS, so every
+    # restart silently invalidated every live screen at once — that is fixed at
+    # the root now (`Settings.sandbox_signing_secret` derives a stable secret
+    # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
     from app.domain.scheduler.service import (
@@ -76,9 +71,9 @@ async def lifespan(_: FastAPI):
         GateSweepRunner,
         OrphanSweepRunner,
         PrPollRunner,
-        SandboxReaperRunner,
         SchedulerRunner,
         SchedulerService,
+        ScreenReaperRunner,
         UpstreamSyncRunner,
     )
 
@@ -142,7 +137,7 @@ async def lifespan(_: FastAPI):
         )
 
     try:
-        recovered = await get_chat_service().recover_hook_subscriptions()
+        recovered = await get_chat_service().recover_sessions()
         if recovered:
             get_logger("cheesex.runtime").info(
                 "hook_subscriptions_recovered", topics=recovered
@@ -179,7 +174,7 @@ async def lifespan(_: FastAPI):
 
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
     runner.start()
-    reaper = SandboxReaperRunner(
+    reaper = ScreenReaperRunner(
         scheduler,
         settings.sandbox_reap_interval_seconds,
         settings.sandbox_idle_hours,
@@ -235,8 +230,13 @@ async def lifespan(_: FastAPI):
             )
             block = await chat.post_system_event(
                 topic_id,
-                "✅ Cloud 机器已接入，正在继续刚才的消息。",
-                meta={"event_type": "cloud_provisioning", "state": "ready"},
+                "Cloud 机器已接入，正在继续刚才的消息",
+                meta={
+                    "event_type": "cloud_provisioning",
+                    "state": "ready",
+                    "severity": SEVERITY_INFO,
+                    "who": WHO_PLATFORM,
+                },
             )
             if block is not None:
                 await get_broker().publish(
@@ -436,6 +436,15 @@ _CHEESE_WRITE_PATHS: list[tuple[str, re.Pattern[str]]] = [
     # project", because a project-scoped credential reaches every topic of it.
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/tell$")),
     ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/accept-card$")),
+    # 重推是意图，不是定时器: the poller stopped committing on a timer, so this
+    # is how an agent says "the tree is worth showing now".
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/push-fix$")),
+    # 路径声明与两把锁: who is touching what, and who is overwriting a whole
+    # file or holding the room's heavy lane right now.
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/claim$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/check-result$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/lock$")),
+    ("POST", re.compile(r"^/topics/(?P<topic>[^/]+)/unlock$")),
     # 结论卡: settled by the PARENT during its own turn, so the scoping id in
     # the URL is the receiver, not the sub-topic that produced the card.
     (

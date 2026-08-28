@@ -16,14 +16,19 @@ import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { TopicPhase } from '@/lib/topicState'
 
 import { computed, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { getProjectUsage, getTopicUsage } from '@/api'
+import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
+import { isThread } from '@/lib/place'
 import { topicPhaseBadge, topicShortId, topicStateBadge } from '@/lib/topicState'
 import { costLabel, costNote, fmtNum } from '@/lib/usageFormat'
 
 const props = defineProps<{
   topic: Topic
+  /** 打开的是一条支线时，它所在的房间——头部据此说「你在哪」。房间自己打开时为 null。 */
+  room?: Topic | null
   /** 话题此刻处在哪一段 — 施工中 / 待验收 / 交付中 / 已采纳, computed above this
    * component because it folds together the topic's status, its live turn and
    * its accept card. Absent (私聊 / 项目本体) falls back to the status alone. */
@@ -36,7 +41,12 @@ const props = defineProps<{
   focus: boolean
 }>()
 
-const emit = defineEmits<{ (e: 'toggle-focus'): void }>()
+const emit = defineEmits<{
+  (e: 'toggle-focus'): void
+  (e: 'open-topic', topicId: string): void
+}>()
+
+const { mdAndUp } = useDisplay()
 
 // 头部常驻状态条 (规则 4): where this topic stands, always on screen. It used to
 // read the topic row's `status` alone, which knows only 归档 —— 「待验收」 and
@@ -46,6 +56,10 @@ const state = computed(() => (props.phase ? topicPhaseBadge(props.phase) : topic
 const shortId = computed(() => topicShortId(props.topic.id))
 // 项目本体 is not a work topic — it has no id badge and no roster.
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
+// 打开的是房间里的一条支线。两个控件对它没有意义，而且各错各的：
+// 名册（支线没有自己的名册，`/members` 对它 404，房间那份也不是它的），
+// 算力（首轮就锁死在房间上，支线改不了）。渲染出来只会是空的或者答非所问。
+const isThreadPlace = computed(() => isThread(props.topic))
 
 // ---- 用量 popover (was the 资源 drawer) ----
 const usageOpen = ref(false)
@@ -87,88 +101,132 @@ watch(
 </script>
 
 <template>
-  <div class="topic-header">
-    <span class="topic-header__title t-title">{{ topic.title }}</span>
-    <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
-    <span class="pr-state" :class="state.cls">{{ state.label }}</span>
-    <span
-      class="status-dot"
-      :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
-      :title="connected ? '已连接' : '未连接'"
-    />
-
-    <v-spacer />
-
-    <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row. -->
-    <TopicMembers v-if="isWorkTopic" :topic-id="topic.id" :project-members="members" :me="me" />
-
-    <!-- 用量: was the 资源 drawer. -->
-    <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
-      <template #activator="{ props: menuProps }">
-        <v-btn
-          v-bind="menuProps"
-          icon="mdi-chart-box-outline"
-          size="small"
-          variant="text"
-          class="c-muted"
-          title="用量"
+  <!-- 手机上这一行不长在页面上，它**就是**顶栏那一格的内容（Teleport 进去）。
+       手机上只有一条顶栏，从不卸载：话题页自己再画一条，两条横条交替出现的时候
+       v-main 的 padding 会滑一下，整页跟着抖。← 由顶栏按路由的 backTo 出，
+       所以这里不再自己画一个。 -->
+  <Teleport to="#app-bar-slot" :disabled="mdAndUp">
+    <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
+      <!-- 支线在侧栏里没有行，所以头部是唯一能说明「你在哪个房间」的地方；
+           点它回房间，也是从一条支线走回去的唯一入口。 -->
+      <button
+        v-if="isThreadPlace && room"
+        type="button"
+        class="topic-header__room t-meta"
+        :title="`回到 ${room.title}`"
+        @click="emit('open-topic', room.id)"
+      >
+        <v-icon size="13">mdi-call-split</v-icon>
+        <span class="topic-header__room-name">{{ room.title }}</span>
+        <span class="topic-header__room-sep">/</span>
+      </button>
+      <!-- 手机上标题独占一行，编号和状态退到下面那条小字：横着平铺的话，标题在
+         390px 上只剩七个字，而它才是你要看的那个。桌面上宽度够，一行摆开更快读。 -->
+      <div class="topic-header__text">
+        <span class="topic-header__title t-title">{{ topic.title }}</span>
+        <span v-if="!mdAndUp" class="topic-header__meta t-meta">
+          <template v-if="isWorkTopic">#{{ shortId }}</template>
+          <span class="pr-state" :class="state.cls">{{ state.label }}</span>
+          <template v-if="!connected">未连接</template>
+        </span>
+      </div>
+      <template v-if="mdAndUp">
+        <span v-if="isWorkTopic" class="topic-header__num t-meta">#{{ shortId }}</span>
+        <span class="pr-state" :class="state.cls">{{ state.label }}</span>
+        <span
+          class="status-dot"
+          :class="connected ? 'status-dot--ok' : 'status-dot--muted'"
+          :title="connected ? '已连接' : '未连接'"
         />
       </template>
-      <v-card min-width="280" class="usage-card">
-        <div v-if="usageLoading" class="d-flex justify-center py-6">
-          <v-progress-circular indeterminate color="primary" size="24" />
-        </div>
-        <div v-else class="pa-3">
-          <div
-            v-for="row in [
-              { label: '本话题', u: topicUsage },
-              { label: '全项目', u: projectUsage },
-            ]"
-            :key="row.label"
-            class="mb-4"
-          >
-            <div class="t-eyebrow mb-2">{{ row.label }}</div>
-            <div v-if="row.u" class="usage-grid">
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.turns) }}</div>
-                <div class="t-meta">轮次</div>
+
+      <v-spacer />
+
+      <!-- 算力：这个话题的轮次在哪儿跑。它以前住在输入区的动作行里，可那一行是
+           「这条消息」的动作，而算力发完第一条就锁死了——是话题的属性，属于这一行。
+           手机上这一行没有它的位置，它浮在对话上方（TopicChatColumn）。 -->
+      <TopicComputePicker v-if="mdAndUp && isWorkTopic && !isThreadPlace" :key="topic.id" :topic-id="topic.id" />
+
+      <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
+           芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
+      <TopicMembers
+        v-if="isWorkTopic && !isThreadPlace"
+        :topic-id="topic.id"
+        :project-id="topic.project_id"
+        :project-members="members"
+        :me="me"
+      />
+
+      <!-- 用量: was the 资源 drawer. -->
+      <v-menu v-model="usageOpen" :close-on-content-click="false" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <v-btn
+            v-bind="menuProps"
+            icon="mdi-chart-box-outline"
+            size="small"
+            variant="text"
+            color="medium-emphasis"
+            title="用量"
+          />
+        </template>
+        <v-card min-width="280" class="usage-card">
+          <div v-if="usageLoading" class="d-flex justify-center py-6">
+            <v-progress-circular indeterminate color="primary" size="24" />
+          </div>
+          <div v-else class="pa-3">
+            <div
+              v-for="row in [
+                { label: isThreadPlace ? '这件活' : '本话题', u: topicUsage },
+                { label: '全项目', u: projectUsage },
+              ]"
+              :key="row.label"
+              class="mb-4"
+            >
+              <div class="t-eyebrow mb-2">{{ row.label }}</div>
+              <div v-if="row.u" class="usage-grid">
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.turns) }}</div>
+                  <div class="t-meta">运行次数</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.total_tokens) }}</div>
+                  <div class="t-meta">总 token</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.input_tokens) }}</div>
+                  <div class="t-meta">输入</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num">{{ fmtNum(row.u.output_tokens) }}</div>
+                  <div class="t-meta">输出</div>
+                </div>
+                <div class="usage-cell">
+                  <div class="usage-num" :title="costNote(row.u)">{{ costLabel(row.u) }}</div>
+                  <div class="t-meta">费用</div>
+                </div>
               </div>
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.total_tokens) }}</div>
-                <div class="t-meta">总 token</div>
+              <div v-else class="t-meta">暂无数据</div>
+              <div v-if="row.u && costNote(row.u)" class="t-meta mt-1">
+                {{ costNote(row.u) }}
               </div>
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.input_tokens) }}</div>
-                <div class="t-meta">输入</div>
-              </div>
-              <div class="usage-cell">
-                <div class="usage-num">{{ fmtNum(row.u.output_tokens) }}</div>
-                <div class="t-meta">输出</div>
-              </div>
-              <div class="usage-cell">
-                <div class="usage-num" :title="costNote(row.u)">{{ costLabel(row.u) }}</div>
-                <div class="t-meta">费用</div>
-              </div>
-            </div>
-            <div v-else class="t-meta">暂无数据</div>
-            <div v-if="row.u && costNote(row.u)" class="t-meta mt-1">
-              {{ costNote(row.u) }}
             </div>
           </div>
-        </div>
-      </v-card>
-    </v-menu>
+        </v-card>
+      </v-menu>
 
-    <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1) -->
-    <v-btn
-      :icon="focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
-      size="small"
-      variant="text"
-      :class="focus ? 'topic-header__on' : 'c-muted'"
-      :title="focus ? '退出专注' : '专注模式（面板全幅）'"
-      @click="emit('toggle-focus')"
-    />
-  </div>
+      <!-- 专注模式: 面板占满工作区，隐藏对话栏 (spec §7.1)。手机上不存在——那儿
+         永远只有一个窗格，没有第二栏可以让开。 -->
+      <v-btn
+        v-if="mdAndUp"
+        :icon="focus ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
+        size="small"
+        variant="text"
+        :class="focus ? 'topic-header__on' : 'c-muted'"
+        :title="focus ? '退出专注模式' : '专注模式'"
+        @click="emit('toggle-focus')"
+      />
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -185,10 +243,59 @@ watch(
   background: var(--surface);
   border-bottom: var(--app-page-header-rule);
 }
+/* 填进顶栏的那一份不画自己的高度、底色和底线——那三样归顶栏。 */
+.topic-header--bar {
+  height: 100%;
+  padding: 0;
+  background: none;
+  border-bottom: 0;
+}
+/* 房间名坐在标题左边，是「你在哪」而不是标题的一部分——所以它压到 --muted，
+   宽度也让给标题（房间名可以截，正在看的那件活的标题不该截）。 */
+.topic-header__room {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 30%;
+  color: var(--muted);
+  cursor: pointer;
+}
+.topic-header__room:hover {
+  color: var(--ink);
+}
+.topic-header__room-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topic-header__room-sep {
+  flex: none;
+  color: var(--faint);
+}
+.topic-header__text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  /* 这一块吃掉整行剩下的宽度，标题才有得截断；不写 min-width 的话 flex 子项
+     以内容为最小宽度，右边的按钮会被挤出去。 */
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
 .topic-header__title {
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topic-header__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.2;
+  overflow: hidden;
   white-space: nowrap;
 }
 .topic-header__num {

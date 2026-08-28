@@ -15,7 +15,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from app.domain.agent.device_launch import build_launch_script
+from app.domain.agent.harness.claude_code.device_launch import build_launch_script
 
 
 def _sync_body() -> str:
@@ -44,6 +44,8 @@ def _run(work: Path, remote: str, hook_log: Path) -> subprocess.CompletedProcess
 
 
 def _repo_with_one_edit(work: Path, remote: str) -> None:
+    """A workspace one commit deep with an uncommitted edit on top — the shape
+    every turn ends in, and the one whose push has to be reported."""
     for args in (
         ["init", "-q"],
         ["config", "user.email", "c@z"],
@@ -51,6 +53,9 @@ def _repo_with_one_edit(work: Path, remote: str) -> None:
         ["remote", "add", "origin", remote],
     ):
         subprocess.run(["git", *args], cwd=work, capture_output=True)
+    (work / "committed.txt").write_text("already the agent's own commit\n")
+    subprocess.run(["git", "add", "-A"], cwd=work, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=work, capture_output=True)
     (work / "agent_wrote_this.txt").write_text("the user's only copy\n")
 
 
@@ -104,7 +109,7 @@ def test_a_failed_sync_becomes_something_the_human_sees():
     the bug; it let a rejected push pass for delivered work until the machine
     was deleted and the work went with it.
     """
-    from app.domain.agent.hook_events import translate_hook
+    from app.domain.agent.harness.claude_code.hook_events import translate_hook
     from app.domain.agent.service import AgentMessage
 
     failed = translate_hook(
@@ -119,7 +124,7 @@ def test_a_failed_sync_becomes_something_the_human_sees():
 def test_a_successful_sync_stays_quiet():
     """Success needs no message — the work is in the branch already, and a
     notice every turn is noise that teaches people to ignore the warning."""
-    from app.domain.agent.hook_events import translate_hook
+    from app.domain.agent.harness.claude_code.hook_events import translate_hook
 
     assert (
         translate_hook(

@@ -50,7 +50,7 @@
 
 ### 今天 self-hosted 档的实况比 issue 描述的更重
 
-<&backend/app/domain/agent/device_launch.py> 里，设备屏幕跑的是 `bash -lc` 写一份 `~/.claude` 然后 `exec claude --dangerously-skip-permissions`——**裸在宿主上，以设备属主的身份，且预先接受了权限门**。所以这一档不是「能看见宿主」，是**以属主身份对这台机器有完全读写权**。UI 上那句实话必须按这个事实写，不是按「能看见」写。
+<&backend/app/domain/agent/harness/claude_code/device_launch.py> 里，设备屏幕跑的是 `bash -lc` 写一份 `~/.claude` 然后 `exec claude --dangerously-skip-permissions`——**裸在宿主上，以设备属主的身份，且预先接受了权限门**。所以这一档不是「能看见宿主」，是**以属主身份对这台机器有完全读写权**。UI 上那句实话必须按这个事实写，不是按「能看见」写。
 
 ---
 

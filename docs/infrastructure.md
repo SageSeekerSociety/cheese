@@ -155,6 +155,39 @@ stopped work.
 To see disk across the CI pool without ssh, run `box-diag.yml`'s `ci-pool` job —
 it prints hostname and disk per machine.
 
+## Logs — reading a container that no longer exists
+
+The dev/prod containers log to **journald**, not to a json-file. The difference
+only matters after a deploy, and then it matters completely: a json-file lives
+in the container's own directory, so `docker compose down` deletes it. Turns die
+*during* deploys, so the failures most worth reading were the ones whose
+evidence the deploy had already removed — that is how 257 turn failures on
+2026-08-18 ended up permanently unclassifiable (#574).
+
+`docker logs` works exactly as before for a *live* container. For one that is
+gone:
+
+```bash
+sudo journalctl -t cheese-backend-1 --since "2 hours ago"   # by container name
+sudo journalctl -t cheese-llm-tunnel -t cheese-api-front -f # the data plane
+sudo journalctl -t cheese-backend-1 --since "09:00" --until "09:30"
+```
+
+`sudo` (or membership of `systemd-journal`) is required — an ordinary user sees
+only their own messages, and the command returns empty rather than refusing,
+which reads exactly like "there are no logs".
+
+Retention is journald's default, `SystemMaxUse` = min(10% of the filesystem,
+4 GB). Measured on dev, the backend writes ~61 MB/day, so 4 GB is on the order
+of two months; the journal also gives back space automatically when the disk
+runs low (`SystemKeepFree`), so it cannot be the thing that fills a box.
+
+The standing data-plane pair (`cheese-llm-tunnel`, `cheese-api-front`) is
+covered too. It is deployed by `deploy/llm-tunnel/up.sh` rather than
+`deploy-docker.sh`, so its logs used to vanish whenever an operator re-ran that
+script — including across the 「container up, pipe dead」 incident (#579), whose
+first-hand account was exactly what nobody could read afterwards.
+
 ## Box ops runbook — changing backend env on a box
 
 The one rule: **containers are only ever (re)created by `deploy/deploy-docker.sh`.**
@@ -257,6 +290,44 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 The backup scripts are version-controlled, but **installing them on a box**
 (copying to `~/ops/`, systemd timers, the R2 credential in `~/ops/r2.env`) is a
 manual runbook, not automated provisioning — see `deploy/README-backup.md`.
+
+## Database encoding — always create with an explicit `ENCODING 'UTF8'`
+
+**Never let `initdb`/`CREATE DATABASE` pick the encoding from the ambient
+locale.** A box with no `LANG` set gets `SQL_ASCII`, and a `SQL_ASCII` server
+**rejects non-ASCII `\uXXXX` escapes inside `jsonb`** — which is how the first
+GitHub profile with a Chinese display name 500'd the OAuth callback (#222 →
+#233). Spell it out every time:
+
+```sql
+CREATE DATABASE <name> OWNER cheese ENCODING 'UTF8' TEMPLATE template0
+  LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8';   -- PG 17
+```
+
+```bash
+initdb -D "$PGDATA" --encoding=UTF8 --locale=C          # cluster level
+```
+
+Status: **dev was rebuilt as UTF8 on 2026-08-16; production
+(`192.168.16.10`) is still `SQL_ASCII`** and is scheduled for the same rebuild.
+The procedure, its failure modes, and what must not be edited in the script:
+[`deploy/README-utf8-cutover.md`](../deploy/README-utf8-cutover.md). Application
+code carries a stopgap for the meantime — `_json_dumps_utf8` in
+`backend/app/core/db.py` sends JSON binds as raw UTF-8 rather than `\uXXXX`, and
+raw bytes are accepted under either server encoding.
+
+**No amount of testing catches this class of bug**, and that is worth knowing
+before someone proposes "add a test so it can't happen again": every test
+environment is already UTF8 — `.claude/scripts/dev-db.sh` runs
+`initdb --encoding=UTF8 --locale=C`, and CI's postgres service container
+(`paradedb`, a postgres-image derivative) inherits that image's UTF-8 locale
+default. There *is* already a regression test for the Chinese-`jsonb` path
+(`backend/tests/integration/test_github_account_link.py`) — but it only ever
+runs against a UTF8 server, so it confirms the stopgap works and still tells you
+nothing about the encoding of the box you deploy to. Server encoding is a
+property of the box, not of the
+code, so it can only be caught by asserting on the real box — or by never
+creating a database without naming the encoding, which is the rule above.
 
 ## Access
 

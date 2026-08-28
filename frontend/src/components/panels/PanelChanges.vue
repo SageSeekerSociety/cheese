@@ -12,6 +12,7 @@ import type { GitCommit, WorkspaceFile } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { useDisplay } from 'vuetify'
 
 import { ApiError, getGitDiff, getGitLog, listFiles, readFile, workspaceFileRawUrl, writeFile } from '../../api'
 import { parseDiffLines, splitDiffByFile } from '../../lib/diff'
@@ -30,6 +31,8 @@ const props = withDefaults(
   }>(),
   { active: false, refreshTick: 0 }
 )
+
+const { mdAndUp } = useDisplay()
 
 // 树的范围: 默认只看这个话题改过的文件——验收要看的就是这些。展开成全部文件是
 // 为了「看一眼旁边那个文件原来长什么样」，那是次要动作。
@@ -672,7 +675,15 @@ defineExpose({ openFile })
               下载原文件
             </v-btn>
           </div>
-          <CodeEditor v-else-if="openPath" v-model="fileDraft" :filename="openPath" @save="saveFile" />
+          <!-- 手机上只读：软键盘配 Monaco 不是能救的组合，给一个明确的说法比给一个
+               难用的编辑器好。 -->
+          <CodeEditor
+            v-else-if="openPath"
+            v-model="fileDraft"
+            :filename="openPath"
+            :readonly="!mdAndUp"
+            @save="saveFile"
+          />
           <!-- 没打开文件时这一半装的是「这个话题干了什么」——提交本身是过程记录，
                它配一个位置，但不配一个和文件并列的入口。 -->
           <div v-else class="changes-scroll">

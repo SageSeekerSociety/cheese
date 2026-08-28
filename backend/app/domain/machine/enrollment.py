@@ -19,7 +19,10 @@ import logging
 import os
 import tempfile
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import (
+    CLAUDE_MIN_VERSION,
+    CLAUDE_PINNED_VERSION,
+)
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
@@ -93,8 +96,8 @@ def bootstrap_script(*, origin: str, token: str, device_id: str) -> str:
     # restated: a machine enrolled against a different number than the launcher
     # enforces is a machine that enrolls cleanly and then runs nothing.
     origin_clean = origin.rstrip("/")
-    min_version = device_launch.CLAUDE_MIN_VERSION
-    pinned_version = device_launch.CLAUDE_PINNED_VERSION
+    min_version = CLAUDE_MIN_VERSION
+    pinned_version = CLAUDE_PINNED_VERSION
     return f"""set -eu
 arch=$(uname -m)
 case "$arch" in
@@ -200,17 +203,37 @@ cat > "$HOME/.config/cheese/config.json" <<'CHEESE_CONFIG_EOF'
 {config}
 CHEESE_CONFIG_EOF
 # Already logged in as far as the cli is concerned, so this only installs and
-# starts the background service (it elevates with sudo by itself).
-# stdin is closed: this script arrives ON stdin, and sudo would otherwise eat
-# what is left of it — or block on a password prompt with nothing to read.
+# starts the background service — for THIS account, no root involved.
+# stdin is closed: this script arrives ON stdin, and anything the command reads
+# from it would eat the rest of the script.
 "$HOME/.local/bin/cheesehost" link connect < /dev/null
 # `link connect` succeeds as soon as systemd accepts the start, which is BEFORE
 # the process can fail. Enrollment must not report success for a service that is
-# already dead, so ask systemd what actually happened.
+# already dead, so ask systemd what actually happened. It is a --user unit, and
+# the system manager knows nothing about those.
 sleep 5
-if ! systemctl is-active --quiet cheese; then
+if ! systemctl --user is-active --quiet cheese; then
   echo "the connector service did not stay up:" >&2
-  sudo -n journalctl -u cheese --no-pager -n 20 >&2 2>/dev/null || true
+  journalctl --user -u cheese --no-pager -n 20 >&2 2>/dev/null || true
+  exit 1
+fi
+# Nobody ever logs into this machine, and the user manager holding the connector
+# is torn down with the last session — this ssh one — unless the account
+# lingers. `link connect` turns it on and says so when it cannot, but that is a
+# warning on a stream nobody reads: without this check the machine enrols, goes
+# green, and drops off the moment we disconnect.
+#
+# The connector asks for itself and never elevates, because the machine it runs
+# on is usually somebody's laptop. This one is not: the platform opened it, and
+# the same passwordless sudo installed tmux above. `enable-linger` needs it only
+# where the image ships no polkit — logind then denies the unprivileged request
+# outright — so try once, and judge on what linger actually says afterwards.
+if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null)" != "Linger=yes" ]; then
+  sudo -n loginctl enable-linger "$(id -un)" >/dev/null 2>&1 || true
+fi
+if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null)" != "Linger=yes" ]; then
+  echo "linger is off for $(id -un): the connector would stop when this ssh" >&2
+  echo "session ends and never return after a reboot." >&2
   exit 1
 fi
 echo "cheese.service active"

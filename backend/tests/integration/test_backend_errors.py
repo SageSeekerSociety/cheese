@@ -102,7 +102,7 @@ def test_reported_error_lands_in_the_topic_timeline(client):
 
     events = _backend_events(client, tid)
     assert len(events) == 1
-    assert "💥" in events[0]["content"]
+    assert events[0]["meta"]["event_type"] == "backend_error"
     assert "nope" in events[0]["content"]
     assert "\n" not in events[0]["content"]  # one line for a human…
     assert events[0]["meta"]["stack"].endswith("ValueError: nope")  # …whole for 芝士

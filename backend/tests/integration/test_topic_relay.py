@@ -1,6 +1,6 @@
-"""母子传话 (`POST /topics/{id}/tell`, `cheese tell`).
+"""上下传话 (`POST /topics/{id}/tell`, `cheese tell`).
 
-What was broken and is under test here: the parent → running-sub-topic direction
+What was broken and is under test here: the room → running-thread direction
 had no working channel at all. `POST /topics/{id}/comments` — the only thing that
 looked like one — summons **only when the commenter is human**, so a parent's
 芝士 wrote a row and woke nobody, and that route is not in
@@ -22,7 +22,7 @@ def _project(client) -> dict:
     return client.post("/projects", json={"name": "P"}).json()["data"]
 
 
-def _topic(client, project_id: str, title: str = "母话题") -> dict:
+def _topic(client, project_id: str, title: str = "房间") -> dict:
     return client.post(
         "/topics", json={"project_id": project_id, "title": title}
     ).json()["data"]
@@ -52,7 +52,7 @@ def _blocks(client, topic_id: str) -> list[dict]:
 # --- 父 → 直接子: 落地 + 真的叫醒 -------------------------------------------
 
 
-def test_parent_tells_child_and_the_child_is_woken(client, stub_agent):
+def test_parent_tells_child_and_the_child_is_woken(client, stub_hooks):
     """The whole point: the message reaches the child's timeline AND a turn runs
     there with the text in its prompt."""
     p = _project(client)
@@ -70,12 +70,12 @@ def test_parent_tells_child_and_the_child_is_woken(client, stub_agent):
     contents = [b["content"] for b in _blocks(client, sub["id"])]
     assert any("口径改了：只算活跃用户" in c for c in contents)
     # 叫醒: the agent actually got the text, tagged as a platform instruction.
-    assert stub_agent.last_prompt is not None
-    assert "口径改了：只算活跃用户" in stub_agent.last_prompt
-    assert "【平台】" in stub_agent.last_prompt
+    assert stub_hooks.last_prompt is not None
+    assert "口径改了：只算活跃用户" in stub_hooks.last_prompt
+    assert "【平台】" in stub_hooks.last_prompt
     # …and it is told the relay OVERRIDES the one-shot brief, which is the whole
     # reason this channel exists.
-    assert "以这条为准" in stub_agent.last_prompt
+    assert "以这条为准" in stub_hooks.last_prompt
 
 
 def test_relayed_block_is_authored_by_the_receiving_room(client):
@@ -96,11 +96,11 @@ def test_relayed_block_is_authored_by_the_receiving_room(client):
     assert block["author_type"] == "ai"
     # refs points back at the sender, so the chip links home.
     assert parent["id"] in (block.get("refs") or [])
-    # The 母话题 is named in the block so the room can see where it came from.
-    assert "母话题追加" in block["content"]
+    # The room is named in the block so the thread can see where it came from.
+    assert "房间追加" in block["content"]
 
 
-def test_child_tells_parent(client, stub_agent):
+def test_child_tells_parent(client, stub_hooks):
     """The other allowed direction. Distinct from `conclude`: no card, no
     settlement — it is a question or a mid-flight finding."""
     p = _project(client)
@@ -116,14 +116,14 @@ def test_child_tells_parent(client, stub_agent):
         "发现简报里那条前提不成立" in b["content"]
         for b in _blocks(client, parent["id"])
     )
-    assert "发现简报里那条前提不成立" in (stub_agent.last_prompt or "")
-    assert "子话题" in (stub_agent.last_prompt or "")
+    assert "发现简报里那条前提不成立" in (stub_hooks.last_prompt or "")
+    assert "支线" in (stub_hooks.last_prompt or "")
 
 
-def test_child_can_address_its_parent_as_parent(client):
-    """回话不该先要求查到母话题叫什么 —— `cheese tell parent "..."`."""
+def test_a_thread_can_address_its_room_as_parent(client):
+    """回话不该先要求查到房间叫什么 —— `cheese tell parent "..."`."""
     p = _project(client)
-    parent = _topic(client, p["id"], "上面那个话题")
+    parent = _topic(client, p["id"], "上面那个房间")
     sub = _split(client, parent["id"], "子活")
 
     r = _tell(client, sub["id"], "parent", "问一句：口径按哪版？")
@@ -131,11 +131,10 @@ def test_child_can_address_its_parent_as_parent(client):
     assert r.json()["data"]["target_topic_id"] == parent["id"]
     wait_work_idle()
 
-    # The project root is the one topic with no parent — plain answer, not a
-    # confusing 404. (Every other topic hangs off the root, so it always has one.)
-    r2 = _tell(client, p["root_topic_id"], "parent", "x")
+    # A ROOM has nothing above it to answer — plain answer, not a confusing 404.
+    r2 = _tell(client, parent["id"], "parent", "x")
     assert r2.status_code == 422
-    assert "没有母话题" in r2.json()["message"]
+    assert "没有可以回话的地方" in r2.json()["message"]
 
 
 def test_target_can_be_a_title_or_a_ref_token(client):
@@ -159,16 +158,16 @@ def test_target_can_be_a_title_or_a_ref_token(client):
 
 
 def test_siblings_cannot_tell_each_other(client):
-    """两个子话题之间发不通 —— a general topic-to-topic mailbox is the end of
-    topic-level isolation."""
+    """同一个房间里的两条支线之间发不通 —— a general place-to-place mailbox is
+    the end of place-level isolation."""
     p = _project(client)
     parent = _topic(client, p["id"])
-    a = _split(client, parent["id"], "子话题A")
-    b = _split(client, parent["id"], "子话题B")
+    a = _split(client, parent["id"], "支线A")
+    b = _split(client, parent["id"], "支线B")
 
     r = _tell(client, a["id"], b["id"], "偷偷说句话")
     assert r.status_code == 422
-    assert "父子" in r.json()["message"]
+    assert "上下关系" in r.json()["message"]
     # Nothing landed in B either — a refused relay must not leave a message.
     assert not any("偷偷说句话" in blk["content"] for blk in _blocks(client, b["id"]))
 
@@ -184,19 +183,24 @@ def test_unrelated_topics_cannot_tell_each_other(client):
     assert not any("喂" in blk["content"] for blk in _blocks(client, two["id"]))
 
 
-def test_grandchild_is_not_a_direct_child(client):
-    """ "直接子" is literal: the root cannot reach a task two levels down."""
-    p = _project(client)
-    root = p["root_topic_id"]
-    child = _split(client, root, "二级话题")
-    grandchild = _split(client, child["id"], "三级的活")
+def test_splitting_from_a_thread_makes_a_sibling_not_a_child(client):
+    """Work does not nest, so there is no third level to be two levels down.
 
-    r = _tell(client, root, grandchild["id"], "跳一级说话")
-    assert r.status_code == 422
-    # The parent of the grandchild still can.
-    ok_r = _tell(client, child["id"], grandchild["id"], "正常说话")
-    assert ok_r.status_code == 200
+    Splitting from inside a piece of work puts the new work in the SAME room —
+    it is that room's to reach, and the thread it was split from cannot reach it
+    any more than any other sibling can.
+    """
+    p = _project(client)
+    room = _topic(client, p["id"])
+    first = _split(client, room["id"], "第一件活")
+    second = _split(client, first["id"], "干着干着发现的第二件活")
+
+    assert second["room_id"] == room["id"]
+    # The room reaches it directly...
+    assert _tell(client, room["id"], second["id"], "正常说话").status_code == 200
     wait_work_idle()
+    # ...and the thread it came out of does not.
+    assert _tell(client, first["id"], second["id"], "偷偷说句话").status_code == 422
 
 
 def test_missing_topic_is_404_and_a_stranger_topic_says_why(client):
@@ -208,7 +212,7 @@ def test_missing_topic_is_404_and_a_stranger_topic_says_why(client):
     r = _tell(client, parent["id"], other["id"], "x")
     assert r.status_code == 422
     # 说清为什么，否则调用方会以为自己打错了 id 并原样重试。
-    assert "父子" in r.json()["message"]
+    assert "上下关系" in r.json()["message"]
 
 
 def test_unknown_title_lists_the_reachable_topics(client):
@@ -273,14 +277,31 @@ def test_tell_is_token_gated(client):
 # --- 归档的收方: 写得进去，但没人会被叫醒 -----------------------------------
 
 
-def test_archived_target_is_not_woken_and_says_so(client):
+def test_a_closed_thread_can_still_be_told_something(client):
+    """收起不是冻结：a finished thread still takes a message.
+
+    A room can be talked in after it is archived, so a thread has no reason to be
+    stricter than the room it lives in — otherwise "改一行" after delivery means
+    opening a second piece of work and cutting the history in half.
+    """
     p = _project(client)
     parent = _topic(client, p["id"])
     sub = _split(client, parent["id"], "已经收工的活")
-    client.post(f"/topics/{sub['id']}/archive", json={"by": "user-1"})
     wait_work_idle()
 
     r = _tell(client, parent["id"], sub["id"], "还有一件事")
     assert r.status_code == 200
-    data = r.json()["data"]
-    assert data["delivery"] == "archived"
+    assert r.json()["data"]["delivery"] != "archived"
+
+
+def test_a_thread_in_an_archived_room_is_not_woken_and_says_so(client):
+    """The room is the work面 — freezing it freezes what is inside it."""
+    p = _project(client)
+    parent = _topic(client, p["id"])
+    sub = _split(client, parent["id"], "房间要归档了")
+    wait_work_idle()
+    client.post(f"/topics/{parent['id']}/archive", json={"by": "user-1"})
+
+    r = _tell(client, parent["id"], sub["id"], "还有一件事")
+    assert r.status_code == 200
+    assert r.json()["data"]["delivery"] == "archived"

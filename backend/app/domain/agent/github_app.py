@@ -1,17 +1,20 @@
 """Short-lived GitHub tokens for sandboxes (#188 minimal item 1, #192 install flow).
 
 The platform's GitHub credential is the cheesex-app private key. It stays on
-the backend and is NEVER handed to a sandbox. A sandbox that wants to look at
-the repo it works on calls ``/sandbox/github-token`` with its scoped cheese
-token; the backend mints an **installation access token narrowed to read-only**
-and returns that instead. GitHub expires it after an hour; minting is cached
-until shortly before expiry, so a burst of calls costs one upstream mint.
+the backend and is NEVER handed to a sandbox. An agent that works on a repo
+calls ``/sandbox/github-token`` with its scoped cheese token; the backend mints
+an **installation access token carrying everything the App holds on that
+installation** and returns that instead. GitHub expires it after an hour;
+minting is cached until shortly before expiry, so a burst of calls costs one
+upstream mint.
 
-Same containment shape as the LLM gateway path (``llm_proxy``): the sandbox
-only ever holds a credential that is short-lived, scoped, and centrally
-revocable. The App's write permissions (contents / pull_requests / workflows,
-reserved for PR-based accept, #188 §5.1) are NOT reachable through this
-module — the narrowing happens at mint time, server-side.
+Same containment shape as the LLM gateway path (``llm_proxy``): what the
+sandbox holds is short-lived, scoped to one installation, and centrally
+revocable, while the long-lived secret behind it never moves. That is the
+containment, and it is the whole of it — the token is deliberately NOT
+narrowed below the App. An agent is a full member of the room
+(``docs/agent-principles.md`` §2), so it commits, pushes and opens its PR with
+the same grants the platform itself would have used on its behalf.
 
 Which *installation* to mint from is resolved per-project (#192): the App
 id and private key are one platform-wide credential, but each connected repo
@@ -32,31 +35,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.domain.project.repositories import ProjectGitInstallationRepository
 
-# What a sandbox may do with GitHub: look, never touch. Every level here is
-# "read", and a test pins that — it is the one line standing between an agent
-# and the App's contents/pull_requests/workflows write grants.
-#
-# `issues`, `contents` and `pull_requests` are on this list because an agent
-# that cannot read the issue it was asked to fix, a file outside its own
-# worktree, or the review comments on its own PR has to ask a human to paste
-# them in. That cost was paid for real: teammates hand-copying issue bodies
-# into the chat because "cheese 没有权限看".
-_SANDBOX_PERMISSIONS = {
-    "actions": "read",
-    "checks": "read",
-    "contents": "read",
-    "issues": "read",
-    "metadata": "read",
-    "pull_requests": "read",
-}
-# What the BACKEND ITSELF may do for PR-based accept (#188 §5.1): push the topic
-# branch, open and merge the PR. Never exposed through any sandbox-facing route.
+# What PR-based accept needs (#188 §5.1): push the topic branch, open and merge
+# the PR. Named rather than taken from the grant map so that a revoked grant is
+# refused at the mint, where the message says which one.
 # `workflows: write` is load-bearing, not optional: without it GitHub rejects
 # the PUSH of any branch that touches .github/workflows/* ("refusing to allow a
 # GitHub App to create or update workflow ... without `workflows` permission"),
 # which surfaced as an opaque 422 on accept (2026-08-16, topic ee17b136). The
-# App itself has held this grant all along (see the module docstring) — the
-# mint request simply never asked, and GitHub narrows to what is asked.
+# App has held this grant all along — the mint request simply never asked, and
+# GitHub narrows to what is asked.
 _WRITE_PERMISSIONS = {
     "contents": "write",
     "metadata": "read",
@@ -67,26 +54,9 @@ _WRITE_PERMISSIONS = {
 _JWT_TTL_S = 540
 # Re-mint when the cached token has less life left than a long agent turn.
 _REFRESH_MARGIN_S = 20 * 60
-# GitHub rejects the WHOLE mint with 422 when any requested permission was
-# never granted to the installation, so the sandbox set is intersected with
-# what the App actually holds instead of being sent blind. Asking for a lower
-# level than granted is fine (contents: write installed → contents: read
-# minted), asking for an absent one is not. The payoff: the day an org admin
-# adds "Issues: Read" to cheesex-app, sandboxes pick it up on the next mint —
-# no deploy, no code change.
-_PERMISSION_LEVELS = {"read": 1, "write": 2, "admin": 3}
 # How long a fetched grant map is trusted. Grants only change when a human
 # edits the App, so this is really "how fast that edit reaches sandboxes".
 _GRANTS_TTL_S = 10 * 60
-
-
-def _narrow(wanted: dict[str, str], granted: dict[str, str]) -> dict[str, str]:
-    """`wanted`, minus every permission the installation does not hold."""
-    return {
-        name: level
-        for name, level in wanted.items()
-        if _PERMISSION_LEVELS.get(granted.get(name, ""), 0) >= _PERMISSION_LEVELS[level]
-    }
 
 
 class GitHubAppError(RuntimeError):
@@ -94,7 +64,7 @@ class GitHubAppError(RuntimeError):
 
 
 class GitHubAppTokens:
-    """Mints (and caches) narrowed installation tokens for one installation."""
+    """Mints (and caches) installation tokens for one installation."""
 
     def __init__(
         self,
@@ -136,40 +106,46 @@ class GitHubAppTokens:
             algorithm="RS256",
         )
 
-    async def readonly_token(self) -> tuple[str, str]:
-        """A read-only installation token and its ISO expiry (sandbox-facing)."""
-        return await self._mint("readonly", self.sandbox_permissions)
+    async def installation_token(self) -> tuple[str, str]:
+        """An installation token and its ISO expiry, carrying every grant.
+
+        This is what ``/sandbox/github-token`` hands an agent, so it has to be
+        enough to finish a piece of work: commit, push the branch, open the PR,
+        then read the CI it triggered. Nothing is subtracted on the way out —
+        see the module docstring.
+        """
+        return await self._mint("installation", self.granted_permissions)
 
     async def write_token(self) -> tuple[str, str]:
-        """A contents+pull_requests write token — BACKEND-INTERNAL ONLY.
+        """The named write set, used by PR-based accept.
 
-        Used by PR-based accept to push the topic branch and open/merge the PR.
-        No route may ever return this to a caller.
+        Not a smaller share of the installation token above — it is the same
+        App, and an agent's token carries at least as much. It is a separate
+        mint only so that the permissions accept depends on are stated out loud
+        and a revoked one fails at the mint (`_write_permissions`).
         """
         return await self._mint("write", self._write_permissions)
 
-    async def sandbox_permissions(self) -> dict[str, str]:
-        """What a sandbox token actually carries on this installation.
-
-        `_SANDBOX_PERMISSIONS` is what we ask for; this is what survives the
-        intersection with the installation's grants. The sandbox-facing route
-        reports it verbatim so an agent learns what it may read from the
-        payload instead of from a 403 halfway through a turn.
-        """
-        return _narrow(_SANDBOX_PERMISSIONS, await self._granted_permissions())
-
     async def _write_permissions(self) -> dict[str, str]:
-        """The backend-internal write set, sent to GitHub unnarrowed.
+        """The backend-internal write set, named rather than asked for whole.
 
-        Deliberately not intersected like the sandbox set: if an admin revoked
-        `contents: write`, narrowing would hand back a token that dies later at
-        `git push` with an unexplained 403, while sending it as-is makes GitHub
-        say "not granted" at the mint, where the message is readable.
+        Spelled out because a revoked grant has to fail HERE: if an admin took
+        `contents: write` away, GitHub says "not granted" at the mint, where the
+        message is readable, instead of handing back a weaker token that dies
+        later at `git push` with an unexplained 403.
         """
         return _WRITE_PERMISSIONS
 
-    async def _granted_permissions(self) -> dict[str, str]:
+    async def granted_permissions(self) -> dict[str, str]:
         """Permissions this installation holds, cached for `_GRANTS_TTL_S`.
+
+        Doubles as the sandbox mint's request: asking for exactly the grant map
+        is the one request GitHub can never 422 (it rejects the WHOLE mint when
+        any requested permission was never granted), and it means the day an
+        org admin adds a permission to cheesex-app, agents pick it up on the
+        next mint — no deploy, no code change. The sandbox-facing route reports
+        it verbatim, so an agent learns what it may do from the payload instead
+        of from a 403 halfway through a turn.
 
         Guarded by its own lock, never `self._lock` (which `_mint` holds while
         calling this) — two locks, one order, no deadlock.
@@ -340,14 +316,14 @@ async def fetch_installation_repos(installation_id: int) -> list[dict]:
     """The repos `installation_id` can access, via its own read-only token.
 
     Used right after the #192 install callback: GitHub's setup_url redirect
-    carries only the installation_id, not which repo(s) got connected — the
-    read-only "metadata" permission we already mint is exactly what
-    ``/installation/repositories`` needs.
+    carries only the installation_id, not which repo(s) got connected — and
+    ``/installation/repositories`` needs nothing beyond the `metadata` every
+    installation grants.
     """
     minter = _tokens_for_installation(installation_id)
     if minter is None:
         raise GitHubAppError("GitHub App is not configured on this deployment")
-    token, _expires_at = await minter.readonly_token()
+    token, _expires_at = await minter.installation_token()
     async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.get(
             f"{minter.api_base}/installation/repositories",

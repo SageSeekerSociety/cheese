@@ -96,7 +96,11 @@ async function openTab(container: Element, label: string) {
   await fireEvent.click(tabButton(container, label))
   await flush()
 }
-/** A tab pane is on screen when it is not the one v-show hid. */
+/** A tab pane is on screen when it is not the one v-show hid.
+ *
+ *  文档 那一格现在是 总览 的下半边（上半边是 Task Progress），所以「文档在不在
+ *  屏幕上」问的是 `.panel-overview` —— v-show 挂在它身上，里面的 `.doc` 从头到
+ *  尾都在。 */
 function visible(container: Element, selector: string): boolean {
   const el = container.querySelector<HTMLElement>(selector)
   return !!el && el.style.display !== 'none'
@@ -140,10 +144,10 @@ beforeEach(() => {
 })
 
 describe('工作面板 · Tab 容器', () => {
-  it('默认停在文档', async () => {
+  it('默认停在总览', async () => {
     const { container } = mountPanel()
     await flush()
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
   })
 
   it('每个 tab 都切得过去，而且真的渲染出了自己那一片', async () => {
@@ -152,7 +156,7 @@ describe('工作面板 · Tab 容器', () => {
 
     await openTab(container, '现场')
     expect(visible(container, '.panel-site')).toBe(true)
-    expect(visible(container, '.doc')).toBe(false)
+    expect(visible(container, '.panel-overview')).toBe(false)
     expect(getTranscript).toHaveBeenCalled()
     expect(container.textContent).toContain('暂无现场记录')
 
@@ -162,8 +166,8 @@ describe('工作面板 · Tab 容器', () => {
     expect(container.querySelector('.file-list'), '改动 tab 没渲染出文件树').toBeTruthy()
 
     // 回到文档：编辑器还在（它从头到尾没被卸载过，切走一趟不会重建 tiptap）。
-    await openTab(container, '文档')
-    expect(visible(container, '.doc')).toBe(true)
+    await openTab(container, '总览')
+    expect(visible(container, '.panel-overview')).toBe(true)
     expect(container.querySelector('.doc-editor')).toBeTruthy()
   })
 
@@ -193,7 +197,7 @@ describe('工作面板 · Tab 容器', () => {
 
     // 落在改动 tab 上……
     expect(visible(container, '.panel-changes')).toBe(true)
-    expect(visible(container, '.doc')).toBe(false)
+    expect(visible(container, '.panel-overview')).toBe(false)
     // ……而且是它的文件半边，开着的正是被点的那个文件。
     expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A')
     expect(container.querySelector('.file-bar__path')?.textContent?.trim()).toBe('src/b.ts')
@@ -201,13 +205,13 @@ describe('工作面板 · Tab 容器', () => {
 
   // 规则 1: 能力不存在时，入口就不该存在。判定读的是「这个话题手上有什么」，
   // 不是它的 kind —— 后端给每个话题都建了 worktree 和分支，按 kind 分只是猜。
-  it('谁也没在里面干过活的话题：只剩文档，连 tab 栏都不出现', async () => {
+  it('谁也没在里面干过活的话题：只剩总览，连 tab 栏都不出现', async () => {
     getTopicWorkSummary.mockResolvedValue({ changed_files: [], has_run: false })
     const { container } = mountPanel()
     await flush()
 
     expect(container.querySelector('.tabbar')).toBeNull()
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
   })
 
   it('跑过活但没产生改动：有现场，没有改动', async () => {
@@ -215,7 +219,7 @@ describe('工作面板 · Tab 容器', () => {
     const { container } = mountPanel()
     await flush()
 
-    expect(tabLabels(container)).toEqual(['文档', '现场'])
+    expect(tabLabels(container)).toEqual(['总览', '现场'])
   })
 
   it('第一轮还在跑、session 还没落库：现场立刻就在', async () => {
@@ -256,18 +260,18 @@ describe('工作面板 · Tab 容器', () => {
 
   // 「你在看什么」进 URL：面板只报告自己的动作，地址由 TopicView 持有——所以这里
   // 钉的是那份合同的两半（收 tab、发 update:tab），不是路由本身。
-  it('地址点名了 tab 就开在那个 tab 上，不是文档', async () => {
+  it('地址点名了 tab 就开在那个 tab 上，不是总览', async () => {
     const { container } = mountPanel('topic-A', { tab: 'changes' })
     await flush()
 
     expect(visible(container, '.panel-changes')).toBe(true)
-    expect(visible(container, '.doc')).toBe(false)
+    expect(visible(container, '.panel-overview')).toBe(false)
   })
 
-  it('地址给的 tab 不认识就退回文档，不是空面板', async () => {
+  it('地址给的 tab 不认识就退回总览，不是空面板', async () => {
     const { container } = mountPanel('topic-A', { tab: '资源' })
     await flush()
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
   })
 
   it('切 tab 会把新的 tab 报出去，地址才跟得上', async () => {
@@ -308,7 +312,7 @@ describe('工作面板 · Tab 容器', () => {
 
     expect(container.querySelector('.tabbar__pulse')).toBeTruthy()
     expect(tabButton(container, '现场').getAttribute('title')).toContain('芝士正在工作')
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
   })
 
   it('改动 tab 上是文件数；进话题时已有的改动不算「新」', async () => {
@@ -331,7 +335,7 @@ describe('工作面板 · Tab 容器', () => {
     await flush()
 
     expect(container.querySelector('.tabbar__count')?.classList.contains('tabbar__count--new')).toBe(true)
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
 
     // 看过就不再是新的。
     await openTab(container, '改动')
@@ -344,7 +348,7 @@ describe('工作面板 · Tab 容器', () => {
   it('待验收的话题开在改动上', async () => {
     const { container, rerender } = mountPanel()
     await flush()
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
 
     await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
     await flush()
@@ -367,7 +371,7 @@ describe('工作面板 · Tab 容器', () => {
     await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'open' })
     await flush()
 
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
   })
 
   it('地址点名了 tab 就以地址为准，阶段不许改它', async () => {
@@ -376,7 +380,7 @@ describe('工作面板 · Tab 容器', () => {
     await rerender({ topic: topic('topic-A'), activityTick: 0, tab: 'doc', phase: 'reviewing' })
     await flush()
 
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
   })
 
   it('人已经自己选过了，晚到的阶段不许把他挪走', async () => {
@@ -399,7 +403,7 @@ describe('工作面板 · Tab 容器', () => {
     await rerender({ topic: topic('topic-A'), activityTick: 0, phase: 'reviewing' })
     await flush()
 
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
   })
 
   // 规则 5: 批注归批注，聊天归聊天。写评论的输入框长在评论区里，不再劫持底部那
@@ -447,7 +451,7 @@ describe('工作面板 · Tab 容器', () => {
 
     await rerender({ topic: topic('topic-B'), activityTick: 0 })
     await flush()
-    expect(visible(container, '.doc')).toBe(true)
+    expect(visible(container, '.panel-overview')).toBe(true)
     expect(visible(container, '.panel-changes')).toBe(false)
   })
 })

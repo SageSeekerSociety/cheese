@@ -228,7 +228,7 @@ def test_concurrent_accepts_on_the_same_project_dont_block_each_other(
     _native_edit(pid, hang_tid, "hang.txt", "hang work\n")
     _native_edit(pid, fast_tid, "fast.txt", "fast work\n")
 
-    hang_branch = ws.branch_for_topic(hang_tid)
+    hang_branch = ws.branch_for_tree(hang_tid)
     real_run = ws._run_subprocess
     hang_entered = threading.Event()
 

@@ -22,6 +22,9 @@ import type { RouteRecordRaw } from 'vue-router'
 // full page. One address per document now; the old links still resolve.
 const DOC_KINDS = ['charter', 'decisions', 'weeklies'] as const
 
+// 手机上这整棵子树是一条页面栈：话题列表是唯一的一级目的地（底栏「工作区」那一格
+// 的落点），其余每一层都收起底栏并说明 ← 回哪儿去。桌面上这些 meta 全都不生效——
+// 那儿话题列表是常驻侧栏，没有"上一层"可回。
 export const workspaceRoutes: RouteRecordRaw = {
   path: '/projects/:projectId',
   components: {
@@ -36,54 +39,78 @@ export const workspaceRoutes: RouteRecordRaw = {
       path: '',
       component: () => import('@/views/workspace/WorkspaceEntry.vue'),
       props: true,
+      // 手机上这一层就是话题列表，项目名 + 切换器由它自己填进顶栏（barSlot）。
+      // 它同时是底栏「工作区」那一格的落点，所以底栏留着，也没有"回上一层"。
+      meta: { barSlot: true },
     },
     {
       name: 'workspace-topic',
       path: 'topics/:topicId',
       component: () => import('@/views/workspace/TopicView.vue'),
       props: true,
+      // 手机上这是页面栈的末端：底栏收起（它不是一级目的地），← 回到话题列表。
+      // `barSlot`: TopicHeader（标题 + #id + 阶段）填的就是顶栏那一格，不再自己
+      // 画一条横条；← 由顶栏按 backTo 出。桌面上三者都不生效。
+      meta: { hideTabs: true, backTo: 'workspace-project', barSlot: true },
+    },
+    {
+      // 在跑的活: 跨房间的一张表。房间总览答的是「这个房间在干什么」，而一个项目
+      // 有上百个房间——「现在整个项目有什么在跑」得一个个点进去才知道，于是没人
+      // 知道。桌面上侧栏常驻，手机上它是页面栈的一层，← 回话题列表。
+      name: 'workspace-running',
+      path: 'running',
+      component: () => import('@/views/workspace/RunningWorkView.vue'),
+      props: true,
+      meta: { title: '在跑的活', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'workspace-dm',
       path: 'dm/:peer',
       component: () => import('@/views/workspace/DmView.vue'),
       props: true,
-      meta: { title: '私聊' },
+      meta: { title: '私聊', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'project-docs',
       path: 'docs/:kind',
       component: () => import('@/views/ProjectDocsView.vue'),
       props: true,
-      meta: { title: '项目文档' },
+      meta: { title: '项目文档', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'overview',
       path: 'overview',
       component: () => import('@/views/OverviewView.vue'),
       props: true,
-      meta: { title: '总览' },
+      meta: { title: '总览', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'calendar',
       path: 'calendar',
       component: () => import('@/views/CalendarView.vue'),
       props: true,
-      meta: { title: '日历' },
+      meta: { title: '日历', hideTabs: true, backTo: 'workspace-project' },
+    },
+    {
+      name: 'project-agents',
+      path: 'agents',
+      component: () => import('@/views/ProjectAgentsView.vue'),
+      props: true,
+      meta: { title: 'AI 队友' },
     },
     {
       name: 'project-settings',
       path: 'settings',
       component: () => import('@/views/ProjectSettingsView.vue'),
       props: true,
-      meta: { title: '项目设置' },
+      meta: { title: '项目设置', hideTabs: true, backTo: 'workspace-project' },
     },
     {
       name: 'member',
       path: 'members/:handle',
       component: () => import('@/views/MemberView.vue'),
       props: true,
-      meta: { title: '成员' },
+      meta: { title: '成员', hideTabs: true, backTo: 'workspace-project' },
     },
     ...DOC_KINDS.map(
       (kind): RouteRecordRaw => ({

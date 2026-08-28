@@ -156,7 +156,7 @@ def _push(pid: uuid.UUID, tid: uuid.UUID, remote_branch: str = "cheesex/x") -> d
 
 
 def _branch_head(repo: Path, tid: uuid.UUID) -> str:
-    return _run(repo, "rev-parse", ws.branch_for_topic(tid)).strip()
+    return _run(repo, "rev-parse", ws.branch_for_tree(tid)).strip()
 
 
 def _remote_head(bare: Path, ref: str = "refs/heads/cheesex/x") -> str:

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { myHandle } from '@/me'
@@ -15,7 +16,10 @@ import { useWorkspaceStore } from '@/stores/workspace'
 // reason a click's outcome was unpredictable.
 defineOptions({ name: 'ProjectSidebar' })
 
-const props = defineProps<{ projectId: string }>()
+// `page`: 手机上话题列表是页面栈的一层，占满内容区（由 WorkspaceEntry 挂起来）。
+// 不带这个 prop 的那份是常驻侧栏——桌面才有，所以手机上它整个不渲染。
+const props = defineProps<{ projectId: string; page?: boolean }>()
+const { mdAndUp } = useDisplay()
 const route = useRoute()
 const router = useRouter()
 const store = useWorkspaceStore()
@@ -35,14 +39,9 @@ function openDocs(kind: string) {
   void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind } })
 }
 
-async function onCreateTopic(title: string) {
-  const topic = await store.create(title)
+async function onCreateTopic(title: string, agentInstanceId?: string | null) {
+  const topic = await store.create(title, agentInstanceId)
   if (topic) openTopic(topic.id)
-}
-
-async function onSplitTopic(payload: { topicId: string; title: string }) {
-  const sub = await store.split(payload.topicId, payload.title)
-  if (sub) openTopic(sub.id)
 }
 
 // Archiving the topic you are looking at closes it — go back to the project
@@ -56,11 +55,15 @@ async function onArchiveTopic(topicId: string) {
 </script>
 
 <template>
+  <!-- `store.tree` 而不是 `store.topics`：侧栏画的是房间**加上**房间里派出去的
+       活，而 topics 只有房间（@话题 补全和文档里的 <#id> 解析读的是那一份）。 -->
   <TopicSidebar
+    v-if="page || mdAndUp"
+    :page="page"
     :width="store.railWidth"
     :projects="store.projects"
     :selected-project-id="store.projectId"
-    :topics="store.topics"
+    :topics="store.tree"
     :selected-topic-id="activeTopicId"
     :loading-topics="store.loadingTopics"
     :private-active="activeDmPeer === 'cheese'"
@@ -79,6 +82,5 @@ async function onArchiveTopic(topicId: string) {
     @unarchive-topic="store.unarchive"
     @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     @create-topic="onCreateTopic"
-    @split-topic="onSplitTopic"
   />
 </template>

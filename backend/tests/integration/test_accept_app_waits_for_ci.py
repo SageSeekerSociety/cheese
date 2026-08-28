@@ -82,7 +82,7 @@ class _FakeTokens:
         type(self).minted_write += 1
         return "ghs_app_write", "2099-01-01T00:00:00+00:00"
 
-    async def readonly_token(self) -> tuple[str, str]:
+    async def installation_token(self) -> tuple[str, str]:
         type(self).minted_read += 1
         return "ghs_app_read", "2099-01-01T00:00:00+00:00"
 
@@ -163,7 +163,7 @@ def app_world(monkeypatch):
     monkeypatch.setattr(ws, "sync_upstream", lambda pid: {"synced": True, "commits": 1})
 
     def _push(pid, tid, token):
-        branch = ws.branch_for_topic(tid)
+        branch = ws.branch_for_tree(tid)
         recorded["pushes"].append({"topic": tid, "token": token, "branch": branch})
         return branch
 
@@ -371,9 +371,9 @@ def test_waiting_card_says_what_it_waits_for(client, app_world):
     _poll(client)
 
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("⏳ 等 CI")
+    assert note.startswith("等检查")
     assert "Backend Test" in note  # 在等什么
-    assert "等" in note  # 等了多久（刚采纳 → 「刚开始等」）
+    assert "刚开始等" in note  # 等了多久
 
 
 def test_waiting_note_does_not_churn_on_every_tick(client, app_world):
@@ -399,7 +399,7 @@ def test_waiting_note_never_overwrites_a_real_failure(client, app_world):
     _poll(client)
     wait_work_idle()
     failed_note = _cards(client, tid)[0]["note"]
-    assert failed_note.startswith("⚠️")
+    assert _cards(client, tid)[0]["note_level"] == "error"
 
     fake.check_state_by_sha[head_sha] = ("pending", "等待中：Backend Test")
     _poll(client)
@@ -638,7 +638,8 @@ def test_github_unreachable_at_accept_stops_and_keeps_the_pr_on_the_card(
     assert r.status_code == 422
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 采纳未完成：PR 未能合并")
+    assert card["note_level"] == "error"
+    assert card["note"].startswith("采纳未完成：PR 未能合并")
     assert card["pr_number"] == 21  # 事务外持久化，重试不会重开
     assert app_world["local_merges"] == []
     assert _topic(client, tid)["status"] == "active"
@@ -744,7 +745,8 @@ def test_pr_open_failure_stops_the_accept_and_lands_on_the_card(client, app_worl
     assert "无法为这张卡开 PR" in r.json()["message"]
     card = _cards(client, tid)[0]
     assert card["status"] == "pending"
-    assert card["note"].startswith("⚠️ 采纳未完成：无法为这张卡开 PR")
+    assert card["note_level"] == "error"
+    assert card["note"].startswith("采纳未完成：开不出 PR")
     assert "remote rejected" in card["note"]
     assert app_world["local_merges"] == []
     assert app_world["fake"].merge_calls == []
@@ -875,7 +877,8 @@ def test_a_required_check_missing_too_long_goes_to_a_human(client, app_world):
     assert fake.merge_calls == []
     card = _cards(client, tid)[0]
     assert card["status"] == "pr_open"
-    assert card["note"].startswith("✋")
+    assert card["note_level"] == "error"
+    assert "平台不会自动合并" in card["note"]
     assert "test" in card["note"]
 
 
@@ -911,7 +914,7 @@ def test_scope_unknown_says_on_the_card_that_it_is_a_fallback(client, app_world)
     _poll(client)
 
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("⏳ 等 CI")
+    assert note.startswith("等检查")
     assert "没能判断这次改动碰了哪些文件" in note  # 自陈是回退
     assert "文件清单" in note  # 具体原因，不是笼统一句「出错了」
     assert "test" in note  # 仍然要求哪几项
@@ -938,7 +941,7 @@ def test_unresolvable_base_says_on_the_card_that_it_is_a_fallback(
 
     assert fake.merge_calls == []
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("⏳ 等 CI")
+    assert note.startswith("等检查")
     assert "没能判断这次改动碰了哪些文件" in note
     assert "upstream remote 读不到" in note  # 异常摘要，不是一句「内部错误」
     assert "required 检查还没出现" not in note
@@ -959,22 +962,23 @@ def test_the_fallback_note_still_does_not_churn(client, app_world):
     assert _cards(client, tid)[0]["note"] == first
 
 
-def _set_note(client, card_id: str, note: str) -> None:
-    """直接把一条 note 摆到卡上 —— 用来立起「已经有更高优先级的 note」这个前提。
+def _stop_card_on(client, card_id: str, code, note: str) -> None:
+    """直接把卡摆成「已经停在某件事上」—— 用来立起更高优先级 note 的前提。
 
     不走「让 CI 真的红一次」那条路：那会叫醒芝士，于是测试得等一个 agent 轮次
-    静默下来 —— 而这里要证的性质跟这条 note 是怎么来的毫无关系，只跟「它已经在
-    卡上」有关。少绑一个 helper，就少一次因为别人重构那个 helper 而假红。"""
+    静默下来 —— 而这里要证的性质跟这条 note 是怎么来的毫无关系，只跟「卡已经停
+    在那儿」有关。少绑一个 helper，就少一次因为别人重构那个 helper 而假红。"""
     import asyncio
     import uuid
 
+    from app.domain.review import notes
     from app.domain.review.repositories import AcceptCardRepository
 
     async def _do() -> None:
         async with client.test_factory() as session:
             card = await AcceptCardRepository(session).get(uuid.UUID(card_id))
             assert card is not None
-            card.note = note
+            notes.record(card, code, note)
             await session.commit()
 
     asyncio.run(_do())
@@ -985,8 +989,10 @@ def test_the_fallback_note_never_overwrites_a_real_failure(client, app_world):
     fake = app_world["fake"]
     tid, cid, number, head_sha = _authorized(client, app_world)
 
+    from app.domain.review.notes import NoteCode
+
     failed_note = "⚠️ CI 检查未通过：Backend Test: failure"
-    _set_note(client, cid, failed_note)
+    _stop_card_on(client, cid, NoteCode.checks_failed, failed_note)
 
     fake.check_state_by_sha[head_sha] = ("success", "可见的都绿了")
     fake.check_names_by_sha[head_sha] = {"guards", "lint"}
@@ -1011,7 +1017,7 @@ def test_a_fallback_that_times_out_does_not_blame_the_workflow(client, app_world
 
     assert fake.merge_calls == []
     note = _cards(client, tid)[0]["note"]
-    assert note.startswith("✋")
+    assert "平台不会自动合并" in note
     assert "没能判断这次改动碰了哪些文件" in note
     assert "被改名" not in note
 
@@ -1033,6 +1039,31 @@ def test_a_stale_base_gets_updated_not_merged(client, app_world):
     assert "落后" in card["note"]
 
 
+def test_rebasing_stops_after_three_tries(client, app_world):
+    """换基有上限：main 比 CI 还快时平台交给人，而不是一直换基下去。
+
+    上限过去是数 note 里 `⟲` 的个数，而 note 是一列所有写入方共用的散文：换基本身
+    让 PR 的 head 前进，下一轮轮询发现 head 变了就把整条 note 清空——计数器跟着归
+    零，上限永远够不着。这条测试把 GitHub 的 Update branch 会造一个提交这件事也一
+    起建模，因为不建模就看不见这个缺陷。
+    """
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    sha = head_sha
+    for _ in range(5):
+        fake.check_state_by_sha[sha] = ("success", "绿，但绿在旧基上")
+        fake.compare_status_by_pair[("main", sha)] = "behind"
+        _poll(client)
+        sha = fake.prs[number]["head_sha"]
+
+    assert fake.merge_calls == []
+    assert len(fake.update_branch_calls) == 3
+    note = _cards(client, tid)[0]["note"]
+    assert "平台不会自动合并" in note
+    assert "已自动换基 3 次" in note
+
+
 def test_current_base_and_full_roster_still_merge(client, app_world):
     """正例回归：required 都在、基线不落后（identical/ahead 或 GitHub 答非所问
     的 None）→ 照常合并归档，两道新阀不误伤。"""
@@ -1048,3 +1079,79 @@ def test_current_base_and_full_roster_still_merge(client, app_world):
     # 交付完成 ≠ 话题结束 (#442 decision 1).
     assert delivered["status"] == "active"
     assert delivered["accepted_at"] is not None
+
+
+# --- 读不到 GitHub 的那一轮，必须在卡上留下痕迹 -------------------------------
+#
+# 2026-08-23: PR #575 和 #582 都全绿、都没合并，卡上的 note 一个字没变。根因是
+# Update branch 用了只读 mint，GitHub 回 403，异常被吞成一条 logger.warning。
+# 两件事都要修：钥匙拿错了，以及拿错钥匙这件事在卡面上完全看不见——「轮询每次都
+# 失败」和「CI 还在跑」长得一模一样，而那条旧的等待 note 还在自顾自读秒。
+
+
+def test_update_branch_pushes_with_the_write_credential(client, app_world):
+    """Update branch MERGES main into the PR branch — it is a push, not a read.
+
+    The App lane mints two tokens because they carry different permissions, and
+    handing this one the read mint is a 403 on every single poll, forever.
+    """
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("success", "绿，但绿在旧基上")
+    fake.compare_status_by_pair[("main", head_sha)] = "behind"
+    _poll(client)
+
+    assert fake.update_branch_calls == [number]
+    assert fake.update_branch_tokens == ["ghs_app_write"]
+
+
+def test_a_poll_that_cannot_read_github_says_so_on_the_card(client, app_world):
+    """否则 pr_open 上停着的卡看起来就是「CI 还在跑」，而它其实每一轮都在报错。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_error = github_pr.GitHubPrError(
+        "GitHub 拒绝更新 PR 的分支（HTTP 403）：Resource not accessible by integration"
+    )
+    _poll(client)
+
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pr_open"
+    assert "读不到这个 PR 的状态" in card["note"]
+    assert "403" in card["note"]
+    assert fake.merge_calls == []
+
+
+def test_the_poll_failure_note_clears_once_github_answers_again(client, app_world):
+    """自愈：下一轮读通了就换回真实状态，而不是让一条过期的错误挡在前面。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_error = github_pr.GitHubPrError("GitHub 抽风了")
+    _poll(client)
+    assert "读不到这个 PR 的状态" in _cards(client, tid)[0]["note"]
+
+    fake.check_state_error = None
+    fake.check_state_by_sha[head_sha] = ("success", "全部检查通过")
+    _poll(client)
+
+    assert "读不到这个 PR 的状态" not in (_cards(client, tid)[0]["note"] or "")
+    assert fake.merge_calls != []
+
+
+def test_a_poll_failure_does_not_bury_a_note_that_matters_more(client, app_world):
+    """检查未通过说的是读者必须动手的事。一次读不到 GitHub 是暂时的，绝不能把它
+    顶掉——顶掉之后那条真正的状态就再也没有别的地方可看了。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+
+    fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
+    _poll(client)
+    red = _cards(client, tid)[0]["note"]
+    assert "检查未通过" in red
+
+    fake.check_state_error = github_pr.GitHubPrError("GitHub 抽风了")
+    _poll(client)
+
+    assert _cards(client, tid)[0]["note"] == red

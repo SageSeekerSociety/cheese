@@ -21,11 +21,10 @@ const menuOpen = ref(false)
 const DEVICE_PROFILE = 'device'
 
 // Only pools that can actually be picked, plus whichever one this topic is
-// already on. A row that is permanently unavailable teaches the reader that
-// connecting something would light it up, and for a retired pool (local-docker,
-// #358) that is simply false — so it is not shown at all rather than greyed out.
-// The current pool stays listed even when unselectable, because a topic frozen on
-// a retired pool still has to render a readable label for what it is running on.
+// already on. A permanently unavailable row teaches the reader that connecting
+// something would light it up, so a pool that does not exist is not shown at
+// all rather than greyed out. The current pool stays listed even when
+// unselectable — a topic has to render a readable label for what it runs on.
 const visibleProfiles = computed<PoolListing[]>(() => {
   const profiles = state.value?.profiles ?? []
   const current = state.value?.current
@@ -33,13 +32,12 @@ const visibleProfiles = computed<PoolListing[]>(() => {
   return profiles.filter((p) => p.available || p.id === current || (p.id === DEVICE_PROFILE && hasSelfHostedDevices))
 })
 
-// A glyph per pool so the chip reads at a glance — platform container vs. your own
-// machine vs. GPU. Unknown ids fall back to a generic compute icon.
+// A glyph per pool so the chip reads at a glance — your machine vs. a leased
+// one. Unknown ids fall back to a generic icon, which is also what a row from a
+// future pool gets until it earns a glyph.
 const POOL_ICON: Record<string, string> = {
-  'local-docker': 'mdi-server',
   device: 'mdi-laptop',
-  'remote-cheesed': 'mdi-server-network',
-  gpu: 'mdi-expansion-card',
+  cloud: 'mdi-cloud-outline',
 }
 function iconFor(id: string): string {
   return POOL_ICON[id] ?? 'mdi-chip'
@@ -256,34 +254,33 @@ watch(
   color: var(--text);
   cursor: help;
 }
+/* 它住在输入区的动作行里，那一行的规矩是：静止时谁也不画边框、不画底色，整行
+   只有发送是实心的。描边 + 淡底的 chip 在那儿是第三种视觉语言，而算力只是一条
+   设置，比动作还轻。高度跟着那一行走（28px），不自己定一个。 */
 .cp-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 24px;
+  height: 28px;
   padding: 0 8px;
-  border: 1px solid rgba(var(--v-border-color), 0.16);
-  border-radius: 6px;
-  background: rgba(var(--v-theme-on-surface), 0.03);
-  color: rgb(var(--v-theme-on-surface));
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--muted);
   font-size: 12px;
   line-height: 1;
   cursor: pointer;
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+  transition: background 0.12s ease;
 }
 .cp-chip:hover {
-  background: rgba(var(--v-theme-on-surface), 0.06);
-  border-color: rgba(var(--v-border-color), 0.28);
+  background: var(--fill);
 }
 .cp-chip--locked {
   cursor: default;
   opacity: 0.72;
 }
 .cp-chip--locked:hover {
-  background: rgba(var(--v-theme-on-surface), 0.03);
-  border-color: rgba(var(--v-border-color), 0.16);
+  background: transparent;
 }
 .cp-inherit {
   color: rgba(var(--v-theme-on-surface), 0.5);

@@ -164,6 +164,7 @@ func TestRealClaudeActsOnDeliveredPrompts(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	isolateTmux(t)
 	m, err := terminal.NewManager()
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -239,4 +240,19 @@ func TestRealClaudeActsOnDeliveredPrompts(t *testing.T) {
 	rt.Invoke("call-2", "prompt", []any{long})
 	waitFor(t, "the 30KB prompt to be acted on (tool ran again)", 180*time.Second,
 		func() bool { return countMarks() >= 2 }, dumpPane)
+}
+
+// isolateTmux points terminal.NewManager at a runtime dir of this test's own.
+// NewManager derives its socket from $TMPDIR, and on a machine that hosts agents
+// the default one is the LIVE connector's server — which holds every running
+// `claude` on the box, and which these tests kill on the way out. A short path
+// on purpose: a unix socket path is capped near 104 bytes.
+func isolateTmux(t *testing.T) {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "cheesee2e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMPDIR", dir)
 }

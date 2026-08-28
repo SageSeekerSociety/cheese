@@ -7,14 +7,14 @@ import { formatToolAction, isPlatformAction, isPlatformEvent, toolLabel } from '
 
 describe('toolLabel', () => {
   it('translates native tools (incl. the ones that used to leak raw)', () => {
-    expect(toolLabel('Glob')).toBe('找文件')
-    expect(toolLabel('Grep')).toBe('搜内容')
-    expect(toolLabel('Agent')).toBe('派分身去查')
-    expect(toolLabel('Task')).toBe('派分身去查')
+    expect(toolLabel('Glob')).toBe('查找文件')
+    expect(toolLabel('Grep')).toBe('搜索内容')
+    expect(toolLabel('Agent')).toBe('派出分身')
+    expect(toolLabel('Task')).toBe('派出分身')
   })
 
   it('strips the mcp__cheese__ prefix and falls back to the raw name', () => {
-    expect(toolLabel('mcp__cheese__update_doc')).toBe('更新了文档')
+    expect(toolLabel('mcp__cheese__update_doc')).toBe('更新文档')
     expect(toolLabel('FutureTool')).toBe('FutureTool')
   })
 })
@@ -60,12 +60,12 @@ describe('isPlatformEvent (persisted event blocks)', () => {
 
 describe('formatToolAction', () => {
   it('renders verb · preview from the live tool input', () => {
-    expect(formatToolAction('Grep', { pattern: 'TODO' })).toBe('搜内容 · TODO')
+    expect(formatToolAction('Grep', { pattern: 'TODO' })).toBe('搜索内容 · TODO')
     expect(formatToolAction('mcp__cheese__notify', { title: '进展' })).toBe('发送通知 · 进展')
   })
 
   it('renders the bare verb when the preview arg is missing', () => {
-    expect(formatToolAction('Grep', null)).toBe('搜内容')
+    expect(formatToolAction('Grep', null)).toBe('搜索内容')
     expect(formatToolAction('FutureTool', { x: 1 })).toBe('FutureTool')
   })
 })

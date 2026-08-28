@@ -1,7 +1,7 @@
 """Topic compute-profile API (execution-architecture v4 会话级选择).
 
 A topic picks its compute pool before its first turn; the choice sticks as the
-project default and freezes once the topic has run (session_id set).
+project default and freezes once the topic has run (a session exists).
 """
 
 import asyncio
@@ -15,14 +15,15 @@ import pytest
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import resolve_pinned_device
-from app.domain.agent.hooks_substrate import ScreenSetupError
+from app.domain.agent.harness.claude_code.hooks_substrate import ScreenSetupError
 from app.domain.agent.platform_failures import DEVICE_OFFLINE_MESSAGE
+from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.device.supply import Supply, Visibility
 from app.domain.device.wiring import sql_device_service
+from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.machine.services import MachineService
 from app.domain.project.repositories import ProjectRepository
 from app.domain.team.models import Team
-from app.domain.topic.repositories import TopicRepository
 
 
 def _project(client, owner: str = "andyl") -> str:
@@ -38,13 +39,15 @@ def _topic(client, pid: str) -> str:
 
 
 def _mark_started(client, tid: str) -> None:
-    """Simulate the topic having run one turn (session_id captured)."""
+    """Simulate the topic having run one turn (a session captured)."""
 
     async def _run() -> None:
         async with client.test_factory() as s:
-            repo = TopicRepository(s)
-            topic = await repo.get(uuid.UUID(tid))
-            await repo.set_session_id(topic, "sess-1")
+            await AgentSessionRepository(s).save(
+                topic_id=uuid.UUID(tid),
+                agent_handle=CHEESE_HANDLE,
+                resume_token="sess-1",
+            )
             await s.commit()
 
     asyncio.run(_run())
@@ -102,10 +105,13 @@ def _resolve_topic_device(
 def test_new_topic_inherits_default_and_is_unlocked(client):
     pid = _project(client)
     tid = _topic(client, pid)
+    from app.core.config import settings
+    from app.domain.agent.market import compute_default_name
+
     body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
-    # Nothing selected anywhere, so the fallback applies: Cloud, not the retired
-    # local pool (#358). Last selection would win if there were one.
-    assert body["current"] == "cloud"
+    # Nothing selected anywhere, so the deployment's own fallback applies — never
+    # the retired local pool (#358). Last selection would win if there were one.
+    assert body["current"] == compute_default_name(settings) == "device"
     assert body["locked"] is False
     assert body["inherited"] is True
     # ...and the retired pool is no longer offered as a choice.
@@ -303,22 +309,28 @@ def test_selecting_cloud_without_machine_create_authority_is_refused(
     provision.assert_not_awaited()
 
 
-def test_visibility_block_is_present_non_default_and_carries_the_notice(client):
+def test_visibility_block_is_present_and_carries_the_notice(client):
     """#282 §四 / #358: the compute-profile response a room reads carries the
-    visibility 档 so the room can SHOW whether a turn sees the whole machine. Boxed
-    is the default-but-undeployed option; whole-machine is available yet non-default
-    and describes itself with the honest #282 warning. A topic with no pinned device
-    is not a Hosted Machine turn, so `machine_access` is False."""
+    visibility 档 so the room can SHOW whether a turn sees the whole machine.
+
+    The default is whichever 档 has a transport, and today that is whole-machine:
+    boxed `isolated` is honestly undeployed until #358 step 2, so naming it the
+    default here — as this test used to — told a room its topic was boxed while
+    the resolver bound it to the whole machine. A topic with no pinned device is
+    not a Hosted Machine turn at all, so `machine_access` is False."""
     pid = _project(client)
     tid = _topic(client, pid)
     vis = client.get(f"/topics/{tid}/compute-profile").json()["data"]["visibility"]
 
     opts = {o["id"]: o for o in vis["options"]}
-    assert opts["isolated"]["default"] is True
     assert opts["isolated"]["available"] is False
-    assert opts["host"]["default"] is False
+    assert opts["isolated"]["default"] is False
     assert opts["host"]["available"] is True
+    assert opts["host"]["default"] is True
     assert "整台机器" in opts["host"]["description"]
+    # Survives step 2 flipping the answer: one default, and it can run.
+    defaults = [o for o in vis["options"] if o["default"]]
+    assert len(defaults) == 1 and defaults[0]["available"] is True
 
     assert vis["effective"] is None  # not pinned to any device
     assert vis["machine_access"] is False

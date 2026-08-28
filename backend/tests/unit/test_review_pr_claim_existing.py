@@ -44,6 +44,11 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     card = SimpleNamespace(
         id=uuid.uuid4(),
         topic_id=uuid.uuid4(),
+        # The card is the room's own main line, not one thread's — delivery
+        # therefore gets stamped on the room. It rides no tree either, so
+        # sealing and marking-merged both have nothing to do.
+        task_id=None,
+        tree_id=None,
         status=AcceptStatus.pending,
         reviewer_handle="alice",
         routing_reason="最懂",
@@ -76,6 +81,9 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
     service._repo.list_approver_handles.return_value = []
     service._topics = AsyncMock()
     service._topics.get.return_value = topic
+    # A card is addressed by a PLACE id and resolved to the room around it,
+    # which needs a real session to walk — hand the answer over directly.
+    service._topic_or_404 = AsyncMock(return_value=topic)
     service._projects = AsyncMock()
     service._projects.get.return_value = project
     service._machines = AsyncMock()
@@ -123,8 +131,9 @@ def _wire(monkeypatch, client) -> list[str]:
     """Common stubs; returns the list room messages accumulate into."""
     posted: list[str] = []
 
-    async def fake_post(_factory, *, project_id, topic_id, content, source):
-        posted.append(content)
+    async def fake_post(_factory, *, project_id, topic_id, content, source, meta=None):
+        # 房间那一行 + 展开区：说了什么、和没说什么，两边都要看。
+        posted.append(f"{content}\n{(meta or {}).get('detail') or ''}")
         return True
 
     monkeypatch.setattr(webhook_service, "post_with_retries", fake_post)
@@ -142,7 +151,6 @@ def _wire(monkeypatch, client) -> list[str]:
     monkeypatch.setattr(
         ws, "push_back", lambda *_a: {"mode": "upstream", "target": "origin/main"}
     )
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_a: None)
     github_pr.set_default_client(client)
     return posted
 
@@ -189,12 +197,11 @@ async def test_claim_emits_only_the_pr_message_never_the_archive_one(monkeypatch
     assert len(posted) == 1
     (message,) = posted
     assert "已认领该分支上已存在的 PR #234" in message
-    assert "话题保持 active" in message
-    # The message that contradicted it in the incident ("✅ 话题已被 alice
-    # 采纳并合并。"). Note this one legitimately ends "…部署也成功后才会归档" —
-    # a promise about later, not a claim that it happened.
+    assert "话题保持活跃" in message
+    # The message that contradicted it in the incident ("话题已被 alice 采纳并
+    # 合并") — this lane has NOT merged anything yet, and must not say so.
     assert "采纳并合并" not in message
-    assert "✅" not in message
+    assert "已合并" not in message
 
 
 @pytest.mark.anyio
@@ -218,7 +225,7 @@ async def test_other_github_failures_still_degrade_and_say_so(monkeypatch):
 
     assert card.status == AcceptStatus.accepted
     assert card.pr_number is None
-    assert card.note.startswith("⚠️ 未走 PR 采纳（GitHub 侧调用失败：")
+    assert card.note.startswith("未走 PR 采纳（GitHub 侧调用失败：")
     assert "已合并并推送到上游 origin/main" in card.note
     # 交付完成 ≠ 话题结束 (#442 decision 1)：本地合并这条路同样不归档。
     assert topic.status == TopicStatus.active
@@ -227,7 +234,7 @@ async def test_other_github_failures_still_degrade_and_say_so(monkeypatch):
 
     assert len(posted) == 1
     (message,) = posted
-    assert "采纳并合并" in message
+    assert "采纳了这次改动，已合并" in message
     assert "已开 PR" not in message
     assert "已认领" not in message
 

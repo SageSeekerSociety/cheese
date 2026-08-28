@@ -9,7 +9,7 @@ failing the launch instead of falling back to typing into a terminal.
 import subprocess
 from pathlib import Path
 
-from app.domain.agent import device_launch
+from app.domain.agent.harness.claude_code import device_launch
 
 TOPIC = "c43d2e12-6d4f-436d-b436-05278a879f81"
 
@@ -192,4 +192,20 @@ def test_ci_e2e_pin_matches_the_launcher_pin():
     ).read_text()
     assert (
         f"@anthropic-ai/claude-code@{device_launch.CLAUDE_PINNED_VERSION}" in workflow
+    )
+
+
+def test_sandbox_image_pin_matches_the_launcher_pin():
+    """The sandbox image bakes the same Claude Code the launcher installs.
+
+    A topic can run on either side — an agent container the backend spawns, or
+    an enrolled device — and "the same turn" has to mean the same runtime. The
+    image used to install whatever was newest at build time, so any rebuild
+    could move it, silently and for an unrelated reason.
+    """
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "sandbox" / "Dockerfile"
+    ).read_text()
+    assert (
+        f"ARG CLAUDE_CODE_VERSION={device_launch.CLAUDE_PINNED_VERSION}" in dockerfile
     )

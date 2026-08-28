@@ -2,18 +2,20 @@
 import type { Topic } from '@/cx_types'
 import type { CardPhase, TopicPhase } from '@/lib/topicState'
 
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { useDisplay } from 'vuetify'
 
-import ChatPanel from '@/components/ChatPanel.vue'
-import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
-import TopicComputePicker from '@/components/TopicComputePicker.vue'
+import { usePageTitle } from '@/composables/usePageTitle'
+
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
+import { isThread, roomIdOf } from '@/lib/place'
 import { formatToolAction, isPlatformAction, toolLabel } from '@/lib/toolLabels'
 import { topicPhase } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
+import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. The input bar is
 // the chat column's own — it used to span both columns from here, which read as
@@ -24,6 +26,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 defineOptions({ name: 'TopicView' })
 
 const props = defineProps<{ projectId: string; topicId: string }>()
+const { mdAndUp } = useDisplay()
 const router = useRouter()
 const route = useRoute()
 const store = useWorkspaceStore()
@@ -44,9 +47,41 @@ function onPanelTab(key: string) {
 
 const AUTHOR = myHandle()
 
-const selectedTopic = computed<Topic | null>(() => store.topics.find((t) => t.id === props.topicId) ?? null)
-// The list is still on its way, so "not found" is not yet a fact.
-const resolving = computed(() => !selectedTopic.value && (store.loadingTopics || store.topics.length === 0))
+// URL 里的这个 id 指向一个「地点」——房间，或者房间里的一条支线 (lib/place.ts)。
+//
+// 这里以前只在 `store.topics` 里找，而那张表来自 `GET /topics?project_id=`，只查
+// topics 表：**支线永远不在里面**。于是点房间时间线上那条「已派出《X》」，或者刚
+// 把一条消息升级成一件活，跳过去看到的是「这个话题不存在」——一个完全好使的 id，
+// 一个空状态。
+//
+// 修的方向不是把支线塞进那张表（侧栏只列房间是设计，塞进去等于每条支线在侧栏长
+// 一行，正是这次改造要省掉的成本），而是：**在列表里找不到就直接去问这个 id**。
+const selectedTopic = computed<Topic | null>(() => store.placeById(props.topicId))
+const room = computed<Topic | null>(() => {
+  const place = selectedTopic.value
+  if (!place || !isThread(place)) return null
+  return store.topics.find((t) => t.id === roomIdOf(place)) ?? null
+})
+
+// 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
+// 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
+const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
+watch(
+  selectedTopic,
+  (topic) => {
+    if (topic) setDynamicTitle(topic.title, 'workspace-topic')
+    else clearDynamicTitle('workspace-topic')
+  },
+  { immediate: true }
+)
+onUnmounted(() => clearDynamicTitle('workspace-topic'))
+// The list is still on its way, so "not found" is not yet a fact. Neither is it
+// one while this id is being asked about directly — that is the path a thread
+// always takes, so without the third clause opening one flashes 「不存在」 first.
+const resolving = computed(
+  () =>
+    !selectedTopic.value && (store.loadingTopics || store.topics.length === 0 || store.isResolvingPlace(props.topicId))
+)
 
 function openTopic(topicId: string) {
   if (topicId === props.topicId) return
@@ -64,7 +99,10 @@ const panelRef = ref<{
   highlightTurn: (turnId: string) => void
   openFile?: (path: string) => void
 } | null>(null)
-const acceptRef = ref<{ reload: (silent?: boolean) => Promise<void> } | null>(null)
+const chatColumn = ref<{
+  connected: boolean
+  reloadAccept: (silent?: boolean) => void
+} | null>(null)
 
 // Drag the chat|panel splitter: set chat's width as a % of the panes row.
 function startPaneDrag(e: MouseEvent) {
@@ -92,8 +130,22 @@ const activityTick = ref(0)
 
 // The chat column's own composer is the one this topic uses; TopicView only
 // needs a handle on the panel it lives in for the connection dot in the header.
-const chatRef = ref<{ connected: boolean } | null>(null)
-const composerReady = computed(() => !!chatRef.value?.connected)
+const composerReady = computed(() => !!chatColumn.value?.connected)
+
+// 对话那一栏在两端挂在不同位置（左栏 / tab 栏第一格），但接的是同一组事件。
+const chatEvents = {
+  'turn-done': handleTurnDone,
+  working: handleWorking,
+  'tool-used': handleToolUsed,
+  'state-changed': handleStateChanged,
+  'mention-click': handleMentionClick,
+  'open-file': (path: string) => panelRef.value?.openFile?.(path),
+  'open-resource': handleOpenResource,
+  'upgrade-message': handleUpgradeMessage,
+  'open-topic': openTopic,
+  phase: (p: CardPhase) => (cardPhase.value = p),
+  review: () => onPanelTab('changes'),
+}
 
 // 施工现场 live feed for the current topic — the 现场 tab shows it with a pulsing
 // dot while the turn runs; cleared when the turn ends (the persisted transcript
@@ -123,6 +175,20 @@ watch(
   }
 )
 
+// 芝士 开工 / 收工，由对话栏按轮次生命周期报上来。这是 `working` 唯一的开关：
+// 「现场」那一格的存在与否读它，所以它必须在开工那一刻就翻过来——而不是等到第一
+// 个工具帧。一条 @芝士 开出来的 agent 可能先想上半分钟才动手，那半分钟里右边什
+// 么都没有，除非刷新一次页面。
+function handleWorking(now: boolean) {
+  if (now) {
+    if (!working.value) workingSince.value = Date.now()
+    working.value = true
+  } else {
+    working.value = false
+    workingSince.value = null
+  }
+}
+
 function handleTurnDone() {
   // The live feed's job is over — the persisted 现场 transcript is the record.
   working.value = false
@@ -141,7 +207,7 @@ function handleTurnDone() {
 // so we can't key off a tool name) — refresh the affected panel live (§3.1.1).
 function handleStateChanged(resource: string) {
   if (resource === 'topics') void store.refreshTopics()
-  else if (resource === 'accept') void acceptRef.value?.reload()
+  else if (resource === 'accept') chatColumn.value?.reloadAccept()
   else activityTick.value += 1 // doc / decision / milestone / notify → reload
 }
 
@@ -154,8 +220,12 @@ async function handleOpenResource(resource: string, turnId?: string) {
     void router.push({ name: 'project-docs', params: { projectId: props.projectId, kind: 'decisions' } })
   } else if (resource === 'milestone') {
     void router.push({ name: 'calendar', params: { projectId: props.projectId } })
+  } else if (resource === 'changes') {
+    // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
+    focusMode.value = false
+    onPanelTab('changes')
   } else if (resource === 'accept') {
-    void acceptRef.value?.reload()
+    chatColumn.value?.reloadAccept()
   } else if (resource === 'doc') {
     // B1 Phase 2: highlight the exact paragraphs this turn changed (falls back to
     // a whole-doc pulse when the turn's blocks aren't tagged). Leaving focus mode
@@ -175,8 +245,6 @@ function handleMentionClick(handle: string) {
 }
 
 function handleToolUsed(name: string, input?: Record<string, unknown>) {
-  if (!working.value) workingSince.value = Date.now()
-  working.value = true
   worklog.value.push({
     label: toolLabel(name),
     text: formatToolAction(name, input),
@@ -188,7 +256,7 @@ function handleToolUsed(name: string, input?: Record<string, unknown>) {
     void store.refreshTopics()
   } else if (name === 'request_accept') {
     // 芝士 递出验收卡: refresh the banner so it shows up immediately.
-    void acceptRef.value?.reload()
+    chatColumn.value?.reloadAccept()
   }
 }
 
@@ -199,13 +267,22 @@ async function handleUpgradeMessage(messageId: string) {
 }
 
 // Everything topic-scoped resets when the URL names a different topic.
+// 「新消息从哪开始」只有开话题的那一瞬间知道：markRead 一跑，未读数就归零了。
+// 所以在归零之前抓一次，交给对话栏去画那条线。
+const unreadOnOpen = ref(0)
 watch(
   () => props.topicId,
-  (id) => {
+  async (id) => {
     worklog.value = []
     working.value = false
     workingSince.value = null
-    if (id) store.markRead(id)
+    if (!id) return
+    unreadOnOpen.value = store.unreadMap[id] ?? 0
+    // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
+    // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
+    // 等于对每一条支线都白打一次会 404 的请求。
+    await store.loadPlace(id)
+    store.markRead(id)
   },
   { immediate: true }
 )
@@ -225,60 +302,32 @@ watch(
       <!-- 一条话题头部，横跨对话和工作面板 -->
       <TopicHeader
         :topic="selectedTopic"
+        :room="room"
         :phase="phase"
         :members="store.members"
         :me="AUTHOR"
         :connected="composerReady"
         :focus="focusMode"
         @toggle-focus="focusMode = !focusMode"
+        @open-topic="openTopic"
       />
 
       <div class="panes d-flex flex-grow-1" style="min-width: 0; min-height: 0; position: relative">
-        <ChatPanel
+        <!-- 桌面：对话是左边那一栏，和工作面板之间有一条可拖的分隔。 -->
+        <TopicChatColumn
+          v-if="mdAndUp"
           v-show="!focusMode"
-          ref="chatRef"
+          ref="chatColumn"
           class="col col-chat"
           :style="{ flex: `0 0 ${store.chatPct}%` }"
           :topic="selectedTopic"
-          hide-header
-          show-composer
           :members="store.members"
           :topic-list="store.topics"
-          @turn-done="handleTurnDone"
-          @tool-used="handleToolUsed"
-          @state-changed="handleStateChanged"
-          @mention-click="handleMentionClick"
-          @open-file="(p: string) => panelRef?.openFile?.(p)"
-          @open-resource="handleOpenResource"
-          @upgrade-message="handleUpgradeMessage"
-          @open-topic="openTopic"
-        >
-          <!-- 成果待采纳框，放在对话时间线末尾 (GitHub PR 的合并框样式) -->
-          <template #timeline-end>
-            <TopicAcceptCard
-              ref="acceptRef"
-              :topic-id="selectedTopic.id"
-              :topic-status="selectedTopic.status"
-              @phase="cardPhase = $event"
-              @review="onPanelTab('changes')"
-            />
-          </template>
-          <!-- 话题自己的 chips: what this box is addressing, and where this
-               topic's turns will run. 算力 locks on the first message, so it
-               belongs beside the input that sends it. -->
-          <template #composer-chips>
-            <span
-              v-if="selectedTopic.status === 'archived'"
-              class="d-inline-flex align-center ga-1 c-faint"
-              style="font-size: 12px"
-            >
-              <span class="status-dot status-dot--muted" />已归档
-            </span>
-            <TopicComputePicker :key="selectedTopic.id" :topic-id="selectedTopic.id" />
-          </template>
-        </ChatPanel>
+          :unread-on-open="unreadOnOpen"
+          v-on="chatEvents"
+        />
         <div
-          v-if="!focusMode"
+          v-if="mdAndUp && !focusMode"
           class="pane-resizer"
           title="拖动调整宽度，双击复位"
           @mousedown.prevent="startPaneDrag"
@@ -296,10 +345,24 @@ watch(
           :topic-list="store.topics"
           :tab="panelTab"
           :phase="phase"
+          :with-chat="!mdAndUp"
           @open-topic="openTopic"
           @mention-click="handleMentionClick"
           @update:tab="onPanelTab"
-        />
+        >
+          <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
+          <template #chat>
+            <TopicChatColumn
+              ref="chatColumn"
+              class="col col-chat flex-grow-1"
+              :topic="selectedTopic"
+              :members="store.members"
+              :topic-list="store.topics"
+              :unread-on-open="unreadOnOpen"
+              v-on="chatEvents"
+            />
+          </template>
+        </WorkPanel>
       </div>
     </template>
   </div>
@@ -326,11 +389,5 @@ watch(
 }
 .pane-resizer:hover {
   background: var(--accent);
-}
-/* @-autocomplete dropdown (§3.1.1) */
-@media (max-width: 960px) {
-  .panes {
-    flex-direction: column;
-  }
 }
 </style>

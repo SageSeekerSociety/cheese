@@ -100,8 +100,8 @@ jobs:
           echo "=== newest topic worktrees (owner/mode as the device user sees them) ==="
           ls -ld /home/nictheboy/cheese-workspaces/.worktrees/*/* 2>/dev/null | tail -5
           echo "=== connector ==="
-          systemctl is-active cheese.service || true
-          journalctl -u cheese.service --since "20 minutes ago" --no-pager 2>/dev/null | tail -15 || true
+          systemctl --user is-active cheese.service || true
+          journalctl --user -u cheese.service --since "20 minutes ago" --no-pager 2>/dev/null | tail -15 || true
 
       # The pre-#102 launcher created ONE session literally named `cheese` that
       # outlived every config change; the current launcher never uses that name,

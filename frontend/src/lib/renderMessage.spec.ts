@@ -26,10 +26,31 @@ describe('renderMarkdown (芝士 replies)', () => {
     expect(html).toContain('@Andy Liu')
   })
 
+  // 我们自己的工具链到处在写 `<&path:12-30>`——一个认不出来的 token 不会安静地
+  // 失败，它原样躺在正文里，把「点开那段代码」变成「读一串尖括号」。
+  it('renders a <&path> token as a file chip, line range and all', () => {
+    const html = renderMarkdown('看 <&frontend/src/stores/workspace.ts:176-196> 这一段', MAPS)
+    expect(html).toContain('data-file="frontend/src/stores/workspace.ts:176-196"')
+    expect(html).toContain('workspace.ts:176-196')
+    expect(html).not.toContain('&lt;&amp;')
+  })
+
+  it('renders a <&path> token with a single line number', () => {
+    expect(renderMarkdown('见 <&backend/app/core/db.py:55>', MAPS)).toContain('data-file="backend/app/core/db.py:55"')
+  })
+
   it('renders a <#topicId> token as a topic chip with its title', () => {
     const html = renderMarkdown('进展见 <#abc12345-0000-0000-0000-000000000000>', MAPS)
     expect(html).toContain('data-topic="abc12345-0000-0000-0000-000000000000"')
     expect(html).toContain('#搭建推荐算法原型')
+  })
+
+  // 芝士 writes Chinese, and Chinese puts no space after a closing `**` —
+  // which is the one position CommonMark refuses to close on. Plain marked
+  // leaves the asterisks in the message body.
+  it('renders bold that closes right before a CJK character', () => {
+    expect(renderMarkdown('按**执行档案（ExecutionProfile）**解析出模型', MAPS)).toContain('<strong>')
+    expect(renderMarkdown('**这句话是粗体。**下一句不是', MAPS)).toContain('<strong>')
   })
 
   it('falls back to the raw handle when the roster has no name', () => {

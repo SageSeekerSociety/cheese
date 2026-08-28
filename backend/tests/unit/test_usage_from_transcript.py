@@ -12,8 +12,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from app.domain.agent.device_launch import CHEESE_USAGE_READER
-from app.domain.agent.hook_events import usage_from_hook
+from app.domain.agent.harness.claude_code.device_launch import CHEESE_USAGE_READER
+from app.domain.agent.harness.claude_code.hook_events import usage_from_hook
 from app.domain.agent.service import AgentUsage
 
 _TRANSCRIPT = [

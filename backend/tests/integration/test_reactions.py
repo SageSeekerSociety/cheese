@@ -7,9 +7,10 @@ import uuid
 
 import pytest
 
+from app.api.auth import ActorResolver
 from app.domain.agent.chat import ChatService
 from app.domain.identity.handles import topic_agent_handle
-from tests.conftest import StubAgent
+from tests.conftest import stub_compute
 from tests.integration.conftest import chat_ws_url
 
 
@@ -94,6 +95,45 @@ def test_reaction_broadcasts_live_ws_frame(client):
     }
 
 
+@pytest.mark.timeout(30)
+def test_a_reaction_fired_while_the_socket_is_still_authorising_is_not_lost(
+    client, monkeypatch
+):
+    """连上就有人点表情：那一帧不能掉。
+
+    `accept()` 一返回，客户端就认为这个话题是活的 —— 而服务端还要做完鉴权那趟
+    数据库往返才订阅得上。reaction 是**不进重放缓冲**的（它可以在没有轮次的时候
+    单独发生，缓冲了会让空闲频道一直显示在忙），所以这段窗口里发出去的表情，
+    如果订阅还没挂上，就是真没了：屏幕上要等到下一次重新拉取才补上。
+
+    这条测试把鉴权拖慢，好让那段窗口从几十毫秒变成必然命中的一段 —— 它平时是
+    靠机器快慢碰运气的，也正因为如此，它以前只在整套并发跑的时候偶尔红一次。
+
+    带 30 秒上限：回归时这里会等一帧永远不来的帧，必须快速红掉、而不是把一轮
+    CI 拖死五分钟。
+    """
+    topic_id = _create_topic(client)
+    block_id = _post_message(client, topic_id, "看这条", "alice")
+
+    original = ActorResolver.resolve
+
+    async def slow_resolve(self, *args, **kwargs):
+        await asyncio.sleep(0.5)
+        return await original(self, *args, **kwargs)
+
+    monkeypatch.setattr(ActorResolver, "resolve", slow_resolve)
+
+    with client.websocket_connect(chat_ws_url(topic_id, "alice")) as ws:
+        out = _toggle(client, block_id, "👀", "bob")
+        frame = ws.receive_json()
+
+    assert frame == {
+        "type": "reaction",
+        "block_id": block_id,
+        "reactions": out["reactions"],
+    }
+
+
 def test_reaction_on_missing_block_is_404(client):
     r = client.post(
         f"/blocks/{uuid.uuid4()}/reactions",
@@ -142,9 +182,9 @@ async def test_resume_turn_adds_no_receipt(client, tmp_path):
 
     svc = ChatService(
         session_factory=factory,
-        agent=StubAgent(),
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
+        compute=stub_compute(),
     )
     from app.domain.project.services import ProjectService
     from app.domain.topic.services import TopicService

@@ -12,7 +12,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.response import ok, page
 from app.core.db import get_db
-from app.core.errors import AuthenticationRequiredError, BaseError
+from app.core.errors import AuthenticationRequiredError, BaseError, ValidationError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import github_app_tokens_for_project
 from app.domain.agent.platform_notices import (
@@ -39,6 +39,7 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import AcceptService
+from app.domain.room_task.place import PlaceResolver
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.accept")
@@ -46,6 +47,26 @@ logger = logging.getLogger("cheesex.accept")
 router = APIRouter(prefix="", tags=["accept"])
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
+
+#: Refusal for a thread trying to file its room's card.
+#:
+#: 一棵树 = 一个分支 = 一个 PR = 一批活, and the batch belongs to the room: filing
+#: seals the tree, which is the room saying "this lot is done" — not a sentence
+#: one sibling gets to say for the others. A thread that files anyway seals a
+#: branch its siblings are still writing to, and the PR flies with their
+#: half-finished work on it.
+#:
+#: Long on purpose, like `_MISSING_SUBJECT` in the service: the reader is an
+#: agent one step away from doing something else, and "不允许" alone leaves it
+#: with no idea what. `cheese conclude` is the whole answer.
+_THREAD_CANNOT_FILE = (
+    "递卡是房间的事，一条支线递不了。\n"
+    "一棵树=一个分支=一个 PR=一批活，而这批活是整个房间的：递卡会把分支封口开 PR，"
+    "而你的兄弟支线还在往同一条分支上写，它们没做完的东西会跟着这个 PR 一起飞出去。\n"
+    "你要做的是把结论交回房间，由房间统一递卡：\n"
+    '  cheese conclude "<做了什么、故意没做什么、哪些结论没核实>"\n'
+    "改动照常提交到工作区就行，它和兄弟们的改动在同一条分支上，房间递卡时一起带走。"
+)
 
 
 @router.post("/topics/{topic_id}/accept-card")
@@ -55,6 +76,17 @@ async def create_accept_card(
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
+    # 递卡是房间的事 —— before anything else, and before the service gets as far
+    # as checking the subject. A thread is not being told its paperwork is
+    # wrong, it is being told this is not its job; leading with the subject
+    # would send it away to fix one and walk straight back into the same wall.
+    #
+    # An id that names nothing falls through on purpose: "no such topic" is the
+    # service's 404 to give, and answering it here with "you are not a room"
+    # would be a worse sentence about a different problem.
+    place = await PlaceResolver(db).resolve(topic_id)
+    if place is not None and place.is_thread:
+        raise ValidationError(_THREAD_CANNOT_FILE)
     svc = AcceptService(db)
     card = await svc.create_card(
         topic_id=topic_id,
@@ -78,6 +110,25 @@ async def create_accept_card(
             project_id=project_id,
         )
     return ok(await svc.describe(card))
+
+
+@router.post("/topics/{topic_id}/push-fix")
+async def push_fix(topic_id: uuid.UUID, db: DbSession) -> dict:
+    """Push this place's workspace to the PR it is riding, right now.
+
+    The counterpart to the snapshot that used to happen on every CI poll: the
+    poller no longer commits on a timer (see
+    `AcceptService._local_topic_branch_head`), so a fix reaches the PR when the
+    agent says it is a fix — not sixty seconds after it touched any file at all.
+
+    `topic_id` is a PLACE. A thread pushes the tree it shares with its room,
+    which is the same tree either way; naming the place keeps the per-turn token
+    scoped to the caller like every other cheese write path.
+    """
+    svc = AcceptService(db)
+    result = await svc.push_fix(topic_id)
+    await db.commit()
+    return ok(result)
 
 
 @router.get("/topics/{topic_id}/accept-card")
@@ -128,7 +179,9 @@ async def _pr_checks_payload(topic_id: uuid.UUID, db: AsyncSession) -> dict:
     try:
         view = await client.pr_view(card.pr_number)
         head_sha = (view.get("head") or {}).get("sha")
-        checks = await client.check_runs(head_sha or ws.branch_for_topic(topic_id))
+        checks = await client.check_runs(
+            head_sha or ws.branch_for_tree(ws.tree_for_place(topic_id))
+        )
     except GitHubPRError as exc:
         return {"available": False, "reason": str(exc)[:200]}
     return {
@@ -195,7 +248,7 @@ async def accept_card(
             summon=True,
             # 平台提示统一契约: 一行给房间，冲突文件清单进 meta.detail。detail 给的
             # 是**完整**清单（content 里那份为了可读只列前 15 个），收起来不等于删掉。
-            nudge_event=f"⚠️ 采纳时合并冲突，芝士在解（{len(files)} 个文件）",
+            nudge_event=f"采纳时合并冲突，{len(files)} 个文件，芝士在解",
             nudge_meta=notice(
                 EVENT_ACCEPT_CONFLICT,
                 severity=SEVERITY_WARN,
@@ -271,7 +324,7 @@ async def reject_card(
             "在对话里简短回一句问清楚。"
         ),
         summon=True,
-        nudge_event=f"↩️ {decided_by} 驳回了验收卡，芝士去改",
+        nudge_event=f"{decided_by} 驳回了验收卡，芝士去改",
         nudge_meta=notice(
             EVENT_CARD_REJECTED,
             severity=SEVERITY_WARN,
@@ -317,12 +370,13 @@ async def merge_card_anyway(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """人工放行：明知检查没全绿，仍然合并这张卡的 PR (App 采纳等 CI 再合)。
+    """人工放行：明知检查没全绿，仍然合并这张卡的 PR。
 
-    等 CI 全绿再合之后，「红着合」需要一个出口——因为红着合有时候是对的（CI 基础
-    设施抽风、与本次改动无关的既有失败）。不能接受的从来不是红着合，而是**没有人
-    做过这个决定**。所以这条路由是**默认拒绝、显式放行**的那一半：平台自己永远
-    不走它，人点一次算一次，卡面上留下谁、什么时候、当时检查什么状态、为什么。
+    平台自己不合 forge 说没过的 PR，所以「红着合」需要一个出口——红着合有时候是
+    对的（CI 基础设施抽风、与本次改动无关的既有失败）。不能接受的从来不是红着合，
+    而是**没有人做过这个决定**。所以这条路由是**默认拒绝、显式放行**的那一半：
+    平台自己永远不走它，人点一次算一次，卡面上留下谁、什么时候、当时检查什么
+    状态、为什么。
 
     跟 `void` 同一条线：路由**故意不在** `app/main.py` 的 `_CHEESE_WRITE_PATHS`
     里——那是给芝士的白名单，这个动作不给芝士。但"不加白名单"本身拦不住任何东西

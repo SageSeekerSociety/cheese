@@ -36,7 +36,7 @@ interface Props {
 }
 
 const props = withDefaults(defineProps<Props>(), {
-  placeholder: 'Write a reply...',
+  placeholder: '写下你的回复…',
   autofocus: false,
 })
 

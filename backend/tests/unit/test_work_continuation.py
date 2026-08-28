@@ -11,17 +11,18 @@ are one unit of work on all three paths
 """
 
 import asyncio
-import time as _time
 import uuid
 
 import pytest
 
-from app.domain.agent import runtime as rt
 from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from tests.turn_log import a_topic, open_turn
 
 
 class _Hang:
     """A turn that never finishes — what the wall-clock ceiling exists for."""
+
+    session_factory = None
 
     async def converse(self, **_):
         yield {"type": "user_block"}
@@ -30,31 +31,56 @@ class _Hang:
 
 
 class _Boom:
+    session_factory = None
+
     async def converse(self, **_):
         yield {"type": "user_block"}
         raise RuntimeError("turn crashed")
 
 
 class _Quiet:
+    session_factory = None
+
     async def converse(self, **_):
         yield {"type": "done"}
 
     async def post_system_event(self, topic_id, text, turn_id=None, meta=None):
         return {"id": "b1", "content": text}
 
-    async def orphan_turn_evidence(self, topic_id, turn_ids):
+    def has_live_screen(self, topic_id):
+        return False
+
+    async def turns_that_produced_something(self, turn_ids):
         # No trace anywhere → the sweep may re-send (the path under test).
-        return {"delivered": set(), "spool": False}
+        return set()
 
     def schedule_spool_settle(self, topic_id, delay_s=2.0):
         return None
 
 
+async def _until_finished(queue) -> None:
+    """Read frames until the turn is really over.
+
+    Ending a turn now closes its durable interval, so "the turn is finished" is
+    no longer true the instant a frame arrives — the `turn_finished` frame is
+    the runner saying it, and reading fewer frames than that is reading mid-turn.
+    """
+    async with asyncio.timeout(5):
+        while (await queue.get())["type"] != "turn_finished":
+            pass
+
+
+def _wired(chat, factory):
+    """Hand a stand-in ChatService the database the runner logs turns in."""
+    chat.session_factory = factory
+    return chat
+
+
 def _capture_resumes(runner, monkeypatch) -> list[dict]:
     seen: list[dict] = []
 
-    def _fake(_chat, tid, after, why="", *, continuation_id=None):
-        seen.append({"topic": tid, "continuation_id": continuation_id})
+    def _fake(_chat, tid, after, why="", *, continuation_id=None, chain=0):
+        seen.append({"topic": tid, "continuation_id": continuation_id, "chain": chain})
 
     monkeypatch.setattr(runner, "_schedule_resume", _fake)
     return seen
@@ -71,12 +97,14 @@ def _capture_resends(runner, monkeypatch) -> list[dict]:
 
 
 @pytest.mark.anyio
-async def test_a_fresh_turn_starts_its_own_continuation():
+async def test_a_fresh_turn_starts_its_own_continuation(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        turn_id = runner.submit(_Quiet(), topic, author="u", content="hi", summon=True)
+        turn_id = runner.submit(
+            _wired(_Quiet(), db_factory), topic, author="u", content="hi", summon=True
+        )
         await asyncio.wait_for(q.get(), 2)
     rec = runner.topic_work(topic)
     assert rec is not None
@@ -86,13 +114,15 @@ async def test_a_fresh_turn_starts_its_own_continuation():
 
 
 @pytest.mark.anyio
-async def test_timeout_resume_inherits_the_continuation(monkeypatch):
+async def test_timeout_resume_inherits_the_continuation(db_factory, monkeypatch):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=0.05)
     seen = _capture_resumes(runner, monkeypatch)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        turn_id = runner.submit(_Hang(), topic, author="u", content="hi", summon=True)
+        turn_id = runner.submit(
+            _wired(_Hang(), db_factory), topic, author="u", content="hi", summon=True
+        )
         for _ in range(3):
             f = await asyncio.wait_for(q.get(), 2)
             if f["type"] == "error":
@@ -105,13 +135,15 @@ async def test_timeout_resume_inherits_the_continuation(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_crash_resume_inherits_the_continuation(monkeypatch):
+async def test_crash_resume_inherits_the_continuation(db_factory, monkeypatch):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
     seen = _capture_resumes(runner, monkeypatch)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     async with broker.subscribe(str(topic)) as q:
-        turn_id = runner.submit(_Boom(), topic, author="u", content="hi", summon=True)
+        turn_id = runner.submit(
+            _wired(_Boom(), db_factory), topic, author="u", content="hi", summon=True
+        )
         for _ in range(4):
             f = await asyncio.wait_for(q.get(), 2)
             if f["type"] == "error":
@@ -125,103 +157,34 @@ async def test_crash_resume_inherits_the_continuation(monkeypatch):
 
 @pytest.mark.anyio
 async def test_orphan_resend_runs_under_the_recorded_continuation(
-    tmp_path, monkeypatch
+    db_factory, monkeypatch
 ):
     """The path that actually broke in production: the process dies, so the
-    continuation has to come back off DISK, not out of memory. The sweep's
-    remedy for an undelivered prompt is a re-send now, but the invariant is the
-    same one: it runs under the dead turn's recorded continuation."""
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
+    continuation has to come back out of the DATABASE, not out of memory. The
+    sweep's remedy for an undelivered prompt is a re-send now, but the invariant
+    is the same one: it runs under the dead turn's recorded continuation."""
+    topic = await a_topic(db_factory)
     continuation = uuid.uuid4()
-    rt._save_inflight(
-        {
-            str(uuid.uuid4()): {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "continuation_id": str(continuation),
-                "author": "u",
-                "content": "修一下登录页",
-            }
-        }
-    )
+    await open_turn(db_factory, topic, continuation_id=continuation, age_s=60)
     runner = AgentWorkRunner(InProcessBroker())
     seen = _capture_resends(runner, monkeypatch)
-    assert await runner.resume_orphans(_Quiet()) == 1
+    assert await runner.resume_orphans(_wired(_Quiet(), db_factory)) == 1
     assert seen[0]["continuation_id"] == continuation
 
 
 @pytest.mark.anyio
-async def test_legacy_orphan_entry_falls_back_to_its_turn_id(tmp_path, monkeypatch):
-    """An entry written before the continuation field existed still re-sends —
-    under its own turn id, which IS what its continuation would have been."""
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    topic = uuid.uuid4()
-    turn_id = uuid.uuid4()
-    rt._save_inflight(
-        {
-            str(turn_id): {
-                "topic_id": str(topic),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "author": "u",
-                "content": "修一下登录页",
-            }
-        }
-    )
-    runner = AgentWorkRunner(InProcessBroker())
-    seen = _capture_resends(runner, monkeypatch)
-    assert await runner.resume_orphans(_Quiet()) == 1
-    assert seen[0]["continuation_id"] == turn_id
-
-
-@pytest.mark.anyio
-async def test_an_unparseable_entry_still_resends_instead_of_killing_the_sweep(
-    tmp_path, monkeypatch
-):
-    """A corrupt entry must not raise out of the sweep: the sweep is what
-    rescues every OTHER orphaned turn, so one bad row taking it down would be a
-    worse failure than the one it is there to prevent."""
-    monkeypatch.setattr(rt, "_inflight_path", lambda: tmp_path / "inflight.json")
-    good_topic = uuid.uuid4()
-    rt._save_inflight(
-        {
-            "not-a-uuid": {
-                "topic_id": str(uuid.uuid4()),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "author": "u",
-                "content": "任务甲",
-            },
-            str(uuid.uuid4()): {
-                "topic_id": str(good_topic),
-                "started_at": _time.time() - 60,
-                "is_resume": False,
-                "continuation_id": str(uuid.uuid4()),
-                "author": "u",
-                "content": "任务乙",
-            },
-        }
-    )
-    runner = AgentWorkRunner(InProcessBroker())
-    seen = _capture_resends(runner, monkeypatch)
-    assert await runner.resume_orphans(_Quiet()) == 2
-    assert all(isinstance(s["continuation_id"], uuid.UUID) for s in seen)
-    assert good_topic in {s["topic"] for s in seen}
-
-
-@pytest.mark.anyio
-async def test_continuation_for_is_none_outside_a_running_turn():
+async def test_continuation_for_is_none_outside_a_running_turn(db_factory):
     """What the endpoints key off: no running turn → no continuation → no
     dedup. A human clicking twice means it twice."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     assert runner.continuation_for(topic) is None
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_Quiet(), topic, author="u", content="hi", summon=True)
-        await asyncio.wait_for(q.get(), 2)
+        runner.submit(
+            _wired(_Quiet(), db_factory), topic, author="u", content="hi", summon=True
+        )
+        await _until_finished(q)
     # The turn finished; its record is still in the ring buffer but no longer
     # running, so a later stray call must not reuse its namespace.
     assert runner.continuation_for(topic) is None
@@ -240,6 +203,8 @@ class _Blocks:
     runner WHILE a turn is live — which is the only state `turn_author_for` is
     allowed to answer from."""
 
+    session_factory = None
+
     def __init__(self):
         self.started = asyncio.Event()
         self.finish = asyncio.Event()
@@ -251,9 +216,9 @@ class _Blocks:
         yield {"type": "done"}
 
 
-async def _while_running(runner, broker, topic, author: str):
+async def _while_running(runner, broker, topic, author: str, factory):
     """Start a turn for `author`, read both answers mid-flight, then let it end."""
-    turn = _Blocks()
+    turn = _wired(_Blocks(), factory)
     async with broker.subscribe(str(topic)) as q:
         runner.submit(turn, topic, author=author, content="hi", summon=True)
         await asyncio.wait_for(turn.started.wait(), 2)
@@ -265,11 +230,13 @@ async def _while_running(runner, broker, topic, author: str):
 
 
 @pytest.mark.anyio
-async def test_the_human_driving_the_turn_is_reported():
+async def test_the_human_driving_the_turn_is_reported(db_factory):
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
-    author, continuation = await _while_running(runner, broker, topic, "bob")
+    topic = await a_topic(db_factory)
+    author, continuation = await _while_running(
+        runner, broker, topic, "bob", db_factory
+    )
     assert author == "bob"
     # Same record, so the split endpoint's two reads describe the same turn.
     assert continuation is not None
@@ -286,7 +253,7 @@ async def test_the_human_driving_the_turn_is_reported():
         pytest.param("", id="no_author_at_all"),
     ],
 )
-async def test_only_a_real_person_is_reported_as_the_driver(author):
+async def test_only_a_real_person_is_reported_as_the_driver(db_factory, author):
     """Gate verdicts, scheduled wake-ups, `cheese await` reports and conflict
     nudges all run as `system`; a 分身 working on its own initiative runs as
     itself. None of them may become a room's owner — `seed()` refuses to make 芝士
@@ -294,20 +261,22 @@ async def test_only_a_real_person_is_reported_as_the_driver(author):
     roster. The caller falls back to the ladder it had instead."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
-    reported, _ = await _while_running(runner, broker, topic, author)
+    topic = await a_topic(db_factory)
+    reported, _ = await _while_running(runner, broker, topic, author, db_factory)
     assert reported is None
 
 
 @pytest.mark.anyio
-async def test_no_driver_outside_a_running_turn():
+async def test_no_driver_outside_a_running_turn(db_factory):
     """Same rule as `continuation_for`: `_recent` remembers what turns DID, so a
     finished turn's author must not be read as whoever is driving now."""
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker)
-    topic = uuid.uuid4()
+    topic = await a_topic(db_factory)
     assert runner.turn_author_for(topic) is None
     async with broker.subscribe(str(topic)) as q:
-        runner.submit(_Quiet(), topic, author="bob", content="hi", summon=True)
-        await asyncio.wait_for(q.get(), 2)
+        runner.submit(
+            _wired(_Quiet(), db_factory), topic, author="bob", content="hi", summon=True
+        )
+        await _until_finished(q)
     assert runner.turn_author_for(topic) is None

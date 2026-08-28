@@ -17,7 +17,6 @@ from sqlalchemy import func, select
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.scheduler")
@@ -89,72 +88,25 @@ class SchedulerService:
         for topic_id, last in rows:
             if last is None:
                 continue
-            # Same normalization as reap_idle_containers: the column is TIMESTAMPTZ
-            # but some drivers hand back a naive value, and a naive one would blow
-            # up the subtraction rather than merely being wrong.
+            # The column is TIMESTAMPTZ but some drivers hand back a naive
+            # value, and a naive one would blow up the subtraction rather than
+            # merely being wrong.
             out[topic_id] = (
                 last if last.tzinfo is not None else last.replace(tzinfo=UTC)
             )
         return out
 
-    async def reap_idle_containers(self, idle_hours: float = IDLE_REAP_HOURS) -> int:
-        """Remove sandbox containers whose topic has had NO block activity for
-        ``idle_hours`` (or whose topic no longer exists). Safe by construction:
-        an active turn has just-persisted blocks, so its topic can never look
-        idle.
-
-        A tmux box is named after a ROOM and hosts that room's tasks too, so its
-        idleness is the idleness of the room AND everything in it. Judging the
-        room alone would destroy a box with a task working in it the moment the
-        room's own timeline went quiet — which is the normal state of a room
-        whose work has been split out.
-
-        Reaping is not destructive to the conversation. The transcript lives in
-        the topic's config dir on the HOST, so the next turn recreates the box
-        and resumes from it — the container is the body, not the continuity."""
-        names = ws.list_sandbox_containers()
-        if not names:
-            return 0
-        cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
-        reaped = 0
-        async with self._sessions() as session:
-            rows = (await session.execute(select(Topic.id, Topic.parent_id))).all()
-            by_hex = {row.id.hex[:12]: row.id for row in rows}
-            children: dict[uuid.UUID, list[uuid.UUID]] = {}
-            for row in rows:
-                if row.parent_id is not None:
-                    children.setdefault(row.parent_id, []).append(row.id)
-            for name in names:
-                topic_id = by_hex.get(name.rsplit("-", 1)[-1])
-                if topic_id is not None:
-                    scope = [topic_id, *children.get(topic_id, [])]
-                    last = (
-                        await session.execute(
-                            select(func.max(Block.created_at)).where(
-                                Block.topic_id.in_(scope)
-                            )
-                        )
-                    ).scalar()
-                    if last is not None and last.tzinfo is None:
-                        last = last.replace(tzinfo=UTC)
-                    if last is not None and last >= cutoff:
-                        continue  # recently active — keep the box warm
-                ws.remove_container(name)
-                reaped += 1
-        return reaped
-
     async def reap_idle_device_screens(
         self, idle_hours: float = IDLE_REAP_HOURS
     ) -> int:
-        """Device counterpart to ``reap_idle_containers``: close a device screen whose
-        topic has had NO block activity for ``idle_hours``. Screens live in the device
-        hub's in-memory registry, not in Docker, so the container reaper never saw
-        them — a topic that ran on a device and then went quiet used to leak its screen
-        (and the ``claude`` process behind it) on the machine forever.
+        """Close a device screen whose topic has had NO block activity for
+        ``idle_hours`` — a topic that ran on a device and then went quiet used to
+        leak its screen (and the ``claude`` process behind it) on the machine
+        forever.
 
-        Only ONLINE devices are walked (an offline box is unreachable now). The same
-        safety holds as for containers: an active turn has just-persisted blocks, so
-        its topic can never look idle. Teardown removes the device's per-topic tree.
+        Only ONLINE devices are walked (an offline box is unreachable now). Safe
+        by construction: an active turn has just-persisted blocks, so its topic
+        can never look idle. Teardown removes the device's per-topic tree.
         Returns how many topics were released."""
         from app.domain.agent.device_hub import device_hub
         from app.domain.agent.device_provider import release_topic_screen
@@ -275,7 +227,32 @@ class SchedulerService:
                     await session.rollback()
                     errors.append(f"{card_id}: {exc}")
                     logger.exception("poll_open_prs failed for card %s", card_id)
+                    await self._note_card_poll_crashed(card_id, exc)
         return {"cards_checked": checked, "errors": errors}
+
+    async def _note_card_poll_crashed(
+        self, card_id: uuid.UUID, exc: BaseException
+    ) -> None:
+        """Leave the crash on the card, in its own transaction.
+
+        The rollback above throws away everything the failed tick wrote — which
+        is right for the state machine and wrong for the reader: the card keeps
+        showing whatever it said before, usually 「等 CI」, while every tick dies
+        the same way. A person watching a green PR that never merges has no way
+        to tell that apart from slow checks. So the explanation is written by a
+        SEPARATE session that the rollback cannot take with it.
+
+        Best-effort by construction: if even this write fails, the log line
+        above is still there and the poll loop keeps going.
+        """
+        from app.domain.review.services import AcceptService
+
+        try:
+            async with self._sessions() as session:
+                await AcceptService(session).note_poll_crashed(card_id, exc)
+                await session.commit()
+        except Exception:  # noqa: BLE001 — never let the explanation kill the loop
+            logger.exception("could not record poll failure on card %s", card_id)
 
     async def sweep_abandoned_gates(self) -> dict:
         """闸门孤儿卡扫底 (2026-08-11): condemn `pending_gate` cards whose gate
@@ -313,6 +290,11 @@ class SchedulerService:
         sub-topic still held an undecided accept card. That deferral is what
         keeps a reviewer's card from being revoked out from under them; this is
         what keeps the deferral from turning into a never-archived sub-topic.
+
+        Third job: land the sub-topic commits 采信 could not fold into the room's
+        branch at the time — the room was waiting on CI, or somebody was editing
+        in its workspace. Queuing those is the whole reason they are safe to
+        refuse; this is the exit from the queue.
         """
         from app.domain.conclusion.services import ConclusionCardService
 
@@ -340,7 +322,30 @@ class SchedulerService:
                 await session.rollback()
                 logger.exception("deferred archive sweep failed")
                 errors.append(str(exc))
-        return {"settled": len(settled), "archived": len(archived), "errors": errors}
+        # 幽灵额度: a backend that died mid-turn leaves a task marked running
+        # forever, holding one of its room's four slots with nothing behind it.
+        # Materialised residency is what lets a slot survive a restart; this is
+        # the other half of that bargain.
+        freed: list = []
+        async with self._sessions() as session:
+            try:
+                from app.domain.room_task.services import ResidencyService
+
+                svc = ResidencyService(session)
+                freed = await svc.sweep_ghosts()
+                for task in freed:
+                    await svc.dequeue(task.room_id)
+                await session.commit()
+            except Exception as exc:  # noqa: BLE001 — maintenance must survive
+                await session.rollback()
+                logger.exception("ghost residency sweep failed")
+                errors.append(str(exc))
+        return {
+            "settled": len(settled),
+            "archived": len(archived),
+            "freed_slots": len(freed),
+            "errors": errors,
+        }
 
 
 class SchedulerRunner:
@@ -373,8 +378,8 @@ class SchedulerRunner:
                 logger.exception("scheduler tick failed")
 
 
-class SandboxReaperRunner:
-    """Deterministic sandbox cleanup, independent from AI heartbeat scheduling."""
+class ScreenReaperRunner:
+    """Deterministic screen cleanup, independent from AI heartbeat scheduling."""
 
     def __init__(
         self,
@@ -391,7 +396,7 @@ class SandboxReaperRunner:
         if self._interval > 0 and self._task is None:
             self._task = asyncio.create_task(self._loop())
             logger.info(
-                "sandbox reaper started (every %ss, idle>%sh)",
+                "screen reaper started (every %ss, idle>%sh)",
                 self._interval,
                 self._idle_hours,
             )
@@ -406,14 +411,6 @@ class SandboxReaperRunner:
     async def _loop(self) -> None:
         while True:
             await asyncio.sleep(self._interval)
-            # Containers and device screens are independent cleanups on the same
-            # cadence — one raising must not skip the other.
-            try:
-                reaped = await self._scheduler.reap_idle_containers(self._idle_hours)
-                if reaped:
-                    logger.info("idle reap: removed %d container(s)", reaped)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("idle container reap failed")
             try:
                 freed = await self._scheduler.reap_idle_device_screens(self._idle_hours)
                 if freed:
@@ -425,7 +422,7 @@ class SandboxReaperRunner:
 class PrPollRunner:
     """两阶段采纳 (PR迭代式, 2026-08-09): drives SchedulerService.poll_open_prs()
     on an interval, independent from the AI heartbeat and the idle reaper —
-    same shape as SandboxReaperRunner."""
+    same shape as ScreenReaperRunner."""
 
     def __init__(self, scheduler: SchedulerService, interval_seconds: int):
         self._scheduler = scheduler
@@ -586,7 +583,9 @@ class ConclusionSweepRunner:
             await asyncio.sleep(self._interval)
             try:
                 result = await self._scheduler.sweep_conclusion_cards()
-                if result["settled"] or result["archived"] or result["errors"]:
+                if any(
+                    result[k] for k in ("settled", "archived", "freed_slots", "errors")
+                ):
                     logger.info("conclusion sweep: %s", result)
             except Exception:  # noqa: BLE001 -- maintenance loop must survive
                 logger.exception("conclusion sweep failed")

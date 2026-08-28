@@ -3,50 +3,33 @@ platform} in `meta` so the UI translates and colors dots at DISPLAY time —
 including tools missing from today's verb table, and subagent-nested calls
 (which arrive through the same AgentToolUse path with the same field shapes)."""
 
+import uuid
+
 import pytest
 
-from app.domain.agent.service import (
-    AgentDelta,
-    AgentResult,
-    AgentToolUse,
-    AgentUsage,
-)
-from tests.conftest import StubAgent
+from tests.conftest import StubChannel
 from tests.integration.conftest import chat_ws_url
 
 
-class ToolStubAgent(StubAgent):
-    """Streams a mix of platform / plain / unmapped tool calls, then a result."""
+class ToolScreen(StubChannel):
+    """A session using a mix of platform / plain / unmapped tools."""
 
-    async def stream_reply(
-        self,
-        *,
-        prompt,
-        system_prompt,
-        cwd,
-        resume_session_id,
-        sandbox=None,
-        allowed_tools=None,
-        **_,
-    ):
-        self.last_system_prompt = system_prompt
-        yield AgentToolUse(name="Grep", input={"pattern": "TODO", "path": "src"})
-        yield AgentToolUse(name="mcp__cheese__update_doc", input={"content": "# 文档"})
-        yield AgentToolUse(name="Bash", input={"command": 'cheese title "新标题"'})
-        yield AgentToolUse(name="Bash", input={"command": "ls -la"})
-        yield AgentToolUse(name="FutureTool", input={"x": 1})
-        yield AgentDelta(text="done")
-        yield AgentResult(
-            text="done",
-            session_id="sess-tools-1",
-            usage=AgentUsage(model="stub", input_tokens=1, output_tokens=1),
-        )
+    def emit_turn(self, topic_id: uuid.UUID, prompt: str, reply: str) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.uses(topic_id, "Grep", pattern="TODO", path="src")
+        self.uses(topic_id, "mcp__cheese__update_doc", content="# 文档")
+        self.uses(topic_id, "Bash", command='cheese title "新标题"')
+        self.uses(topic_id, "Bash", command="ls -la")
+        self.uses(topic_id, "FutureTool", x=1)
+        self.stops(topic_id, "done")
 
 
 @pytest.fixture
-def stub_agent() -> ToolStubAgent:
-    # Overrides conftest's stub_agent for this module; `client` picks it up.
-    return ToolStubAgent()
+def stub_hooks() -> ToolScreen:
+    # Overrides conftest's stub_hooks for this module; `client` picks it up.
+    return ToolScreen()
 
 
 def _chat(client, topic_id: str) -> None:
@@ -68,8 +51,14 @@ def test_event_blocks_persist_structured_meta(client):
     by_tool = {b["meta"]["tool"]: b for b in tr if (b.get("meta") or {}).get("tool")}
 
     # Plain work → neutral dot; verb/arg live in meta for display-time labels.
+    # in_room=False keeps 芝士's working detail out of the conversation (§14.1).
     grep = by_tool["Grep"]
-    assert grep["meta"] == {"tool": "Grep", "arg": "TODO", "platform": False}
+    assert grep["meta"] == {
+        "tool": "Grep",
+        "arg": "TODO",
+        "platform": False,
+        "in_room": False,
+    }
     assert grep["content"] == "搜内容\nTODO"  # human-readable fallback text
 
     # cheese MCP tool → platform (amber dot); name stored mcp-prefix-stripped.
@@ -87,4 +76,59 @@ def test_event_blocks_persist_structured_meta(client):
     # fallback), but meta still lets a NEWER frontend table translate it.
     fut = by_tool["FutureTool"]
     assert fut["content"] == "FutureTool"
-    assert fut["meta"] == {"tool": "FutureTool", "platform": False}
+    assert fut["meta"] == {
+        "tool": "FutureTool",
+        "platform": False,
+        "in_room": False,
+    }
+
+
+def test_transcript_pages_back_instead_of_serving_everything(client):
+    """现场 is the biggest thing a topic can hand back — one event per tool call,
+    forever. So it comes in windows, newest first, and the caller walks back."""
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    t = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "话题", "created_by": "user-1"},
+    ).json()["data"]
+    for _ in range(3):
+        _chat(client, t["id"])
+
+    everything = client.get(f"/topics/{t['id']}/transcript").json()["data"]["data"]
+    assert len(everything) > 2, "需要几条事件才谈得上分页"
+
+    first = client.get(f"/topics/{t['id']}/transcript?limit=2").json()["data"]
+    assert len(first["data"]) == 2
+    assert first["has_more"] is True
+    # 最新的一窗：末尾必须和全量的末尾是同一条。
+    assert first["data"][-1]["id"] == everything[-1]["id"]
+
+    older = client.get(
+        f"/topics/{t['id']}/transcript?limit=200&before={first['oldest_id']}"
+    ).json()["data"]
+    assert older["has_more"] is False
+    # 两窗接起来就是全量，一条不多一条不少 —— 「过滤发生在分页之后」的实现会在
+    # 这里露馅：它每一窗都少给几条，has_more 也算错。
+    assert [b["id"] for b in older["data"] + first["data"]] == [
+        b["id"] for b in everything
+    ]
+
+
+def test_transcript_rejects_a_cursor_from_another_topic(client):
+    """未知游标不能悄悄退化成「最新 N 条」—— 调用方分不出那和真的一页有什么区别。"""
+    p = client.post("/projects", json={"name": "P"}).json()["data"]
+    a = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "A", "created_by": "user-1"},
+    ).json()["data"]
+    b = client.post(
+        "/topics",
+        json={"project_id": p["id"], "title": "B", "created_by": "user-1"},
+    ).json()["data"]
+    _chat(client, a["id"])
+    other = client.get(f"/topics/{a['id']}/transcript").json()["data"]["data"][0]["id"]
+
+    assert (
+        client.get(f"/topics/{b['id']}/transcript?limit=5&before={other}").status_code
+        == 404
+    )

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.domain.agent.platform_notices import SEVERITY_ERROR, SEVERITY_INFO
 from app.domain.block.models import AuthorType, BlockKind
 from app.domain.workspace import dogfood_notices as dn
 
@@ -136,11 +137,15 @@ def _write_log(tmp_path: Path, prefix: str, suffix: str) -> tuple[Path, int]:
 # ---- _compose_message: pure outcome parsing -------------------------------
 
 
+BRANCH = "dogfood/abcd1234"
+
+
 def test_compose_message_success_extracts_commit():
     text = "[..] [dogfood/abcd1234] === push-back done: platform now runs a1b2c3d ===\n"
-    msg = dn._compose_message(text, "dogfood/abcd1234")
-    assert "a1b2c3d" in msg
-    assert "✅" in msg
+    line, meta = dn._compose_message(text, BRANCH)
+    assert "成功" in line
+    assert meta["severity"] == SEVERITY_INFO
+    assert "a1b2c3d" in meta["detail"]
 
 
 def test_compose_message_rollback_keeps_branch_and_reason():
@@ -149,39 +154,41 @@ def test_compose_message_rollback_keeps_branch_and_reason():
         "[..] ROLLBACK: checks failed — main restored to deadbee; "
         "branch dogfood/abcd1234 kept for debugging\n"
     )
-    msg = dn._compose_message(text, "dogfood/abcd1234")
-    assert "回滚" in msg
-    assert "dogfood/abcd1234" in msg
-    assert "checks failed" in msg
-    assert "✅" not in msg
+    line, meta = dn._compose_message(text, BRANCH)
+    assert "回滚" in line
+    assert meta["severity"] == SEVERITY_ERROR
+    assert BRANCH in meta["detail"]
+    assert "checks failed" in meta["detail"]
 
 
 def test_compose_message_conflict_is_not_reported_as_rollback():
     text = "[..] CONFLICT: dogfood/abcd1234 does not merge cleanly — resolve manually\n"
-    msg = dn._compose_message(text, "dogfood/abcd1234")
-    assert "dogfood/abcd1234" in msg
-    assert "❌" in msg
-    assert "回滚" not in msg
+    line, meta = dn._compose_message(text, BRANCH)
+    assert meta["severity"] == SEVERITY_ERROR
+    assert BRANCH in meta["detail"]
+    # 没合上和合上又退回来是两回事，说错了人就去查错的东西。
+    assert "回滚" not in line and "回滚" not in meta["detail"]
 
 
 def test_compose_message_lock_timeout():
     text = "[..] another push-back is still running after 600s — giving up\n"
-    msg = dn._compose_message(text, "dogfood/abcd1234")
-    assert "❌" in msg
-    assert "dogfood/abcd1234" in msg
+    line, meta = dn._compose_message(text, BRANCH)
+    assert meta["severity"] == SEVERITY_ERROR
+    assert BRANCH in meta["detail"]
 
 
 def test_compose_message_unrecognized_output_never_claims_success():
     text = "[..] SKIP: dev working tree is dirty — resolve manually: git merge x\n"
-    msg = dn._compose_message(text, "dogfood/abcd1234")
-    assert "✅" not in msg
-    assert "SKIP" in msg  # falls back to the last non-empty log line
+    line, meta = dn._compose_message(text, BRANCH)
+    assert "成功" not in line
+    assert meta["severity"] != SEVERITY_INFO
+    assert "SKIP" in meta["detail"]  # falls back to the last non-empty log line
 
 
 def test_compose_message_none_text_is_unknown_outcome():
-    msg = dn._compose_message(None, "dogfood/abcd1234")
-    assert "未知" in msg
-    assert "dogfood/abcd1234" in msg
+    line, meta = dn._compose_message(None, BRANCH)
+    assert "未知" in line
+    assert BRANCH in meta["detail"]
 
 
 # ---- _wait_for_output: process exit + offset-scoped log read --------------
@@ -224,7 +231,7 @@ async def test_watch_dogfood_push_posts_success_to_the_right_topic(
     assert call["project_id"] == project_id
     assert call["author_type"] == AuthorType.system
     assert call["kind"] == BlockKind.event
-    assert "deadbee" in call["content"]
+    assert "deadbee" in call["meta"]["detail"]
 
 
 @pytest.mark.anyio

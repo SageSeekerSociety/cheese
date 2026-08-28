@@ -31,8 +31,19 @@ from app.domain.agent.market import (
     subscription_model_listings,
 )
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent.roles import resolve_role_description
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.schemas import (
+    AgentInstanceCreate,
+    AgentInstanceOut,
+    ProjectDefaultAgentIn,
+)
+from app.domain.agent_instance.services import (
+    IMPLICIT_DEFAULT,
+    AgentInstanceService,
+    ResolvedAgent,
+    legacy_topic_pool,
+    memory_pool,
+)
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -47,10 +58,12 @@ from app.domain.project.schemas import (
     ProjectOut,
 )
 from app.domain.project.services import ProjectService
-from app.domain.topic.models import Topic
+from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.place import Place
+from app.domain.room_task.repositories import TaskRepository
+from app.domain.room_task.schemas import TaskOut
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
-from app.domain.topic_membership.services import TopicMemberService
 from app.domain.workspace import service as ws
 from app.domain.workspace import upstream_conflict
 
@@ -118,7 +131,7 @@ async def create_project(
         name=body.name,
         owner_handle=owner_handle,
         ai_mode=body.ai_mode,
-        expert_role=body.expert_role,
+        agent_type=body.agent_type,
         team_id=body.team_id,
         external_task_id=body.external_task_id,
     )
@@ -211,19 +224,100 @@ async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
-@router.put("/{project_id}/expert-role")
-async def set_expert_role(project_id: uuid.UUID, body: dict, db: DbSession) -> dict:
-    """Set which expert persona 芝士 loads for this project (spec §8.2). Any
-    known role name is accepted (custom shadows built-in); empty clears."""
-    project = await ProjectRepository(db).get(project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    name = str(body.get("role") or "").strip()
-    if name and await resolve_role_description(db, name) is None:
-        raise ValidationError(f"角色 {name!r} 不存在")
-    project.expert_role = name or None
+def _agent_out(
+    project_id: uuid.UUID, agent: ResolvedAgent, *, is_default: bool
+) -> dict:
+    return AgentInstanceOut(
+        id=agent.instance_id,
+        project_id=project_id,
+        handle=agent.handle,
+        type_name=agent.type_name,
+        display_name=agent.display_name,
+        is_default=is_default,
+        configured=agent.instance_id is not None,
+    ).model_dump(mode="json")
+
+
+@router.get("/{project_id}/agents")
+async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
+    """The agents this project has, and which one a new topic gets.
+
+    A project that never configured one is not empty: it still has an implicit
+    芝士 (``configured: false``), and that agent owns a real memory pool. Hiding
+    it would make the settings page claim there is no agent while one is
+    plainly working in every room.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    default = await service.for_project(project)
+    rows = await service.list_for_project(project_id)
+    items = [
+        _agent_out(
+            project_id,
+            AgentInstanceService.resolved(row),
+            # A row under the implicit handle IS the project's 芝士 — same
+            # handle, therefore the same memory pool — so it holds the default
+            # even before anything points at it.
+            is_default=row.id == project.default_agent_instance_id
+            or (
+                project.default_agent_instance_id is None
+                and row.handle == IMPLICIT_DEFAULT.handle
+            ),
+        )
+        for row in rows
+    ]
+    # Synthesized only when nothing materialized it yet. Listing both would show
+    # two agents under one handle, reading as two teammates where there is one.
+    if default.instance_id is None and not any(item["is_default"] for item in items):
+        items.insert(0, _agent_out(project_id, default, is_default=True))
+    return ok(page(items, len(items)))
+
+
+@router.post("/{project_id}/agents")
+async def create_project_agent(
+    project_id: uuid.UUID, body: AgentInstanceCreate, db: DbSession
+) -> dict:
+    """Add an agent to this project. It starts with an empty memory pool."""
+    await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    instance = await service.create(
+        project_id=project_id,
+        handle=body.handle or body.type_name or IMPLICIT_DEFAULT.handle,
+        type_name=body.type_name,
+        display_name=body.display_name,
+    )
     await db.flush()
-    return ok({"current": project.expert_role})
+    return ok(
+        _agent_out(
+            project_id, AgentInstanceService.resolved(instance), is_default=False
+        )
+    )
+
+
+@router.put("/{project_id}/default-agent")
+async def set_project_default_agent(
+    project_id: uuid.UUID, body: ProjectDefaultAgentIn, db: DbSession
+) -> dict:
+    """Which agent a new topic in this project gets.
+
+    Two ways in, because they are two different intents. ``instance_id`` picks a
+    different agent — a different memory pool. ``type_name`` re-skins the one
+    the project already has, which is what "which persona does 芝士 wear here"
+    means: the pool it has been filling stays its own.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    if body.instance_id is not None:
+        instance = await service.get_in_project(
+            project_id=project_id, instance_id=body.instance_id
+        )
+        agent = await service.set_project_default(project, instance)
+    else:
+        instance = await service.materialize_default(project)
+        await service.set_type(instance, body.type_name)
+        await db.flush()
+        agent = await service.for_project(project)
+    return ok(_agent_out(project_id, agent, is_default=True))
 
 
 @router.get("/{project_id}/decisions")
@@ -238,52 +332,130 @@ async def list_decisions(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(page(items, len(items)))
 
 
+@router.get("/{project_id}/tasks")
+async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
+    """Every thread in the project, each with the card it currently rides on.
+
+    The rail draws rooms and the work inside them, so it needs both halves at
+    once. Two round trips, not two per room and one per thread: a project here
+    already holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)
+    would make painting one sidebar 170 requests before a single PR badge.
+
+    `card` is the newest accept card ON THAT THREAD, narrowed to what a rail row
+    can show — where the work stands and the PR it rides on. Null for a thread
+    that has not been filed for acceptance, which is most of them while the work
+    is still going.
+    """
+    await ProjectService(db).get_or_404(project_id)
+    tasks = await TaskRepository(db).list_for_project(project_id)
+    cards = await AcceptCardRepository(db).latest_by_task([t.id for t in tasks])
+    items = []
+    for task in tasks:
+        card = cards.get(task.id)
+        items.append(
+            {
+                **TaskOut.model_validate(task).model_dump(mode="json"),
+                "card": None
+                if card is None
+                else {
+                    "id": str(card.id),
+                    "status": str(card.status),
+                    "pr_number": card.pr_number,
+                    "pr_url": card.pr_url,
+                },
+            }
+        )
+    return ok(page(items, len(items)))
+
+
 async def _authorized_memory_topic(
     db: DbSession,
     resolver: ActorResolverDep,
     project_id: uuid.UUID,
     topic_raw: str,
-) -> Topic | None:
-    """Resolve and authorize the body-carried topic, when present."""
+) -> Place | None:
+    """Resolve and authorize the body-carried place, when present.
+
+    A place, not a room: `cheese remember` is run by whoever is doing the work,
+    and that is usually a thread. Resolving only rooms answered 404 for the one
+    caller this endpoint exists for.
+    """
     if not topic_raw:
         return None
     try:
         topic_id = uuid.UUID(topic_raw)
     except ValueError as exc:
         raise ValidationError("topic 不是合法的话题 id") from exc
-    topic = await TopicService(db).get_or_404(topic_id)
-    if topic.project_id != project_id:
+    place = await TopicService(db).place_or_404(topic_id)
+    if place.project_id != project_id:
         raise ForbiddenError("这个话题不属于 URL 中的项目")
+    # Two different ids on purpose. A per-turn token is scoped to the PLACE it
+    # was minted for, so that is what identity is checked against — handing it
+    # the room would read a thread's token as out-of-scope and erase its author.
+    # Access, though, is the room's roster: threads do not have one.
     actor = await resolver.resolve(
-        fallback_handle=None, topic_id=topic_id, project_id=project_id
+        fallback_handle=None, topic_id=place.id, project_id=project_id
     )
-    await resolver.authorize_topic(actor, project_id=project_id, topic_id=topic_id)
-    return topic
+    await resolver.authorize_topic(actor, project_id=project_id, topic_id=place.room_id)
+    return place
 
 
 async def _agent_memory_scope(
-    db: DbSession, project_id: uuid.UUID, topic: Topic | None
+    db: DbSession, project_id: uuid.UUID, place: Place | None
 ) -> tuple[MemoryScope, str] | None:
-    """Resolve ``topic`` into the acting 芝士's own memory scope in this project.
+    """Where the agent working in ``place`` writes what it learns.
 
-    What an agent learns is its own, the way a teammate's is — a project hosting
-    several 芝士 must not pool one's operational trivia with another's product
-    decisions. Returns ``None`` when no usable topic was supplied, so the caller
-    falls back to the shared project pool.
+    Keyed by the AGENT, not by the room: the same 芝士 moving between rooms of
+    one project keeps one pool, which is the whole point of an instance owning
+    its memory. Returns ``None`` when no usable place was supplied, so the
+    caller falls back to the shared project pool.
+
+    A thread is asked about its own row: it was handed the room's agent when
+    the work went out, so what it learns lands in the pool the room reads back
+    — which is the entire reason the room dispatched it.
     """
-    from app.domain.memory.models import agent_project_scope_id
-
-    if topic is None:
+    if place is None:
         return None
-    handle = await TopicMemberService(db).resolve_agent_handle(topic.id)
-    return MemoryScope.agent_project, agent_project_scope_id(project_id, handle)
+    project = await ProjectService(db).get_or_404(project_id)
+    owner = place.task if place.task is not None else place.room
+    agent = await AgentInstanceService(db).for_topic(owner, project)
+    return memory_pool(project_id, agent)
 
 
-def _authorize_personal_memory_owner(topic: Topic | None, owner: str) -> None:
-    if topic is None:
+async def _agent_memory_read_scopes(
+    db: DbSession, project_id: uuid.UUID, place: Place | None
+) -> list[tuple[MemoryScope, str]]:
+    """Every pool a read on behalf of ``place`` should cover.
+
+    The agent's own pool, plus the pool this room filled back when memory was
+    keyed by the room. Writes go to the first alone; the second is a read-only
+    tail so that repointing memory at the agent does not read as amnesia in
+    every room that had already learned something.
+
+    The legacy tail is the ROOM's, even when a thread is asking: that pool was
+    filled when work was a room of its own, so keying it by the thread would
+    look up an id nothing ever wrote under.
+    """
+    if place is None:
+        return []
+    agent_scope = await _agent_memory_scope(db, project_id, place)
+    if agent_scope is None:
+        return []
+    scopes = [agent_scope]
+    legacy = legacy_topic_pool(project_id, place.room_id)
+    if legacy != agent_scope:
+        scopes.append(legacy)
+    return scopes
+
+
+def _authorize_personal_memory_owner(place: Place | None, owner: str) -> None:
+    """个人记忆 lives in a private chat, and a private chat is a room — so this
+    asks the room even when a thread inside it is the caller."""
+    if place is None:
         return
-    participants = {topic.private_owner, topic.private_peer} - {None}
-    if not topic.is_private or owner not in participants:
+    room = place.room
+    participants = {room.private_owner, room.private_peer} - {None}
+    if not room.is_private or owner not in participants:
         raise ForbiddenError("只能在该成员自己的私聊中读写个人记忆")
 
 
@@ -297,30 +469,39 @@ async def add_memory(
     """记入记忆 — used by the `cheese remember` CLI. With a ``topic`` it writes
     the acting 芝士's own memory for this project; with scope="user"+owner it
     writes that member's personal memory (private chat, spec §8.4 个人记忆跟着
-    人走). Without either it falls back to the shared project pool."""
-    from app.domain.memory.models import MemoryScope
+    人走). Without either it falls back to the shared project pool.
+
+    ``layer="core"`` buys a seat in every future prompt instead of a place in
+    the pool that gets retrieved on demand — see MemoryLayer."""
+    from app.domain.memory.models import MemoryLayer, MemoryScope
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    topic = await _authorized_memory_topic(
+    place = await _authorized_memory_topic(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     content = (body.get("content") or "").strip()
     if not content:
         raise ValidationError("content 不能为空")
+    raw_layer = (body.get("layer") or MemoryLayer.fact.value).strip()
+    if raw_layer not in tuple(MemoryLayer):
+        raise ValidationError("layer 只能是 core 或 fact")
+    layer = MemoryLayer(raw_layer)
     if (body.get("scope") or "project") == "user":
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(topic, owner)
-        await memory_store(db).remember(MemoryScope.user, owner, content)
-        return ok({"remembered": True})
-    agent_scope = await _agent_memory_scope(db, project_id, topic)
+        _authorize_personal_memory_owner(place, owner)
+        await memory_store(db).remember(MemoryScope.user, owner, content, layer=layer)
+        return ok({"remembered": True, "layer": layer.value})
+    agent_scope = await _agent_memory_scope(db, project_id, place)
     if agent_scope is not None:
-        await memory_store(db).remember(*agent_scope, content)
+        await memory_store(db).remember(*agent_scope, content, layer=layer)
     else:
-        await memory_store(db).remember(MemoryScope.project, str(project_id), content)
-    return ok({"remembered": True})
+        await memory_store(db).remember(
+            MemoryScope.project, str(project_id), content, layer=layer
+        )
+    return ok({"remembered": True, "layer": layer.value})
 
 
 @router.post("/{project_id}/memory/search")
@@ -339,7 +520,7 @@ async def search_memory(
     from app.domain.memory.store import memory_store
 
     await ProjectService(db).get_or_404(project_id)
-    topic = await _authorized_memory_topic(
+    place = await _authorized_memory_topic(
         db, resolver, project_id, (body.get("topic") or "").strip()
     )
     query = (body.get("query") or "").strip()
@@ -350,17 +531,17 @@ async def search_memory(
         owner = (body.get("owner") or "").strip()
         if not owner:
             raise ValidationError("owner 不能为空（个人记忆需要 owner）")
-        _authorize_personal_memory_owner(topic, owner)
+        _authorize_personal_memory_owner(place, owner)
         hits = await store.search(MemoryScope.user, owner, query)
         return ok({"hits": [h.as_dict() for h in hits]})
-    # The agent's own memory plus the shared pool — the latter a read-only tail
-    # of what was written before memory was split per agent. Merged on score, not
-    # concatenated by pool: which pool a fact happens to sit in says nothing
-    # about how well it answers the question, and the caller reads top-down.
+    # The agent's own memory, the pool this room filled before memory followed
+    # the agent, and the shared pool — the last two read-only tails of earlier
+    # keyings. Merged on score, not concatenated by pool: which pool a fact
+    # happens to sit in says nothing about how well it answers the question, and
+    # the caller reads top-down.
     hits = []
-    agent_scope = await _agent_memory_scope(db, project_id, topic)
-    if agent_scope is not None:
-        hits.extend(await store.search(*agent_scope, query))
+    for scope in await _agent_memory_read_scopes(db, project_id, place):
+        hits.extend(await store.search(*scope, query))
     hits.extend(await store.search(MemoryScope.project, str(project_id), query))
     hits.sort(key=lambda h: -h.score)
     return ok({"hits": [h.as_dict() for h in hits]})
@@ -653,11 +834,18 @@ async def get_quality_gate(project_id: uuid.UUID, db: DbSession) -> dict:
     """The project's 硬门 settings: `check_command` and `approvals_required`
     (distinct approvals an accept needs; default 1).
 
-    采纳即合并退役闸门 (docs/accept-is-merge.md #296, stage 1): `check_command`
-    is RETIRED. It used to run in the topic workspace before a card reached the
-    reviewer; that mechanism is gone — a card is the view of a PR and real CI on
-    that PR decides. The value is still stored and returned (round-trip stays
-    working, a later stage clears it) but nothing runs it any more.
+    `check_command` is no longer a PLATFORM gate. #296 retired that: a card is
+    the view of a PR, and the real CI on that PR is what decides whether a
+    change is good — not a private check the platform runs before a reviewer
+    ever sees the card.
+
+    It is now the agent's own quick check, which `cheese check` runs in the
+    agent's sandbox, on the room's heavy lane, costing no CI runner. The result
+    is recorded on the tree and shown on the card. It still gates nothing: red
+    does not stop a card being filed or accepted. What it does is make a red
+    check VISIBLE to the person about to accept, which is the half that was
+    missing — a check whose result goes nowhere is a check nobody runs.
+
     `approvals_required` is unaffected."""
     from app.domain.review.services import approvals_required_of, check_command_of
 

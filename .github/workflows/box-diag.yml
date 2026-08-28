@@ -74,7 +74,7 @@ jobs:
           '
       - name: Deployed images and disk
         run: |
-          docker ps --format '{{.Names}}  {{.Image}}' | grep -v cheesex-tmux || true
+          docker ps --format '{{.Names}}  {{.Image}}' || true
           df -h / | tail -1
       - name: Backend log tail
         # The backend process's own stdout is not reachable any other way: the
@@ -98,6 +98,56 @@ jobs:
           docker logs --since 2h --timestamps cheese-backend-1 2>&1 \
             | grep -v 'uvicorn.access\|\[http\][[:space:]]*bytes=' \
             | tail -600 || true
+      - name: Data plane (llm tunnel + api front)
+        # The standing pair from #573 carries ALL machine model traffic, and it
+        # is deliberately outside deploy-docker.sh's stack — so when it breaks,
+        # nothing in the backend's own log says so. On 2026-08-18 every claude
+        # on the dev box died with `API Error: Unable to connect to API
+        # (ConnectionRefused)` while cheese-llm-tunnel and cheese-api-front were
+        # both listed as running: "the container is up" is not "the pipe works",
+        # and their logs were the one place that could tell the two apart.
+        #
+        # Port bindings go with the logs on purpose: this pair's whole contract
+        # is who owns :8081 and who answers on :8091, and a half-finished
+        # cutover (backend still on :8081, or nginx pointing at a port nothing
+        # serves) is invisible in `docker ps --format '{{.Names}}'`.
+        run: |
+          for c in cheese-llm-tunnel cheese-api-front; do
+            echo "===== $c ====="
+            docker inspect -f '{{.State.Status}} started={{.State.StartedAt}} restarts={{.RestartCount}}' "$c" 2>&1 || true
+            docker port "$c" 2>&1 || true
+            docker logs --since 2h --timestamps --tail 200 "$c" 2>&1 || true
+          done
+          echo "===== who owns :8081 / :8091 ====="
+          docker ps --format '{{.Names}}  {{.Ports}}' | grep -E '8081|8091|18081' || true
+      - name: Public entrypoint (cloudflared connector)
+        # okcheese.com reaches this box through ONE cloudflared connector running
+        # here as a systemd unit. When that connector dies the edge serves 530 to
+        # every visitor while the box itself stays perfectly healthy — deploys go
+        # green, healthz answers, containers run — so nothing else in this file
+        # can tell the difference between "the site is down" and "the site is up".
+        #
+        # The 2026-08-25 outage burned three days on exactly that gap: the tunnel
+        # was down and the only way in was a key/route combination no single host
+        # had. The connector runs HERE, and the runner is already here.
+        #
+        # Reads only: unit state, why it last failed, and whether this box can
+        # still open the outbound TCP session the connector needs. No restart,
+        # no config edit — a probe that repairs is a probe nobody can run safely
+        # while they are still trying to understand the failure.
+        run: |
+          systemctl is-active cloudflared 2>&1 || true
+          systemctl show cloudflared -p ActiveState -p SubState -p Result \
+            -p NRestarts -p ExecMainStartTimestamp 2>&1 || true
+          journalctl -u cloudflared --since -6h --no-pager 2>&1 | tail -80 || true
+          echo "===== egress to the tunnel edge (TCP 7844, http2 protocol) ====="
+          for ip in 198.41.192.167 198.41.200.113; do
+            timeout 8 bash -c "cat < /dev/null > /dev/tcp/$ip/7844" \
+              && echo "$ip:7844 reachable" || echo "$ip:7844 UNREACHABLE"
+          done
+          echo "===== resolver + default route ====="
+          cat /etc/resolv.conf 2>&1 | grep -v '^#' || true
+          ip route show default 2>&1 || true
 
   prod-box:
     runs-on: [self-hosted, cheese-prod]
@@ -148,7 +198,7 @@ jobs:
           '
       - name: Deployed images and disk
         run: |
-          docker ps --format '{{.Names}}  {{.Image}}' | grep -v cheesex-tmux || true
+          docker ps --format '{{.Names}}  {{.Image}}' || true
           df -h / | tail -1
 
   # The cheese-ci pool, which now runs every heavy job (test, migration-heads,

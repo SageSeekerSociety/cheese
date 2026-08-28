@@ -297,13 +297,13 @@ def event_content(err: BackendErrorIn) -> str:
     """The one line a human sees. The stack lives in ``meta`` — 芝士 reads the
     whole thing, a person reads this."""
     where = f"（{err.where}）" if err.where else ""
-    return f"💥 后端报错{where}：{_headline(err)}"
+    return f"后端报错{where}：{_headline(err)}"
 
 
 def summary_content(err: BackendErrorIn, count: int) -> str:
     minutes = int(DEDUP_WINDOW_S // 60)
     where = f"（{err.where}）" if err.where else ""
-    return f"💥 后端报错刷屏{where}：{_headline(err)} —— {minutes} 分钟内 {count} 次"
+    return f"后端报错刷屏{where}：{_headline(err)} —— {minutes} 分钟内 {count} 次"
 
 
 def event_meta(err: BackendErrorIn, verdict: Verdict) -> dict:
