@@ -40,6 +40,10 @@
 
 下次启动会 re-adopt 活着的会话（`HasSession` 分支），drainer 继续重投它 spool 下来的 hook，viewer 重新 attach 回原来那个 pane。
 
+第三行只对 systemd 说话，**macOS 不需要对应物**：tmux server 一起来就 daemonize（实测 tmux 3.5a：PPID 1、自成进程组），而 launchd 拆 job 只管 job 自己的进程组，于是 server 和里面的会话原样活着——LaunchAgent 与 LaunchDaemon 两种形态都实测过，`launchctl bootout` 之后 `has-session` 仍然成立。Linux 非要那一行，是因为 cgroup 不是进程组：fork 出来的进程离不开自己所在的 unit，除非有个特权的 manager 把它搬走。所以「把 tmux server 挪出 connector 名下、让它结构上就不归我们」在不要 sudo 的前提下无处可去，那一行就是做法本身，不是权宜。
+
+它撑住的**上限是同一次开机**：unit 的 cgroup 放过 tmux server，登出和关机不会。默认路径（`cheese link connect` 提权装系统级 service）在 `system.slice` / LaunchDaemon 里，登出与它无关；退到用户级 service（没有 sudo，或 `--user`）时，登出会把 `user@.service` 连同 connector 和 tmux server 一起带走。`KillUserProcesses=` 不是这里的开关——它管的是 login session scope，而我们的 server 从来不在那里面；用户级路径要熬过登出，只有 linger。
+
 **真的要结束会话的动作是另外几个**，它们说了就得算数：`cheese link disconnect`、`cheese link no-auto-connect`、`cheese uninstall`（这条尤其——机器不是我们的，不能留东西），以及服务端关掉某块屏幕。
 
 unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖已存在的 unit，所以是先 uninstall 再 install），否则老版本装出来的 unit 会一直活着，而这类"发布悄悄没生效"正是 #501 的形状。
