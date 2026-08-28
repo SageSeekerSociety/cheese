@@ -235,14 +235,21 @@ async def _spend_2fa_attempt(
     user_id: int,
     verify: Callable[[], Awaitable[bool]],
     *,
+    step_up: bool = False,
     is_backup_code: bool = False,
     reissue_until: int | None = None,
 ) -> None:
     """Check a second-factor code against a per-user attempt budget (#357).
 
-    Every path that validates a second factor during login must go through
-    here, including the ones that take a code inline and never mint a ticket
-    — otherwise the un-budgeted path is the whole vulnerability, unchanged.
+    Every path that validates a second factor must go through here, including
+    the ones that take a code inline and never mint a ticket — otherwise the
+    un-budgeted path is the whole vulnerability, unchanged.
+
+    ``step_up`` picks the budget for re-proving 2FA inside a live session
+    (#389) instead of the login one. Which budget an entrance draws on is the
+    security question, not a detail: put a stolen session's guesses on the
+    login counter and grinding sudo would lock the owner out of signing in,
+    which is a denial of service dressed as a rate limit.
 
     Raises on a wrong code (or an exhausted budget) and returns None on a
     good one, so callers cannot forget to check a boolean.
@@ -265,13 +272,17 @@ async def _spend_2fa_attempt(
         LOCKOUT_DURATION_SECONDS,
         BackupCodeRateLimiter,
         LoginRateLimiter,
+        StepUpTwoFactorRateLimiter,
         TwoFactorRateLimiter,
     )
 
     subject = str(user_id)
-    # A backup-code guess spends both budgets; a TOTP guess spends only the
-    # shared one, so routine TOTP typos cannot exhaust the backup allowance.
-    limiters: list[LoginRateLimiter] = [TwoFactorRateLimiter(redis)]
+    # Exactly one of the two TOTP budgets, plus the backup-code one when the
+    # code is a backup code — so a backup guess spends both and routine TOTP
+    # typos cannot exhaust the tighter backup allowance.
+    limiters: list[LoginRateLimiter] = [
+        StepUpTwoFactorRateLimiter(redis) if step_up else TwoFactorRateLimiter(redis)
+    ]
     if is_backup_code:
         limiters.append(BackupCodeRateLimiter(redis))
 
@@ -2130,8 +2141,15 @@ async def sudo_auth(
             totp_service = TOTPService(redis)
             if not await totp_service.is_2fa_enabled(auth_user.user_id):
                 raise AuthenticationRequiredError("2FA is not enabled")
-            if not await totp_service.verify_2fa(auth_user.user_id, code):
-                raise AuthenticationRequiredError("Invalid 2FA code")
+            # Only TOTP is a step-up credential here: a backup code is never
+            # checked at this entrance, so an 8-hex code simply fails as a
+            # wrong TOTP and costs a step-up attempt like any other guess.
+            await _spend_2fa_attempt(
+                redis,
+                auth_user.user_id,
+                lambda: totp_service.verify_2fa(auth_user.user_id, code),
+                step_up=True,
+            )
             return {
                 "code": 200,
                 "message": "Sudo mode activated via 2FA.",
@@ -2935,9 +2953,16 @@ async def disable_user_2fa(
             raise BadRequestError("2FA is not enabled")
 
         # Reference contract: no code in the request body (the client gates
-        # this behind sudo re-verification). If one IS provided, check it.
-        if code and not await totp_service.verify_2fa(auth_user.user_id, code):
-            raise AuthenticationRequiredError("Invalid 2FA code")
+        # this behind sudo re-verification). If one IS provided, check it —
+        # under the step-up budget it shares with sudo, because this is the
+        # one entrance where a right guess ends 2FA for good.
+        if code:
+            await _spend_2fa_attempt(
+                redis,
+                auth_user.user_id,
+                lambda: totp_service.verify_2fa(auth_user.user_id, code),
+                step_up=True,
+            )
 
         await totp_service.disable_2fa(auth_user.user_id)
 
