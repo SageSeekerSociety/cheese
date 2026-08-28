@@ -228,7 +228,8 @@ async def agent_socket(
         await device_hub.detach_device(device.device_id, transport)
 
 
-# --- 现场 viewer: a browser watches a device screen's real terminal (read-only) ----
+# --- 现场 viewer: a browser watches a device screen's real terminal, and can type
+# into it. Read-only is where this is GOING (see docs/where-a-turn-runs.md §6) --
 
 
 class _WebSocketViewerTransport:
