@@ -63,27 +63,31 @@ def test_pushing_is_enabled_on_the_repo(client):
     assert value == "true"
 
 
-def test_a_push_keeps_jj_and_git_from_diverging(client, monkeypatch):
-    """jj is colocated on these repos and does not see a push on its own.
+def test_a_push_reaches_the_files_the_panel_reads(client):
+    """A machine's push has to land in the topic's checkout, not just on the ref.
 
-    That is not cosmetic: the platform reads files and diffs out of a jj
-    workspace on the same store, and a jj view still pointing at the old commit
-    shows the topic as if the push had never landed.
+    The file panel, the diff and the sandbox all read files out of that
+    checkout, so a ref that moved while the checkout stayed put shows the topic
+    exactly as if the push had never happened — which is the failure this whole
+    endpoint exists to prevent, and it cannot report itself (`cheese-sync` is a
+    Stop hook; raising takes the turn down).
     """
-    import app.api.routes.git_http as git_http
+    from app.domain.workspace import service as ws
+    from tests.machine_work import machine_commits
 
-    calls: list[list[str]] = []
-    real = git_http.subprocess.run
-
-    def spy(cmd, *a, **kw):
-        calls.append(list(cmd))
-        return real(cmd, *a, **kw)
-
-    monkeypatch.setattr(git_http.subprocess, "run", spy)
     pid = _project(client)
-    client.post(
-        f"/projects/{pid}/git/git-receive-pack",
+    topic = uuid.uuid4()
+    project = uuid.UUID(pid)
+    worktree = ws.topic_worktree(project, topic)  # the topic is open
+    # Reach the repo the way a machine does, so it is configured as one.
+    client.get(
+        f"/projects/{pid}/git/info/refs?service=git-upload-pack",
         headers={"X-Cheese-Token": mint_scoped_token(project_id=pid)},
-        content=b"0000",
     )
-    assert any(c[:3] == ["jj", "git", "import"] for c in calls)
+
+    machine_commits(project, topic, {"from_machine.txt": "what the machine wrote\n"})
+
+    assert (worktree / "from_machine.txt").exists()
+    assert "from_machine.txt" in [
+        f["path"] for f in ws.list_files(project, topic_id=topic)
+    ]

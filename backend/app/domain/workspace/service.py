@@ -380,8 +380,9 @@ def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
     # left behind.
     with contextlib.suppress(ValidationError):
         _git(main, "worktree", "prune")
-    start = branch if _branch_exists(main, branch) else _base_branch(main)
-    create = [] if _branch_exists(main, branch) else ["-b", branch]
+    delivered = _branch_exists(main, branch)
+    start = branch if delivered else _base_branch(main)
+    create = [] if delivered else ["-b", branch]
     if wt.exists() and any(wt.iterdir()):
         _adopt_the_directory_that_is_already_there(main, wt, start, create)
     else:
