@@ -231,31 +231,99 @@ def snapshot_hold(topic_id: uuid.UUID) -> AwaitedTask | None:
     return max(live, key=lambda t: t.started_at + t.timeout_s, default=None)
 
 
-def checkpoint_worktree(
-    project_id: uuid.UUID, topic_id: uuid.UUID, message: str | None = None
-) -> str:
-    """The automatic snapshot, with the hold applied. Returns what it did
-    (``"held: <label>"`` / ``"snapshotted"``) for the caller's logs.
-
-    Best-effort like every checkpoint path: a snapshot must never fail a turn."""
+def _held_outcome(topic_id: uuid.UUID) -> str | None:
+    """``"held: <label>"`` when a background command still owns the worktree."""
     held = snapshot_hold(topic_id)
-    if held is not None:
-        logger.info(
-            "snapshot held for topic %s: background task %s still running",
-            topic_id,
-            held.label,
-        )
-        return f"held: {held.label}"
+    if held is None:
+        return None
+    logger.info(
+        "snapshot held for topic %s: background task %s still running",
+        topic_id,
+        held.label,
+    )
+    return f"held: {held.label}"
+
+
+def _snapshot_now(
+    project_id: uuid.UUID, topic_id: uuid.UUID, message: str | None
+) -> str | None:
+    """Take the snapshot. Returns the error text when it could NOT, else None.
+
+    Returning the failure instead of hiding it behind a log line is the whole
+    point: the caller is the one holding an event loop, and it is the only one
+    that can tell the room."""
     try:
         if message is None:
             ws.snapshot_worktree(project_id, topic_id)
         else:
             ws.snapshot_worktree(project_id, topic_id, message)
-    except Exception:  # noqa: BLE001 — git snapshot is best-effort
+    except Exception as exc:  # noqa: BLE001 — a snapshot must never fail a turn
         logger.warning("snapshot failed for topic %s", topic_id, exc_info=True)
-        return "failed"
+        return " ".join(str(exc).split()) or exc.__class__.__name__
     _report_paths_outside_the_claim(project_id, topic_id)
-    return "snapshotted"
+    return None
+
+
+def checkpoint_worktree(
+    project_id: uuid.UUID, topic_id: uuid.UUID, message: str | None = None
+) -> str:
+    """The automatic snapshot, with the hold applied. Returns what it did
+    (``"held: <label>"`` / ``"snapshotted"`` / ``"failed"``) for the caller's logs.
+
+    Best-effort like every checkpoint path: a snapshot must never fail a turn.
+    Best-effort is not the same as silent, though, and it used to be both — a
+    failure here means this turn's edits are on disk and in NOTHING else: not
+    the branch, not the change summary (which counts new commits), not the
+    accept card's diff, not the PR. That is indistinguishable from a turn that
+    changed nothing, so it produced a confident wrong conclusion rather than a
+    question. The room is told now.
+
+    Called on the event loop (a turn ending), so the notice is spawned; the
+    off-loop twin below awaits it instead."""
+    from app.core.background import spawn
+    from app.domain.agent import snapshot_notices
+
+    held = _held_outcome(topic_id)
+    if held is not None:
+        return held
+    failed = _snapshot_now(project_id, topic_id, message)
+    if failed is None:
+        return "snapshotted"
+    if not spawn(
+        snapshot_notices.warn_snapshot_failed(topic_id, failed),
+        name=f"snapshot-failed-{topic_id}",
+    ):
+        # No loop in this thread, so nothing was scheduled and the room hears
+        # nothing — the exact silence this function exists to end. Loud in the
+        # log rather than a shrug, because the fix is a code one: that caller
+        # wants `checkpoint_worktree_off_loop`.
+        logger.error(
+            "no event loop to tell topic %s its snapshot failed (%s)",
+            topic_id,
+            failed,
+        )
+    return "failed"
+
+
+async def checkpoint_worktree_off_loop(
+    project_id: uuid.UUID, topic_id: uuid.UUID, message: str | None = None
+) -> str:
+    """The same checkpoint for a caller that must not block the event loop.
+
+    Not a wrapper around the sync one: `spawn` schedules onto the loop of the
+    CURRENT thread, and there is none inside `asyncio.to_thread`, so a notice
+    spawned from in there is closed unsent. Only the snapshot itself crosses
+    into the worker thread; telling the room stays here, awaited."""
+    from app.domain.agent import snapshot_notices
+
+    held = _held_outcome(topic_id)
+    if held is not None:
+        return held
+    failed = await asyncio.to_thread(_snapshot_now, project_id, topic_id, message)
+    if failed is None:
+        return "snapshotted"
+    await snapshot_notices.warn_snapshot_failed(topic_id, failed)
+    return "failed"
 
 
 def _report_paths_outside_the_claim(project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
@@ -327,12 +395,11 @@ async def _catch_up_snapshot(task: AwaitedTask) -> None:
     """Take the snapshot that was held while ``task`` (and any sibling) ran.
 
     Called once the task is out of the registry, so it only lands when the LAST
-    one finishes. Runs off the event loop — snapshotting shells out to jj, and
+    one finishes. Snapshotting shells out to jj, so it runs off the event loop —
     this is reached from the reporting child's HTTP request."""
     if not ws.has_worktree(task.project_id, task.topic_id):
         return  # nothing was ever checked out for this topic — nothing to commit
-    outcome = await asyncio.to_thread(
-        checkpoint_worktree,
+    outcome = await checkpoint_worktree_off_loop(
         task.project_id,
         task.topic_id,
         # Subject stays a plain Conventional Commits line; WHICH task settled
