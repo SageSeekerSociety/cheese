@@ -29,6 +29,13 @@ TWO_FACTOR_LOCKOUT_PREFIX = "cheese:2fa_lockout:"
 # with TOTP would let ordinary TOTP typos spend their budget and vice versa.
 BACKUP_CODE_ATTEMPTS_PREFIX = "cheese:2fa_backup_attempts:"
 BACKUP_CODE_LOCKOUT_PREFIX = "cheese:2fa_backup_lockout:"
+# Re-proving 2FA inside a live session (#389) is the same secret under a
+# different threat model, so it gets its own keys: sharing the login budget
+# would let whoever stole a session lock the owner out of signing in — turning
+# a rate limit into a denial of service — and would let the owner's own typos
+# at the login screen shrink the step-up allowance.
+STEP_UP_2FA_ATTEMPTS_PREFIX = "cheese:2fa_stepup_attempts:"
+STEP_UP_2FA_LOCKOUT_PREFIX = "cheese:2fa_stepup_lockout:"
 TOTP_SECRET_PREFIX = "cheese:totp_secret:"
 TOTP_BACKUP_PREFIX = "cheese:totp_backup:"
 TOTP_ALWAYS_PREFIX = "cheese:totp_always:"
@@ -43,6 +50,10 @@ MAX_TWO_FACTOR_ATTEMPTS = 5
 # generous — and it is the credential worth guarding hardest, being the one
 # that needs no device.
 MAX_BACKUP_CODE_ATTEMPTS = 3
+# Its own knob rather than an alias of the login figure: the two budgets bound
+# different attacks and either can be tightened without dragging the other
+# along. Same number today because the credential and its entropy are the same.
+MAX_STEP_UP_2FA_ATTEMPTS = 5
 LOCKOUT_DURATION_SECONDS = 15 * 60
 PASSWORD_RESET_TTL = 30 * 60
 SESSION_TTL = 30 * 24 * 60 * 60
@@ -159,6 +170,27 @@ class BackupCodeRateLimiter(LoginRateLimiter):
     _lockout_prefix = BACKUP_CODE_LOCKOUT_PREFIX
     _max_attempts = MAX_BACKUP_CODE_ATTEMPTS
     _what = "2fa backup code"
+
+
+class StepUpTwoFactorRateLimiter(LoginRateLimiter):
+    """Budget for re-proving 2FA inside an existing session (#389).
+
+    Covers ``/auth/sudo`` (method=totp) and ``/{userId}/2fa/disable``, which
+    check the same TOTP secret as login but against an attacker who already
+    holds a live session rather than a leaked password. ``/2fa/disable`` is the
+    one entrance where guessing right ends 2FA for good, so leaving it
+    uncounted let a stolen session grind the second factor off the account.
+
+    One budget covers both entrances because they are two halves of one
+    operation — the client puts sudo in front of disable — and separate ones
+    would just hand the same attacker a second full allowance for switching
+    URL. Separate from the *login* budget, though: see the prefix comment.
+    """
+
+    _attempts_prefix = STEP_UP_2FA_ATTEMPTS_PREFIX
+    _lockout_prefix = STEP_UP_2FA_LOCKOUT_PREFIX
+    _max_attempts = MAX_STEP_UP_2FA_ATTEMPTS
+    _what = "2fa step-up"
 
 
 class TOTPService:

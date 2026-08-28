@@ -32,6 +32,8 @@ class TestTwoFactorIntegration:
         from app.domain.user.login_security import (
             BACKUP_CODE_ATTEMPTS_PREFIX,
             BACKUP_CODE_LOCKOUT_PREFIX,
+            STEP_UP_2FA_ATTEMPTS_PREFIX,
+            STEP_UP_2FA_LOCKOUT_PREFIX,
             TOTP_ALWAYS_PREFIX,
             TOTP_BACKUP_PREFIX,
             TOTP_SECRET_PREFIX,
@@ -53,6 +55,8 @@ class TestTwoFactorIntegration:
                     TWO_FACTOR_LOCKOUT_PREFIX,
                     BACKUP_CODE_ATTEMPTS_PREFIX,
                     BACKUP_CODE_LOCKOUT_PREFIX,
+                    STEP_UP_2FA_ATTEMPTS_PREFIX,
+                    STEP_UP_2FA_LOCKOUT_PREFIX,
                 )
             )
         )
@@ -389,6 +393,144 @@ class TestTwoFactorIntegration:
         # is why backup guesses can be capped harder than a phone code.
         ok = self._verify(self._temp_token(), pyotp.TOTP(secret).now())
         assert ok.status_code == 200, ok.text
+
+    # ── #389: re-proving 2FA inside a live session is budgeted too ────────
+    #
+    # Different attacker from the block above. Here the password is beside
+    # the point: whoever is guessing already holds a working session — a
+    # stolen cookie, an unlocked laptop — and 2FA is what stands between them
+    # and taking the account over properly. /2fa/disable is the sharp end,
+    # being the one entrance where a right guess ends 2FA for good.
+
+    def _sudo_totp(self, code: str):
+        return self.client.post(
+            "/users/auth/sudo",
+            headers=self.headers,
+            json={"method": "totp", "credentials": {"code": code}},
+        )
+
+    def _disable(self, code: str | None = None):
+        return self.client.post(
+            f"/users/{self.user.user_id}/2fa/disable",
+            headers=self.headers,
+            json={} if code is None else {"code": code},
+        )
+
+    def _2fa_enabled(self) -> bool:
+        resp = self.client.get(
+            f"/users/{self.user.user_id}/2fa/status", headers=self.headers
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()["data"]["enabled"]
+
+    def test_sudo_totp_is_budgeted(self):
+        """Both sides of the wall: what a guess costs before it, and what
+        happens at it."""
+        from app.domain.user.login_security import MAX_STEP_UP_2FA_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+
+        # Before: the right code works, and a wrong one comes back saying how
+        # much rope is left — no replacement ticket, there is no ticket here.
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 200
+        wrong = self._wrong_totp(secret)
+        first = self._sudo_totp(wrong)
+        assert first.status_code == 401, first.text
+        assert first.json()["error"]["data"] == {
+            "reason": "invalid_code",
+            "attemptsRemaining": MAX_STEP_UP_2FA_ATTEMPTS - 1,
+        }
+
+        for attempt in range(1, MAX_STEP_UP_2FA_ATTEMPTS):
+            resp = self._sudo_totp(wrong)
+            assert resp.status_code in (401, 403), f"attempt {attempt + 1}: {resp.text}"
+
+        # After: refused without the code being looked at — proven by sending
+        # the CORRECT one, which this same test already watched be accepted.
+        blocked = self._sudo_totp(pyotp.TOTP(secret).now())
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["error"]["data"]["reason"] == "too_many_attempts"
+        assert blocked.json()["error"]["data"]["retryAfterSeconds"] > 0
+
+    def test_disabling_2fa_with_a_guessed_code_runs_out_of_guesses(self):
+        """The one that matters most: a stolen session grinding this endpoint
+        used to get unlimited tries at switching 2FA off permanently."""
+        from app.domain.user.login_security import MAX_STEP_UP_2FA_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+        wrong = self._wrong_totp(secret)
+
+        for attempt in range(MAX_STEP_UP_2FA_ATTEMPTS):
+            resp = self._disable(wrong)
+            assert resp.status_code in (401, 403), f"attempt {attempt + 1}: {resp.text}"
+
+        blocked = self._disable(pyotp.TOTP(secret).now())
+        assert blocked.status_code == 403, blocked.text
+        assert blocked.json()["error"]["data"]["reason"] == "too_many_attempts"
+        assert self._2fa_enabled() is True
+
+    def test_switching_between_the_two_entrances_buys_no_extra_guesses(self):
+        """Sudo is the gate the client puts in front of disable, so the pair
+        is one operation and gets one allowance. Split budgets would hand the
+        same attacker a fresh five for changing URL."""
+        from app.domain.user.login_security import MAX_STEP_UP_2FA_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+        wrong = self._wrong_totp(secret)
+
+        for _ in range(MAX_STEP_UP_2FA_ATTEMPTS):
+            self._sudo_totp(wrong)
+
+        blocked = self._disable(pyotp.TOTP(secret).now())
+        assert blocked.status_code == 403, blocked.text
+        assert self._2fa_enabled() is True
+
+    def test_step_up_and_login_budgets_cannot_spend_each_other(self):
+        """Why the step-up counter lives under its own keys. Grinding a
+        stolen session must not lock the owner out of signing in — that would
+        make the rate limit an attack of its own — and signing in must not
+        refill the attacker's allowance."""
+        from app.domain.user.login_security import MAX_STEP_UP_2FA_ATTEMPTS
+
+        secret, _codes = self._enable_2fa()
+        wrong = self._wrong_totp(secret)
+
+        for _ in range(MAX_STEP_UP_2FA_ATTEMPTS):
+            self._sudo_totp(wrong)
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 403
+
+        # The owner signs in normally, second step and all.
+        signed_in = self._verify(self._temp_token(), pyotp.TOTP(secret).now())
+        assert signed_in.status_code == 200, signed_in.text
+
+        # And that login left the step-up lockout exactly where it was.
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 403
+
+    def test_a_backup_code_is_not_a_step_up_credential(self):
+        """Neither entrance checks backup codes — only the TOTP secret — so
+        one presented there is just a wrong code: refused, charged to the
+        step-up budget, and never looked up, which is why it survives to be
+        used at the one place it *is* a credential."""
+        from app.domain.user.login_security import MAX_STEP_UP_2FA_ATTEMPTS
+
+        secret, codes = self._enable_2fa()
+
+        assert self._sudo_totp(codes[0]).status_code == 401
+        assert self._disable(codes[1]).status_code == 401
+        assert self._2fa_enabled() is True
+
+        # Charged like any other guess: two spent here plus three more empties
+        # the allowance, and the next correct TOTP is refused on the budget.
+        wrong = self._wrong_totp(secret)
+        for _ in range(MAX_STEP_UP_2FA_ATTEMPTS - 2):
+            self._sudo_totp(wrong)
+        assert self._sudo_totp(pyotp.TOTP(secret).now()).status_code == 403
+
+        # Both are still live at login, where backup codes are a credential.
+        for code in (codes[0], codes[1]):
+            resp = self._verify(self._temp_token(), code)
+            assert resp.status_code == 200, resp.text
+            assert resp.json()["data"]["usedBackupCode"] is True
 
     def test_backup_codes_regenerate_invalidates_old(self):
         _secret, old_codes = self._enable_2fa()
