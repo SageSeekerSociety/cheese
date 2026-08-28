@@ -166,7 +166,7 @@ describe('对话栏自己的输入栏', () => {
     const menu = container.querySelector('.mention-menu')
     expect(menu, '@ 补全没弹出来').toBeTruthy()
     expect(menu!.textContent).toContain('芝士')
-    expect(menu!.textContent).toContain('Agent')
+    expect(menu!.textContent).toContain('AI 队友')
   })
 
   // 老话题的名册里可能没有芝士的座位（座位是后来才有的）。那种房间里，项目名册上

@@ -97,7 +97,7 @@ describe('成员名册', () => {
     const agentRow = Array.from(document.querySelectorAll('.roster__item')).find((r) =>
       r.textContent?.includes('cheese-t1')
     )!
-    expect(agentRow.textContent).toContain('Agent')
+    expect(agentRow.textContent).toContain('AI 队友')
     expect(agentRow.querySelector('.roster__role')).toBeNull()
   })
 })
