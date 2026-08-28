@@ -407,9 +407,15 @@ def _adopt_the_directory_that_is_already_there(
     in. The index moves with it, describing `start` while the files describe
     what the agent actually left — which is precisely how uncommitted work is
     meant to read: `git status` shows it, the next commit carries it.
+
+    The staging path is a throwaway PARENT holding the tree's own name, because
+    git names the admin directory after the last path component: staged under
+    its real name, the entry that ends up in `.git/worktrees/` is the one this
+    tree would have had if it had been created here in the first place.
     """
-    staging = wt.with_name(f".{wt.name}.adopting")
-    shutil.rmtree(staging, ignore_errors=True)
+    staging_parent = wt.with_name(f".adopting-{wt.name}")
+    shutil.rmtree(staging_parent, ignore_errors=True)
+    staging = staging_parent / wt.name
     _git(main, "worktree", "add", "-q", *create, str(staging), start)
     try:
         shutil.rmtree(wt / ".jj", ignore_errors=True)
@@ -418,7 +424,7 @@ def _adopt_the_directory_that_is_already_there(
         # the entry the moment it notices `staging` is gone.
         _git(main, "worktree", "repair", str(wt))
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(staging_parent, ignore_errors=True)
 
 
 def _point_at_the_store_relatively(main: Path, wt: Path) -> None:
