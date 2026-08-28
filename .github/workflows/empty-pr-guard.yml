@@ -1,0 +1,65 @@
+name: Empty PR guard
+
+# A pull request that changes no files must not be green.
+#
+# Four of them reached main — #608, #610, #611 and #618 — each merged, each
+# delivering nothing but its commit message. Every other check in this repo
+# judges a tree, and an empty pull request has the same tree as its base, so
+# every one of them passed honestly while the merge delivered nothing. The cause
+# is fixed (#620); this is the part that notices if it ever comes back, by
+# whatever route.
+#
+# NO `paths:` FILTER, for two reasons that point the same way. A required check
+# that is path filtered never reports on the pull requests it skips, and GitHub
+# then waits forever for a result that will not arrive. And a pull request
+# changing zero files matches no path filter that exists — the one case this
+# guard is for is exactly the case a filter would skip. It costs a few seconds
+# of bash on a pull request that has nothing to answer for.
+#
+# On the cheese-ci pool because the org's Actions billing lapsed on 2026-08-13
+# and every ubuntu-latest job is refused before it starts. It needs nothing but
+# git and bash — no uv, no database, no docker.
+#
+# STILL NEEDED FROM A HUMAN, and merging this does not do it: to make the check
+# block a merge rather than merely show red, someone with repository admin has
+# to add `empty-pr-guard` to the required status checks under
+# Settings -> Branches -> the protection rule for main.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: empty-pr-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The job id is the check run's name, and it is what a human types into the
+  # required-status-checks box. Deliberately not `guard`: ops-guard.yml already
+  # publishes a check by that name, and two check runs sharing one name make the
+  # required-checks entry ambiguous — the failure mode being a gate that looks
+  # registered while a different workflow's job is what satisfies it.
+  empty-pr-guard:
+    runs-on: [self-hosted, cheese-ci-any]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The merge base has to be reachable; a shallow checkout cannot
+          # produce the range GitHub used to build the Files tab.
+          fetch-depth: 0
+
+      # The guard proves itself before it is trusted to judge anything. A guard
+      # that silently stopped matching looks exactly like a repo with nothing
+      # wrong in it, which is the whole failure mode here.
+      - name: Guard self-test
+        run: bash .github/scripts/check-pr-not-empty.sh --self-test
+
+      - name: This pull request changes at least one file
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/check-pr-not-empty.sh "$BASE_SHA" "$HEAD_SHA"
