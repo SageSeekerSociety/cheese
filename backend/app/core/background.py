@@ -121,11 +121,6 @@ class PeriodicRunner:
                 await self._task
             self._task = None
 
-    async def run_once(self) -> Any:
-        """Run the job a single time, outside the loop. For a startup pass, and
-        for a test that wants the job's behaviour without its clock."""
-        return await self._job()
-
     async def _loop(self) -> None:
         while True:
             await asyncio.sleep(self._interval)
