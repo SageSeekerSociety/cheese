@@ -115,15 +115,13 @@ def test_pool_rejects_a_backend_that_runs_no_harness():
 
 
 def _two_machine_pool() -> ComputePool:
-    return ComputePool(
-        [_FakeBackend("tmux-hooks"), _FakeBackend("device")], "tmux-hooks"
-    )
+    return ComputePool([_FakeBackend("cloud"), _FakeBackend("device")], "cloud")
 
 
 def test_select_routes_to_the_named_machine():
     pool = _two_machine_pool()
     assert pool.select(provider_id="device").name == "device"
-    assert pool.select(provider_id="tmux-hooks").name == "tmux-hooks"
+    assert pool.select(provider_id="cloud").name == "cloud"
 
 
 def test_a_machine_can_offer_more_than_one_harness():
@@ -131,29 +129,29 @@ def test_a_machine_can_offer_more_than_one_harness():
     not hold a second harness at all — both backends would answer to the same
     name and one would silently replace the other."""
     pool = ComputePool(
-        [_FakeBackend("tmux-hooks"), _FakeBackend("tmux-hooks", harness="pi")],
-        "tmux-hooks",
+        [_FakeBackend("cloud"), _FakeBackend("cloud", harness="pi")],
+        "cloud",
     )
-    assert pool.machines() == {"tmux-hooks"}
-    assert pool.select(provider_id="tmux-hooks", harness="pi").harness == "pi"
-    assert pool.select(provider_id="tmux-hooks").harness == "claude-code"
+    assert pool.machines() == {"cloud"}
+    assert pool.select(provider_id="cloud", harness="pi").harness == "pi"
+    assert pool.select(provider_id="cloud").harness == "claude-code"
 
 
 def test_a_harness_this_deployment_does_not_run_is_refused_not_substituted():
     """Running something else would answer as an agent nobody configured. The
     machine falls back; what runs on it never does."""
     pool = _two_machine_pool()
-    assert pool.select(provider_id="tmux-hooks", harness="pi") is None
+    assert pool.select(provider_id="cloud", harness="pi") is None
 
 
 def test_select_falls_back_to_default_for_unknown_or_none():
     pool = _two_machine_pool()
     # None (topic/project chose nothing) → the pool default.
-    assert pool.select(provider_id=None).name == "tmux-hooks"
-    assert pool.select().name == "tmux-hooks"
+    assert pool.select(provider_id=None).name == "cloud"
+    assert pool.select().name == "cloud"
     # A stored id that isn't deployed here (e.g. a pool that was retired) must
     # never break a turn — it degrades to the default, not an error.
-    assert pool.select(provider_id="gpu").name == "tmux-hooks"
+    assert pool.select(provider_id="gpu").name == "cloud"
 
 
 def test_pool_select_returns_available_default():
@@ -163,16 +161,64 @@ def test_pool_select_returns_available_default():
     assert provider.available() is True
 
 
-def test_build_pool_registers_device_alongside_the_local_box():
-    """A topic can route to the user's own machine, and the default stays local
-    (device is opt-in per topic)."""
+def test_the_pool_holds_only_machines_the_catalogue_offers():
+    """A turn can only land on something a person could have picked. The
+    platform's own container host was in this pool and in no catalogue, so it was
+    where every unconfigured topic ran (#358)."""
     from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.market import COMPUTE_CLOUD, COMPUTE_DEVICE
 
     pool = build_compute_pool()
-    assert pool.has("tmux-hooks")
-    assert pool.has("device")
-    assert pool.default().name == "tmux-hooks"
-    assert pool.select(provider_id="device").name == "device"
+    assert pool.machines() <= {COMPUTE_DEVICE, COMPUTE_CLOUD}
+    assert pool.has(COMPUTE_DEVICE)
+
+
+def test_an_unconfigured_turn_lands_on_the_pool_the_catalogue_marks_default(
+    monkeypatch,
+):
+    """The two answers are one function now. They used not to be, and the gap was
+    invisible: the picker said Cloud while the turn ran in a container here.
+
+    Checked in BOTH deployment shapes, because the answer moves between them and
+    only one of the two could be got right by accident."""
+    from unittest.mock import AsyncMock
+
+    from app.core.config import settings
+    from app.domain.agent.cloud_provider import CloudChannel
+    from app.domain.agent.compute import build_compute_pool
+    from app.domain.agent.market import compute_default_name
+
+    def _cloud() -> CloudChannel:
+        return CloudChannel(
+            configured=True,
+            ensure_topic_cloud=AsyncMock(),
+            read_topic_cloud=AsyncMock(),
+        )
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "")
+    pool = build_compute_pool(cloud_channel=_cloud())
+    assert pool.select(provider_id=None).name == compute_default_name()
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://microcloud.example")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
+    pool = build_compute_pool(cloud_channel=_cloud())
+    assert pool.select(provider_id=None).name == compute_default_name()
+
+
+def test_the_default_never_names_a_machine_the_pool_does_not_hold(monkeypatch):
+    """A default the pool cannot resolve is refused at construction, so it would
+    take the whole deployment down at startup. Preferring Cloud must therefore
+    never outvote what was actually wired in."""
+    from app.core.config import settings
+    from app.domain.agent.compute import build_compute_pool
+
+    monkeypatch.setattr(settings, "microcloud_base_url", "https://microcloud.example")
+    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
+
+    pool = build_compute_pool()  # no Cloud channel handed in
+
+    assert pool.default().name in pool.machines()
 
 
 def test_build_pool_registers_the_concrete_cloud_channel():
@@ -195,19 +241,6 @@ def test_build_pool_registers_the_concrete_cloud_channel():
     # backend the turn path must wait for a machine on.
     assert backend.available() is False
     assert backend.provisions_machine is True
-
-
-def test_device_backend_still_offers_a_local_transport(monkeypatch):
-    # Defaulting every turn to someone else's machine must not leave a topic
-    # unable to route back to a local one.
-    from app.core.config import settings
-    from app.domain.agent.compute import build_compute_pool
-
-    monkeypatch.setattr(settings, "agent_backend", "device")
-    pool = build_compute_pool()
-
-    assert pool.default().name == "device"
-    assert pool.has("tmux-hooks")
 
 
 def test_resolve_compute_id_topic_then_project_then_team_default():

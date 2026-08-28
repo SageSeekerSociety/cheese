@@ -1382,11 +1382,6 @@ class ChatService:
     def session_factory(self) -> async_sessionmaker:
         return self._sessions
 
-    def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
-        """`cheese status`'s idle-suspect signal (turn 活跃度检测) — see
-        `ComputePool.tmux_activity_status`."""
-        return self._compute.tmux_activity_status(topic_id)
-
     def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock:
         lock = self._topic_locks.get(topic_id)
         if lock is None:
@@ -3184,20 +3179,6 @@ class ChatService:
                 kwargs["model"] = subscription_model_alias(choice)
                 return kwargs, "subscription"
             return kwargs, "gateway"
-        if settings.subscription_enabled and provider_name == "tmux-hooks":
-            # The subscription path doesn't route through the gateway or a
-            # profile: the tmux provider points Claude Code at the metering proxy
-            # and the model is the project's own pick (Sonnet 5 by default, Opus 5
-            # opt-in). Pass the --model alias ("" = default, no flag); the sandbox
-            # env is set by the provider, not a profile. Only tmux implements
-            # that env — the sdk provider under this flag used to fall through
-            # with no env at all and run on whatever the backend process itself
-            # inherited.
-            choice = agent_model or (
-                (project.settings or {}).get("subscription_model") if project else None
-            )
-            kwargs["model"] = subscription_model_alias(choice)
-            return kwargs, "subscription"
         pool_route = True
         if self._profiles is not None:
             profile = self._profiles.resolve(
@@ -3736,7 +3717,7 @@ class ChatService:
             # failure mode this counter exists to expose.
             await session.commit()
             replay_notice = _replay_notice(replay_n, pending)
-            # turn 活跃度检测: the hooks-driven backends (LOCAL tmux + remote
+            # turn 活跃度检测: the hooks-driven backends (remote
             # device) run hooks_substrate's two-layer idle-suspect + hard-ceiling
             # loop and manage their own inner ceiling (which can be hours), so the
             # outer wall-clock wrap (runtime.py) must be told their REAL ceiling via

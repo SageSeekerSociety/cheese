@@ -63,18 +63,12 @@ test_deploy_keeps_agent_runtime_images() {
 
   grep -Fqx \
     'pull ghcr.io/sageseekersociety/cheese/sandbox:testsha' "$docker_log" || \
-    fail "deploy did not pull the SDK sandbox image"
-  grep -Fqx \
-    'pull ghcr.io/sageseekersociety/cheese/sandbox-tmux:testsha' "$docker_log" || \
-    fail "deploy did not pull the tmux sandbox image"
-  grep -F \
-    'run --rm --entrypoint sh ghcr.io/sageseekersociety/cheese/sandbox-tmux:testsha' \
-    "$docker_log" >/dev/null || fail "deploy did not smoke-test the tmux image"
-  grep -F 'create --name cheese-tmux-image-retainer-next' "$docker_log" \
-    >/dev/null || fail "deploy did not retain the tmux image before pruning"
+    fail "deploy did not pull the sandbox image"
+  grep -F 'create --name cheese-sandbox-image-retainer-next' "$docker_log" \
+    >/dev/null || fail "deploy did not retain the sandbox image before pruning"
 
   promote_line="$(grep -nF \
-    'rename cheese-tmux-image-retainer-next cheese-tmux-image-retainer' \
+    'rename cheese-sandbox-image-retainer-next cheese-sandbox-image-retainer' \
     "$docker_log" | cut -d: -f1)"
   prune_line="$(grep -nF 'image prune -af' "$docker_log" | cut -d: -f1)"
   [ -n "$promote_line" ] && [ -n "$prune_line" ] && \

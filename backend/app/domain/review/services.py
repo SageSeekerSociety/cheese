@@ -663,17 +663,15 @@ class AcceptService:
         """Release the delivered topic's BILLED compute — its Cloud VM — and
         nothing else.
 
-        This used to tear down the working surface too (the sandbox container,
-        and a device topic's screen plus its remote work dir). It doesn't any
-        more, because 交付完成 no longer means 话题结束 (#442 decision 1: 一个
-        话题往往是连续的): the room keeps working after the merge, and killing
-        its box mid-life is not free — a rebuilt container loses everything
-        installed inside it (jj, procps, the git identity the test suite needs),
-        so the next turn pays for a teardown nobody asked for. Both surfaces
-        have their own idle reaper (``scheduler.reap_idle_containers`` /
-        ``reap_idle_device_screens``), which is where reclaiming them belongs:
-        the question "is anyone still using this" is about activity, not about
-        whether a branch landed.
+        This used to tear down the working surface too — a device topic's
+        screen plus its remote work dir. It doesn't any more, because 交付完成 no
+        longer means 话题结束 (#442 decision 1: 一个话题往往是连续的): the room
+        keeps working after the merge, and killing its screen mid-life is not
+        free — a rebuilt one loses everything installed alongside it, so the next
+        turn pays for a teardown nobody asked for. That surface has its own idle
+        reaper (``scheduler.reap_idle_device_screens``), which is where
+        reclaiming it belongs: the question "is anyone still using this" is about
+        activity, not about whether a branch landed.
 
         The Cloud VM is the one exception and it stays here, deliberately: it is
         the only one that costs money per hour and the only one with NO reaper —

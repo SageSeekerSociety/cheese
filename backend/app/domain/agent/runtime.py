@@ -331,14 +331,13 @@ class AgentWorkRunner:
 
     def topic_work(self, topic_id: uuid.UUID) -> dict | None:
         """Latest lifecycle record for this topic. `ceiling_s` is this turn's
-        effective absolute ceiling (`self._timeout` for most backends; the tmux
-        backend's own hard ceiling once its `turn_ceiling` frame has rescheduled
-        the outer wrap — see `_execute`) and `near_ceiling` is a coarse "within
-        the last 10 minutes" flag — turn 活跃度检测 deliberately does NOT expose a
-        live `budget_left_s` countdown any more: that figure was observed making
-        the agent rush against what's only meant to be a wedged-turn safety net
-        (dev, 2026-08-08). The idle-suspect layer (tmux only) isn't tracked here
-        — see `ChatService.tmux_activity_status` / `/topics/{id}/status`.
+        effective absolute ceiling (`self._timeout`, or the channel's own hard
+        ceiling once its `turn_ceiling` frame has rescheduled the outer wrap —
+        see `_execute`) and `near_ceiling` is a coarse "within the last 10
+        minutes" flag — turn 活跃度检测 deliberately does NOT expose a live
+        `budget_left_s` countdown any more: that figure was observed making the
+        agent rush against what's only meant to be a wedged-turn safety net
+        (dev, 2026-08-08).
         Ring-buffer-backed, so None after a restart or ~100 turns elsewhere."""
         key = str(topic_id)
         activity = self._broker.activity_snapshot(key)

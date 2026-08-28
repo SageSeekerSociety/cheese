@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # use the gateway's ADMIN API to (L1) mint a per-project virtual key — injected
     # into the sandbox instead of the master key, so a sandbox never holds admin
     # credentials and spend is attributable per project — and read back REAL token
-    # usage from /spend/logs (fixes the tmux backend's usage=0), and (L2) set a
+    # usage from /spend/logs (fixes a provider-reported usage=0), and (L2) set a
     # per-key max_budget from the project's compute grants so the gateway refuses
     # further calls when the budget is exhausted (the mid-turn brake).
     # Unset (default) =整层关闭: env injection, usage, credits all behave as before.
@@ -152,7 +152,7 @@ class Settings(BaseSettings):
     # Still governs: AgentWorkRunner's outer transport-independent wrap for the SDK
     # backend (no activity signal exists there), plus the generic outer default
     # any backend keeps until it signals its own ceiling. The hooks-driven
-    # backends — LOCAL tmux AND remote device — no longer use this for their
+    # backends no longer use this for their
     # effective timeout: they run the two-layer idle-suspect / hard-ceiling loop
     # (agent_idle_suspect_s / agent_turn_hard_ceiling_s below) and reschedule the
     # outer wrap to their own ceiling (turn 活跃度检测, 2026-08-09).
@@ -166,11 +166,11 @@ class Settings(BaseSettings):
     # Generous on purpose: this must never cut a slow-but-live turn, only one
     # that never started. 0 disables it.
     agent_first_output_timeout_s: float = 300.0
-    # Two-layer safety net for the hooks-driven backends — LOCAL tmux AND remote
-    # device (they share one policy). Below this much idle time (no hook, and no
+    # Two-layer safety net for the hooks-driven backends (they share one
+    # policy). Below this much idle time (no hook, and no
     # backend-specific activity signal) a turn is normal; past it the turn is only
-    # SUSPECTED wedged and gets one lightweight liveness probe (tmux: pane_dead;
-    # device: a process-tree probe over the link) rather than being killed outright
+    # SUSPECTED wedged and gets one lightweight liveness probe (a process-tree
+    # probe over the link) rather than being killed outright
     # — a long foreground command with no interim hook must not look identical to a
     # dead screen.
     agent_idle_suspect_s: float = 300.0
@@ -179,15 +179,6 @@ class Settings(BaseSettings):
     # retrying forever, a genuine infinite loop that keeps printing).
     agent_turn_hard_ceiling_s: float = 10800.0
 
-    # Where a turn lands when nothing chose: "tmux" keeps it on this box (an
-    # interactive `claude` in a per-topic tmux session inside a container),
-    # "device" sends it to the user's own enrolled machine over the frozen
-    # link.Msg channel. Both are the same turn flow — events come back through
-    # Claude Code hooks either way — so this picks a machine, not a mechanism.
-    agent_backend: str = "tmux"
-    # Image the tmux backend uses (base image + tmux + ttyd + pre-accepted
-    # first-launch gates). Independent of sandbox_image (the SDK path's image).
-    tmux_sandbox_image: str = "cheesex-agent-tmux:latest"
     # RETIRED (2026-08-10). Used to name a HOST directory holding a `cheese` CLI
     # to mount over the image's baked copy — but nothing kept that checkout in
     # sync with the backend, so boxes served agents a months-old CLI. The CLI is
@@ -342,7 +333,7 @@ class Settings(BaseSettings):
     # Machine quality gates use a disposable sibling container and never the
     # backend process. Keep this explicit so operators can ship a test-toolchain
     # image without granting the gate Docker socket or backend credentials.
-    quality_gate_image: str = "cheesex-agent-tmux:latest"
+    quality_gate_image: str = "cheesex-agent-sandbox:latest"
     quality_gate_memory_mb: int = 2048
     quality_gate_cpus: float = 2.0
     quality_gate_pids_limit: int = 512
@@ -374,7 +365,7 @@ class Settings(BaseSettings):
         every existing box's token the instant the backend restarted. The whole
         deployment went deaf at once — hooks 401ing into nothing, turns running
         to their ceiling reporting `tools: 0` while the agent inside worked
-        perfectly — recovering only by destroying each box (and with it the tmux
+        perfectly — recovering only by destroying each box (and with it the
         session that IS that topic's conversational continuity).
 
         Deriving instead of randomising makes the secret stable across restarts
@@ -390,27 +381,6 @@ class Settings(BaseSettings):
         return hashlib.sha256(
             b"cheesex:sandbox-signing-secret:v1:" + self.jwt_secret.encode()
         ).hexdigest()
-
-    # --- tmux sandbox: one box per ROOM, not per topic ---
-    # A room's box hosts the room's own tmux session plus one per task split out
-    # of it, so the quota is a ROOM budget now, not a topic's. Sized from what
-    # this repo actually needs: `pnpm run build` alone OOMs a 2g box (exit 134,
-    # measured), and a room routinely has a build, a test run and an idle
-    # session in flight at once. Operator-tunable because the right number is a
-    # property of the deployment's projects, not of this code.
-    sandbox_memory_gb: float = 6.0
-    sandbox_cpus: float = 4.0
-    sandbox_pids_limit: int = 2048
-    # How many topics of one room may hold a published app/ttyd port. Ports are
-    # published as a RANGE at container creation and can never be extended
-    # afterwards, so this is a hard ceiling on 运行环境预览 + 现场终端 slots per
-    # room — beyond it a session still runs, it just gets no published port.
-    sandbox_room_port_slots: int = 16
-    # Escape hatch: False puts every topic back in its own box (the pre-room
-    # behaviour). Here because room sharing merges a room's fault domain — one
-    # topic OOMing the box takes its siblings down — and an operator hitting
-    # that needs a way out that is not a redeploy.
-    sandbox_share_room_container: bool = True
 
     def agent_api_base(self) -> str:
         """`sandbox_api_base` with a stale trailing `/api` removed.
@@ -462,12 +432,11 @@ class Settings(BaseSettings):
     # since yesterday is paying rent for a conversation that will resume from
     # its transcript anyway.
     #
-    # 8 hours holds even though one box now serves a whole room (2026-08-17
-    # decision). What changed is not the threshold but what "idle" MEASURES:
-    # `reap_idle_containers` takes the room's last activity AND its tasks'.
-    # Judging the room alone would destroy a box with live work in it the
-    # moment the room's own timeline went quiet — and a room whose work has
-    # been split out is quiet by design, so that is the normal case.
+    # 8 hours holds for a whole room (2026-08-17 decision), because what
+    # "idle" MEASURES is the room's last activity AND its tasks'. Judging the
+    # room alone would tear down live work the moment the room's own timeline
+    # went quiet — and a room whose work has been split out is quiet by design,
+    # so that is the normal case.
     sandbox_reap_interval_seconds: int = 3600
     sandbox_idle_hours: float = 8
     # Seconds between orphan sweeps (AgentWorkRunner.sweep_orphans). On by default,

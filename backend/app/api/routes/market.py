@@ -17,13 +17,15 @@ from app.api.response import ok
 from app.core.config import settings
 from app.core.db import get_db
 from app.domain.agent.market import (
+    COMPUTE_CLOUD,
+    COMPUTE_DEVICE,
     ai_listings,
+    compute_default_name,
     compute_listings,
     visibility_listings,
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.agent.tmux_provider import TmuxChannel
 
 router = APIRouter(prefix="/market", tags=["market"])
 
@@ -54,33 +56,38 @@ async def list_pools(registry: Registry) -> dict:
 
 @router.get("/nodes")
 async def list_nodes(runner: Runner) -> dict:
-    """节点看板: the compute nodes this deployment runs, with liveness and
-    current load (in-flight turns)."""
-    from app.domain.workspace import service as ws
+    """节点看板: the compute pools this deployment can run a turn on, with
+    liveness and current load (in-flight turns).
 
-    active = runner.active_work_count()
-    online = ws.sandbox_available()
-    nodes: list[dict] = [
+    Built from the same catalogue the 市场 browses, so the board cannot show a
+    node the picker does not offer — it used to show exactly one, the platform's
+    own container host, which was the one pool the catalogue never listed."""
+    default_name = compute_default_name(settings)
+    # What makes each pool live, in its own terms — the mono line under the card.
+    detail = {
+        COMPUTE_DEVICE: ("有已连接的设备", "暂无已连接的设备"),
+        COMPUTE_CLOUD: ("可以为话题开一台机器", "这个部署还没有云端算力"),
+    }
+    nodes = [
         {
-            "id": TmuxChannel.name,
-            "label": "知是本地算力",
-            "kind": "local",
-            "online": online,
-            "current": True,
-            "active_turns": active,
-            "detail": (
-                f"沙箱镜像 {settings.tmux_sandbox_image}"
-                if online
-                else "无 Docker 沙箱：本机跑不了回合"
-            ),
-            "description": "平台托管的容器算力（CPU 级），跑代码、文档与数据分析。",
+            "id": pool.id,
+            "label": pool.label,
+            "kind": pool.id,
+            "online": pool.available,
+            "current": pool.id == default_name,
+            "detail": detail[pool.id][0 if pool.available else 1],
+            "description": pool.description,
         }
+        for pool in compute_listings(settings)
     ]
+    # In-flight turns are counted per DEPLOYMENT: the work runner tracks a turn
+    # without recording which machine took it, so there is no per-node number to
+    # report. Repeating the total under every card would read as that many each.
     return ok(
         {
             "nodes": nodes,
-            "active_turns_total": active,
-            "current_provider": TmuxChannel.name,
+            "active_turns_total": runner.active_work_count(),
+            "current_provider": default_name,
         }
     )
 

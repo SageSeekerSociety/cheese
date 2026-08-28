@@ -108,8 +108,7 @@ async def receive_hook(
         # to drop quietly — it is our own agent, locked out.
         logger.warning(
             "sandbox hook rejected: token does not verify for topic %s "
-            "(box likely baked before a backend restart — see tmux_provider."
-            "_hook_token_dead)",
+            "(screen likely launched before a backend restart)",
             topic_id,
         )
         return JSONResponse(

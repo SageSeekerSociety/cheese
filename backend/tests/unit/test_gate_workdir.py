@@ -2,8 +2,8 @@
 
 这不是洁癖，是闸门能不能跑起来的唯一条件。`uv`/`pip` 生成的 console script
 （pyright、pytest、alembic）会把自己 venv 的**绝对路径**烤进 shebang。分身的沙箱
-把工作树跑在 `/topics/topic_<hex8>`（tmux_provider 里写着「the topic's REAL path
-under that mount, not a /work remap」——硬链接不能跨 bind mount），所以那些脚本
+把工作树跑在 `/topics/topic_<hex8>`（`sandbox_topic_workdir` 是真实路径，不是
+`/work` 重映射——硬链接不能跨 bind mount），所以那些脚本
 的第一行指向 `/topics/topic_<hex8>/.venv/bin/python`。闸门要是把同一份工作树挂到
 `/work`，这行路径在容器里就不存在，`.venv/bin/pyright` 直接 exec 失败。
 

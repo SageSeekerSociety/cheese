@@ -1,6 +1,6 @@
-"""DeviceChannel — the self-hosted / BYO-compute channel (AGENT_BACKEND=device, P3).
+"""DeviceChannel — the self-hosted / BYO-compute channel (P3).
 
-Symmetric to ``TmuxChannel`` but the screen lives on a *user's own enrolled
+The screen lives on a *user's own enrolled
 machine* instead of a platform container. The platform opens it over the frozen
 ``link.Msg`` channel (``DeviceHub``) and the device runs ``claude`` with our
 hooks (``device_launch``), so events come back through the SAME hook path
@@ -699,7 +699,7 @@ class DeviceChannel(Channel):
             # the gateway shape (BASE_URL + model pins), and any of those keys
             # surviving flips the CLI into API-key mode or asks the subscription
             # for a model it does not serve. Dropped, not overridden, because
-            # subscription_provider only ADDS keys (mirrors tmux_provider).
+            # subscription_provider only ADDS keys.
             merged = {**(env or {})}
             for k in (
                 "ANTHROPIC_BASE_URL",
@@ -1026,7 +1026,7 @@ class DeviceChannel(Channel):
         cheap screen-byte signal on a headless device (the hub relays raw bytes only
         to a live browser viewer). Every device uses the same probe.
 
-        Conservative, mirroring TmuxChannel.confirm_alive: only an explicit
+        Conservative: only an explicit
         `dead` reading ends the turn; any exec failure/timeout, a non-zero exit, or
         an `unknown`/empty result is read as alive, so a link hiccup or a hardened
         /proc never false-kills a turn that is really still working."""

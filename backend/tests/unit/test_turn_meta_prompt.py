@@ -114,21 +114,27 @@ def test_a_fractional_gigabyte_is_not_rounded_to_a_lie() -> None:
     assert "1.5GB" in "\n".join(lines)
 
 
-def test_the_stated_size_is_the_one_the_container_actually_gets() -> None:
-    """Two places could drift: the docker args and the sentence in the prompt.
-    They read the same constants, and this is what keeps that true.
+def test_a_machine_that_is_not_ours_states_no_size() -> None:
+    """A backend that does not know its own size must say nothing rather than
+    guess: an enrolled machine belongs to someone else, and an invented limit
+    would make the agent skip work the machine could actually do.
 
-    Asked of the backend the pool hands the turn, not of a class: the size has
-    to survive every layer between the container and the prompt, and a layer
-    that stopped forwarding it would leave the sentence silently missing."""
+    Asked of the backend the pool hands the turn, not of a class — the answer
+    has to survive every layer between the machine and the prompt."""
     from app.domain.agent.chat import _sandbox_limits
     from app.domain.agent.compute import build_compute_pool
-    from app.domain.agent.tmux_provider import SANDBOX_CORES, SANDBOX_MEMORY_MB
 
     pool = build_compute_pool()
-    assert _sandbox_limits(pool.select(provider_id="tmux-hooks")) == (
-        SANDBOX_MEMORY_MB,
-        SANDBOX_CORES,
-    )
-    # A machine that belongs to someone else says nothing rather than guessing.
     assert _sandbox_limits(pool.select(provider_id="device")) is None
+
+
+def test_no_machine_line_when_the_size_is_unknown() -> None:
+    """And the prompt then carries no size sentence at all — silence, not a
+    sentence with a blank in it."""
+    lines = _turn_meta_lines(
+        is_resume=False,
+        disk=None,
+        open_cards=None,
+        sandbox=None,
+    )
+    assert not [line for line in lines if "这台机器" in line]

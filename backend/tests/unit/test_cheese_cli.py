@@ -172,43 +172,23 @@ def test_format_status_renders_cards_and_waterlines():
 
 
 def test_format_status_never_renders_a_live_countdown():
-    """turn 活跃度检测 (2026-08-09): a literal "还剩 Ns" figure was observed
-    making the agent rush against what's only meant to be a wedged-turn safety
-    net — the three-state rendering must never reintroduce it."""
+    """A literal "还剩 Ns" figure was observed making the agent rush against what
+    is only meant to be a wedged-turn safety net. Neither running state may
+    reintroduce it."""
     cli = _load()
     for turn in (
-        {"status": "running", "near_ceiling": False, "activity": None},
-        {"status": "running", "near_ceiling": True, "activity": None},
-        {
-            "status": "running",
-            "near_ceiling": False,
-            "activity": {"idle_for_s": 400, "suspect_since_s_ago": 120},
-        },
+        {"status": "running", "near_ceiling": False},
+        {"status": "running", "near_ceiling": True},
     ):
         out = cli._format_status(_status_payload(turn))
         assert "还剩" not in out
         assert "budget" not in out
 
 
-def test_format_status_renders_idle_suspect_state():
-    cli = _load()
-    out = cli._format_status(
-        _status_payload(
-            {
-                "status": "running",
-                "near_ceiling": False,
-                "activity": {"idle_for_s": 320, "suspect_since_s_ago": 120},
-            }
-        )
-    )
-    assert "疑似卡死" in out
-    assert "2 分钟" in out  # 120s → 2min, rounded
-
-
 def test_format_status_renders_near_ceiling_state():
     cli = _load()
     out = cli._format_status(
-        _status_payload({"status": "running", "near_ceiling": True, "activity": None})
+        _status_payload({"status": "running", "near_ceiling": True})
     )
     assert "接近硬顶" in out
 

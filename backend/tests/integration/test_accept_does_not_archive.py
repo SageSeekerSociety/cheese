@@ -174,10 +174,8 @@ def test_revoking_does_not_undo_a_persons_archive(client):
 
 def test_merge_does_not_stop_the_container(client, monkeypatch):
     """采纳不再删容器：话题接着干活要用它，而闲置回收器管它的死活。"""
-    from app.domain.workspace import service as ws
 
     stopped: list[uuid.UUID] = []
-    monkeypatch.setattr(ws, "stop_topic_container", stopped.append)
 
     _pid, tid = _delivered_topic(client)
 

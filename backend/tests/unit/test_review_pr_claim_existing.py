@@ -151,7 +151,6 @@ def _wire(monkeypatch, client) -> list[str]:
     monkeypatch.setattr(
         ws, "push_back", lambda *_a: {"mode": "upstream", "target": "origin/main"}
     )
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_a: None)
     github_pr.set_default_client(client)
     return posted
 

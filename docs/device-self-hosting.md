@@ -90,7 +90,7 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 5. **绑定项目/团队**。在「我的设备」页或各小队的「算力」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
 
 6. **话题选 device 算力**。两种姿势：
-   - **全局**：`AGENT_BACKEND=device`。整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
+   - **全局**：不配 Cloud 的部署，整个算力池就是 DeviceChannel，每次 agent 请求都落到一台在线的、绑定了该项目的设备。
    - **话题/项目级**：DeviceChannel 与 local-docker 并列在算力池里，通过 `compute_profile` / provider_id 选用 `device`。**仅当有在线设备时才可选**（市场 listing 里 `available` 按 `device_online` gating）。
    - **话题亲和（关键）**：一个话题第一次落在哪台设备就**写死 pin** 在那台，之后仍回到同一台——工作树 + 可恢复 Claude Code 会话都在那台机器上。pinned 设备离线时**绝不漂到别的在线设备**（否则工作树清零、resume 错乱）。
 
@@ -205,5 +205,5 @@ cheesehost auth login https://<你的站点>/connector      # 打印 approve_url
 # CLI 自动 link connect 上线——全程不需要 sudo
 
 # 平台侧：在小队「算力」页把设备绑给团队（或「我的设备」绑项目）
-# 话题选 device 算力（全局 AGENT_BACKEND=device，或用 compute_profile/provider_id 选 device）
+# 话题选 device 算力（不配 Cloud 时就是默认，也可以用 compute_profile/provider_id 显式选）
 ```

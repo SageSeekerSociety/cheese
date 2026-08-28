@@ -543,8 +543,8 @@ async def test_turn_failure_lands_in_the_timeline(db_factory):
         (OSError(errno.ENOSPC, "No space left on device"), "storage_exhausted"),
         (
             RuntimeError(
-                "tmux container create failed: Unable to find image "
-                "'cheesex-agent-tmux:latest' locally: pull access denied"
+                "screen setup failed: Unable to find image "
+                "'cheesex-agent-sandbox:latest' locally: pull access denied"
             ),
             "runtime_image_missing",
         ),

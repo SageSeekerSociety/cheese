@@ -55,10 +55,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.chat", "app.domain.usage.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
-        ("app.domain.agent.sandbox_notices", "app.domain.block.repositories"),
-        ("app.domain.agent.sandbox_notices", "app.domain.topic.repositories"),
-        # Same shape, same reason as the two notice modules above and below:
-        # posting one system event into a topic's timeline needs the block row
+        # Posting one system event into a topic's timeline needs the block row
         # and the topic it hangs off, and `app.domain.block` has no service at
         # all — only models, schemas and repositories. There is nothing to call.
         ("app.domain.agent.snapshot_notices", "app.domain.block.repositories"),

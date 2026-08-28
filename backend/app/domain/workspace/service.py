@@ -438,7 +438,7 @@ def _tree_dirname(topic_id: uuid.UUID) -> str:
     directory name is baked into things that survive a rename and cannot be
     migrated cheaply: the jj workspace name, the relative `.jj/repo` pointer
     inside every worktree (whose depth `sandbox_vcs_mounts` reproduces), the
-    container workdir, and — through that workdir — the tmux session name the
+    container workdir, and — through that workdir — the session name the
     device backend hashes, so a changed path retires a live claude session and
     drops its context. Naming the branch is a git-side decision; it must not be
     able to move anyone's files.
@@ -509,8 +509,8 @@ def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
     return wt
 
 
-# Container path a topic's worktree is bind-mounted to (tmux_provider.py,
-# exec_in_sandbox below) — the anchor `sandbox_vcs_mounts` resolves against.
+# Container path a topic's worktree is bind-mounted to (exec_in_sandbox below)
+# — the anchor `sandbox_vcs_mounts` resolves against.
 SANDBOX_WORKDIR = "/work"
 
 
@@ -561,8 +561,8 @@ def sandbox_vcs_mounts(
     ]
 
 
-# Container mount point of a project's whole `.worktrees/<project>` tree in the
-# long-lived tmux sandbox. One mount covering every topic's worktree AND the
+# Container mount point of a project's whole `.worktrees/<project>` tree in a
+# sandbox. One mount covering every topic's worktree AND the
 # shared dependency stores below, because hardlinks cannot cross bind mounts
 # (link(2) → EXDEV even on the same filesystem): pnpm/uv only dedup against a
 # store that lives on the SAME mount as the tree they install into. Verified
@@ -618,7 +618,7 @@ _SANDBOX_STORES = (
 
 
 def sandbox_topic_workdir(topic_id: uuid.UUID) -> str:
-    """A topic's worktree path inside the tmux sandbox — its REAL path under the
+    """A topic's worktree path inside a sandbox — its REAL path under the
     project-tree mount (not a per-topic remap), so hardlinks to the shared
     stores on the same mount work."""
     return f"{SANDBOX_TOPICS_ROOT}/{_tree_dirname(topic_id)}"
@@ -631,9 +631,9 @@ def sandbox_topic_workdir(topic_id: uuid.UUID) -> str:
 # fixed at creation while a room keeps gaining tasks. One mount of the parent
 # covers topics that do not exist yet.
 #
-# Each topic's `claude` is pointed at its own subdirectory with a per-tmux-session
-# `CLAUDE_CONFIG_DIR` (see tmux_provider._session_env) rather than by remapping
-# the mount, because there is only one mount and many sessions.
+# Each topic's `claude` is pointed at its own subdirectory with a per-session
+# `CLAUDE_CONFIG_DIR` rather than by remapping the mount, because there is only
+# one mount and many sessions.
 SANDBOX_SESSIONS_ROOT = "/sessions"
 
 
@@ -658,24 +658,8 @@ def sessions_root(project_id: uuid.UUID) -> Path:
 def sandbox_session_dir(topic_id: uuid.UUID) -> str:
     """A topic's `~/.claude` INSIDE the sandbox — its real path under the sessions
     mount. Must agree with `session_dir`'s host layout (both name the directory
-    `topic_id.hex[:8]`); the tmux session exports this as CLAUDE_CONFIG_DIR."""
+    `topic_id.hex[:8]`); the session exports this as CLAUDE_CONFIG_DIR."""
     return f"{SANDBOX_SESSIONS_ROOT}/{topic_id.hex[:8]}"
-
-
-# --- which box a topic runs in ----------------------------------------------
-#
-# A sandbox box is allocated per ROOM (its own line and every thread in it
-# share one), so everything that reaches into "the topic's container" has to map
-# topic → room first. That mapping lives in the DB, and this module is
-# deliberately sync and DB-free — it is called from `docker port` lookups on the
-# request path. So the provider, which does have a session, writes the answer
-# here as a marker file when it starts a box, and readers here fall back to
-# "the topic is its own room", which is exactly the pre-room behaviour.
-_ROOMS_DIRNAME = ".rooms"
-
-
-def _rooms_dir() -> Path:
-    return Path(settings.workspace_root) / _ROOMS_DIRNAME
 
 
 def _write_marker(path: Path, value: str, what: str) -> None:
@@ -697,33 +681,6 @@ def _write_marker(path: Path, value: str, what: str) -> None:
         tmp.replace(path)
     except OSError:
         logger.warning("could not record %s for %s", what, path.name, exc_info=True)
-
-
-def bind_room(topic_id: uuid.UUID, room_id: uuid.UUID) -> None:
-    """Record which room's box a topic runs in. Idempotent, best-effort: the
-    mapping is a cache of a DB fact, so losing it costs a fallback, not
-    correctness."""
-    _write_marker(_rooms_dir() / topic_id.hex, room_id.hex, "room binding")
-
-
-def room_for_topic(topic_id: uuid.UUID) -> uuid.UUID:
-    """The room whose box hosts this topic — itself when unknown.
-
-    Unknown is the honest answer for a topic that has never started a box, and
-    also the SAFE one: falling back to the topic's own id reproduces the
-    one-box-per-topic behaviour rather than pointing at some other room's box."""
-    if not settings.sandbox_share_room_container:
-        return topic_id
-    try:
-        return uuid.UUID(hex=(_rooms_dir() / topic_id.hex).read_text().strip())
-    except (OSError, ValueError):
-        return topic_id
-
-
-def forget_room(topic_id: uuid.UUID) -> None:
-    """Drop a topic's room binding (its box no longer hosts it)."""
-    with contextlib.suppress(OSError):
-        (_rooms_dir() / topic_id.hex).unlink()
 
 
 # --- which tree a place writes to -------------------------------------------
@@ -2338,7 +2295,7 @@ def session_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
     ).resolve()
     d.mkdir(parents=True, exist_ok=True)
     # Create the hook WAL before the sandbox starts and make it writable by both
-    # container users.  The backend runs as uid 1001 while the tmux image runs as
+    # container users.  The backend runs as uid 1001 while the sandbox image runs as
     # uid 1000; if the hook forwarder creates this directory first, its normal
     # 0755 mode lets the backend read events but not park or remove them.
     spool = d / "cheese-spool"
@@ -2399,7 +2356,7 @@ def _loosen(path: str, mode: int) -> None:
 
 
 def spool_dir(project_id: uuid.UUID, topic_id: uuid.UUID) -> Path:
-    """Host path of the topic's hook-event spool (WAL). The tmux container writes
+    """Host path of the topic's hook-event spool (WAL). The screen writes
     here via CHEESE_HOOK_SPOOL=/home/node/.claude/cheese-spool (the session dir
     mounts to /home/node/.claude), and the backend reconciles from it. Mirrors
     session_dir's base so both sides agree on ONE location."""
@@ -2693,247 +2650,4 @@ def exec_in_sandbox(
     }
 
 
-# 运行环境预览: every topic container publishes this in-container port to a
-# random localhost port at creation (claude-sbx). The AI starts whatever server
-# the project needs on 0.0.0.0:$CHEESE_APP_PORT and declares it (cheese serve).
-APP_PORT = 3000
-
-# 现场终端: the in-container ttyd (read-only pane mirror) base port.
-TTYD_PORT = 7681
-
-
-# --- per-topic port slots ----------------------------------------------------
-#
-# A room's box hosts several topics, and each wants its OWN app port (运行环境
-# 预览) and its OWN ttyd (现场终端) — two topics of one room cannot share :3000.
-# Published ports are fixed at container creation and a room keeps gaining
-# tasks, so the box publishes a fixed BLOCK of slots up front and each topic's
-# tmux session is handed one (see tmux_provider._allocate_port_slot). The slot
-# index is stored in the session's own environment, which makes the tmux server
-# the single registry — no host-side bookkeeping to drift out of sync with the
-# sessions that actually exist.
-
-
-def app_port_for_slot(slot: int) -> int:
-    return APP_PORT + slot
-
-
-def ttyd_port_for_slot(slot: int) -> int:
-    return TTYD_PORT + slot
-
-
-def port_slots() -> int:
-    """How many topics of one room get published ports. At least 1 — a zero here
-    would silently leave every box with no 运行环境预览 at all."""
-    return max(1, settings.sandbox_room_port_slots)
-
-
-def tmux_session_name(topic_id: uuid.UUID) -> str:
-    """The topic's tmux session inside its room's box. Per topic, because one box
-    now hosts a whole room; `LEGACY_TMUX_SESSION` is what a box created before
-    that (one box, one topic, one session) called it."""
-    return f"cheese-{topic_id.hex[:8]}"
-
-
-LEGACY_TMUX_SESSION = "cheese"
-
-
-def published_endpoint(container: str, port: int) -> str | None:
-    """`127.0.0.1:<host-port>` a container publishes an in-container port to, or
-    None (container down / mapping missing — an old container predating the
-    publish). One parse shared by every "reach into the box" feature."""
-    result = subprocess.run(
-        ["docker", "port", container, str(port)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    # e.g. "127.0.0.1:55007" (possibly one line per address family).
-    line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
-    host_port = line.rsplit(":", 1)[-1]
-    return f"127.0.0.1:{host_port}" if host_port.isdigit() else None
-
-
-def session_env_var(container: str, session: str, key: str) -> str | None:
-    """One variable out of a tmux session's own environment, or None.
-
-    The session env is where a shared box keeps everything that differs BETWEEN
-    the topics it hosts (which port slot, which config dir, which topic id) — see
-    tmux_provider._session_env. Reading it back is how the host learns what a
-    session was given without keeping a second copy that can go stale."""
-    result = subprocess.run(
-        ["docker", "exec", container, "tmux", "show-environment", "-t", session, key],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return None
-    # "KEY=value" when set; "-KEY" when explicitly unset.
-    name, separator, value = result.stdout.strip().partition("=")
-    return value if separator and name == key else None
-
-
-def topic_port_slot(topic_id: uuid.UUID) -> int:
-    """The port slot the topic's live tmux session holds, or 0.
-
-    0 is the honest fallback for "no live session to ask", and it is also the
-    slot the first topic in a box gets — so a box that predates slots keeps
-    answering on the conventional ports.
-
-    That fallback is why there is deliberately NO lookup against the legacy
-    session name here. `tmux show-environment -t cheese` falls back to PREFIX
-    matching, and ``cheese`` is a prefix of every per-topic session name, so on
-    a box that has any live topic it would answer with a SIBLING's slot — a
-    wrong preview port rather than a missing one. A legacy session carries no
-    slot variable anyway, so the only value such a lookup could ever return
-    correctly is the 0 this already returns."""
-    raw = session_env_var(
-        tmux_container_name(room_for_topic(topic_id)),
-        tmux_session_name(topic_id),
-        "CHEESE_PORT_SLOT",
-    )
-    return int(raw) if raw is not None and raw.isdigit() else 0
-
-
-def app_endpoint(topic_id: uuid.UUID) -> str | None:
-    """`127.0.0.1:<host-port>` of the topic's app port, or None when no container
-    publishes it.
-
-    Both backends' boxes are asked, tmux first. Asking only the SDK one (the old
-    behavior) meant 运行环境预览 was dead for every tmux-backed topic — which is
-    all of them under ``AGENT_BACKEND=tmux`` — because 3000 is published by
-    ``cheesex-tmux-*`` while the lookup went to ``cheesex-sbx-*``.
-
-    The tmux box belongs to the topic's ROOM and publishes one app port per slot,
-    so the topic's own slot decides which of them is its preview. The SDK box is
-    still per topic and still publishes the bare APP_PORT.
-    """
-    if not sandbox_available():
-        return None
-    tmux_box = tmux_container_name(room_for_topic(topic_id))
-    endpoint = published_endpoint(
-        tmux_box, app_port_for_slot(topic_port_slot(topic_id))
-    )
-    if endpoint is not None:
-        return endpoint
-    return published_endpoint(container_name(topic_id), APP_PORT)
-
-
-# NOTE: there is deliberately no `app_preview_url` here any more. It returned
-# `http://127.0.0.1:<host-port>` — the port is bound to the *server's* loopback,
-# so the address only ever resolved for someone running the whole platform on
-# their own laptop and every remote user got a white iframe. What a browser gets
-# now is the backend's reverse-proxy path, built by the route that serves it
-# (`app.api.routes.app_preview`), from this endpoint.
-
-
-def container_name(topic_id: uuid.UUID) -> str:
-    """Deterministic name of a topic's long-lived SDK sandbox container."""
-    return f"cheesex-sbx-{topic_id.hex[:12]}"
-
-
-def tmux_container_name(topic_id: uuid.UUID) -> str:
-    """Deterministic name of a topic's long-lived tmux-backend container — distinct
-    from the SDK one so the two backends never collide. Lives here (the shared
-    workspace layer) so the accept/archive reaper can free it WITHOUT importing the
-    provider; TmuxChannel references this as its single source of truth."""
-    return f"cheesex-tmux-{topic_id.hex[:12]}"
-
-
-def stop_topic_container(topic_id: uuid.UUID) -> None:
-    """Release a topic's long-lived compute — BOTH the SDK and tmux backends —
-    e.g. when the topic is merged/archived or its worktree is recreated.
-    Best-effort: a missing container is fine. Freeing BOTH matters because a
-    topic may have run on either backend and each leaves its own box; reaping
-    only the SDK one (the old behavior) leaked every tmux container forever.
-
-    The tmux box belongs to a ROOM, so what "release" means depends on which the
-    topic is. Releasing a TASK must kill its tmux session and nothing else —
-    removing the box would take its still-working siblings down with it, and the
-    `docker rm` below is a no-op for a task precisely because the box is not
-    named after it. Releasing the ROOM removes the box, siblings included, which
-    is what archiving a room means."""
-    from app.domain.agent.harness.claude_code import (
-        schedule_topic_subscription_drop,
-    )
-
-    schedule_topic_subscription_drop(topic_id)
-    if not sandbox_available():
-        return
-    room = room_for_topic(topic_id)
-    if room != topic_id:
-        subprocess.run(
-            [
-                "docker",
-                "exec",
-                tmux_container_name(room),
-                "tmux",
-                "kill-session",
-                "-t",
-                tmux_session_name(topic_id),
-            ],
-            capture_output=True,
-            text=True,
-        )
-    forget_room(topic_id)
-    for name in (container_name(topic_id), tmux_container_name(topic_id)):
-        subprocess.run(
-            ["docker", "rm", "-f", name],
-            capture_output=True,
-            text=True,
-        )
-
-
-def list_sandbox_containers() -> list[str]:
-    """Names of all live cheesex sandbox containers (both backends' labels)."""
-    if not sandbox_available():
-        return []
-    result = subprocess.run(
-        [
-            "docker",
-            "ps",
-            "--filter",
-            "label=cheesex-sandbox=1",
-            "--format",
-            "{{.Names}}",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return []
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
-
-
-def remove_container(name: str) -> None:
-    """Remove ONE container by exact name (the idle reaper's primitive).
-    Best-effort; a missing container is fine."""
-    from app.domain.agent.harness.claude_code import (
-        schedule_screen_subscription_drop,
-    )
-
-    schedule_screen_subscription_drop(name)
-    if not sandbox_available():
-        return
-    subprocess.run(["docker", "rm", "-f", name], capture_output=True, text=True)
-
-
 GATE_TAIL_CHARS = 4000
-
-
-def reap_sandbox_containers() -> int:
-    """Remove all CheeseX sandbox containers (label cheesex-sandbox=1). Called at
-    startup: containers from a previous run hold stale mounts, so we drop them and
-    let each topic recreate its own on the next turn. Returns how many were removed."""
-    if not sandbox_available():
-        return 0
-    listed = subprocess.run(
-        ["docker", "ps", "-aq", "--filter", "label=cheesex-sandbox=1"],
-        capture_output=True,
-        text=True,
-    )
-    ids = [c for c in listed.stdout.split() if c]
-    if ids:
-        subprocess.run(["docker", "rm", "-f", *ids], capture_output=True, text=True)
-    return len(ids)

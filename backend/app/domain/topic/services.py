@@ -930,14 +930,7 @@ class TopicService:
 
         分身 (dispatch_task) starts a FRESH session with a task brief; clone
         instead forks the source's full conversation state so the target resumes
-        exactly where the source is. Only the interactive backends (tmux/device)
-        keep a real Claude session file on disk; the sdk backend has none, so
-        clone is unsupported there (dispatch fresh work instead — a graceful
-        degrade, not a silent no-op)."""
-        if settings.agent_backend not in ("tmux", "device"):
-            raise ValidationError(
-                "当前后端没有独立会话文件，无法克隆会话；请改用「拆活」新起会话"
-            )
+        exactly where the source is."""
         target = await self.get_or_404(target_topic_id)
         source = await self.get_or_404(source_topic_id)
         if source.id == target.id:

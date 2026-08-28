@@ -17,7 +17,6 @@ from sqlalchemy import func, select
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import Topic
 from app.domain.workspace import service as ws
 
 logger = logging.getLogger("cheesex.scheduler")
@@ -89,73 +88,25 @@ class SchedulerService:
         for topic_id, last in rows:
             if last is None:
                 continue
-            # Same normalization as reap_idle_containers: the column is TIMESTAMPTZ
-            # but some drivers hand back a naive value, and a naive one would blow
-            # up the subtraction rather than merely being wrong.
+            # The column is TIMESTAMPTZ but some drivers hand back a naive
+            # value, and a naive one would blow up the subtraction rather than
+            # merely being wrong.
             out[topic_id] = (
                 last if last.tzinfo is not None else last.replace(tzinfo=UTC)
             )
         return out
 
-    async def reap_idle_containers(self, idle_hours: float = IDLE_REAP_HOURS) -> int:
-        """Remove sandbox containers whose topic has had NO block activity for
-        ``idle_hours`` (or whose topic no longer exists). Safe by construction:
-        an active turn has just-persisted blocks, so its topic can never look
-        idle.
-
-        A tmux box is named after a ROOM and hosts that room's tasks too, so its
-        idleness is the idleness of the room AND everything in it. Judging the
-        room alone would destroy a box with a task working in it the moment the
-        room's own timeline went quiet — which is the normal state of a room
-        whose work has been split out.
-
-        Reaping is not destructive to the conversation. The transcript lives in
-        the topic's config dir on the HOST, so the next turn recreates the box
-        and resumes from it — the container is the body, not the continuity."""
-        names = ws.list_sandbox_containers()
-        if not names:
-            return 0
-        cutoff = datetime.now(UTC) - timedelta(hours=idle_hours)
-        reaped = 0
-        async with self._sessions() as session:
-            rows = (await session.execute(select(Topic.id))).all()
-            by_hex = {row.id.hex[:12]: row.id for row in rows}
-            for name in names:
-                topic_id = by_hex.get(name.rsplit("-", 1)[-1])
-                if topic_id is not None:
-                    # One predicate covers the room AND every thread in it: a
-                    # thread's blocks carry the room's `topic_id`. This used to
-                    # walk `topics.parent_id` to collect the work, and the walk
-                    # would now find nothing — the room would look idle the
-                    # moment its own line went quiet, which is exactly the
-                    # normal state of a room whose work has been dispatched.
-                    last = (
-                        await session.execute(
-                            select(func.max(Block.created_at)).where(
-                                Block.topic_id == topic_id
-                            )
-                        )
-                    ).scalar()
-                    if last is not None and last.tzinfo is None:
-                        last = last.replace(tzinfo=UTC)
-                    if last is not None and last >= cutoff:
-                        continue  # recently active — keep the box warm
-                ws.remove_container(name)
-                reaped += 1
-        return reaped
-
     async def reap_idle_device_screens(
         self, idle_hours: float = IDLE_REAP_HOURS
     ) -> int:
-        """Device counterpart to ``reap_idle_containers``: close a device screen whose
-        topic has had NO block activity for ``idle_hours``. Screens live in the device
-        hub's in-memory registry, not in Docker, so the container reaper never saw
-        them — a topic that ran on a device and then went quiet used to leak its screen
-        (and the ``claude`` process behind it) on the machine forever.
+        """Close a device screen whose topic has had NO block activity for
+        ``idle_hours`` — a topic that ran on a device and then went quiet used to
+        leak its screen (and the ``claude`` process behind it) on the machine
+        forever.
 
-        Only ONLINE devices are walked (an offline box is unreachable now). The same
-        safety holds as for containers: an active turn has just-persisted blocks, so
-        its topic can never look idle. Teardown removes the device's per-topic tree.
+        Only ONLINE devices are walked (an offline box is unreachable now). Safe
+        by construction: an active turn has just-persisted blocks, so its topic
+        can never look idle. Teardown removes the device's per-topic tree.
         Returns how many topics were released."""
         from app.domain.agent.device_hub import device_hub
         from app.domain.agent.device_provider import release_topic_screen
@@ -427,8 +378,8 @@ class SchedulerRunner:
                 logger.exception("scheduler tick failed")
 
 
-class SandboxReaperRunner:
-    """Deterministic sandbox cleanup, independent from AI heartbeat scheduling."""
+class ScreenReaperRunner:
+    """Deterministic screen cleanup, independent from AI heartbeat scheduling."""
 
     def __init__(
         self,
@@ -445,7 +396,7 @@ class SandboxReaperRunner:
         if self._interval > 0 and self._task is None:
             self._task = asyncio.create_task(self._loop())
             logger.info(
-                "sandbox reaper started (every %ss, idle>%sh)",
+                "screen reaper started (every %ss, idle>%sh)",
                 self._interval,
                 self._idle_hours,
             )
@@ -460,14 +411,6 @@ class SandboxReaperRunner:
     async def _loop(self) -> None:
         while True:
             await asyncio.sleep(self._interval)
-            # Containers and device screens are independent cleanups on the same
-            # cadence — one raising must not skip the other.
-            try:
-                reaped = await self._scheduler.reap_idle_containers(self._idle_hours)
-                if reaped:
-                    logger.info("idle reap: removed %d container(s)", reaped)
-            except Exception:  # noqa: BLE001 -- maintenance loop must survive
-                logger.exception("idle container reap failed")
             try:
                 freed = await self._scheduler.reap_idle_device_screens(self._idle_hours)
                 if freed:
@@ -479,7 +422,7 @@ class SandboxReaperRunner:
 class PrPollRunner:
     """两阶段采纳 (PR迭代式, 2026-08-09): drives SchedulerService.poll_open_prs()
     on an interval, independent from the AI heartbeat and the idle reaper —
-    same shape as SandboxReaperRunner."""
+    same shape as ScreenReaperRunner."""
 
     def __init__(self, scheduler: SchedulerService, interval_seconds: int):
         self._scheduler = scheduler

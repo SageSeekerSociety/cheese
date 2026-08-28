@@ -5,13 +5,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_normal_build_publishes_tmux_runtime_image():
+def test_normal_build_publishes_the_runtime_image():
     workflow = yaml.safe_load((ROOT / ".github/workflows/build.yml").read_text())
     sandbox_steps = workflow["jobs"]["build-sandbox"]["steps"]
     names = {step.get("name") for step in sandbox_steps}
 
     assert "Build and push sandbox image" in names
-    assert "Build and push tmux sandbox image" in names
 
 
 def test_backend_receives_sha_pinned_runtime_images():
@@ -25,12 +24,8 @@ def test_backend_receives_sha_pinned_runtime_images():
         "sandbox:${IMAGE_TAG:-main}}"
     ) in environment
     assert (
-        "TMUX_SANDBOX_IMAGE=${TMUX_SANDBOX_IMAGE:-ghcr.io/"
-        "sageseekersociety/cheese/sandbox-tmux:${IMAGE_TAG:-main}}"
-    ) in environment
-    assert (
         "QUALITY_GATE_IMAGE=${QUALITY_GATE_IMAGE:-ghcr.io/"
-        "sageseekersociety/cheese/sandbox-tmux:${IMAGE_TAG:-main}}"
+        "sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}"
     ) in environment
 
 

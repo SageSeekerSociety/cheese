@@ -323,20 +323,20 @@ async def test_device_turn_route_follows_the_deployment_supply(client, tmp_path)
 async def test_subscription_route_applies_only_to_the_hooks_providers(
     client, tmp_path, monkeypatch
 ):
-    """subscription_enabled names a capability only the hooks providers (tmux,
-    device) implement — they build the metering-proxy env themselves. The sdk
-    provider under that flag used to fall through with no env and run on the
-    backend's own inherited credentials — it must keep its profile/gateway
-    routing instead."""
+    """subscription_enabled names a capability a pool has to IMPLEMENT — the
+    provider builds the metering-proxy env itself, so nothing travels from here.
+    A pool without that transport used to fall through under the same flag with
+    no env at all and run on the backend's own inherited credentials; it must
+    keep its profile/gateway routing instead."""
     from app.core.config import settings as app_settings
 
     monkeypatch.setattr(app_settings, "subscription_enabled", True)
     fake = FakeGateway()
     svc, _factory, pid, _tid = await _mk_service(client.test_factory, tmp_path, fake)
 
-    kwargs, route = await svc._model_kwargs(pid, "tmux-hooks")
+    kwargs, route = await svc._model_kwargs(pid, "device")
     assert route == "subscription"
-    assert "env" not in kwargs  # the tmux provider builds the proxy env itself
+    assert "env" not in kwargs  # the device provider builds the proxy env itself
 
     kwargs, route = await svc._model_kwargs(pid, "local-docker")
     assert route == "gateway"  # profile/gateway logic, not the subscription
