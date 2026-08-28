@@ -23,20 +23,18 @@ the app lifespan when ``SUBSCRIPTION_USAGE_LOG`` is set — never hung off the
 project scheduler, which ships disabled.
 """
 
-import asyncio
-import contextlib
 import hashlib
 import json
 import logging
 import uuid
 from bisect import bisect_right
-from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import SessionFactory
 from app.domain.block.models import Block
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import room_and_task
@@ -206,7 +204,7 @@ async def _land_row(session: AsyncSession, row: dict, work_index: WorkIndex) -> 
 
 
 async def ingest_once(
-    session_factory: Callable[[], AsyncSession], path: Path, source: str = SOURCE
+    session_factory: SessionFactory, path: Path, source: str = SOURCE
 ) -> dict[str, int]:
     """One ingestion pass. Returns counters (for logs and tests)."""
     if not path.is_file():
@@ -245,45 +243,3 @@ async def ingest_once(
             new_offset,
         )
     return {"landed": landed, "skipped": skipped}
-
-
-class SubscriptionUsageIngestRunner:
-    """Interval loop around ``ingest_once``. Same shape as
-    MachineEnrollmentRunner and for the same reason: plumbing must not depend
-    on the AI scheduler's on/off switch."""
-
-    def __init__(
-        self,
-        session_factory: Callable[[], AsyncSession],
-        path: str,
-        interval_seconds: int,
-    ) -> None:
-        self._sessions = session_factory
-        self._path = Path(path) if path else None
-        self._interval = interval_seconds
-        self._task: asyncio.Task[None] | None = None
-
-    def start(self) -> None:
-        if self._path is not None and self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info(
-                "subscription usage ingest started (%s, every %ss)",
-                self._path,
-                self._interval,
-            )
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        assert self._path is not None
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                await ingest_once(self._sessions, self._path)
-            except Exception:  # noqa: BLE001 — one bad pass must never kill the loop
-                logger.exception("subscription usage ingest failed")

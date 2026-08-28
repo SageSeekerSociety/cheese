@@ -41,8 +41,6 @@ In-memory state matches the platform's single-process reality (same assumption
 as the per-topic chat locks and ``frontend_log``'s intake).
 """
 
-import asyncio
-import contextlib
 import hashlib
 import logging
 import re
@@ -459,43 +457,6 @@ async def flush_expired(now: float | None = None) -> int:
             )
         await session.commit()
     return len(bursts)
-
-
-class BackendErrorFlushRunner:
-    """Ticks `flush_expired` so a burst that STOPPED still gets counted.
-
-    Its own loop rather than a step in the project scheduler, for the reason
-    given in `machine/runner.py`: that scheduler spends model budget and is off
-    by default in deployments, and this is plumbing with no judgment in it.
-
-    The interval only bounds how LATE a summary is, never whether it arrives —
-    the window length decides that — so it can be lazy and cheap. A tick with no
-    expired window touches no database at all.
-    """
-
-    def __init__(self, interval_seconds: int) -> None:
-        self._interval = interval_seconds
-        self._task: asyncio.Task[None] | None = None
-
-    def start(self) -> None:
-        if self._interval > 0 and self._task is None:
-            self._task = asyncio.create_task(self._loop())
-            logger.info("backend error flush started (every %ss)", self._interval)
-
-    async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-
-    async def _loop(self) -> None:
-        while True:
-            await asyncio.sleep(self._interval)
-            try:
-                await flush_expired()
-            except Exception:  # noqa: BLE001 — a flush must never kill the loop
-                logger.exception("backend error flush failed")
 
 
 async def report_request_failure(

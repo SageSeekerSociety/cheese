@@ -21,11 +21,15 @@ Never awaited, never cancelled here — the caller has already decided this work
 outlives it. A crash inside is logged rather than swallowed, because a bare
 ``create_task`` whose exception nobody retrieves only surfaces (if ever) as an
 "exception was never retrieved" warning at GC time.
+
+``PeriodicRunner`` is the same idea for work that repeats: one maintenance job,
+one interval, one place where every loop's boilerplate is written down.
 """
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from typing import Any
 
 logger = logging.getLogger("cheesex.background")
@@ -66,3 +70,75 @@ def spawn(coro: Coroutine[Any, Any, Any], *, name: str | None = None) -> bool:
 def inflight_count() -> int:
     """How many spawned tasks are still running — for tests and diagnostics."""
     return len(_INFLIGHT)
+
+
+class PeriodicRunner:
+    """One maintenance job on a clock, held so it cannot be collected.
+
+    Every periodic job the platform runs wants the same four things, and gets
+    them wrong in the same four ways when it hand-rolls them: a strong
+    reference (see ``spawn`` above), an interval of ``0`` meaning "not on this
+    box" rather than "as fast as possible", a crash that kills one cycle rather
+    than the loop, and a log line only on the cycles that did something — a
+    sweep that reports "swept 0" every minute is a sweep nobody reads.
+
+    ``job`` returns whatever it likes; ``_worth_reporting`` decides whether the
+    result is worth a line. A mapping speaks when any of its values does, so
+    ``{"failed": 0, "errors": []}`` stays quiet and ``{"failed": 3}`` does not.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        interval_seconds: float,
+        job: Callable[[], Awaitable[Any]],
+    ) -> None:
+        self._name = name
+        self._interval = interval_seconds
+        self._job = job
+        self._task: asyncio.Task[None] | None = None
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def interval_seconds(self) -> float:
+        """Seconds between runs; 0 or less means this box does not run it."""
+        return self._interval
+
+    def start(self) -> None:
+        """Begin looping. A non-positive interval means this box does not run
+        this job at all — the switch every deployment and every test uses."""
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._loop(), name=self._name)
+            logger.info("%s started (every %ss)", self._name, self._interval)
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+            self._task = None
+
+    async def run_once(self) -> Any:
+        """Run the job a single time, outside the loop. For a startup pass, and
+        for a test that wants the job's behaviour without its clock."""
+        return await self._job()
+
+    async def _loop(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            try:
+                result = await self._job()
+            except Exception:  # noqa: BLE001 — one bad cycle must not end the loop
+                logger.exception("%s failed", self._name)
+                continue
+            if _worth_reporting(result):
+                logger.info("%s: %s", self._name, result)
+
+
+def _worth_reporting(result: Any) -> bool:
+    if isinstance(result, Mapping):
+        return any(bool(value) for value in result.values())
+    return bool(result)

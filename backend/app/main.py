@@ -66,16 +66,7 @@ async def lifespan(_: FastAPI):
     # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
-    from app.domain.scheduler.service import (
-        ConclusionSweepRunner,
-        GateSweepRunner,
-        OrphanSweepRunner,
-        PrPollRunner,
-        SchedulerRunner,
-        SchedulerService,
-        ScreenReaperRunner,
-        UpstreamSyncRunner,
-    )
+    from app.domain.scheduler.service import SchedulerService
 
     # agent-as-user (fusion-design §2): guarantee 芝士 exists as a real user with
     # its platform agent-binding. Idempotent — the migration seeds it too; this is
@@ -172,48 +163,11 @@ async def lifespan(_: FastAPI):
     except Exception:  # noqa: BLE001 — never block startup
         get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
-    runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
-    runner.start()
-    reaper = ScreenReaperRunner(
-        scheduler,
-        settings.sandbox_reap_interval_seconds,
-        settings.sandbox_idle_hours,
-    )
-    reaper.start()
-    # 两阶段采纳 (PR迭代式, 2026-08-09): advances pr_open accept cards — PR CI →
-    # merge → deploy workflow → archive. Independent interval, same shape as
-    # the reaper above.
-    pr_poller = PrPollRunner(scheduler, settings.accept_pr_poll_interval_s)
-    pr_poller.start()
-    # 自动同步上游: keeps each linked project's base current so accepting can
-    # actually push. Conflicts hand off to 芝士 the same way the manual button
-    # does, and an open resolution task is reused rather than duplicated.
-    upstream_sync = UpstreamSyncRunner(scheduler, settings.upstream_sync_interval_s)
-    upstream_sync.start()
-    # The startup sweep above only fires when the PROCESS restarts; a turn can
-    # be killed without that (container recreate, OOM, sandbox swap) and then
-    # nothing would ever look again. This is the loop that keeps looking.
-    orphan_sweep = OrphanSweepRunner(scheduler, settings.orphan_sweep_interval_s)
-    orphan_sweep.start()
-    # 闸门孤儿卡扫底: the same blind spot one layer down — a gate task can die
-    # under a process that keeps running, and then the card waits forever (see
-    # review/gate_sweep.py's module docstring).
-    gate_sweeper = GateSweepRunner(scheduler, settings.gate_sweep_interval_s)
-    gate_sweeper.start()
-    # 结论卡·阶段一: 默认采信 must happen even when the parent's digest turn never
-    # runs (queued behind a wedged turn, refused on credits, killed by a deploy).
-    # This sweeps cards past their 30-minute absolute deadline.
-    conclusion_sweeper = ConclusionSweepRunner(
-        scheduler, settings.conclusion_sweep_interval_s
-    )
-    conclusion_sweeper.start()
-
-    # Enrolling provisioned machines is platform plumbing, so it runs on its own
-    # interval rather than the AI scheduler's — see MachineEnrollmentRunner.
     from app.core.db import async_session_factory
     from app.domain.agent.device_hub import device_hub
     from app.domain.agent.runtime import get_broker
-    from app.domain.machine.runner import MachineEnrollmentRunner
+    from app.domain.machine.runner import MachineEnrollmentSweeper
+    from app.domain.scheduler.jobs import periodic_jobs
 
     async def resume_ready_cloud_topics(
         ready: list[tuple[uuid.UUID, str]],
@@ -243,42 +197,20 @@ async def lifespan(_: FastAPI):
                     str(topic_id), {"type": "event_block", "block": block}
                 )
 
-    machines = MachineEnrollmentRunner(
-        async_session_factory,
-        settings.machine_enroll_interval_seconds,
-        on_ready=resume_ready_cloud_topics,
+    jobs = periodic_jobs(
+        scheduler=scheduler,
+        machines=MachineEnrollmentSweeper(
+            async_session_factory, on_ready=resume_ready_cloud_topics
+        ),
+        sessions=async_session_factory,
     )
-    machines.start()
-    # Subscription turns are metered at the proxy; this tails its log into
-    # resource_usage + credits (issue #218). No-op unless the log path is set.
-    from app.domain.usage.subscription_ingest import SubscriptionUsageIngestRunner
-
-    usage_ingest = SubscriptionUsageIngestRunner(
-        async_session_factory,
-        settings.subscription_usage_log,
-        settings.subscription_ingest_interval_s,
-    )
-    usage_ingest.start()
-    # 后端报错回房间 (issue #283): closes burst windows on a clock, so a flood
-    # that stopped still reports its size instead of waiting for a recurrence
-    # that a fixed bug never has.
-    error_flush = backend_log.BackendErrorFlushRunner(
-        settings.backend_error_flush_interval_s
-    )
-    error_flush.start()
+    for job in jobs:
+        job.start()
     try:
         yield
     finally:
-        await error_flush.stop()
-        await usage_ingest.stop()
-        await machines.stop()
-        await gate_sweeper.stop()
-        await orphan_sweep.stop()
-        await upstream_sync.stop()
-        await conclusion_sweeper.stop()
-        await pr_poller.stop()
-        await reaper.stop()
-        await runner.stop()
+        for job in reversed(jobs):
+            await job.stop()
         # The openviking backend keeps the whole memory tree in one embedded
         # instance (AGFS + vector index) under openviking_data_dir. Nothing
         # else owns its lifecycle, so a redeploy would tear the process down

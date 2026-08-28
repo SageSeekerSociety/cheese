@@ -318,7 +318,7 @@ async def test_the_sweep_is_a_no_op_when_microcloud_is_not_configured(monkeypatc
     Nothing can have been provisioned, so there is nothing to enroll — that is a
     quiet no-op, not a failure.
     """
-    from app.domain.machine.runner import MachineEnrollmentRunner
+    from app.domain.machine.runner import MachineEnrollmentSweeper
 
     class Session:
         async def __aenter__(self):
@@ -333,7 +333,7 @@ async def test_the_sweep_is_a_no_op_when_microcloud_is_not_configured(monkeypatc
     from app.domain.machine.services import MachineService
 
     monkeypatch.setattr(MachineService, "available", property(lambda self: False))
-    runner = MachineEnrollmentRunner(Session, 60)
+    runner = MachineEnrollmentSweeper(Session)
     assert await runner.sweep() == {"enrolled": 0, "failed": 0}
 
 
@@ -342,7 +342,7 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
     to the connector-presence gate without creating a per-topic retry timer."""
     from unittest.mock import AsyncMock
 
-    from app.domain.machine.runner import MachineEnrollmentRunner
+    from app.domain.machine.runner import MachineEnrollmentSweeper
     from app.domain.machine.services import MachineService
 
     topic_id = uuid.uuid4()
@@ -377,7 +377,7 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
 
     monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
     on_ready = AsyncMock()
-    runner = MachineEnrollmentRunner(Session, 60, on_ready=on_ready)
+    runner = MachineEnrollmentSweeper(Session, on_ready=on_ready)
 
     assert await runner.sweep() == {"enrolled": 1, "failed": 0}
     on_ready.assert_awaited_once_with([(topic_id, "cloud-1")])

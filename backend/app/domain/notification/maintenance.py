@@ -1,78 +1,48 @@
+"""The two notification jobs that only a clock can start.
+
+Everything else in this domain runs on the request that caused it: a mention
+publishes, a handler writes the in-app row and pushes the email onto Redis.
+These two have no such caller.
+
+``finalize_expired_aggregations`` closes an aggregation window. A burst of
+mentions is merged into one notification that stays open for
+``notification_config.aggregation_window``; the merged notification is only
+DELIVERED when that window is finalized, so without this the aggregated ones
+are written and never sent — the exact notifications a busy room produces most
+of.
+
+``drain_email_queue`` is the only consumer of the Redis list every email
+notification is pushed onto. Nothing else reads that key, so an unrun drain is
+not a delay: it is a queue that grows forever and an inbox that never receives.
+"""
+
+import json
 import logging
+from typing import Any
 
-from taskiq.schedule_sources import LabelScheduleSource
+from redis.asyncio import Redis
+from sqlalchemy import select
 
-from app.core.taskiq_broker import broker, scheduler
-from app.db.session import AsyncSessionLocal as async_session_factory
+from app.core.config import settings
+from app.core.db import SessionFactory
+from app.core.email import get_email_sender
+from app.domain.notification.publisher import build_notification_event_handler
+from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
 
 
-@broker.task(
-    task_name="notification_aggregation_finalize",
-    schedule=[{"cron": "* * * * *"}],
-)
-async def notification_aggregation_finalize_task() -> dict[str, int]:
-    """Finalize expired notification aggregations. Runs every minute."""
-    from app.domain.notification.publisher import build_notification_event_handler
-
-    async with async_session_factory() as session:
+async def finalize_expired_aggregations(sessions: SessionFactory) -> dict[str, int]:
+    """Close every aggregation window that has expired, delivering what it held."""
+    async with sessions() as session:
         handler = build_notification_event_handler(session)
         finalized = await handler.finalize_expired()
         await session.commit()
-        count = len(finalized)
-        if count > 0:
-            logger.info("Finalized %d notification aggregations", count)
-        return {"finalized": count}
+    return {"finalized": len(finalized)}
 
 
-@broker.task(
-    task_name="task_deadline_check",
-    schedule=[{"cron": "*/15 * * * *"}],
-)
-async def task_deadline_check_task() -> dict[str, int]:
-    """Check and fail expired task deadlines. Runs every 15 minutes."""
-    from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
-
-    async with async_session_factory() as session:
-        count = await check_and_fail_expired_deadlines(session)
-        return {"failed": count}
-
-
-@broker.task(task_name="send_notification_email")
-async def send_notification_email_task(
-    recipient_email: str,
-    subject: str,
-    body_html: str,
-    body_text: str | None = None,
-) -> dict[str, bool]:
-    """Send a single notification email."""
-    from app.core.email import get_email_sender
-
-    sender = get_email_sender()
-    success = await sender.send(
-        to=recipient_email,
-        subject=subject,
-        body_html=body_html,
-        body_text=body_text,
-    )
-    return {"success": success}
-
-
-@broker.task(
-    task_name="process_email_queue",
-    schedule=[{"cron": "* * * * *"}],
-)
-async def process_email_queue_task() -> dict[str, int]:
+async def drain_email_queue(sessions: SessionFactory) -> dict[str, int]:
     """Deliver queued email with claim/ack and bounded retry semantics."""
-    import json
-
-    from redis.asyncio import Redis
-
-    from app.core.config import settings
-    from app.core.email import get_email_sender
-    from app.db.session import AsyncSessionLocal as async_session_factory
-
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     queue_key = settings.notification_email_queue_key
     processing_key = f"{queue_key}:processing"
@@ -100,18 +70,14 @@ async def process_email_queue_task() -> dict[str, int]:
             pass
         batch_count = min(batch_size, await redis.llen(queue_key))
 
-        async with async_session_factory() as session:
-            from sqlalchemy import select
-
-            from app.domain.user.models import User
-
+        async with sessions() as session:
             for _ in range(batch_count):
                 claimed = await redis.lmove(queue_key, processing_key, "LEFT", "RIGHT")
                 if claimed is None:
                     break
                 item_str = claimed.decode() if isinstance(claimed, bytes) else claimed
 
-                item: dict = {}
+                item: dict[str, Any] = {}
                 failure: str | None = None
                 try:
                     decoded = json.loads(item_str)
@@ -176,9 +142,6 @@ async def process_email_queue_task() -> dict[str, int]:
                             failure,
                         )
                 await lock.extend(90, replace_ttl=True)
-
-        if processed > 0:
-            logger.info("Processed %d notification emails", processed)
     finally:
         if lock_acquired:
             try:
@@ -192,6 +155,3 @@ async def process_email_queue_task() -> dict[str, int]:
         "retried": retried,
         "dead_lettered": dead_lettered,
     }
-
-
-scheduler.sources = [LabelScheduleSource(broker)]  # type: ignore[misc]

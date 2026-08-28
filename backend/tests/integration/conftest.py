@@ -240,8 +240,8 @@ class UserCreator:
 
 @pytest.fixture(scope="session")
 def app() -> "FastAPI":
-    """Import the FastAPI app. (Notification aggregation is finalized by the
-    taskiq cron, not an in-process scheduler — nothing to patch out here.)"""
+    """Import the FastAPI app. (Its periodic jobs only start inside `lifespan`,
+    which these tests do not enter — nothing to patch out here.)"""
     from app.main import app as fastapi_app
 
     return fastapi_app
