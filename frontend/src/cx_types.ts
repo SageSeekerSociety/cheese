@@ -149,6 +149,9 @@ export interface RoomTask {
   created_by?: string | null
   agent_instance_id?: string | null
   branch_name?: string | null
+  // 它干在哪一批上。一棵树 = 一个分支 = 一个 PR = 一批活，所以这是「我这条活最后
+  // 会从哪个 PR 出去」的答案，也是总览把活和 PR 对上的唯一依据。
+  tree_id?: string | null
   // 交付，和 `status` 不是同一个问题：活可以已交付但还开着，也可以关掉却什么都没交付。
   accepted_by?: string | null
   accepted_at?: string | null

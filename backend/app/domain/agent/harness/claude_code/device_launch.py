@@ -406,6 +406,178 @@ done
 """
 
 
+# Bringing a device's workspace up, kept out of the launcher's f-string (and
+# raw, so it reads as the shell it is) because a test runs this exact text
+# against real repositories — a fix that never reached the launcher must not be
+# able to pass.
+#
+# "There is a .git directory" is not the same question as "this workspace
+# works", and three separate incidents came out of the gap. git points HEAD at
+# refs/heads/.invalid for the WHOLE duration of a clone and only names the real
+# branch as its last step (poll HEAD through a clone and that is exactly what
+# you see). A clone killed in between — a container torn down, a machine
+# rebooted — leaves a .git that satisfies [ -d ], answers `git log` with "fatal:
+# your current branch appears to be broken", and still lets `git status` exit 0
+# on a clean tree. The old guard was `[ ! -d .git ]`, so every later launch
+# stepped over the wreck and left the agent to find it.
+#
+# So: ask git whether it can read HEAD, repair in place when it can be repaired,
+# and say out loud when it cannot. Nothing here ever deletes a .git — a
+# repository this platform cannot read may still be the only place the agent's
+# unpushed commits exist.
+CHEESE_WORKSPACE_BRINGUP = r"""# A device starts with an empty work dir.
+if [ -n "${CHEESE_GIT_REMOTE:-}" ]; then
+  CHEESE_WS_BRANCH="${CHEESE_GIT_BRANCH:-main}"
+  CHEESE_WS_NOTE=""
+  cheese_ws_say() {
+    CHEESE_WS_NOTE="${CHEESE_WS_NOTE:+$CHEESE_WS_NOTE; }$1"
+  }
+  # Unreadable, not merely unusual. A detached HEAD (an agent bisecting) and an
+  # unborn branch are both fine and both must be left alone; only a HEAD that
+  # answers NEITHER question is the placeholder a killed clone leaves behind.
+  cheese_ws_unreadable() {
+    git -C "$CHEESE_WORK" rev-parse --verify -q HEAD >/dev/null 2>&1 && return 1
+    git -C "$CHEESE_WORK" symbolic-ref -q HEAD >/dev/null 2>&1 && return 1
+    return 0
+  }
+  # Adopt whatever .git is there: name the branch, put HEAD on it, fill in files
+  # that are simply absent. Deliberately conservative — it never moves a branch
+  # that already exists and never overwrites a file that is already there,
+  # because either one can be the only copy of something. It reports success
+  # only if git can read HEAD afterwards.
+  cheese_ws_adopt() {
+    git -C "$CHEESE_WORK" config user.name "${CHEESE_GIT_AUTHOR_NAME:-芝士}" 2>/dev/null
+    git -C "$CHEESE_WORK" config user.email \
+      "${CHEESE_GIT_AUTHOR_EMAIL:-cheese@zhishi.local}" 2>/dev/null
+    git -C "$CHEESE_WORK" config http.extraHeader \
+      "X-Cheese-Token: $CHEESE_TOKEN" 2>/dev/null
+    git -C "$CHEESE_WORK" show-ref -q --verify \
+      "refs/heads/$CHEESE_WS_BRANCH" 2>/dev/null \
+      || git -C "$CHEESE_WORK" update-ref "refs/heads/$CHEESE_WS_BRANCH" \
+           "refs/remotes/origin/$CHEESE_WS_BRANCH" 2>/dev/null \
+      || git -C "$CHEESE_WORK" update-ref "refs/heads/$CHEESE_WS_BRANCH" \
+           HEAD 2>/dev/null \
+      || true
+    git -C "$CHEESE_WORK" symbolic-ref HEAD \
+      "refs/heads/$CHEESE_WS_BRANCH" 2>/dev/null || true
+    git -C "$CHEESE_WORK" reset -q --mixed 2>/dev/null || true
+    git -C "$CHEESE_WORK" checkout-index -a -q 2>/dev/null || true
+    git -C "$CHEESE_WORK" symbolic-ref -q HEAD >/dev/null 2>&1
+  }
+  if [ -d "$CHEESE_WORK/.git" ] && cheese_ws_unreadable; then
+    if cheese_ws_adopt; then
+      cheese_ws_say "repaired a workspace an interrupted clone left behind"
+    elif mv "$CHEESE_WORK/.git" "$CHEESE_WORK/.git.broken.$$" 2>/dev/null; then
+      cheese_ws_say "set an unreadable .git aside as .git.broken.$$"
+    else
+      cheese_ws_say "found an unreadable .git and could not move it aside"
+    fi
+  fi
+  if [ ! -d "$CHEESE_WORK/.git" ]; then
+    # Clone next door and move the .git in, rather than cloning INTO the work
+    # dir: git refuses to clone into a directory that is not empty, so a
+    # workspace that had lost only its .git got no repository at all — and
+    # `2>/dev/null || true` made that indistinguishable from success.
+    CHEESE_WS_TMP="$CHEESE_WORK.clone.$$"
+    rm -rf "$CHEESE_WS_TMP"
+    CHEESE_WS_ERR="$(git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
+      clone -q --no-checkout "$CHEESE_GIT_REMOTE" "$CHEESE_WS_TMP" 2>&1)" || true
+    if [ -d "$CHEESE_WS_TMP/.git" ] \
+       && mv "$CHEESE_WS_TMP/.git" "$CHEESE_WORK/.git" 2>/dev/null; then
+      cheese_ws_adopt \
+        || cheese_ws_say "cloned it but could not put HEAD on $CHEESE_WS_BRANCH"
+    else
+      cheese_ws_say "could not clone the repository: ${CHEESE_WS_ERR:-git said nothing}"
+    fi
+    rm -rf "$CHEESE_WS_TMP"
+  fi
+  # Quotes and newlines are dropped rather than escaped: a git error message is
+  # worth carrying verbatim, its punctuation is not worth a quoting bug.
+  if [ -n "$CHEESE_WS_NOTE" ]; then
+    printf '{"hook_event_name":"CheeseWorkspace","detail":"%s"}' \
+      "$(printf '%s' "$CHEESE_WS_NOTE" | tr -d '"\\' | tr '\n\r\t' '   ')" \
+      | cheese-hook >/dev/null 2>&1 || true
+  fi
+fi
+"""
+
+
+# The end-of-turn snapshot. Two different jobs live here, and conflating them
+# cost a day's work: PUBLISHING what the agent committed, so 采纳 and the PR see
+# it, and BACKING UP what it has not committed, so a machine that disappears
+# does not take the only copy.
+#
+# The old script did both with one `git add -A && git commit && git push`, which
+# moved HEAD. That is what turned a backup into a hazard. An agent mid-debug had
+# temporarily reverted a file to prove a test went red; the turn ended, the
+# snapshot committed the revert and pushed it, and the agent's next
+# `git checkout HEAD -- <file>` — the ordinary way back — restored the REVERT,
+# because HEAD was no longer the commit it had read. Thirty-three lines of
+# production code left the shared branch with every test still green and nothing
+# in `git status` to see. Bisecting, A/B comparison, "prove it fails first", a
+# temporary print: every one of them assumes HEAD stays put.
+#
+# So HEAD is never moved here, and neither is the branch — the branch only ever
+# advances to commits the agent made itself. Uncommitted work is written as a
+# commit OBJECT through a scratch index (so the real index is untouched too) and
+# pushed to refs/cheese/snapshots/<branch>: off the machine and recoverable,
+# where it cannot be mistaken for delivered work.
+CHEESE_SYNC_SCRIPT = r"""#!/bin/sh
+# Silent by design in the sense that matters — a Stop hook that fails must never
+# take the turn down with it. It exits 0 either way; what it must not do is
+# leave no trace, which is why the outcome goes out through cheese-hook (durable
+# spool, retries until the backend acknowledges).
+[ -n "${CHEESE_GIT_REMOTE:-}" ] || exit 0
+[ -d "$CHEESE_WORK/.git" ] || exit 0
+cd "$CHEESE_WORK" || exit 0
+branch="${CHEESE_GIT_BRANCH:-main}"
+head="$(git rev-parse --verify -q HEAD 2>/dev/null || true)"
+failed=""
+tried=""
+if [ -n "$head" ]; then
+  tried=1
+  git push -q origin "$head:refs/heads/$branch" >/dev/null 2>&1 || failed=1
+fi
+# The scratch index lives inside .git so it is never something the agent can see
+# and never a path git would try to add to itself.
+snapshot=""
+idx="$CHEESE_WORK/.git/cheese-snapshot-index"
+rm -f "$idx"
+if [ -n "$head" ]; then
+  GIT_INDEX_FILE="$idx" git read-tree "$head" >/dev/null 2>&1 || rm -f "$idx"
+fi
+tree=""
+if GIT_INDEX_FILE="$idx" git add -A >/dev/null 2>&1; then
+  tree="$(GIT_INDEX_FILE="$idx" git write-tree 2>/dev/null || true)"
+fi
+rm -f "$idx"
+headtree=""
+if [ -n "$head" ]; then
+  headtree="$(git rev-parse -q --verify "$head^{tree}" 2>/dev/null || true)"
+fi
+if [ -n "$tree" ] && [ "$tree" != "$headtree" ]; then
+  if [ -n "$head" ]; then
+    snapshot="$(git commit-tree "$tree" -p "$head" \
+      -m "cheese: uncommitted workspace after an agent turn" 2>/dev/null || true)"
+  else
+    snapshot="$(git commit-tree "$tree" \
+      -m "cheese: uncommitted workspace after an agent turn" 2>/dev/null || true)"
+  fi
+fi
+if [ -n "$snapshot" ]; then
+  tried=1
+  git push -q -f origin "$snapshot:refs/cheese/snapshots/$branch" >/dev/null 2>&1 \
+    || failed=1
+fi
+[ -n "$tried" ] || exit 0
+if [ -n "$failed" ]; then status=failed; else status=ok; fi
+{
+  printf '{"hook_event_name":"CheeseSync","status":"%s",' "$status"
+  printf '"commit":"%s","snapshot":"%s","branch":"%s"}' "$head" "$snapshot" "$branch"
+} | cheese-hook >/dev/null 2>&1 || true
+"""
+
+
 def build_launch_script(
     sync_on_stop: bool = False, system_prompt: str = "", ca_pem: str = ""
 ) -> str:
@@ -439,6 +611,8 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
     usage_script = CHEESE_USAGE_SCRIPT
     usage_reader = CHEESE_USAGE_READER
+    sync_script = CHEESE_SYNC_SCRIPT
+    workspace_bringup = CHEESE_WORKSPACE_BRINGUP
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
     drain_script = CHEESE_DRAIN_SCRIPT
     # Shipped by reading the module's own bytes rather than by keeping a second
@@ -472,21 +646,6 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # the tmux-hosted claude below runs from a fresh server with its own cwd.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
-# A device starts with an empty work dir. Give every device the topic branch: a
-# real checkout it can push back from so 采纳 sees what the agent wrote.
-if [ -n "${{CHEESE_GIT_REMOTE:-}}" ] && [ ! -d "$CHEESE_WORK/.git" ]; then
-  git -c http.extraHeader="X-Cheese-Token: $CHEESE_TOKEN" \
-      clone -q "$CHEESE_GIT_REMOTE" "$CHEESE_WORK" 2>/dev/null || true
-  if [ -d "$CHEESE_WORK/.git" ]; then
-    git -C "$CHEESE_WORK" config user.name "${{CHEESE_GIT_AUTHOR_NAME:-芝士}}"
-    git -C "$CHEESE_WORK" config user.email \
-      "${{CHEESE_GIT_AUTHOR_EMAIL:-cheese@zhishi.local}}"
-    git -C "$CHEESE_WORK" config http.extraHeader "X-Cheese-Token: $CHEESE_TOKEN"
-    git -C "$CHEESE_WORK" checkout -q -B "${{CHEESE_GIT_BRANCH:-main}}" \
-      "origin/${{CHEESE_GIT_BRANCH:-main}}" 2>/dev/null \
-      || git -C "$CHEESE_WORK" checkout -q -B "${{CHEESE_GIT_BRANCH:-main}}"
-  fi
-fi
 mkdir -p "$HOME/.claude"
 # THE isolation boundary on a machine we do not own (#5): claude reads AND
 # writes its config — settings.json, .claude.json, .credentials.json — under
@@ -520,31 +679,7 @@ JSON
 cat > "$HOME/.claude/cheese-system-prompt.md" <<'SYSPROMPT'
 {system_prompt}SYSPROMPT
 cat > "$HOME/.claude/cheese-sync" <<'SYNC'
-#!/bin/sh
-# Runs at the end of every turn on a machine that owns its own tree: commit what
-# the agent wrote and push the topic branch back, so 采纳 can see it. Silent by
-# design — a hook that fails must never take the turn down with it.
-[ -n "${{CHEESE_GIT_REMOTE:-}}" ] || exit 0
-[ -d "$CHEESE_WORK/.git" ] || exit 0
-cd "$CHEESE_WORK" || exit 0
-git add -A >/dev/null 2>&1
-git diff --cached --quiet && exit 0
-git commit -q -m "chore: snapshot workspace after agent turn" >/dev/null 2>&1 || exit 0
-# Report the outcome through cheese-hook, which already has a durable spool and
-# retries until the backend acknowledges. Staying non-fatal was right — a Stop
-# hook that dies takes the turn with it — but silence was not: a rejected push
-# left the turn reporting done while the only copy of the agent's work sat on a
-# machine nobody would think to look at. Exit 0 either way; the difference is
-# that failure now leaves a trace instead of nothing.
-sha="$(git rev-parse HEAD 2>/dev/null)"
-if git push -q origin "HEAD:${{CHEESE_GIT_BRANCH:-main}}" >/dev/null 2>&1; then
-  status=ok
-else
-  status=failed
-fi
-printf '{{"hook_event_name":"CheeseSync","status":"%s","commit":"%s","branch":"%s"}}' \
-  "$status" "$sha" "${{CHEESE_GIT_BRANCH:-main}}" | cheese-hook >/dev/null 2>&1 || true
-SYNC
+{sync_script}SYNC
 chmod +x "$HOME/.claude/cheese-sync"
 cat > "$HOME/.claude/cheese-usage.py" <<'USAGEPY'
 {usage_reader}USAGEPY
@@ -564,6 +699,10 @@ if [ -n "$CHEESE_CLI_URL" ]; then
     && chmod +x "$HOME/.claude/cheese" || rm -f "$HOME/.claude/cheese"
 fi
 export PATH="$HOME/.claude:$PATH"
+# Give every device the topic branch: a real checkout it can push back from so
+# 采纳 sees what the agent wrote. It runs here, after the forwarder is on PATH,
+# because what this step has to say when it goes wrong is the whole point of it.
+{workspace_bringup}
 # Extract the machine's own ccproxy ticket, READING the owner's files only —
 # see CHEESE_SETTINGS_RECONCILE for why nothing is written there any more
 # (CLAUDE_CONFIG_DIR made the owner's settings.json irrelevant to routing).

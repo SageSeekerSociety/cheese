@@ -111,7 +111,7 @@
                   <v-avatar size="64" class="mb-3" color="primary" variant="tonal">
                     <v-icon icon="mdi-sign-caution"></v-icon>
                   </v-avatar>
-                  <p class="text-subtitle-2 font-weight-medium text-center mb-1">Coming Soon</p>
+                  <p class="text-subtitle-2 font-weight-medium text-center mb-1">敬请期待</p>
                   <p class="text-body-2 text-medium-emphasis mb-0">
                     即将支持小队管理员发布招募信息，让更多人发现并加入你的小队。
                   </p>

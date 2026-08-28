@@ -1794,7 +1794,7 @@ onBeforeUnmount(() => {
                 <v-icon size="13">mdi-pound</v-icon>
               </span>
               <span class="mention-menu-name">{{ mm.label }}</span>
-              <span v-if="mm.agent" class="mention-agent-badge">Agent</span>
+              <span v-if="mm.agent" class="mention-agent-badge">AI 队友</span>
               <span class="mention-menu-sub">{{ mm.sub }}</span>
               <span v-if="i === 0" class="mention-menu-hint">Enter</span>
             </button>
