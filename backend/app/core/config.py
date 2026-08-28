@@ -6,6 +6,15 @@ from functools import lru_cache
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# The gateway mounts this whole app under `/api` and strips that one segment
+# (`proxy_pass http://backend:8081/`), so a backend route is bare while the URL
+# the browser used is `/api` + that route. Anything the BROWSER will resolve
+# against — a cookie's Path, a rewritten asset URL, the base a dev server has to
+# be started under — has to be built with this. It lives in core rather than in
+# the API layer because the device launcher needs the same string to tell an
+# agent where its app will be mounted, and the domain cannot import the API.
+GATEWAY_MOUNT = "/api"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
