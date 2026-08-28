@@ -1,8 +1,9 @@
 // Package link is the dial-out control channel to the server. It carries a flat
 // stream of JSON messages in both directions and knows nothing about their
-// meaning — session lifecycle, variables and RPC are all just message types the
-// host and the server agree on. cheese always dials out, so it works from behind
-// NAT; the connection reconnects with backoff and heartbeats while up.
+// meaning — session lifecycle, screen bytes, calls and exec are all just message
+// types the host and the server agree on. cheese always dials out, so it works
+// from behind NAT; the connection reconnects with backoff and heartbeats while
+// up.
 package link
 
 import (
@@ -39,11 +40,10 @@ type Msg struct {
 	Screen  string            `json:"screen,omitempty"`
 	Cols    int               `json:"cols,omitempty"`
 	Rows    int               `json:"rows,omitempty"`
-	Source  string            `json:"source,omitempty"`
 	// Adopt marks a session.create that re-drives a screen whose tmux session
 	// already survives on the device (after a server restart or a `cheese update`
-	// re-exec): the host re-establishes the runtime + driver around the existing
-	// tmux instead of spawning a new session. Unknown to older peers (ignored).
+	// re-exec): the host re-attaches to the existing tmux instead of spawning a
+	// new session. Unknown to older peers (ignored).
 	Adopt bool `json:"adopt,omitempty"`
 	// Data carries base64-encoded raw terminal bytes for the direct screen
 	// channel (screen.data downstream, screen.input upstream).
