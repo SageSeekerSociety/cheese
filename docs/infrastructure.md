@@ -231,6 +231,46 @@ Related: never hand-install files INTO a running container (they evaporate on
 the next recreate); the gateway's own env keys follow the same
 recreate-not-restart rule (`deploy/gateway/README.md`).
 
+### Turning on the openviking memory backend (#187)
+
+Everything except the key is already in place: `deploy-docker.sh` creates
+`VIKING_HOST_PATH` (default `/home/nictheboy/cheese-viking`), hands it to uid
+1000 with the other mounts, and compose bind-mounts it at `/data/viking` with
+`OPENVIKING_DATA_DIR` pointed there. On the default `MEMORY_BACKEND=db` the
+directory simply stays empty.
+
+To switch a box over, add to its `backend/.env` and redeploy the running sha
+(step 2 above — `docker restart` will not do):
+
+```
+MEMORY_BACKEND=openviking
+OPENVIKING_LLM_API_KEY=<zhipu key>
+OPENVIKING_EMBEDDING_API_KEY=<zhipu key>
+```
+
+Then import the facts the db backend already holds. The rows are kept as the
+audit trail, so this is additive; imported ids are checkpointed on the volume,
+so a re-run resumes instead of duplicating:
+
+```bash
+docker exec -w /app cheese-backend-1 \
+  python scripts/migrate_memory_to_openviking.py --dry-run   # then without it
+```
+
+Two things to know before flipping it:
+
+- **That directory IS the database.** Not Postgres, not the image. It is
+  excluded from the PG backup job, so if these memories are to survive a box
+  rebuild it needs its own backup line.
+- **The key buys extraction, not just vectors.** Every remembered fact costs a
+  chat call (OpenViking's extractor) plus embedding calls. A key that only
+  works on the embedding endpoint gets you a backend that stores nothing.
+
+`backend/tests/integration/test_openviking_fake_endpoint.py` exercises this
+whole path against a local stand-in endpoint, so the wiring is verifiable
+without a key — but it says nothing about extraction quality, which is exactly
+what the real key is for.
+
 ## Backups
 
 Every box runs the same scripts (only the R2 prefix and host differ); details and
@@ -318,7 +358,8 @@ writer sets explicitly. The only fix is that both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where jj keeps the per-repo secure config that `config-id` points at) hold files
+where jj keeps the per-repo secure config that `config-id` points at, and
+`VIKING_HOST_PATH`, the openviking memory tree) hold files
 written by the pre-2026-08 backend as uid 1001. `deploy/deploy-docker.sh` hands
 them over once via `deploy/fix-workspace-ownership.sh` before the swap —
 idempotent, marker-guarded, and it runs the chown in a throwaway root container

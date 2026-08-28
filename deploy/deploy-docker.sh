@@ -14,6 +14,8 @@
 # Env (with safe defaults baked into the compose file):
 #   BACKEND_ENV_FILE   path to the box's backend/.env   (default in compose)
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
+#   VIKING_HOST_PATH   host dir holding the openviking memory tree (created by
+#                      this script if missing; default in compose)
 #   PROJECT            compose project name              (default cheese)
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
@@ -390,11 +392,20 @@ dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — a
 # deploy-dev *after* the trees had already moved and took dev down until the
 # next deploy (run 31466502982). So: last fallible step first, irreversible step
 # last, and nothing between it and `dc up` that can fail.
+VIKING_PATH="${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}"
+# Create it here, not by letting the bind mount conjure it: a missing source
+# path makes docker create it as root:root, and the backend (uid 1000) then
+# cannot write the memory tree it was just told to keep there. Making it first
+# also puts it in reach of the handover below, which skips paths that do not
+# exist yet.
+mkdir -p "$VIKING_PATH" || fail "cannot create $VIKING_PATH"
+
 OWNERSHIP_REPORT="$(mktemp)"
 OWNERSHIP_PATHS=(
   "${WORKSPACES_HOST_PATH:-/home/nictheboy/cheese-workspaces}"
   "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}"
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
+  "$VIKING_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
 OWNERSHIP_SECRETS="${GIT_CREDENTIALS_FILE:-/dev/null}"
