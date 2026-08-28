@@ -339,8 +339,10 @@ jobs:
           # Read out of the image rather than pinned again here. A second copy
           # of the number is a copy that drifts, and it drifts in the direction
           # that hides: CI stays green on a jj the shipped image never runs.
-          JJ_VERSION="v$(sed -n 's/^ARG JJ_VERSION=//p' backend/sandbox/Dockerfile)"
-          [ "$JJ_VERSION" != "v" ] || { echo "no ARG JJ_VERSION in backend/sandbox/Dockerfile" >&2; exit 1; }
+          # Absolute: this workflow's steps default to backend/ as their cwd.
+          DOCKERFILE="$GITHUB_WORKSPACE/backend/sandbox/Dockerfile"
+          JJ_VERSION="v$(sed -n 's/^ARG JJ_VERSION=//p' "$DOCKERFILE")"
+          [ "$JJ_VERSION" != "v" ] || { echo "no ARG JJ_VERSION in $DOCKERFILE" >&2; exit 1; }
           # The runner's own arch, not a hardcoded one: the pool is x86_64 today,
           # and a machine of another arch joining it would fail here with a
           # rejected binary rather than anything naming the real cause.
