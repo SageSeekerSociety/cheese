@@ -1541,15 +1541,19 @@ def _merge_ref_into_base(
 
 def merge_topic(project_id: uuid.UUID, topic_id: uuid.UUID) -> dict:
     """采纳 = merge (spec §6.3): merge the topic's branch into the base branch.
-    Best-effort — on conflict it aborts and reports, never half-merges."""
+
+    On conflict it aborts and reports, never half-merges. It does raise for one
+    thing: a working copy whose pending edits could not be folded into the
+    branch, because merging then delivers something the reviewer never saw."""
     repo = ensure_repo(project_id)
     # Fold any pending working-copy changes into the branch first: a human may
     # have edited files (人改文件即指令) with no agent turn afterwards to
     # snapshot them — accepting must deliver what the reviewer actually saw.
-    try:
-        snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_ACCEPT)
-    except ValidationError:
-        pass  # no workspace/jj state yet — nothing pending to fold
+    #
+    # A fold that FAILS raises out of here rather than being swallowed, and the
+    # caller already knows what to do with that: it refuses the accept and says
+    # so in the room, instead of merging a branch this turn never reached.
+    commit_pending_work(project_id, topic_id, SNAPSHOT_BEFORE_ACCEPT)
     branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo, branch):
         return {"merged": False, "noop": True, "reason": "no topic branch"}
@@ -1955,10 +1959,8 @@ def push_topic_branch(project_id: uuid.UUID, topic_id: uuid.UUID, token: str) ->
     repo = ensure_repo(project_id)
     if get_upstream(project_id) is None:
         raise ValidationError("未关联上游仓库，无法推分支")
-    try:
-        snapshot_worktree(project_id, topic_id, SNAPSHOT_FOR_PR)
-    except ValidationError:
-        pass  # no workspace/jj state yet — nothing pending to fold
+    # Raises rather than publishing a PR head that is missing this turn.
+    commit_pending_work(project_id, topic_id, SNAPSHOT_FOR_PR)
     branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo, branch):
         raise ValidationError("话题没有分支，无法推送")
@@ -2223,10 +2225,10 @@ def push_topic_branch_for_github_pr(
     before. Syncing only after a rejection keeps the happy path (including the
     60s re-push poll) exactly as cheap as it was — no fetch, no extra commit."""
     repo_path = ensure_repo(project_id)
-    try:
-        snapshot_worktree(project_id, topic_id, SNAPSHOT_BEFORE_TWO_PHASE)
-    except ValidationError:
-        pass  # no workspace/jj state yet — nothing pending to fold
+    # Raises like any other push failure here, and the callers already handle
+    # that: the re-push poller records it on the card and retries next tick, the
+    # open-a-PR path stops the accept.
+    commit_pending_work(project_id, topic_id, SNAPSHOT_BEFORE_TWO_PHASE)
     branch = branch_for_tree(tree_for_place(topic_id))
     if not _branch_exists(repo_path, branch):
         raise ValidationError("话题还没有可推送的分支")
@@ -2515,6 +2517,29 @@ def snapshot_worktree(
         _jj(wt, "metaedit", "--update-author", "-r", "@-", identity=author)
     _jj(wt, "bookmark", "set", branch, "-r", "@-", "--allow-backwards")
     _jj(wt, "git", "export")
+
+
+def commit_pending_work(
+    project_id: uuid.UUID, place_id: uuid.UUID, message: str
+) -> None:
+    """Fold whatever is sitting in this place's working copy into its branch,
+    for the human-triggered paths that must deliver what the reviewer saw:
+    accept, opening or updating a PR, an explicit push-fix.
+
+    A place with no workspace has nothing to fold and returns quietly. Anything
+    else RAISES.
+
+    That distinction is the whole function. It used to be a `try/except
+    ValidationError: pass` at each call site, whose comment said "no workspace
+    yet — nothing pending to fold" — but a workspace that has gone stale raises
+    exactly the same exception, and so does every other way jj can fail. So the
+    four paths treated "the work was lost" as "there was never any work" and
+    carried on: the branch stayed where it was, the card's diff and the PR were
+    computed from that branch, and the merge landed without this turn in it.
+    Nothing anywhere said so. `has_worktree` is a read-only probe, so asking it
+    the harmless question first leaves the failure with nobody to swallow it."""
+    if has_worktree(project_id, place_id):
+        snapshot_worktree(project_id, place_id, message)
 
 
 # `docker info` costs ~50ms, and the answer changes only when someone starts or

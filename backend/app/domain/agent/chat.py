@@ -1926,10 +1926,11 @@ class ChatService:
 
     def schedule_spool_settle(self, topic_id: uuid.UUID, delay_s: float = 2.0) -> None:
         """Debounced background ``settle_spool``. Two callers: the hooks
-        endpoint when it parks an event with no turn listening (so a working
-        claude's progress — and its Stop — lands within seconds instead of
-        waiting for the next summon), and the orphan sweep when it attaches to
-        an interrupted turn (so anything already parked lands now)."""
+        endpoint when an event arrives with no turn listening — nothing will
+        read what it just wrote until something goes looking, so a working
+        claude's progress (and its Stop) lands within seconds instead of waiting
+        for the next summon — and the orphan sweep when it attaches to an
+        interrupted turn, so anything already waiting lands now."""
         if topic_id in self._settle_pending:
             return
         self._settle_pending.add(topic_id)

@@ -55,6 +55,11 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.chat", "app.domain.usage.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
+        # Posting one system event into a topic's timeline needs the block row
+        # and the topic it hangs off, and `app.domain.block` has no service at
+        # all — only models, schemas and repositories. There is nothing to call.
+        ("app.domain.agent.snapshot_notices", "app.domain.block.repositories"),
+        ("app.domain.agent.snapshot_notices", "app.domain.topic.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),

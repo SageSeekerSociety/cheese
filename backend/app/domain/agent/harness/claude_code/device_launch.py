@@ -393,6 +393,8 @@ while true; do
     resp="$(curl -s -m 10 -X POST -H 'Content-Type: application/json' \\
       -H "X-Cheese-Token: $CHEESE_TOKEN" -H "X-Cheese-Event-Id: ${f##*.}" \\
       --data-binary @"$f" "$CHEESE_HOOK_URL" 2>/dev/null)"
+    # Deleting the ONLY copy, so only on the backend's word that it wrote the
+    # event to its own disk — which is what a 200 from /sandbox/hooks means.
     case "$resp" in *'"code":200'*) rm -f "$f";; esac
   done
   # Retention, NOT a wildcard: `.seq` is the spool's sequence hint, and reaping
@@ -738,10 +740,11 @@ esac
 # Durable event delivery on the device: cheese-hook spools every hook and (via
 # CHEESE_HOOK_SPOOL_ONLY) skips its own inline curl, so the cheese-drain script
 # is the sole sender — it retries each spooled event until the backend DURABLY
-# accepts it (code:200 = pushed to the live turn OR parked in the topic's
-# server-side spool for the next reconcile), so a link/backend outage never
-# drops an event. A 24h age cap stops an unreachable backend from accumulating
-# retries forever. The backend dedups re-deliveries by event-id.
+# accepts it (code:200 = the backend wrote the event to the topic's server-side
+# spool; anything else leaves this machine's copy in place, which is the only
+# one there is), so a link/backend outage never drops an event. A 24h age cap
+# stops an unreachable backend from accumulating retries forever. The backend
+# dedups re-deliveries by event-id.
 #
 # The drainer is NOT started here: this launcher runs in the CONNECTOR's
 # process tree, which dies with the connector while claude survives in its own

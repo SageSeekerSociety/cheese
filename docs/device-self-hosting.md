@@ -40,6 +40,10 @@
 
 下次启动会 re-adopt 活着的会话（`HasSession` 分支），drainer 继续重投它 spool 下来的 hook，viewer 重新 attach 回原来那个 pane。
 
+第三行只对 systemd 说话，**macOS 不需要对应物**：tmux server 一起来就 daemonize（实测 tmux 3.5a：PPID 1、自成进程组），而 launchd 拆 job 只管 job 自己的进程组，于是 server 和里面的会话原样活着——LaunchAgent 与 LaunchDaemon 两种形态都实测过，`launchctl bootout` 之后 `has-session` 仍然成立。Linux 非要那一行，是因为 cgroup 不是进程组：fork 出来的进程离不开自己所在的 unit，除非有个特权的 manager 把它搬走。所以「把 tmux server 挪出 connector 名下、让它结构上就不归我们」在不要 sudo 的前提下无处可去，那一行就是做法本身，不是权宜。
+
+它撑住的**上限是同一次开机**：unit 的 cgroup 放过 tmux server，登出和关机不会。默认路径（`cheese link connect` 提权装系统级 service）在 `system.slice` / LaunchDaemon 里，登出与它无关；退到用户级 service（没有 sudo，或 `--user`）时，登出会把 `user@.service` 连同 connector 和 tmux server 一起带走。`KillUserProcesses=` 不是这里的开关——它管的是 login session scope，而我们的 server 从来不在那里面；用户级路径要熬过登出，只有 linger。
+
 **真的要结束会话的动作是另外几个**，它们说了就得算数：`cheese link disconnect`、`cheese link no-auto-connect`、`cheese uninstall`（这条尤其——机器不是我们的，不能留东西），以及服务端关掉某块屏幕。
 
 unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖已存在的 unit，所以是先 uninstall 再 install），否则老版本装出来的 unit 会一直活着，而这类"发布悄悄没生效"正是 #501 的形状。
@@ -147,13 +151,15 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 ```
 设备侧                                          后端侧
 claude COMMAND hooks                            /sandbox/hooks/{topic_id}
-  → ~/.claude/cheese-hook 转发器                  → 共享 hook_router
-  → 先写本地 spool (~/.claude/cheese-spool,        → translate_hook → AgentEvent
-     CHEESE_HOOK_SPOOL_ONLY=1)                  → code:200 = 推给活 turn 或存进 topic
-  → 后台 drainer 用 curl POST                       的服务端 spool，等下次 reconcile
-     {CONNECTOR_PUBLIC_BASE}/sandbox/hooks/{topic}
+  → ~/.claude/cheese-hook 转发器                  → 先写 topic 的服务端 spool
+  → 先写本地 spool (~/.claude/cheese-spool,        → 再推给活 turn（hook_router →
+     CHEESE_HOOK_SPOOL_ONLY=1)                       translate_hook → AgentEvent）
+  → 后台 drainer 用 curl POST                     → code:200 = 已落到我们盘上
+     {CONNECTOR_PUBLIC_BASE}/sandbox/hooks/{topic}    （drainer 见 200 才删本地副本）
      带 X-Cheese-Token + X-Cheese-Event-Id      （按 event-id 去重）
 ```
+
+**200 = 这条事件已经在我们自己的盘上。** drainer 见 200 就删掉设备上的副本，所以后端在落盘之前给的任何 ack 都是在拿一台**别人的机器**（§0）当我们的持久层：它可以离线、被擦、被机主删掉。落盘失败、缺 `X-Cheese-Event-Id`、token 里没有项目，一律回非 200——事件留在它还存在的地方，drainer 下一轮再来。
 
 - **事件没回来**：先看设备侧 spool 目录有没有堆积——后端不可达时 drainer 会一直重试，24h 过期清理；spool 堆积 = 设备到后端的回连断了。再看 `CONNECTOR_PUBLIC_BASE` 设备是否可达、scoped token 对不对。
 - **事件丢序/重复**：后端按 `X-Cheese-Event-Id` 去重；durable 投递保证一次 link/后端抖动不丢事件，但可能重投，消费侧需幂等。

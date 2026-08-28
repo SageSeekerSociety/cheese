@@ -123,6 +123,10 @@ async def test_spooled_event_is_backfilled_then_deduped(client, tmp_path, monkey
     async with factory() as session:
         rows = await BlockRepository(session).list_for_topic(topic_id)
     assert len(_event_blocks_for(rows, eid)) == 1  # deduped, not duplicated
+    # And the copy it skipped is READ, not left waiting: every hook is written
+    # to this spool, so a pass that only moved its cursor over what it landed
+    # would re-scan the whole history of the topic at every turn.
+    assert _unread(ws.spool_dir(project_id, topic_id)) == []
 
 
 @pytest.mark.anyio

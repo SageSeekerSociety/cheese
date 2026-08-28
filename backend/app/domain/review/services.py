@@ -1904,15 +1904,24 @@ class AcceptService:
 
         # Fold the working tree into a commit FIRST — that is the whole point of
         # an explicit push: the caller means "what is on disk right now".
+        #
+        # A fold that fails is this whole request failing: answering "pushed" to
+        # it would tell the agent its fix is on the PR while the commit was
+        # never made, and it would go back to waiting for CI on a head that
+        # never moved. `commit_pending_work` is what keeps that apart from the
+        # genuinely empty case.
         try:
             await asyncio.to_thread(
-                ws.snapshot_worktree,
+                ws.commit_pending_work,
                 topic.project_id,
                 place_id,
                 ws.SNAPSHOT_FOR_PUSH_FIX,
             )
-        except ValidationError:
-            pass  # no workspace/jj state yet — nothing pending to fold
+        except ValidationError as exc:
+            return {
+                "pushed": False,
+                "reason": f"工作区没能提交，所以没有推送：{exc}",
+            }
 
         from app.domain.review import github_pr
 
