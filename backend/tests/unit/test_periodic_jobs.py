@@ -120,23 +120,31 @@ def _jobs():
 
 
 @pytest.mark.parametrize(
-    "name",
+    ("name", "interval_setting"),
     [
-        "notification finalize",
-        "notification email drain",
-        "task deadline sweep",
+        ("notification finalize", "notification_finalize_interval_s"),
+        ("notification email drain", "notification_email_drain_interval_s"),
+        ("task deadline sweep", "task_deadline_sweep_interval_s"),
     ],
 )
-def test_the_jobs_nobody_was_running_are_scheduled(name):
+def test_the_jobs_nobody_was_running_are_scheduled(name, interval_setting):
     """These three had no runner in any deployed image, and each absence is
     invisible: an aggregation window that never closes, an email queue with no
-    consumer, a deadline nobody checks. A default interval of 0 would put them
-    right back where they were, so the interval is asserted too."""
-    job = next((j for j in _jobs() if j.name == name), None)
-    assert job is not None, f"{name!r} is not among the platform's periodic jobs"
-    assert job.interval_seconds > 0, (
-        f"{name!r} is registered but disabled by default — a deployment that "
-        "does not opt in still never runs it"
+    consumer, a deadline nobody checks.
+
+    Being on the list is half of it. A default interval of 0 would put them
+    right back where they were — registered, deployed, and run by nobody — so
+    the SHIPPED default is asserted rather than whatever this test process has
+    (the harness turns these three off; see tests/conftest.py)."""
+    from app.core.config import Settings
+
+    assert any(j.name == name for j in _jobs()), (
+        f"{name!r} is not among the platform's periodic jobs"
+    )
+    default = Settings.model_fields[interval_setting].default
+    assert default > 0, (
+        f"{interval_setting} ships as {default!r} — a deployment that changes "
+        f"nothing still never runs {name!r}"
     )
 
 

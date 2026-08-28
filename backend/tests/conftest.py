@@ -100,6 +100,16 @@ settings.memory_backend = "db"
 # ships it OFF for the conservative dogfood rollout). Same leak class as the
 # memory backend above: the .env value must not decide test behavior.
 settings.authz_enforce_topic_access = True
+# The `client` fixture enters lifespan, which starts every periodic job the
+# platform runs (scheduler/jobs.py). Three of them would act on the test's own
+# data behind its back: the email drain claims whatever a notification test
+# queued and dead-letters it after three tries, the finalizer closes an
+# aggregation window a test may be asserting is still open, and the deadline
+# sweep flips a membership to FAILED. Zero is the same "not on this box" switch
+# a deployment uses.
+settings.notification_email_drain_interval_s = 0
+settings.notification_finalize_interval_s = 0
+settings.task_deadline_sweep_interval_s = 0
 
 
 def _stranded_topics() -> set[str]:
