@@ -13,7 +13,7 @@ Both directions actually happened in production.
 No umask, shared group, or default ACL can widen a mode the writer sets
 explicitly, so the fix is the identity itself: backend and sandbox share
 `ws.AGENT_UID`. These tests pin the three places that has to hold — the two
-images and the `docker run` — plus the behaviour that broke: files stay readable
+image and its users — plus the behaviour that broke: files stay readable
 after the agent uses jj, and edits pass back and forth between the two sides.
 """
 
@@ -79,38 +79,6 @@ def test_sandbox_image_pins_node_to_the_agent_uid():
     assert f'test "$(id -u node)" = {ws.AGENT_UID}' in text
     assert f'test "$(id -g node)" = {ws.AGENT_GID}' in text
     assert text.rstrip().endswith("USER node")
-
-
-@needs_jj
-@pytest.mark.anyio
-async def test_sandbox_container_is_started_as_that_user(project, monkeypatch):
-    """The run-time half: whatever the image says, the container is launched as
-    the aligned user."""
-    from app.domain.agent import tmux_provider
-
-    captured: list[tuple[str, ...]] = []
-
-    async def _fake_docker(*args: str, stdin: bytes | None = None):
-        captured.append(args)
-        return 0, "", ""
-
-    monkeypatch.setattr(tmux_provider, "_docker", _fake_docker)
-    provider = tmux_provider.TmuxChannel(image="cheesex-agent-sandbox:test")
-    topic = uuid.uuid4()
-    # The argv it builds IS the behaviour under test.
-    await provider._create_container(  # noqa: SLF001
-        "cheesex-tmux-test",
-        {
-            # A box is a ROOM's now, so its env names the room, never a topic.
-            "CHEESE_PROJECT": str(project),
-            "CHEESE_ROOM": str(topic),
-            "SBX_SESSIONS": str(ws.sessions_root(project)),
-        },
-        topic,
-    )
-    args = captured[-1]
-    assert "--user" in args
-    assert args[args.index("--user") + 1] == "node"
 
 
 # --- the behaviour that broke ---------------------------------------------

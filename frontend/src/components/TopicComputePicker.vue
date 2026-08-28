@@ -32,11 +32,10 @@ const visibleProfiles = computed<PoolListing[]>(() => {
   return profiles.filter((p) => p.available || p.id === current || (p.id === DEVICE_PROFILE && hasSelfHostedDevices))
 })
 
-// A glyph per pool so the chip reads at a glance — the platform's own box vs.
-// your machine vs. a leased one. Unknown ids fall back to a generic icon, which
-// is also what a row from a future pool gets until it earns a glyph.
+// A glyph per pool so the chip reads at a glance — your machine vs. a leased
+// one. Unknown ids fall back to a generic icon, which is also what a row from a
+// future pool gets until it earns a glyph.
 const POOL_ICON: Record<string, string> = {
-  'tmux-hooks': 'mdi-server',
   device: 'mdi-laptop',
   cloud: 'mdi-cloud-outline',
 }

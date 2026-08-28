@@ -70,9 +70,7 @@ _STORAGE_PATTERNS = (
     re.compile(r"\berrno\s*28\b", re.IGNORECASE),
 )
 _RUNTIME_IMAGE_MARKERS = (
-    "cheesex-agent-tmux",
     "cheesex-agent-sandbox",
-    "/sandbox-tmux:",
     "/sandbox:",
 )
 _RUNTIME_IMAGE_FAILURES = (

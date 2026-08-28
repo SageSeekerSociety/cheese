@@ -105,7 +105,6 @@ def _stub_local_merge(monkeypatch) -> None:
     monkeypatch.setattr(
         ws, "push_back", lambda *_a: {"mode": "upstream", "target": "origin/main"}
     )
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_a: None)
     monkeypatch.setattr(
         webhook_service, "post_with_retries", AsyncMock(return_value=True)
     )

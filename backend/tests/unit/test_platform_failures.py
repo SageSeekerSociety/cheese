@@ -62,8 +62,8 @@ def test_storage_failure_payload_is_stable_and_sanitized():
 
 def test_missing_runtime_image_is_a_sanitized_platform_event():
     failure = classify_platform_failure(
-        "tmux container create failed: Unable to find image "
-        "'cheesex-agent-tmux:latest' locally: pull access denied"
+        "screen setup failed: Unable to find image "
+        "'cheesex-agent-sandbox:latest' locally: pull access denied"
     )
 
     assert failure is not None

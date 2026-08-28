@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 现场 tab: 芝士 干活的实况 —— 优先接真实终端（tmux 容器的 ttyd，或设备上的
+// 现场 tab: 芝士 干活的实况 —— 优先接真实终端（跑这一轮的机器上的
 // screen 通道），接不上就渲染重建出来的 transcript 时间线。
 //
 // 这个 tab 的输入是隔离的：worklog / working / workingSince 只有它用，别的 tab
@@ -8,7 +8,7 @@ import type { Block, Topic } from '../../cx_types'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { getTerminal, getTranscript, SITE_PAGE_SIZE, withSessionToken } from '../../api'
+import { getTerminal, getTranscript, SITE_PAGE_SIZE } from '../../api'
 import { countLines, isLongSiteEntry, shouldFollowTail, shouldKeepPinning, SITE_CLAMP_LINES } from '../../lib/siteLog'
 import { isPlatformEvent, summarizeActions, toolLabel } from '../../lib/toolLabels'
 import CheeseAvatar from '../CheeseAvatar.vue'
@@ -120,11 +120,9 @@ watch(
   }
 )
 
-// 现场实时终端: when the tmux backend has this topic's container up, 现场 embeds
-// the real read-only terminal (ttyd) instead of the rebuilt worklog.
-const terminalUrl = ref<string | null>(null)
-// Device-hosted topics carry no proxied ttyd URL; the probe hands back the
-// screen WebSocket path instead, and 现场 embeds DeviceLiveViewer on it.
+// 现场实时终端: when a machine has this topic's screen open, 现场 embeds the real
+// pane instead of the rebuilt worklog. The probe hands back the screen
+// WebSocket path, and 现场 embeds DeviceLiveViewer on it.
 const screenSid = ref<string | null>(null)
 
 // Live-turn elapsed seconds (ticks while `working`).
@@ -153,9 +151,9 @@ async function load() {
   loading.value = true
   errorMsg.value = null
   try {
-    // Prefer the real terminal (tmux backend); fall back to the worklog
-    // timeline. The terminal probe must never break 现场 — on any error it
-    // just stays null and the worklog view renders.
+    // Prefer the real pane on the machine running the turn; fall back to the
+    // worklog timeline. The terminal probe must never break 现场 — on any error
+    // it just stays null and the worklog view renders.
     const [tx, term] = await Promise.all([
       getTranscript(tid, { limit: SITE_PAGE_SIZE }),
       getTerminal(tid).catch(() => null),
@@ -166,16 +164,10 @@ async function load() {
     // Follow the tail on every open of a topic's 现场 — that is what "open on
     // the newest" means.
     scrollSiteToTail()
-    // `url` is a root-relative path ("/api/topics/…/terminal/live/") loaded
-    // through the same dev/proxy that fronts /api. The session token has to be
-    // appended: the proxy authorizes every request and an iframe can carry no
-    // header, so the bare URL 404s and the panel renders a white box that never
-    // falls back. `available` is the backend's own probe (credential +
-    // container + something actually answering), so a false here means the
-    // timeline below is the honest thing to show.
-    terminalUrl.value = term?.available && term.url ? withSessionToken(term.url) : null
-    // The device path: no url, a ws ("/connector/session/{sid}/screen"). The
-    // sid is all DeviceLiveViewer needs — it builds the socket URL itself.
+    // `available` is the backend's own probe (credential + an open screen), so
+    // a false here means the timeline below is the honest thing to show. The
+    // sid out of the ws path ("/connector/session/{sid}/screen") is all
+    // DeviceLiveViewer needs — it builds the socket URL itself.
     screenSid.value = (term?.available && term.ws?.match(/\/session\/([^/]+)\/screen/)?.[1]) || null
   } catch (e) {
     errorMsg.value = e instanceof Error ? e.message : '加载失败'
@@ -199,7 +191,6 @@ watch(
   () => props.topic?.id,
   () => {
     transcript.value = []
-    terminalUrl.value = null
     screenSid.value = null
     expandedSite.value = new Set()
     errorMsg.value = null
@@ -258,17 +249,6 @@ function eventPlatform(b: Block): boolean {
     <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">
       {{ errorMsg }}
     </v-alert>
-
-    <!-- 实时终端(只读): the topic container's ttyd pane, proxied by the backend.
-         iframe is the simplest embed — ttyd ships its own xterm.js frontend, and
-         same-origin (via the /api proxy) means no CSP/cross-origin friction. -->
-    <div v-else-if="terminalUrl" class="term-wrap">
-      <div class="term-bar text-caption px-3 py-1">
-        <v-icon class="term-bar__dot" size="10">mdi-circle</v-icon>
-        实时终端（只读）
-      </div>
-      <iframe class="term-frame" :src="terminalUrl" title="实时终端（只读）" />
-    </div>
 
     <!-- 设备上的话题: the machine screen's REAL terminal, byte-for-byte over the
          screen WebSocket, and INTERACTIVE — typing here reaches the pane (the
@@ -536,7 +516,7 @@ function eventPlatform(b: Block): boolean {
   color: var(--text);
   text-decoration: underline;
 }
-/* 实时终端(只读): the embedded ttyd pane fills the tab height. */
+/* 实时终端: the embedded pane fills the tab height. */
 .term-wrap {
   height: 100%;
   display: flex;
@@ -556,9 +536,9 @@ function eventPlatform(b: Block): boolean {
   flex: 1 1 auto;
   width: 100%;
   border: none;
-  /* Theme-invariant on purpose: this is the backing behind the ttyd iframe,
-     whose terminal paints its own black ground in both themes. A token here
-     would flash a light slab under a black terminal during load. */
+  /* Theme-invariant on purpose: this is the backing behind the pane, whose
+     terminal paints its own black ground in both themes. A token here would
+     flash a light slab under a black terminal during load. */
   /* stylelint-disable-next-line color-no-hex -- see the reason above */
   background: #000;
 }

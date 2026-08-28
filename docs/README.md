@@ -19,7 +19,7 @@
 |---|---|
 | [`product-impl.md`](product-impl.md) | 当前真实落地的产品行为与实现方式 |
 | [`infrastructure.md`](infrastructure.md) | 这个应用跑在哪、怎么发布、数据在哪 |
-| [`where-a-turn-runs.md`](where-a-turn-runs.md) | 一轮活落在哪台机器上：三条执行路，以及**能选的和实际跑的不是一回事** |
+| [`where-a-turn-runs.md`](where-a-turn-runs.md) | 一轮活落在哪台机器上：两条执行路，以及一台机器都没有时会怎样 |
 | [`spec.md`](spec.md) | Cheese 2.0 产品与实现 Spec |
 | [`evals.md`](evals.md) | 评测配套 |
 | [`feishu-lark.md`](feishu-lark.md) | lark-cli 团队配置：飞书操作走 `--profile cheese`，含踩坑速查 |
@@ -34,7 +34,6 @@
 | [`deploy-unification-design.md`](deploy-unification-design.md) | **draft，未批准开工** |
 | [`permission-audit.md`](permission-audit.md) | 一次性权限审计记录 |
 | [`unification-plan.md`](unification-plan.md) | 统一化计划 |
-| [`tmux-backend-spike.md`](tmux-backend-spike.md) | 2026-07-09 的 spike 结论：tmux + send-keys 驱动交互式 claude。**投递部分已被 #480/#487 取代**（改走 rendezvous socket），留作当时判断的记录 |
 
 ## 目录
 

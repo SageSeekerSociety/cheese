@@ -50,8 +50,6 @@ from app.domain.agent.harness.claude_code.hooks_substrate import (
     expire_log,
     log_cursor,
     read_log,
-    schedule_screen_subscription_drop,
-    schedule_topic_subscription_drop,
 )
 from app.domain.agent.harness.claude_code.session_launch import (
     HARNESS_ENV,
@@ -94,6 +92,4 @@ __all__ = [
     "input_box_ready",
     "log_cursor",
     "read_log",
-    "schedule_screen_subscription_drop",
-    "schedule_topic_subscription_drop",
 ]

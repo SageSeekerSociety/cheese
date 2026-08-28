@@ -93,7 +93,6 @@ async def test_merge_exception_keeps_acceptance_retryable(monkeypatch):
         raise RuntimeError("git object database unavailable")
 
     monkeypatch.setattr(ws, "merge_topic", fail_merge)
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_args: None)
 
     with pytest.raises(ValidationError, match="could not be merged"):
         await service.accept(card_id=card.id, decided_by="alice")
@@ -126,7 +125,6 @@ async def test_empty_conflict_result_keeps_acceptance_retryable(monkeypatch):
             "conflicts": [],
         },
     )
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_args: None)
 
     with pytest.raises(ValidationError, match="could not be merged"):
         await service.accept(card_id=card.id, decided_by="alice")
@@ -155,7 +153,6 @@ async def test_conflict_with_paths_marks_card_conflict_and_notifies(monkeypatch)
             "conflicts": ["app/main.py"],
         },
     )
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_args: None)
 
     returned = await service.accept(card_id=card.id, decided_by="alice")
 
@@ -183,7 +180,6 @@ async def test_explicit_merge_noop_remains_acceptable(monkeypatch, reason):
         "merge_topic",
         lambda *_args: {"merged": False, "noop": True, "reason": reason},
     )
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_args: None)
 
     returned = await service.accept(card_id=card.id, decided_by="alice")
 
@@ -215,7 +211,6 @@ async def test_successful_merge_notifies_room_with_push_status(monkeypatch):
         "push_back",
         lambda *_args: {"mode": "upstream", "target": "origin/main"},
     )
-    monkeypatch.setattr(ws, "stop_topic_container", lambda *_args: None)
 
     returned = await service.accept(card_id=card.id, decided_by="alice")
 

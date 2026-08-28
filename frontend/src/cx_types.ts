@@ -435,23 +435,10 @@ export interface FileContent {
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
 // topic's current preview. Null when 芝士 hasn't set one.
 export interface PreviewInfo {
-  // kind=file → render the file's content; kind=app → iframe straight to the
-  // running app the agent started in its container (url, live-resolved).
-  kind?: 'file' | 'app'
   path: string
   mime: string | null
-  // kind=app: the backend's reverse-proxy path (root-relative), or null when the
-  // app isn't answering. `container_up` separates "容器不在了" from "容器还在但
-  // 应用没在跑" — without it both looked like an empty white frame.
-  url?: string | null
-  container_up?: boolean
-  // kind=app: whether this topic's runtime can host a live app AT ALL. A topic
-  // running on someone's own machine has no container here to publish the port,
-  // so `container_up` is false for a machine that is perfectly alive — telling
-  // those users to summon 芝士 again waits on a box that is never coming.
-  supported?: boolean
-  // Which artifact this is. Distinguishes "芝士 pointed at something new" from
-  // "the same preview, re-fetched" — re-pointing at the same path is new too.
+  // Which artifact this is, so a client can tell "芝士 pointed at something new"
+  // from "the same preview, re-fetched".
   artifact_id?: string
 }
 
@@ -623,11 +610,11 @@ export interface MarketPools {
 export interface MarketNode {
   id: string
   label: string
-  kind: 'local' | 'remote'
+  // Which compute pool this node IS — the same id the 市场 catalogue lists.
+  kind: 'device' | 'cloud'
   online: boolean
-  // Whether turns currently run on this node (one provider at a time today).
+  // Whether an unconfigured topic lands on this node.
   current: boolean
-  active_turns: number
   detail: string
   description: string
 }

@@ -97,8 +97,8 @@ class ComputePool:
     """Which backend a turn lands on — a machine AND a harness.
 
     Two axes, because they are two questions. WHICH MACHINE is the topic's
-    ``compute_profile``: a container on this host, someone's enrolled laptop, a
-    leased Cloud box. WHAT RUNS THERE is the agent type's ``harness``. They were
+    ``compute_profile``: someone's enrolled laptop, a leased Cloud box. WHAT
+    RUNS THERE is the agent type's ``harness``. They were
     one key for as long as one harness existed, and a registry keyed by machine
     alone cannot hold a second one — two runtimes over the same transport would
     collide on the same name.
@@ -138,19 +138,6 @@ class ComputePool:
     def machines(self) -> set[str]:
         """Which machine pools this deployment offers, whatever runs on them."""
         return {name for name, _ in self._backends}
-
-    def tmux_activity_status(self, topic_id: uuid.UUID) -> dict | None:
-        """turn 活跃度检测: `cheese status`'s idle-suspect signal, read from
-        whichever tmux backend is in this pool. None when there is no tmux
-        backend, or no turn currently monitored for this topic (not running, or
-        running on a different machine)."""
-        from app.domain.agent.tmux_provider import TmuxChannel
-
-        for backend in self._backends.values():
-            channel = getattr(backend, "channel", None)
-            if isinstance(channel, TmuxChannel):
-                return channel.activity_status(topic_id)
-        return None
 
     async def deliver(
         self, topic_id: uuid.UUID, text: str, images: list[dict] | None = None
@@ -273,18 +260,22 @@ class ComputePool:
 def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
     """Build the ComputePool from settings.
 
-    The local transport (a container on this box) always joins, the device
-    transport always joins, and Cloud joins when it is configured. A topic picks
-    between them per turn, with the first turn pinning the choice; the device
-    and Cloud pools are only OFFERED when they can actually run something, which
-    is what keeps them opt-in without a deployment switch.
+    Every machine here belongs to someone a person can name: the device
+    transport (an enrolled machine of theirs) always joins, and Cloud joins when
+    the deployment can provision one. Both are pools the 市场 catalogue lists, so
+    the pool and the menu hold the same machines — a turn can only land on
+    something that was on offer.
 
-    ``agent_backend`` used to choose between this and an SDK subprocess. There
-    is nothing to choose between now.
+    There used to be a third, a container on the platform's own host, wired in
+    unconditionally and made the pool's default. Nothing ever offered it (#358
+    retired it from the catalogue), which is precisely why it kept running work:
+    a machine nobody can choose is still where everything goes if it is what the
+    executor falls back to. The default now comes from `compute_default_name`,
+    the same answer the catalogue marks 默认.
     """
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness.claude_code import Channel, ClaudeCodeRuntime
-    from app.domain.agent.tmux_provider import TmuxChannel
+    from app.domain.agent.market import compute_default_name
 
     def runs_claude_code(channel: Channel) -> ClaudeCodeRuntime:
         # One timeout policy, applied where the watching happens. The two-layer
@@ -300,38 +291,16 @@ def build_compute_pool(cloud_channel: "Channel | None" = None) -> ComputePool:
             hard_ceiling_s=settings.agent_turn_hard_ceiling_s,
         )
 
-    channels: list[Channel] = [
-        TmuxChannel(image=settings.tmux_sandbox_image),
-        DeviceChannel(),
-    ]
+    channels: list[Channel] = [DeviceChannel()]
     if cloud_channel is not None:
         channels.append(cloud_channel)
-    default_name = (
-        DeviceChannel.name if settings.agent_backend == "device" else TmuxChannel.name
-    )
+    # The default has to name a machine THIS pool actually holds — the pool
+    # refuses one that does not, and a deployment that cannot start is worse
+    # than one whose fallback is the plainer machine. `compute_default_name` is
+    # the preference and the row the catalogue marks 默认; the device pool is
+    # what every deployment has.
+    preferred = compute_default_name(settings)
+    names = {channel.name for channel in channels}
+    default_name = preferred if preferred in names else DeviceChannel.name
     backends: list[ComputeProvider] = [runs_claude_code(c) for c in channels]
     return ComputePool(backends, default_name)
-
-
-def app_preview_reachable(compute_profile: str | None) -> bool:
-    """Can 运行环境预览 exist for a topic running on this compute at all?
-
-    The feature resolves the app port a *docker container on the backend's own
-    host* publishes (``workspace.app_endpoint`` → ``docker port``). That mapping
-    exists only when the topic's box IS a container here. A turn running on
-    someone's enrolled machine (``device``) or on a leased Cloud machine
-    (``cloud`` — a DeviceChannel subclass) has no container on this host, so the
-    lookup returns None for a reason that has nothing to do with the app: there
-    is no path from the platform to that port, and there never was.
-
-    Without this distinction both cases collapse into "container down", and the
-    panel tells those users to @ 芝士 again to bring up a box that is not coming.
-    """
-    from app.domain.agent.market import compute_default_name
-    from app.domain.agent.tmux_provider import TmuxChannel
-
-    local_box = {TmuxChannel.name}
-    # A topic that has an app artifact has necessarily run a turn, and the first
-    # turn pins `topic.compute_profile` — so the sticky project/team chain is
-    # already collapsed into it and only the deployment default is left to apply.
-    return (compute_profile or compute_default_name()) in local_box

@@ -81,6 +81,17 @@ def ai_listings(
     return out
 
 
+def cloud_provisionable(
+    settings,  # type: ignore[no-untyped-def]
+) -> bool:
+    """Can cheese PROVISION a Cloud machine on this deployment?
+
+    Connector presence belongs to an individual topic machine's later
+    boot/enrolment state; using it here would make a configured empty pool
+    impossible to select."""
+    return bool(settings.microcloud_base_url and settings.microcloud_tenant_secret)
+
+
 def compute_listings(
     settings,  # type: ignore[no-untyped-def]
     *,
@@ -94,12 +105,8 @@ def compute_listings(
     that knows the project passes whether THAT project has an online enrolled
     machine (compute belongs to the project/team, not globally). Left as ``None``
     (the global 市场 catalog) it falls back to 'is any device connected at all'."""
-    # Cloud is available when cheese can PROVISION it. Connector presence belongs
-    # to an individual topic machine's later boot/enrolment state; using it here
-    # would make a configured empty pool impossible to select.
-    cloud_ready = bool(
-        settings.microcloud_base_url and settings.microcloud_tenant_secret
-    )
+    cloud_ready = cloud_provisionable(settings)
+    fallback = compute_default_name(settings)
     # A device is real compute the moment a relevant machine is connected (DeviceHub
     # presence) — the honest `available` flag. Per-project when the caller knows the
     # context; else the global 'any device online'.
@@ -108,11 +115,12 @@ def compute_listings(
 
         device_online = bool(device_hub.online_device_ids())
     device_ready = device_online
-    # The platform's own box is not offered here (#358 "retire local"): what a
-    # person picks between is whose machine runs the work, and "ours" is what
-    # they get by not choosing. It is still in the ComputePool — the execution
-    # layer never consults this catalog — so an unconfigured topic lands there.
-    listings = [
+    # Whose machine runs the work is the whole question, so both rows name an
+    # owner. The platform's own box was a third row that never appeared here and
+    # ran every unconfigured topic anyway (#358 "retire local"); it is gone from
+    # the ComputePool too, which is what makes `default` below a fact rather
+    # than a claim.
+    return [
         PoolListing(
             kind="compute",
             id=COMPUTE_DEVICE,
@@ -121,6 +129,7 @@ def compute_listings(
             price="自备",
             description="在你自己连接的机器上跑，工作树与数据留在本地；先到『我的设备』连接一台。",
             available=device_ready,
+            default=fallback == COMPUTE_DEVICE,
         ),
         PoolListing(
             kind="compute",
@@ -130,13 +139,9 @@ def compute_listings(
             price="按量计费",
             description="为这个话题创建一台独占云端机器；首次启动需要等待几分钟。",
             available=cloud_ready,
-            # The fallback when nothing was selected — see `compute_default_name`.
-            # Last selection still wins; this is only where a topic lands with no
-            # topic choice, no project sticky and no team default.
-            default=True,
+            default=fallback == COMPUTE_CLOUD,
         ),
     ]
-    return listings
 
 
 def compute_selectable(
@@ -153,15 +158,29 @@ def compute_selectable(
     ]
 
 
-def compute_default_name() -> str:
+def compute_default_name(
+    settings=None,  # type: ignore[no-untyped-def]
+) -> str:
     """What a topic runs on when nothing was chosen: last selection first (the
     topic's own, then the project's sticky memory, then the team default — see
-    `_resolve_compute_id`), and Cloud when there is none.
+    `_resolve_compute_id`), and this pool when there is none.
 
-    It used to name the platform's own box. That made the pool nobody was
-    offered the destination of every unconfigured topic (#358).
+    Cloud where the deployment can provision one, the self-hosted device pool
+    where it cannot — the machine the deployment actually has, named honestly
+    rather than aspirationally.
+
+    This is also what `build_compute_pool` hands an unconfigured turn to, which
+    is the point of putting it in ONE function. The catalogue used to declare
+    Cloud the default while the execution layer's own default was the platform's
+    own box, a pool the catalogue did not list at all: a person read 默认 next to
+    Cloud and their turn ran in a container on our host. Two answers to one
+    question can only ever disagree, so there is one.
     """
-    return COMPUTE_CLOUD
+    if settings is None:
+        from app.core.config import settings as deployment_settings
+
+        settings = deployment_settings
+    return COMPUTE_CLOUD if cloud_provisionable(settings) else COMPUTE_DEVICE
 
 
 # --- Visibility (#282 §四 / #358): the whole-machine question -------------------

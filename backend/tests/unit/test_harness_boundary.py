@@ -22,7 +22,7 @@ harness 一样都不用付。
 
 三类，性质完全不同：
 
-- **channels**（tmux / device / cloud）：它们实现 ``Channel``，拿走这一个接缝、它抛
+- **channels**（device / cloud）：它们实现 ``Channel``，拿走这一个接缝、它抛
   的错，以及 ``ensure_claude``（一块屏幕上什么时候可以复用一个会话、什么时候必须
   重开）——这些都是 transport 拿来照做的，不是它自己定的。**「跑什么」不在这张表
   里**：那是 ``harness.launch`` 的 ``LaunchPlan``，通道说自己的坐标、拿回一份它读
@@ -55,10 +55,6 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     # --- 边缘：适配器对外的那条边 ---
     "app.api.routes.sandbox": ("append_event", "hook_router"),
     "app.domain.machine.enrollment": ("CLAUDE_MIN_VERSION", "CLAUDE_PINNED_VERSION"),
-    "app.domain.workspace.service": (
-        "schedule_screen_subscription_drop",
-        "schedule_topic_subscription_drop",
-    ),
     # --- 装配：池子在这里把 runtime 和 channel 拼起来，也只在这里 ---
     "app.domain.agent.compute": ("Channel", "ClaudeCodeRuntime"),
     "app.domain.agent.device_hub": (
@@ -76,16 +72,6 @@ _LEDGER: dict[str, tuple[str, ...]] = {
         "ScreenSetupError",
         "build_screen_launch",
         "drop_topic_subscriptions",
-    ),
-    "app.domain.agent.tmux_provider": (
-        "ActivityTracker",
-        "Channel",
-        "HARNESS_ENV",
-        "SESSION_TOKEN_TTL_S",
-        "ScreenSetupError",
-        "drop_screen_subscriptions",
-        "ensure_claude",
-        "harness_of",
     ),
 }
 

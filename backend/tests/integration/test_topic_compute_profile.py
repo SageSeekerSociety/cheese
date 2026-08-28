@@ -105,10 +105,13 @@ def _resolve_topic_device(
 def test_new_topic_inherits_default_and_is_unlocked(client):
     pid = _project(client)
     tid = _topic(client, pid)
+    from app.core.config import settings
+    from app.domain.agent.market import compute_default_name
+
     body = client.get(f"/topics/{tid}/compute-profile").json()["data"]
-    # Nothing selected anywhere, so the fallback applies: Cloud, not the retired
-    # local pool (#358). Last selection would win if there were one.
-    assert body["current"] == "cloud"
+    # Nothing selected anywhere, so the deployment's own fallback applies — never
+    # the retired local pool (#358). Last selection would win if there were one.
+    assert body["current"] == compute_default_name(settings) == "device"
     assert body["locked"] is False
     assert body["inherited"] is True
     # ...and the retired pool is no longer offered as a choice.

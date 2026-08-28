@@ -55,21 +55,15 @@ configure_logging()
 async def lifespan(_: FastAPI):
     # Schema is managed by Alembic migrations. Start the deterministic scheduler
     # loop (定期巡检 / lifecycle, spec §9.1) — no-op unless the interval is set.
-    # Per-topic sandbox containers are long-lived and REUSED across backend
-    # restarts: their mounts are stable host paths (worktree + session dirs), so
-    # a redeploy must NOT reap them — that killed in-flight work and raced the
-    # first turns after a restart. The claude-sbx shim validates each container
-    # against the project's current image and recreates it only when the image
-    # changed. (reap_sandbox_containers stays available as an ops tool.)
     # Orphan sweep: resume turns the previous process died with (see
     # AgentWorkRunner.resume_orphans) — a deploy must never silently eat a turn.
-    # ...and that reuse is exactly why the hook credential must survive a
-    # restart: a box's token is baked into the environment of its long-running
-    # `claude` at launch and never refreshed. An unpinned SANDBOX_TOKEN used to
-    # mean a fresh random secret per PROCESS, so every restart silently
-    # invalidated every existing box at once — that is fixed at the root now
-    # (`Settings.sandbox_signing_secret` derives a stable secret from
-    # jwt_secret), and there is nothing left to warn about here.
+    # A screen outlives this process, which is exactly why the hook credential
+    # must survive a restart: its token is baked into the environment of the
+    # long-running `claude` at launch and never refreshed. An unpinned
+    # SANDBOX_TOKEN used to mean a fresh random secret per PROCESS, so every
+    # restart silently invalidated every live screen at once — that is fixed at
+    # the root now (`Settings.sandbox_signing_secret` derives a stable secret
+    # from jwt_secret), and there is nothing left to warn about here.
 
     from app.api.deps import get_chat_service, get_work_runner
     from app.domain.scheduler.service import (
@@ -77,9 +71,9 @@ async def lifespan(_: FastAPI):
         GateSweepRunner,
         OrphanSweepRunner,
         PrPollRunner,
-        SandboxReaperRunner,
         SchedulerRunner,
         SchedulerService,
+        ScreenReaperRunner,
         UpstreamSyncRunner,
     )
 
@@ -180,7 +174,7 @@ async def lifespan(_: FastAPI):
 
     runner = SchedulerRunner(scheduler, settings.scheduler_interval_seconds)
     runner.start()
-    reaper = SandboxReaperRunner(
+    reaper = ScreenReaperRunner(
         scheduler,
         settings.sandbox_reap_interval_seconds,
         settings.sandbox_idle_hours,

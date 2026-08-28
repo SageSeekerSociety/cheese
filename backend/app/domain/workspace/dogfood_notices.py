@@ -7,7 +7,7 @@ background and, once it exits, posts what actually happened (deployed /
 rolled back / unknown) into the topic's timeline, so whoever accepted the
 card learns the outcome without SSHing into the dev box.
 
-Unlike sandbox_notices' pure best-effort style, a dropped notice here is worse
+Unlike a courtesy notice's pure best-effort style, a dropped notice here is worse
 (it's the only signal the accepted card silently rolled back), so delivery is
 retried before giving up.
 """

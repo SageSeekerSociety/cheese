@@ -74,7 +74,7 @@ jobs:
           '
       - name: Deployed images and disk
         run: |
-          docker ps --format '{{.Names}}  {{.Image}}' | grep -v cheesex-tmux || true
+          docker ps --format '{{.Names}}  {{.Image}}' || true
           df -h / | tail -1
       - name: Backend log tail
         # The backend process's own stdout is not reachable any other way: the
@@ -170,7 +170,7 @@ jobs:
           '
       - name: Deployed images and disk
         run: |
-          docker ps --format '{{.Names}}  {{.Image}}' | grep -v cheesex-tmux || true
+          docker ps --format '{{.Names}}  {{.Image}}' || true
           df -h / | tail -1
 
   # The cheese-ci pool, which now runs every heavy job (test, migration-heads,

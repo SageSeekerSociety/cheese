@@ -1159,8 +1159,8 @@ class ClaudeCodeRuntime:
     # --- AgentRuntime -------------------------------------------------------
 
     # What this adapter drives. Separate from `name`, which every subclass sets
-    # to its compute pool ("tmux-hooks" / "device" / "cloud") — that says which
-    # machine, this says what runs on it.
+    # to its compute pool ("device" / "cloud") — that says which machine, this
+    # says what runs on it.
     harness = CLAUDE_CODE
 
     def backlog(self, session: SessionRef) -> Backlog:
@@ -1735,23 +1735,3 @@ async def drop_device_subscriptions(device_id: str) -> None:
     for runtime in list(_RUNTIMES):
         if isinstance(runtime, ClaudeCodeRuntime):
             await runtime.drop_device_subscriptions(device_id)
-
-
-def schedule_topic_subscription_drop(topic_id: uuid.UUID) -> bool:
-    """Bridge synchronous workspace teardown into async subscription cleanup."""
-    from app.core.background import spawn
-
-    return spawn(
-        drop_topic_subscriptions(topic_id),
-        name=f"drop hook subscription topic={topic_id}",
-    )
-
-
-def schedule_screen_subscription_drop(screen: object) -> bool:
-    """Bridge synchronous container teardown into async subscription cleanup."""
-    from app.core.background import spawn
-
-    return spawn(
-        drop_screen_subscriptions(screen),
-        name=f"drop hook subscription screen={screen}",
-    )

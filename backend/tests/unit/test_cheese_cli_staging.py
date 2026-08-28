@@ -6,9 +6,9 @@ wrote went to the wrong pool — silently, for as long as the box had been up.
 The mount source was an operator-maintained host checkout nothing kept in sync.
 
 The fix makes freshness structural rather than procedural: the backend stages
-its own copy into each topic's session dir (already a host-visible bind-mount
-source) on every turn, and both container backends mount THAT. These tests pin
-the three links in that chain — staged, mounted, and rechecked on reuse.
+its own copy into each topic's session dir on every turn, and a screen takes the
+CLI from THERE. These tests pin the staging half of that chain — a fresh copy on
+every turn, and a stale one replaced.
 """
 
 import uuid
@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent import tmux_provider
 from app.domain.workspace import service as ws
 
 _CLI_SRC = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
@@ -52,49 +51,3 @@ def test_a_stale_staged_copy_is_refreshed_on_the_next_turn(monkeypatch, tmp_path
     ws.session_dir(project_id, topic_id)  # next turn
 
     assert staged.read_bytes() == _CLI_SRC.read_bytes()
-
-
-def test_the_container_mounts_the_staged_copy(session):
-    args = tmux_provider._cheese_cli_mount(str(session))
-    assert args[0] == "-v"
-    source, destination, mode = args[1].rsplit(":", 2)
-    assert Path(source) == ws.cheese_cli_mount_source(session)
-    assert destination == "/usr/local/bin/cheese"
-    assert mode == "ro"
-
-
-@pytest.mark.anyio
-async def test_a_reused_box_with_the_old_mount_is_flagged_stale(monkeypatch, session):
-    """Mounts are fixed at creation. Without this check a container built before
-    the mount moved would keep serving the old CLI for the life of the topic."""
-
-    async def inspect(*_args, **_kw):
-        return 0, "/opt/cheesex/sandbox/cheese->/usr/local/bin/cheese\n", ""
-
-    monkeypatch.setattr(tmux_provider, "_docker", inspect)
-    assert await tmux_provider.TmuxChannel._cli_mount_stale("box", str(session))
-
-
-@pytest.mark.anyio
-async def test_a_box_mounting_the_staged_copy_is_left_alone(monkeypatch, session):
-    want = ws.cheese_cli_mount_source(session)
-
-    async def inspect(*_args, **_kw):
-        return 0, f"{session}->/home/node/.claude\n{want}->/usr/local/bin/cheese\n", ""
-
-    monkeypatch.setattr(tmux_provider, "_docker", inspect)
-    stale = tmux_provider.TmuxChannel._cli_mount_stale
-    assert not await stale("box", str(session))
-
-
-@pytest.mark.anyio
-async def test_a_failed_inspect_does_not_destroy_the_box(monkeypatch, session):
-    """Recreating kills everything running inside; an unreadable inspect is not
-    evidence of staleness."""
-
-    async def failing(*_args, **_kw):
-        return 1, "", "no such container"
-
-    monkeypatch.setattr(tmux_provider, "_docker", failing)
-    stale = tmux_provider.TmuxChannel._cli_mount_stale
-    assert not await stale("box", str(session))

@@ -10,7 +10,6 @@ from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api import proxy
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import (
     get_broker,
@@ -25,7 +24,6 @@ from app.core.errors import NotFoundError, ValidationError
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import awaited_tasks
 from app.domain.agent.chat import ChatService, conclusion_digest_prompt
-from app.domain.agent.compute import app_preview_reachable
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.market import (
     COMPUTE_CLOUD,
@@ -644,11 +642,6 @@ async def topic_status(
     status`) or a debugging human doesn't have to poll several endpoints and
     guess. Read path, open like the rest of the MVP read surface.
 
-    ``turn.activity`` (turn 活跃度检测, tmux backend only — None otherwise) is
-    the idle-suspect signal: ``suspect_since_s_ago`` set means the turn has been
-    idle past the threshold and is being actively re-confirmed alive, not yet
-    treated as dead.
-
     ``stall`` answers the question nothing here could answer before: did a turn
     die on this topic? ``turn`` cannot — it is a ring buffer of what turns did,
     so it is empty after a restart and says `running` about a turn killed with
@@ -663,8 +656,6 @@ async def topic_status(
     cards = await AcceptCardRepository(db).list_for_topic(topic_id)
     credits = await ComputeGrantRepository(db).summary(place.project_id)
     turn = runner.topic_work(topic_id)
-    if turn is not None and turn.get("status") == "running":
-        turn["activity"] = chat_service.tmux_activity_status(topic_id)
     background = awaited_tasks.status_snapshot(topic_id)
     stall = await topics.stall_signal(
         topic_id,
@@ -1779,10 +1770,6 @@ async def return_conclusion(
 _ARTIFACT_MIME = {
     "html": "text/html",
     "svg": "image/svg+xml",
-    # 运行环境预览: the artifact is a RUNNING app inside the topic's container,
-    # listening on the conventional $CHEESE_APP_PORT. HOW to run it is the AI's
-    # judgment (per-project); the platform only proxies the published port.
-    "app": "application/x-cheesex-app",
 }
 
 
@@ -1798,38 +1785,6 @@ def _clean_artifact_path(raw: str) -> str:
     return path
 
 
-async def _reject_unreachable_app(
-    topic_id: uuid.UUID, compute_profile: str | None
-) -> None:
-    """Refuse an app artifact the platform provably cannot render (``cheese serve``).
-
-    Setting it used to always succeed, so 芝士 announced "预览已就绪" while the
-    panel showed 「应用暂时不在线」 — the CLI never asked whether anything was
-    reachable, it just filed the record. The check lives HERE rather than in the
-    CLI on purpose: the sandbox's `cheese` binary is baked into an image and runs
-    days behind this repo, so a client-side probe reaches agents whenever that
-    image is next rebuilt, while this one applies to every agent immediately.
-    """
-    if not app_preview_reachable(compute_profile):
-        raise ValidationError(
-            "这个话题的运行环境不在平台的容器里（当前算力："
-            f"{compute_profile or compute_default_name()}），运行中的应用"
-            "还到不了预览面板。要给人看结果，请用 cheese artifact 点名一个"
-            "网页或 SVG 文件。"
-        )
-    endpoint = ws.app_endpoint(topic_id)
-    if endpoint is None:
-        raise ValidationError(
-            f"这个话题的运行环境没有发布 {ws.APP_PORT} 端口，预览到不了它。"
-        )
-    if not await proxy.probe(endpoint):
-        raise ValidationError(
-            f"{ws.APP_PORT} 端口上没有服务在应答，预览会是一个白框。"
-            f"先把应用起在 0.0.0.0:{ws.APP_PORT}（只绑 localhost 不行）、"
-            "确认能访问，再设为预览。"
-        )
-
-
 @router.post("/{topic_id}/artifact")
 async def set_artifact(
     topic_id: uuid.UUID,
@@ -1842,15 +1797,7 @@ async def set_artifact(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     as_ = (body.get("as") or "html").strip().lower()
-    # An app artifact points at the running server, not a file — the stored
-    # content is a human note ("Vue dev server"), not a path.
-    if as_ == "app":
-        path = (body.get("path") or "app").strip()[:120]
-        # The box is the ROOM's — threads run in it — so the profile that
-        # decides which ports exist is the room's too.
-        await _reject_unreachable_app(place.room_id, place.room.compute_profile)
-    else:
-        path = _clean_artifact_path(body.get("path") or "")
+    path = _clean_artifact_path(body.get("path") or "")
     mime = _ARTIFACT_MIME.get(as_)
     if mime is None:
         allowed = "、".join(_ARTIFACT_MIME)
@@ -1890,36 +1837,6 @@ async def get_preview(
     )
     if art is None:
         return ok(None)
-    if art.mime_type == _ARTIFACT_MIME["app"]:
-        # Resolve the container's published port LIVE — the mapping only exists
-        # while the topic's container is up — and then ACTUALLY KNOCK on it. A
-        # published port with a dead server behind it renders as a white iframe,
-        # which is why the two states are reported separately: `container_up`
-        # without a `url` is "容器还在，应用没在跑", and the panel can say so
-        # instead of showing an empty frame.
-        #
-        # `supported` is the third state, and it is the one the other two lied
-        # about: a topic running on someone's own machine has no container here
-        # to publish anything, so `container_up` is False for a box that is alive
-        # and well. Reported separately so the panel stops telling those users to
-        # @ 芝士 again — there is nothing 芝士 can do from inside that machine.
-        # The box belongs to the ROOM — threads run inside it — so the port to
-        # knock on is the room's, whichever thread pointed at the app.
-        endpoint = ws.app_endpoint(place.room_id)
-        alive = endpoint is not None and await proxy.probe(endpoint)
-        return ok(
-            {
-                "kind": "app",
-                "path": art.content,
-                "mime": art.mime_type,
-                # Root-relative: the backend's reverse proxy, reachable from any
-                # browser. NOT the container's 127.0.0.1 host port (server-local).
-                "url": f"/api/topics/{topic_id}/app/" if alive else None,
-                "container_up": endpoint is not None,
-                "supported": app_preview_reachable(place.room.compute_profile),
-                "artifact_id": str(art.id),
-            }
-        )
     return ok(
         {
             "kind": "file",
@@ -1948,7 +1865,7 @@ async def get_preview_raw(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     art = await BlockRepository(db).latest_artifact(topic_id)
-    if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
+    if art is None:
         raise NotFoundError("没有可打开的文件 artifact")
     data = ws.read_file_bytes(topic.project_id, art.content, topic_id=topic_id)
     return Response(

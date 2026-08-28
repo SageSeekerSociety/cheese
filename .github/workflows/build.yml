@@ -162,7 +162,6 @@ jobs:
           [ "$BUILD_BACKEND" = true ] || promote backend
           if [ "$BUILD_SANDBOX" = false ]; then
             promote sandbox
-            promote sandbox-tmux
           fi
           [ "$BUILD_FRONTEND" = true ] || promote frontend
 
@@ -276,8 +275,6 @@ jobs:
     needs: plan
     if: needs.plan.outputs.sandbox == 'true'
     runs-on: [self-hosted, cheese-dev]
-    # Builds two images back-to-back (sandbox, then sandbox-tmux from it), so
-    # gets more headroom than build-backend/build-frontend.
     timeout-minutes: 60
     permissions:
       contents: read
@@ -331,8 +328,7 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=
-            # An unambiguous handle for THIS run: the tmux image is built FROM
-            # the base this run pushed, and `type=sha` is the short sha, so
+            # An unambiguous handle for THIS run: `type=sha` is the short sha, so
             # ${{ github.sha }} would name a tag that does not exist.
             type=raw,value=run-${{ github.run_id }}
 
@@ -344,39 +340,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-      # The deployed backend uses this derivative for every local tmux turn.
-      # Build it in the SAME gated workflow from the exact base above: otherwise
-      # app deploys can go green while the first real user message cannot start.
-      - name: Extract tmux sandbox metadata
-        id: tmux_meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/sandbox-tmux
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=
-            type=raw,value=run-${{ github.run_id }}
-
-      - name: Resolve this run's sandbox base image
-        id: sandbox_base
-        run: |
-          name="${IMAGE_NAME,,}"
-          echo "ref=${REGISTRY}/${name}/sandbox:run-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push tmux sandbox image
-        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
-        with:
-          context: ./backend/sandbox
-          file: ./backend/sandbox/tmux.Dockerfile
-          push: true
-          build-args: |
-            BASE_IMAGE=${{ steps.sandbox_base.outputs.ref }}
-          tags: ${{ steps.tmux_meta.outputs.tags }}
-          labels: ${{ steps.tmux_meta.outputs.labels }}
 
       # Building on the box that also SERVES dev means build layers land on the
       # deployment's own disk — at 63GB it hit 100% twice on 2026-07-25, which

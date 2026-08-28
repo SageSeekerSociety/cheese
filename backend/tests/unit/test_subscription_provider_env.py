@@ -14,8 +14,6 @@ but bills nothing" if it regresses:
 
 import json
 
-import pytest
-
 from app.domain.agent import provider_env
 
 
@@ -129,29 +127,6 @@ def test_model_names_are_never_pinned_on_the_subscription():
         ca_path="/ca.pem", project_id="p", topic_id="t"
     )
     assert not [k for k in choice.env if "MODEL" in k]
-
-
-@pytest.mark.parametrize("enabled", [True, False])
-def test_sandbox_capture_args_follow_the_switch(monkeypatch, enabled):
-    """A sandbox must only resolve api.anthropic.com to the meter when the meter
-    is actually deployed — otherwise every turn fails on a dead address."""
-    from app.core.config import settings
-    from app.domain.agent import tmux_provider
-
-    monkeypatch.setattr(settings, "subscription_enabled", enabled)
-    monkeypatch.setattr(settings, "subscription_proxy_host", "172.17.0.1")
-    monkeypatch.setattr(settings, "subscription_ca_host_path", "/host/ca.pem")
-
-    args = tmux_provider._subscription_args()
-    if not enabled:
-        assert args == []
-        return
-    assert "--add-host" in args
-    # Messages AND the login/refresh hosts all route to the meter.
-    assert "api.anthropic.com:172.17.0.1" in args
-    assert "console.anthropic.com:172.17.0.1" in args
-    assert "platform.claude.com:172.17.0.1" in args
-    assert "/host/ca.pem:/etc/cheese/proxy-ca.pem:ro" in args
 
 
 def test_no_credential_file_is_ever_planted_in_the_box(monkeypatch, tmp_path):

@@ -1271,7 +1271,7 @@ def test_the_deployed_backends_split_the_two_timeout_layers():
     from app.domain.agent.compute import build_compute_pool
 
     pool = build_compute_pool()
-    for name in ("device", "tmux-hooks"):
+    for name in pool.machines():
         backend = pool.select(provider_id=name)
         assert backend._idle_suspect_s == 300.0
         assert backend._hard_ceiling_s == 10800.0
