@@ -82,7 +82,7 @@ class _FakeTokens:
         type(self).minted_write += 1
         return "ghs_app_write", "2099-01-01T00:00:00+00:00"
 
-    async def readonly_token(self) -> tuple[str, str]:
+    async def installation_token(self) -> tuple[str, str]:
         type(self).minted_read += 1
         return "ghs_app_read", "2099-01-01T00:00:00+00:00"
 

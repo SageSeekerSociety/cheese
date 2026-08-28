@@ -517,7 +517,10 @@ class _FakeHTTPResponse:
         return False
 
 
-def _run_gh_token(cli, monkeypatch, permissions: str) -> None:
+def _run_gh_token(
+    cli, monkeypatch, permissions: str, *, in_git_worktree: bool = True
+) -> None:
+    monkeypatch.setattr(cli, "_in_a_git_worktree", lambda: in_git_worktree)
     monkeypatch.setattr(
         cli.urllib.request,
         "urlopen",
@@ -543,7 +546,8 @@ def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsy
     _run_gh_token(
         cli,
         monkeypatch,
-        "read-only: actions, checks, contents, issues, metadata, pull_requests",
+        "actions: read, checks: read, contents: read, issues: read, "
+        "metadata: read, pull_requests: read",
     )
 
     out, err = capsys.readouterr()
@@ -553,17 +557,61 @@ def test_gh_token_advertises_every_permission_it_actually_has(monkeypatch, capsy
     assert "repos/acme/widgets/contents/<path>" in err
 
 
+def test_gh_token_spells_out_pushing_and_opening_a_pr_when_it_may(monkeypatch, capsys):
+    """Same lesson one step further along. Reading what it may do is only half
+    the job — an agent that can push and open its own PR but was never shown
+    the two commands hands the last step back to a human, which is exactly the
+    stall the read-only token used to cause."""
+    cli = _load()
+    _run_gh_token(
+        cli,
+        monkeypatch,
+        "actions: read, checks: read, contents: write, metadata: read, "
+        "pull_requests: write, workflows: write",
+    )
+
+    _out, err = capsys.readouterr()
+    assert "git push https://x-access-token:$GH_TOKEN@github.com/acme/widgets" in err
+    assert "gh api repos/acme/widgets/pulls -f head=" in err
+
+
+def test_gh_token_does_not_offer_a_push_where_there_is_nothing_to_push_from(
+    monkeypatch, capsys
+):
+    """A jj topic workspace has no `.git`, so `git push` cannot run there
+    whatever the token carries. Printing it anyway produces `not a git
+    repository`, which reads like the credential is at fault — so say which
+    one it is instead."""
+    cli = _load()
+    _run_gh_token(
+        cli,
+        monkeypatch,
+        "contents: write, metadata: read, pull_requests: write",
+        in_git_worktree=False,
+    )
+
+    _out, err = capsys.readouterr()
+    assert "git push" not in err
+    assert "没有 .git" in err
+    # The PR recipe is API-only, so it still works from a jj workspace.
+    assert "gh api repos/acme/widgets/pulls -f head=" in err
+
+
 def test_gh_token_does_not_promise_what_it_was_not_granted(monkeypatch, capsys):
     """An advertised recipe that 403s is worse than no recipe — it burns a turn
-    and teaches the agent the wrong lesson about what it may read."""
+    and teaches the agent the wrong lesson about what it may do. A read-level
+    grant is one of those: `contents: read` must not produce a push recipe."""
     cli = _load()
-    _run_gh_token(cli, monkeypatch, "read-only: actions, checks, metadata")
+    _run_gh_token(
+        cli, monkeypatch, "actions: read, checks: read, contents: read, metadata: read"
+    )
 
     _out, err = capsys.readouterr()
     assert "issues/<n>" not in err
     assert "pulls/<n>" not in err
+    assert "git push" not in err
     assert "check-runs" in err  # what it CAN do is still spelled out
-    assert "read-only: actions, checks, metadata" in err
+    assert "contents: read" in err
 
 
 def _is_subparsers(action):

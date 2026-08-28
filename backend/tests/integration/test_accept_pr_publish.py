@@ -67,7 +67,7 @@ class _FakeTokens:
     async def write_token(self) -> tuple[str, str]:
         return "ghs_write", "2099-01-01T00:00:00+00:00"
 
-    async def readonly_token(self) -> tuple[str, str]:
+    async def installation_token(self) -> tuple[str, str]:
         return "ghs_read", "2099-01-01T00:00:00+00:00"
 
 
@@ -375,7 +375,7 @@ def test_pr_checks_endpoint_mirrors_forge_check_runs(client, monkeypatch):
     from app.domain.workspace import service as ws
 
     class _Tokens:
-        async def readonly_token(self) -> tuple[str, str]:
+        async def installation_token(self) -> tuple[str, str]:
             return "ghs_read", "2099-01-01T00:00:00+00:00"
 
         async def write_token(self) -> tuple[str, str]:
@@ -454,7 +454,7 @@ def test_pr_checks_answers_available_false_when_github_is_unreachable(
     from app.domain.workspace import service as ws
 
     class _Tokens:
-        async def readonly_token(self) -> tuple[str, str]:
+        async def installation_token(self) -> tuple[str, str]:
             return "ghs_read", "2099-01-01T00:00:00+00:00"
 
         async def write_token(self) -> tuple[str, str]:
@@ -501,7 +501,7 @@ def test_pr_checks_survives_a_failure_outside_the_github_calls(client, monkeypat
     from app.domain.workspace import service as ws
 
     class _Tokens:
-        async def readonly_token(self) -> tuple[str, str]:
+        async def installation_token(self) -> tuple[str, str]:
             return "ghs_read", "2099-01-01T00:00:00+00:00"
 
         async def write_token(self) -> tuple[str, str]:

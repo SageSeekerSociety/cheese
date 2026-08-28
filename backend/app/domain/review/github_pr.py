@@ -1321,10 +1321,10 @@ class GitHubPRClient:
     async def check_runs(self, ref: str) -> list[dict]:
         """Simplified check runs for a ref (branch name or sha) — display only.
 
-        Uses the read-only mint (checks:read); the write mint has no checks
-        permission by design.
+        Uses the full installation mint, which carries `checks: read`; the
+        named write set does not (`github_app._WRITE_PERMISSIONS`).
         """
-        token, _ = await self._tokens.readonly_token()
+        token, _ = await self._tokens.installation_token()
         async with httpx.AsyncClient(transport=self._transport, timeout=20.0) as client:
             resp = await client.get(
                 self._url(f"/commits/{ref}/check-runs"),

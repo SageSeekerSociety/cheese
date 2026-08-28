@@ -40,7 +40,9 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 - **没有暂存区**:工作副本本身就是一个 commit。`git add` 没有对应物,也不用手动 commit。
 - `gh` 必须显式带 `-R <owner>/<repo>`——没有 `.git`,它推断不出是哪个仓库。
 
-**你看不到远端,所以永远不要报告远端状态。** 沙箱里 `jj git fetch`/`jj git push` 都用不了(镜像的 git 版本低于 jj 的要求,报 `Git does not recognize required option: porcelain`),推送发生在平台侧、不在你这边。所以「已推送 / 已合并 / 冲突解决了 / CI 绿了」这类话是**断言,不是观察**:要么用 `cheese gh-token` 真去读一眼,要么明说这条未经验证、交给平台侧去核——**别让房间里的人替你操作平台**。真出过事——有一轮报告「改动已经带着快照进了 PR 分支」,而分支根本没动、冲突还在。它不是在撒谎,是没有办法看。
+**远端你自己去读,别把「已推送 / 已合并 / 冲突解决了 / CI 绿了」当断言说出口。** `cheese gh-token` 给的不是一张只能看 CI 的票——它带的是平台 GitHub App 在这个仓库上被授予的**全部**权限,一项不减,stderr 会逐项列出等级(`contents: write` 和 `contents: read` 是两回事)并把对应的命令直接打出来,照抄就行。所以没有「我没办法看」这回事了:读一眼,读到什么说什么。真出过事——有一轮报告「改动已经带着快照进了 PR 分支」,而分支根本没动、冲突还在;它不是在撒谎,是当时确实看不见。
+
+**但这种工作区推不出去。** 没有 `.git`,`jj git push` 也用不了(镜像的 git 版本低于 jj 的要求,报 `Git does not recognize required option: porcelain`),所以推分支这一步发生在平台侧,不在你这边。**别让房间里的人替你操作平台。**
 
 **你的工作区可能落后于主干。** 动一个别人也在改的文件前,先跟 `main@upstream` 比一下。在陈旧的基上编辑,对 git 来说是一次普通修改而**不是**冲突——会干净地合并掉别人已经合进去的改动,没有任何检查会拦你。所以改到不是你创建的文件时,在报告里说一句,平台侧的集成检查会覆盖它。
 
@@ -52,6 +54,7 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 - **只有 `git push` 出去的才算存在。** 机器是随时可以被回收、被重建的,重建后 `git status` 依然干净、什么都不提示,而本地提交和没提交的改动一样会没。所以**每改完一批就 commit + push 一次,不要攒到最后**。
 - **临时改一个文件再还原,记 sha,别用 `HEAD`。** 动手前先 `git rev-parse HEAD` 记下来,还原时 `git checkout <那个 sha> -- <文件>`。`HEAD` 是一个会动的名字,而这个工作区不止你一个人在写。只要有任何东西在你「改坏」和「还原」之间移动了 HEAD,`git checkout HEAD -- <文件>` 就从**撤销临时改动**变成**把临时改动钉死**——而 `git status` 会显示干净,测试会照样绿,没有任何地方提示你。二分查找、A/B 对照、「先证明它是红的」、临时加一行 print,全都踩在这个假设上。`git stash` 不能用来绕开它(而且 stash 栈全仓库共享,见上)。
 - `git checkout HEAD -- <文件>` 报 `fatal: your current branch appears to be broken`:是 HEAD 指坏了,不是仓库坏了。`git symbolic-ref HEAD refs/heads/<你的分支>` 就好,**别 rebase**。
+- **推到 GitHub、开 PR,凭据你手上就有。** `origin` 指的是平台自己的那个仓(采纳走的是那条路,照常推),GitHub 是另一个地方,要写全 URL:`export GH_TOKEN=$(cheese gh-token)` 之后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`,开 PR 用 `gh api repos/<owner>/<repo>/pulls -f head=<分支> -f base=<主干> -f title=… -f body=…`。仓库名、能不能推、能不能开 PR,`cheese gh-token` 的 stderr 里都有。**开之前先 `cheese status` 看一眼这个话题在平台侧有没有已经开着的 PR**——别开出第二条并行的路径来。
 
 ## 点名某人 = 名字前加 @
 
