@@ -7,11 +7,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
+from app.core.background import PeriodicRunner
 from app.domain.agent.chat import ChatService
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.project.services import ProjectService
-from app.domain.scheduler.service import SchedulerService, ScreenReaperRunner
+from app.domain.scheduler.service import SchedulerService
 from app.domain.topic.services import TopicService
 from tests.conftest import stub_compute
 
@@ -103,7 +104,9 @@ async def test_reaper_runs_without_heartbeat_scheduler():
         return 0
 
     scheduler.reap_idle_device_screens = reap_idle_device_screens
-    runner = ScreenReaperRunner(scheduler, interval_seconds=0.01, idle_hours=7)
+    runner = PeriodicRunner(
+        "idle screen reap", 0.01, lambda: scheduler.reap_idle_device_screens(7)
+    )
     runner.start()
     await asyncio.wait_for(screens_called.wait(), timeout=1)
     await runner.stop()

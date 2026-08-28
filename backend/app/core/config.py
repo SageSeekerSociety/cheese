@@ -567,6 +567,15 @@ class Settings(BaseSettings):
     # (see SchedulerService.sync_upstreams), so this only has to run often
     # enough that the gap stays small — not on every commit. 0 disables it.
     upstream_sync_interval_s: int = 1800
+    # --- notifications and deadlines ---
+    # Three jobs nothing in a request path can do. An aggregation window that
+    # never closes is a notification written and never delivered; an undrained
+    # email queue is an inbox that never receives; an unswept deadline is a
+    # promise the platform made and quietly did not keep. Each failure is
+    # silent, which is why the intervals are on by default. 0 disables one.
+    notification_finalize_interval_s: int = 60
+    notification_email_drain_interval_s: int = 60
+    task_deadline_sweep_interval_s: int = 900
     # --- 结论卡 (2026-08-11) ---
     # How often open conclusion cards past their absolute deadline are swept and
     # auto-accepted. Backstop for the turn-end hook: 默认采信 must not depend on

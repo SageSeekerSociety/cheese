@@ -2,7 +2,8 @@
 
 import json
 import os
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager
 from typing import Any
 
 from sqlalchemy import text
@@ -67,9 +68,15 @@ engine = create_async_engine(
 )
 async_session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
+# What every caller actually does with one: `async with sessions() as session`.
+# Spelled as `Callable[[], AsyncSession]` it type-checks against nothing useful,
+# because the thing returned is a context manager, not a session.
+SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
+
 __all__ = [
     "AsyncSession",
     "Base",
+    "SessionFactory",
     "apply_migration_timeouts",
     "async_session_factory",
     "engine",
