@@ -2,12 +2,11 @@
 
 // Prompt delivery over the rendezvous socket, against a REAL Claude Code.
 //
-// The companion file drives the same stack through the terminal (paste + Enter,
-// verified on screen). This one drives it through the socket Claude Code binds
-// for itself, and asserts the property that made us switch: delivery does not
-// depend on anything the terminal does. Every test here runs the pane at 46
-// columns — the exact width that made the screen-scraping driver re-paste a CJK
-// prompt forever on 2026-08-16 — and sends Chinese text through it.
+// Delivery goes through the socket Claude Code binds for itself, and this
+// asserts the property that made us switch: it does not depend on anything the
+// terminal does. Every test here runs the pane at 46 columns — the exact width
+// that made the screen-scraping driver re-paste a CJK prompt forever on
+// 2026-08-16 — and sends Chinese text through it.
 //
 // What is proven, not assumed: the file the scripted tool writes. A prompt that
 // reaches the composer but is never submitted leaves a pane that looks perfect
