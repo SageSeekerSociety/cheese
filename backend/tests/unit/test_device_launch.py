@@ -47,7 +47,7 @@ def test_build_screen_launch_shapes_command_and_env():
     # Session name is derived from the work dir (per-topic isolation; a stale
     # session can't serve a different topic's tree).
     assert 'SESSION="cheese_$(printf' in script
-    assert 'tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
+    assert 'new-session -d -s "$SESSION" -c "$CHEESE_WORK"' in script
     assert "CHEESE_HOOK_SPOOL" in script
     # The drainer deletes only on DURABLE acceptance (code:200 = live delivery or
     # server-side parking), with a 24h age cap for an unreachable backend.
@@ -289,8 +289,8 @@ def test_the_gates_written_are_valid_json():
 
 # --- the inner claude must boot on THIS launch's token, not a frozen one ------
 #
-# A device's `claude` runs in a PERSISTENT inner tmux session on the box's default
-# tmux server. The 407-that-outlives-a-re-mint has two layers:
+# A device's `claude` runs in a PERSISTENT inner tmux session on the connector's
+# own private tmux server. The 407-that-outlives-a-re-mint has two layers:
 #   1. tmux seeds a new session's env from the SERVER's GLOBAL env — frozen when
 #      the server first started — for every var not in `update-environment`
 #      (DISPLAY/SSH_* only). So a brand-new claude on an already-running server
@@ -307,14 +307,25 @@ def _tmux_hosting_block() -> str:
     """The tmux-hosting branch of the launcher, standalone (its env is supplied by
     the caller instead of the full launcher's earlier setup)."""
     script = device_launch.build_launch_script()
-    after = script.split("  unset TMUX\n", 1)[1]
-    body = after.split('  exec tmux attach -t "$SESSION"\n', 1)[0]
-    return "set -e\nunset TMUX\n" + body + 'exec tmux attach -t "$SESSION"\n'
+    head = "if command -v tmux >/dev/null 2>&1; then\n"
+    tail = '  exec tmux -S "$CHEESE_TMUX_SOCK" attach -t "$SESSION"\n'
+    body = script.split(head, 1)[1].split(tail, 1)[0]
+    return "set -e\n" + head + body + tail + "fi\n"
+
+
+# The socket the stub/real tmux below stands for: the launcher reads it out of
+# $TMUX, exactly as a pane of the connector's own tmux would.
+STUB_SOCK = "/tmp/cheese-test-connector.sock"  # noqa: S108 — never bound, only named
 
 
 def _stub_tmux_env(tmp_path):
     """A home + a stub `tmux` that records kill/new/window to a log and toggles a
-    has-session marker, so a run's session-lifecycle decisions are observable."""
+    has-session marker, so a run's session-lifecycle decisions are observable.
+
+    The stub distinguishes the two servers a launch can talk to: one named with
+    `-S` (ours) and the machine owner's DEFAULT one (no `-S`). Calls against the
+    default server are logged with a `default:` prefix so a test can assert we
+    never host anything there."""
     home = tmp_path / "home"
     (home / ".claude").mkdir(parents=True)
     work = home / "work"
@@ -326,14 +337,26 @@ def _stub_tmux_env(tmp_path):
     stub = bindir / "tmux"
     stub.write_text(
         "#!/bin/sh\n"
+        'sock=""\n'
+        'if [ "$1" = "-S" ]; then sock="$2"; shift 2; fi\n'
         'cmd="$1"; shift\n'
+        'if [ -z "$sock" ]; then\n'
+        '  printf \'default:%s\\n\' "$cmd" >> "$STUB_LOG"\n'
+        '  case "$cmd" in\n'
+        '    has-session) [ -f "$STUB_OWNER_MARK" ] ;;\n'
+        '    kill-session) rm -f "$STUB_OWNER_MARK" ;;\n'
+        "    *) : ;;\n"
+        "  esac\n"
+        "  exit\n"
+        "fi\n"
+        'printf \'%s\\n\' "$sock" >> "$STUB_SOCKS"\n'
         'case "$cmd" in\n'
         '  has-session) [ -f "$STUB_MARK" ] ;;\n'
         '  kill-session) printf \'kill\\n\' >> "$STUB_LOG"; rm -f "$STUB_MARK" ;;\n'
         "  new-session) printf 'new\\n' >> \"$STUB_LOG\";"
         ' printf \'%s\\n\' "$@" >> "$STUB_ARGS"; : > "$STUB_MARK" ;;\n'
         "  new-window) printf 'window\\n' >> \"$STUB_LOG\" ;;\n"
-        "  list-panes) printf '12345\\n' ;;\n"
+        "  list-panes) printf '%s\\n' \"${STUB_PANES:-12345}\" ;;\n"
         "  attach) printf 'attach\\n' >> \"$STUB_LOG\" ;;\n"
         "  *) : ;;\n"
         "esac\n"
@@ -345,8 +368,11 @@ def _stub_tmux_env(tmp_path):
         "HOME": str(home),
         "CHEESE_WORK": str(work),
         "CLAUDE": "claude --model x",
+        "TMUX": f"{STUB_SOCK},1,0",
         "STUB_LOG": str(log),
         "STUB_MARK": str(mark),
+        "STUB_OWNER_MARK": str(tmp_path / "owner-session.mark"),
+        "STUB_SOCKS": str(tmp_path / "sockets.seen"),
         "STUB_ARGS": str(tmp_path / "newsession.args"),
     }
     return home, env, log
@@ -365,6 +391,56 @@ def _tokexp_file(home):
     files = list((home / ".claude").glob("*.tokexp"))
     assert len(files) == 1, files
     return files[0]
+
+
+def test_the_agent_session_never_lands_on_the_machine_owners_tmux_server(tmp_path):
+    """A Hosted machine is someone's own laptop. If our claude lives in their
+    DEFAULT tmux server then their `tmux kill-server` takes every agent on the
+    box with it, our teardown takes their sessions, and `tmux ls` shows them our
+    internals. So every command that hosts, adopts or attaches must name the
+    connector's own socket — the one $TMUX handed this pane."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    _run_block(env, expiry=int(time.time()) + 100_000)
+
+    sockets = set(open(env["STUB_SOCKS"]).read().split())
+    assert sockets == {STUB_SOCK}, (
+        f"an inner tmux command went to a server we do not own: {sockets}"
+    )
+    on_default = [s for s in log.read_text().split() if s.startswith("default:")]
+    assert not [s for s in on_default if s not in ("default:has-session",)], (
+        f"the machine owner's server was used for more than a look: {on_default}"
+    )
+
+
+def test_a_session_left_on_the_machine_owners_server_is_retired(tmp_path):
+    """An agent session sitting on the default server is ours wherever it came
+    from, and it is not inert: it holds this topic's rendezvous socket, spool and
+    work tree, so leaving it means a second claude answering for this topic. The
+    launch takes it down instead of hosting alongside it."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    open(env["STUB_OWNER_MARK"], "w").close()  # one is squatting there
+
+    _run_block(env, expiry=int(time.time()) + 100_000)
+
+    steps = log.read_text().split()
+    assert "default:kill-session" in steps, "the misplaced session was left running"
+    assert not os.path.exists(env["STUB_OWNER_MARK"])
+    assert "new" in steps, "and this launch still hosts its own claude"
+
+
+def test_a_session_whose_claude_died_is_not_adopted(tmp_path):
+    """The connector's server keeps a pane after its program exits, so a claude
+    that died leaves the session standing with a dead pane. Adopting it hosts
+    nothing — every later turn would attach to a corpse and the topic would never
+    get a claude again."""
+    home, env, log = _stub_tmux_env(tmp_path)
+    good = int(time.time()) + 100_000
+    _run_block(env, expiry=good)  # create
+    _run_block({**env, "STUB_PANES": "1"}, expiry=good)  # its claude has since died
+
+    steps = log.read_text().split()
+    assert "kill" in steps, "a session whose pane is dead must be retired"
+    assert steps.count("new") == 2, "and replaced by a live claude"
 
 
 def test_a_fresh_inner_session_records_the_launch_token_expiry(tmp_path):
@@ -479,10 +555,9 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
     fake_claude.chmod(0o755)
     bindir = tmp_path / "bin"
     bindir.mkdir()
-    # A tmux that pins every launcher call to our private test server (which we
-    # pre-seed with a STALE global token, standing in for the box's old server).
-    (bindir / "tmux").write_text(f'#!/bin/sh\nexec "{real_tmux}" -S "{sock}" "$@"\n')
-    (bindir / "tmux").chmod(0o755)
+    # PATH leads with a dir of our own so the assertion below can tell THIS
+    # launch's PATH from the one frozen into the seed server's global env.
+    (bindir / "keep").write_text("")
     try:
         subprocess.run(
             [real_tmux, "-S", sock, "new-session", "-d", "-s", "seed", "sleep 60"],
@@ -502,6 +577,10 @@ def test_fresh_token_overrides_a_stale_tmux_server_global(tmp_path):
             "CLAUDE_CODE_OAUTH_TOKEN": "FRESH-live-token",
             "CHEESE_HOOK_SPOOL": f"{home}/.claude/cheese-spool",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+            # What a pane of the connector's own tmux sees. The launcher reads
+            # the socket out of it, so the seeded server IS the one it hosts in
+            # — no wrapper pinning it there.
+            "TMUX": f"{sock},1,0",
         }
         subprocess.run(
             ["sh", "-c", _tmux_hosting_block()],
@@ -898,6 +977,7 @@ def test_a_transient_create_failure_fails_loudly_not_into_the_fallback(tmp_path)
     stub = bindir / "tmux"
     stub.write_text(
         "#!/bin/sh\n"
+        'if [ "$1" = "-S" ]; then shift 2; fi\n'
         f'echo "$@" >> "{calls}"\n'
         'case "$1" in\n'
         "  has-session) exit 1 ;;\n"
@@ -914,6 +994,7 @@ def test_a_transient_create_failure_fails_loudly_not_into_the_fallback(tmp_path)
             "CHEESE_WORK": str(work),
             "CLAUDE": "true",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+            "TMUX": f"{STUB_SOCK},1,0",
         },
         capture_output=True,
         text=True,
@@ -941,6 +1022,7 @@ def test_an_old_tmux_without_dash_e_still_gets_the_fallback(tmp_path):
     stub = bindir / "tmux"
     stub.write_text(
         "#!/bin/sh\n"
+        'if [ "$1" = "-S" ]; then shift 2; fi\n'
         f'echo "$@" >> "{calls}"\n'
         'case "$1" in\n'
         "  has-session) exit 1 ;;\n"
@@ -963,6 +1045,7 @@ def test_an_old_tmux_without_dash_e_still_gets_the_fallback(tmp_path):
             "CHEESE_WORK": str(work),
             "CLAUDE": "true",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 100_000),
+            "TMUX": f"{STUB_SOCK},1,0",
         },
         capture_output=True,
         text=True,

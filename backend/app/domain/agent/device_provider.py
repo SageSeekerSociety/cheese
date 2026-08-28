@@ -563,9 +563,10 @@ class DeviceChannel(Channel):
         """Reuse the topic's screen on the device, or open a fresh one running
         ``claude`` with our hooks (the device-side launcher creates its home/work dirs
         and wires the hook forwarder). A reused screen is RE-ASSERTED, not trusted:
-        the hub's registry survives things the device's sessions do not (a connector
-        restart kills its private tmux; a create sent on a dying transport was never
-        delivered at all), and the frozen cli silently drops ``rpc.call`` for a sid
+        the hub's registry can outrun what the connector knows (a restarted
+        connector has forgotten every sid until a create makes it re-adopt the
+        tmux session that outlived it; a create sent on a dying transport was
+        never delivered at all), and the cli silently drops ``rpc.call`` for a sid
         it does not know — so a turn that trusted the registry alone died in a blank
         3×60s prompt timeout whenever the two had diverged. The adopt-create is
         idempotent on the device: a live session hot-reloads the cheeselet and keeps

@@ -10,14 +10,30 @@ import (
 	"time"
 )
 
-// TestHasSessionAndAdopt spins up a fully isolated private tmux server on its own
-// temp socket (never the live service's), so it cannot touch any running screen.
-// It verifies HasSession reflects an existing session and that Adopt wraps it
-// without spawning. Skipped when no tmux binary is available.
+// isolate points NewManager at a runtime dir of this test's own. NewManager
+// derives its socket from $TMPDIR, and on a machine that hosts agents the
+// default one is the LIVE connector's server — which holds every running
+// `claude` on the box, and which these tests kill on the way out. A short path
+// on purpose: a unix socket path is capped near 104 bytes.
+func isolate(t *testing.T) {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "cheeseterm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("TMPDIR", dir)
+}
+
+// TestHasSessionAndAdopt spins up a private tmux server on a socket of its own,
+// so it cannot touch any running screen. It verifies HasSession reflects an
+// existing session and that Adopt wraps it without spawning. Skipped when no
+// tmux binary is available.
 func TestHasSessionAndAdopt(t *testing.T) {
 	if _, err := findTmux(); err != nil {
 		t.Skip("no tmux available")
 	}
+	isolate(t)
 	m, err := NewManager()
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -69,6 +85,7 @@ func TestSpawnRunsTheExactArgvItWasHanded(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("no bash available")
 	}
+	isolate(t)
 	m, err := NewManager()
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
@@ -122,6 +139,7 @@ func TestWriteLongMessage(t *testing.T) {
 	if _, err := findTmux(); err != nil {
 		t.Skip("no tmux available")
 	}
+	isolate(t)
 	m, err := NewManager()
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
