@@ -43,9 +43,13 @@ def _link_state(user_id: int, return_project_id: uuid.UUID | None = None) -> str
     this helper every callback below would quietly redirect to invalid_state
     and these tests would pass while testing nothing.
 
-    `cache_clear` because `get_redis_client` is `@lru_cache`d and its client is
-    bound to whichever loop asked first — here that would be this throwaway
-    `asyncio.run` loop, which the app's own request would then inherit.
+    The `cache_clear` pair is for the loop switch this helper performs, not for
+    the one between tests: `asyncio.run` reserves on a throwaway loop, and the
+    cached redis client belongs to whichever loop built it. Clear on the way in
+    so this loop does not inherit the client the app's earlier request left
+    behind, and on the way out so the app's next request does not inherit the
+    throwaway one. The autouse fixture in conftest spans test boundaries and
+    cannot see either of these — nine tests here go red without this pair.
     """
     minted = mint_account_link_state(user_id, return_project_id=return_project_id)
     get_redis_client.cache_clear()

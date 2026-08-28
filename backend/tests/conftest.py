@@ -80,6 +80,7 @@ os.environ["CHEESEX_TEST_NULLPOOL"] = "1"
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.api.deps import get_broker, get_chat_service, get_work_runner  # noqa: E402
 from app.core.db import Base, get_db  # noqa: E402
+from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.chat import ChatService  # noqa: E402
 from app.domain.agent.compute import ComputePool  # noqa: E402
@@ -390,6 +391,28 @@ def bearer() -> Callable[[str], dict[str, str]]:
         return session_auth_headers(handle)
 
     return _headers
+
+
+@pytest.fixture(autouse=True)
+def _redis_client_per_loop() -> Iterator[None]:
+    """No test may inherit the redis client another test built.
+
+    ``get_redis_client`` is ``@lru_cache``d, and in production that is right —
+    one process, one event loop, one pool. Under pytest every test runs on a
+    fresh loop, so a cached client carries the previous test's dead loop into
+    this one and the first ``await`` on it raises "attached to a different
+    loop". The test that pays is whichever one next touches redis, never the
+    one that cached the client, so the failure arrives as an unrelated 500 in a
+    file that passes in isolation.
+
+    Autouse and here rather than in the files that noticed: a test file that
+    clears the cache for itself buys its own tests immunity and leaves the leak
+    for everyone downstream — which is precisely how this survived a release
+    with one test exposed and fifteen around it green.
+    """
+    get_redis_client.cache_clear()
+    yield
+    get_redis_client.cache_clear()
 
 
 @pytest.fixture
