@@ -66,8 +66,7 @@ DeviceResolver = Callable[
 
 def _git_author(project_id: uuid.UUID, topic_id: uuid.UUID) -> tuple[str, str] | None:
     """Who this topic's commits belong to, for a machine that owns its own tree
-    and commits with plain git (the in-repo path reads the same sidecar in
-    `ws.snapshot_worktree`). None → the launcher's 芝士 default."""
+    and commits with plain git. None → the launcher's 芝士 default."""
     from app.domain.workspace import identity as ws_identity
 
     found = ws_identity.read(project_id, topic_id)

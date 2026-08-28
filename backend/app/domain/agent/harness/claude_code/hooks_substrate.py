@@ -781,11 +781,6 @@ class Channel:
         cheaply overrides this."""
         return True
 
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        """Snapshot the turn's edits into version history. Default no-op (the
-        device owns its own tree); the tmux channel overrides to git-snapshot."""
-        return
-
 
 class ClaudeCodeRuntime:
     """Claude Code, driven over one ``Channel``.
@@ -898,9 +893,6 @@ class ClaudeCodeRuntime:
         return await self._channel.prepare_topic(
             project_id=project_id, topic_id=topic_id, actor=actor
         )
-
-    def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
-        return self._channel.checkpoint(project_id, topic_id)
 
     def bind_events(self, consumer: EventConsumer) -> None:
         """Bind the room persistence and broadcast callback owned by ChatService."""

@@ -143,7 +143,7 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 - 首次开屏时，设备通过带 scoped token 的 smart HTTP clone 话题分支；请求结束时 `cheese-sync` 提交并 push 回同一分支。
 - 图片附件先由后端通过控制信道 `file.put` 写进这个 checkout，收到设备确认后，再用 `@相对路径` 送进 rendezvous。
 - 后端从不把自己的 topic workspace 路径翻译成设备路径，也不跳过复制。仓库中没有“后端与设备共享 workspace”的配置或分支。
-- DeviceChannel 不快照后端 worktree；后端以设备 push 回来的分支作为结果。
+- 后端不往任何工作树里写提交；它以设备 push 回来的分支作为结果。
 
 ---
 

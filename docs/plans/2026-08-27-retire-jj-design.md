@@ -1,61 +1,16 @@
 # 退掉 jj：让芝士自己提交、推送、开 PR
 
-**状态：设计已定（Zhifei，2026-08-27）。已落地两块——平台不再把「提交没做成」当成「本来就没活」（见第三节），以及芝士手上那张 GitHub 票不再是只读的（见第六节第一条）；主体（芝士自己提交、平台停止写树）还没开工。**
+**状态：设计已定（Zhifei，2026-08-27）。已落地：芝士手上那张 GitHub 票不再是只读的（见第四节第一条），以及主体的前一半——平台不再替任何人提交（见第二节）。剩下的是机械替换：jj workspace 换成 git worktree、镜像去掉 jj、存量项目迁回纯 git。**
 
-这份文档面向零前置知识的读者。前半解释平台今天在做什么、为什么这么做；后半是要改成什么，以及为什么。涉及的术语第一次出现时都会解释。
-
----
-
-## 一、今天：平台替芝士敲那次提交
-
-### 缺的是哪一步
-
-芝士干活的方式和人一样：读文件、写文件、跑命令。干完之后，改动**躺在磁盘上**。
-
-但平台后面每件事都不看磁盘，只看**提交（commit）**——git 里记录下来的一次改动快照：
-
-- 房间里那句「这轮改了 3 个文件、+120/-15」，是数提交数出来的
-- 验收卡上的 diff，是提交之间的差
-- 推到 GitHub 开 PR，推的是提交
-- 点「采纳」，合并的是提交
-
-**磁盘上的改动和提交之间隔着一步：得有人敲一次 `git commit`。**
-
-```
-芝士改文件  ──▶  ???  ──▶  改动摘要 / 验收卡 diff / PR / 采纳
-（在磁盘上）              （全部只认提交）
-```
-
-### 今天由谁敲，取决于芝士跑在哪
-
-| 芝士跑在哪 | 谁敲这次提交 |
-|---|---|
-| **沙箱**——平台自己开的容器 | **平台替它敲。**代码里叫「快照」（snapshot） |
-| **设备**——用户自己接进来的机器 | **芝士自己推。**平台不碰它的文件 |
-
-设备路的分工是显式写死的：`checkpoint` 在通用通道上是空实现，注释写着 "the device owns its own tree"，只有沙箱通道覆盖它去做快照。
-
-**这份文档要改的是沙箱路——把它并到设备路已经在用的模型上。**
-
-### 平台一共在五个时机做快照
-
-都在 `workspace/service.py`，各有自己的提交信息：
-
-| 时机 | 所在函数 | 提交信息 |
-|---|---|---|
-| 每轮结束 | `checkpoint_worktree` | `chore: snapshot workspace after agent turn` |
-| 本地合并采纳之前 | `merge_topic` | `chore: snapshot workspace before accept` |
-| 平台推分支之前 | `push_topic_branch` | `chore: snapshot workspace for pull request` |
-| 平台为 PR 推分支之前 | `push_topic_branch_for_github_pr` | `chore: snapshot workspace before two-phase accept` |
-| 手动补推之前 | `review/services.py` | `chore: snapshot workspace for push-fix` |
+这份文档面向零前置知识的读者。前半解释平台为什么曾经用 jj、那个理由为什么没了；后半是还要改什么，以及为什么。涉及的术语第一次出现时都会解释。
 
 ---
 
-## 二、为什么当初选 jj，以及那个理由现在没了
+## 一、为什么当初选 jj，以及那个理由现在没了
 
 平台的版本控制用的是 **jj（Jujutsu）**——一个建在 git 之上的前端，它管「分支」叫**书签（bookmark）**，两边要靠 `jj git export` / `import` 来回同步。
 
-选它的理由写在 `workspace/service.py` 的模块开头，**只有一条**：
+选它的理由曾经写在 `workspace/service.py` 的模块开头，**只有一条**：
 
 > 每个话题 = 一个 jj workspace（取代 git worktree）。**这样沙箱容器里的原生 Bash/Write/Edit 改动会被 jj 自动快照（无需手动 commit）**，而 git 侧照常工作。
 
@@ -70,102 +25,52 @@
 | 沙箱里 `git status` 报「不是仓库」，看着像仓库坏了 | `sandbox/skills/cheese/SKILL.md` 要专门写一段解释 |
 | 沙箱里 `jj git push` 用不了（镜像 git 版本低于 jj 要求） | 同上 |
 | 芝士**看不见自己的推送状态**，只能「断言，不是观察」 | 同上——已出过一次假报告：报「改动已进 PR 分支」，而分支根本没动 |
-| 工作区过期（stale）→ 这一轮的活进不了分支（下一节） | 全仓无恢复代码 |
-| bookmark 和 git ref 会双向不一致，要一整套调和逻辑 | `_put_the_branch_under_the_working_copy` |
+| 工作区过期（stale）→ 那一轮的活进不了分支 | 全仓搜不到 `jj workspace update-stale` |
+| bookmark 和 git ref 会双向不一致，要一套调和逻辑 | `_catch_up_with_branch` / `_catch_up_topic_workspace` |
 
 最后一行值得单独说：**这些代价没有一条是 jj 本身的错，全都是「平台替模型写树」这个决定的下游。** 换成 git 也一样——只要平台在写别人的工作树，就还得有工作区隔离、uid 对齐，和一套「别人推上来的东西不能被我盖掉」的调和。
 
-## 三、这个决定制造出来的那个 bug
-
-### 一次没做成的提交，长得和「本来就没活」一模一样
-
-平台替芝士提交，于是「这一轮的改动」和「分支上的提交」之间隔着一次**会失败的操作**。它失败时磁盘上一个字节都没少，而下面每一处一起看不到这一轮——它们读的全是提交：
-
-| 应该发生 | 实际发生 |
-|---|---|
-| 改动变成提交 | 没有提交 |
-| 房间里显示「这轮改了什么」 | **什么都不显示**——摘要是数「新出现的提交」算的 |
-| 分支往前走 | 分支不动 |
-| 验收卡 diff 含这轮改动 | 不含——`topic_diff` 比的是**分支**和它的起点 |
-| PR 更新 | 没变化，或 diff 是空的 |
-
-在采纳和推 PR 两条路上还要再糟一层：**它们不是漏掉这一轮，是带着一条缺了这一轮的分支继续走完。**
-
-### 「没做成」曾经被当成「没有」——这一半已经修掉
-
-五个快照点原先全都把失败吞掉：每轮末那次是 `except Exception` 加一行服务器日志，另外四处是 `except ValidationError: pass`，注释写着「还没有工作区」。那句注释描述的情况确实无害，但 **`ValidationError` 是 jj 任何一次执行失败都会抛的东西**（`_jj` 里除权限问题外一律抛它），工作区过期抛的就是它。于是「活丢了」被当成「本来就没活」，人看到的 diff 里没有它，点了采纳，合进主干的也没有它，全程零报错。
-
-现在「有没有工作区」由 `workspace.commit_pending_work` 一处读盘回答：**没有工作区**是唯一还会安静跳过的情况；**提交没做成**会让采纳、开 PR、push-fix 停下来并说出原因，每轮末那次失败会在房间里落一条系统事件（带上 jj 自己那句话，里面就有恢复命令）。
-
-失败本身没有消失。它是「平台替别人写树」的下游，只有第四节那个改法才拿得掉。
-
-### 为什么会过期
-
-一个项目底下很多棵工作树，每棵是一个 jj workspace，**共用同一个版本库存储**。同时对它下命令的至少三方：后端（多线程、无排队）、沙箱容器里的芝士（**另一个系统用户**）、从 git 代理推进来的代码。任一方改了存储，其他工作区就过期，jj 拒绝执行并提示：
-
-```
-Error: The working copy is stale (not updated since operation ...).
-Hint: Run `jj workspace update-stale` to update it.
-```
-
-**这句恢复命令在整个代码库里搜不到**——41 个远程分支，零命中。而快照第一步就是问 jj「这轮有没有改动」，所以过期时它第一个动作就失败，后面全不执行。
-
----
-
-## 四、改成什么
+## 二、已经落地：平台不再替任何人提交
 
 **芝士自己提交、自己推送、自己开 PR，全部通过 prompt 交代。平台不再写任何人的工作树。**
 
-这不是新架构——**设备路今天就是这么跑的**，而且设备路没有上面任何一条毛病。这次是把沙箱路并过去。
+这不是新架构——设备路本来就是这么跑的：机器自己 `git clone`、自己 `git commit`、把分支 push 回来（`api/routes/git_http.py`），没提交的东西另外存到 `refs/cheese/snapshots/<branch>`，**永远不动分支**。平台那套代劳是并排的第二套机制。
 
-### 具体替换
+拿掉的是：每轮末的快照、采纳前快照、开 PR 前快照、两阶段采纳前快照、手动补推前快照，以及 `snapshot_worktree`、`commit_pending_work`、`_put_the_branch_under_the_working_copy`、`cheese await` 的快照暂缓、「平台自己的快照失败了」那条房间通知。
+
+两条明确决定（Zhifei，2026-08-27 / 08-28），别自作主张加回来：
+
+**采纳不看工作树脏不脏。** 采纳 = 合并那个 PR，PR 里有什么合什么。人在工作区改了但没提交的东西没进 PR，那它本来就不该被合进去——这比「快照一下悄悄塞进去」诚实。这也让采纳回到 `docs/agent-principles.md` 第五条本来的样子：平台不在合并前往那条分支上追加任何东西。
+
+**平台也不要「看一眼」树脏不脏然后提醒。** 三条理由，每条单独就够：
+
+- **芝士自己拿得到。** `git status` 就在它手边，一条命令。平台去查了再告诉它，不是反馈，是噪音。真正拿不到的是推送结果、卡被驳回、平台判它这轮失败——那些在它的机器之外，`git status` 不是。
+- **提不提交是它的选择。** 在 room/task 下，一件活是芝士的交付。它决定「这半截先不提交」是正当判断，平台去查等于替它做判断。
+- **后果已经是结构性的。** 采纳 = 合并那个 PR。没提交就不在 PR 里，就合不进去。**系统本来就不可能合并没提交的东西**，不需要谁额外看一眼。
+
+那么原来担心的「活悄悄丢」去哪了？它随代劳一起消失：**丢活的从来不是模型忘了提交，是平台替它提交、失败了、而谁都不知道。** 代劳没了，这个失败模式就没有了，不需要一个检测去对准一个不再存在的东西。
+
+### 还剩的替换
 
 | 今天 | 之后 |
 |---|---|
 | jj workspace（`jj workspace add`） | git worktree（`git worktree add`） |
-| 平台每轮末自动 `jj commit` | 芝士自己 `git commit` |
-| 平台 `push_topic_branch` 代推 | 芝士自己 `git push` |
-| 平台开 PR | 芝士自己开 PR |
 | bookmark → git branch 导出 | 不需要，本来就是 git branch |
-| 采纳前快照 | **取消**——采纳 = 合并那个 PR，PR 里有什么就合什么 |
+| 主仓 jj colocate（`.git` + `.jj`） | 只有 `.git` |
+| 镜像里装 jj | 不装 |
 
-最后一行是本次的一条明确决定（Zhifei，2026-08-27）：**采纳不看工作树脏不脏。** 人在工作区改了但没提交的东西没进 PR，那它本来就不该被合进去——这比「快照一下悄悄塞进去」诚实。想提示「你还有没提交的改动」是可以另外做的事，但它是附加功能，不是核心机制，不进这一轮。
-
-这也让采纳回到 `docs/agent-principles.md` 第五条本来的样子：**采纳 = 合并那个 PR**，平台不在合并前往那条分支上追加任何东西。
-
-### 会一并消失的东西
-
-- 五个快照点和 `snapshot_worktree` 本身
-- `_put_the_branch_under_the_working_copy`（bookmark/git ref 调和）
-- `cheese await` 的快照暂缓逻辑——芝士自己提交，自然是命令跑完才提交
-- `AGENT_UID` 必须对齐这条约束的 jj 部分（`config-id` 0600 陷阱随 `.jj` 一起走）
-- SKILL.md 里那整段 jj 免责声明
-
-### 也不要留一个「看一眼」
-
-这一节原本写的是：平台停止写树，但每轮结束查一句「树还脏着吗 / 分支动了吗」，脏了就说一句。**那也不做**（Zhifei，2026-08-28）。
-
-三条理由，每条单独就够：
-
-**芝士自己拿得到。** `git status` 就在它手边，一条命令。平台去查了再告诉它，不是反馈，是噪音。真正拿不到的是推送结果、卡被驳回、平台判它这轮失败——那些在它的沙箱之外，`git status` 不是。
-
-**提不提交是它的选择。** 在 room/task 下，一件活是芝士的交付。它决定「这半截先不提交」是正当判断，平台去查等于替它做判断。
-
-**后果已经是结构性的。** 采纳 = 合并那个 PR。没提交就不在 PR 里，就合不进去。**系统本来就不可能合并没提交的东西**，不需要谁额外看一眼。
-
-那么原来担心的「活悄悄丢」去哪了？它随代劳一起消失：**丢活的从来不是模型忘了提交，是平台替它提交、失败了、而谁都不知道。** 代劳没了，这个失败模式就没有了，不需要一个检测去对准一个不再存在的东西。
+一起消失的还有 `AGENT_UID` 必须对齐这条约束的 jj 部分——`config-id` 0600 那个陷阱随 `.jj` 一起走。
 
 ---
 
-## 五、改动面
+## 三、改动面
 
-- `_jj(` 全后端**只出现在一个文件**：`backend/app/domain/workspace/service.py`（约 2900 行，27 处调用）
-- 连带要改：`agent/awaited_tasks.py`（快照暂缓）、`review/services.py`（补推）、`agent/tmux_provider.py` 与 `harness/claude_code/hooks_substrate.py`（`checkpoint` 覆盖）
-- 沙箱镜像：不再需要 jj；需要一个能 push 的 git（今天镜像里的 git 版本连 jj 的 push 都带不动）
-- `sandbox/skills/cheese/SKILL.md`：删掉 jj 免责段，改成芝士自己提交推送的说明
-- 存量项目要从 jj colocate 迁回纯 git（`.git` 本来就在，colocate 的意思就是两者并存）
+- `_jj(` 全后端**只出现在一个文件**：`backend/app/domain/workspace/service.py`。剩下的调用点是检出与合并前置：`_ensure_worktree`、`_catch_up_with_branch`、`prepare_conflict_resolution`、`prepare_upstream_conflict_resolution`、`_catch_up_topic_workspace`
+- `sandbox_vcs_mounts` 整套是围着 `.jj/repo` 那个相对指针建的，换成 git worktree 之后它没有对位物（worktree 的 `.git` 存的是**绝对**路径）——而 #630 退掉平台自己那台机器之后，全后端已经没有调用它的地方了，跟着删
+- 沙箱镜像：不再需要 jj
+- 存量项目要从 jj colocate 迁回纯 git（`.git` 本来就在，colocate 的意思就是两者并存），并把已有的 jj workspace 目录换成 git worktree——**目录名必须一个字不变**
 
-## 六、开工前要确认的（已核实）
+## 四、开工前要确认的（已核实）
 
 **1. 芝士推送用什么凭据 —— 已经解决。**
 
@@ -174,7 +79,7 @@ Hint: Run `jj workspace update-stale` to update it.
 - **自己提交 + 自己推回项目仓**：`api/routes/git_http.py` 用话题手上那个 scoped cheese token 认证 `git-receive-pack`，设备路今天就是这么把分支推回来的，零新凭据。
 - **自己推到 GitHub、自己开 PR**：`export GH_TOKEN=$(cheese gh-token)`，然后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`、`gh api repos/<owner>/<repo>/pulls`。沙箱镜像里 git 2.39.5 和 gh 2.62.0 都在，两条命令都不需要新工具。
 
-**所以剩下的缺口不是凭据，是一个 `.git`。** jj 工作区里没有它（`jj workspace add` 出来的次级工作区不 colocate），`jj git push` 又用不了，拿着这张票照样推不动——要等第四节把 jj workspace 换成 git worktree。跑在托管机器上的那条路（普通 `git clone`）今天就已经能一路走到 PR。
+两条路今天都通：干活的机器拿到的是一份普通 `git clone`。平台自己那份检出还是 jj workspace（里面没有 `.git`），但没有人在那里面干活——它只被文件面板和合并读。
 
 **2. 多棵树共用一个仓库 —— 对位替换成立。**
 
@@ -186,13 +91,13 @@ Hint: Run `jj workspace update-stale` to update it.
 
 **4. 归属 —— 作者是人类需求方，用 git 自己的两个身份位。**
 
-`workspace/identity.py` 已经把「话题属于谁」解析成一个 GitHub 认得的 `<id>+<login>@users.noreply.github.com`，并落盘在工作区旁边（`git-identity.json`），同步快照路径没有 DB session 也读得到。芝士自己提交时，把它读成 `GIT_AUTHOR_*` 即可。
+`workspace/identity.py` 已经把「话题属于谁」解析成一个 GitHub 认得的 `<id>+<login>@users.noreply.github.com`，并落盘在工作区旁边（`git-identity.json`），开屏路径没有 DB session 也读得到。芝士自己提交时把它读成 `GIT_AUTHOR_*`。
 
-顺带**变好一件事**：identity.py 现在写着「一个旋钮，不是两个——jj 0.43 从 JJ_USER/JJ_EMAIL 同时设 author 和 committer，没有 `--author`，所以记不下『芝士提交的』」。git 有 `GIT_COMMITTER_*`，所以退掉 jj 之后这条限制消失：author 是人类需求方，committer 是芝士，`Co-authored-by:` 照 #546 的口径进 trailer。那段注释要在同一个 PR 里删掉。
+顺带**变好一件事**：平台不再自己提交之后，「一个旋钮，不是两个」那条 jj 限制就不成立了——author 是人类需求方（`GIT_AUTHOR_*`），committer 是芝士（`GIT_COMMITTER_*`），`Co-authored-by:` 照 #546 的口径进 trailer。
 
 ## 相关
 
-- `backend/app/domain/workspace/service.py` — 模块开头就是 jj 的原始理由
+- `backend/app/domain/workspace/service.py` — 剩下的 jj 调用点都在这里
 - `docs/agent-principles.md` — 第五条「采纳 = 合并那个 PR」
 - `docs/device-self-hosting.md` — 设备路为什么不碰用户机器上的东西
 - #242 — `config-id` 属主导致全项目停摆

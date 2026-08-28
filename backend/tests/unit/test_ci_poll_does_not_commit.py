@@ -1,14 +1,14 @@
 """轮询不再替你提交: reading a topic's branch head must not move it.
 
-The CI poller used to snapshot the workspace on every tick before reading the
+The CI poller used to commit the workspace on every tick before reading the
 branch head. Any write at all — a scratch file, a line in the living doc —
 therefore became a commit, the commit moved the branch, the moved branch was
 re-pushed, and `cancel-in-progress` killed the CI run already in flight. One PR
 was measured running the backend suite 17 times, 14 of those cancelled.
 
 Functional, against a real repo AND a real topic workspace: the workspace is
-what makes this test able to fail. Without one, a snapshot raises before it can
-commit anything and the old behaviour would pass too.
+what makes this test able to fail. Without one there would be nothing on disk
+for a commit to sweep up, and the old behaviour would pass too.
 """
 
 import subprocess
@@ -19,6 +19,7 @@ import pytest
 
 from app.domain.review.services import AcceptService
 from app.domain.workspace import service as ws
+from tests.machine_work import machine_commits
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -55,20 +56,19 @@ def test_reading_the_branch_head_leaves_uncommitted_work_uncommitted(
     assert (worktree / "scratch.md").exists(), "文件还在，只是没被提交"
 
 
-def test_an_explicit_snapshot_is_what_moves_the_branch(project: uuid.UUID) -> None:
-    """The other half of the contract: moving the head is still possible — it
-    just has to be asked for. This is the path `cheese push-fix` takes."""
+def test_the_machine_s_own_push_is_what_moves_the_branch(project: uuid.UUID) -> None:
+    """The other half of the contract: the head still moves — by the agent
+    committing and pushing. That is what `cheese push-fix` then puts on the PR."""
     topic_id = uuid.uuid4()
-    worktree = ws._ensure_worktree(project, topic_id)
+    ws._ensure_worktree(project, topic_id)
     repo = ws.ensure_repo(project)
     branch = ws.branch_for_tree(topic_id)
     before = _git(repo, "rev-parse", branch)
 
-    (worktree / "fix.md").write_text("the actual fix\n")
-    ws.snapshot_worktree(project, topic_id, ws.SNAPSHOT_FOR_PUSH_FIX)
+    machine_commits(project, topic_id, {"fix.md": "the actual fix\n"})
 
     assert _git(repo, "rev-parse", branch) != before, (
-        "明确要求的快照仍然要能推动分支——被去掉的只有定时器那一次"
+        "分身自己提交推送之后，分支头必须动"
     )
 
 
