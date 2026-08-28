@@ -10,7 +10,7 @@ Three ways it could, all reproduced before these tests existed:
 
 The tests drive the workspace service directly against a plain directory —
 ``_tree`` is the seam that decides *which* directory an operation works in, and
-these behaviours have nothing to do with jj/git.
+these behaviours have nothing to do with git.
 """
 
 import hashlib
