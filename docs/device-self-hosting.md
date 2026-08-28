@@ -40,13 +40,34 @@
 
 下次启动会 re-adopt 活着的会话（`HasSession` 分支），drainer 继续重投它 spool 下来的 hook，viewer 重新 attach 回原来那个 pane。
 
-第三行只对 systemd 说话，**macOS 不需要对应物**：tmux server 一起来就 daemonize（实测 tmux 3.5a：PPID 1、自成进程组），而 launchd 拆 job 只管 job 自己的进程组，于是 server 和里面的会话原样活着——LaunchAgent 与 LaunchDaemon 两种形态都实测过，`launchctl bootout` 之后 `has-session` 仍然成立。Linux 非要那一行，是因为 cgroup 不是进程组：fork 出来的进程离不开自己所在的 unit，除非有个特权的 manager 把它搬走。所以「把 tmux server 挪出 connector 名下、让它结构上就不归我们」在不要 sudo 的前提下无处可去，那一行就是做法本身，不是权宜。
+第三行只对 systemd 说话，**macOS 不需要对应物**：tmux server 一起来就 daemonize（实测 tmux 3.5a：PPID 1、自成进程组），而 launchd 拆 job 只管 job 自己的进程组，于是 server 和里面的会话原样活着，`launchctl bootout` 之后 `has-session` 仍然成立。Linux 非要那一行，是因为 cgroup 不是进程组：fork 出来的进程离不开自己所在的 unit，除非有个特权的 manager 把它搬走。所以「把 tmux server 挪出 connector 名下、让它结构上就不归我们」在不要 sudo 的前提下无处可去，那一行就是做法本身，不是权宜。
 
-它撑住的**上限是同一次开机**：unit 的 cgroup 放过 tmux server，登出和关机不会。默认路径（`cheese link connect` 提权装系统级 service）在 `system.slice` / LaunchDaemon 里，登出与它无关；退到用户级 service（没有 sudo，或 `--user`）时，登出会把 `user@.service` 连同 connector 和 tmux server 一起带走。`KillUserProcesses=` 不是这里的开关——它管的是 login session scope，而我们的 server 从来不在那里面；用户级路径要熬过登出，只有 linger。
+`KillMode=process` 对 `--user` unit 一样成立（systemd 252 实测：unit 停掉，它 fork 出来的 tmux server 和里面的会话照旧）——这一点值得单说，因为那是现在**每台机器都走的路**，不再是没 sudo 时的退路。它撑住的**上限是同一次开机**：重启会带走 tmux server 和里面的会话，那不是任何一行 unit 挡得住的；connector 自己能不能回来是另一件事，见下。
 
 **真的要结束会话的动作是另外几个**，它们说了就得算数：`cheese link disconnect`、`cheese link no-auto-connect`、`cheese uninstall`（这条尤其——机器不是我们的，不能留东西），以及服务端关掉某块屏幕。
 
 unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖已存在的 unit，所以是先 uninstall 再 install），否则老版本装出来的 unit 会一直活着，而这类"发布悄悄没生效"正是 #501 的形状。
+
+### connector 装在他自己的账户下，从不问 root
+
+`cheese link connect` 只装**用户级** service——Linux 是 `systemd --user` unit（`~/.config/systemd/user/cheese.service`），macOS 是 LaunchAgent（`~/Library/LaunchAgents/cheese.plist`）。没有提权、没有 polkit 弹窗、没有 `sudo` 这个词。这是上面那条约束的直接推论：「一个 `sudo` 让安装成功」本来就写在它列出的、最容易破坏它的写法里。
+
+「系统级 service 才能在没人登录时起来」曾经是提权的理由，在 Linux 上它不成立：**`loginctl enable-linger` 不需要管理员**。systemd 自带的 polkit 策略里 `org.freedesktop.login1.set-self-linger` 是 `allow_any=yes`（要管理员的是给**别人**开的 `set-user-linger`）。systemd 252 实测：普通用户 `loginctl enable-linger` exit 0、`Linger=yes`；`loginctl list-sessions` 空着，`user@1000.service` 仍然 active。所以 `link connect` 装完就替自己开 linger——**开不了不静默降级**，把后果和那一条修复命令印出来；入册脚本更进一步，linger 不是 `yes` 就直接判这次入册失败（那台机器没人会登录，它会绿一下然后随 ssh 一起消失）。
+
+唯一一处 `sudo` 在**入册脚本**里，那是平台自己开的机器（§0 明说 Cloud 不适用），上面几行装 tmux/git 用的就是同一个免密 sudo：镜像里没跑 polkit 时 logind 会直接拒掉普通用户的 `enable-linger`，那就补一次 `sudo -n loginctl enable-linger`，然后仍旧只认 linger 自己的回答。**connector 里没有这条路**——它跑在别人的笔记本上。
+
+两个细节必须同时到位，缺一个都是「装成功了，然后永远不会自己起来」：
+
+- **`WantedBy=default.target`**。user manager 里根本没有 `multi-user.target`——systemd 252 实测：`systemctl --user enable` 照收，回一句 "added as a dependency to a non-existent unit"，之后谁也不会拉起它。于是 connector 只在 `link connect` 亲手 start 的那一次活着，重启后再不回来，而安装报的是成功。
+- **unit 里不能有 `User=`**。systemd 拒绝加载带 `User=` 的 user unit，而 scope 里本来就只有一个账户。
+
+`KillUserProcesses=` 不是这里的开关，别去调它——它管的是 login session scope，而 connector 和它的 tmux server 在 `user@.service` 下面，从来不在那里面。
+
+**`uninstall` 不关 linger**，尽管它是我们开的。linger 是账户级设置，机主自己的 user timer / service 可能正靠着它，而我们分不清那台机器上它本来是不是就开着；关掉它的代价落在别人的东西上，留着它的代价是一个空转的 user manager。§0 那条「走之后还是原样」在这里的读法是前者更重。
+
+**macOS 没有 linger 的对应物，也不打算造一个。** LaunchAgent 活在机主的登录会话里（实测：job 落在 `gui/501` 域，`type = login`、`creator = loginwindow`；非 root `launchctl bootstrap user/501` 直接 `Bootstrap failed: 5`）。他登录时起、登出时停、下次登录再起。**一台没人登录的 Mac 不托管**——这是「不问别人要管理员密码」的诚实代价，不是漏了一个 case。真要 headless Mac，那是 LaunchDaemon、是一个新决定，不是在这里留一个开关等着被捡起来。
+
+**机器上已经有 root 装的 cheese service 时，`link connect` 拒绝安装**，并打印删掉它的命令。同一个账户下跑两个 connector 比一个都没有更糟：共用一份 device 凭据、共用同一个 tmux server，互相收养又互相拆掉对方的屏幕。
 
 ---
 
@@ -64,7 +85,7 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 
 3. **人在网页批准**。打开 `approve_url`，登录后落到前端 `/connect` 审批页（批准**在登录态后面**，没有裸批准按钮）：可给节点改名、可选绑定一个项目，提交即 `POST /connector/connect`——把设备绑到当前用户为 owner，签发**不过期的 durable token**（只能服务端撤销）。
 
-4. **`cheese link connect` 上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheese link auto-connect` 可让它开机自动重连。
+4. **`cheese link connect` 上线**。CLI 轮询拿到 token，写入 `~/.config/cheese/config.json`，随即拨出 `WS /connector/agent`，用 durable token 鉴权。握手成功后这台机器在 `device_hub` 里标记为在线。`cheese link auto-connect` 可让它开机自动重连。**这一步不需要 sudo**：service 装在当前账户下（Linux 顺带 `loginctl enable-linger`，macOS 是 LaunchAgent），细节和它的边界见 §0。
 
 5. **绑定项目/团队**。在「我的设备」页或各小队的「算力」页把设备绑到项目（`assign_to_project`）或团队（`assign_to_team`——团队下**所有项目**都能跑在这台机器上）。只有设备的 owner 能绑，且 owner 必须是该项目/团队的成员。
 
@@ -90,6 +111,7 @@ unit 文件由 `cheese link connect` 每次重写（kardianos 本身拒绝覆盖
 | **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
 | **claude**（Claude Code CLI） | 真正干活的 agent | 必须，**由平台装**（见下） |
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
+| **能用的用户级 service manager** | 后台常驻靠它，而我们只用当前账户的那一个 | 必须。Linux 上是 `systemd --user`（要 logind：ssh 进来得有 `XDG_RUNTIME_DIR`，还要能 `loginctl enable-linger`），macOS 上是 launchd。装不上不是无声的：`link connect` 直接报错，入册脚本判失败 |
 
 平台：Linux / macOS（需 pty），**无 Windows**。
 
@@ -180,7 +202,7 @@ claude COMMAND hooks                            /sandbox/hooks/{topic_id}
 curl -fsSL https://<你的站点>/connector/install.sh | sh
 cheesehost auth login https://<你的站点>/connector      # 打印 approve_url，阻塞轮询
 # 人浏览器打开 approve_url → 登录 → 批准（可命名/绑项目）
-# CLI 自动 link connect 上线
+# CLI 自动 link connect 上线——全程不需要 sudo
 
 # 平台侧：在小队「算力」页把设备绑给团队（或「我的设备」绑项目）
 # 话题选 device 算力（全局 AGENT_BACKEND=device，或用 compute_profile/provider_id 选 device）
