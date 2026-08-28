@@ -21,6 +21,10 @@ import (
 // kardianos passes it (service_systemd_linux.go: the anonymous `to` struct and
 // the `tf` FuncMap). Anything the template names that is not here would fail on
 // a real install.
+//
+// userName is what kardianos would put in Config.UserName. It is passed even
+// though the connector never sets it, because a template that reacts to it at
+// all is a template that can emit a directive systemd rejects in a user unit.
 func renderUnit(t *testing.T, userName string) string {
 	t.Helper()
 	funcs := template.FuncMap{
@@ -92,24 +96,34 @@ func TestTheUnitStillStartsAndSupervisesTheConnector(t *testing.T) {
 	if !hasDirective(unit, "Restart", "always") {
 		t.Fatalf("a crashed connector would never come back:\n%s", unit)
 	}
-	if !hasDirective(unit, "User", "dev") {
-		t.Fatalf("a system unit must run as the account whose home holds the "+
-			"config and the tmux socket:\n%s", unit)
-	}
 	if !strings.Contains(unit, "[Unit]") || !strings.Contains(unit, "[Service]") ||
 		!strings.Contains(unit, "[Install]") {
 		t.Fatalf("the unit is missing a section systemd requires:\n%s", unit)
 	}
-	if !hasDirective(unit, "WantedBy", "multi-user.target") {
-		t.Fatalf("the unit would never be enabled for boot:\n%s", unit)
+}
+
+// The connector installs into the user's own systemd, which is a different set
+// of units from the system one. `multi-user.target` is not among them: measured
+// on systemd 252, `systemctl --user enable` accepts a unit wanted by it and
+// answers "added as a dependency to a non-existent unit", after which nothing
+// ever pulls it in — so the connector runs the once that `cheese link connect`
+// starts it by hand, and never again after a reboot, having reported success.
+func TestTheUnitIsEnabledIntoATargetTheUserManagerHas(t *testing.T) {
+	unit := renderUnit(t, "")
+	if !hasDirective(unit, "WantedBy", "default.target") {
+		t.Fatalf("nothing in a user systemd would ever start this unit:\n%s", unit)
 	}
 }
 
-// A per-user unit has no User= line at all; systemd rejects one in a --user unit.
-func TestAUserUnitNamesNoAccount(t *testing.T) {
-	unit := renderUnit(t, "")
-	if directive(unit, "User") != "" {
-		t.Fatalf("a --user unit must not carry User=:\n%s", unit)
+// systemd refuses User= in a user unit, and there is only one account in scope
+// anyway. kardianos fills UserName in from its own Config, so the guard is that
+// the template does not pass it through no matter what it is handed.
+func TestTheUnitNamesNoAccount(t *testing.T) {
+	for _, userName := range []string{"", "dev"} {
+		unit := renderUnit(t, userName)
+		if directive(unit, "User") != "" {
+			t.Fatalf("a --user unit systemd will not load (UserName=%q):\n%s", userName, unit)
+		}
 	}
 }
 
