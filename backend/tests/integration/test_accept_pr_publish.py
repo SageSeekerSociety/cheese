@@ -7,10 +7,10 @@ card never touches GitHub. GitHub itself is a fake client class — the tests
 assert what the accept path DOES with it, not HTTP details (unit-tested
 separately in tests/unit/test_github_pr.py).
 
-App forge 的采纳不在这里：它已经不合并了（App 采纳等 CI 再合）——采纳把卡送进
-`pr_open`，轮询器等 CI 全绿才合。完整行为见
-tests/integration/test_accept_app_waits_for_ci.py。这个文件覆盖的是
-`_accept_via_pr` 这条仍在合并的路，以及不进 PR 的两种形状。
+App forge 的采纳不在这里：它把卡送进 `pr_open`，轮询器等 CI 全绿才合，完整行为见
+tests/integration/test_accept_app_waits_for_ci.py。这个文件覆盖的是 `_accept_via_pr`
+这条仍会在采纳现场合并的路——它现在也只在 forge 说全绿（或这个仓库根本没有检查）
+时才合——以及不进 PR 的两种形状。
 """
 
 import asyncio
@@ -18,8 +18,10 @@ import uuid
 
 import pytest
 
+from app.domain.oauth import services as oauth_services
 from app.domain.review.github_pr import GitHubPRError, GitHubPRMergeBlocked
 from tests.integration.conftest import session_auth_headers
+from tests.integration.test_accept_pr import FakeGitHubPrClient
 
 
 def _make_project(client) -> str:
@@ -651,16 +653,59 @@ def test_unbound_project_local_merge_is_legitimate_and_labelled(
     assert client.get(f"/topics/{tid}").json()["data"]["accepted_by"] == "alice"
 
 
-# ---- CI 镜像与 405 如实转译 (#362, 对齐 GitHub) ------------------------------
+# ---- forge 说没过就不合，405 如实转译 ----------------------------------------
 #
-# 平台不发明 GitHub 没有的拦截：没有 branch protection 时 GitHub 让人看着红色
-# 的 ✗ 自己决定合不合——平台持同一姿态，把合并那一刻的检查状态写进卡片留痕，
-# 而不是拒绝合并。405 也一样：如实转译 forge 给的理由，而不是一律说成冲突。
+# 采纳不再「读一次检查、把状态写进 note、照合」：forge 没给出全绿的结论，平台就
+# 不合，卡挂到 `pr_open` 上等它。要红着合，走署名的人工放行。判据是「这个 PR 的
+# 检查过没过」而不是某一道具名检查，所以没配 CI 的仓库不受影响。
+#
+# 405 照旧如实转译 forge 给的理由，而不是一律说成冲突。
 
 
-def test_red_checks_do_not_block_but_are_mirrored(client, pr_world):
-    """红着的 CI 不拦采纳（对齐 GitHub），但合并那一刻的检查状态必须留在卡片
-    note 上：人看着红点采纳是合法决定，决定的上下文要事后可读。"""
+def _accept(client, card_id: str, handle: str = "alice"):
+    return client.post(
+        f"/accept-cards/{card_id}/accept",
+        json={"decided_by": handle},
+        headers=session_auth_headers(handle),
+    )
+
+
+def _merged(calls) -> list:
+    return [c for c in calls if c[0] == "merge"]
+
+
+@pytest.fixture
+def room(monkeypatch):
+    """平台在房间里说的每一句（`content` + 折叠起来的 `meta.detail`）。
+
+    平台提示是 fire-and-forget 发出去的（`app.core.background.spawn`），不经过
+    work runner，也就不在 `/blocks` 上等得到；这里在它被交给 spawn 之前把参数记
+    下来——和这条路的单元测试用的是同一个接缝。"""
+    from app.domain.review import services as review_services
+
+    said: list[dict] = []
+
+    async def _posted() -> bool:
+        return True
+
+    def _record(_factory, **kwargs):
+        said.append(kwargs)
+        return _posted()
+
+    monkeypatch.setattr(review_services.webhook_service, "post_with_retries", _record)
+    return said
+
+
+def _room_text(said: list[dict]) -> str:
+    return "\n".join(
+        f"{s.get('content') or ''}\n{(s.get('meta') or {}).get('detail') or ''}"
+        for s in said
+    )
+
+
+def test_a_red_pr_is_not_merged_by_the_accept(client, pr_world):
+    """红着的检查拦下这次合并。三件事一起钉：合并 API 一次都没被调用；卡没进
+    accepted；也没有偷偷退回本地合并——那等于绕开 PR 把红的直推 main。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
@@ -670,60 +715,134 @@ def test_red_checks_do_not_block_but_are_mirrored(client, pr_world):
         _check(name="build", status="in_progress", conclusion=None),
     ]
 
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
+    r = _accept(client, cid)
     assert r.status_code == 200
     card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert "PR #14" in card["note"]
+
+    assert _merged(_FakeClient.calls) == []
+    assert pr_world["local_merges"] == []
+    assert card["status"] == "pr_open"  # 等检查，不是「已采纳」
+    assert client.get(f"/topics/{tid}").json()["data"]["accepted_at"] is None
+    # 卡面说得出是哪一项红了，以及还有哪一项没跑完。
     assert "未通过：test" in card["note"]
     assert "还在跑：build" in card["note"]
-    # The merge DID happen — mirror, not gate.
-    assert [c for c in _FakeClient.calls if c[0] == "merge"] != []
+
+
+def test_a_red_pr_says_in_the_room_what_failed_and_how_to_get_through(
+    client, pr_world, room
+):
+    """房间里那张卡要够人一眼决定下一步：哪项检查红了，以及红着也要合的出口。
+    「哪项红了」在 content + meta.detail 合起来找——平台提示的统一契约把 content
+    压成一行人话，原话收进 detail 由前端折叠。"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=17)
+    _FakeClient.checks = [_check(name="empty-pr-guard", conclusion="failure")]
+
+    assert _accept(client, cid).status_code == 200
+
+    said = _room_text(room)
+    assert "PR #17" in said
+    assert "empty-pr-guard" in said
+    assert "人工放行" in said
+
+
+def test_a_pr_whose_checks_are_still_running_is_waited_for(client, pr_world):
+    """还在跑不是「过了」，也不是「拒了让人待会儿再点」：卡进等检查状态，平台
+    自己等——CI 要跑十几分钟，让人守着标签页重新点是把平台的活派给人。"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid)
+    _give_card_a_pr(client, cid, number=18)
+    _FakeClient.checks = [_check(name="test", status="in_progress", conclusion=None)]
+
+    r = _accept(client, cid)
+    assert r.status_code == 200
+    card = r.json()["data"]
+
+    assert _merged(_FakeClient.calls) == []
     assert pr_world["local_merges"] == []
+    assert card["status"] == "pr_open"
+    assert "还在跑：test" in card["note"]
+    assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
-def test_absent_checks_are_mirrored(client, pr_world):
-    """没配 CI 的项目照常采纳，但「这次合并没有任何检查把关」要写在卡上——
-    #362 的四层静默失效里，最后一层就是没人说得出这句话。"""
+def test_a_repo_with_no_checks_is_accepted_exactly_as_before(client, pr_world):
+    """没配 CI 的仓库不受这道闸影响：没有检查就没有红，采纳纯粹是人的判断
+    (#363)。但「这次合并没有任何检查把关」要写在卡上——#362 的四层静默失效里，
+    最后一层就是事后没人说得出这句话。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=15)
     _FakeClient.checks = []
 
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
+    r = _accept(client, cid)
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "accepted"
+    assert _merged(_FakeClient.calls) != []
     assert "没有任何 CI 检查" in card["note"]
 
 
-def test_checks_read_failure_does_not_block_the_merge(client, pr_world):
-    """镜像读取失败不拦合并（它只是镜像），但「没读到」也要如实写上。"""
+def test_an_unreadable_verdict_is_not_taken_for_green(client, pr_world):
+    """读不到结论 ≠ 结论是绿的。平台合的必须是 forge 真答过的那个绿，所以这里
+    也不合——但卡面要如实说是「没读到」，不能写成「红的」。"""
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
     _give_card_a_pr(client, cid, number=16)
     _FakeClient.checks = GitHubPRError("check-runs read failed (HTTP 500)")
 
-    r = client.post(
-        f"/accept-cards/{cid}/accept",
-        json={"decided_by": "alice"},
-        headers=session_auth_headers("alice"),
-    )
+    r = _accept(client, cid)
     assert r.status_code == 200
     card = r.json()["data"]
-    assert card["status"] == "accepted"
+
+    assert _merged(_FakeClient.calls) == []
+    assert pr_world["local_merges"] == []
+    assert card["status"] == "pr_open"
     assert "未能读取 CI 检查状态" in card["note"]
-    assert [c for c in _FakeClient.calls if c[0] == "merge"] != []
+    assert "未通过" not in card["note"]
+
+
+def test_a_human_can_still_force_the_red_pr_through(client, pr_world, monkeypatch):
+    """默认拒绝、显式放行：房间里承诺的那个出口必须真的能走。拦下来的卡停在
+    `pr_open` 上，正是人工放行认的状态——否则那句「可以人工放行」是假的。"""
+    from app.domain.review import github_pr
+
+    fake = FakeGitHubPrClient()
+    github_pr.set_default_client(fake)
+
+    async def _connected_token(_session, _handle):
+        return "gho_alice", ""
+
+    monkeypatch.setattr(
+        oauth_services, "get_github_user_token_for_handle_with_reason", _connected_token
+    )
+    try:
+        pid = _make_project(client)
+        tid = _make_topic(client, pid)
+        cid = _make_card(client, tid)
+        _give_card_a_pr(client, cid, number=19)
+        _FakeClient.checks = [_check(name="test", conclusion="failure")]
+
+        assert _accept(client, cid).status_code == 200
+        assert _merged(_FakeClient.calls) == []
+
+        r = client.post(
+            f"/accept-cards/{cid}/merge-anyway",
+            json={"reason": "CI runner 挂了，跟这次改动无关"},
+            headers=session_auth_headers("alice"),
+        )
+        assert r.status_code == 200, r.text
+        card = r.json()["data"]
+        assert [m["number"] for m in fake.merge_calls] == [19]
+        assert card["status"] == "accepted"
+        assert "alice" in card["note"]
+        assert "CI runner 挂了" in card["note"]
+    finally:
+        github_pr.set_default_client(None)
 
 
 def test_merge_405_non_conflict_surfaces_githubs_reason(client, pr_world):
