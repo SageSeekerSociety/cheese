@@ -54,6 +54,8 @@ before deciding it is worth keeping.
 
 Not hypothetically — concurrently, in this repo, on adjacent files. Before starting a fix, look for someone already fixing it in an open PR. Before handing work off, review **every path your change touches**; a cache directory in that list is a stop sign.
 
+So never `git stash`. The stash is one stack for the whole repository, shared by every worktree, and nothing marks which worktree an entry came from — a pop in yours applies somebody else's uncommitted work and drops it from under them, silently, with no error on either side. Commit instead: the worktree you are in is already the second checkout a stash would have bought you.
+
 ## Test behaviour, never the implementation
 
 Write functional tests. Do not read the source to work out what to assert — a test derived from the implementation passes by construction and proves nothing, including after the implementation breaks.
