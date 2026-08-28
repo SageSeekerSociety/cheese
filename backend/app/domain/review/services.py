@@ -120,14 +120,14 @@ class _GitHubCredentials:
     """驱动一张 `pr_open` 卡所需的 GitHub 凭据 —— **两把钥匙，不是一把**。
 
     个人 token 那条路上它们是同一个字符串（一个 OAuth token 什么都能干）。App
-    这条路上它们不是，而且分不开就会坏：`GitHubAppTokens.write_token()` 请求的是
-    `contents:write` + `pull_requests:write` + `metadata:read`，**没有 `checks`**
-    （`_WRITE_PERMISSIONS`，故意的：写权限不该顺带把「读检查」也捆进去；
-    `GitHubPRClient.check_runs` 早就为此改用只读 mint 了）。拿写 token 去读
-    `/commits/{ref}/check-runs` 会 403 —— 而轮询器把它当成一次 GitHub 抖动，下一
-    轮再来，于是卡永远停在 `pr_open`，卡面上什么都不会写。
+    这条路上它们不是，而且分不开就会坏：`GitHubAppTokens.write_token()` 逐项写死了
+    `contents:write` + `pull_requests:write` + `workflows:write` + `metadata:read`
+    （`_WRITE_PERMISSIONS`，为的是某项被撤销时在铸币那一刻就报出来），**里面没有
+    `checks`**。拿它去读 `/commits/{ref}/check-runs` 会 403 —— 而轮询器把它当成一次
+    GitHub 抖动，下一轮再来，于是卡永远停在 `pr_open`，卡面上什么都不会写。
 
-    所以：GET 用 `read`，推分支和合并用 `write`。
+    所以：GET 用 `read`（`installation_token()`，带 `checks:read`），推分支和合并用
+    `write`。
     """
 
     write: str
@@ -156,8 +156,8 @@ def _ci_log_howto(repo_full_name: str) -> str:
 
     The excerpt above it is deliberately short, so the message has to say how
     to get the whole thing — and that path was undocumented everywhere 芝士
-    can read (not in `.claude/`, not in `CLAUDE.md`): the read-only token is
-    a `cheese gh-token` away, but nothing told it so, and nothing told it the
+    can read (not in `.claude/`, not in `CLAUDE.md`): the token is a
+    `cheese gh-token` away, but nothing told it so, and nothing told it the
     repo's name either, which `gh api repos/:owner/:repo/...` needs. Both are
     in hand right here, at the one moment they're wanted.
     """
@@ -166,7 +166,7 @@ def _ci_log_howto(repo_full_name: str) -> str:
         "上面是失败 job 的名字、Actions 页面链接，以及日志里错误行附近的片段。"
         "要看完整日志，在本话题的工作区里跑：\n"
         "```bash\n"
-        "export GH_TOKEN=$(cheese gh-token)   # 只读 token，约 1 小时过期\n"
+        "export GH_TOKEN=$(cheese gh-token)   # 本仓库的 GitHub token，约 1 小时过期\n"
         f"gh api repos/{repo}/actions/jobs/<job_id>/logs\n"
         "```\n"
         "（`<job_id>` 就是上面 Actions 链接里 `/job/` 后面那串数字；"
@@ -1762,7 +1762,7 @@ class AcceptService:
             return None, "平台 GitHub App 对这个项目不可用"
         try:
             write, _ = await tokens.write_token()
-            read, _ = await tokens.readonly_token()
+            read, _ = await tokens.installation_token()
         except Exception as exc:  # noqa: BLE001 — pause this tick, don't crash
             return None, f"平台 GitHub App 取 token 失败（{type(exc).__name__}）"
         return _GitHubCredentials(write=write, read=read), ""

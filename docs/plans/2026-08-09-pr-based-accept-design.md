@@ -46,11 +46,12 @@ API. GitHub's machinery (checks, audit, conflict detection) comes for free.
   remote parses as `github.com/<owner>/<repo>`. Phase 1 assumes the single
   configured installation (the dogfood repo); per-project installations are #192.
 - **Auth**: installation tokens minted server-side with `contents:write` +
-  `pull_requests:write` (`GitHubAppTokens.write_token()`, cached separately from
-  the sandbox read-only mint). Tokens never leave the backend process; the git
-  push wires the token through an in-memory credential helper (env var), never
-  argv, never the on-disk credential store. The host credential-store helper is
-  explicitly reset for these pushes so attribution is always the App.
+  `pull_requests:write` (`GitHubAppTokens.write_token()`, cached in its own slot,
+  separate from the full-grant mint an agent gets). This mint never leaves the
+  backend process; the git push wires the token through an in-memory credential
+  helper (env var), never argv, never the on-disk credential store. The host
+  credential-store helper is explicitly reset for these pushes so attribution is
+  always the App.
 - **Branch on GitHub**: same name as local, `topic/<8hex>`. Re-pushed
   (`--force-with-lease`) at accept time after the pre-merge snapshot, so
   last-minute worktree edits and conflict fixes are what actually merges.

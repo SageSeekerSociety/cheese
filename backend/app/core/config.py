@@ -527,9 +527,9 @@ class Settings(BaseSettings):
 
     # --- GitHub App (cheesex-app, #188 minimal / #192 git integration) ---
     # The platform's GitHub credential: the backend holds the App private key
-    # and mints short-lived installation tokens, narrowed per use (sandboxes
-    # only ever see read-only ones). Unset = the /sandbox/github-token
-    # endpoint answers "not configured"; nothing else changes.
+    # and mints short-lived installation tokens from it. Unset = the
+    # /sandbox/github-token endpoint answers "not configured"; nothing else
+    # changes.
     github_app_id: int | None = None
     github_app_private_key_path: str | None = None
     # Which installation to mint a token for is resolved per-project via the

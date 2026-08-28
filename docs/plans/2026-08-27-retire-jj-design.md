@@ -1,6 +1,6 @@
 # 退掉 jj：让芝士自己提交、推送、开 PR
 
-**状态：设计已定（Zhifei，2026-08-27）。第一步已落地——平台不再把「提交没做成」当成「本来就没活」（见第三节）；主体（芝士自己提交、平台停止写树）还没开工。**
+**状态：设计已定（Zhifei，2026-08-27）。已落地两块——平台不再把「提交没做成」当成「本来就没活」（见第三节），以及芝士手上那张 GitHub 票不再是只读的（见第六节第一条）；主体（芝士自己提交、平台停止写树）还没开工。**
 
 这份文档面向零前置知识的读者。前半解释平台今天在做什么、为什么这么做；后半是要改成什么，以及为什么。涉及的术语第一次出现时都会解释。
 
@@ -161,16 +161,14 @@ Hint: Run `jj workspace update-stale` to update it.
 
 ## 六、开工前要确认的（已核实）
 
-**1. 芝士推送用什么凭据 —— `cheese gh-token` 不够，但推平台自己那个仓不需要它。**
+**1. 芝士推送用什么凭据 —— 已经解决。**
 
-`/sandbox/github-token` 只铸 `_SANDBOX_PERMISSIONS` 里那一组，每一项都是 `read`，且这一点是被测试钉住的（`app/domain/agent/github_app.py`：这组权限「是挡在 agent 和 App 的 contents/pull_requests/workflows 写权限之间的那一行」）。所以它连 push 都不够，更开不了 PR。
+`/sandbox/github-token` 铸的是平台 GitHub App 在这个仓库上被授予的**全部**权限，一项不减：`contents` / `pull_requests` / `workflows` 的写权限都在里面。原来那组收窄成只读的权限、以及把它钉住的那条测试，都已经删掉（Zhifei，2026-08-27：全给，不做隔离——这也正是 `docs/agent-principles.md` 第二条「凭证不携带任何缩水」）。于是两条路都通：
 
-但芝士要推的第一站不是 GitHub，是**项目在平台上的那个仓**：`api/routes/git_http.py` 用话题手上那个 scoped cheese token 认证 `git-receive-pack`，设备路今天就是这么把分支推回来的。所以
+- **自己提交 + 自己推回项目仓**：`api/routes/git_http.py` 用话题手上那个 scoped cheese token 认证 `git-receive-pack`，设备路今天就是这么把分支推回来的，零新凭据。
+- **自己推到 GitHub、自己开 PR**：`export GH_TOKEN=$(cheese gh-token)`，然后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`、`gh api repos/<owner>/<repo>/pulls`。沙箱镜像里 git 2.39.5 和 gh 2.62.0 都在，两条命令都不需要新工具。
 
-- **自己提交 + 自己推回项目仓**：零新凭据，路已经通。
-- **自己推到 GitHub、自己开 PR**：要一条新的写凭据通道。那是一个单独的安全决定（今天平台是用人的 token 或 App 的写 token 在后端推的），**不能顺手做**。
-
-先做前者、把推 GitHub 和开 PR 继续留在后端，是一个完整可落地的中间态：平台不再写任何人的工作树，而写凭据仍然没离开后端。
+**所以剩下的缺口不是凭据，是一个 `.git`。** jj 工作区里没有它（`jj workspace add` 出来的次级工作区不 colocate），`jj git push` 又用不了，拿着这张票照样推不动——要等第四节把 jj workspace 换成 git worktree。跑在托管机器上的那条路（普通 `git clone`）今天就已经能一路走到 PR。
 
 **2. 多棵树共用一个仓库 —— 对位替换成立。**
 
