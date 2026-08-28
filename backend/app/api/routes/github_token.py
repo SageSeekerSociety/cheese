@@ -4,11 +4,12 @@ Root-mounted like ``/llm`` and the other machine-facing routers: everything a
 sandbox calls is built as ``{connector_public_base}/<path>``, which maps onto
 the backend root, not ``/api``.
 
-The sandbox authenticates with its scoped cheese token and gets back a
-read-only GitHub installation token (~1h). Which read permissions it carries
-depends on what the App was granted, so the payload spells them out rather
-than hardcoding a list — see ``app.domain.agent.github_app``. The App's
-private key and its write permissions never leave the backend.
+The sandbox authenticates with its scoped cheese token and gets back a GitHub
+installation token (~1h) carrying everything the App was granted on this repo —
+enough to push a branch and open a PR, not only to read. What exactly that is
+depends on the installation's grants, so the payload spells them out rather
+than hardcoding a list — see ``app.domain.agent.github_app``. The App's private
+key never leaves the backend.
 """
 
 import uuid
@@ -63,8 +64,8 @@ async def sandbox_github_token(
             "configured on this deployment"
         )
     try:
-        gh_token, expires_at = await minter.readonly_token()
-        granted = await minter.sandbox_permissions()
+        gh_token, expires_at = await minter.installation_token()
+        granted = await minter.granted_permissions()
     except GitHubAppError as exc:
         raise GatewayUnavailableError(str(exc)) from exc
     return ok(
@@ -72,11 +73,15 @@ async def sandbox_github_token(
             "token": gh_token,
             "expires_at": expires_at,
             # So an agent reading the payload knows what it can and cannot do
-            # with this credential without trial-and-error. Computed, not
-            # hardcoded: the set shrinks or grows with the App's grants, and a
-            # stale literal here would send an agent at a 403 it was told to
-            # expect success from.
-            "permissions": "read-only: " + ", ".join(sorted(granted)),
+            # with this credential without trial-and-error. Levels are spelled
+            # out per permission because the difference between `contents:
+            # read` and `contents: write` is the difference between reading the
+            # repo and delivering the work. Computed, not hardcoded: the set
+            # shrinks or grows with the App's grants, and a stale literal here
+            # would send an agent at a 403 it was told to expect success from.
+            "permissions": ", ".join(
+                f"{name}: {level}" for name, level in sorted(granted.items())
+            ),
             #: "owner/repo" this token is scoped to.
             "repo": installation.repo if installation else None,
         }

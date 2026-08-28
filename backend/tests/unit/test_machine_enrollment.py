@@ -422,19 +422,46 @@ def test_the_script_provides_tmux_the_connector_needs():
 
 def test_the_script_confirms_the_service_actually_stayed_up():
     """`link connect` returns as soon as systemd accepts the start, which is
-    before the process can fail — so its exit code alone is not evidence."""
+    before the process can fail — so its exit code alone is not evidence.
+
+    The connector installs into the enrolling account's own systemd, so the
+    question has to be put to that manager; the system one has never heard of
+    the unit and would answer "inactive" for a connector that is running fine.
+    """
     script = enrollment.bootstrap_script(
         origin="https://x.test", token="T", device_id="D"
     )
-    assert "systemctl is-active --quiet cheese" in script
+    assert "systemctl --user is-active --quiet cheese" in script
     connect = next(
         text
         for text in script.splitlines()
         if "link connect" in text and text.startswith('"')
     )
-    # sudo inside `link connect` would otherwise consume the rest of this very
-    # script, which arrives on stdin.
+    # This script arrives on stdin; anything `link connect` reads from there
+    # would swallow the rest of it.
     assert connect.endswith("< /dev/null")
+
+
+def test_the_script_refuses_a_machine_that_will_drop_off_when_ssh_closes():
+    """Nobody ever logs into a provisioned machine. Its connector lives in a
+    user service manager, which systemd tears down with the account's last
+    session — this ssh one — unless the account lingers.
+
+    So a machine that enrols without linger reports healthy, goes green on the
+    devices page, and is gone seconds later with nothing said. Enrollment has to
+    fail while somebody is still looking at the output.
+    """
+    script = enrollment.bootstrap_script(
+        origin="https://x.test", token="T", device_id="D"
+    )
+    code = [line for line in script.splitlines() if not line.lstrip().startswith("#")]
+    checks = [i for i, line in enumerate(code) if "Linger" in line]
+    assert checks, "the script never asks whether the account lingers"
+    # Whatever it tries in between, the LAST word on linger decides the exit.
+    assert "exit 1" in "\n".join(code[checks[-1] : checks[-1] + 6])
+    # ...and it asks after the connector is started, or nothing set it yet.
+    connects = next(i for i, line in enumerate(code) if "link connect" in line)
+    assert connects < checks[0]
 
 
 async def test_a_service_that_dies_is_recorded_as_a_failure(monkeypatch):

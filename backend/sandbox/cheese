@@ -578,6 +578,24 @@ def source_fingerprint() -> str:
         return "unknown"
 
 
+def _in_a_git_worktree() -> bool:
+    """Whether the cwd sits inside a git checkout.
+
+    Decides which delivery recipe `gh-token` prints. A jj topic workspace has
+    no `.git` at all, so the push line would be a recipe that cannot run —
+    worse than none, because the failure it produces (`not a git repository`)
+    reads like the token is at fault.
+    """
+    here = os.path.abspath(os.getcwd())
+    while True:
+        if os.path.exists(os.path.join(here, ".git")):
+            return True
+        parent = os.path.dirname(here)
+        if parent == here:
+            return False
+        here = parent
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="cheese",
@@ -1014,19 +1032,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser(
         "gh-token",
-        help="铸一个只读 GitHub token(约1小时过期); stderr 会带上仓库名、"
-             "这个 token 到底能读什么,以及对应的具体命令",
+        help="铸一个 GitHub token(约1小时过期); stderr 会带上仓库名、"
+             "这个 token 到底能干什么,以及对应的具体命令",
         description=(
-            "铸一个只读 token 读这个仓库:`GH_TOKEN=$(cheese gh-token) gh api "
+            "铸一个 token 操作这个仓库:`GH_TOKEN=$(cheese gh-token) gh api "
             "repos/<owner/repo>/issues/187`\n"
             "\n"
-            "**先看 stderr 那几行再动手**。token 能读什么不是固定的——它是平台 GitHub App\n"
-            "被授予的权限收窄成只读的结果,所以能力清单由铸出来的那一刻的 stderr 说了算,\n"
-            "不要凭印象假设「只能查 CI」而去找人贴 issue 正文。stderr 会按当前实际权限\n"
-            "打出可以直接抄的命令(check-runs / job 日志 / issue / PR / 仓库文件)。\n"
+            "**先看 stderr 那几行再动手**。token 能干什么不是固定的——它带的就是平台\n"
+            "GitHub App 在这个仓库上被授予的全部权限,一项不减,所以能力清单由铸出来的\n"
+            "那一刻的 stderr 说了算。不要凭印象假设「只能查 CI」而去找人贴 issue 正文,\n"
+            "也不要假设推分支/开 PR 得交给平台。stderr 会按当前实际权限打出可以直接抄的\n"
+            "命令(check-runs / job 日志 / issue / PR / 仓库文件 / 推分支 / 开 PR)。\n"
             "\n"
-            "本仓库的版本控制是 jj 不是 git,工作区里没有 .git,所以 `gh` 自己推断不出仓库,"
-            "会报 `not a git repository`——**必须显式带 -R owner/repo**(或用 "
+            "`gh` 推断不出这是哪个仓库(工作区的 origin 不是 GitHub,jj 工作区连 .git 都"
+            "没有),会报 `not a git repository`——**必须显式带 -R owner/repo**(或用 "
             "`gh api repos/<owner>/<repo>/...` 的全路径写法)。仓库名和过期时间不用自己猜,"
             "stderr 里就有;stdout 只有 token 本身,所以 `GH_TOKEN=$(cheese gh-token)` "
             "照常能用。"
@@ -1347,7 +1366,7 @@ def main() -> None:
         # granted, and a hardcoded list went stale the moment that changed —
         # which is how agents ended up believing they couldn't read an issue
         # that the token could in fact read.
-        perms = data.get("permissions") or "read-only"
+        perms = data.get("permissions") or "(权限未知)"
         lines = [
             f"[cheese] {perms}, 仓库 {repo}, 过期 {data.get('expires_at', '?')}",
             "[cheese] 看 CI: export GH_TOKEN=$(cheese gh-token) 然后",
@@ -1371,6 +1390,26 @@ def main() -> None:
             lines.append(
                 "[cheese] 读工作区以外的仓库文件: "
                 f"gh api repos/{repo}/contents/<path>?ref=<branch>"
+            )
+        # 有写权限就把交付那一步也写出来。少了这两行,一个能推、能开 PR 的 agent 照样
+        # 会以为最后一步得交给平台或者人 —— 而它并不会为了确认这件事去试一次。
+        if "contents: write" in perms:
+            if _in_a_git_worktree():
+                lines.append(
+                    "[cheese] 推分支(凭据走 URL,token 一小时后自然失效): git push "
+                    f"https://x-access-token:$GH_TOKEN@github.com/{repo} HEAD:<分支>"
+                )
+            else:
+                # jj 工作区里没有 .git,推不动;把原因说出来,好过让它试一次 git push
+                # 然后从 `not a git repository` 里自己猜是不是权限问题。
+                lines.append(
+                    "[cheese] 这个工作区没有 .git(是 jj 的那种),推不出去——"
+                    "token 有写权限,但推分支这一步在平台侧"
+                )
+        if "pull_requests: write" in perms:
+            lines.append(
+                f"[cheese] 开 PR: gh api repos/{repo}/pulls -f head=<分支> "
+                "-f base=<主干> -f title=<标题> -f body=<正文>"
             )
         print("\n".join(lines), file=sys.stderr)
     elif a.cmd == "members":

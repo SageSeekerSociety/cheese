@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Annotated, NamedTuple
 
 import jwt
@@ -113,6 +114,91 @@ def verify_2fa_pending_token(token: str) -> Pending2faClaims | None:
     except (KeyError, TypeError, ValueError):
         return None
     return Pending2faClaims(user_id=user_id, jti=jti, expires_at=expires_at)
+
+
+# A sudo ticket outlives only the screen that asked for it: the client
+# re-authenticates, gets the ticket, and immediately spends it on the one
+# operation it was minted for.
+SUDO_TICKET_TTL_S = 300
+
+
+class SudoPurpose(StrEnum):
+    """The one operation a sudo ticket may be spent on.
+
+    A re-authentication is proof of presence for *something*. Without a name
+    on it, a ticket the owner minted to add a passkey is equally good for
+    switching their second factor off — the ceremony they consented to is not
+    the one that gets performed. So the purpose is asked for at mint time,
+    signed into the ticket, and checked at the entrance that redeems it.
+
+    Only the operations whose gate the server actually enforces belong here.
+    The rest are still gated in the client alone and ask for no ticket: a
+    credential with no lock to fit is not a protection, it is a spare key.
+    """
+
+    TWO_FA_DISABLE = "2fa:disable"
+
+
+class MintedSudoTicket(NamedTuple):
+    token: str
+    # Same split as the 2FA ticket above, for the same reason: the signature
+    # says the platform minted it, and only a live reservation says nobody
+    # has spent it yet.
+    jti: str
+
+
+def mint_sudo_ticket(user_id: int, purpose: SudoPurpose) -> MintedSudoTicket:
+    """A ticket proving this user just re-authenticated, for ``purpose`` only.
+
+    Like the 2FA ticket, the ``jti`` comes back for the caller to reserve —
+    this module stays pure JWT with no I/O, and a ticket whose reservation
+    failed must never reach a client, because nothing would redeem it.
+    """
+    now = int(_utcnow().timestamp())
+    jti = uuid.uuid4().hex
+    payload = {
+        "sub": str(user_id),
+        "type": "sudo",
+        "purpose": purpose.value,
+        "jti": jti,
+        "iat": now,
+        "exp": now + SUDO_TICKET_TTL_S,
+    }
+    return MintedSudoTicket(
+        token=jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), jti=jti
+    )
+
+
+class SudoTicketClaims(NamedTuple):
+    user_id: int
+    purpose: SudoPurpose
+    jti: str
+
+
+def verify_sudo_ticket(token: str) -> SudoTicketClaims | None:
+    """The claims a valid, unexpired sudo ticket carries, else None.
+
+    An access token is not a sudo ticket however freshly it was issued: the
+    ``type`` check is what keeps "is signed in" from being read as "just
+    proved they are here". A purpose this build does not know is likewise no
+    ticket — an unrecognised name cannot be matched against the entrance
+    redeeming it, so it can only be refused.
+    """
+    try:
+        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError:  # type: ignore[attr-defined]
+        return None
+    if decoded.get("type") != "sudo":
+        return None
+    jti = decoded.get("jti")
+    if not isinstance(jti, str) or not jti:
+        return None
+    try:
+        user_id = int(decoded.get("sub") or "")
+        purpose = SudoPurpose(decoded.get("purpose"))
+    except (TypeError, ValueError):
+        return None
+    return SudoTicketClaims(user_id=user_id, purpose=purpose, jti=jti)
 
 
 def create_refresh_token(user_id: int) -> str:

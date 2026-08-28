@@ -1,7 +1,8 @@
-// Package service runs `cheese` as a cross-platform system service via
-// kardianos/service, so `cheese link connect` / `cheese link auto-connect` drive
-// it under whatever init system the host uses (systemd, openrc, launchd). The
-// work itself — connecting out and hosting server-driven sessions — lives in
+// Package service runs `cheese` as a background service via kardianos/service,
+// so `cheese link connect` / `cheese link auto-connect` drive it under whatever
+// service manager the host uses (systemd, launchd). It is always the invoking
+// account's own service manager — the connector never asks for root. The work
+// itself — connecting out and hosting server-driven sessions — lives in
 // internal/host; this only adapts it to the service.Interface lifecycle.
 package service
 
@@ -13,6 +14,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -70,42 +72,35 @@ func (p *program) Stop(_ ksvc.Service) error {
 // New builds the kardianos service bound to the config at cfgPath. When the
 // service manager launches the binary it runs `cheese run --config <cfgPath>`.
 //
-// kardianos adapts to the init system but not to privilege: by default it
-// installs a system-level unit, which needs root (and, under systemd, a polkit
-// agent to prompt for it). We adapt that ourselves — running as a non-root user
-// installs a per-user service instead (systemd `--user`, launchd LaunchAgent),
-// which needs no root and no polkit. A machine's config already lives in the
-// user's home, so per-user is the natural default for an unprivileged install.
+// It is always a PER-USER service — systemd `--user`, launchd LaunchAgent —
+// installed into the invoking account's own home, because the connector has no
+// business asking for the machine's root password. kardianos defaults the other
+// way (a system unit, which needs root and, under systemd, a polkit agent), so
+// this is the one thing we override.
+//
+// Nothing is lost by it on Linux: `loginctl enable-linger` (see
+// KeepRunningAfterLogout) makes the user manager start at boot and outlive
+// logout, which is the whole of what a system unit was buying. On macOS a
+// LaunchAgent is bound to the owner's login session, and that is the honest
+// answer for a machine we do not own.
 func New(cfgPath string) (ksvc.Service, error) {
-	// Default to a per-user service when unprivileged, a system service when root.
-	return newService(cfgPath, os.Geteuid() != 0)
-}
-
-// newService builds the kardianos service as either a per-user or a system unit.
-func newService(cfgPath string, userService bool) (ksvc.Service, error) {
 	cfg := &ksvc.Config{
 		Name:        serviceName,
 		DisplayName: displayName,
 		Description: description,
 		Arguments:   []string{"run", "--config", cfgPath},
-		Option:      ksvc.KeyValue{"SystemdScript": systemdScript},
-	}
-	if userService {
-		// A per-user service (systemd --user / launchd LaunchAgent): no root or polkit.
-		cfg.Option["UserService"] = true
-	} else if u := os.Getenv("SUDO_USER"); u != "" && u != "root" {
-		// A *system* unit that starts at boot with nobody logged in — but run it AS the
-		// invoking user so it uses that user's home (config + private tmux) and gets a
-		// real $HOME (restish and tmux both need one; systemd/launchd populate HOME from
-		// the account database when User is set).
-		cfg.UserName = u
+		Option: ksvc.KeyValue{
+			"SystemdScript": systemdScript,
+			"UserService":   true,
+		},
 	}
 	return ksvc.New(&program{cfgPath: cfgPath}, cfg)
 }
 
-// systemdScript is the unit we install. It is kardianos's own template with one
-// line added — `KillMode=process` — and that line is the whole reason we carry a
-// template at all.
+// systemdScript is the unit we install. It is kardianos's own template with two
+// departures, and each one decides whether an installed connector works at all.
+//
+// `KillMode=process`.
 //
 // systemd's default, KillMode=control-group, SIGTERMs every process in the
 // unit's cgroup on stop. The connector's tmux server is in that cgroup (it was
@@ -119,6 +114,17 @@ func newService(cfgPath string, userService bool) (ksvc.Service, error) {
 // connector stops; the tmux server and the sessions inside it keep running; the
 // next start re-adopts them. Ending them is left to the verbs that say they end
 // them (`cheese link disconnect`, `cheese uninstall`).
+//
+// `WantedBy=default.target`, and no `User=`.
+//
+// kardianos's template is written for a system unit, and both of its answers
+// are wrong in a user manager. `multi-user.target` does not exist there:
+// `systemctl --user enable` accepts the unit, prints "added as a dependency to
+// a non-existent unit", and nothing ever starts it — so the connector would
+// come up the one time `cheese link connect` starts it by hand and never again
+// after a reboot, with the install having reported success. And systemd refuses
+// a `User=` in a user unit outright; there is only one account in scope, the one
+// whose home holds the config and the tmux socket.
 //
 // The template renders against kardianos's own field set and funcs (cmd,
 // cmdEscape), at install time, straight into the unit directory — so a field
@@ -136,7 +142,6 @@ StartLimitBurst=10
 ExecStart={{.Path|cmdEscape}}{{range .Arguments}} {{.|cmd}}{{end}}
 {{if .ChRoot}}RootDirectory={{.ChRoot|cmd}}{{end}}
 {{if .WorkingDirectory}}WorkingDirectory={{.WorkingDirectory|cmdEscape}}{{end}}
-{{if .UserName}}User={{.UserName}}{{end}}
 {{if .ReloadSignal}}ExecReload=/bin/kill -{{.ReloadSignal}} "$MAINPID"{{end}}
 {{if .PIDFile}}PIDFile={{.PIDFile|cmd}}{{end}}
 {{if and .LogOutput .HasOutputFileSupport -}}
@@ -155,24 +160,18 @@ Environment={{$k}}={{$v}}
 {{end -}}
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 `
 
-// serviceRunsAs is the account the installed unit will run under: the invoking
-// user normally, and SUDO_USER for a system unit installed with sudo (mirroring
-// newService, which sets cfg.UserName the same way).
+// serviceRunsAs is the account the installed unit will run under. A per-user
+// service is installed into the invoking account's own home and started by that
+// account's service manager, so there is only ever one answer.
 func serviceRunsAs() (uid int, name string) {
-	if os.Geteuid() == 0 {
-		if u := os.Getenv("SUDO_USER"); u != "" && u != "root" {
-			if acct, err := user.Lookup(u); err == nil {
-				if id, err := strconv.Atoi(acct.Uid); err == nil {
-					return id, u
-				}
-			}
-		}
-		return 0, "root"
+	uid = os.Getuid()
+	if acct, err := user.LookupId(strconv.Itoa(uid)); err == nil {
+		return uid, acct.Username
 	}
-	return os.Getuid(), strconv.Itoa(os.Getuid())
+	return uid, strconv.Itoa(uid)
 }
 
 // checkSelfUpdatable refuses an install that could never update itself.
@@ -230,11 +229,48 @@ func selfUpdatableIn(dir string, uid int, name string) error {
 		"refusing to install: the service would run as %s, which cannot write to %s "+
 			"— so this connector could never update itself, and the failure would be "+
 			"silent (a failed update keeps the old binary running by design).\n"+
-			"Install it under a directory that user owns and register the service from "+
-			"there:\n"+
+			"Install it under a directory that user owns and connect from there:\n"+
 			"  curl -fsSL <origin>/connector/install.sh | sh   # → ~/.local/bin/cheesehost\n"+
-			"  ~/.local/bin/cheesehost service install",
+			"  ~/.local/bin/cheesehost link connect",
 		name, dir)
+}
+
+// machineWideService returns the path of a cheese service installed for the
+// whole machine, or "" if there is none.
+//
+// Two connectors on one account is worse than none: they share the device
+// credential the server authenticates, and they share the tmux server every
+// session lives in, so each one adopts and tears down the other's screens. A
+// machine-wide service belongs to root, and this command has no root and wants
+// none — so it refuses and names the commands that clear it, rather than
+// installing a second connector next to the first.
+func machineWideService() string {
+	return machineWideServiceUnder("/")
+}
+
+// machineWideServiceUnder is the search, rooted so it can be tested against a
+// real directory instead of the machine's own /etc.
+func machineWideServiceUnder(root string) string {
+	for _, rel := range []string{
+		"etc/systemd/system/" + serviceName + ".service",
+		"Library/LaunchDaemons/" + serviceName + ".plist",
+	} {
+		path := filepath.Join(root, rel)
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	return ""
+}
+
+// removeMachineWideService is the command that clears what machineWideService
+// found — the service manager's own removal, not just the file, or the manager
+// keeps the definition until the next reload.
+func removeMachineWideService(path string) string {
+	if strings.HasSuffix(path, ".plist") {
+		return "sudo launchctl bootout system/" + serviceName + " ; sudo rm " + path
+	}
+	return "sudo systemctl disable --now " + serviceName + " && sudo rm " + path
 }
 
 // Control runs an install/uninstall/start/stop/restart action against the service.
@@ -249,9 +285,19 @@ func Control(cfgPath, action string) error {
 	if err := checkSelfUpdatable(); err != nil {
 		return err
 	}
-	// An install over an existing unit REPLACES its definition. kardianos refuses
-	// to overwrite ("Init already exists"), and `cheese link connect` installs on
-	// every run and ignores the error — so a unit written by an older build would
+	if path := machineWideService(); path != "" {
+		return fmt.Errorf(
+			"refusing to install: a machine-wide cheese service is already installed "+
+				"at %s, and a second connector beside it would fight this one for the "+
+				"same device credential and the same tmux server.\n"+
+				"Remove it (this needs root, which is why this command will not do it "+
+				"for you), then run this again:\n"+
+				"  %s",
+			path, removeMachineWideService(path))
+	}
+	// An install over an existing unit REPLACES its definition, and `cheese link
+	// connect` installs on every run — but kardianos refuses to overwrite ("Init
+	// already exists"), so on its own a unit written by an older build would
 	// outlive every reinstall and every self-update, and the machine would keep
 	// the old definition forever with nothing anywhere saying so. That is #501's
 	// shape exactly: a rollout that silently does not take. The service manager's
@@ -277,36 +323,23 @@ func RunForeground(cfgPath string) error {
 	return s.Run()
 }
 
-// Status returns a human-readable service status string. It looks for the service under
-// both privilege variants — the one matching our own euid first, then the other — so a
-// normal-user `cheese status` still reports a *system* service installed via sudo (and
-// vice versa). Querying a system unit's state needs no root. "not installed" means
-// neither variant exists.
+// Status returns a human-readable service status string, asking this account's
+// own service manager — the only one an install can have written to.
 func Status(cfgPath string) (string, error) {
-	prefUser := os.Geteuid() != 0
-	var lastErr error
-	for _, userService := range []bool{prefUser, !prefUser} {
-		s, err := newService(cfgPath, userService)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		st, err := s.Status()
-		if err != nil {
-			lastErr = err // most likely ErrNotInstalled for this variant — try the other
-			continue
-		}
-		switch st {
-		case ksvc.StatusRunning:
-			return "running", nil
-		case ksvc.StatusStopped:
-			return "stopped", nil
-		default:
-			return "unknown", nil
-		}
+	s, err := New(cfgPath)
+	if err != nil {
+		return "unknown", nil
 	}
-	if lastErr != nil {
+	st, err := s.Status()
+	if err != nil {
 		return "not installed", nil
 	}
-	return "unknown", nil
+	switch st {
+	case ksvc.StatusRunning:
+		return "running", nil
+	case ksvc.StatusStopped:
+		return "stopped", nil
+	default:
+		return "unknown", nil
+	}
 }

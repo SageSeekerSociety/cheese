@@ -1,5 +1,5 @@
-"""GET /sandbox/github-token — the read-only credential a sandbox uses to
-read the repo it works on, and the repo name that makes it usable.
+"""GET /sandbox/github-token — the GitHub credential a sandbox works with, and
+the repo name that makes it usable.
 
 A token on its own leaves the caller holding a credential with nothing to
 point it at: `gh api repos/:owner/:repo/...` needs a name, and a topic
@@ -29,21 +29,23 @@ class _Minter:
     def __init__(self, permissions: dict[str, str]) -> None:
         self._permissions = permissions
 
-    async def readonly_token(self):
-        return "ghs_readonly", "2026-08-11T09:00:00Z"
+    async def installation_token(self):
+        return "ghs_installation", "2026-08-11T09:00:00Z"
 
-    async def sandbox_permissions(self):
+    async def granted_permissions(self):
         return self._permissions
 
 
-# What the sandbox mint narrows to on an installation that grants `issues`.
+# What cheesex-app holds on SageSeekerSociety, plus the `issues: read` an admin
+# may add: whatever the installation was granted is what the token carries.
 _FULL = {
     "actions": "read",
     "checks": "read",
-    "contents": "read",
+    "contents": "write",
     "issues": "read",
     "metadata": "read",
-    "pull_requests": "read",
+    "pull_requests": "write",
+    "workflows": "write",
 }
 
 
@@ -79,10 +81,11 @@ def test_token_payload_names_the_repo_it_works_on(client, monkeypatch):
 
     assert r.status_code == 200
     data = r.json()["data"]
-    assert data["token"] == "ghs_readonly"
+    assert data["token"] == "ghs_installation"
     assert data["repo"] == "acme/widgets"
     assert data["permissions"] == (
-        "read-only: actions, checks, contents, issues, metadata, pull_requests"
+        "actions: read, checks: read, contents: write, issues: read, "
+        "metadata: read, pull_requests: write, workflows: write"
     )
 
 
@@ -102,10 +105,21 @@ def test_the_payload_reports_the_permissions_this_token_really_has(client, monke
         headers={"X-Cheese-Token": mint_scoped_token(project_id=project_id)},
     )
 
-    assert r.json()["data"]["permissions"] == "read-only: actions, checks, metadata"
+    assert (
+        r.json()["data"]["permissions"] == "actions: read, checks: read, metadata: read"
+    )
 
 
-def test_the_sandbox_payload_never_advertises_write(client, monkeypatch):
+def test_the_payload_spells_out_the_level_not_just_the_name(client, monkeypatch):
+    """This assertion used to be its opposite: the payload was required to
+    start with "read-only: " and to contain no `write` anywhere.
+
+    It was reversed deliberately (Zhifei, 2026-08-27): an agent is a full
+    member of the room, and every stall this platform has had came from a
+    credential that was too small, never from one that was too large
+    (`docs/agent-principles.md` §2). Reporting the name without the level is
+    the same failure in miniature — an agent that reads "contents" cannot tell
+    whether it may push, so it either asks a human or finds out from a 403."""
     project_id = str(uuid.uuid4())
     _wire(monkeypatch, installation=_Installation("acme/widgets"))
 
@@ -115,11 +129,11 @@ def test_the_sandbox_payload_never_advertises_write(client, monkeypatch):
     )
 
     permissions = r.json()["data"]["permissions"]
-    assert permissions.startswith("read-only: ")
-    assert "write" not in permissions
-    # The two grants the App holds that would let an agent rewrite the repo or
-    # its CI. Neither is in the sandbox set, at any level.
-    assert "workflows" not in permissions
+    assert "contents: write" in permissions
+    assert "pull_requests: write" in permissions
+    # Pushing a branch that touches .github/workflows/* needs this one, and
+    # GitHub's refusal names the permission rather than the file.
+    assert "workflows: write" in permissions
 
 
 def test_unconnected_project_gets_no_token(client, monkeypatch):

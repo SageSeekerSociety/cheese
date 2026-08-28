@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (
+    SudoPurpose,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -44,6 +45,7 @@ from app.core.errors import (
     ForbiddenError,
     InternalServerError,
     NotFoundError,
+    SudoRequiredError,
     UnprocessableEntityError,
 )
 from app.db.session import get_db
@@ -129,6 +131,17 @@ class SudoAuthRequest(BaseModel):
 
     method: str
     credentials: dict = Field(default_factory=dict)
+    # Which privileged operation the resulting ticket may be spent on. Absent
+    # for the operations still gated in the client alone: they redeem nothing,
+    # so minting them a ticket would only put an unusable credential on the
+    # wire. See ``SudoPurpose``.
+    purpose: SudoPurpose | None = None
+
+
+class DisableTwoFactorRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    sudo_ticket: str | None = Field(default=None, alias="sudoTicket")
 
 
 class PutUserIdentityRequest(BaseModel):
@@ -190,6 +203,10 @@ logger = logging.getLogger(__name__)
 # Namespaces the single-use reservations that make a 2FA ticket redeemable
 # exactly once (#357).
 _PENDING_2FA_SCOPE = "2fa_pending"
+
+# Namespaces the reservations behind a sudo ticket. Its own scope, so a ticket
+# can never be redeemed by whatever else happens to hold a matching ``jti``.
+_SUDO_TICKET_SCOPE = "sudo_ticket"
 
 
 async def _issue_2fa_pending_token(
@@ -330,6 +347,112 @@ async def _spend_2fa_attempt(
 
     for limiter in limiters:
         await limiter.clear_attempts(subject)
+
+
+async def _spend_sudo_password_attempt(
+    redis: "Redis",
+    user_id: int,
+    verify: Callable[[], Awaitable[bool]],
+    *,
+    message: str,
+) -> None:
+    """Check a password re-proof against the step-up password budget (#389).
+
+    ``/auth/sudo`` is reachable with nothing but a live session, so before
+    this existed a stolen cookie bought unlimited password guesses against an
+    account whose owner never sees a login-failure counter move. The slot is
+    spent before the comparison, for the same check-then-act reason
+    ``consume_attempt`` documents.
+    """
+    from app.domain.user.login_security import (
+        LOCKOUT_DURATION_SECONDS,
+        StepUpPasswordRateLimiter,
+    )
+
+    limiter = StepUpPasswordRateLimiter(redis)
+    subject = str(user_id)
+
+    if await limiter.is_locked_out(subject):
+        remaining = await limiter.get_remaining_lockout_seconds(subject)
+        raise ForbiddenError(
+            f"Too many attempts. Try again in {remaining} seconds",
+            {"reason": "too_many_attempts", "retryAfterSeconds": remaining},
+        )
+
+    budget = await limiter.consume_attempt(subject)
+    if budget is None:
+        raise ForbiddenError(
+            "Too many attempts. Try again later",
+            {
+                "reason": "too_many_attempts",
+                "retryAfterSeconds": LOCKOUT_DURATION_SECONDS,
+            },
+        )
+
+    if not await verify():
+        if budget == 0:
+            raise ForbiddenError(
+                "Too many failed attempts. Locked for 15 minutes",
+                {
+                    "reason": "too_many_attempts",
+                    "retryAfterSeconds": LOCKOUT_DURATION_SECONDS,
+                },
+            )
+        raise AuthenticationRequiredError(
+            f"{message}. {budget} attempts remaining",
+            {"reason": "invalid_credentials", "attemptsRemaining": budget},
+        )
+
+    await limiter.clear_attempts(subject)
+
+
+async def _issue_sudo_ticket(user_id: int, purpose: SudoPurpose) -> str:
+    """Mint a sudo ticket and reserve it, or refuse the re-authentication.
+
+    Fail-closed for the same reason as the 2FA pending ticket: a ticket we
+    could not reserve is one the operation will refuse anyway, so handing it
+    out turns an error here into a baffling "verify again" a screen later.
+    """
+    from app.common.auth import SUDO_TICKET_TTL_S, mint_sudo_ticket
+    from app.core.single_use_state import SingleUseUnavailableError, reserve
+
+    minted = mint_sudo_ticket(user_id, purpose)
+    try:
+        await reserve(_SUDO_TICKET_SCOPE, minted.jti, ttl_s=SUDO_TICKET_TTL_S)
+    except SingleUseUnavailableError:
+        logger.exception("sudo: cannot reserve ticket uid=%s", user_id)
+        raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
+    return minted.token
+
+
+async def _spend_sudo_ticket(
+    ticket: str | None, *, user_id: int, purpose: SudoPurpose
+) -> None:
+    """Redeem a sudo ticket for exactly this user and this operation, once.
+
+    Every refusal is the same ``SudoRequiredError``, because every refusal has
+    the same remedy — re-authenticate and try again — and because saying which
+    of the four checks failed would tell a holder of a stolen session whether
+    a captured ticket was expired, already spent, or simply for something
+    else.
+
+    Fail-closed when Redis is unreachable: without the reservation there is no
+    way to tell a first use from a replay, and "cannot tell" is not "allow".
+    """
+    from app.common.auth import verify_sudo_ticket
+    from app.core.single_use_state import SingleUseUnavailableError, claim
+
+    claims = verify_sudo_ticket(ticket) if ticket else None
+    if claims is None or claims.user_id != user_id or claims.purpose != purpose:
+        raise SudoRequiredError("Re-authentication required for this operation")
+
+    try:
+        spent = await claim(_SUDO_TICKET_SCOPE, claims.jti)
+    except SingleUseUnavailableError:
+        logger.exception("sudo: cannot claim ticket uid=%s", user_id)
+        raise InternalServerError("暂时无法完成安全验证，请稍后重试") from None
+    if not spent:
+        raise SudoRequiredError("Re-authentication required for this operation")
 
 
 def _normalize_registration_invite_code(
@@ -2025,7 +2148,15 @@ async def sudo_auth(
     payload: SudoAuthRequest,
     auth_user: AuthUserInfo = Depends(require_auth_user),
     auth_service: UserAuthService = Depends(get_user_auth_service),
+    passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
+    """Re-prove who is at the keyboard, and hand back a ticket saying so.
+
+    The ticket is the whole point (#389). Before it, this endpoint answered
+    ``{"verified": true}`` and kept no record — nothing the server could check
+    afterwards — so the gate it appeared to be existed only in the client, and
+    the operation behind it took a session cookie and nothing more.
+    """
     from redis.asyncio import Redis as AsyncRedis
 
     from app.core.config import settings
@@ -2034,12 +2165,20 @@ async def sudo_auth(
     method = payload.method
     credentials = payload.credentials
 
+    async def verified(message: str, **extra: Any) -> dict:
+        data: dict[str, Any] = {"verified": True, **extra}
+        if payload.purpose is not None:
+            data["sudoTicket"] = await _issue_sudo_ticket(
+                auth_user.user_id, payload.purpose
+            )
+        return {"code": 200, "message": message, "data": data}
+
     if method == "password":
         password = credentials.get("password")
         if not password:
             raise BadRequestError("password is required")
 
-        user, profile = await auth_service.get_user_with_profile(auth_user.user_id)
+        user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
         if not user.hashed_password or user.hashed_password.startswith("SRP:"):
             raise AuthenticationRequiredError(
                 "Password authentication not available for this account"
@@ -2047,18 +2186,24 @@ async def sudo_auth(
 
         import bcrypt
 
-        if not await asyncio.to_thread(
-            bcrypt.checkpw,
-            password.encode("utf-8"),
-            user.hashed_password.encode("utf-8"),
-        ):
-            raise AuthenticationRequiredError("Invalid password")
+        hashed_password = user.hashed_password
 
-        return {
-            "code": 200,
-            "message": "Sudo mode activated.",
-            "data": {"verified": True},
-        }
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            await _spend_sudo_password_attempt(
+                redis,
+                auth_user.user_id,
+                lambda: asyncio.to_thread(
+                    bcrypt.checkpw,
+                    password.encode("utf-8"),
+                    hashed_password.encode("utf-8"),
+                ),
+                message="Invalid password",
+            )
+        finally:
+            await redis.aclose()
+
+        return await verified("Sudo mode activated.")
 
     elif method == "srp":
         client_ephemeral = credentials.get("clientPublicEphemeral")
@@ -2101,33 +2246,43 @@ async def sudo_auth(
                     "Both clientPublicEphemeral and clientProof are required"
                 )
 
-            server_secret = await redis.get(srp_key)
-            if not server_secret:
+            stored_secret = await redis.get(srp_key)
+            if not stored_secret:
                 raise AuthenticationRequiredError(
                     "SRP session expired, please reinitialize"
                 )
             await redis.delete(srp_key)
 
-            success, server_proof_hex = _srp_verify_session(
-                server_secret_hex=server_secret,
-                client_public_hex=client_ephemeral,
-                salt_hex=stored_salt,
-                username=user.username,
-                verifier_hex=stored_verifier,
-                client_proof_hex=client_proof,
+            # The proof carries the same password the bcrypt branch compares,
+            # so it draws on the same budget — otherwise switching protocol
+            # buys a second full allowance. The server's own proof is captured
+            # out of the check because the client needs it to authenticate us
+            # back once the check passes.
+            server_proof_hex = ""
+
+            async def _check_srp_proof() -> bool:
+                nonlocal server_proof_hex
+                success, proof = _srp_verify_session(
+                    server_secret_hex=stored_secret,
+                    client_public_hex=client_ephemeral,
+                    salt_hex=stored_salt,
+                    username=user.username,
+                    verifier_hex=stored_verifier,
+                    client_proof_hex=client_proof,
+                )
+                server_proof_hex = proof
+                return success
+
+            await _spend_sudo_password_attempt(
+                redis,
+                auth_user.user_id,
+                _check_srp_proof,
+                message="Invalid SRP proof",
             )
 
-            if not success:
-                raise AuthenticationRequiredError("Invalid SRP proof")
-
-            return {
-                "code": 200,
-                "message": "Sudo mode activated via SRP.",
-                "data": {
-                    "verified": True,
-                    "serverProof": server_proof_hex,
-                },
-            }
+            return await verified(
+                "Sudo mode activated via SRP.", serverProof=server_proof_hex
+            )
         finally:
             await redis.aclose()
 
@@ -2150,13 +2305,39 @@ async def sudo_auth(
                 lambda: totp_service.verify_2fa(auth_user.user_id, code),
                 step_up=True,
             )
-            return {
-                "code": 200,
-                "message": "Sudo mode activated via 2FA.",
-                "data": {"verified": True},
-            }
         finally:
             await redis.aclose()
+
+        return await verified("Sudo mode activated via 2FA.")
+
+    elif method == "passkey":
+        credential = credentials.get("passkeyResponse")
+        if not isinstance(credential, dict):
+            raise BadRequestError("passkeyResponse is required")
+        challenge = _challenge_from_credential(credential)
+
+        redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
+        try:
+            challenge_key = f"passkey:auth_challenge:{challenge}"
+            if not await redis.get(challenge_key):
+                raise BadRequestError("Invalid or expired challenge")
+            await redis.delete(challenge_key)
+        finally:
+            await redis.aclose()
+
+        # No attempt budget: a WebAuthn assertion is a signature rather than a
+        # secret to guess, and the challenge above already makes it single-use.
+        verified_user_id = await passkey_service.verify_authentication(
+            challenge=challenge,
+            credential=credential,
+        )
+        # A passkey proves an identity; this endpoint has to prove *this*
+        # session's identity. Somebody else's key, presented from a stolen
+        # session, would otherwise re-authenticate it.
+        if verified_user_id != auth_user.user_id:
+            raise AuthenticationRequiredError("Passkey does not belong to this account")
+
+        return await verified("Sudo mode activated via passkey.")
 
     else:
         raise BadRequestError(f"Unknown auth method: {method}")
@@ -2926,24 +3107,86 @@ async def enable_user_2fa(
         await redis.aclose()
 
 
+async def _notify_2fa_disabled(email: str | None, username: str) -> None:
+    """Tell the account owner out of band that their second factor is gone.
+
+    Out of band is the entire value. Everything else on this path — the
+    session, the ticket, the screen that showed the confirmation — is already
+    in the attacker's hands in the case worth defending against. Mail leaves
+    through a channel they may not hold, which is what turns a silent lockout
+    into something the owner can still catch and reverse.
+
+    Never fatal. The factor is off by the time this runs, so raising here
+    would answer a completed operation with an error and send the owner back
+    to retry something that already happened.
+    """
+    if not email:
+        return
+    import html
+
+    from app.core.email import get_email_sender
+
+    subject = "[Cheese] Two-factor authentication was turned off"
+    recover_url = f"{settings.frontend_url}/account/recover/password"
+    # The username is user-chosen and this is an HTML document. Interpolating
+    # it raw would let an account name carry markup into a mail the *owner*
+    # opens — the one reader this message exists to reach honestly.
+    safe_username = html.escape(username)
+    body_html = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #333;">Two-factor authentication was turned off</h2>
+        <p>Hi {safe_username},</p>
+        <p>
+          Two-factor authentication has just been disabled on your Cheese
+          account. Signing in now needs only your password.
+        </p>
+        <p>
+          <strong>If this was not you</strong>, someone else is using your
+          session. Change your password immediately and turn two-factor
+          authentication back on:
+        </p>
+        <p><a href="{recover_url}" style="color: #007bff;">{recover_url}</a></p>
+    </div>
+    """
+    body_text = (
+        f"Hi {username},\n\n"
+        "Two-factor authentication has just been disabled on your Cheese "
+        "account. Signing in now needs only your password.\n\n"
+        "If this was not you, someone else is using your session. Change your "
+        f"password immediately and turn it back on: {recover_url}\n"
+    )
+    try:
+        await get_email_sender().send(
+            to=email, subject=subject, body_html=body_html, body_text=body_text
+        )
+    except Exception:
+        logger.exception("2fa: could not notify %s that 2FA was disabled", email)
+
+
 @router.post(
     "/{userId}/2fa/disable",
     summary="Disable 2FA for user",
 )
 async def disable_user_2fa(
     user_id: Annotated[int, Path(ge=0, alias="userId")],
-    payload: dict = Body(default={}),
+    payload: DisableTwoFactorRequest = Body(default_factory=DisableTwoFactorRequest),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
 ) -> dict:
+    """Turn the second factor off, against a ticket and not just a session.
+
+    Removing an MFA factor is a high-risk operation, so it is re-authenticated
+    rather than merely authenticated: the caller has to present a sudo ticket
+    minted for this one purpose, which they can only have got by proving a
+    credential moments ago. A live session alone used to be enough, which made
+    every other control on this account only as strong as the session cookie.
+    """
     from redis.asyncio import Redis as AsyncRedis
 
-    from app.core.config import settings
     from app.domain.user.login_security import TOTPService
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can disable 2FA.")
-
-    code = payload.get("code")
 
     redis = AsyncRedis.from_url(settings.redis_url, decode_responses=False)
     try:
@@ -2952,27 +3195,24 @@ async def disable_user_2fa(
         if not await totp_service.is_2fa_enabled(auth_user.user_id):
             raise BadRequestError("2FA is not enabled")
 
-        # Reference contract: no code in the request body (the client gates
-        # this behind sudo re-verification). If one IS provided, check it —
-        # under the step-up budget it shares with sudo, because this is the
-        # one entrance where a right guess ends 2FA for good.
-        if code:
-            await _spend_2fa_attempt(
-                redis,
-                auth_user.user_id,
-                lambda: totp_service.verify_2fa(auth_user.user_id, code),
-                step_up=True,
-            )
+        await _spend_sudo_ticket(
+            payload.sudo_ticket,
+            user_id=auth_user.user_id,
+            purpose=SudoPurpose.TWO_FA_DISABLE,
+        )
 
         await totp_service.disable_2fa(auth_user.user_id)
-
-        return {
-            "code": 200,
-            "message": "2FA disabled successfully",
-            "data": {"success": True},
-        }
     finally:
         await redis.aclose()
+
+    user, _profile = await auth_service.get_user_with_profile(auth_user.user_id)
+    await _notify_2fa_disabled(user.email, user.username)
+
+    return {
+        "code": 200,
+        "message": "2FA disabled successfully",
+        "data": {"success": True},
+    }
 
 
 @router.get(
