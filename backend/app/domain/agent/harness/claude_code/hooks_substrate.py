@@ -777,8 +777,8 @@ class Channel:
         """Called (repeatedly, while idle persists) once the idle-suspect
         threshold is crossed, to confirm the screen isn't actually dead before
         treating the idle window as fatal. Default: assume alive — no cheap
-        probe exists at this level. ``TmuxChannel`` overrides with
-        ``pane_dead()``."""
+        probe exists at this level. A channel that can ask its transport
+        cheaply overrides this."""
         return True
 
     def checkpoint(self, project_id: uuid.UUID, topic_id: uuid.UUID) -> None:
