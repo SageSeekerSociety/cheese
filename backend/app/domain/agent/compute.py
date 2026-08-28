@@ -65,6 +65,15 @@ class ComputeProvider(Protocol):
     @property
     def provisions_machine(self) -> bool: ...
 
+    # Does this backend assemble its machine's model environment itself? The
+    # platform then sends the model CHOICE and nothing else, and the turn's
+    # supply route is the deployment's rather than the profile's. Asked instead
+    # of the backend's NAME because the answer is a property of the transport,
+    # and a name is only ever the list of transports that had it on the day it
+    # was written — see ``Channel.builds_model_env``.
+    @property
+    def builds_model_env(self) -> bool: ...
+
     def available(self) -> bool: ...
 
     async def prepare_topic(

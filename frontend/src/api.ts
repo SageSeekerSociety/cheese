@@ -1099,6 +1099,16 @@ export function getTerminal(topicId: string): Promise<TerminalInfo> {
   return request<TerminalInfo>(`/topics/${encodeURIComponent(topicId)}/terminal`)
 }
 
+// 运行环境预览 authenticates its iframe deliberately differently from every other
+// embed: the frame renders whatever 芝士 chose to serve, and a `?token=` in the
+// URL is readable by that page's own JS (location.search) even sandboxed — so
+// instead this call, which DOES carry the Authorization header, leaves an
+// HttpOnly path-scoped cookie that the iframe's same-origin requests present by
+// themselves.
+export function primeAppPreview(topicId: string): Promise<{ ready: boolean }> {
+  return request<{ ready: boolean }>(`/topics/${encodeURIComponent(topicId)}/app-session`)
+}
+
 export function getGitLog(projectId: string, topicId?: string | null): Promise<ListPayload<GitCommit>> {
   const t = topicId ? `?topic=${encodeURIComponent(topicId)}` : ''
   return request<ListPayload<GitCommit>>(`/projects/${encodeURIComponent(projectId)}/git/log${t}`)

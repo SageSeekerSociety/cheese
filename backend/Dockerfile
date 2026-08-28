@@ -201,6 +201,11 @@ COPY --chown=cheese:python alembic.ini ./
 # (fetched by enrolled devices via /sandbox/cli/cheese) and the skills seeded
 # into a topic's ~/.claude. Without these the device path has no CLI.
 COPY --chown=cheese:python sandbox ./sandbox
+# One-shot data migration an operator has to be able to run ON the box (memory
+# rows to openviking, #187). Named file by file rather than `COPY scripts`: the
+# rest of that directory is dev probes and demo seeders that have no business in
+# a production image.
+COPY --chown=cheese:python scripts/migrate_memory_to_openviking.py ./scripts/
 
 # WORKDIR created /app as root; the app writes into it (and into uploads).
 RUN mkdir -p /app/uploads && chown cheese:python /app /app/uploads

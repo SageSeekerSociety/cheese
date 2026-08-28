@@ -3150,7 +3150,7 @@ class ChatService:
     async def _model_kwargs(
         self,
         project_id: uuid.UUID,
-        provider_name: str,
+        provider: ComputeProvider,
         topic_id: uuid.UUID | None = None,
     ) -> tuple[dict, str]:
         """Per-turn overrides for the agent call, resolved from project.settings:
@@ -3170,13 +3170,12 @@ class ChatService:
                          is all there is.
 
         The route is a fact about where the PROVIDER actually sends the turn's
-        traffic. On a subscription deployment the device provider builds the
-        same metering-proxy env the tmux provider does (#325 G2: the device never
-        holds a credential), so its route is "subscription"
-        and its spend is metered by the proxy's usage log. Only WITHOUT the
-        subscription does a device turn ride /llm → gateway. Labeling device
-        turns "subscription" while their traffic went through /llm was a real
-        bug once — the label must follow the traffic, in both directions.
+        traffic, so it is asked of the provider: a backend that builds its own
+        model environment (``builds_model_env``) rides the deployment's supply —
+        the metering proxy under a subscription, /llm → gateway without one — and
+        is metered by that supply's log. Labeling a turn "subscription" while its
+        traffic went through /llm was a real bug once, and so was the reverse:
+        the label must follow the traffic, in both directions.
 
         The model a turn runs on is the AGENT's before it is the project's: an
         agent whose type names a model runs on that model in every room it
@@ -3197,16 +3196,16 @@ class ChatService:
         image = (project.settings or {}).get("sandbox_image") if project else None
         if image:
             kwargs["sandbox_image"] = image
-        if provider_name == "device":
-            # A machine's model env is the device provider's own affair — handing
-            # it this box's profile env would put a box-local URL and a raw
-            # provider key on hardware the platform does not control. Under the
-            # subscription the provider builds the metering-proxy env itself;
-            # only the project's model pick travels from here, as the --model
-            # alias ("" = the subscription's default, no flag). Without the
-            # subscription it gets the backend's /llm route + its scoped token,
-            # and the backend swaps in the project's virtual key per request
-            # (routes/llm_proxy).
+        if provider.builds_model_env:
+            # A machine's model env is that machine's backend's own affair —
+            # handing it this box's profile env would put a box-local URL and a
+            # raw provider key on hardware that is not this process, whoever
+            # rents it. Under the subscription the backend builds the
+            # metering-proxy env itself; only the project's model pick travels
+            # from here, as the --model alias ("" = the subscription's default,
+            # no flag). Without the subscription it gets the backend's /llm route
+            # + its scoped token, and the backend swaps in the project's virtual
+            # key per request (routes/llm_proxy).
             if settings.subscription_enabled:
                 choice = agent_model or (
                     (project.settings or {}).get("subscription_model")
@@ -3890,9 +3889,7 @@ class ChatService:
         # Compute: a provider owns the per-topic sandbox + execution (spec §9.1).
         # In a private chat, `cheese remember` targets the owner's personal memory
         # (spec §8.4). The provider runs a plain model turn when no Docker (tests).
-        model_kwargs, route = await self._model_kwargs(
-            project_id, provider.name, topic_id
-        )
+        model_kwargs, route = await self._model_kwargs(project_id, provider, topic_id)
         # Internal: the screen subscription, not this request, owns timeout and
         # thinking lifecycle. Runtime consumes this frame and disables its
         # request-scoped lifecycle before provider setup begins.
@@ -4183,7 +4180,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider.name, topic_id))[0],
+            **(await self._model_kwargs(project_id, provider, topic_id))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -4300,7 +4297,7 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(await self._model_kwargs(project_id, provider.name, root_topic_id))[0],
+            **(await self._model_kwargs(project_id, provider, root_topic_id))[0],
         ):
             if isinstance(event, AgentToolUse):
                 tools_used.append(event.name)
@@ -4398,11 +4395,9 @@ class ChatService:
             prompt=prompt,
             system_prompt=system_prompt,
             resume_session_id=None,
-            **(
-                await self._model_kwargs(
-                    project_id, provider.name, project.root_topic_id
-                )
-            )[0],
+            **(await self._model_kwargs(project_id, provider, project.root_topic_id))[
+                0
+            ],
         ):
             if isinstance(event, AgentResult):
                 final_text = event.text

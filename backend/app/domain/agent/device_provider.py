@@ -194,6 +194,22 @@ def tunnel_port_for_topic(topic_id: uuid.UUID) -> int:
     return base + (int(hashlib.sha1(str(topic_id).encode()).hexdigest(), 16) % 2000)
 
 
+def _preview_ws_url(public_base: str) -> str:
+    """``wss://…/preview/tunnel`` for a machine, from the base it already dials.
+
+    Scheme-swapped rather than configured: the connector, the hooks and the CLI
+    all reach this origin already, so a preview that rides the same one needs no
+    second address to keep true — and a deployment cannot end up with a preview
+    pointed somewhere the machine was never able to reach.
+    """
+    base = public_base.rstrip("/")
+    for http_scheme, ws_scheme in (("https://", "wss://"), ("http://", "ws://")):
+        if base.startswith(http_scheme):
+            base = ws_scheme + base[len(http_scheme) :]
+            break
+    return f"{base}/preview/tunnel"
+
+
 def connect_transport(
     *, session_token: str, via_tunnel: bool, tunnel_port: int | None = None
 ) -> str:
@@ -338,6 +354,13 @@ class DeviceChannel(Channel):
     ``ClaudeCodeRuntime``."""
 
     name = "device"
+    # ``_ensure_screen`` below builds the whole model environment on the machine
+    # — the metering-proxy env under a subscription, the backend's /llm route and
+    # a scoped token without one. Either way the machine holds no provider
+    # credential, so the platform must hand this transport the model choice and
+    # nothing else. Every transport that reaches a machine over a link inherits
+    # this build, and inherits the declaration with it.
+    builds_model_env = True
     needs_topic_message = "device 后端需要话题上下文（每个屏幕绑定一个话题）"
     timeout_message = "device 轮次超时"
 
@@ -654,12 +677,14 @@ class DeviceChannel(Channel):
         work_dir = self._work_dir(project_id, topic_id)
         ca_pem = ""
         if settings.subscription_enabled:
-            # Every device request runs on the subscription through the metering
-            # proxy, the
-            # same path the local tmux container takes (#325 G2). The machine
-            # holds no real credential either way: the env ships a scoped cheese
-            # token as the fake login, the proxy verifies it and injects the real
-            # token backend-side. The gateway route (/llm → LiteLLM) is NOT a
+            # Every request from every machine reached this way runs on the
+            # subscription through the metering proxy — an enrolled device and a
+            # leased Cloud box alike, since both are launched from right here
+            # (#325 G2). This is what ``builds_model_env`` declares: the platform
+            # sends the model choice, and the env around it is assembled below.
+            # The machine holds no real credential either way: the env ships a
+            # scoped cheese token as the fake login, the proxy verifies it and
+            # injects the real token backend-side. The gateway route is NOT a
             # fallback here — falling back silently is exactly the model swap
             # this branch exists to kill (dev shipped device screens with
             # CLAUDE_MODEL=deepseek-chat while users thought they were talking
@@ -750,6 +775,11 @@ class DeviceChannel(Channel):
             credential_expires = _credential_expiry(token)
             model_env["CHEESE_TOKEN_EXPIRES"] = str(credential_expires)
         _warn_if_model_endpoint_is_box_local(model_env, device_id)
+        # 运行环境预览's dial-out address. Derived from the base this machine already
+        # reaches for hooks, git and the CLI rather than configured separately:
+        # the preview rides the path the connector proved, so a deployment that
+        # can host a device can host a preview with nothing further to set.
+        model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(self._public_base)
         command, screen_env, cheeselet = build_screen_launch(
             hook_url=self._hook_url(topic_id),
             hook_token=token,

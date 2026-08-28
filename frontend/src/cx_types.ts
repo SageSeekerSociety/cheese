@@ -435,8 +435,17 @@ export interface FileContent {
 // GET /topics/{id}/preview (spec §9.1): the artifact 芝士 pointed at as the
 // topic's current preview. Null when 芝士 hasn't set one.
 export interface PreviewInfo {
+  // kind=file → render the file's content; kind=app → iframe straight to the app
+  // the agent started on its machine, carried here over that machine's preview
+  // tunnel (url, live-resolved on every fetch).
+  kind?: 'file' | 'app'
   path: string
   mime: string | null
+  // kind=app: the backend's reverse-proxy path (root-relative), or null when the
+  // app isn't answering. `tunnel_up` separates "那台机器没有把预览通道拨出来" from
+  // "通道在，但应用没在跑" — without it both look like an empty white frame.
+  url?: string | null
+  tunnel_up?: boolean
   // Which artifact this is, so a client can tell "芝士 pointed at something new"
   // from "the same preview, re-fetched".
   artifact_id?: string

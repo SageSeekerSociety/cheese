@@ -70,7 +70,17 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 
 **看现场：**设备上的那个屏通过连接器拨出来的链路回传，房间里能实时看，也能直接输入——它是什么、给谁的，见下一节。
 
-跑起来的**服务**（dev server 之类）拿不回来：这些机器都不是平台的，平台没有一条通往它们端口的网络路径。要给人看一个页面长什么样，把它导出成文件再 `cheese artifact`。
+**看跑起来的应用：`cheese serve <端口>`。** 芝士把 dev server 起在那台机器的 `127.0.0.1` 上，报一个端口，房间的预览面板里就能直接用它——HTTP 和 WebSocket（dev server 的热更新）都走。
+
+这条路和上面两条一样，**没有一条网络路径是通往机器的**。平台仍然打不进去，是那台机器多拨出来一条 WebSocket，浏览器的请求在这条连接上分流回去（`agent/preview_tunnel.py` 是机器那一半，`agent/preview_hub.py` 是平台这一半）。
+
+三件事把它的边界钉死：
+
+- **地址永远不在线上。** 机器那半只拨一个地方：`cheese serve` 在**那台机器的磁盘上**写下的那个端口。平台发下去的帧里根本没有主机字段，所以平台就算被攻陷也没法让一台笔记本去扫别的端口。
+- **不是连接器那条链路。** 连接器那条是一轮活的命脉（prompt、hooks、现场中继），两端都用一把锁串行发帧；dev server 的静态资源和热更新排在 prompt 前面就是活活拖死一轮。同一条网络路径、同一个网关、同样是拨出——但另一条连接，另一个失效域。
+- **能看的人，本来就能在那台机器上敲命令。** 预览的门槛跟现场同一道（话题所在项目的成员/所有者）。现场是可写的（见下一节），所以「读一个 loopback 端口」不是一道新增的权限，是已有边界里面的一件小事。反过来，页面本身是芝士写的，所以 iframe 拿不到任何凭证：不带 `?token=`（那是页面自己的 JS 读得到的），只有一个按路径限定的 HttpOnly cookie，且 sandbox 不给 `allow-same-origin`。
+
+要给人看一个**静止**的结果，仍然是 `cheese artifact` 更省事——它连机器在不在线都不关心。
 
 ## 六、现场：给开发者 debug 用的，长期保留
 
@@ -91,6 +101,8 @@ Cloud 能开机 → 默认是 Cloud；开不了 → 默认是自托管设备
 ## 相关
 
 - `backend/app/domain/agent/compute.py` — 两条路的装配与默认值
+- `backend/app/domain/agent/preview_tunnel.py` — 运行环境预览：机器那一半（发到机器上跑的那份）
+- `backend/app/api/routes/app_preview.py` — 运行环境预览：平台这一半，两端都在里面
 - `backend/app/domain/agent/market.py` — 菜单，以及默认值这一个答案
 - `backend/app/domain/device/supply.py` — 可见性两档与「哪档真能跑」
 - `docs/device-self-hosting.md` — 自托管设备那条路的完整说明

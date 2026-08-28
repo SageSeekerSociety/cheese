@@ -1,10 +1,12 @@
-/** 预览 tab: what a refresh must not do to the artifact someone is looking at,
- * and what a new one has to announce.
+/** 预览 tab: what it says when a running app is not reachable, what a refresh
+ * must not do to the one that IS, and what a new preview has to announce.
  *
- * 两件事被钉在这里：
- *   1. 预览面板会自动刷新，但静默刷新绝不能把 iframe 拆掉重建——那会让正在看的
+ * 三件事被钉在这里：
+ *   1. 「那台机器没把预览通道拨出来」和「通道在、应用死了」是两回事。合成一句以后
+ *      面板会叫人「再 @ 它一次」去等一个 @ 不回来的通道。
+ *   2. 预览面板会自动刷新，但静默刷新绝不能把 iframe 拆掉重建——那会让正在看的
  *      产物每 20 秒重载一次（交互式 artifact 里攒下的状态全丢），比不刷新更糟。
- *   2. 芝士换了预览，没停在这个 tab 上的人也要看得见。
+ *   3. 芝士换了预览，没停在这个 tab 上的人也要看得见。
  */
 import type { Topic } from '../../cx_types'
 
@@ -25,6 +27,7 @@ vi.mock('../CodeEditor.vue', () => ({
 
 const getPreview = vi.fn()
 const readFile = vi.fn()
+const primeAppPreview = vi.fn()
 
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
@@ -32,6 +35,7 @@ vi.mock('../../api', async () => {
     ...actual,
     getPreview: (...a: unknown[]) => getPreview(...a),
     readFile: (...a: unknown[]) => readFile(...a),
+    primeAppPreview: (...a: unknown[]) => primeAppPreview(...a),
     getDoc: vi.fn().mockResolvedValue({ markdown: '', title: '' }),
     putDoc: vi.fn().mockResolvedValue({}),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
@@ -94,6 +98,64 @@ beforeEach(() => {
   vi.clearAllMocks()
   getPreview.mockResolvedValue(null)
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
+  primeAppPreview.mockResolvedValue({ ready: true })
+})
+
+describe('预览面板：运行中的应用到不了的时候说什么', () => {
+  it('机器没把预览通道拨出来 → 说的是通道，不是应用', async () => {
+    getPreview.mockResolvedValue({
+      kind: 'app',
+      path: 'Vue dev server',
+      mime: 'application/x-cheesex-app',
+      url: null,
+      tunnel_up: false,
+      artifact_id: 'a1',
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    expect(container.textContent).toContain('预览通道')
+    expect(container.textContent).not.toContain('服务多半已经退出')
+  })
+
+  it('通道在、应用死了 → 说的是应用，并告诉人再 @ 一次能拉起来', async () => {
+    getPreview.mockResolvedValue({
+      kind: 'app',
+      path: 'Vue dev server',
+      mime: 'application/x-cheesex-app',
+      url: null,
+      tunnel_up: true,
+      artifact_id: 'a1',
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    expect(container.textContent).toContain('应用暂时不在线')
+    expect(container.textContent).toContain('服务多半已经退出')
+  })
+
+  it('应用活着 → 嵌的是反代路径，而不是机器上的地址', async () => {
+    getPreview.mockResolvedValue({
+      kind: 'app',
+      path: 'Vue dev server',
+      mime: 'application/x-cheesex-app',
+      url: '/api/topics/topic-A/app/',
+      tunnel_up: true,
+      artifact_id: 'a1',
+    })
+    const { container } = mountPanel()
+    await flush()
+    await openPreview(container)
+
+    const frame = container.querySelector('iframe.preview-frame') as HTMLIFrameElement | null
+    expect(frame?.getAttribute('src')).toBe('/api/topics/topic-A/app/')
+    // 授权先落地，否则 iframe 的第一个请求就 404 —— 白框。
+    expect(primeAppPreview).toHaveBeenCalledWith('topic-A')
+    // 页面是芝士写的：给了 same-origin 就等于把会话 token 交出去。
+    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin')
+  })
 })
 
 describe('预览面板：刷新', () => {

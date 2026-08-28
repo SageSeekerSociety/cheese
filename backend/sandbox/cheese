@@ -24,6 +24,7 @@
   cheese await "bash .claude/scripts/check.sh --full"  # 后台跑;跑完平台叫醒本话题
   cheese status                             # 平台状态快照(本轮运行状态/验收卡/闸门输出/水位)
   cheese artifact report.html               # 把产物设为本话题当前预览(进预览窗口)
+  cheese serve 5173 "Vue dev server"        # 应用起在 127.0.0.1:5173 后,设为预览
   cheese artifact chart.svg --as svg        # SVG 同理
 """
 
@@ -34,6 +35,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -1039,6 +1041,31 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    psv = sub.add_parser(
+        "serve",
+        help="把这台机器上跑起来的应用设为当前预览(先起服务,再报端口)",
+        description=(
+            "把**已经跑起来的**应用设为当前预览。跑之前:\n"
+            "  1. 把 dev server 起在 127.0.0.1 上,后台跑(nohup ... &)\n"
+            "  2. 端口你自己挑,固定住(vite 要 --strictPort,否则端口被占时它会\n"
+            "     静默跳到下一个,你以为起好了,报上来的那个却没人应答)\n"
+            "  3. 把那个端口报给这条命令\n"
+            "\n"
+            "页面经后端反代挂在 $CHEESE_APP_BASE 这个子路径下。会发根绝对资源 URL\n"
+            "的 dev server(vite 的 /@vite/client)要按这个 base 起,否则用户那边\n"
+            "只有一个白框:\n"
+            "  vite --base=$CHEESE_APP_BASE --strictPort --port <端口>\n"
+            "\n"
+            "平台会当场从自己这边敲一次那个端口;敲不通就直接拒绝,不会给用户留一个\n"
+            "白框。这台机器不是平台的,预览走的是这台机器主动拨出去的一条隧道——所以\n"
+            "只有你报上来的这一个端口会被带出去,别的端口平台碰不到。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    psv.add_argument("port", type=int, help="应用监听的端口,如 5173")
+    psv.add_argument("note", nargs="?", default="app",
+                     help="一句话说明在跑什么,如 'Vue dev server'")
+
     part = sub.add_parser(
         "artifact",
         help="把工作区文件设为可渲染产物(当前预览)",
@@ -1392,6 +1419,33 @@ def main() -> None:
         topic = _need("CHEESE_TOPIC", TOPIC)
         d = _call("GET", f"/topics/{topic}/status").get("data") or {}
         print(_format_status(d))
+    elif a.cmd == "serve":
+        topic = _need("CHEESE_TOPIC", TOPIC)
+        if not (1 <= a.port <= 65535):
+            print(f"[cheese] {a.port} 不是一个端口号。", file=sys.stderr)
+            sys.exit(2)
+        up = os.environ.get("CHEESE_PREVIEW_UP", "")
+        if not up:
+            # No preview channel in this runtime — the launcher exports this only
+            # when it has shipped the helper. A running app cannot reach the
+            # panel from here, so say so instead of filing a record that would
+            # render as a white frame.
+            print("[cheese] 这个运行环境没有预览通道,运行中的应用到不了预览面板。\n"
+                  "[cheese] 要给人看结果,用 cheese artifact <文件> 点名一个网页或 SVG。",
+                  file=sys.stderr)
+            sys.exit(2)
+        # Declare the port and bring the tunnel up in one step. The port is
+        # written on THIS machine and read from disk by the helper — it never
+        # travels on the wire, which is what keeps the platform unable to point
+        # a machine at any other port.
+        rc = subprocess.call(["sh", up, str(a.port)])
+        if rc != 0:
+            print(f"[cheese] 预览通道没能起来（{up} 退出码 {rc}）。", file=sys.stderr)
+            sys.exit(1)
+        # The backend knocks on the port through the tunnel before accepting; a
+        # dead server is refused there, with the reason.
+        _call("POST", f"/topics/{topic}/artifact", {"path": a.note, "as": "app"})
+        print(f"已把 :{a.port} 上的应用设为当前预览（{a.note}）。")
     elif a.cmd == "artifact":
         topic = _need("CHEESE_TOPIC", TOPIC)
         # The platform resolves artifact paths against the worktree ROOT (/work),
