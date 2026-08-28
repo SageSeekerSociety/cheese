@@ -246,8 +246,10 @@ class DeviceHub:
         """Re-send an existing screen's ``session.create`` with ``adopt`` set — the
         frozen cli's designed re-provision path. The registry alone never proves the
         device still runs a screen: the connector process may have restarted (its
-        private tmux dies with it), or the original create may not have been
-        delivered at all (``open_screen`` registers before an unacknowledged send).
+        tmux sessions outlive it, but its in-memory session map does not, so it
+        knows nothing about this sid until a create makes it re-adopt), or the
+        original create may not have been delivered at all (``open_screen``
+        registers before an unacknowledged send).
         The cli silently drops ``rpc.call`` for a sid it does not know, so prompting
         a lost screen strands the turn in a bare timeout. An adopt-create is
         idempotent on the device: a live session hot-reloads the cheeselet and keeps

@@ -53,8 +53,20 @@ class _Screen(StubChannel):
 
     def __init__(self, *, mode: str) -> None:
         # Squeezed watchdog: the `provider_error` case is a session that goes
-        # quiet, and that is what the watchdog is for.
-        super().__init__(idle_suspect_s=0.2, hard_ceiling_s=0.4, delivery_timeout_s=0.2)
+        # quiet, and that is what the watchdog is for. This screen announces
+        # itself first, so `delivered` is true and the ceiling — not the
+        # delivery deadline — is what ends that turn; it is the one knob here
+        # that cannot be pushed down to fractions of a second.
+        #
+        # The ceiling is a wall clock started before the screen is reached, so a
+        # sub-second value races the setup path on a loaded box. Losing that
+        # race wedges the turn: the monitor sees an expired ceiling on its first
+        # pass, ends a session that never delivered, and the verdict reaches
+        # nobody — no `done`, and the socket read blocks until pytest-timeout
+        # kills the run. Same trap cost test_replay_visibility ~40% of its CI
+        # runs. Keep it comfortably above setup; it still ends the quiet turn
+        # in a few seconds.
+        super().__init__(idle_suspect_s=0.2, hard_ceiling_s=3.0, delivery_timeout_s=0.2)
         self._mode = mode
 
     async def send_prompt(

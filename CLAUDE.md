@@ -36,6 +36,12 @@ mature system pays to protect the users it already has. We do not have them yet,
 so it buys nothing and leaves more to unwind — and each one is a place the next
 reader can mistake for something still in use.
 
+Deletion has to reach the layer that decides what runs. Taking something off the
+surface where a person picks it removes the choice and leaves the path wired —
+and what nobody can select can still be what an unconfigured case gets by
+default. A retirement is finished when the code is gone; confirm it in the code
+that chooses.
+
 The corollary is that a thing must be judged by what it does now, not by the
 reason it was created. Mechanisms drift away from their purpose while keeping
 their name: a check written after an incident points at where that incident

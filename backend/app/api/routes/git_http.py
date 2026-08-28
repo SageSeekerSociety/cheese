@@ -178,10 +178,12 @@ async def receive_pack(
     response = await _cgi(repo, f"/{_RECEIVE}", request, await request.body())
     # Unconditionally, not only on success: jj is colocated here and does not see
     # a push on its own, and a push that only partly applied has still moved refs.
-    # The divergence is dangerous rather than untidy — snapshot_worktree moves the
-    # topic bookmark with --allow-backwards, so a jj view still pointing at the
-    # old commit could drag the branch back over what was just pushed. The import
-    # is idempotent and cheap, so there is nothing to gain by guessing.
+    # This keeps jj's view TRUE; it is not on its own what keeps the pushed work
+    # on the branch. That is the worktree's job, and it does it by starting from
+    # the branch and rebasing onto it (`_ensure_worktree`,
+    # `_put_the_branch_under_the_working_copy`) — an import that merely told jj
+    # where the branch was left the next bookmark move free to walk it back.
+    # The import is idempotent and cheap, so there is nothing to gain by guessing.
     subprocess.run(
         ["jj", "git", "import"],
         cwd=repo,

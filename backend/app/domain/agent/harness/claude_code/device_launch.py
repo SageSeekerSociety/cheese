@@ -855,12 +855,30 @@ CLAUDE="\\"$CLAUDE_BIN\\"{CLAUDE_BASE_ARGS}"
 CHEESE_SP="$HOME/.claude/cheese-system-prompt.md"
 [ -s "$CHEESE_SP" ] && CLAUDE="$CLAUDE --append-system-prompt-file \\"$CHEESE_SP\\""
 if command -v tmux >/dev/null 2>&1; then
-  # The screen runs inside the connector's own tmux, so $TMUX points at ITS
-  # socket — inherited, new-session would land the claude session there (dying
-  # with the connector) while attach looks at the default socket ("no
-  # sessions", dead pane). unset TMUX for the WHOLE block: every command
-  # targets the user's default server, decoupled from the connector.
+  # WHICH tmux server hosts the inner session decides who is able to wipe it.
+  # The machine's DEFAULT server belongs to the person whose machine this is:
+  # their `tmux kill-server` would take every agent on the box with it, our
+  # teardown would take their sessions, and their `tmux ls` would list our
+  # internals — the constraint device-self-hosting §0 exists to hold. So the
+  # session lives in the CONNECTOR's private server: the very one this launcher
+  # is already running inside.
+  #
+  # That socket needs no new contract between connector and launcher, because
+  # tmux hands it to every pane as the first field of $TMUX
+  # ("<socket>,<pid>,<session>"). Read it before unsetting. With no connector
+  # around it, a per-user socket of our own still keeps us off the owner's
+  # server — the invariant holds either way, which is the point.
+  CHEESE_TMUX_SOCK="${{TMUX%%,*}}"
+  if [ -z "$CHEESE_TMUX_SOCK" ]; then
+    CHEESE_TMUX_DIR="/tmp/cheese-$(id -u)"
+    (umask 077 && mkdir -p "$CHEESE_TMUX_DIR") || true
+    CHEESE_TMUX_SOCK="$CHEESE_TMUX_DIR/agent.sock"
+  fi
+  # tmux refuses to attach from inside a pane while $TMUX is set, so it has to
+  # go. Every command below names the socket explicitly instead of inheriting
+  # one, so nothing in this block can silently land on the default server.
   unset TMUX
+  atmux() {{ tmux -S "$CHEESE_TMUX_SOCK" "$@"; }}
   # The session name is derived from the WORK DIR, never a fixed "cheese": one
   # shared session made every topic on a device attach to whatever cwd the FIRST
   # topic had, so later topics edited the wrong tree and never saw new launcher
@@ -868,6 +886,14 @@ if command -v tmux >/dev/null 2>&1; then
   # the work dir gives per-topic isolation AND retires a stale session whenever
   # the resolved work dir changes.
   SESSION="cheese_$(printf '%s' "$CHEESE_WORK" | cksum | cut -d' ' -f1)"
+  # An agent session is never the owner's to carry. One sitting on the default
+  # server is ours all the same, and it is not harmless: it holds this topic's
+  # rendezvous socket, spool and work tree, so leaving it running means a second
+  # claude answering for this topic forever. Retire it. `has-session` never
+  # starts a server, so a machine with no default server keeps not having one.
+  if tmux has-session -t "$SESSION" 2>/dev/null; then
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+  fi
   # A surviving inner session runs the `claude` it was BORN with, and claude
   # reads its model credential (CLAUDE_CODE_OAUTH_TOKEN / the HTTPS_PROXY
   # password) ONCE at startup — it never re-reads it. So the fresh scoped token
@@ -885,7 +911,7 @@ if command -v tmux >/dev/null 2>&1; then
   # never a healthy one, so a short-lived credential (the gateway path's hour) is
   # re-minted at most once an hour rather than on every turn.
   EXPFILE="$HOME/.claude/$SESSION.tokexp"
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
+  if atmux has-session -t "$SESSION" 2>/dev/null; then
     TOKEXP="$(cat "$EXPFILE" 2>/dev/null || true)"
     case "$TOKEXP" in ''|*[!0-9]*) TOKEXP=0 ;; esac
     # Retire on a dead credential OR on a changed launch contract. claude reads
@@ -908,11 +934,18 @@ if command -v tmux >/dev/null 2>&1; then
     RETIRE=0
     [ "$TOKEXP" -le "$(( $(date +%s) + 300 ))" ] && RETIRE=1
     [ -n "$CFGNOW" ] && [ "$CFGNOW" != "$CFGWAS" ] && RETIRE=1
+    # The connector's server keeps a pane after its program exits, so a claude
+    # that died leaves the session standing with a DEAD pane. Adopting that
+    # hosts nothing: every later turn attaches to a corpse and the topic never
+    # gets a claude again. A dead first pane is as good a reason to retire as a
+    # dead credential.
+    case "$(atmux list-panes -s -t "$SESSION" -F '#{{pane_dead}}' 2>/dev/null \\
+      | head -n 1)" in 1) RETIRE=1 ;; esac
     if [ "$RETIRE" = 1 ]; then
-      tmux kill-session -t "$SESSION" 2>/dev/null || true
+      atmux kill-session -t "$SESSION" 2>/dev/null || true
     fi
   fi
-  if tmux has-session -t "$SESSION" 2>/dev/null; then
+  if atmux has-session -t "$SESSION" 2>/dev/null; then
     # Adopt: claude (and normally the drainer sharing its pane, started below)
     # is already running — never start a second drainer. But a session CAN
     # outlive its drainer (one created before the drainer moved in-session; a
@@ -924,18 +957,18 @@ if command -v tmux >/dev/null 2>&1; then
     # loopback port — every turn then fails looking exactly like a stalled model.
     # `cheese-tunnel-up` adopts a live one and starts a new one otherwise.
     if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-      TETHER="$(tmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
+      TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
         2>/dev/null | head -n 1)"
-      tmux new-window -d -t "$SESSION" -n cheese-tunnel \\
+      atmux new-window -d -t "$SESSION" -n cheese-tunnel \\
         "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT \\
          CHEESE_TUNNEL_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
         || true
     fi
     DRAIN_PID="$(cat "$HOME/.claude/cheese-drain.pid" 2>/dev/null || true)"
     if [ -z "$DRAIN_PID" ] || ! kill -0 "$DRAIN_PID" 2>/dev/null; then
-      TETHER="$(tmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
+      TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
         2>/dev/null | head -n 1)"
-      tmux new-window -d -t "$SESSION" -n cheese-drain \\
+      atmux new-window -d -t "$SESSION" -n cheese-drain \\
         "CHEESE_DRAIN_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-drain\\"" \\
         || true
     fi
@@ -954,9 +987,10 @@ if command -v tmux >/dev/null 2>&1; then
     # the tmux SERVER's GLOBAL env — frozen when that server first started — for
     # every var outside `update-environment` (which lists only DISPLAY / SSH_*).
     # CLAUDE_CODE_OAUTH_TOKEN, the HTTPS_PROXY password and the CHEESE_* wiring are
-    # none of them, so on a box whose default tmux server is already up (it hosts
-    # another topic, or a login shell) a brand-new claude would silently boot with
-    # the token frozen into that server weeks ago — a stale, wrong-topic credential
+    # none of them, so on a server that has been up since another topic's launch
+    # (which, now the connector's own server hosts these sessions, is the normal
+    # case) a brand-new claude would silently boot with the token frozen into
+    # that server when the connector started — a stale, wrong-topic credential
     # — instead of the one this turn minted. That is the 407 that outlives a
     # re-mint, a backend redeploy AND killing the old session: the dead token lives
     # in the server's global env, not the process, so recreating the session alone
@@ -1025,10 +1059,10 @@ for k, v in os.environ.items():
     # carries the full environment either way (#434), a masked failure still
     # costs its diagnosis. The launcher exiting non-zero surfaces as a screen
     # setup error on the turn, which is the honest outcome.
-    if ! _ERR=$(tmux "$@" 2>&1); then
+    if ! _ERR=$(atmux "$@" 2>&1); then
       case "$_ERR" in
         *"unknown flag"*|*"usage:"*|*"invalid option"*)
-          tmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
+          atmux new-session -d -s "$SESSION" -c "$CHEESE_WORK" \\
             "$SRCENV$TUP $DRAINCMD & exec $CLAUDE"
           ;;
         *)
@@ -1037,7 +1071,7 @@ for k, v in os.environ.items():
       esac
     fi
   fi
-  exec tmux attach -t "$SESSION"
+  exec tmux -S "$CHEESE_TMUX_SOCK" attach -t "$SESSION"
 else
   # eval, not bare exec: $CLAUDE now carries a QUOTED file path, and plain
   # word-splitting would hand claude the quote characters themselves.

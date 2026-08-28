@@ -45,8 +45,22 @@ def _use_failing_agent(client, monkeypatch) -> SilentScreen:
     below would be counting the machine's speed.
     """
     monkeypatch.setattr(AgentWorkRunner, "MAX_RESUME_CHAIN", 0)
+    # `hard_ceiling_s` is NOT squeezed, and must not be: it is a wall clock that
+    # starts before the screen is even reached, so squeezing it races the setup
+    # it is supposed to outlive. Lose that race — and a loaded CI box loses it
+    # roughly two runs in five — and the monitor finds the ceiling already
+    # expired on its first pass, takes the branch for a session that never
+    # delivered anything, and the verdict lands with nobody subscribed to hear
+    # it: no `done` is ever published and `_say` blocks until pytest-timeout
+    # kills the run 300 seconds later.
+    #
+    # This screen ends its turns through `delivery_timeout_s` — it emits no
+    # hooks at all, so the prompt is never acknowledged — and THAT is the knob
+    # worth squeezing. The ceiling only has to stay far enough above the setup
+    # path that it cannot fire during it; it is never reached, so its size
+    # costs nothing.
     screen = SilentScreen(
-        idle_suspect_s=0.2, hard_ceiling_s=0.4, delivery_timeout_s=0.2
+        idle_suspect_s=0.2, hard_ceiling_s=10.0, delivery_timeout_s=0.2
     )
 
     service = ChatService(

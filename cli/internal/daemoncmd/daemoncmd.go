@@ -31,6 +31,7 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
+	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 	"github.com/SageSeekerSociety/cheese/cli/internal/ui"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
 )
@@ -178,6 +179,24 @@ func elevateToRoot(userService bool, cfgPath string) error {
 	return nil
 }
 
+// endHostedSessions tears down the tmux server this machine's screens live in —
+// the connector's own sessions and the `claude` each one hosts.
+//
+// The connector's exit path deliberately leaves them running, because a stop is
+// usually a restart and a restart is nobody's decision to end a turn. The verbs
+// below are the ones that DO mean it: disconnect, no-auto-connect, uninstall.
+// They say so to the user and then have to be true, and uninstall in particular
+// must leave nothing of ours behind on a machine we do not own.
+//
+// It addresses the socket by the running user, so it reaches the sessions when
+// the CLI runs as the account the service does — the ordinary case, since the
+// unit is installed to run as the invoking user either way.
+func endHostedSessions() {
+	if tm, err := terminal.NewManager(); err == nil {
+		tm.KillServer()
+	}
+}
+
 // hasFlag reports whether argv already carries the given flag (as `--flag` or
 // `--flag=value`), so elevation doesn't append a duplicate.
 func hasFlag(argv []string, flag string) bool {
@@ -247,6 +266,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 			if err := service.Control(*cfgPath, "stop"); err != nil {
 				return err
 			}
+			endHostedSessions()
 			fmt.Println("Disconnected. `cheese link connect` to reconnect.")
 			fmt.Println("(Note: it will still reconnect after a reboot; `cheese link no-auto-connect` prevents that.)")
 			return nil
@@ -275,6 +295,7 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				}
 			}
 			_ = service.Control(*cfgPath, "stop")
+			endHostedSessions()
 			if err := service.Control(*cfgPath, "uninstall"); err != nil {
 				return err
 			}
@@ -409,6 +430,7 @@ func uninstallCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Comman
 			pid := state.RawPID(*cfgPath)
 			_ = service.Control(*cfgPath, "stop")
 			_ = service.Control(*cfgPath, "uninstall")
+			endHostedSessions()
 			// A running connector whose config+binary were deleted is the worst possible
 			// state: it keeps using stale in-memory credentials, can't be managed, and
 			// looks "connected" while the server sees it offline. So guarantee the process
