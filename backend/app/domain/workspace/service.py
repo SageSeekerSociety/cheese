@@ -1636,34 +1636,57 @@ def prepare_upstream_conflict_resolution(
 def _materialize_conflicts(
     project_id: uuid.UUID, topic_id: uuid.UUID, merge_sha: str
 ) -> list[str]:
-    """Merge `merge_sha` into the topic's checkout, leaving the conflicts in the
-    files, and name them.
+    """Put a merge with `merge_sha` on the topic's branch, conflicts and all,
+    and name the files that conflicted.
 
-    Left mid-merge on purpose. git cannot commit a conflicted tree at all, so
-    there is no "conflict on the branch" to hand anybody — and there does not
-    need to be: the worktree this writes IS where 芝士 works, and it now holds
-    exactly the state a person gets from `git merge`, which is the state every
-    agent already knows how to finish. Committing the resolution moves the
-    branch, because the worktree is checked out on it.
+    The conflict has to be ON THE BRANCH, not merely in a working tree: whoever
+    resolves it may be working from a clone on another machine, and it is the
+    branch they pull and push back to. It also has to be a real merge — the
+    commit's second parent is what makes 采纳 bring the other side's history
+    along, which is the whole reason the upstream variant exists.
 
-    A merge that turns out to be clean is aborted rather than left staged: the
-    caller only arrives here after 采纳 reported a conflict, so a clean result
-    means the conflict is already gone, and leaving MERGE_HEAD lying around
-    would make the next commit an unexplained merge.
+    git cannot commit a conflicted tree, so the conflict travels the only way
+    git can carry it: the markers themselves, committed. That is what the
+    resolver receives either way — in a clone, in the sandbox, in an editor —
+    and finishing it is an ordinary commit.
+
+    This is the platform committing, which it otherwise does not do. The
+    distinction is whose work it is: the merge is the platform's own act,
+    performed because someone pressed 采纳, and the agent's own commits stay
+    the agent's to make.
+
+    `--allow-unrelated-histories` because the upstream variant merges a repo
+    that shares no history with this one — the ordinary case for a project
+    connected to an existing GitHub repo.
     """
     wt = _ensure_worktree(project_id, topic_id)
     with contextlib.suppress(ValidationError):
         _git(wt, "merge", "--abort")  # a resolution attempt someone walked away from
     with contextlib.suppress(ValidationError):
-        _git(wt, "merge", "--no-commit", "--no-ff", merge_sha.strip())
+        _git(
+            wt,
+            "merge",
+            "--no-commit",
+            "--no-ff",
+            "--allow-unrelated-histories",
+            merge_sha.strip(),
+            timeout=120,
+        )
     files = [
         line
         for line in _git(wt, "diff", "--name-only", "--diff-filter=U").splitlines()
         if line.strip()
     ]
-    if not files:
-        with contextlib.suppress(ValidationError):
-            _git(wt, "merge", "--abort")
+    _git(wt, "add", "-A")
+    _git(
+        wt,
+        "commit",
+        "-q",
+        "--no-verify",
+        "-m",
+        "chore: merge for 芝士 to resolve" if files else "chore: merge",
+        timeout=60,
+    )
     return files
 
 
