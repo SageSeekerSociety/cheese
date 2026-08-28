@@ -386,7 +386,10 @@ def _ensure_worktree(project_id: uuid.UUID, place_id: uuid.UUID) -> Path:
     if wt.exists() and any(wt.iterdir()):
         _adopt_the_directory_that_is_already_there(main, wt, start, create)
     else:
-        _git(main, "worktree", "add", "-q", *create, str(wt), start)
+        # A generous timeout: this writes out a whole project tree, and a
+        # checkout killed halfway leaves a directory that the branch above
+        # would then read as a tree full of uncommitted work.
+        _git(main, "worktree", "add", "-q", *create, str(wt), start, timeout=300)
     _point_at_the_store_relatively(main, wt)
     _make_world_writable(wt)
     return wt
@@ -417,7 +420,7 @@ def _adopt_the_directory_that_is_already_there(
     staging_parent = wt.with_name(f".adopting-{wt.name}")
     shutil.rmtree(staging_parent, ignore_errors=True)
     staging = staging_parent / wt.name
-    _git(main, "worktree", "add", "-q", *create, str(staging), start)
+    _git(main, "worktree", "add", "-q", *create, str(staging), start, timeout=300)
     try:
         shutil.rmtree(wt / ".jj", ignore_errors=True)
         shutil.move(str(staging / ".git"), str(wt / ".git"))
