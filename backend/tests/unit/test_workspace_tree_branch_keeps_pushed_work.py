@@ -90,9 +90,6 @@ def _push_over_the_git_proxy(
         target.write_text(content, encoding="utf-8")
     _commit_all(work, "feat: the work this card delivers")
     _run(work, "push", "-q", "origin", f"HEAD:refs/heads/{branch}")
-    # What the git proxy does on its way out of a receive-pack: keep jj's view
-    # level with the refs that just moved (api/routes/git_http.py).
-    subprocess.run(["jj", "git", "import"], cwd=repo, capture_output=True, check=False)
     return _run(repo, "rev-parse", branch).strip()
 
 

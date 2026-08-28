@@ -143,7 +143,7 @@ class WorkTreeService:
         as long as CI took.
 
         The very first tree carries the room's own id so that its branch,
-        worktree directory, jj workspace, container workdir and tmux session are
+        worktree directory, container workdir and tmux session are
         byte-for-byte the names they already had (migration `b8e2f4a90d33`).
         Later trees get fresh ids, and therefore fresh branches.
         """

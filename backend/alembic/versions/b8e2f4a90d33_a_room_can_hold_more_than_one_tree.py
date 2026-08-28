@@ -25,8 +25,8 @@ already on the tree the PR is open on.
 ## Why the first tree inherits its room's id
 
 `branch_for_place` derived a branch name from an id (`topic/<hex8>`), and the
-worktree directory, the jj workspace name, the container workdir and the tmux
-session name all derive from that same id. Giving each room's FIRST tree the
+worktree directory, its admin dir under `.git/worktrees/`, the container
+workdir and the tmux session name all derive from that same id. Giving each room's FIRST tree the
 room's own id makes every one of those names byte-for-byte what it already is,
 so no branch is renamed, no worktree is moved, and no live agent session is
 retired. It is the same trick `c4a7e91b2d05` used to let a task inherit the id

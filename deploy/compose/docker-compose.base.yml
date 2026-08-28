@@ -37,9 +37,9 @@ services:
       - GIT_CONFIG_COUNT=1
       - GIT_CONFIG_KEY_0=credential.helper
       - GIT_CONFIG_VALUE_0=store --file /data/git-credentials
-      # The image's app user has HOME=/nonexistent; jj (repo trust records) and
-      # git need a writable, PERSISTENT home. Backed by a host path so jj's
-      # per-repo secure-config survives redeploys.
+      # The image's app user has HOME=/nonexistent; git needs a writable,
+      # PERSISTENT home. Backed by a host path so its global config and the
+      # repo-trust records survive redeploys.
       - HOME=/data/apphome
       # Memory (#187). On MEMORY_BACKEND=openviking the whole memory tree —
       # AGFS files AND the vector index — lives under this directory and
@@ -55,7 +55,7 @@ services:
       - QUALITY_GATE_IMAGE=${QUALITY_GATE_IMAGE:-ghcr.io/sageseekersociety/cheese/sandbox:${IMAGE_TAG:-main}}
     volumes:
       - ${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}:/data/uploads
-      # Platform workspaces (project git repos / jj worktrees / claude sessions)
+      # Platform workspaces (project git repos / topic worktrees / sessions)
       # must OUTLIVE container recreations — without this bind every deploy
       # erased them (they lived in the container FS). Required for the fused
       # platform features (topics/芝士) and the self-hosting dogfood loop.

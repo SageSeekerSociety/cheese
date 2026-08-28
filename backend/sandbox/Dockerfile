@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 # Agent sandbox: 芝士 (claude code) runs INSIDE here, per topic, with native
-# tools jailed to this container. jj (colocated git) auto-snapshots edits.
+# tools jailed to this container. The topic's git worktree is mounted in, and
+# 芝士 commits to it itself.
 FROM node:22-bookworm-slim
 
 # Universal toolchain (the shared base, like Codex's `universal` image): package
@@ -41,20 +42,10 @@ ARG UV_VERSION=0.12.1
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install --break-system-packages "uv==${UV_VERSION}" && uv --version
 
-# jujutsu (jj) — auto-snapshotting VCS, git-compatible. This line is the single
-# place the version is chosen: CI reads the ARG out of this file to install the
-# binary it tests against (.github/workflows/test.yml), and the backend image
-# has to match it (tests/unit/test_jj_pin_alignment.py) because the two write to
-# ONE store through the .jj bind mounts.
-ARG JJ_VERSION=0.43.0
-RUN curl -fsSL "https://github.com/jj-vcs/jj/releases/download/v${JJ_VERSION}/jj-v${JJ_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz" \
-      | tar xz -C /usr/local/bin ./jj \
-    && jj --version
-
 # GitHub CLI — so 芝士 can inspect CI/CD (`gh run view --log-failed`) with the
 # read-only token `cheese gh-token` mints (#188/#193). curl works too, but gh
 # is far less error-prone for reading Actions. Direct from releases (musl-free
-# deb), same reason as jj: reliable through the proxy, unlike ghcr/apt-key.
+# deb): reliable through the proxy, unlike ghcr/apt-key.
 ARG GH_VERSION=2.62.0
 RUN ARCH="$(dpkg --print-architecture)" \
     && curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
@@ -79,10 +70,11 @@ COPY cheese /usr/local/bin/cheese
 RUN chmod +x /usr/local/bin/cheese && mkdir -p /work && chown -R node:node /work
 
 # `node` is uid/gid 1000 here (node:22's own user) and the backend deliberately
-# runs as the SAME uid — the two share one jj store through the main-repo
-# .jj/.git bind mounts, and jj's 0600 store objects mean a uid split locks one
-# side out of every jj command. Do not usermod/groupmod this user, and keep any
-# derived image (backend/sandbox/cheesex-dev.Dockerfile) on `USER node`.
+# runs as the SAME uid — the two share one git store through the main-repo
+# `.git` bind mount and both COMMIT into it, and git's object directories
+# belong to whoever wrote them, so a uid split leaves one side unable to add
+# anything. Do not usermod/groupmod this user, and keep any derived image
+# (backend/sandbox/cheesex-dev.Dockerfile) on `USER node`.
 # The invariant is asserted by tests/unit/test_workspace_uid_alignment.py.
 RUN test "$(id -u node)" = 1000 && test "$(id -g node)" = 1000
 USER node

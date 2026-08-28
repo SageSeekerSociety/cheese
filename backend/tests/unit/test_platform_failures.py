@@ -3,11 +3,12 @@ import errno
 from app.domain.agent.platform_failures import (
     RUNTIME_IMAGE_MISSING_CODE,
     STORAGE_EXHAUSTED_CODE,
+    WORKSPACE_VCS_PERMS,
     WORKSPACE_VCS_PERMS_CODE,
     classify_platform_failure,
     is_storage_exhausted,
-    is_workspace_vcs_perms,
 )
+from app.domain.workspace.service import WorkspacePermissionError
 
 
 def test_storage_exhaustion_matches_errno_and_provider_text():
@@ -86,15 +87,13 @@ def test_missing_runtime_image_is_a_sanitized_platform_event():
     assert "pull access denied" not in failure.detail
 
 
-def test_workspace_vcs_perms_matches_jj_and_backend_wording():
-    """Both ends of the same failure: jj's own English, and the sentence the
-    backend rewrites it into before it leaves workspace/service.py."""
-    assert is_workspace_vcs_perms(
-        "jj workspace failed: Internal error: Failed to determine the secure "
-        "config for a repo"
-    )
-    assert is_workspace_vcs_perms(
-        "工作区版本库权限异常：/ws/x/.jj/repo/config-id 的属主…"
+def test_workspace_vcs_perms_is_carried_not_recognised_from_its_copy():
+    """The failure declares itself. It is the platform's own sentence, so the
+    classifier must not be reading it — copy a classifier greps is copy nobody
+    can edit."""
+    assert (
+        classify_platform_failure(WorkspacePermissionError("工作区仓库里有…"))
+        is WORKSPACE_VCS_PERMS
     )
 
 
@@ -102,27 +101,26 @@ def test_workspace_vcs_perms_walks_exception_chain():
     """Production wraps it twice (ValidationError → ScreenSetupError)."""
     try:
         try:
-            raise RuntimeError(
-                "Internal error: Failed to determine the secure config for a repo"
-            )
-        except RuntimeError as exc:
+            raise WorkspacePermissionError("工作区仓库里有…")
+        except WorkspacePermissionError as exc:
             raise RuntimeError("tmux 后端启动失败") from exc
     except RuntimeError as wrapped:
-        assert is_workspace_vcs_perms(wrapped)
+        assert classify_platform_failure(wrapped) is WORKSPACE_VCS_PERMS
 
 
 def test_workspace_vcs_perms_does_not_guess_from_any_permission_error():
-    """Plenty of unrelated failures say "Permission denied" — only jj's
-    secure-config wording means the store is owned by another uid."""
-    assert not is_workspace_vcs_perms("git push failed: Permission denied (publickey)")
+    """Plenty of unrelated failures say "Permission denied", and none of them
+    means the store belongs to another uid."""
+    assert classify_platform_failure("git push failed: Permission denied") is None
     assert classify_platform_failure("PermissionError: [Errno 13] '/tmp/x'") is None
 
 
 def test_workspace_vcs_perms_payload_is_stable_and_sanitized():
     failure = classify_platform_failure(
-        "tmux 后端启动失败：工作区版本库权限异常：/ws/p/.jj/repo/config-id 的属主不是"
-        "后端进程。原始报错：Internal error: Failed to determine the secure config "
-        "for a repo"
+        WorkspacePermissionError(
+            "工作区仓库里有当前进程（uid=1001）无权访问的文件。"
+            "原始报错：fatal: not a git repository: /ws/p/.git/worktrees/topic_x"
+        )
     )
 
     assert failure is not None
@@ -134,10 +132,10 @@ def test_workspace_vcs_perms_payload_is_stable_and_sanitized():
         "title": "工作区版本库权限异常",
         "retryable": True,
         "detail": (
-            "那个文件的属主不是平台进程，平台读不到它，话题就起不来。"
+            "版本库目录属于另一个系统用户，平台进不去，话题就起不来。"
             "项目文件和已提交的改动都没有受影响，版本历史也没有动过。"
-            "平台会在下一次访问时自动清掉这个文件并恢复，"
-            "请稍后再 @芝士 重试；若反复出现，请把这条提示转给管理员。"
+            "这要管理员在机器上改一次属主（deploy/fix-workspace-ownership.sh），"
+            "平台自己绕不过去——请把这条提示转给管理员，修好后再 @芝士 重试。"
         ),
         "detail_label": "详细说明",
     }

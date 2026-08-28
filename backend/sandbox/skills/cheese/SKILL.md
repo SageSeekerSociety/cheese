@@ -34,15 +34,15 @@ description: 在 CheeseX(知是)平台里改"平台状态"时用。代码/文件
 
 ## 版本控制:提交、推送、开 PR 都是你自己做
 
-工作区是一份普通 `git clone`,`origin` 指的是平台自己那个仓。**平台不替你提交**——它读的是分支,你不提交,后面每一个人读到的都是「这轮什么都没干」:房间里的改动摘要数的是新提交,验收卡的 diff 比的是分支,PR 推的是分支,采纳合的是分支。
+工作区是平台那个仓的一棵 git 工作树,检出在你这条分支上(在托管机器上跑时是一份 `git clone`,`origin` 指着同一个仓)。**平台不替你提交**——它读的是分支,你不提交,后面每一个人读到的都是「这轮什么都没干」:房间里的改动摘要数的是新提交,验收卡的 diff 比的是分支,PR 推的是分支,采纳合的是分支。
 
-- **改完就 `git commit`,提交完就 `git push`。** 只有推出去的才算存在:机器随时可以被回收重建,重建后 `git status` 依然干净、什么都不提示,而本地提交和没提交的改动一样会没。所以**每改完一批推一次,不要攒到最后**。
+- **改完就 `git commit`。** 提交落在你这条分支上,那一刻它就到位了。`git remote` 里有 `origin` 的话(托管机器上那份是 clone),**提交完还要 `git push`**:那份是独立的,机器随时可以被回收重建,重建后 `git status` 依然干净、什么都不提示,而本地提交和没提交的改动一样会没。所以**每改完一批交付一次,不要攒到最后**。
 - **采纳只合 PR 里有的东西。** 没提交的不在 PR 里,也就合不进去,没有任何机制会替你补上。
 - **临时改一个文件再还原,记 sha,别用 `HEAD`。** 动手前先 `git rev-parse HEAD` 记下来,还原时 `git checkout <那个 sha> -- <文件>`。`HEAD` 是一个会动的名字,而这个工作区不止你一个人在写。只要有任何东西在你「改坏」和「还原」之间移动了 HEAD,`git checkout HEAD -- <文件>` 就从**撤销临时改动**变成**把临时改动钉死**——而 `git status` 会显示干净,测试会照样绿,没有任何地方提示你。二分查找、A/B 对照、「先证明它是红的」、临时加一行 print,全都踩在这个假设上。`git stash` 不能用来绕开它(而且 stash 栈全仓库共享,见上)。
 - `git checkout HEAD -- <文件>` 报 `fatal: your current branch appears to be broken`:是 HEAD 指坏了,不是仓库坏了。`git symbolic-ref HEAD refs/heads/<你的分支>` 就好,**别 rebase**。
-- `gh` 必须显式带 `-R <owner>/<repo>`:`origin` 是平台的仓不是 GitHub,它推断不出你说的是哪个 GitHub 仓库。
+- `gh` 必须显式带 `-R <owner>/<repo>`:工作区连的是平台的仓不是 GitHub,它推断不出你说的是哪个 GitHub 仓库。
 
-**推到 GitHub、开 PR,凭据你手上就有。** `origin` 那条路照常推(采纳走的就是它);GitHub 是另一个地方,要写全 URL:`export GH_TOKEN=$(cheese gh-token)` 之后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`,开 PR 用 `gh api repos/<owner>/<repo>/pulls -f head=<分支> -f base=<主干> -f title=… -f body=…`。仓库名、能不能推、能不能开 PR,`cheese gh-token` 的 stderr 里都有。**开之前先 `cheese status` 看一眼这个话题在平台侧有没有已经开着的 PR**——别开出第二条并行的路径来。
+**推到 GitHub、开 PR,凭据你手上就有。** 平台那条路上面已经交代完了(采纳走的就是它);GitHub 是另一个地方,要写全 URL:`export GH_TOKEN=$(cheese gh-token)` 之后 `git push https://x-access-token:$GH_TOKEN@github.com/<owner>/<repo> HEAD:<分支>`,开 PR 用 `gh api repos/<owner>/<repo>/pulls -f head=<分支> -f base=<主干> -f title=… -f body=…`。仓库名、能不能推、能不能开 PR,`cheese gh-token` 的 stderr 里都有。**开之前先 `cheese status` 看一眼这个话题在平台侧有没有已经开着的 PR**——别开出第二条并行的路径来。
 
 **远端你自己去读,别把「已推送 / 已合并 / 冲突解决了 / CI 绿了」当断言说出口。** `cheese gh-token` 给的不是一张只能看 CI 的票——它带的是平台 GitHub App 在这个仓库上被授予的**全部**权限,一项不减,stderr 会逐项列出等级(`contents: write` 和 `contents: read` 是两回事)并把对应的命令直接打出来,照抄就行。所以没有「我没办法看」这回事了:读一眼,读到什么说什么。真出过事——有一轮报告「改动已经进了 PR 分支」,而分支根本没动、冲突还在;它不是在撒谎,是当时确实看不见。
 

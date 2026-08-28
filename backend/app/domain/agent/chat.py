@@ -3932,7 +3932,7 @@ class ChatService:
             yield {"type": "todo", "items": prior_progress, "restored": True}
         # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
         # but deliberately NOT awaited here: git_log ensures the repo exists, and
-        # on a cold project that is a git init plus a jj colocate. Awaited in
+        # on a cold project that is a git init plus a base commit. Awaited in
         # front of the provider, that delay is charged to the start of every
         # turn, and a turn cancelled inside the window dies before it can store
         # its session id. What it measures only becomes commits at the

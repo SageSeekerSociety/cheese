@@ -17,7 +17,7 @@ async def test_delivery_releases_the_cloud_vm_only(monkeypatch):
     """交付释放计费算力，但不拆工作面：设备屏不关。
 
     合并不再等于话题结束，所以拆掉正在用的屏是纯粹的损失——重建的会丢掉旁边装好
-    的一切（jj、procps、测试要用的 git identity）。
+    的一切（procps、测试要用的 git identity）。
     """
     from app.domain.agent import device_provider
     from app.domain.review.services import AcceptService

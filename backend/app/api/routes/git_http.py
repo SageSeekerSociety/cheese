@@ -66,12 +66,15 @@ def _configure_for_push(repo: Path) -> None:
     ``http.receivepack``: http-backend refuses to serve receive-pack otherwise.
 
     ``receive.denyCurrentBranch=updateInstead``: git rejects a push to a branch
-    that is checked out. Topics here are jj workspaces, which git does not count
-    as checked out, so today only the repo's own HEAD (the base branch) is
-    exposed to this — but the rejection message goes to a push that CANNOT report
-    it (a Stop hook must not take the turn down), so it would look exactly like
-    success. ``updateInstead`` also refuses when the target worktree has
-    uncommitted edits, so a human's unsaved work is never overwritten.
+    that is checked out, and every open topic is checked out here (its worktree
+    sits on its branch, which is how the agent's own commit moves it). The
+    rejection would go to a push that CANNOT report it — a Stop hook must not
+    take the turn down — so it would look exactly like success while the work
+    stayed on the machine. ``updateInstead`` lands the push and moves that
+    worktree onto it, and still refuses when the worktree has uncommitted
+    edits, so a human's unsaved work is never overwritten. The workspace layer
+    sets the same thing when it creates a worktree; this covers a repo that
+    predates it.
     """
     for key, value in (
         ("http.receivepack", "true"),
@@ -80,6 +83,14 @@ def _configure_for_push(repo: Path) -> None:
         subprocess.run(
             ["git", "config", key, value], cwd=repo, capture_output=True, check=False
         )
+    # A topic whose directory was deleted out of band — disk cleanup, an
+    # operator, a wiped volume — leaves its branch registered to a worktree that
+    # is not there, and `updateInstead` then fails trying to enter it: every
+    # push to that branch is rejected, silently, forever. Pruning here costs a
+    # directory scan and makes the dead entry stop mattering.
+    subprocess.run(
+        ["git", "worktree", "prune"], cwd=repo, capture_output=True, check=False
+    )
 
 
 async def _cgi(
@@ -175,20 +186,4 @@ async def receive_pack(
 ) -> Response:
     """Push — the direction that was missing."""
     repo = _repo_for(project_id, x_cheese_token)
-    response = await _cgi(repo, f"/{_RECEIVE}", request, await request.body())
-    # Unconditionally, not only on success: jj is colocated here and does not see
-    # a push on its own, and a push that only partly applied has still moved refs.
-    # This keeps jj's view TRUE; it is not on its own what keeps the pushed work
-    # on the branch. That is the worktree's job, and it does it by starting from
-    # the branch and rebasing onto it (`_ensure_worktree`,
-    # `_put_the_branch_under_the_working_copy`) — an import that merely told jj
-    # where the branch was left the next bookmark move free to walk it back.
-    # The import is idempotent and cheap, so there is nothing to gain by guessing.
-    subprocess.run(
-        ["jj", "git", "import"],
-        cwd=repo,
-        capture_output=True,
-        check=False,
-        timeout=30,
-    )
-    return response
+    return await _cgi(repo, f"/{_RECEIVE}", request, await request.body())

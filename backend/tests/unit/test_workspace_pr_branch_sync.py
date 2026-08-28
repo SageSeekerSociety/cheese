@@ -257,6 +257,58 @@ def test_a_later_agent_commit_builds_on_the_synced_branch(
     assert _run(bare, "show", f"{fixed_head}:src/app.py") == "print('fixed')\n"
 
 
+def test_the_sync_reaches_the_checkout_the_agent_goes_on_working_in(
+    tmp_path, project, monkeypatch
+):
+    """After the sync, 芝士's own worktree must hold the synced files.
+
+    This sync is the one place a branch moves without git moving its checkout
+    with it, and the checkout is where the next turn happens. Left behind, it
+    describes the commit BEFORE the merge while sitting on the branch after it
+    — so `git status` reports the synced files as deletions, and the agent's
+    next commit hands back a branch with the sync undone. Nothing warns: the
+    tests are green, the CI re-run is red for a reason nobody can see.
+    """
+    pid, repo = project
+    tid = uuid.uuid4()
+    bare = _make_github(tmp_path, repo)
+    _advance_github(tmp_path, bare, {WORKFLOW: _E2E_V2})
+    _topic_commit(pid, tid, "src/app.py", "print('hi')\n")
+    worktree = ws.topic_worktree(pid, tid)  # the topic is open on this box
+    _use_github(monkeypatch, bare)
+
+    synced = _push(pid, tid)["head_sha"]
+
+    assert (worktree / WORKFLOW).read_text(encoding="utf-8") == _E2E_V2
+    assert _run(worktree, "status", "--porcelain") == ""
+    # And a commit made here builds on the sync rather than reverting it.
+    (worktree / "src" / "app.py").write_text("print('fixed')\n", encoding="utf-8")
+    _run(worktree, "add", "-A")
+    _run(
+        worktree,
+        "-c",
+        "user.name=芝士",
+        "-c",
+        "user.email=c@z.l",
+        "commit",
+        "-m",
+        "fix: ci",
+    )
+    kept = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo),
+            "merge-base",
+            "--is-ancestor",
+            synced,
+            _branch_head(repo, tid),
+        ],
+        capture_output=True,
+    )
+    assert kept.returncode == 0, "the agent's next commit dropped the sync merge"
+
+
 def test_conflicting_sync_reports_the_conflict_and_leaves_the_branch_alone(
     tmp_path, project, monkeypatch
 ):

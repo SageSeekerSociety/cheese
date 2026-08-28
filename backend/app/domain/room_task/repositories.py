@@ -51,7 +51,7 @@ class WorkTreeRepository:
         """Start a batch.
 
         `tree_id` exists for the room's FIRST tree, which carries the room's own
-        id so that every branch, worktree directory, jj workspace, container
+        id so that every branch, worktree directory, container
         workdir and tmux session keeps the name it already had. Every later tree
         gets a fresh id and therefore a fresh branch.
         """

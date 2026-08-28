@@ -92,7 +92,7 @@ async def lifespan(_: FastAPI):
             "agent-user seed skipped", reason=str(exc)[:120]
         )
 
-    # The backend and the in-container agent share one jj store and must run as
+    # The backend and the in-container agent share one git store and must run as
     # the same uid (ws.AGENT_UID). When they don't, nothing here fails — the file
     # panel just 422s for every topic in the project. Say it out loud at boot.
     try:

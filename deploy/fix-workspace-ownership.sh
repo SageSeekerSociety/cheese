@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # One-time ownership migration for the backend's host bind mounts.
 #
-# WHY: the backend process and the in-container agent share one jj store (the
-# project's main-repo .jj/.git is bind-mounted into every sandbox container,
-# read-write). jj writes its store objects — `.jj/repo/config-id` above all —
-# with a hardcoded 0600, so a uid split means whichever side writes first locks
-# the other out of EVERY jj command. Backend-side that showed up as a
-# project-wide 422 on the file panel; sandbox-side as jj being unusable in the
-# container. umask/group/ACL cannot widen a mode the writer sets explicitly, so
-# the backend image now runs as the SAME uid as the sandbox's `node` (1000,
-# see backend/Dockerfile). Files written by the old uid (1001) must be handed
-# over once, or the new backend cannot read its own history.
+# WHY: the backend process and the in-container agent share one git store (the
+# project's main-repo .git is bind-mounted into every sandbox container,
+# read-write) and BOTH commit into it — the agent's own commit is how a topic
+# branch moves. git creates object directories 0755 and loose objects 0444,
+# owned by whoever wrote them, so a uid split leaves the second side able to
+# read everything and add nothing. Backend-side that showed up as a
+# project-wide 422 on the file panel; sandbox-side as an agent whose work could
+# not leave the container. So the backend image runs as the SAME uid as the
+# sandbox's `node` (1000, see backend/Dockerfile). Files written by the old uid
+# (1001) must be handed over once, or the new backend cannot read its own
+# history.
 #
 # Idempotent and safe to re-run: it only touches entries whose uid is wrong, and
 # drops a marker so a second deploy skips the walk entirely. Runs the chown in a

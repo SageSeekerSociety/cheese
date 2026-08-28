@@ -33,9 +33,9 @@ def test_reading_a_file_needs_a_credential(client):
 
 
 def test_a_topic_worktree_listing_reflects_what_was_pushed(tmp_path, monkeypatch):
-    """A machine that owns its tree pushes to the branch; the backend's jj
-    workspace for that topic does not move on its own, so a read that goes
-    through it showed nothing — the push looked like it had done nothing."""
+    """A machine that owns its tree pushes to the branch, and the file panel
+    reads out of the backend's own checkout of it. A checkout that does not
+    move with the branch shows nothing — the push looks like it did nothing."""
     from app.api.routes.git_http import _configure_for_push
     from app.domain.workspace import service as ws
 

@@ -138,7 +138,7 @@ class WorkTree(UuidPk, Timestamps, Base):
     together and lands together, in one PR, reviewed once.
 
     The first tree of each room carries the ROOM's id (migration
-    `b8e2f4a90d33`), so every branch, worktree directory, jj workspace, container
+    `b8e2f4a90d33`), so every branch, worktree directory, container
     workdir and tmux session keeps the name it already had.
     """
 
