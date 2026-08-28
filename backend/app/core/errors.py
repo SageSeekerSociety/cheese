@@ -117,6 +117,17 @@ class PermissionDeniedError(ForbiddenError):
         super().__init__(message, data)
 
 
+class SudoRequiredError(ForbiddenError):
+    """This operation needs a fresh re-authentication, not just a session.
+
+    Distinct from a plain 403 because the client's answer is different: there
+    is nothing wrong with who is asking, so the fix is to send them through
+    the re-authentication screen and retry, not to tell them they lack
+    permission. The class name travels in the response body, which is what
+    the web client keys on.
+    """
+
+
 class TokenExpiredError(BaseError):
     def __init__(self, message: str = "Token has expired") -> None:
         super().__init__(HTTP_401_UNAUTHORIZED, message, None)

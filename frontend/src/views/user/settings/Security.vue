@@ -512,7 +512,8 @@ onMounted(() => {
   // 检查 sudo store 中是否存在重试操作
   const sudoStore = useSudoStore()
   if (sudoStore.retryOperation && sudoStore.isVerified) {
-    console.log('重试操作:', sudoStore.retryOperation)
+    // 不打印 retryOperation：changePassword 的 opData 里装着用户刚输入的新密码，
+    // 打出来就等于把明文密码留在浏览器控制台里。
     const opKey = sudoStore.retryOperation.opKey
     const retryOperations: Record<string, () => void> = {
       disableTOTP: handleDisableTOTP,
@@ -631,11 +632,11 @@ const handleDisableTOTP = async () => {
   loading.value = true
   try {
     await withSudo(
-      async () => {
-        await UserApi.disableTOTP(currentUserId.value!)
+      async (sudoTicket) => {
+        await UserApi.disableTOTP(currentUserId.value!, sudoTicket)
         await fetch2FAStatus() // 确保状态更新
         showDisableDialog.value = false
-        toast.success('双重验证已禁用')
+        toast.success('双重验证已禁用，通知已发送到你的邮箱')
       },
       'disableTOTP',
       null,

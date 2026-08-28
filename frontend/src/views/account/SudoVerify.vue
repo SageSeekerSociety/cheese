@@ -125,12 +125,18 @@ import { toast } from 'vuetify-sonner'
 import { browserSupportsWebAuthn, startAuthentication } from '@simplewebauthn/browser'
 import * as srp from 'secure-remote-password/client'
 
+import { sudoPurposeFor } from '@/utils/sudo'
+
 import { UserApi } from '@/network/api/users'
-import AccountService from '@/services/account'
 import { currentUserId, currentUserName } from '@/services/account'
 import { useSudoStore } from '@/stores/sudo'
 
 const router = useRouter()
+const sudoStore = useSudoStore()
+
+// 这次验证是为哪一件事做的。服务端把它签进票里，所以为「添加通行密钥」验的
+// 那一次，换不来一张能关掉两步验证的票。
+const purpose = computed(() => sudoPurposeFor(sudoStore.retryOperation?.opKey))
 
 const activeMethod = ref('passkey')
 const loading = ref(false)
@@ -160,10 +166,6 @@ const authMethods = ref<{
   requires_2fa: false,
 })
 
-const setAccessToken = (token: string) => {
-  AccountService.accessToken = token
-}
-
 // 添加初始化状态
 const isInitializing = ref(true)
 
@@ -185,13 +187,10 @@ const handlePasskeyVerify = async () => {
     const asseResp = await startAuthentication({ optionsJSON })
 
     // 验证结果
-    const response = await UserApi.verifySudoPasskey(asseResp)
-
-    // 更新 access token
-    setAccessToken(response.data.accessToken)
+    const response = await UserApi.verifySudoPasskey(asseResp, purpose.value)
 
     // 验证成功，返回原页面
-    await handleVerifySuccess()
+    await handleVerifySuccess(response.data.sudoTicket)
   } catch (error: any) {
     if (error.name === 'NotAllowedError') {
       errorMessage.value = '操作被取消'
@@ -240,31 +239,31 @@ const handlePasswordVerify = async () => {
       )
 
       // 4. 发送客户端证明到服务器
-      const verifyResponse = await UserApi.verifySudoSrpVerify({
-        clientPublicEphemeral: srpSession.value.clientEphemeral.public,
-        clientProof: clientSession.proof,
-      })
+      const verifyResponse = await UserApi.verifySudoSrpVerify(
+        {
+          clientPublicEphemeral: srpSession.value.clientEphemeral.public,
+          clientProof: clientSession.proof,
+        },
+        purpose.value
+      )
 
-      const { serverProof, accessToken } = verifyResponse.data
+      const { serverProof, sudoTicket } = verifyResponse.data
 
       // 5. 验证服务器证明
       srp.verifySession(srpSession.value.clientEphemeral.public, clientSession, serverProof)
 
-      // 6. 更新 access token 并完成验证
-      setAccessToken(accessToken)
-      await handleVerifySuccess()
+      // 6. 完成验证
+      await handleVerifySuccess(sudoTicket)
     } else {
       // 使用传统密码验证
-      const response = await UserApi.verifySudoPassword(password.value)
+      const response = await UserApi.verifySudoPassword(password.value, purpose.value)
 
       // 如果服务器返回了 srpUpgraded = true，说明账户已自动升级到 SRP
       if (response.data.srpUpgraded) {
         toast.success('您的账户安全性已自动升级')
       }
 
-      // 更新 access token
-      setAccessToken(response.data.accessToken)
-      await handleVerifySuccess()
+      await handleVerifySuccess(response.data.sudoTicket)
     }
   } catch (error: any) {
     errorMessage.value = error.message || '验证失败'
@@ -283,13 +282,10 @@ const handleTOTPVerify = async () => {
   loading.value = true
   errorMessage.value = ''
   try {
-    const response = await UserApi.verifySudoTOTP(totpCode.value)
-
-    // 更新 access token
-    setAccessToken(response.data.accessToken)
+    const response = await UserApi.verifySudoTOTP(totpCode.value, purpose.value)
 
     // 验证成功，返回原页面
-    await handleVerifySuccess()
+    await handleVerifySuccess(response.data.sudoTicket)
   } catch (error: any) {
     errorMessage.value = error.message || '验证失败'
   } finally {
@@ -305,10 +301,9 @@ const handleTOTPInput = (value: string) => {
 }
 
 // 验证成功后的处理
-const handleVerifySuccess = async () => {
-  const sudoStore = useSudoStore()
-  // 设置验证成功标志
-  sudoStore.setVerified()
+const handleVerifySuccess = async (sudoTicket?: string) => {
+  // 设置验证成功标志，并把服务端签的票交给待重试的操作
+  sudoStore.setVerified(sudoTicket)
 
   if (sudoStore.returnPath) {
     router.replace(sudoStore.returnPath)
