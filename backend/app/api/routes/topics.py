@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api import proxy
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import (
     get_broker,
@@ -35,6 +36,7 @@ from app.domain.agent.market import (
     compute_selectable,
     visibility_listings,
 )
+from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.schemas import TopicAgentIn
 from app.domain.agent_instance.services import ResolvedAgent
@@ -1770,7 +1772,17 @@ async def return_conclusion(
 _ARTIFACT_MIME = {
     "html": "text/html",
     "svg": "image/svg+xml",
+    # 运行环境预览: the artifact is a RUNNING app on the machine this place's turn
+    # lives on, reached over the preview tunnel that machine dialled out. HOW to
+    # run it — and on which port — is the agent's judgment; the platform only
+    # carries what answers there.
+    "app": "application/x-cheesex-app",
 }
+
+# How long ``cheese serve`` may wait for the helper it just started to finish its
+# upgrade. It declares the preview in the same breath as starting the tunnel, so
+# without this the platform would refuse a preview that is one round trip away.
+_PREVIEW_ATTACH_WAIT_S = 8.0
 
 
 def _clean_artifact_path(raw: str) -> str:
@@ -1785,6 +1797,28 @@ def _clean_artifact_path(raw: str) -> str:
     return path
 
 
+async def _reject_unreachable_app(topic_id: uuid.UUID) -> None:
+    """Refuse an app artifact the platform provably cannot render (``cheese serve``).
+
+    Setting it used to always succeed, so 芝士 announced 「预览已就绪」 while the
+    panel showed 「应用暂时不在线」. Two separate things can be missing and they
+    read differently to whoever has to fix them: the tunnel (nothing on that
+    machine is carrying a preview out) and the app behind it (the tunnel is up and
+    the declared port answers nothing).
+    """
+    if not await preview_hub.wait_online(topic_id, _PREVIEW_ATTACH_WAIT_S):
+        raise ValidationError(
+            "这台机器还没有把预览通道拨出来，预览到不了运行中的应用。"
+            "用 cheese serve <端口> 登记（它会把通道带起来）；"
+            "要给人看结果也可以用 cheese artifact 点名一个网页或 SVG 文件。"
+        )
+    if not await preview_hub.probe(topic_id):
+        raise ValidationError(
+            "登记的端口上没有服务在应答，预览会是一个白框。"
+            "先把应用起在 127.0.0.1 上、确认能访问，再登记这个端口。"
+        )
+
+
 @router.post("/{topic_id}/artifact")
 async def set_artifact(
     topic_id: uuid.UUID,
@@ -1797,7 +1831,13 @@ async def set_artifact(
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     as_ = (body.get("as") or "html").strip().lower()
-    path = _clean_artifact_path(body.get("path") or "")
+    if as_ == "app":
+        # An app artifact points at the running server, not a file — the stored
+        # content is a human note ("Vue dev server"), not a path.
+        path = (body.get("path") or "app").strip()[:120]
+        await _reject_unreachable_app(topic_id)
+    else:
+        path = _clean_artifact_path(body.get("path") or "")
     mime = _ARTIFACT_MIME.get(as_)
     if mime is None:
         allowed = "、".join(_ARTIFACT_MIME)
@@ -1837,6 +1877,29 @@ async def get_preview(
     )
     if art is None:
         return ok(None)
+    if art.mime_type == _ARTIFACT_MIME["app"]:
+        # Knocked on LIVE, through the tunnel, every time the panel asks. A
+        # declared preview is not a running one: the agent's dev server exits,
+        # the machine goes offline, the helper's token ages out — and each of
+        # those renders as a white iframe unless the two states are reported
+        # apart. `tunnel_up` without a `url` is 「通道在，应用没在跑」.
+        tunnel_up = preview_hub.is_online(topic_id)
+        alive = tunnel_up and await preview_hub.probe(topic_id)
+        return ok(
+            {
+                "kind": "app",
+                "path": art.content,
+                "mime": art.mime_type,
+                # Root-relative: the backend's reverse proxy, reachable from any
+                # browser. There is no machine-local address to hand out — that
+                # is the whole reason the tunnel exists.
+                "url": (
+                    proxy.browser_path(f"/topics/{topic_id}/app/") if alive else None
+                ),
+                "tunnel_up": tunnel_up,
+                "artifact_id": str(art.id),
+            }
+        )
     return ok(
         {
             "kind": "file",
@@ -1865,7 +1928,7 @@ async def get_preview_raw(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
     art = await BlockRepository(db).latest_artifact(topic_id)
-    if art is None:
+    if art is None or art.mime_type == _ARTIFACT_MIME["app"]:
         raise NotFoundError("没有可打开的文件 artifact")
     data = ws.read_file_bytes(topic.project_id, art.content, topic_id=topic_id)
     return Response(
