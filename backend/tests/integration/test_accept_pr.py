@@ -330,7 +330,7 @@ def _pr_ready(
     this file EXCEPT the repush ones below is testing something orthogonal
     to the repush mechanism (CI states, merge, deploy, nudging) and none of
     them ever create a real workspace commit, so a real lookup would just be
-    incidental git/jj plumbing unrelated to what's under test. The repush
+    incidental git plumbing unrelated to what's under test. The repush
     tests pass `patch_local_head=False` to exercise the real thing."""
 
     async def fake_token(_session, h, *, provider_id="github_app"):

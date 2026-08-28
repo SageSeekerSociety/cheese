@@ -202,7 +202,7 @@ def test_the_baseline_read_never_delays_the_turns_start(
     client, monkeypatch, stub_hooks
 ):
     """The baseline is read through `git_log`, which ensures the repo exists —
-    on a cold project that is a `git init` plus a jj colocate. Awaited in front
+    on a cold project that is a `git init` plus a base commit. Awaited in front
     of the provider it is charged to the start of EVERY turn, and a turn
     cancelled inside that window dies before it can store its session id
     (test_turn_exit_paths.py owns that contract). So the read must be started,

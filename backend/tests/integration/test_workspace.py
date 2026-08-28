@@ -82,13 +82,13 @@ def test_parallel_topics_isolated(client):
     assert "b.txt" in n2 and "a.txt" not in n2
 
 
-def test_file_endpoints_survive_the_agent_using_jj(client):
+def test_file_endpoints_survive_the_agent_committing(client):
     """The file panel's 422 outage, at the level the user saw it.
 
-    芝士 running jj in its workspace writes into the project's SHARED main-repo
-    store (mounted into every sandbox container), and every backend file read
-    goes back through jj. While the backend ran as a different uid than the
-    sandbox, jj's 0600 store objects made that one command 422 the file list,
+    芝士 committing in its workspace writes into the project's SHARED store
+    (mounted into every sandbox container), and every backend file read reaches
+    for that same store. While the backend ran as a different uid than the
+    sandbox, one side's writes locked the other out and 422'd the file list,
     the file body, and the raw bytes — for every topic in the project, not just
     this one. Same uid on both sides → the endpoints keep answering.
     """
@@ -97,18 +97,29 @@ def test_file_endpoints_survive_the_agent_using_jj(client):
     _native_edit(pid, tid, "note.md", "hello\n")
 
     wt = ws.topic_worktree(pid, tid)
-    subprocess.run(
-        ["jj", "--no-pager", "config", "set", "--repo", "user.name", "芝士"],
-        cwd=wt,
-        check=True,
-        capture_output=True,
+    (wt / "from_the_agent.md").write_text(
+        "written in the container\n", encoding="utf-8"
     )
+    for args in (
+        ["add", "-A"],
+        [
+            "-c",
+            "user.name=芝士",
+            "-c",
+            "user.email=c@z.l",
+            "commit",
+            "-m",
+            "feat: work",
+        ],
+    ):
+        subprocess.run(["git", *args], cwd=wt, check=True, capture_output=True)
 
     listed = client.get(
         f"/projects/{pid}/files", params={"topic": str(tid)}, headers=_owner(client)
     )
     assert listed.status_code == 200
-    assert any(f["path"] == "note.md" for f in listed.json()["data"]["data"])
+    paths = {f["path"] for f in listed.json()["data"]["data"]}
+    assert {"note.md", "from_the_agent.md"} <= paths
 
     body = client.get(
         f"/projects/{pid}/file",
