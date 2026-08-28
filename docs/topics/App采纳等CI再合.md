@@ -114,7 +114,8 @@ PR 是在采纳那一刻才现场补开的（人点采纳时界面上根本没�
 ## 没做、故意留着的
 
 - 没有删 `_accept_via_pr`。它在 `github_user` 那条路上（卡上已有 PR 时）仍然可
-  达，是否该删是另一张独立的卡。
+  达，是否该删是另一张独立的卡。（它「读一次检查、照合」的姿态后来单独修掉了，
+  见 [采纳不合红着的 PR](采纳不合红着的PR.md)。）
 - 没有动 GitHub 仓库设置 / 分支保护 / `.github/workflows/` / `deploy/`。分支保护
   是另一条候选方案，不在这次范围里。
 - **write token 不含 `workflows`**（`_WRITE_PERMISSIONS` 只有 `contents:write` +
