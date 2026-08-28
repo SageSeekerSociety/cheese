@@ -49,7 +49,6 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.service import (
-    AgentDeliveryFailure,
     AgentEvent,
     AgentMessage,
     AgentResult,
@@ -2001,7 +2000,7 @@ class ChatService:
         project_id: uuid.UUID,
         topic_id: uuid.UUID,
         turn_id: uuid.UUID,
-        event: AgentEvent | AgentDeliveryFailure,
+        event: AgentEvent,
         eid: str | None,
         result_text_seen: bool,
         platform_unsolicited: bool,

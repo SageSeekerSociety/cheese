@@ -1,12 +1,15 @@
 // Package host is the composition root of `cheese run`: it dials the server and
 // lets the server open any number of screens on this machine. Each screen is a
-// program in a terminal, and the server drives it two ways at once:
+// program in a terminal, and the server reaches it three ways:
 //
-//   - through a hosted script (the cheeselet) over a variable/function bus, and
-//   - directly, as a raw byte stream to and from the terminal.
+//   - as a raw byte stream to and from the terminal (what a browser viewer
+//     rides),
+//   - through the screen's own rendezvous socket, where a prompt is enqueued as
+//     human-origin input without passing through the terminal at all,
+//   - and by staging files into the screen's workspace.
 //
 // The host wires those together and ascribes no meaning to any of it; all
-// behavior lives in the server and its scripts.
+// behavior lives in the server.
 package host
 
 import (
@@ -28,7 +31,6 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/rendezvous"
-	"github.com/SageSeekerSociety/cheese/cli/internal/runtime"
 	"github.com/SageSeekerSociety/cheese/cli/internal/state"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
 	"github.com/SageSeekerSociety/cheese/cli/internal/update"
@@ -56,8 +58,6 @@ type Host struct {
 
 type sess struct {
 	term     *terminal.Session
-	rt       *runtime.Runtime
-	cancel   context.CancelFunc
 	client   *terminal.Client // a real tmux client (pty) while a viewer is attached
 	lastCols int
 	lastRows int
@@ -98,8 +98,8 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 }
 
 // Run connects and serves screens until ctx is cancelled, then LETS GO of them:
-// it releases what this process owns (viewer ptys, rendezvous clients, runtimes)
-// and leaves every tmux session running.
+// it releases what this process owns (viewer ptys, rendezvous clients) and
+// leaves every tmux session running.
 //
 // Stopping the connector is not a decision to end anybody's work. The service
 // manager stops this process to restart it, to apply an update, on a reboot —
@@ -212,36 +212,15 @@ func (h *Host) onMsg(m link.Msg) {
 		h.createSession(m)
 	case "session.close":
 		h.closeSession(m.Sid)
-	case "script.load":
+	case "rpc.call": // the server asks this screen to do something
 		if s := h.session(m.Sid); s != nil {
-			s.rt.LoadScript(m.Source)
-		}
-	case "var.set": // server-owned variable pushed down
-		if s := h.session(m.Sid); s != nil {
-			s.rt.SetVar(m.Name, m.Value)
-		}
-	case "rpc.call": // server invokes a script-exposed function
-		if s := h.session(m.Sid); s != nil {
-			// `prompt` is the one call that must never go through the terminal:
-			// it carries what a person said, and typing it into a TUI made
-			// delivery depend on pane width and screen scraping. When the
-			// launcher armed a rendezvous socket, deliver over that instead —
-			// same call name, same rpc.result contract, different transport.
-			if s.usesRendezvous(m.Name) {
-				go h.deliverPrompt(m, s)
-				return
-			}
-			s.rt.Invoke(m.ID, m.Name, m.Args)
+			go h.serveCall(m, s)
 		}
 	case "file.put":
 		if s := h.session(m.Sid); s != nil {
 			go h.putFile(m, s)
 		} else {
 			_ = h.conn.Send(link.Msg{T: "file.result", Sid: m.Sid, ID: m.ID, Error: "unknown screen"})
-		}
-	case "rpc.result": // result of a script->server call
-		if s := h.session(m.Sid); s != nil {
-			s.rt.Resolve(m.ID, m.Value, m.Error)
 		}
 	case "screen.subscribe": // attach a real tmux client sized to the viewer
 		h.subscribeScreen(m.Sid, m.Cols, m.Rows)
@@ -283,14 +262,9 @@ func (h *Host) session(sid string) *sess {
 }
 
 func (h *Host) createSession(m link.Msg) {
-	if existing := h.session(m.Sid); existing != nil {
-		// Same-process reconnect: the screen is already live locally. An adopt
-		// create carries the current driver source — hot-reload it into the live
-		// runtime (this is how a backend restart pushes the latest cheeselet into
-		// already-running screens). A non-adopt duplicate is a harmless no-op.
-		if m.Adopt && m.Source != "" {
-			existing.rt.LoadScript(m.Source)
-		}
+	if h.session(m.Sid) != nil {
+		// Same-process reconnect: the screen is already live locally, and every
+		// way of reaching it is per-message, so there is nothing to re-establish.
 		return
 	}
 	// The server owns the screen's identity: it hands down an opaque token in
@@ -305,10 +279,10 @@ func (h *Host) createSession(m link.Msg) {
 	}
 
 	// If a tmux session for this sid already exists (it survived a `cheese update`
-	// re-exec or a server restart), ADOPT it: re-establish the runtime + driver +
-	// polling around the still-running program instead of spawning a new session.
-	// Otherwise spawn a fresh tmux session + program as usual. The server sets
-	// m.Adopt on the re-provision path; HasSession is the ground truth we act on.
+	// re-exec or a server restart), ADOPT it: re-attach to the still-running
+	// program instead of spawning a new session. Otherwise spawn a fresh tmux
+	// session + program as usual. The server sets m.Adopt on the re-provision
+	// path; HasSession is the ground truth we act on.
 	var term *terminal.Session
 	if h.tm.HasSession(m.Sid) {
 		term = h.tm.Adopt(m.Sid)
@@ -320,22 +294,15 @@ func (h *Host) createSession(m link.Msg) {
 			return
 		}
 	}
-	rt := runtime.New(term, &busAdapter{conn: h.conn, sid: m.Sid})
-	ctx, cancel := context.WithCancel(h.ctx)
-
 	h.mu.Lock()
 	h.sessions[m.Sid] = &sess{
-		term: term, rt: rt, cancel: cancel,
-		rvPath: m.Env[envRvSock], rvTokenFile: m.Env[envRvTokenFile],
-		workDir: m.Env["CHEESE_WORK"],
+		term:        term,
+		rvPath:      m.Env[envRvSock],
+		rvTokenFile: m.Env[envRvTokenFile],
+		workDir:     m.Env["CHEESE_WORK"],
 	}
 	h.mu.Unlock()
 
-	go func() { _ = rt.Run(ctx) }()
-
-	if m.Source != "" {
-		rt.LoadScript(m.Source)
-	}
 	_ = h.conn.Send(link.Msg{T: "session.ready", Sid: m.Sid})
 	h.publishState()
 }
@@ -412,9 +379,9 @@ func (h *Host) releaseAll() {
 	}
 }
 
-// release drops what this PROCESS owns for a screen — the viewer's pty client,
-// the rendezvous connection, the driver runtime. Nothing here outlives the
-// process anyway, and none of it is the screen's work.
+// release drops what this PROCESS owns for a screen — the viewer's pty client
+// and the rendezvous connection. Nothing here outlives the process anyway, and
+// none of it is the screen's work.
 func (h *Host) release(s *sess) {
 	if s == nil {
 		return
@@ -428,7 +395,6 @@ func (h *Host) release(s *sess) {
 		s.rv = nil
 	}
 	s.rvMu.Unlock()
-	s.cancel()
 }
 
 // teardown ends a screen for good: release, then kill the tmux session with the
@@ -643,11 +609,24 @@ func (h *Host) dropRendezvous(s *sess) {
 // have to spend it.
 var rvTokenWait = 20 * time.Second
 
-// usesRendezvous reports whether this call should bypass the cheeselet. Only
-// `prompt` does, and only when the launcher armed a socket for this screen —
-// every other exposed function still belongs to the script.
-func (s *sess) usesRendezvous(callName string) bool {
-	return callName == promptCall && s.rvPath != ""
+// serveCall answers one server->screen call. `prompt` is the only thing a screen
+// can be asked to do, and it goes over the rendezvous socket the launcher armed.
+// Anything else — a call this build does not know, or a prompt for a screen with
+// no socket — is answered with an error rather than dropped: a call the server
+// believes it made and this side silently ignored is the exact failure shape
+// this delivery path exists to end.
+func (h *Host) serveCall(m link.Msg, s *sess) {
+	if m.Name != promptCall {
+		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID,
+			Error: fmt.Sprintf("unknown call %q", m.Name)})
+		return
+	}
+	if s.rvPath == "" {
+		_ = h.conn.Send(link.Msg{T: "rpc.result", Sid: m.Sid, ID: m.ID,
+			Error: "rendezvous: this screen has no socket (" + envRvSock + " was not in its env)"})
+		return
+	}
+	h.deliverPrompt(m, s)
 }
 
 // readRvToken reads the launcher-written token. It waits briefly: the file is
@@ -768,25 +747,3 @@ func (c *cappedBuffer) Write(p []byte) (int, error) {
 
 func (c *cappedBuffer) String() string { return c.buf.String() }
 func (c *cappedBuffer) Len() int       { return c.buf.Len() }
-
-// busAdapter maps one screen's runtime.Bus onto sid-tagged link messages.
-type busAdapter struct {
-	conn *link.Conn
-	sid  string
-}
-
-func (b *busAdapter) PushVar(name string, value any) {
-	_ = b.conn.Send(link.Msg{T: "var.push", Sid: b.sid, Name: name, Value: value})
-}
-
-func (b *busAdapter) CallServer(id, name string, args []any) {
-	_ = b.conn.Send(link.Msg{T: "rpc.call", Sid: b.sid, ID: id, Name: name, Args: args})
-}
-
-func (b *busAdapter) ReplyServer(id string, result any, errStr string) {
-	_ = b.conn.Send(link.Msg{T: "rpc.result", Sid: b.sid, ID: id, Value: result, Error: errStr})
-}
-
-// SetInbound is unused: the host routes inbound messages to the runtime directly
-// (see onMsg), so the adapter needs no reference back.
-func (b *busAdapter) SetInbound(runtime.Inbound) {}

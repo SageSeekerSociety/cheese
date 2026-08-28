@@ -2,12 +2,11 @@
 
 // Prompt delivery over the rendezvous socket, against a REAL Claude Code.
 //
-// The companion file drives the same stack through the terminal (paste + Enter,
-// verified on screen). This one drives it through the socket Claude Code binds
-// for itself, and asserts the property that made us switch: delivery does not
-// depend on anything the terminal does. Every test here runs the pane at 46
-// columns — the exact width that made the screen-scraping driver re-paste a CJK
-// prompt forever on 2026-08-16 — and sends Chinese text through it.
+// Delivery goes through the socket Claude Code binds for itself, and this
+// asserts the property that made us switch: it does not depend on anything the
+// terminal does. Every test here runs the pane at 46 columns — the exact width
+// that made the screen-scraping driver re-paste a CJK prompt forever on
+// 2026-08-16 — and sends Chinese text through it.
 //
 // What is proven, not assumed: the file the scripted tool writes. A prompt that
 // reaches the composer but is never submitted leaves a pane that looks perfect
@@ -304,11 +303,10 @@ func startRendezvousClaude(t *testing.T) *rvFixture {
 	t.Cleanup(func() { sess.Close() })
 
 	// Snapshot() serves whatever the poller last captured, and the poller only
-	// starts on the first OnChange registration — which used to happen as a side
-	// effect of loading the cheeselet. There is no cheeselet on this path, so
-	// register a no-op: without it every snapshot is the empty string and the
-	// readiness wait below can only ever time out. (Nothing in production reads
-	// the screen any more; this is purely so the TEST can watch claude boot.)
+	// starts on the first OnChange registration. Nothing in production registers
+	// one — nothing there reads a screen — so this test has to, or every
+	// snapshot is the empty string and the readiness wait below can only ever
+	// time out. Purely so the TEST can watch claude boot.
 	sess.OnChange(func() {})
 
 	pane := func() string { return sess.Snapshot() }

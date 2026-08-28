@@ -54,7 +54,7 @@ class FakeHub:
     def all_online_screens(self) -> list[HubScreen]:
         return list(self.opened)
 
-    async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
+    async def open_screen(self, device_id, command, **kw) -> HubScreen:
         screen = HubScreen(
             sid="s1",
             device_id=device_id,
@@ -70,9 +70,7 @@ class FakeHub:
         self.envs.append(kw.get("env"))
         return screen
 
-    async def reassert_screen(
-        self, screen: HubScreen, *, command, cheeselet_source, env=None
-    ) -> None:
+    async def reassert_screen(self, screen: HubScreen, *, command, env=None) -> None:
         screen.command = command
         self.reasserted.append(screen.sid)
 
@@ -140,7 +138,7 @@ async def test_turn_streams_hook_events_until_stop():
     )
     # Let it resolve the device, open the screen, send the prompt, reach the drain.
     await asyncio.sleep(0.05)
-    assert hub.prompts == [["1+1?"]]  # prompt delivered via the cheeselet
+    assert hub.prompts == [["1+1?"]]  # prompt delivered over the socket
     assert hub.opened[0].topic_id == topic_id
     assert hub.opened[0].agent_user_id == agent_id
 
@@ -237,48 +235,10 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
 
 
-async def test_a_reported_delivery_failure_is_resent_immediately():
-    """#445: the cheeselet's give-up (surfaced as a CheeseDeliveryFailed hook)
-    must trigger an immediate re-send of the prompt plus a visible message —
-    not leave the room waiting out the 300s no-output bound."""
-    hub = FakeHub()
-    router = HookRouter()
-    agent_id = uuid.uuid4()
-    provider = _provider(hub, router, agent_id)
-    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
-
-    events, task = await _run(
-        provider,
-        project_id=project_id,
-        topic_id=topic_id,
-        prompt="1+1?",
-        system_prompt="",
-        resume_session_id=None,
-    )
-    await asyncio.sleep(0.05)
-    assert hub.prompts == [["1+1?"]]
-
-    key = str(topic_id)
-    router.push(
-        key, {"hook_event_name": "CheeseDeliveryFailed", "phase": "paste", "ticks": 41}
-    )
-    await asyncio.sleep(0.05)
-    assert hub.prompts == [["1+1?"], ["1+1?"]], "the prompt was not re-sent"
-
-    router.push(key, {"hook_event_name": "Stop", "last_assistant_message": "2"})
-    await asyncio.wait_for(task, timeout=5)
-
-    texts = [getattr(e, "text", "") for e in events]
-    assert any("重投" in t for t in texts), f"no visible re-send notice: {texts}"
-    assert not any(type(e).__name__ == "AgentDeliveryFailure" for e in events), (
-        "the internal delivery-failure event leaked to the chat layer"
-    )
-
-
 async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry():
     """The hub's registry outlives what the device actually runs (a connector
     restart kills its sessions; a create sent on a dying transport was never
-    delivered), and the frozen cli silently drops rpc.calls for unknown sids. So a
+    delivered), and the cli silently drops rpc.calls for unknown sids. So a
     later turn must re-send the screen's adopt-create — idempotent on a live
     session, a respawn for a lost one — rather than prompt a screen that may not
     exist and die in a blank timeout."""
@@ -317,7 +277,7 @@ class DeadClaudeHub(FakeHub):
         self.closed: list[str] = []
         self._sid_seq = 0
 
-    async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
+    async def open_screen(self, device_id, command, **kw) -> HubScreen:
         self._sid_seq += 1
         screen = HubScreen(
             sid=f"s{self._sid_seq}",
@@ -351,7 +311,7 @@ class DeadClaudeHub(FakeHub):
 async def test_a_reused_screen_whose_claude_died_is_reopened_not_reasserted():
     """The registry holding a screen is NOT proof its `claude` still runs: an orphan
     sweep or `tmux kill-server` can end the device session while the connector lives
-    on. Reasserting (adopt-create) would only hot-reload the cheeselet into the dead
+    on. Reasserting (adopt-create) would only re-attach to the dead
     pane — the frozen connector re-Spawns solely for a sid it forgot (i.e. after IT
     restarted), so a screen whose process died under a live connector is never
     respawned and the turn dies in the delivery timeout with no model reached. So a
@@ -431,7 +391,7 @@ async def _two_turns(provider, router, project_id, topic_id):
 async def test_a_reused_screen_whose_tunnel_helper_died_is_relaunched(monkeypatch):
     """`claude` dials a machine-local tunnel helper it was handed at startup and
     never re-reads. That helper is brought up ONLY by the launcher's prefix, and a
-    reused screen is reasserted (a cheeselet hot-reload) rather than relaunched —
+    reused screen is reasserted (an adopt-create) rather than relaunched —
     so when the helper dies under a still-running `claude`, nothing on either side
     restores it and every turn after that dies with ConnectionRefused while the
     process-tree probe still answers `alive`.
@@ -713,9 +673,9 @@ async def test_every_machine_facing_url_is_the_base_plus_a_route_that_exists():
             super().__init__()
             self.env: dict = {}
 
-        async def open_screen(self, device_id, command, source, **kw):
+        async def open_screen(self, device_id, command, **kw):
             self.env = kw.get("env") or {}
-            return await super().open_screen(device_id, command, source, **kw)
+            return await super().open_screen(device_id, command, **kw)
 
     # The production shape: behind the gateway the base carries the `/api` mount.
     base = "http://cheese.test/api"
@@ -759,9 +719,9 @@ async def test_every_device_is_told_where_to_clone_from():
             super().__init__()
             self.env: dict = {}
 
-        async def open_screen(self, device_id, command, source, **kw):
+        async def open_screen(self, device_id, command, **kw):
             self.env = kw.get("env") or {}
-            return await super().open_screen(device_id, command, source, **kw)
+            return await super().open_screen(device_id, command, **kw)
 
     project, topic = uuid.uuid4(), uuid.uuid4()
     hub = RecordingHub()
@@ -962,9 +922,9 @@ async def test_a_machine_never_receives_the_upstream_provider_key(monkeypatch):
             super().__init__()
             self.env: dict = {}
 
-        async def open_screen(self, device_id, command, source, **kw):
+        async def open_screen(self, device_id, command, **kw):
             self.env = kw.get("env") or {}
-            return await super().open_screen(device_id, command, source, **kw)
+            return await super().open_screen(device_id, command, **kw)
 
     hub = RecordingHub()
     provider = DeviceChannel(hub=hub, public_base="http://cheese.test")
@@ -1002,9 +962,9 @@ class SubRecordingHub(FakeHub):
         super().__init__()
         self.env: dict = {}
 
-    async def open_screen(self, device_id, command, source, **kw):
+    async def open_screen(self, device_id, command, **kw):
         self.env = kw.get("env") or {}
-        return await super().open_screen(device_id, command, source, **kw)
+        return await super().open_screen(device_id, command, **kw)
 
 
 def _subscription_settings(monkeypatch, tmp_path) -> str:
@@ -1462,7 +1422,7 @@ async def test_each_launch_ships_a_fresh_now_based_token_expiry():
 # `_confirm_alive` is a process-tree probe: it says a `claude` is running, never
 # whether the credential that `claude` was LAUNCHED with is still good. A bare
 # `claude` reads that credential once and never re-reads it, and a reused screen is
-# only reasserted (a cheeselet hot-reload), never relaunched — so a live process on
+# only reasserted (an adopt-create), never relaunched — so a live process on
 # a dead credential is 401/407'd every turn while the probe reports it healthy, and
 # the screen is reused forever. The backend already stamps the credential's expiry
 # (#386's CHEESE_TOKEN_EXPIRES); these pin that it now gates reuse too, so an
@@ -1479,7 +1439,7 @@ class ReuseGateHub(FakeHub):
         self.closed: list[str] = []
         self._sid_seq = 0
 
-    async def open_screen(self, device_id, command, source, **kw) -> HubScreen:
+    async def open_screen(self, device_id, command, **kw) -> HubScreen:
         self._sid_seq += 1
         screen = HubScreen(
             sid=f"s{self._sid_seq}",
@@ -1549,7 +1509,7 @@ async def test_a_reused_screen_whose_birth_credential_expired_is_retired_not_ado
 
     # It is RETIRED (close_screen makes the connector forget the sid) and reopened
     # under a fresh sid the connector must Spawn with THIS launch's live credential
-    # — never reasserted into the corpse (which would only hot-reload the cheeselet).
+    # — never reasserted into the corpse (which would only re-attach to it).
     assert hub.closed == ["s1"]
     assert hub.reasserted == []
     assert second.sid == "s2"
@@ -1708,7 +1668,6 @@ async def test_interrupt_presses_escape_rather_than_saying_something():
     screen = await hub.open_screen(
         "dev1",
         "claude",
-        "src",
         agent_user_id=uuid.uuid4(),
         agent_handle="agent-x",
         project_id=session.project_id,

@@ -45,9 +45,8 @@ func hostWithScreen(t *testing.T, name string) (*Host, *terminal.Manager) {
 	if err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	h := &Host{tm: m, ctx: ctx, sessions: map[string]*sess{
-		name: {term: term, cancel: cancel},
+	h := &Host{tm: m, ctx: context.Background(), sessions: map[string]*sess{
+		name: {term: term},
 	}}
 	return h, m
 }

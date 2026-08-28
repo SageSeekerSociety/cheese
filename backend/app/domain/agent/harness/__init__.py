@@ -47,7 +47,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from app.domain.agent.service import (
-    AgentDeliveryFailure,
     AgentEvent,
     AgentMessage,
 )
@@ -68,7 +67,7 @@ EventConsumer = Callable[
         uuid.UUID,
         uuid.UUID,
         uuid.UUID,
-        AgentEvent | AgentDeliveryFailure,
+        AgentEvent,
         str | None,
         bool,
         bool,
@@ -335,9 +334,7 @@ class Backlog(Protocol):
         things during the pass does not change what this returned."""
         ...
 
-    def assemble(
-        self, entry: HarnessEvent
-    ) -> Sequence[AgentEvent | AgentDeliveryFailure]:
+    def assemble(self, entry: HarnessEvent) -> Sequence[AgentEvent]:
         """What this entry means, once anything it completes is folded in.
         Empty = nothing whole yet, or nothing that could be read."""
         ...

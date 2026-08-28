@@ -60,7 +60,6 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     "app.domain.agent.device_hub": (
         "drop_device_subscriptions",
         "drop_screen_subscriptions",
-        "hook_router",
     ),
     # --- channels：接缝本身，加上还没搬过缝的 Claude Code 知识 ---
     "app.domain.agent.cloud_provider": ("ScreenSetupError",),

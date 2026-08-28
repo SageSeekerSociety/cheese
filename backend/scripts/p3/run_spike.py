@@ -1,16 +1,16 @@
 """P3 connector spike — Phase A end-to-end proof (reproducible).
 
-Proves the self-hosted slice with the REAL frozen Go cli acting as the "user machine"
+Proves the self-hosted slice with the REAL Go cli acting as the "user machine"
 and our backend modules:
 
   1. start our standalone connector backend (spike_app) on 127.0.0.1:PORT;
   2. device flow: HTTP ``/connector/auth/device/start`` → code; approve in-process
      (simulating the human ``/connect``); HTTP ``/connector/auth/device/poll`` → token;
-  3. write the cli config and run the FROZEN cli (`cheese run`) — it DIALS OUT to
+  3. write the cli config and run the cli (`cheese run`) — it DIALS OUT to
      ``WS /connector/agent`` and authenticates with the device token (NAT-friendly);
   4. open a screen on the device running interactive ``claude`` with OUR hooks;
-  5. attach a viewer (proves the raw screen relay — 现场) and send one prompt via the
-     minimal cheeselet;
+  5. attach a viewer (proves the raw screen relay — 现场) and send one prompt over
+     the screen's rendezvous socket;
   6. collect the structured hook events flowing back (SessionStart → … → Stop) and the
      relayed screen bytes; write evidence to ``scripts/p3/logs/``.
 
@@ -184,20 +184,24 @@ async def main() -> int:
             project_id=str(project_id), topic_id=str(topic_id), ttl_s=3600
         )
         hook_url = f"{BASE}/sandbox/hooks/{topic_id}"
-        command, screen_env, cheeselet = build_screen_launch(
+        command, screen_env = build_screen_launch(
             hook_url=hook_url,
             hook_token=hook_token,
             home_dir=home_dir,
             work_dir=work_dir,
             model=settings.agent_model,
             extra_env=settings.agent_env(),
+            # The topic is what arms the screen's rendezvous socket, which is
+            # where the prompt below arrives — without it the launcher builds a
+            # screen nothing can be said to.
+            project_id=str(project_id),
+            topic_id=str(topic_id),
         )
         # Register the topic's hook queue BEFORE the screen so no hook is missed.
         queue = hook_router.register(str(topic_id))
         screen = await device_hub.open_screen(
             device.device_id,
             command,
-            cheeselet,
             agent_user_id=agent_user_id,
             agent_handle="agent-spike",
             project_id=project_id,
@@ -216,10 +220,10 @@ async def main() -> int:
         call_id = await device_hub.call_screen(
             device.device_id, screen.sid, "prompt", [prompt]
         )
-        log(f"sent prompt via cheeselet.prompt() (call {call_id}); await ack…")
+        log(f"sent prompt over the rendezvous socket (call {call_id}); await ack…")
         try:
             await device_hub.await_call(device.device_id, call_id, timeout=90)
-            log("cheeselet acked prompt (typed into claude's input box)")
+            log("connector acked prompt (enqueued in claude's session)")
         except Exception as exc:  # noqa: BLE001 — log + keep draining hooks
             log(f"WARN: prompt ack failed/timed out: {exc}")
 

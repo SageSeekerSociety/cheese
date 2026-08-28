@@ -5,7 +5,7 @@ machine* instead of a platform container. The platform opens it over the frozen
 ``link.Msg`` channel (``DeviceHub``) and the device runs ``claude`` with our
 hooks (``device_launch``), so events come back through the SAME hook path
 (``/sandbox/hooks/{topic}`` → ``hook_router`` → ``translate_hook``) the tmux
-channel uses. The prompt is delivered by the minimal cheeselet's ``prompt``
+channel uses. The prompt is delivered over the screen's rendezvous socket
 function — not by reading/writing the screen from the backend.
 
 Per request:
@@ -591,8 +591,8 @@ class DeviceChannel(Channel):
         never delivered at all), and the cli silently drops ``rpc.call`` for a sid
         it does not know — so a turn that trusted the registry alone died in a blank
         3×60s prompt timeout whenever the two had diverged. The adopt-create is
-        idempotent on the device: a live session hot-reloads the cheeselet and keeps
-        the system prompt it launched with (the launcher only reads it at screen
+        idempotent on the device: a live session keeps running, and keeps the
+        system prompt it launched with (the launcher only reads it at screen
         creation); a lost one is respawned under the same sid + screen token.
 
         But adopt-create only respawns a screen the CONNECTOR forgot (it restarted);
@@ -606,7 +606,7 @@ class DeviceChannel(Channel):
             # #388 缺陷二: the screen is still alive, but the credential its `claude`
             # was LAUNCHED with has expired (or is within the retire margin). That
             # credential is read ONCE at startup and never re-read, and a reused
-            # screen is only reasserted (a cheeselet hot-reload), never relaunched —
+            # screen is only reasserted (an adopt-create), never relaunched —
             # so reasserting here would leave the process forever holding a dead
             # token, 407'd by the metering proxy / 401'd upstream on every turn
             # while its process stays healthy (the exact "alive process + dead
@@ -626,7 +626,7 @@ class DeviceChannel(Channel):
             # connector (an orphan sweep, a `tmux kill-server`, a crash). Reasserting
             # (adopt-create, #369) does NOT bring it back: the frozen connector,
             # finding the sid still in its own in-memory session map, only
-            # hot-reloads the cheeselet and returns — it re-Spawns the launcher ONLY
+            # re-attaches and returns — it re-Spawns the launcher ONLY
             # for a sid it has forgotten, i.e. after IT restarted (cli host.go
             # createSession). #369 rebuilds a screen a CONNECTOR restart lost; it
             # cannot rebuild one whose `claude` died while the connector lived. The
@@ -646,7 +646,7 @@ class DeviceChannel(Channel):
             # that had no gate: its `claude` runs, its credential is fresh, and the
             # machine-local tunnel helper its HTTPS_PROXY points at is GONE. That
             # helper is started ONLY by `cheese-tunnel-up`, which runs ONLY as the
-            # launcher's prefix — and reuse reasserts (hot-reloads the cheeselet)
+            # launcher's prefix — and reuse reasserts (an adopt-create)
             # instead of relaunching, so nothing on either side ever restarts it.
             # `claude` read that HTTPS_PROXY once at startup and never re-reads it,
             # so every turn from then on dies with `API Error: Unable to connect to
@@ -694,7 +694,7 @@ class DeviceChannel(Channel):
             # bare process's HTTPS_PROXY (CONNECT credential) and
             # CLAUDE_CODE_OAUTH_TOKEN, both read ONCE at process start and never
             # hot-refreshed; the screen is reused across turns (a reassert only
-            # hot-reloads the cheeselet, it does not relaunch claude). A 1h token
+            # re-attaches, it does not relaunch claude). A 1h token
             # thus expires under a still-running process, and every turn after the
             # first hour is rejected by the metering proxy (407) — the agent looks
             # dead. Same session lifetime as the CHEESE_TOKEN minted alongside it.
@@ -780,7 +780,7 @@ class DeviceChannel(Channel):
         # the preview rides the path the connector proved, so a deployment that
         # can host a device can host a preview with nothing further to set.
         model_env["CHEESE_PREVIEW_URL"] = _preview_ws_url(self._public_base)
-        command, screen_env, cheeselet = build_screen_launch(
+        command, screen_env = build_screen_launch(
             hook_url=self._hook_url(topic_id),
             hook_token=token,
             home_dir=home_dir,
@@ -811,14 +811,11 @@ class DeviceChannel(Channel):
             # credential it was born with — so the recorded birth expiry must NOT be
             # overwritten with this launch's freshly-minted one (the new token never
             # reaches the running process). It stays as the reuse gate's truth.
-            await self._hub.reassert_screen(
-                existing, command=command, cheeselet_source=cheeselet, env=screen_env
-            )
+            await self._hub.reassert_screen(existing, command=command, env=screen_env)
             return existing
         screen = await self._hub.open_screen(
             device_id,
             command,
-            cheeselet,
             agent_user_id=agent_user_id,
             agent_handle=agent_handle,
             project_id=project_id,
@@ -957,12 +954,10 @@ class DeviceChannel(Channel):
         Code enqueues it as `origin: {kind:"human"}` — the same place a keystroke
         lands, with none of a keystroke's blindness.
 
-        The call name and result shape are unchanged from the cheeselet era on
-        purpose (`{ready: bool}`), so only the transport moved. What IS new is
-        that a failure here is a real failure: the connector answers with an
-        error when the socket never bound, the token never appeared, or the
-        session refused the frame — instead of a driver silently re-pasting into
-        a composer nobody was reading (2026-08-16)."""
+        A failure here is a real failure: the connector answers with an error
+        when the socket never bound, the token never appeared, or the session
+        refused the frame — instead of a driver silently re-pasting into a
+        composer nobody was reading (2026-08-16)."""
         try:
             call_id = await self._hub.call_screen(
                 screen.device_id, screen.sid, "prompt", [prompt]
@@ -988,7 +983,7 @@ class DeviceChannel(Channel):
         The freshness of that credential is part of whether a screen may be REUSED,
         not just whether its process is alive: `claude` reads its model credential
         (HTTPS_PROXY CONNECT password / CLAUDE_CODE_OAUTH_TOKEN) exactly once at
-        startup, and a reused screen is only reasserted (a cheeselet hot-reload),
+        startup, and a reused screen is only reasserted (an adopt-create),
         never relaunched — so a still-running process on a dead credential is
         rejected on every request while the process-tree probe (`confirm_alive`)
         keeps reporting it healthy. This is the local, in-memory half of the gate;

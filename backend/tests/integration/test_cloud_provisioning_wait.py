@@ -49,15 +49,23 @@ def test_cloud_boot_preserves_pending_input_and_prompt_accounting(client, tmp_pa
             compute=ComputePool([ClaudeCodeRuntime(cloud)], "cloud"),
         )
 
+    # Restored in a finally: this override outlives the test otherwise, and every
+    # later test on the same worker then builds on a ChatService bound to a loop
+    # that has already closed. The one that pays is whichever test next reaches
+    # for a chat service — never this one — so it surfaces as `RuntimeError:
+    # Event loop is closed` in an unrelated file that passes in isolation.
     app.dependency_overrides[get_chat_service] = override
     seen: list[str] = []
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
-        ws.send_json({"type": "message", "content": "不要丢掉我", "summon": True})
-        while True:
-            frame = ws.receive_json()
-            seen.append(frame["type"])
-            if frame["type"] == "done":
-                break
+    try:
+        with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+            ws.send_json({"type": "message", "content": "不要丢掉我", "summon": True})
+            while True:
+                frame = ws.receive_json()
+                seen.append(frame["type"])
+                if frame["type"] == "done":
+                    break
+    finally:
+        app.dependency_overrides.pop(get_chat_service, None)
 
     assert "waiting" in seen
     assert "error" not in seen
