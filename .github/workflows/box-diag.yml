@@ -131,21 +131,58 @@ jobs:
         # was down and the only way in was a key/route combination no single host
         # had. The connector runs HERE, and the runner is already here.
         #
-        # Reads only: unit state, why it last failed, and whether this box can
-        # still open the outbound TCP session the connector needs. No restart,
-        # no config edit — a probe that repairs is a probe nobody can run safely
-        # while they are still trying to understand the failure.
+        # Reads only. No restart, no config edit — a probe that repairs is a probe
+        # nobody can run safely while they are still trying to understand the
+        # failure.
+        #
+        # THREE THINGS HERE ANSWER "yes" DURING A TOTAL OUTAGE, so each is paired
+        # with the test that actually separates up from down:
+        #
+        #   `systemctl is-active`  — cloudflared retries registration forever and
+        #                            never exits, so it reads active throughout.
+        #   `NRestarts=0`          — it never crashed; it just never connected.
+        #   a TCP connect to :7844 — the socket opens. The handshake that follows
+        #                            is what fails, and only a handshake CARRYING
+        #                            SNI reaches the part that breaks.
+        #
+        # journalctl needs sudo: the runner user is not in `adm`/`systemd-journal`,
+        # and without it journalctl prints "-- No entries --" and exits 0. That is
+        # a silent wrong answer, which is worse than an error.
         run: |
           systemctl is-active cloudflared 2>&1 || true
           systemctl show cloudflared -p ActiveState -p SubState -p Result \
             -p NRestarts -p ExecMainStartTimestamp 2>&1 || true
-          journalctl -u cloudflared --since -6h --no-pager 2>&1 | tail -80 || true
-          echo "===== egress to the tunnel edge (TCP 7844, http2 protocol) ====="
+          echo "===== connector journal (needs sudo; see note above) ====="
+          sudo -n journalctl -u cloudflared --since -6h --no-pager 2>&1 | tail -60 \
+            || echo "journal unreadable (no passwordless sudo for the runner user)"
+          echo "===== TCP reaches the edge (necessary, nowhere near sufficient) ====="
           for ip in 198.41.192.167 198.41.200.113; do
             timeout 8 bash -c "cat < /dev/null > /dev/tcp/$ip/7844" \
-              && echo "$ip:7844 reachable" || echo "$ip:7844 UNREACHABLE"
+              && echo "$ip:7844 tcp ok" || echo "$ip:7844 TCP UNREACHABLE"
           done
-          echo "===== resolver + default route ====="
+          echo "===== TLS handshakes, WITH SNI — this is the one that matters ====="
+          # The tunnel edge, and two ordinary hosts. If ghcr.io fails too, the
+          # fault is not a Cloudflare-specific rule on the gateway and the fix
+          # has to be scoped wider; if only the edge fails, it is.
+          for host in region1.v2.argotunnel.com ghcr.io github.com; do
+            printf '%-28s ' "$host"
+            timeout 12 openssl s_client -connect "$host:443" -servername "$host" \
+              </dev/null 2>&1 \
+              | grep -m1 -E "Verify return code|no peer certificate|handshake failure|write:errno" \
+              || echo "NO HANDSHAKE (timed out or connection dropped mid-handshake)"
+          done
+          echo "===== same hosts WITHOUT SNI, to isolate what the gateway reads ====="
+          for host in ghcr.io github.com; do
+            printf '%-28s ' "$host (no sni)"
+            timeout 12 openssl s_client -connect "$host:443" -noservername \
+              </dev/null 2>&1 \
+              | grep -m1 -E "Verify return code|no peer certificate|handshake failure|write:errno" \
+              || echo "NO HANDSHAKE"
+          done
+          echo "===== path MTU, the other thing that drops a handshake mid-flight ====="
+          ping -c1 -M do -s 1472 198.41.192.167 2>&1 | tail -2 || true
+          ping -c1 -M do -s 1272 198.41.192.167 2>&1 | tail -2 || true
+          echo "===== resolver + default route (both are the gateway) ====="
           cat /etc/resolv.conf 2>&1 | grep -v '^#' || true
           ip route show default 2>&1 || true
 
