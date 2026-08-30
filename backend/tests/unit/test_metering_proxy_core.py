@@ -107,6 +107,40 @@ def test_sse_usage_merges_start_and_delta():
     assert usage["output_tokens"] == 42
 
 
+def test_streaming_extractor_matches_the_buffered_parse_across_chunk_splits():
+    """The live proxy scrapes usage incrementally as chunks pass through, so
+    feeding a body in arbitrary fragments must yield exactly what parsing the
+    whole body would — including when a split lands mid-line."""
+    body = b"\n".join(
+        [
+            b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+            b'"usage":{"input_tokens":7,"cache_read_input_tokens":100,'
+            b'"cache_creation_input_tokens":3,"output_tokens":1}}}',
+            b'data: {"type":"content_block_delta"}',
+            b'data: {"type":"message_delta","usage":{"output_tokens":42}}',
+            b"data: [DONE]",
+        ]
+    )
+    want_usage, want_model = core.usage_from_sse(body)
+
+    for step in (1, 7, 13, 500):  # byte-at-a-time up to whole-body
+        ex = core.StreamingUsageExtractor()
+        for i in range(0, len(body), step):
+            ex.feed(body[i : i + step])
+        ex.close()
+        assert (ex.usage, ex.model) == (want_usage, want_model), f"step={step}"
+    assert want_usage["output_tokens"] == 42 and want_usage["input_tokens"] == 7
+
+
+def test_streaming_extractor_stays_bounded_on_newlineless_input():
+    """A pathological stream with no line breaks must not grow the buffer without
+    limit — the O(one line) memory bound is what keeps this proxy from OOMing."""
+    ex = core.StreamingUsageExtractor()
+    for _ in range(64):
+        ex.feed(b"x" * (1 << 20))  # 64 MiB total, no newline ever
+    assert len(ex._buf) <= (1 << 20)
+
+
 def test_meter_records_and_caps_over_the_window(tmp_path):
     meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
     meter.record("p1", "t1", {"input_tokens": 60, "output_tokens": 40}, "m")
