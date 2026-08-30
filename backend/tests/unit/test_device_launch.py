@@ -1,5 +1,6 @@
 """Device screen launcher: hooks settings + self-contained launch command."""
 
+import contextlib
 import os
 import re
 import subprocess
@@ -705,6 +706,180 @@ def test_a_helper_running_older_code_is_retired_not_adopted():
     # Adoption is conditional on it, and the mismatch path kills.
     assert '[ "$WANT" = "$HAVE" ]' in script
     assert 'kill "$PID"' in script
+
+
+def _tunnel_up_home(tmp_path):
+    """A HOME laid out the way the launcher leaves one, with a stub helper that
+    binds its --port and then sits there — the only thing about the real helper
+    this script cares about."""
+    from app.domain.agent.harness.claude_code.device_launch import CHEESE_TUNNEL_UP
+
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "cheese-tunnel.py").write_text(
+        "import socket, sys, time\n"
+        "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
+        "s = socket.socket()\n"
+        "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "s.bind(('127.0.0.1', port))\n"
+        "s.listen(5)\n"
+        "print('tunnel listening on 127.0.0.1:%d' % port, flush=True)\n"
+        "time.sleep(300)\n"
+    )
+    (home / ".claude" / "cheese-tunnel.token").write_text("")
+    up = home / ".claude" / "cheese-tunnel-up"
+    up.write_text(CHEESE_TUNNEL_UP)
+    up.chmod(0o755)
+    return home, up
+
+
+def _free_port() -> int:
+    import socket
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+
+
+def _listening(port: int) -> bool:
+    import socket
+
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=0.5).close()
+    except OSError:
+        return False
+    return True
+
+
+def _await_listening(port: int, *, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _listening(port):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def _kill_pidfile(home) -> None:
+    import signal
+
+    try:
+        pid = int((home / ".claude" / "cheese-tunnel.pid").read_text().strip())
+    except (OSError, ValueError):
+        return
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGKILL)
+
+
+@pytest.mark.skipif(not _tmux_ge_30(), reason="needs a real tmux >= 3.0")
+def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
+    """The reuse path starts the helper as the command of its own tmux window,
+    and that window is torn down the instant the command returns. A helper that
+    dies with it leaves `claude` — which read HTTPS_PROXY once at startup and
+    cannot be told a new one — dialling a dead port for the life of the screen.
+
+    Measured 2026-08-30: fifteen topics in exactly that state, their
+    `cheese-tunnel.log` showing `tunnel listening` at the last launch's
+    timestamp, one of them re-@'d four times in three hours without a single
+    reply."""
+    import shutil
+
+    home, _up = _tunnel_up_home(tmp_path)
+    port = _free_port()
+    tmux = shutil.which("tmux")
+    sock = f"/tmp/cu{os.getpid()}.sock"  # noqa: S108 — ephemeral, killed below
+    try:
+        subprocess.run(
+            [tmux, "-S", sock, "new-session", "-d", "-s", "s", "sleep 60"], check=True
+        )
+        subprocess.run(
+            [
+                tmux, "-S", sock, "new-window", "-d", "-t", "s:", "-n", "cheese-tunnel",
+                f'HOME={home} CHEESE_TUNNEL_PORT={port} CHEESE_TUNNEL_URL=wss://x/y '
+                f'exec sh "{home}/.claude/cheese-tunnel-up"',
+            ],
+            check=True,
+        )  # fmt: skip
+        assert _await_listening(port), (
+            "the helper did not come up in its own tmux window"
+        )
+        # The window's command has long returned by now; the helper must not have
+        # gone down with it.
+        time.sleep(2)
+        assert _listening(port), (
+            "the helper died with the window that started it — every turn on this "
+            "screen now fails with ConnectionRefused and nothing can repair it"
+        )
+    finally:
+        _kill_pidfile(home)
+        subprocess.run([tmux, "-S", sock, "kill-server"], capture_output=True)
+
+
+def _run_tunnel_up(home, port: int):
+    return subprocess.run(
+        ["sh", str(home / ".claude" / "cheese-tunnel-up")],
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "CHEESE_TUNNEL_PORT": str(port),
+            "CHEESE_TUNNEL_URL": "wss://x/y",
+        },
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+def test_a_helper_it_already_started_is_adopted_rather_than_churned(tmp_path):
+    """A screen is reused across turns, so this runs on every launch. Restarting
+    a working helper each time would reset every in-flight connection."""
+    home, _up = _tunnel_up_home(tmp_path)
+    port = _free_port()
+    pidf = home / ".claude" / "cheese-tunnel.pid"
+    try:
+        _run_tunnel_up(home, port)
+        assert _await_listening(port)
+        first = pidf.read_text().strip()
+        _run_tunnel_up(home, port)
+        assert pidf.read_text().strip() == first, (
+            "a healthy helper was restarted instead of adopted"
+        )
+        assert _listening(port)
+    finally:
+        _kill_pidfile(home)
+
+
+def test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced(tmp_path):
+    """The recorded pid being alive proves only that SOME process holds that
+    number — after a reboot, or on a box that has burnt through the pid space,
+    that is a coincidence. Adopting on it would leave the port dead for the life
+    of the screen, which is the failure this script exists to end."""
+    home, _up = _tunnel_up_home(tmp_path)
+    port = _free_port()
+    claude = home / ".claude"
+    impostor = subprocess.Popen(["sh", "-c", "sleep 300"])
+    try:
+        # The state the box is actually found in: a pid that resolves, a stamp
+        # that matches the helper on disk, and nothing listening.
+        (claude / "cheese-tunnel.pid").write_text(f"{impostor.pid}\n")
+        stamp = subprocess.run(
+            ["cksum", str(claude / "cheese-tunnel.py")],
+            capture_output=True,
+            text=True,
+        ).stdout.split()[0]
+        (claude / "cheese-tunnel.stamp").write_text(f"{stamp}\n")
+        assert not _listening(port)
+
+        _run_tunnel_up(home, port)
+
+        assert _await_listening(port), (
+            "the port is still dead — an impostor pid was adopted as a live helper"
+        )
+        assert (claude / "cheese-tunnel.pid").read_text().strip() != str(impostor.pid)
+    finally:
+        _kill_pidfile(home)
+        impostor.terminate()
+        impostor.wait(timeout=5)
 
 
 def test_the_helper_is_verified_by_the_dash_syntax_check_too():
