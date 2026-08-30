@@ -786,7 +786,7 @@ def test_the_tunnel_helper_outlives_the_window_that_started_it(tmp_path):
 
     home, _up = _tunnel_up_home(tmp_path)
     port = _free_port()
-    tmux = shutil.which("tmux")
+    tmux = shutil.which("tmux") or "tmux"  # the skipif above already found it
     sock = f"/tmp/cu{os.getpid()}.sock"  # noqa: S108 — ephemeral, killed below
     try:
         subprocess.run(
