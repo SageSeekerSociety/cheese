@@ -249,21 +249,19 @@ const tree = computed<TreeRow[]>(() => {
 // 子话题不一样，它有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧
 // 留在活跃列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
 const activeTree = computed<TreeRow[]>(() => {
-  const kept = new Set<string>()
+  // 深度按**留下来的那个父行**重新算，不沿用原树的：拍平的树里深度就是父子关系
+  // 本身，中间少一层就得少一层缩进，否则缩进指着一行不存在的父行。
+  const depths = new Map<string, number>()
   const rows: TreeRow[] = []
   for (const row of tree.value) {
     if (row.topic.status === 'archived') continue
     const parentId = row.topic.parent_id
-    const attached = parentId !== null && parentId !== undefined && kept.has(parentId)
-    if (isThreadRow(row.topic)) {
-      if (!attached) continue
-    } else if (row.depth > 0 && !attached) {
-      rows.push({ topic: row.topic, depth: 0 })
-      kept.add(row.topic.id)
-      continue
-    }
-    rows.push(row)
-    kept.add(row.topic.id)
+    const parentDepth = parentId ? depths.get(parentId) : undefined
+    // 房间那一行不在了，活就没有能挂的地方。
+    if (parentDepth === undefined && isThreadRow(row.topic)) continue
+    const depth = parentDepth === undefined ? 0 : parentDepth + 1
+    depths.set(row.topic.id, depth)
+    rows.push(depth === row.depth ? row : { topic: row.topic, depth })
   }
   return rows
 })
