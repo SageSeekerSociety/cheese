@@ -325,9 +325,44 @@ echo down
 # Adopt-if-alive for the same reason the drainer does: a screen is reused across
 # turns, and a second helper on the same port would exit immediately, leaving
 # whichever one won holding a token file the other launch had already replaced.
+#
+# `nohup`, and the LISTEN check below, are what make the reuse path actually
+# heal. Measured 2026-08-30 on the dev box: fifteen topics whose helper was gone
+# and whose `claude` had been dialling a dead port for days — one of them re-@'d
+# four times in three hours with not one reply. Their `cheese-tunnel.log` said
+# `tunnel listening` at the timestamp of the last launch, so the launcher HAD run
+# and this script HAD started a helper; the helper simply did not outlive the
+# `tmux new-window` the reuse branch starts it from. That window's command is
+# this script, this script backgrounds the helper and returns, and the window's
+# process group is torn down the moment it does — SIGHUP, and the port is dead
+# again before the turn it was started for reaches the model. `nohup` is what
+# makes the helper outlive the window that bore it; the direct call in the CREATE
+# branch never noticed, because there the process that returns is the one that
+# goes on to be `claude`.
+#
+# The adopt test is the port, not the pid, for the reason DEVICE_TUNNEL_PROBE
+# gives: `claude` connects to a port, and ConnectionRefused is exactly "nothing
+# is listening there". A recorded pid that is alive proves only that SOME process
+# holds that number — after a reboot, or on a box that has burnt through the pid
+# space, that is a coincidence, and adopting on it leaves the port dead for the
+# life of the screen with nothing anywhere reporting a fault.
 CHEESE_TUNNEL_UP = """#!/bin/sh
 PIDF="$HOME/.claude/cheese-tunnel.pid"
 STAMPF="$HOME/.claude/cheese-tunnel.stamp"
+# Is anything answering on the port `claude` was pointed at? python3 rather than
+# bash's /dev/tcp for the same reason the readiness wait below uses it: /bin/sh
+# is dash on the machine images and dash has no /dev/tcp.
+tunnel_listening() {
+  python3 - "$CHEESE_TUNNEL_PORT" <<'PROBEPY'
+import socket, sys
+
+try:
+    socket.create_connection(("127.0.0.1", int(sys.argv[1])), timeout=0.5).close()
+except OSError:
+    raise SystemExit(1)
+raise SystemExit(0)
+PROBEPY
+}
 # Adopt a live helper ONLY if it is running the helper we just wrote. The
 # launcher rewrites cheese-tunnel.py on every launch, so a shipped fix would
 # otherwise never reach a machine whose helper is still alive — it would keep
@@ -336,14 +371,15 @@ WANT="$(cksum "$HOME/.claude/cheese-tunnel.py" 2>/dev/null | cut -d" " -f1)"
 HAVE="$(cat "$STAMPF" 2>/dev/null || true)"
 PID="$(cat "$PIDF" 2>/dev/null || true)"
 if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ]; then
+  if [ -n "$WANT" ] && [ "$WANT" = "$HAVE" ] && tunnel_listening; then
     exit 0
   fi
-  # Different code: retire it. In-flight turns see one connection reset, which
-  # claude retries; a permanently stale helper does not heal at all.
+  # Different code, or a pid that is alive without the port being served:
+  # retire it. In-flight turns see one connection reset, which claude retries;
+  # a permanently stale helper does not heal at all.
   kill "$PID" 2>/dev/null || true
 fi
-python3 "$HOME/.claude/cheese-tunnel.py" \\
+nohup python3 "$HOME/.claude/cheese-tunnel.py" \\
   --port "$CHEESE_TUNNEL_PORT" --url "$CHEESE_TUNNEL_URL" \\
   --token-file "$HOME/.claude/cheese-tunnel.token" \\
   >"$HOME/.claude/cheese-tunnel.log" 2>&1 &
@@ -1028,12 +1064,15 @@ if command -v tmux >/dev/null 2>&1; then
     # (connector restart, crashed loop), and claude keeps pointing at that dead
     # loopback port — every turn then fails looking exactly like a stalled model.
     # `cheese-tunnel-up` adopts a live one and starts a new one otherwise.
+    #
+    # No tether here, unlike the drainer's window. The drainer needs one because
+    # it RUNS in that window and would hold the session open after claude died;
+    # this window only starts a helper that now (`nohup`) outlives it and exits
+    # straight away, so there is nothing left to pin the session down.
     if [ -n "${{CHEESE_TUNNEL_URL:-}}" ]; then
-      TETHER="$(atmux list-panes -s -t "$SESSION" -F '#{{pane_pid}}' \\
-        2>/dev/null | head -n 1)"
       atmux new-window -d -t "$SESSION" -n cheese-tunnel \\
         "CHEESE_TUNNEL_URL=$CHEESE_TUNNEL_URL CHEESE_TUNNEL_PORT=$CHEESE_TUNNEL_PORT \\
-         CHEESE_TUNNEL_TETHER=$TETHER exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
+         exec sh \\"$HOME/.claude/cheese-tunnel-up\\"" \\
         || true
     fi
     # A preview declared on an earlier turn outlives the helper that carried it
