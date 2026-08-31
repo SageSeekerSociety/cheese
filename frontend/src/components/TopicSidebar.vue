@@ -6,6 +6,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { listProjectAgents } from '../api'
+import { columnDotStyle } from '../lib/board'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
@@ -754,6 +755,16 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
                       @blur="saveRename(row.topic)"
                     />
                     <template v-else>
+                      <!-- 「该谁动」的色点，和看板上那一列同一个颜色、同一个形状
+                           （`lib/board.ts` 是唯一的来源）。侧栏和看板对不上的话，
+                           人就得在两块屏幕之间自己做一次翻译。
+                           后端没给 `presentation` 就不画——不在前端另算一个顶上。 -->
+                      <span
+                        v-if="row.topic.presentation"
+                        class="board-dot"
+                        :style="columnDotStyle(row.topic.presentation.column)"
+                        :title="row.topic.presentation.display_status"
+                      />
                       <span class="text-truncate" :class="{ 'title-unread': row.unreadTotal > 0 }">{{
                         row.topic.title
                       }}</span>
@@ -1159,6 +1170,17 @@ const ROW_INDENT = { paddingInlineStart: '8px' }
 }
 .thread-mark {
   color: var(--faint);
+}
+/* 「该谁动」的色点。颜色和形状由 `lib/board.ts` 一处给出（内联样式），这里只管
+   尺寸和位置 —— scoped 样式进不了别的组件，颜色写在这儿就意味着看板和房间总览
+   各有一份，而这颗点存在的全部意义就是三处说的是同一件事。 */
+.board-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-inline-end: 6px;
+  border-radius: 50%;
+  border: 2px solid var(--faint);
 }
 .topic-status {
   font-size: 11.5px;
