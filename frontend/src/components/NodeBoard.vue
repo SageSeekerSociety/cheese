@@ -93,7 +93,11 @@ onBeforeUnmount(() => {
 }
 .node-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* min() is what keeps the track from being wider than what holds it: a bare
+     minmax(280px, …) is a floor the grid honours even when the column it sits
+     in is 200px, so the cards keep their width and the panel scrolls sideways
+     instead. Measured at a 200px container: 80px of overflow without it. */
+  grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr));
   gap: 14px;
 }
 .node-card {
