@@ -87,8 +87,14 @@ func New(cfg *config.Config, cfgPath string) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Which binary this is, for the server's staleness check. Both are
+	// best-effort: a connector that cannot hash itself or does not know its own
+	// platform announces nothing for that field, and the server declines to act
+	// on a half-answer rather than re-exec this machine on every reconnect.
+	build, _ := update.SelfDigest()
+	target, _ := update.PlatformDir()
 	return &Host{
-		conn:     link.New(ctrlURL, cfg.Token),
+		conn:     link.New(ctrlURL, cfg.Token, build, target),
 		tm:       tm,
 		cfgPath:  cfgPath,
 		base:     cfg.Base,

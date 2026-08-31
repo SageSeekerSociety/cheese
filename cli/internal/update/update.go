@@ -9,6 +9,8 @@ package update
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -165,6 +167,31 @@ func Replace(tmpPath, selfPath string) error {
 		return fmt.Errorf("update: replace %s: %w", selfPath, err)
 	}
 	return nil
+}
+
+// SelfDigest is the hex sha256 of the running executable — this build's identity
+// on the wire, announced in the opening `hello`.
+//
+// Deliberately not a version string. A stamp is set by whoever built the binary
+// and has to be remembered on every capability added, whereas the question the
+// server actually asks is whether this machine is running the bytes it serves.
+// An update installs those bytes by renaming them onto the executable (Replace),
+// so hashing the file on disk answers that exactly and cannot fall behind.
+func SelfDigest() (string, error) {
+	self, err := SelfPath()
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(self)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // SelfPath resolves the path of the running executable (symlinks evaluated).

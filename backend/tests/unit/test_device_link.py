@@ -86,3 +86,21 @@ def test_parse_inbound_and_decoded_data():
 def test_parse_tolerates_missing_fields():
     m = LinkMsg.parse({"t": "hello", "v": 1})
     assert m.t == "hello" and m.v == 1 and m.sid == "" and m.decoded_data() == b""
+
+
+def test_parse_hello_carries_which_binary_is_speaking():
+    m = LinkMsg.parse(
+        {"t": "hello", "v": 1, "build": "a" * 64, "target": "linux-amd64"}
+    )
+    assert m.build == "a" * 64 and m.target == "linux-amd64"
+
+
+def test_parse_hello_from_a_connector_too_old_to_say():
+    """The version alone cannot distinguish it from a current build — which is
+    exactly why the server treats the silence as old."""
+    m = LinkMsg.parse({"t": "hello", "v": 1})
+    assert m.build == "" and m.target == ""
+
+
+def test_update_frame():
+    assert device_link.update() == {"t": "update"}
