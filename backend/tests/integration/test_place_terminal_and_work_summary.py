@@ -105,9 +105,7 @@ def test_a_threads_terminal_is_answered_instead_of_404(client, monkeypatch):
     assert data["ws"] == "/connector/session/s-7/screen"
 
 
-def test_a_threads_pane_is_looked_up_by_the_thread_not_by_its_room(
-    client, monkeypatch
-):
+def test_a_threads_pane_is_looked_up_by_the_thread_not_by_its_room(client, monkeypatch):
     """按房间去找，找到的是同伴那块屏幕 —— 比 404 难发现得多。
 
     房间和支线的 id 都是 uuid，传错一个不会报错，只会安静地看别人干活。
@@ -140,9 +138,9 @@ def test_a_threads_pane_is_refused_to_someone_outside_the_room(client, monkeypat
     _pid, room = _room(client)
     thread = _thread(client, room)
 
-    data = client.get(
-        f"/topics/{thread}/terminal", headers=_stranger(client)
-    ).json()["data"]
+    data = client.get(f"/topics/{thread}/terminal", headers=_stranger(client)).json()[
+        "data"
+    ]
 
     assert data["available"] is False, data
     assert "ws" not in data

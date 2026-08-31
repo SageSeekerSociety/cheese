@@ -40,7 +40,9 @@ vi.mock('../../api', async () => {
     ...actual,
     getDoc: vi.fn().mockResolvedValue({ content: '' }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    readFile: vi.fn().mockResolvedValue({ path: 'a.py', content: '', version: 'v1', bytes: 0, binary: false, too_large: false }),
+    readFile: vi
+      .fn()
+      .mockResolvedValue({ path: 'a.py', content: '', version: 'v1', bytes: 0, binary: false, too_large: false }),
     getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
     getComments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     addComment: vi.fn().mockResolvedValue({ id: 'c1' }),
