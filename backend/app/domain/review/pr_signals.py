@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Final
 
+from app.domain.review.notes import NoteCode
+
 #: 评审意见最多自动回流几轮。
 #:
 #: CI 失败和合并冲突是客观的：修好了它们就消失，所以重复叫多少轮都不会白叫，也
@@ -122,12 +124,24 @@ class PendingNudge:
     #: 折叠区的原文，和它的标题。
     detail: str = ""
     detail_label: str = ""
-    #: 卡面那一行（空 = 不动卡面，比如评审意见不该盖掉「检查未通过」）。
+    #: 卡面那一行（空 = 不动卡面）。
     note: str = ""
+    #: 卡面那一行对应的状态码。
+    note_code: NoteCode | None = None
     #: 平台提示的类别码。
     event_type: str = ""
     #: 这一类到顶了没有；到顶的那条只写卡面、不叫芝士。
     capped: bool = False
+
+
+#: 一轮里同时排了好几条待发时，卡面只留优先级最高的那一句 —— 卡面是**一行**，
+#: 而三件事都要人动手。消息不受这个排序影响：每一条都会送到，这正是「互不压制」
+#: 的意思，被排掉的只是「卡上显示哪一句」。
+NOTE_PRIORITY: Final[dict[NudgeKind, int]] = {
+    NudgeKind.ci: 3,
+    NudgeKind.conflict: 2,
+    NudgeKind.review: 1,
+}
 
 
 @dataclass

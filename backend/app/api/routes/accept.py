@@ -291,7 +291,7 @@ async def reject_card(
 
     `AcceptService.reject` only writes the row: no message, no summon. So a
     rejected topic used to sit there until a human happened to come back and
-    poke it, while a CI failure on the same card DOES summon (`_nudge_pr_fix`).
+    poke it, while a CI failure on the same card DOES summon (`_dispatch_nudges`).
     Same card, same "去改代码" verdict, opposite behaviour — the difference was
     invisible from the room.
 
