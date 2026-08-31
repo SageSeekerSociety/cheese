@@ -156,10 +156,22 @@ async def topic_work_summary(
 
     ``has_run`` is the topic's captured session, not its message count: 现场
     shows what 芝士 did, and a room where only people talked has no 现场 to open.
+
+    The id may name a room or a thread, and the two fields answer at DIFFERENT
+    grains — which is the whole reason they are computed separately here:
+
+    - ``changed_files`` belongs to the TREE. 一棵树 = 一个分支 = 一个 PR = 一批活,
+      so a thread's siblings write the same branch and the diff is honestly
+      theirs together; asking per-thread would invent an isolation that does not
+      exist. ``topic_changed_files`` already resolves the place to its tree.
+    - ``has_run`` belongs to the PLACE. A thread runs its own agent, in its own
+      session row, on its own screen — so "has this run" is about this work, not
+      about its room. A room that has run does not make an untouched thread look
+      like it has.
     """
     await ProjectService(db).get_or_404(project_id)
-    await TopicService(db).get_or_404(topic_id)
-    paths = ws.topic_changed_files(project_id, topic_id)
-    # 跑过没有 = 这里有没有哪个 agent 留下过会话。
-    has_run = await AgentSessionService(db).has_run(topic_id)
+    place = await TopicService(db).place_or_404(topic_id)
+    paths = ws.topic_changed_files(project_id, place.id)
+    # 跑过没有 = 这个地点有没有哪个 agent 留下过会话。
+    has_run = await AgentSessionService(db).has_run(place.id)
     return ok({"changed_files": paths, "has_run": has_run})

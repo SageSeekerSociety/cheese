@@ -5,6 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.domain.room_task.schemas import PresentationOut
 from app.domain.topic.models import TopicKind, TopicStatus
 
 
@@ -67,6 +68,10 @@ class TopicOut(BaseModel):
     # elsewhere both stay False, meaning "nobody computed this", not "no".
     i_participate: bool = False
     awaits_me: bool = False
+    # 看板上这一格 —— 同一个 `presentation` 结构，一条活和一个房间用同一套词，因为
+    # 侧栏把它们画在一起。和上面几个派生字段同一条规矩：只有 list_topics/get_topic
+    # 会填，别处是 None（「没人算过」）。
+    presentation: PresentationOut | None = None
 
 
 class UpgradeBlockIn(BaseModel):

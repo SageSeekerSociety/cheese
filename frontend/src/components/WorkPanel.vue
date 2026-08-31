@@ -135,12 +135,12 @@ function setTab(key: TabKey) {
 // again unless another topic is opened.
 const settled = ref(false)
 
-// 打开的是一条支线时这两格根本不存在（见 `tabIsOffered`），所以阶段也不能选它们
-// —— 选了就是把界面切到一个不在 tab 栏上的地方，屏幕上一片空白。
+// 只能选 `tabIsOffered` 真的会给出来的那几格 —— 选了一个不在 tab 栏上的，界面就
+// 切到一片空白。支线上「改动」那一格不存在（见 `tabIsOffered`），所以支线在
+// reviewing/delivering 时留在默认格；「现场」是支线自己的，照常可以选。
 function tabForPhase(phase: TopicPhase): TabKey {
-  if (onThread.value) return defaultTab.value
   if (phase === 'working') return 'site'
-  if (phase === 'reviewing' || phase === 'delivering') return 'changes'
+  if (!onThread.value && (phase === 'reviewing' || phase === 'delivering')) return 'changes'
   return defaultTab.value
 }
 
@@ -289,15 +289,22 @@ function tabIsOffered(key: TabKey): boolean {
   if (key === active.value) return true
   if (key === 'chat') return props.withChat
   if (key === 'overview') return true
-  // 一批活共用一棵树，所以「改动」和「现场」只在房间那一层存在。在一条支线上给
-  // 出这两格，给的是它同伴的工作区——同一棵树、同一个会话——那不是这条活的现场，
-  // 是这个房间的，而看的人会以为屏幕上那些改动是这条活做的。
-  if (onThread.value) return false
-  // 现场 is where 芝士 works: it is there once the topic has run, and from the
+  // 「改动」和「现场」在一条支线上不是同一回事，因为它们各自属于不同的东西：
+  //
+  // 改动属于**树**。一棵树 = 一个分支 = 一个 PR = 一批活，一条支线和它的同伴写
+  // 的是同一条分支，所以那份 diff 诚实地说就是他们一起做的。在支线上摆出「改动」
+  // 就是把一批人的活挂到一条活名下，看的人会以为屏幕上那些改动是这条活做的——所
+  // 以支线上不给这一格，改动只在房间那一层看。
+  //
+  // 现场属于**地点**。一条支线跑的是它自己的 agent、自己的会话、自己那块屏幕，
+  // 所以它的现场就是它自己的，不是它房间的、也不是同伴的。支线上给这一格。
+  if (key === 'changes') return !onThread.value && summary.value.changedFiles.length > 0
+  // 现场 is where 芝士 works: it is there once the place has run, and from the
   // first moment of the first turn (before the session id is captured).
   if (key === 'site') return summary.value.hasRun || props.working
-  if (key === 'changes') return summary.value.changedFiles.length > 0
-  return !!previewLatest.value
+  // 预览 is the room's: what 芝士 put on show is looked up and retracted per
+  // room, so a thread has none of its own to offer.
+  return !onThread.value && !!previewLatest.value
 }
 
 const tabs = computed(() => ALL_TABS.filter((t) => tabIsOffered(t.key)))
