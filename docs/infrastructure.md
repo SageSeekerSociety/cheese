@@ -259,9 +259,12 @@ docker exec -w /app cheese-backend-1 \
 
 Two things to know before flipping it:
 
-- **That directory IS the database.** Not Postgres, not the image. It is
-  excluded from the PG backup job, so if these memories are to survive a box
-  rebuild it needs its own backup line.
+- **That directory IS the database.** Not Postgres, not the image. The PG backup
+  job does not cover it; it has a backup line of its own
+  (`cheese-viking-backup.timer`, every 6h, off-site to R2 — see
+  `deploy/README-backup.md`). Installing that timer is part of the same manual
+  runbook as the DB backup, so confirm it is actually running on this box before
+  you flip the switch, not after.
 - **The key buys extraction, not just vectors.** Every remembered fact costs a
   chat call (OpenViking's extractor) plus embedding calls. A key that only
   works on the embedding endpoint gets you a backend that stores nothing.
@@ -279,6 +282,10 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
+- **Memory** (`VIKING_HOST_PATH`, the openviking tree): 6-hourly full tar →
+  verify → off-site to R2 `viking/` / `prod-viking/`. Taken live, so a snapshot
+  the backend wrote through is kept but named `-hot`. On `MEMORY_BACKEND=db` the
+  tree is empty and the run is skipped, not failed.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or
