@@ -34,20 +34,38 @@ Unable to connect to API (ConnectionRefused) · Retrying in 1s · attempt 3/10
 
 ## 修法
 
-**A. 立刻止血（这台机器）**：后端服务的 `/connector/latest/linux-amd64/cheesehost` 上摆着 8-29 编译的新版本，实测含 `file.put`。给旧进程发 `SIGUSR2` 即可原地自更新并 re-exec，tmux 会话（也就是各话题正在跑的活）按设计保留。
+**A. 立刻止血（这台机器）**：后端服务的 `/connector/latest/linux-amd64/cheesehost` 上摆着 8-29 编译的新版本，实测含 `file.put`。给旧进程发 `SIGUSR2` 即可原地自更新并 re-exec，tmux 会话（也就是各话题正在跑的活）按设计保留。**已发选项问题给 @fulu 拍板**——这台机器是全项目共用的，不适合我自己决定。
 
-**B. 让它不再复发（代码）**：让服务端能看见连接器的真实构建、并主动推更新——
-- `hello` 带上连接器自己二进制的 sha256 和 `GOOS-GOARCH`；
-- 服务端拿它和自己 `connector-dist/<target>/cheesehost` 的 sha256 比，不一致（或干脆没上报，说明是旧到不会上报的版本）就推 `{"t":"update"}`，把那条死代码接上；
-- 顺手修掉 `stage_images` 那条冒号后面空白的日志。
+**B. 让它不再复发（代码，已完成）**：commit `9ee42b992`，分支 `topic/787d58b3`。
+
+让服务端能看见机器上跑的到底是哪个连接器，看见不对就推更新：
+
+- `hello` 带上连接器**自己二进制的 sha256** 和 `<os>-<arch>`。不用版本号字符串——版本号要靠人记得改，而「装更新」本身就是把服务端那份字节 rename 到可执行文件上，所以比哈希是精确的、且不会忘记升。
+- 服务端拿它跟自己发布的那份比，不一致就推 `{"t":"update"}`，把那条一直没有调用点的死代码接上。
+- **一个字节都不报的连接器 = 比「开始上报」那个版本还老**，照样推。这条是够到已经落在外面的机器的关键：`update` 帧从 2026-07-08 就在，每个发过的版本都认识它。
+- 两个防呆：每条连接只推一次（更新失败就等它下次重连，不刷屏）；只在拿到确定答案时才推——报了平台却哈希不出自己的，不动它，否则会变成每次重连都 re-exec、永远收敛不了。
+- 顺带把那条以冒号结尾的日志改成会打印异常类型（`TimeoutError`）。
+
+改动文件：新增 <&backend/app/domain/agent/connector_build.py>；改 <&backend/app/domain/agent/device_hub.py>、<&backend/app/domain/agent/device_link.py>、<&backend/app/domain/agent/device_provider.py>、<&backend/app/api/routes/installer.py>（目标列表和 dist 目录改为共用一处）、<&cli/internal/link/link.go>、<&cli/internal/host/host.go>、<&cli/internal/update/update.go>。
+
+## 验证
+
+- 新增 13 条 Python 测试 + 1 条 Go 测试。其中 **3 条在把修复关掉后实测是红的**（`test_connector_that_names_no_build_is_told_to_update`、`test_connector_running_other_bytes_is_told_to_update`、`test_update_is_pushed_once_per_connection_and_again_on_reconnect`）。
+- Go：`go build` / `go vet` / `gofmt -l` / `go test ./...` 全过（在 docker 的 golang:1.26 里跑，这台机器没装 Go；`internal/service` 有一条测试在容器里以 root 跑会假红，换成非 root 就绿，与本改动无关）。
+- Python：ruff check、ruff format、pyright 全 0 error。
+- 后端全量测试：**5314 passed / 2 failed / 30 skipped**（15 分 34 秒）。两条红的都不是本改动造成的：
+  - `test_exec_in_sandbox_runs_code_and_blocks_network` —— 单独重跑就绿，是要真 docker 沙箱的那类不稳定测试。
+  - `test_market_lists_ai_and_compute_pools` —— 断言的是 AI 池的 `available`，跟本改动碰的文件毫无关系。**已在 base 提交 `d8d3eeb18` 上单独复现，同样红**，是这套一次性测试环境没配 AI provider 导致的既有失败。
 
 ## 进展
 
 - [x] 图已捞出并读出内容
 - [x] 根因定位到「连接器旧了 15 天 + 平台从不推更新」
-- [ ] B：代码修复 + 回归测试
-- [ ] A：更新这台机器上的连接器并验证
+- [x] B：代码修复 + 回归测试，已推到 `topic/787d58b3`
+- [x] 后端全量测试跑完（5314 passed，2 条既有失败与本改动无关）
+- [ ] A：等 @fulu 拍板后更新这台机器上的连接器
 
 ## 待办
 
-- 修完后请 @fulu 再发一张图验证。
+- @fulu 点一下那个选项问题，决定现在更连接器还是等空档。
+- 更完后请 @fulu 再发一张图验证。
