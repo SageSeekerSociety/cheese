@@ -5,6 +5,7 @@ import logging
 import re
 import uuid
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -59,6 +60,7 @@ from app.domain.project.schemas import (
 )
 from app.domain.project.services import ProjectService
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import presentation
 from app.domain.room_task.place import Place
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
@@ -345,16 +347,28 @@ async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
     can show — where the work stands and the PR it rides on. Null for a thread
     that has not been filed for acceptance, which is most of them while the work
     is still going.
+
+    `presentation` is the board's answer for that row — which column it is in
+    and the one phrase to print on it — derived here rather than in the client,
+    so every client gives the same answer (`room_task/presentation.py`). Two
+    round trips still: it is computed from the two batches already fetched.
     """
     await ProjectService(db).get_or_404(project_id)
     tasks = await TaskRepository(db).list_for_project(project_id)
     cards = await AcceptCardRepository(db).latest_by_task([t.id for t in tasks])
+    # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
+    # 一样的活分到不同格子，而那种差别没人再能复现。
+    now = datetime.now(UTC)
     items = []
     for task in tasks:
         card = cards.get(task.id)
+        shown = presentation.task_presentation(
+            presentation.facts_for_task(task, card), now=now
+        )
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                "presentation": shown.as_dict(),
                 "card": None
                 if card is None
                 else {

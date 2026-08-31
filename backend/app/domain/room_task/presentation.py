@@ -213,7 +213,9 @@ def facts_for_room(
 
 #: 这些状态的卡已经结算完了，不再是「此刻是什么情况」的答案。一张被驳回的卡说的
 #: 是上一次递卡的下场，而这条活已经回到施工中了。
-_SETTLED_CARD = frozenset({"accepted", "rejected", "revoked", "gate_failed", "gate_blocked"})
+_SETTLED_CARD = frozenset(
+    {"accepted", "rejected", "revoked", "gate_failed", "gate_blocked"}
+)
 
 
 def _is_stuck(code: NoteCode | None) -> bool:

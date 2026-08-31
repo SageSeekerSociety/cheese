@@ -140,7 +140,12 @@ TASK_CASES = [
         Column.needs_you,
         "交付被退回",
     ),
-    ("采纳时冲突", task(card=card(AcceptStatus.conflict)), Column.needs_you, "交付被退回"),
+    (
+        "采纳时冲突",
+        task(card=card(AcceptStatus.conflict)),
+        Column.needs_you,
+        "交付被退回",
+    ),
     ("已交付", task(accepted_at=JUST_NOW), Column.done, "已采纳"),
     ("收工了", task(status=TaskStatus.closed), Column.done, "已收工"),
 ]
@@ -256,15 +261,21 @@ def test_no_phrase_can_appear_under_a_column_it_does_not_belong_to():
     seen: dict[str, Column] = {}
     for column, phrases in COLUMN_PHRASES.items():
         for phrase in phrases:
-            assert phrase not in seen, f"{phrase} 同时属于 {seen.get(phrase)} 和 {column}"
+            assert phrase not in seen, (
+                f"{phrase} 同时属于 {seen.get(phrase)} 和 {column}"
+            )
             seen[phrase] = column
 
     for _, facts, column, phrase in TASK_CASES:
         assert phrase in COLUMN_PHRASES[column]
-        assert task_presentation(facts, now=NOW).display_status in COLUMN_PHRASES[column]
+        assert (
+            task_presentation(facts, now=NOW).display_status in COLUMN_PHRASES[column]
+        )
     for _, facts, column, phrase in ROOM_CASES:
         assert phrase in COLUMN_PHRASES[column]
-        assert room_presentation(facts, now=NOW).display_status in COLUMN_PHRASES[column]
+        assert (
+            room_presentation(facts, now=NOW).display_status in COLUMN_PHRASES[column]
+        )
 
 
 def test_it_reads_nothing_but_the_facts_it_was_given():
@@ -273,4 +284,7 @@ def test_it_reads_nothing_but_the_facts_it_was_given():
     first = task_presentation(facts, now=NOW)
     assert first == task_presentation(facts, now=NOW)
     # 只有「现在几点」变了，同一行事实就换了一格 —— 时间是参数，不是它自己去读的。
-    assert task_presentation(facts, now=LONG_AGO + timedelta(minutes=1)).display_status == "运行中"
+    assert (
+        task_presentation(facts, now=LONG_AGO + timedelta(minutes=1)).display_status
+        == "运行中"
+    )
