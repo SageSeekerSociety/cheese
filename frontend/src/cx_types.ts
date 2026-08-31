@@ -50,6 +50,13 @@ export interface Topic {
   // 只有 kind='thread' 的地点有：这件活当前骑的那张验收卡 / PR。房间的交付是
   // 整条分支一张卡，不挂在这里。
   card?: ThreadCard | null
+  // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
+  //
+  // 和上面 `running` / `awaits_me` / `i_participate` 一样是「只有 list/get 话题时
+  // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
+  // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
+  // 着，而屏幕上那个颜色是哪一个算出来的，谁也说不清。
+  presentation?: Presentation
 }
 
 export type AuthorType = 'human' | 'ai' | 'system'
@@ -163,6 +170,32 @@ export interface RoomTask {
   // /topics/{id}/tasks`）都带它——「等人验收」也是安静的，没有它就和「闲着」
   // 在屏幕上长得一模一样。
   card?: ThreadCard | null
+  // 这条活在看板上落哪一列、卡上写哪句话。**必有字段，不是可选的**：状态从今往后
+  // 只在后端算一次，前端没有一条退回本地推导的路——留一条兜底路，两个算法就会同时
+  // 存在，而且谁也说不清屏幕上那个词是哪一个算出来的。
+  presentation: Presentation
+}
+
+/** 看板的一列。判据是「**该谁动**」，不是「事情进行到哪一步」——同一个客观事实，
+ *  下一步在平台手上还是在人手上，落在不同的列里。
+ *
+ *    building   施工中 —— 还没递出交付
+ *    delivering 交付中 —— 下一步在平台/芝士手上
+ *    needs_you  等你   —— 下一步在人手上
+ *    done       已完成 —— 已采纳，或已收工且没交付
+ *    archived   已归档 —— 房间才有；活不归档
+ */
+export type BoardColumn = 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
+
+/** 后端算好的呈现，前端照抄。
+ *
+ *  `display_status` 已经是可以直接显示的中文，**前端不再做第二张映射表**——这正是
+ *  这个字段存在的理由。同一个客观事实（比如快检红了）在不同的列里是不同的话：平台
+ *  自己在修时是「修复检查」，等人拍板时是「检查未通过」，所以短语属于列，一列只会
+ *  产出属于它自己的那几个词。前端再映射一次，两边就会各说各的。 */
+export interface Presentation {
+  column: BoardColumn
+  display_status: string
 }
 
 /** 一批活 —— 一棵树 = 一个分支 = 一个 PR。房间封口一批、开下一批，所以一个房间

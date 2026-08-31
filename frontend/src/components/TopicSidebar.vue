@@ -94,7 +94,7 @@ const route = useRoute()
 
 const projectPages = [
   { key: 'overview', label: '总览', icon: 'mdi-view-agenda-outline' },
-  { key: 'workspace-running', label: '在跑的活', icon: 'mdi-play-circle-outline' },
+  { key: 'workspace-running', label: '看板', icon: 'mdi-view-column-outline' },
   { key: 'calendar', label: '日历', icon: 'mdi-calendar-outline' },
   { key: 'project-agents', label: 'AI 队友', icon: 'mdi-robot-outline' },
 ] as const
