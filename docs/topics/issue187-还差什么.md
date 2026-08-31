@@ -40,8 +40,28 @@ key 必须同时能调 chat 和 embedding：抽取器每记一条事实要花一
 
 | # | 事 | 谁 | 阻塞 |
 |---|---|---|---|
-| 1 | 给 `.viking` 加一条备份（脚本 + timer + README-backup.md） | 芝士能做（纯仓库改动） | 无 |
-| 2 | 加「切到 openviking 就自检端点」的探针 | 芝士能做 | 无 |
+| 1 | 给 `.viking` 加一条备份（脚本 + timer + README-backup.md） | **已派出**：支线「viking 备份线」`c71a11fa` | 无 |
+| 2 | 加「切到 openviking 就自检端点」的探针 | **已派出**：支线「openviking 端点自检」`2ce20965` | 无 |
 | 3 | 弄到一把有 embedding 权限的智谱 key | **必须人**：@蔡松洋 / @andy | 采购 |
 | 4 | 上机改 `.env`、重部、跑迁移 | **必须人**（芝士上不了机器） | 依赖 1、3 |
 | 5 | #582 解冲突或关掉 | 芝士能做，需先拍板要不要它 | 拍板 |
+
+
+## 进展
+
+**2026-08-31：第 1、2 条已派出两条支线，正在做。**
+
+派之前重新对着 main `6d5ff5e55` 核实了一遍前提，三条全部仍然成立：`memory_backend` 默认还是 `db`；viking 不在任何备份里（grep 过 `deploy/` 和 `scripts/`，唯一命中是 etrip 部署 rsync 的 `--exclude='.viking'`，即明确排除）；`openviking_store.py:113-114` 回落到网关虚拟 key 那两行还在。
+
+两条支线的边界（防撞车，已写进各自简报并用 `--paths` 声明）：
+
+| 支线 | 拥有 | 禁止碰 |
+|---|---|---|
+| viking 备份线 `c71a11fa` | `deploy/` 全部；`docs/infrastructure.md` 里「That directory IS the database…needs its own backup line」那一条 bullet | `backend/` |
+| openviking 端点自检 `2ce20965` | `backend/` 全部；`docs/infrastructure.md` 那一节的**其余**部分 | `deploy/` |
+
+两条都被要求：局部编辑 `docs/infrastructure.md`、不许整块覆盖；改完一小块就 commit + push；**不许自己递验收卡**（共用一条分支，卡的互斥按树算，谁先递谁把别人堵死）——递卡由本房间统一调度。
+
+留给我的两个决定，等它们回来时要拍：
+- 备份期间后端在写会拿到撕裂快照，允许到什么程度（支线会给方案和代价）。
+- 自检放启动期还是只放 `/health/detailed`——放启动期意味着一次外部 API 抖动可能触发 `deploy-docker.sh` 的健康检查回滚。
