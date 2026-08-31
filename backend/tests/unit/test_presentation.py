@@ -33,7 +33,7 @@ def task(**kw) -> TaskFacts:
         "status": TaskStatus.open,
         "residency": Residency.idle,
         "queued_at": None,
-        "last_turn_at": None,
+        "last_signal_at": None,
         "accepted_at": None,
         "card": None,
     }
@@ -61,25 +61,25 @@ TASK_CASES = [
     # (名字, 事实, 列, 短语)
     (
         "在跑",
-        task(residency=Residency.running, last_turn_at=JUST_NOW),
+        task(residency=Residency.running, last_signal_at=JUST_NOW),
         Column.building,
         "运行中",
     ),
     ("排队", task(queued_at=JUST_NOW), Column.building, "排队中"),
     ("闲着", task(), Column.building, "空闲"),
-    # 说自己在跑、但上一次有人确认它还活着已经太久了。今天前端没有这一格：
-    # taskRing 只看 residency，于是一条隧道断掉的活和一条真在跑的活长得一样。
+    # 说自己在跑、但已经太久没有任何动静了。今天前端没有这一格：taskRing 只看
+    # residency，于是一条卡死的活和一条真在跑的活长得一模一样。
     (
         "在跑但早就没动静了",
-        task(residency=Residency.running, last_turn_at=LONG_AGO),
+        task(residency=Residency.running, last_signal_at=LONG_AGO),
         Column.building,
         "失联",
     ),
-    # residency 说 running，却从来没有过一次 last_turn_at —— 没有任何东西确认过
-    # 这一轮开起来了，所以不能说它在跑。
+    # residency 说 running，却一个信号都没有过 —— 既没说过话也没记下开跑，
+    # 「没有证据」不能读成「一切正常」。
     (
         "在跑但从没被确认过",
-        task(residency=Residency.running, last_turn_at=None),
+        task(residency=Residency.running, last_signal_at=None),
         Column.building,
         "失联",
     ),
@@ -106,7 +106,7 @@ TASK_CASES = [
         "合并冲突，芝士在解",
         task(card=card(AcceptStatus.pr_open, note_code=NoteCode.merge_conflict)),
         Column.delivering,
-        "等待合并",
+        "解决冲突",
     ),
     (
         "PR 合了，等落地",
@@ -167,8 +167,9 @@ def test_a_thread_lands_in_one_column_with_one_phrase(facts, column, phrase):
 ROOM_CASES = [
     ("在跑", room(running=True), Column.building, "运行中"),
     ("闲着", room(), Column.building, "空闲"),
-    # 房间没有「草稿」这一格可用的短语，落回空闲 —— 一个还没开工的房间确实是空闲的。
-    ("草稿", room(status=TopicStatus.draft), Column.building, "空闲"),
+    # 草稿和空闲要分开：一个从没开始的房间，和一个做完一轮在等下一句话的房间，
+    # 对看的人不是一回事。
+    ("草稿", room(status=TopicStatus.draft), Column.building, "草稿"),
     (
         "闸门在跑",
         room(card=card(AcceptStatus.pending_gate)),
@@ -207,7 +208,7 @@ def test_delivery_beats_everything():
         task(
             accepted_at=JUST_NOW,
             residency=Residency.running,
-            last_turn_at=JUST_NOW,
+            last_signal_at=JUST_NOW,
             card=card(AcceptStatus.pending),
         ),
         now=NOW,
@@ -220,7 +221,7 @@ def test_the_live_fact_beats_the_paperwork():
     shown = task_presentation(
         task(
             residency=Residency.running,
-            last_turn_at=JUST_NOW,
+            last_signal_at=JUST_NOW,
             card=card(AcceptStatus.pending),
         ),
         now=NOW,
@@ -278,9 +279,23 @@ def test_no_phrase_can_appear_under_a_column_it_does_not_belong_to():
         )
 
 
+def test_every_phrase_is_reachable():
+    """每一句话都得有活的/房间的事实能点亮它。
+
+    这是「等待回答」被砍掉的那条规矩的另一半：一个契约里有、却永远不会出现的值，
+    下一个人会以为它在工作、去查为什么从来不亮。所以词表里有几句，这里就得有
+    几个例子——加词而不加事实，这条会红。
+    """
+    reached = {p for _, _, _, p in TASK_CASES} | {p for _, _, _, p in ROOM_CASES}
+    from app.domain.room_task.presentation import COLUMN_PHRASES
+
+    every = {p for phrases in COLUMN_PHRASES.values() for p in phrases}
+    assert reached == every
+
+
 def test_it_reads_nothing_but_the_facts_it_was_given():
     """纯函数：同样的事实 + 同样的「现在几点」= 同样的答案，跑多少次都一样。"""
-    facts = task(residency=Residency.running, last_turn_at=LONG_AGO)
+    facts = task(residency=Residency.running, last_signal_at=LONG_AGO)
     first = task_presentation(facts, now=NOW)
     assert first == task_presentation(facts, now=NOW)
     # 只有「现在几点」变了，同一行事实就换了一格 —— 时间是参数，不是它自己去读的。

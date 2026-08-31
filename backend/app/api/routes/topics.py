@@ -58,6 +58,7 @@ from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind, Task
 from app.domain.room_task.place import Place
+from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import (
     ClaimService,
@@ -343,9 +344,12 @@ async def get_topic(
         # 一条活的头也要带上看板那一格，和它在列表里显示的是同一句话——同一个函数
         # 算的，所以深链接进来和从侧栏点进来不可能给出两种说法。
         cards = await AcceptCardRepository(db).latest_by_task([place.task.id])
+        beats = await TaskRepository(db).last_block_at_for_tasks([place.task.id])
         out = TaskOut.model_validate(place.task).model_dump(mode="json")
         out["presentation"] = presentation.task_presentation(
-            presentation.facts_for_task(place.task, cards.get(place.task.id)),
+            presentation.facts_for_task(
+                place.task, cards.get(place.task.id), beats.get(place.task.id)
+            ),
             now=datetime.now(UTC),
         ).as_dict()
         return ok(out)
@@ -475,7 +479,9 @@ async def list_room_tasks(
     # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
     # 人验收" are indistinguishable on screen — both are quiet — and the room
     # overview would have to ask per thread to tell them apart.
-    cards = await AcceptCardRepository(db).latest_by_task([t.id for t, _ in threads])
+    thread_ids = [t.id for t, _ in threads]
+    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
+    beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
     now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
@@ -485,7 +491,8 @@ async def list_room_tasks(
                 **TaskOut.model_validate(task).model_dump(mode="json"),
                 # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
                 "presentation": presentation.task_presentation(
-                    presentation.facts_for_task(task, card), now=now
+                    presentation.facts_for_task(task, card, beats.get(task.id)),
+                    now=now,
                 ).as_dict(),
                 "blocks": [
                     BlockOut.model_validate(b).model_dump(mode="json") for b in blocks

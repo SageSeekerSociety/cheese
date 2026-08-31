@@ -355,7 +355,11 @@ async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
     """
     await ProjectService(db).get_or_404(project_id)
     tasks = await TaskRepository(db).list_for_project(project_id)
-    cards = await AcceptCardRepository(db).latest_by_task([t.id for t in tasks])
+    task_ids = [t.id for t in tasks]
+    cards = await AcceptCardRepository(db).latest_by_task(task_ids)
+    # 每条活最后一次说话是什么时候 —— 看板判「失联」的心跳。第三次批查询，走的是
+    # blocks 上那条 (task_id, created_at) 的部分索引，不是每条活一次。
+    beats = await TaskRepository(db).last_block_at_for_tasks(task_ids)
     # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
     # 一样的活分到不同格子，而那种差别没人再能复现。
     now = datetime.now(UTC)
@@ -363,7 +367,7 @@ async def list_project_tasks(project_id: uuid.UUID, db: DbSession) -> dict:
     for task in tasks:
         card = cards.get(task.id)
         shown = presentation.task_presentation(
-            presentation.facts_for_task(task, card), now=now
+            presentation.facts_for_task(task, card, beats.get(task.id)), now=now
         )
         items.append(
             {

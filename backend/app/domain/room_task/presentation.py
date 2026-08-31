@@ -36,27 +36,32 @@
 import enum
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.models import Residency, Task, TaskStatus
-from app.domain.room_task.services import GHOST_RESIDENCY_AFTER
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:
     from app.domain.review.models import AcceptCard
 
-#: 一行说自己 `running`、却已经这么久没人确认过它还活着 —— 那就不能说它在跑。
+#: 一行说自己 `running`、却已经这么久没有任何动静 —— 那就不能说它在跑。
 #:
-#: 用的就是平台清理幽灵槽位的那个门槛（`GHOST_RESIDENCY_AFTER`），不另立一个数：
-#: 另立一个更短的数，会造出一段「看板说失联、清理线程说它好好的」的时间，而两边
-#: 说法不一正是这个模块要消灭的东西。
+#: 这个数是量出来的，不是拍的。信号取的是**这条活最后一个 block 的时间**（见
+#: `TaskRepository.last_block_at_for_tasks`）：一轮里每一步都落 block，在真实的一
+#: 条活上实测，轮内间隔中位数 8 秒、p90 34 秒。10 分钟是 p90 的十几倍，一段安静的
+#: 工具活动撑不到它；而一条真的停住的活，10 分钟就在看板上现形，不用等两小时。
 #:
-#: 为什么不能更短（比如 AO 的 90 秒）：`last_turn_at` 是在**一轮开始时**盖的，一
-#: 轮跑起来之后不再刷新（见 `ResidencyService.touch` 的调用点）。一轮真的可以很
-#: 长，宽限期短于最长的一轮，就会把正在干活的活说成失联。
-LOST_SIGNAL_AFTER = GHOST_RESIDENCY_AFTER
+#: 为什么不能拿 `Task.last_turn_at` 当信号：它只在一轮**开始**时盖一次，跑起来之
+#: 后不再刷新（见 `ResidencyService.touch` 的调用点），所以按它算，宽限期必须长过
+#: 最长的一轮，否则正在干活的活会被说成失联。它只作兜底 —— 一条刚开跑、还没来得
+#: 及说第一句话的活，靠的是它。
+#:
+#: 也刻意不等于清理幽灵槽位的那个门槛（`GHOST_RESIDENCY_AFTER`，2 小时）：那一步
+#: 会**放掉别人的槽位**，早一步是破坏性的；这里只是在屏幕上说一句话，说早了改回来
+#: 就是了。两种代价不一样，所以两个数不该是同一个。
+LOST_SIGNAL_AFTER = timedelta(minutes=10)
 
 
 class Column(enum.StrEnum):
@@ -75,6 +80,8 @@ class Building(enum.StrEnum):
     running = "运行中"
     queued = "排队中"
     idle = "空闲"
+    #: 房间才有：还没开工。活没有草稿态。
+    draft = "草稿"
     #: 说在跑，但没有任何东西最近确认过。和「空闲」分开，是因为一条隧道断掉的活
     #: 和一条真的没人找它的活，对看的人意味着完全相反的下一步。
     lost = "失联"
@@ -86,6 +93,9 @@ class Delivering(enum.StrEnum):
     gate_running = "检查运行中"
     awaiting_checks = "等待检查"
     fixing_checks = "修复检查"
+    #: 采纳时撞了合并冲突，芝士已经被派去解 —— 今天 `NoteCode.merge_conflict`
+    #: 就在写（review/services.py 两处），所以这一格是点得亮的，不是空契约。
+    resolving_conflict = "解决冲突"
     awaiting_merge = "等待合并"
 
 
@@ -161,8 +171,9 @@ class TaskFacts:
     status: str
     residency: str
     queued_at: datetime | None
-    #: 最后一次有东西确认这一轮活着。见 `LOST_SIGNAL_AFTER`。
-    last_turn_at: datetime | None
+    #: 最后一次有东西确认这条活还在动。见 `LOST_SIGNAL_AFTER`：优先是它最后一个
+    #: block 的时间，没说过话就退回这一轮是什么时候开的。
+    last_signal_at: datetime | None
     accepted_at: datetime | None
     card: CardFacts | None
 
@@ -187,12 +198,23 @@ def facts_for_card(card: "AcceptCard | None") -> CardFacts | None:
     )
 
 
-def facts_for_task(task: Task, card: "AcceptCard | None" = None) -> TaskFacts:
+def facts_for_task(
+    task: Task,
+    card: "AcceptCard | None" = None,
+    last_block_at: datetime | None = None,
+) -> TaskFacts:
+    """把一行 `Task`（加上它的卡、加上它最后一次说话的时间）折成这层要读的事实。
+
+    两个信号取晚的那个，因为它们各自会缺：一条刚开跑、还没说第一句话的活只有
+    `last_turn_at`；一条跑了很久的活，`last_turn_at` 停在开跑那一刻，真正在动的
+    证据在 block 上。取晚的 = 「有任何一个东西确认过它还活着」。
+    """
+    signals = [t for t in (last_block_at, task.last_turn_at) if t is not None]
     return TaskFacts(
         status=str(task.status),
         residency=str(task.residency),
         queued_at=task.queued_at,
-        last_turn_at=task.last_turn_at,
+        last_signal_at=max(signals) if signals else None,
         accepted_at=task.accepted_at,
         card=facts_for_card(card),
     )
@@ -247,7 +269,7 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
         return _show(Delivering.fixing_checks)
     # 采纳时撞了冲突，芝士被派去解；解完由人重试采纳，但此刻在推的是平台。
     if card.note_code is NoteCode.merge_conflict:
-        return _show(Delivering.awaiting_merge)
+        return _show(Delivering.resolving_conflict)
     # 芝士的修复推不上 GitHub / 本地分支和 PR 分支分叉了：PR 上的红清不掉，而且
     # 没有任何自动的路能清掉它。这就是「CI 红了没人管」。
     if card.note_code in (NoteCode.repush_failed, NoteCode.repush_diverged):
@@ -290,7 +312,7 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
         return _show(Done.accepted)
 
     if facts.residency == Residency.running:
-        if _lost_signal(facts.last_turn_at, now=now):
+        if _lost_signal(facts.last_signal_at, now=now):
             return _show(Building.lost)
         return _show(Building.running)
 
@@ -307,15 +329,15 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     return _show(Building.idle)
 
 
-def _lost_signal(last_turn_at: datetime | None, *, now: datetime) -> bool:
+def _lost_signal(last_signal_at: datetime | None, *, now: datetime) -> bool:
     """这一行说自己在跑，但还有东西确认这件事吗？
 
-    从来没有过 `last_turn_at` 也算失联：那意味着没有任何一次开跑被记下来过，而
+    一个信号都没有过也算失联：那意味着既没说过话、也没有一次开跑被记下来，而
     「没有证据」不能读成「一切正常」。
     """
-    if last_turn_at is None:
+    if last_signal_at is None:
         return True
-    return now - last_turn_at > LOST_SIGNAL_AFTER
+    return now - last_signal_at > LOST_SIGNAL_AFTER
 
 
 # —— 一个房间 ——————————————————————————————————————————————————
@@ -345,5 +367,8 @@ def room_presentation(facts: RoomFacts, *, now: datetime) -> Presentation:
         if shown is not None:
             return shown
 
-    # 草稿也落在这里。这套词里没有「草稿」，而一个还没开工的房间确实是空闲的。
+    # 草稿是「还没开工」，正是 building 的定义（还没递出交付）。它和空闲要分开：
+    # 一个从没开始的房间和一个做完一轮在等下一句话的房间，不是一回事。
+    if facts.status == TopicStatus.draft:
+        return _show(Building.draft)
     return _show(Building.idle)
