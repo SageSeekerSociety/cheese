@@ -937,12 +937,17 @@ class DeviceChannel(Channel):
                     timeout=_FILE_STAGE_TIMEOUT_S,
                 )
             except Exception as exc:  # noqa: BLE001 — an image is not the message
+                # `str(exc)` is EMPTY for the failure this actually hits — a bare
+                # `TimeoutError` from a connector too old to know `file.put`, which
+                # drops the frame without answering. Naming the type is the whole
+                # difference between a line that ends in a colon and one that says
+                # the send timed out.
                 logger.warning(
                     "could not stage image %s onto device %s (topic=%s): %s",
                     path,
                     screen.device_id,
                     screen.topic_id,
-                    exc,
+                    str(exc) or exc.__class__.__name__,
                 )
                 lost.append(image)
             else:

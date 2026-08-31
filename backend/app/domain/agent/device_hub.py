@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from app.domain.agent import device_link
+from app.domain.agent import connector_build, device_link
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,15 @@ class HubDevice:
     device_id: str
     transport: DeviceTransport | None = None
     proto: int | None = None
+    # What the connector said about itself in `hello`: the sha256 of its own
+    # executable and the `<os>-<arch>` it was built for. Both empty from a
+    # connector built before it announced either.
+    build: str = ""
+    target: str = ""
+    # Whether this CONNECTION has already been told to update itself. Reset on
+    # every attach, so a machine whose self-update failed is told again the next
+    # time it dials in rather than once and never again.
+    update_pushed: bool = False
     # Last time the device sent any frame (hello/heartbeat/…). A liveness signal for
     # ops/UX: `is_online` already tracks the socket; this dates the last contact so a
     # future reaper can distinguish a wedged-but-connected device from a healthy one.
@@ -117,6 +126,7 @@ class DeviceHub:
     async def attach_device(self, device_id: str, transport: DeviceTransport) -> None:
         device = self._device(device_id)
         device.transport = transport
+        device.update_pushed = False
         await device.send(device_link.welcome())
 
     async def detach_device(self, device_id: str, transport: DeviceTransport) -> None:
@@ -440,8 +450,11 @@ class DeviceHub:
 
         if msg.t == "hello":
             device.proto = msg.v
+            device.build = msg.build
+            device.target = msg.target
             if device.proto not in (None, PROTOCOL_VERSION):
                 self._on_version_skew(device_id, device.proto)
+            await self._update_if_stale(device, msg)
             return
         if msg.t == "session.error":
             # The device could not start (or attach) this screen. There is no
@@ -504,6 +517,48 @@ class DeviceHub:
         if screen is None:
             raise KeyError(f"no screen {sid!r} on device {device_id!r}")
         return screen
+
+    async def _update_if_stale(
+        self, device: HubDevice, msg: device_link.LinkMsg
+    ) -> None:
+        """Tell a machine whose connector is not the one we serve to replace it.
+
+        Nothing else closes the gap between what the server sends and what the
+        far end can receive. A connector drops a frame it does not recognise
+        without answering it, so drift surfaces as a timeout somewhere
+        unrelated — an image that never arrived, a call that never returned —
+        and no error anywhere names a version. Left to a person to notice, a
+        machine stays behind for as long as nobody looks: one ran a build from
+        the day before ``file.put`` merged for two weeks, and every image
+        attached to any topic on it was staged into a twenty-second silence.
+
+        Only ever on a definite answer. A connector that identifies itself but
+        whose bytes we cannot compare is left alone — telling it to update on a
+        half-answer would re-exec the machine on every reconnect and never
+        converge, which is worse than the drift.
+        """
+        if device.update_pushed:
+            return
+        if msg.build or msg.target:
+            if not (msg.build and msg.target):
+                return
+            served = await asyncio.to_thread(connector_build.served_digest, msg.target)
+            if served is None or served == msg.build:
+                return
+        elif not await asyncio.to_thread(connector_build.has_any_build):
+            # It says nothing about itself, so it predates saying anything and
+            # is old by construction — but only tell it to fetch a build if we
+            # have one to give it.
+            return
+        device.update_pushed = True
+        logger.warning(
+            "device %s runs connector build %s for %s, not the one we serve — "
+            "pushing self-update",
+            device.device_id,
+            msg.build or "<unreported>",
+            msg.target or "<unreported>",
+        )
+        await device.send(device_link.update())
 
     # Overridable seam for logging/metrics; a no-op by default.
     def _on_version_skew(self, device_id: str, proto: int | None) -> None:
