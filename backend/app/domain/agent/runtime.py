@@ -329,7 +329,6 @@ class AgentWorkRunner:
         # starting on the same place replaces the entry, and asyncio keeps only
         # a weak one — the dropped write would be collectable mid-await.
         self._holds_in_flight: set[asyncio.Future[None]] = set()
-        broker.watch_idle(self._channel_went_quiet)
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
         self._recent: deque[dict] = deque(maxlen=100)
         # Project-level concurrency gate (spec §9.1): at most N turns run at
@@ -366,6 +365,8 @@ class AgentWorkRunner:
         # what this set cannot see (a failure recorded before a restart) is covered
         # by the staleness rule in `device.health` instead.
         self._host_failed_topics: set[str] = set()
+        # Last, so nothing can be called back into a half-built runner.
+        broker.watch_idle(self._channel_went_quiet)
 
     def recent_work(self) -> list[dict]:
         """Newest-first lifecycle summaries for /debug/turns."""
