@@ -2123,21 +2123,30 @@ class AcceptService:
         # 芝士就一个字都收不到。AO (`lifecycle/reactions.go`) 在同一个位置踩过
         # 同一个坑并留了注释；这里抄的是它改完之后的形状：先全部排队，再统一发。
         #
-        # 收集途中任何一步读 GitHub 失败，都不能把已经排好队的其它待发一起丢掉
-        # ——那只是「一件事吞掉另一件事」的另一种写法。所以取评审意见的那一路自己
-        # 兜住异常（见 `GitHubPrClient.review_signals` 的契约）。
+        # 收集途中读 GitHub 失败，**不能**把已经排好队的其它待发一起丢掉 ——那只是
+        # 「一件事吞掉另一件事」的另一种写法。所以错误推迟到发完再抛：卡上照样会
+        # 记下这次轮询出过错（`advance_pr_card` 的 except），而 CI 那条已经送到。
         pending: list[pr_signals.PendingNudge] = []
+        deferred: Exception | None = None
         if state == "failure":
             ci = self._ci_nudge(
                 card=card, tail=tail, stage="CI", owner=owner, repo=repo
             )
             if ci is not None:
                 pending.append(ci)
-        review = await self._review_nudge(
-            card=card, owner=owner, repo=repo, creds=creds, client=client, status=status
-        )
-        if review is not None:
-            pending.append(review)
+        try:
+            review = await self._review_nudge(
+                card=card,
+                owner=owner,
+                repo=repo,
+                creds=creds,
+                client=client,
+                status=status,
+            )
+            if review is not None:
+                pending.append(review)
+        except Exception as exc:  # noqa: BLE001 — 见上：先发完，再抛
+            deferred = exc
         # 冲突只在「这一轮不会去合并」时自己报，也就是检查还没绿的时候。检查绿了
         # 之后合并会真打一次 GitHub，它的 405/409 由 `_note_merge_blocked` 负责说
         # ——同一件事两个人说，房间里就是两条重复消息。
@@ -2152,6 +2161,8 @@ class AcceptService:
             chat_service=chat_service,
             runner=runner,
         )
+        if deferred is not None:
+            raise deferred
 
         if state == "pending":
             self._note_waiting_on_checks(card=card, tail=tail)
