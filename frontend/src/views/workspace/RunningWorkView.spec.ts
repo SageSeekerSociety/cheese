@@ -67,15 +67,15 @@ function mount() {
 }
 
 /** 一列的列头，形如「施工中 2」。空白由模板编译决定，不是这份用例要钉的东西。 */
-function columnHead(container: HTMLElement, column: string): string {
+function columnHead(container: Element, column: string): string {
   const head = container.querySelector(`[data-column="${column}"] .board-col__head`)
   const name = head?.querySelector('.board-col__name')?.textContent?.trim() ?? ''
   const count = head?.querySelector('.board-col__count')?.textContent?.trim() ?? ''
   return `${name} ${count}`
 }
 
-function titlesInColumn(container: HTMLElement, column: string): string[] {
-  return [...container.querySelectorAll(`[data-column="${column}"] .board-card__title`)].map((n) =>
+function titlesInColumn(container: Element, column: string): string[] {
+  return Array.from(container.querySelectorAll(`[data-column="${column}"] .board-card__title`)).map((n) =>
     (n.textContent ?? '').trim()
   )
 }

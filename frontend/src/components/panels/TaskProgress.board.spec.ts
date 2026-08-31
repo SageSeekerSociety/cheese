@@ -76,17 +76,17 @@ function mount() {
   return render(Panel, { props: { topic: ROOM, active: true }, global: { plugins: [vuetify] } })
 }
 
-function titlesInColumn(container: HTMLElement, column: string): string[] {
+function titlesInColumn(container: Element, column: string): string[] {
   const head = container.querySelector(`[data-column="${column}"]`)
-  const list = head?.nextElementSibling
-  return [...(list?.querySelectorAll('.task-row__line1') ?? [])].map((n) => (n.textContent ?? '').trim())
+  const rows = head?.nextElementSibling?.querySelectorAll('.task-row__line1')
+  return Array.from(rows ?? []).map((n) => (n.textContent ?? '').trim())
 }
 
 describe('列和短语跟项目那块板是同一套', () => {
   it('列的顺序和名字一字不差', async () => {
     const { container } = mount()
     await waitFor(() => expect(container.querySelectorAll('[data-column]').length).toBe(BOARD_COLUMNS.length))
-    const names = [...container.querySelectorAll('[data-column]')].map((n) => ({
+    const names = Array.from(container.querySelectorAll('[data-column]')).map((n) => ({
       key: n.getAttribute('data-column'),
       label: n.querySelectorAll('span')[1]?.textContent?.trim(),
     }))
