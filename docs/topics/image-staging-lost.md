@@ -34,7 +34,21 @@ Unable to connect to API (ConnectionRefused) · Retrying in 1s · attempt 3/10
 
 ## 修法
 
-**A. 立刻止血（这台机器）**：后端服务的 `/connector/latest/linux-amd64/cheesehost` 上摆着 8-29 编译的新版本，实测含 `file.put`。给旧进程发 `SIGUSR2` 即可原地自更新并 re-exec，tmux 会话（也就是各话题正在跑的活）按设计保留。**已发选项问题给 @fulu 拍板**——这台机器是全项目共用的，不适合我自己决定。
+**A. 立刻止血（这台机器）——已完成，2026-08-31 07:05**。@fulu 拍板后执行。
+
+动手前逐项核对：连接器 config 的 `base` 非空；`curl <base>/connector/latest/linux-amd64/cheesehost` 返回 200，sha256 = `d2128fb9…`，与 `docker exec cheese-backend-1 sha256sum /app/connector-dist/linux-amd64/cheesehost` **完全一致**，且含 `file.put`；`~/.local/bin` 对服务用户可写（否则自更新永远失败且无声，#501）。
+
+`kill -USR2 185284` → 7 秒内换完。结果：
+
+| 检查项 | 结果 |
+|---|---|
+| 磁盘上的二进制 | `d175d79f…`（8-16）→ `d2128fb9…`（8-29） |
+| 运行中进程映射的 inode | 1472199 = 磁盘上新文件的 inode，**跑的确实是新镜像** |
+| pid | 185284 不变（`syscall.Exec` 保留 pid） |
+| tmux 会话 | 251 → **251，一个没少** |
+| journal | `binary updated in place; handing off to the new build (tasks preserved)…` |
+| 控制通道 | 14:04:59 `WebSocket /connector/agent` accepted，已重连 |
+
 
 **B. 让它不再复发（代码，已完成）**：commit `9ee42b992`，分支 `topic/787d58b3`。
 
@@ -63,9 +77,9 @@ Unable to connect to API (ConnectionRefused) · Retrying in 1s · attempt 3/10
 - [x] 根因定位到「连接器旧了 15 天 + 平台从不推更新」
 - [x] B：代码修复 + 回归测试，已推到 `topic/787d58b3`
 - [x] 后端全量测试跑完（5314 passed，2 条既有失败与本改动无关）
-- [ ] A：等 @fulu 拍板后更新这台机器上的连接器
+- [x] A：连接器已更新到 8-29 构建并重连，251 个 tmux 会话零损失
 
 ## 待办
 
-- @fulu 点一下那个选项问题，决定现在更连接器还是等空档。
-- 更完后请 @fulu 再发一张图验证。
+- **只差最后一步**：请 @fulu 再发一张图，那是唯一的端到端验证——二进制里有 `file.put` 这个字符串只证明它认识这条帧，真的把字节写进沙箱还得跑一次才算数。
+- 分支 `topic/787d58b3` 要不要开 PR 由 @fulu 定：本话题是 device 话题，递验收卡的瞬间平台会拿它自己那份工作区做快照强推，会把已推的内容冲掉，所以我没有自行递卡。
