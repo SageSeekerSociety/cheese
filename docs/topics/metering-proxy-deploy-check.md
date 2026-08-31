@@ -255,7 +255,7 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 2. 本地在同一分支上连跑 3 次，全过。
 3. 本次 diff 只有 3 个文件（`device_launch.py`、`test_device_launch.py`、本文档），与 kickoff 路径无交集。
 
-处置：把 `origin/main`（当时已推进到 `10651a71e`，含 #655）**merge**（不 rebase）进分支并重推，CI 全绿——`test` / `e2e` / `lint` / `guards` / `empty-pr-guard` / `migration-heads` / `scope` 全部 success。@wangchangxin 授权后由平台合并，`merge_commit_sha=d8d3eeb18`，已核实 main 上的 `device_launch.py` 含 `nohup python3`。
+处置：把 `origin/main`（当时已推进到 `10651a71e`，含 #655）**merge**（不 rebase）进分支并重推，CI 全绿——`test` / `e2e` / `lint` / `guards` / `empty-pr-guard` / `migration-heads` / `scope` 全部 success。<@wangchangxin> 授权后由平台合并，`merge_commit_sha=d8d3eeb18`，已核实 main 上的 `device_launch.py` 含 `nohup python3`。
 
 合并前本地又跑了一次 unit+integration 全量（5237 passed / 24 skipped / 2 failed），两条失败都逐条排除了：
 
@@ -267,3 +267,42 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 两个文件都不引用 `device_launch` 或 `tunnel`。
 
 **生效时机**：`cheese-tunnel-up` 由启动器每次启动重写到机器上，所以后端部署这版之后，各机器下一次启动就拿到新脚本，无需上机操作。
+
+---
+
+# 卡片看板在窄列里溢出（前端）
+
+@fulu 报「右侧的几个看板缩放时右边内容会溢出」。这里有**两件不同的事**，别混：
+
+## 已修：三处卡片看板的网格
+
+`repeat(auto-fill, minmax(280px, 1fr))` 里的 `280px` 是一条**下限**——网格会守住它，哪怕装它的那一列只有 200px 宽。结果不是重排成一列，而是整块横向撑出去。
+
+用真浏览器量的（headless chromium，容器固定 200px）：
+
+| 写法 | 内容宽 | 容器宽 | 结果 |
+|---|---|---|---|
+| `minmax(280px, 1fr)` | 280 | 200 | **溢出 80px** |
+| `minmax(min(280px, 100%), 1fr)` | 200 | 200 | 不溢出 |
+
+改的三处：
+
+| 文件 | 原值 |
+|---|---|
+| <&frontend/src/components/NodeBoard.vue> :96 | `minmax(280px, 1fr)` |
+| <&frontend/src/views/MarketView.vue> :175 | `minmax(260px, 1fr)` |
+| <&frontend/src/views/teams/detail/Compute.vue> :519 | `minmax(240px, 1fr)` |
+
+检查：eslint **0 error**（291 条既有 warning 未增加）、stylelint **65/65，基线未抬**、vitest **758 passed / 87 文件**。
+
+## 未修：截图里那个其实是「现场」终端
+
+@fulu 的截图放的是 现场 标签页里的 Claude Code 终端画面，右边的行被裁掉——**和上面的卡片网格是两套机制**。@fulu 已决定这轮先不动它。留下的证据，供以后接手：
+
+1. <&frontend/src/components/DeviceLiveViewer.vue> 的 `.device-live` 是 `overflow: hidden`——超出直接裁掉，**没有横向滚动条**，所以任何尺寸不一致都表现为「内容永久看不见」而不是可以滚过去看。
+2. 同文件 `fitAndResize()` 在 `fit()` 抛异常时的注释写着「a later tick retries」，**但没有任何代码去调度这次重试**。唯一触发源是 ResizeObserver 再次触发，所以拖动中途量到一次错尺寸就会一直错到下次尺寸再变。
+3. tmux 那侧：连接器写的配置只有 `set -g remain-on-exit on`（<&cli/internal/terminal/tmux.go> :127），于是 `window-size` 取 tmux 默认的 `latest`，窗口跟着最后活动的客户端走。两个观看端尺寸不同时，非「最后那个」会看到按别人尺寸排的画面，再被第 1 条裁掉。
+
+**分辨方法**：溢出后再轻微拖一下面板宽度——能自己恢复就是第 2 条，不恢复就是第 3 条。
+
+**没能做到的**：没有在真实运行的应用里复现终端那个问题。headless chromium 已经能用（上面量网格就是它），但进不去需要登录的话题页面。
