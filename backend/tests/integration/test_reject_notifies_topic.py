@@ -2,7 +2,7 @@
 
 `AcceptService.reject` only writes the row — no message, no summon. So a rejected
 topic sat there until a human came back and poked it, while a CI failure on the
-same card DOES summon (`_nudge_pr_fix`): same "去改代码" verdict, opposite
+same card DOES summon (`_dispatch_nudges`): same "去改代码" verdict, opposite
 behaviour, and from the room the difference was invisible.
 
 The reason has to travel too. "被退了" without "退在哪" leaves 芝士 guessing, and

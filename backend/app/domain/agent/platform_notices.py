@@ -108,6 +108,10 @@ EVENT_FORCE_MERGED: Final = "force_merged"
 EVENT_MIGRATION_COLLISION: Final = "migration_collision"
 #: 同一批消息反复被重投进轮次，前面几次都没跑完。
 EVENT_PROMPT_REPLAYED: Final = "prompt_replayed"
+#: 有人在 PR 上留了评审意见 / 要求改动 —— 芝士要去改，不是等着。
+EVENT_PR_REVIEW: Final = "pr_review"
+#: PR 和它的 base 分支冲突了，GitHub 合不了。
+EVENT_PR_CONFLICT: Final = "pr_conflict"
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
 #: / `host_swap` / `action` 是别处已有的，不在这里重复登记。
 EVENT_TYPES: Final = frozenset(
@@ -142,6 +146,8 @@ EVENT_TYPES: Final = frozenset(
         EVENT_FORCE_MERGED,
         EVENT_MIGRATION_COLLISION,
         EVENT_PROMPT_REPLAYED,
+        EVENT_PR_REVIEW,
+        EVENT_PR_CONFLICT,
     }
 )
 

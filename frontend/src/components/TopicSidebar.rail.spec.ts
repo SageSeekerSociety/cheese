@@ -299,6 +299,41 @@ describe('C5 行操作', () => {
   })
 })
 
+// 树上那颗「该谁动」的色点。它和看板用同一个来源（lib/board.ts），所以侧栏和板
+// 不可能给出两种说法——那正是这颗点存在的理由。
+describe('C6 该谁动的色点', () => {
+  function withPresentation(): Topic[] {
+    return [
+      topic('root', null, 'root'),
+      { ...topic('a', 'root'), presentation: { column: 'needs_you', display_status: '等待验收' } },
+      { ...topic('b', 'root'), presentation: { column: 'building', display_status: '运行中' } },
+    ]
+  }
+
+  it('房间行按它自己的列上色，鼠标停上去说得出是哪一句', () => {
+    const { container } = mount({ topics: withPresentation() })
+    const dots = Array.from(container.querySelectorAll('.topic-row .board-dot')) as HTMLElement[]
+    expect(dots.length).toBe(2)
+    expect(dots.map((d) => d.getAttribute('title'))).toEqual(['等待验收', '运行中'])
+    // 「等你」是唯一的暖色实心点——整棵树上该抓眼睛的只有它。
+    expect(dots[0].getAttribute('style')).toContain('--warn')
+    expect(dots[1].getAttribute('style')).not.toContain('--warn')
+  })
+
+  it('后端没给就不画点，前端不另算一个顶上', () => {
+    // 顶一个上去的话，屏幕上那个颜色是哪个算法算的就说不清了；不画只是少一点信息。
+    const { container } = mount()
+    expect(container.querySelector('.topic-row .board-dot')).toBeNull()
+  })
+
+  it('色点不改变行上的文字', () => {
+    // 树上的字是人找一个房间的方式。加一颗点不能顺手改了它。
+    const plain = titlesIn(mount().container, '.topic-row')
+    const dotted = titlesIn(mount({ topics: withPresentation() }).container, '.topic-row')
+    expect(dotted).toEqual(plain)
+  })
+})
+
 // 整页形态：手机上话题列表是页面栈的一层，占满内容区。抽屉和"拖宽度"这两样
 // 在手机上都不成立——但列表本身一条不能少。
 describe('整页形态', () => {
