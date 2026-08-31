@@ -52,8 +52,10 @@ class _SessionChat:
     async def converse(self, **kwargs):
         self.last_turn_id = kwargs["turn_id"]
         yield {"type": "session_lifecycle"}
+        # Opened inside the injecting send, as the real one is.
+        await self._opens_its_activity(kwargs["topic_id"])
 
-    async def opens_its_activity(self, topic_id):
+    async def _opens_its_activity(self, topic_id):
         self._live[topic_id] = self.last_turn_id
         await self._broker.publish(
             str(topic_id),
@@ -105,9 +107,8 @@ def test_a_working_thread_reads_as_running_over_the_api(client):
         )
         async with asyncio.timeout(10):
             await done.wait()
-        # The session opens its activity after the injecting request returned —
-        # the order the real one uses, and the order that used to lose the slot.
-        await live["chat"].opens_its_activity(live["task_id"])
+        # The request is back and the agent has not written a word yet. This is
+        # the moment the slot used to be handed back.
         await asyncio.sleep(0.3)
 
     async def _stop_the_agent() -> None:

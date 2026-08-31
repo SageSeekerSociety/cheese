@@ -1683,6 +1683,33 @@ class AgentWorkRunner:
             session_ended_it = handed_over and chat_service.session_took_over(
                 topic_id, turn_id
             )
+            # 额度什么时候还回去: when the WORK stops, which is not always when
+            # this coroutine returns. An interactive turn is handed to a live
+            # session at injection and this request comes back right then, with
+            # the agent about to work for minutes; a message folded into a
+            # standing turn never had an ending of its own at all. Releasing on
+            # the way out of here gave the slot back at the START of the work —
+            # which is why a thread visibly producing output read 「空闲」, and why
+            # the room's four slots, being a count of `running` rows, never
+            # filled. Both of those endings belong to the session that owns
+            # them, and `_channel_went_quiet` picks them up off the broker when
+            # it retires its activity.
+            #
+            # The same two questions asked just above therefore answer this one
+            # too, and nothing new has to be worked out: the session ended it →
+            # the session releases it; anyone else still live here → the slot is
+            # theirs to give back; otherwise this turn WAS the ending, and it is
+            # released here and awaited. A bookkeeping write with a live
+            # coroutine able to wait for it should never be left to finish on
+            # its own — nothing would be left to notice it failed, and on the
+            # way down it can be cut off mid-transaction.
+            others_live = [
+                work_id
+                for work_id in self._broker.active_turn_ids(channel)
+                if work_id != str(turn_id)
+            ]
+            if not session_ended_it and not others_live:
+                await self._free_slot(chat_service, topic_id)
             if lifecycle["started"] and not session_ended_it:
                 await self._broker.publish(
                     channel, {"type": "turn_finished", "turn_id": str(turn_id)}
@@ -1697,21 +1724,6 @@ class AgentWorkRunner:
             self._live_topics.pop(str(turn_id), None)
             if gate is not None:
                 gate.release()
-            # 额度什么时候还回去: when the WORK stops, which is not when this
-            # coroutine returns. An interactive turn is handed to a live session
-            # at injection and this request comes back right then, with the agent
-            # about to work for minutes; a message folded into a standing turn
-            # never had an ending of its own at all. Releasing here gave the slot
-            # back at the START of the work — which is why a thread visibly
-            # producing output read 「空闲」, and why the room's four slots, being
-            # a count of `running` rows, never filled.
-            #
-            # `_channel_went_quiet` does it instead, off the broker's idle
-            # signal, which is the one place all three kinds of ending meet. Left
-            # here only for a turn that no session owns and that never went live:
-            # nothing will ever signal for that one.
-            if not lifecycle["session_owned"] and not self._broker.in_flight(channel):
-                await self._free_slot(chat_service, topic_id)
 
     async def _hold_slot(self, chat_service, topic_id: uuid.UUID) -> None:
         """Mark this place's task as resident while its turn runs.

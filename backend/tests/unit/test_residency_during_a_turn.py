@@ -39,9 +39,10 @@ class _Chat:
 
     * `hands_to_session=True` — the interactive harness. `converse` yields
       `session_lifecycle` ("the live subscription owns the ending from here"),
-      injects, and returns. The session's own activity is opened and closed
-      later, by `session_starts_working` / `session_finishes`, which publish the
-      same two broker frames the real one does.
+      injects, opens the session's activity, and returns — in that order,
+      because the real one opens the activity inside the send it awaits. The
+      agent then works, and `session_finishes` is the actual end of the turn,
+      minutes later.
     * `hands_to_session=False` — a plain request-scoped turn: frames stream
       until the turn is actually over, and then it is over.
     """
@@ -77,21 +78,23 @@ class _Chat:
         return None
 
     async def converse(self, **kwargs):
+        topic_id = kwargs["topic_id"]
         self.last_turn_id = kwargs["turn_id"]
         self.injecting.set()
         if self._hands_to_session:
             yield {"type": "session_lifecycle"}
         await self.may_finish_injecting.wait()
-        if not self._hands_to_session:
+        if self._hands_to_session:
+            await self._session_starts_working(topic_id)
+        else:
             yield {"type": "done"}
 
-    async def session_starts_working(self, topic_id):
-        """The session opens its activity — deliberately AFTER the request that
-        injected has already returned, which is when the real one does it."""
-        turn_id = self.last_turn_id
-        self._live[topic_id] = turn_id
+    async def _session_starts_working(self, topic_id):
+        """The session opens its activity, still inside the injecting send."""
+        self._live[topic_id] = self.last_turn_id
         await self._broker.publish(
-            str(topic_id), {"type": "turn_started", "turn_id": str(turn_id)}
+            str(topic_id),
+            {"type": "turn_started", "turn_id": str(self.last_turn_id)},
         )
 
     async def session_finishes(self, topic_id):
@@ -192,7 +195,6 @@ async def _run_one_session_turn(factory, broker, task_id) -> _Chat:
     await _until_residency(factory, task_id, Residency.running)
     chat.may_finish_injecting.set()
     await _until(lambda: done.is_set())
-    await chat.session_starts_working(task_id)
     return chat
 
 
