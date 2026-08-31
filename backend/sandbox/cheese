@@ -638,7 +638,7 @@ def build_parser() -> argparse.ArgumentParser:
             "它看不到本话题的对话历史。简报里没写的前提,它就是不知道。\n"
             "\n"
             "分身跑在一个独立沙箱里,工作区是从 main 新建的 git 工作树:\n"
-            "  - 本话题工作区里 gitignored 的东西(reference/、tmp/、clone 下来的\n"
+            "  - 本话题工作区里 gitignored 的东西(reference/、.tmp/、clone 下来的\n"
             "    参照仓库、装好的依赖)都不会跟过去,要它用就在简报里写清怎么自己弄\n"
             "  - 它写的文件必须落在自己工作区的相对路径下,写 /tmp 会丢\n"
             "  - 它和你并行改同一个仓库,会撞车的地方(同一个文件/同一份配置)要在\n"
