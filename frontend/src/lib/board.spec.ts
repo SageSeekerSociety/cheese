@@ -83,7 +83,10 @@ describe('compareTasks', () => {
   it('两次排序给出同一个结果，无论输入顺序', () => {
     const rows = [task({ id: 'c' }), task({ id: 'a' }), task({ id: 'b' })]
     const forward = [...rows].sort(compareTasks).map((r) => r.id)
-    const backward = [...rows].reverse().sort(compareTasks).map((r) => r.id)
+    const backward = [...rows]
+      .reverse()
+      .sort(compareTasks)
+      .map((r) => r.id)
     expect(forward).toEqual(backward)
     expect(forward).toEqual(['a', 'b', 'c'])
   })

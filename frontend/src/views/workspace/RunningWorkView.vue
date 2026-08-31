@@ -93,9 +93,10 @@ const doneRows = computed(() => inColumn('done'))
 /** 顶上那行统计。以前是「N 件在跑 · N 件排队 · N 件等验收」，现在用板自己的词——
  *  三列的计数各自也在列头上，这一行是把它们和折起来的「已完成」并成一句。 */
 const tally = computed(() =>
-  [...BOARD_COLUMNS.map((c) => ({ label: c.label, n: inColumn(c.key).length })), { label: '已完成', n: doneRows.value.length }].filter(
-    (t) => t.n > 0
-  )
+  [
+    ...BOARD_COLUMNS.map((c) => ({ label: c.label, n: inColumn(c.key).length })),
+    { label: '已完成', n: doneRows.value.length },
+  ].filter((t) => t.n > 0)
 )
 
 function openTask(task: RoomTask) {

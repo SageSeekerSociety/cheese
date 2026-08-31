@@ -11,7 +11,7 @@
 //
 // 每行一条活：色点 +「第 N 件：做什么」+ 小字写状态短语和负责人。屏幕上每一个状态
 // 词都是后端算好的 `presentation.display_status`，这一段一个都不推。
-import type { BoardColumn, Block, RoomTask, RoomTree, Topic } from '../../cx_types'
+import type { Block, BoardColumn, RoomTask, RoomTree, Topic } from '../../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
@@ -110,7 +110,9 @@ const numberOf = computed(() => {
  *  取决于响应里的数组顺序，于是这一段会在两次刷新之间自己跳。排序用的时间是「最后
  *  活动」，和行上显示的那个时间是同一个，不然看起来就是排错了。 */
 function sortRows(list: ThreadRow[]): ThreadRow[] {
-  return [...list].sort((a, b) => compareTasks({ id: a.id, updated_at: lastActivity(a) }, { id: b.id, updated_at: lastActivity(b) }))
+  return [...list].sort((a, b) =>
+    compareTasks({ id: a.id, updated_at: lastActivity(a) }, { id: b.id, updated_at: lastActivity(b) })
+  )
 }
 
 const byColumn = computed(() => {

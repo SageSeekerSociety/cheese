@@ -216,10 +216,7 @@ describe('板不自己跳', () => {
   it('同一时刻更新的两件活有确定的先后', async () => {
     const same = '2026-08-23T05:00:00Z'
     listProjectTasks.mockResolvedValue({
-      data: [
-        task({ id: 'zzz', title: '后', updated_at: same }),
-        task({ id: 'aaa', title: '先', updated_at: same }),
-      ],
+      data: [task({ id: 'zzz', title: '后', updated_at: same }), task({ id: 'aaa', title: '先', updated_at: same })],
       total: 2,
     })
     const { container } = mount()

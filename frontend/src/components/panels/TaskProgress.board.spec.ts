@@ -25,9 +25,9 @@ vi.mock('@/api', async () => {
   }
 })
 
-import { BOARD_COLUMNS } from '@/lib/board'
-
 import TaskProgress from './TaskProgress.vue'
+
+import { BOARD_COLUMNS } from '@/lib/board'
 
 const Panel = TaskProgress as unknown as Component
 
@@ -159,9 +159,7 @@ describe('标题旁边那个数', () => {
     })
     const { container } = mount()
     await waitFor(() =>
-      expect(container.querySelector('.task-progress__tally')?.textContent?.replace(/\s+/g, '')).toBe(
-        '3件，2件等你'
-      )
+      expect(container.querySelector('.task-progress__tally')?.textContent?.replace(/\s+/g, '')).toBe('3件，2件等你')
     )
   })
 })
