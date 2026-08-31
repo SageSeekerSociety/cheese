@@ -476,12 +476,17 @@ async def list_room_tasks(
     # 人验收" are indistinguishable on screen — both are quiet — and the room
     # overview would have to ask per thread to tell them apart.
     cards = await AcceptCardRepository(db).latest_by_task([t.id for t, _ in threads])
+    now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
         card = cards.get(task.id)
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
+                "presentation": presentation.task_presentation(
+                    presentation.facts_for_task(task, card), now=now
+                ).as_dict(),
                 "blocks": [
                     BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
                 ],
