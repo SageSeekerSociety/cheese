@@ -149,7 +149,7 @@ func hostOnAFakeServer(t *testing.T, sessions map[string]*sess) *fakeServer {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	h := &Host{
-		conn:     link.New("ws"+strings.TrimPrefix(srv.URL, "http"), ""),
+		conn:     link.New("ws"+strings.TrimPrefix(srv.URL, "http"), "", "", ""),
 		ctx:      ctx,
 		sessions: sessions,
 	}

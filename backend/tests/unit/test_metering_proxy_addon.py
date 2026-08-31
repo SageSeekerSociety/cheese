@@ -123,7 +123,7 @@ def test_missing_injector_fails_closed_with_503(monkeypatch, tmp_path):
     mod = _load_addon(monkeypatch, tmp_path, inject=None)
     flow = _make_flow(caller_bearer="scoped.caller.token")
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None, "must short-circuit, not forward"
     assert flow.response.status_code == 503
@@ -136,7 +136,7 @@ def test_empty_injector_also_fails_closed(monkeypatch, tmp_path):
     mod = _load_addon(monkeypatch, tmp_path, inject="   \n")
     flow = _make_flow()
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 503
 
@@ -148,7 +148,7 @@ def test_present_injector_is_swapped_in(monkeypatch, tmp_path):
     flow = _make_flow(caller_bearer="scoped.caller.token")
     flow.request.headers["x-api-key"] = "stale-key"
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None, "a served request must not be refused"
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-REALTOKEN"
@@ -207,7 +207,7 @@ def test_a_machine_with_its_own_identity_keeps_its_own_ticket(monkeypatch, tmp_p
     flow = _make_flow(caller_bearer=_scoped_token(secret))
     ticket = flow.request.headers["authorization"]
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None
     assert flow.request.headers["authorization"] == ticket, "ticket was rewritten"
@@ -223,7 +223,7 @@ def test_the_upstream_hop_authenticates_as_that_same_machine(monkeypatch, tmp_pa
     )
     _with_admission(mod, monkeypatch, "m516:pw516")
     monkeypatch.setattr(mod, "UPSTREAM_AUTH", "m161:pw161")
-    asyncio.run(mod.request(_make_flow(caller_bearer=_scoped_token(secret))))
+    asyncio.run(mod.requestheaders(_make_flow(caller_bearer=_scoped_token(secret))))
 
     connect = SimpleNamespace(
         request=SimpleNamespace(headers={}),
@@ -249,7 +249,7 @@ def test_traffic_the_control_plane_cannot_place_keeps_todays_behaviour(
     monkeypatch.setattr(mod, "UPSTREAM_AUTH", "m161:pw161")
     flow = _make_flow(caller_bearer=_scoped_token(secret))
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
 
@@ -270,7 +270,7 @@ def test_a_closed_connection_stops_pinning_an_identity(monkeypatch, tmp_path):
         monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM", scoped_secret=secret
     )
     _with_admission(mod, monkeypatch, "m516:pw516")
-    asyncio.run(mod.request(_make_flow(caller_bearer=_scoped_token(secret))))
+    asyncio.run(mod.requestheaders(_make_flow(caller_bearer=_scoped_token(secret))))
     assert mod._UPSTREAM_BY_CLIENT
 
     mod.client_disconnected(SimpleNamespace(id="client-1"))
@@ -563,7 +563,7 @@ def test_an_unplaceable_machine_is_refused_rather_than_billed_to_the_platform(
     )
     flow = _machine_flow(conn="c1")
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 503
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-machine-ticket"
@@ -581,7 +581,7 @@ def test_a_scoped_caller_with_no_admission_still_gets_the_platform_credential(
     )
     flow = _make_flow(caller_bearer=_scoped_token(secret))
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
@@ -604,7 +604,7 @@ def test_an_exhausted_budget_says_budget_not_misconfiguration(monkeypatch, tmp_p
     )
     flow = _machine_flow(conn="c1")
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 429
     assert b"budget" in flow.response.content
@@ -630,7 +630,60 @@ def test_a_request_with_no_bearer_is_not_treated_as_carrying_its_own(
     del flow.request.headers["authorization"]
     flow.request.path = "/api/event_logging/v2/batch"
 
-    asyncio.run(mod.request(flow))
+    asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None, "telemetry must not be refused"
     assert flow.request.headers["authorization"] == "Bearer sk-ant-oat01-PLATFORM"
+
+
+def _make_response(status_code=200, content_type="text/event-stream"):
+    from mitmproxy import http
+
+    resp = http.Response.make(status_code=status_code, content=b"", headers={})
+    resp.headers = {"content-type": content_type}
+    return resp
+
+
+def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp_path):
+    """The response body is no longer buffered whole (that is what OOM-kills the
+    proxy on long turns); it streams through a tee that scrapes usage from the
+    SSE incrementally. Driving that tee must still land the turn on the meter."""
+    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM")
+
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.response = _make_response()
+
+    mod.responseheaders(flow)
+    assert callable(flow.response.stream), "the SSE response must be streamed"
+
+    body = b"\n".join(
+        [
+            b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+            b'"usage":{"input_tokens":10,"output_tokens":1}}}',
+            b'data: {"type":"message_delta","usage":{"output_tokens":90}}',
+            b"",
+        ]
+    )
+    # Chunks pass through unchanged, and the end-of-stream sentinel records.
+    assert mod.METER.used() == 0
+    for i in range(0, len(body), 5):
+        chunk = body[i : i + 5]
+        assert flow.response.stream(chunk) == chunk
+    flow.response.stream(b"")  # sentinel
+
+    assert mod.METER.used() == 100  # 10 input + 90 output
+
+
+def test_a_non_message_response_streams_without_metering(monkeypatch, tmp_path):
+    """Everything that is not a metered message turn still streams (so nothing
+    is buffered) but must not touch the meter."""
+    mod = _load_addon(monkeypatch, tmp_path, inject="sk-ant-oat01-PLATFORM")
+
+    flow = _make_flow(path="/api/oauth/profile")
+    flow.response = _make_response(content_type="application/json")
+
+    mod.responseheaders(flow)
+
+    assert flow.response.stream is True
+    assert mod.METER.used() == 0

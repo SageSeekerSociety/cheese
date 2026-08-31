@@ -9,7 +9,8 @@ so it is unit-tested without a socket, and a wire-shape drift is caught by a tes
 rather than in production.
 
 The field names are the Go ``json`` tags verbatim: ``t`` (type), ``sid`` (screen id),
-``v`` (version), ``name``/``args``/``id``/``value``/``error`` (rpc),
+``v`` (version), ``build``/``target`` (which connector binary said hello),
+``name``/``args``/``id``/``value``/``error`` (rpc),
 ``command``/``env``/``screen``/``cols``/``rows``/``adopt`` (session),
 ``data`` (base64 raw screen bytes or one uploaded file), ``path`` (file upload),
 and the exec set
@@ -33,6 +34,11 @@ class LinkMsg:
     t: str
     sid: str = ""
     v: int | None = None
+    # `hello` only: the sha256 of the connector's own executable and the
+    # `<os>-<arch>` it was built for. Empty from a connector built before it
+    # announced either — which is the whole point of asking (`connector_build`).
+    build: str = ""
+    target: str = ""
     name: str = ""
     value: Any = None
     id: str = ""
@@ -51,6 +57,8 @@ class LinkMsg:
             t=str(m.get("t", "")),
             sid=str(m.get("sid", "")),
             v=m.get("v"),
+            build=str(m.get("build", "")),
+            target=str(m.get("target", "")),
             name=str(m.get("name", "")),
             value=m.get("value"),
             id=str(m.get("id", "")),
@@ -172,4 +180,10 @@ def exec_cancel(exec_id: str) -> dict[str, Any]:
 
 
 def update() -> dict[str, Any]:
+    """Tell the device to replace its connector binary and hand off to it.
+
+    Understood by every connector we have ever shipped, which is what makes it
+    the way out of version drift: the machine that is too old to receive a new
+    frame is not too old to receive this one.
+    """
     return {"t": "update"}

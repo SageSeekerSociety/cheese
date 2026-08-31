@@ -47,7 +47,7 @@ Two listeners, one addon: containers arrive on the reverse listener (steered by
 HTTPS_PROXY — no root, no docker, so no --add-host for them). The regular
 listener demands the scoped token as Proxy-Authorization before it relays
 anything and MITMs only the Anthropic names; either way every request that
-reaches the `request` hook below is handled identically.
+reaches the `requestheaders` hook below is handled identically.
 
 Config (env): CHEESE_USAGE_LOG, CHEESE_INJECT_TOKEN, CHEESE_TOKEN_CAP,
 CHEESE_CAP_WINDOW_S, CHEESE_UPSTREAM_VIA, CHEESE_SCOPED_SECRET,
@@ -72,8 +72,8 @@ from cheese_billing_core import (  # noqa: E402
     GATEWAY,
     AdmissionGate,
     Meter,
+    StreamingUsageExtractor,
     proxy_basic_password,
-    usage_from_sse,
     verify_scoped_token,
 )
 
@@ -378,7 +378,17 @@ def tls_clienthello(data: tls.ClientHelloData) -> None:
         data.ignore_connection = True
 
 
-async def request(flow: http.HTTPFlow) -> None:
+async def requestheaders(flow: http.HTTPFlow) -> None:
+    # Runs at HEADER time, before the body arrives — and everything below reads
+    # only headers/metadata, never the request body — so the request body can be
+    # streamed straight through (flow.request.stream, set once the host is
+    # allowed) instead of being buffered whole in RAM. A long agent turn re-POSTs
+    # its entire grown conversation as the request body every turn; buffering
+    # that (together with the response) is what OOM-kills this proxy on long
+    # runs, after which the client just sees a refused connection until it
+    # restarts. Refusals still work: setting flow.response here short-circuits
+    # before any body is forwarded upstream.
+
     # Multi-host by SNI: the sandbox --add-hosts api.anthropic.com AND the login
     # hosts (console.anthropic.com, platform.claude.com) to this one proxy, so
     # interactive Claude Code's login/refresh also gets the real token injected.
@@ -404,6 +414,11 @@ async def request(flow: http.HTTPFlow) -> None:
             "cheese: only the Anthropic endpoints are served here",
         )
         return
+
+    # Host is allowed and we intend to forward: stream the body rather than
+    # buffer it. (A path below may still refuse via flow.response, which
+    # short-circuits regardless of this flag.)
+    flow.request.stream = True
 
     via = _via()
     if via is not None:
@@ -570,21 +585,58 @@ async def request(flow: http.HTTPFlow) -> None:
     flow.request.headers["authorization"] = f"Bearer {token}"
 
 
+def responseheaders(flow: http.HTTPFlow) -> None:
+    """Stream the response body through instead of buffering it whole. A turn's
+    SSE response is otherwise held in RAM for the ENTIRE turn while it buffers,
+    which — together with the buffered request — is what OOM-kills this proxy on
+    long runs (the client then sees a refused connection until it restarts).
+
+    Metering is preserved: for a streamed message turn the usage is scraped from
+    the SSE incrementally by a StreamingUsageExtractor as chunks pass through, so
+    no full body is ever materialised. A non-streaming JSON message (small, and
+    not held for the turn's duration) is left buffered so response() can meter it
+    the simple way. Everything else just streams straight through."""
+    resp = flow.response
+    if resp is None:
+        return
+    is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
+    if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
+        project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
+        extractor = StreamingUsageExtractor()
+
+        def tee(chunk: bytes) -> bytes:
+            if chunk:
+                extractor.feed(chunk)
+            else:  # end-of-stream sentinel
+                extractor.close()
+                if extractor.usage:
+                    METER.record(
+                        project_id, topic_id, extractor.usage, extractor.model
+                    )
+            return chunk
+
+        resp.stream = tee
+    elif is_message_200:
+        # Non-streaming JSON message: leave buffered for response() to meter.
+        return
+    else:
+        resp.stream = True
+
+
 def response(flow: http.HTTPFlow) -> None:
+    # SSE turns are metered incrementally in the responseheaders streaming tee;
+    # the only body still buffered here is a non-streaming JSON message.
     if "/v1/messages" not in flow.request.path or not flow.response:
         return
     if flow.response.status_code != 200:
         return
+    if "event-stream" in flow.response.headers.get("content-type", ""):
+        return
     project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
-    body = flow.response.raw_content or b""
-    ctype = flow.response.headers.get("content-type", "")
-    if "event-stream" in ctype:
-        usage, model = usage_from_sse(body)
-    else:
-        try:
-            payload = json.loads(body)
-        except (json.JSONDecodeError, ValueError):
-            return
-        usage, model = payload.get("usage", {}), payload.get("model", "")
+    try:
+        payload = json.loads(flow.response.raw_content or b"")
+    except (json.JSONDecodeError, ValueError):
+        return
+    usage, model = payload.get("usage", {}), payload.get("model", "")
     if usage:
         METER.record(project_id, topic_id, usage, model)

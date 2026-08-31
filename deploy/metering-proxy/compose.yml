@@ -64,6 +64,13 @@ services:
     image: mitmproxy/mitmproxy:12.1.2
     container_name: cheese-metering-proxy
     restart: unless-stopped
+    # Backstop, not the fix: the addon now streams both request and response
+    # bodies (billing_addon.py) so per-flow memory is bounded and a long agent
+    # turn no longer buffers its whole grown context. This cap only ensures that
+    # if something pathological still spikes memory, the OOM is contained to this
+    # container (a restart) instead of taking down every other service on the
+    # box. Raise it on hosts that run many concurrent subscription turns.
+    mem_limit: 2g
     command: >
       mitmdump --listen-host 0.0.0.0
       --mode reverse:https://api.anthropic.com@8443

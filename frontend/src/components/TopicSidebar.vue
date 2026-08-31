@@ -9,6 +9,7 @@ import { listProjectAgents } from '../api'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '../lib/topicTitle'
 import {
   ancestorPathIds,
+  isMyTopic,
   loadExpandedTopics,
   loadOthersGroupOpen,
   partitionByRelevance,
@@ -237,7 +238,33 @@ const tree = computed<TreeRow[]>(() => {
 // 「已归档」 group at the bottom (newest archived first) — like Feishu's
 // folded conversations. Non-archived children of an archived parent stay in
 // the active list (their work isn't done).
-const activeTree = computed<TreeRow[]>(() => tree.value.filter((r) => r.topic.status !== 'archived'))
+//
+// 但**活跟着它的房间走**：活只有 open/closed，没有「已归档」这个状态，所以房间
+// 归档时活这一行自己一个字都不变。不显式把它拿掉，房间那一行走了、挂在它下面的
+// 活却全留在活跃列表里——而拍平的树是按 depth 认父子的（见 lib/topicTree 的
+// buildNodes），于是这些活会挂到前面最近的那个房间下面，画进一个跟它毫无关系的
+// 房间，或者干脆摊在顶层。同理，房间不在这份列表里（私聊里派出去的活、房间已经
+// 不在了）的活也没有能挂的地方。要看归档房间里的活，点进那个房间。
+//
+// 子话题不一样，它有自己的归档状态：父话题归了、它还活着，那份活儿没做完，照旧
+// 留在活跃列表里——只是父行没了，深度提到 0，免得被画到隔壁那棵树底下。
+const activeTree = computed<TreeRow[]>(() => {
+  // 深度按**留下来的那个父行**重新算，不沿用原树的：拍平的树里深度就是父子关系
+  // 本身，中间少一层就得少一层缩进，否则缩进指着一行不存在的父行。
+  const depths = new Map<string, number>()
+  const rows: TreeRow[] = []
+  for (const row of tree.value) {
+    if (row.topic.status === 'archived') continue
+    const parentId = row.topic.parent_id
+    const parentDepth = parentId ? depths.get(parentId) : undefined
+    // 房间那一行不在了，活就没有能挂的地方。
+    if (parentDepth === undefined && isThreadRow(row.topic)) continue
+    const depth = parentDepth === undefined ? 0 : parentDepth + 1
+    depths.set(row.topic.id, depth)
+    rows.push(depth === row.depth ? row : { topic: row.topic, depth })
+  }
+  return rows
+})
 const archivedRows = computed<Topic[]>(() =>
   props.topics
     .filter((t) => t.status === 'archived' && inferKind(t) !== 'root')
@@ -343,7 +370,12 @@ function awaitsOf(id: string): boolean {
 //
 // 两组的**行是同一种形态**：同一段模板渲染，所以树形缩进、竖向引导线、16px 状态
 // 槽、未读角标、hover 的 ⋯ 一个不少。折叠组只是把一批行收起来，不是换一种行。
-const grouped = computed(() => partitionByRelevance(activeTree.value))
+//
+// 一件活不参与这个判定：它身上根本没有 `i_participate`（那是房间的字段，见
+// lib/place.ts 里合成地点时给了哪些），而判定把"字段缺失"当相关——于是**任何派
+// 过活的房间都会被它自己的活顶进「我参与的」**，哪怕后端明说这个房间与我无关。
+// 相关不相关由房间回答，活跟着它的房间走：房间上去了，它派出去的活跟着上去。
+const grouped = computed(() => partitionByRelevance(activeTree.value, (t) => !isThreadRow(t) && isMyTopic(t)))
 
 function rowsOf(rows: readonly FlatRow<Topic>[]) {
   return visibleRows(rows, {
