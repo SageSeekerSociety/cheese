@@ -107,7 +107,7 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 
 # 真正的根因找到了：不是 metering-proxy，是每个话题自己的隧道助手死了
 
-@fulu 让我「看平台」，一看就翻出来了。**这个报错在本平台有两个完全不同的根因，我之前只盯着其中一个。**
+<@wangchangxin> 让我「看平台」，一看就翻出来了。**这个报错在本平台有两个完全不同的根因，我之前只盯着其中一个。**
 
 ## 两个根因
 
@@ -138,7 +138,7 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 
 ## 决定性的一条：`fe2b144d` 的现场
 
-@wangchangxin 今天 @ 了它 **4 次**（06:54、09:02、09:08、09:28），**AI 一条都没回**，中间夹着平台自己的记录：
+<@wangchangxin> 今天 @ 了它 **4 次**（06:54、09:02、09:08、09:28），**AI 一条都没回**，中间夹着平台自己的记录：
 
 ```
 [09:08:21] system  这 3 条消息已经是第 3 次送进轮次，前面几次都没跑完
@@ -176,3 +176,94 @@ POST https://api.anthropic.com/v1/messages?beta=true  << 200 OK
 2. **端口分配去重**（平台侧，未做）：两个不相干的会话拿到同一个端口，是会串账的。
 3. **一个探活**：`claude 的 HTTPS_PROXY 端口是否有人监听` 是一条极便宜、判定极准的健康检查，值得做成常驻告警——现在这个故障**完全没有任何报警**，只能靠人发现「它怎么不理我」。
 4. metering-proxy 那条老待办仍在：`deploy/metering-proxy` 是手工 copy 的孤儿目录，不在 CD 里。
+
+---
+
+# 第 1 条已修：隧道助手活不过启动它的那个 tmux 窗口
+
+<@wangchangxin> 点了第 1 条。查下去发现**平台早就有这套自愈机制，而且是对的**——错的是最后一米。
+
+## 已有的机制（都在，都是对的）
+
+| 环节 | 位置 | 状态 |
+|---|---|---|
+| 后端闸门：复用屏幕前探一次隧道端口，死了就退屏重开 | `_tunnel_helper_is_down`（PR #578） | 在，已部署 |
+| 探针脚本：查 `/proc/net/tcp` 判端口是否 LISTEN | `DEVICE_TUNNEL_PROBE` | 在，实测判定准确 |
+| 启动器收养分支：复用屏幕时重跑 `cheese-tunnel-up` | `device_launch.py` | 在 |
+
+逐一验过：探针脚本本地跑，死端口报 `down`、活端口报 `up`，**完全正确**；端口推导 `tunnel_port_for_topic` 与卡死进程实际拨的端口**逐个吻合**；线上镜像（37d9b516a）里闸门代码**确实存在**。
+
+## 断点在最后一米
+
+`fe2b144d` 的 `cheese-tunnel.log` 时间戳是今天 09:08Z、内容是 `tunnel listening on 127.0.0.1:8851`——**启动器跑了，助手也真的起来了**。可 20 分钟后端口是死的。
+
+原因：复用屏幕时，助手是被 `atmux new-window` 起在一个**只跑 `cheese-tunnel-up` 的窗口**里的。那个脚本把助手放后台、等就绪、然后**自己退出**——窗口的命令一返回，窗口的进程组就被拆掉，SIGHUP 连带把刚起来的助手一起带走。
+
+**实验证据**（同一个脚本，两种起法）：
+
+| 起法 | 助手存活 | 端口在听 |
+|---|---|---|
+| 直接 `sh cheese-tunnel-up` | 是 | 是 |
+| `tmux new-window ... exec sh cheese-tunnel-up`（复用屏幕走的路） | **否** | **否** |
+
+这也解释了为什么**只有复用屏幕的话题会中招**：全新启动那条路里，`cheese-tunnel-up` 是在将来要变成 `claude` 的那个进程里调用的，那个进程不会退出，助手自然活着。
+
+## 顺带发现的第二个缺口
+
+`cheese-tunnel-up` 的收养判断是 **pid 还活着**，不是**端口在监听**。而 `DEVICE_TUNNEL_PROBE` 自己的注释就写明「LISTEN 才是该问的问题」。实测对照：
+
+- 造一个活着但与隧道无关的进程占住 pid 文件、stamp 也对上 → **旧逻辑：收养并退出，端口永远是死的**；新逻辑：识破并重起。
+
+## 改了什么
+
+`backend/app/domain/agent/harness/claude_code/device_launch.py`：
+
+1. 助手改用 **`nohup`** 启动，让它活过启动它的窗口。（没用 `setsid`：`setsid` 会 fork，`$!` 就不再是助手的真实 pid，而收养判断正靠这个 pid。）
+2. 收养条件从「pid 活着 + 代码版本一致」改成「pid 活着 + 版本一致 + **端口真的在听**」。
+3. 删掉 `CHEESE_TUNNEL_TETHER`——它只被写、全仓库没有一处读它（对照排水器的 `CHEESE_DRAIN_TETHER` 是真在用的）。助手现在 `nohup` 之后不再需要拴绳。
+
+## 测试
+
+`backend/tests/unit/test_device_launch.py` 新增 3 条功能测试（真跑 shell、真起 tmux，沿用该文件已有写法）：
+
+| 测试 | 断言 |
+|---|---|
+| `test_the_tunnel_helper_outlives_the_window_that_started_it` | 经 tmux 窗口起完、窗口命令返回后，端口仍在监听 |
+| `test_a_recorded_pid_that_is_alive_but_serves_no_port_is_replaced` | 冒名 pid + 匹配 stamp + 死端口 → 助手被重起 |
+| `test_a_helper_it_already_started_is_adopted_rather_than_churned` | 健康助手不被反复重启（防止每轮重置在途连接） |
+
+**前两条在旧代码上是红的、在新代码上是绿的**（把 `nohup` 和端口判断退回旧行为实测确认）。第三条两边都绿——它防的是新逻辑引入的过度重启，不是回归。
+
+检查结果：`ruff check` 全过、`ruff format` 已格式化、`pyright` **0 errors**（项目配置只检 `app`）。
+
+## 这条修复的部署路径
+
+`cheese-tunnel-up` 是**启动器每次启动都重写**到机器上的，所以后端一部署，所有机器的下一次启动就拿到新脚本，不需要上机操作。
+
+## 仍未做的
+
+- **第 2 条 端口撞车**：`1e2e1e61` 与 `b52e024f` 的 sha1 都落在 367 → 同一个端口 8812（`base 8445 + hash%2000`，已用代码算式复核）。`tunnel_port_for_topic` 的注释自称撞车会「loud」（第二个 helper bind 失败、启动报错），但实际后果是两个不相干会话共用一条隧道、算到同一个 token 账上。这两个话题因此没救活。
+- **第 3 条 探活告警**：仍然零告警。
+- metering-proxy 那条老待办：`deploy/metering-proxy` 是手工 copy 的孤儿目录、不在 CD 里。
+- 图片送不到本机：connector `0.3.2+6eb332a`（8/23 构建）二进制里没有 `file.put` 帧，需要升级它。
+
+## PR #656 已合并进 main（2026-08-31 00:57Z）
+
+第一次 CI 挂在 `tests/integration/test_idempotency.py::test_kickoff_message_is_not_posted_twice_under_one_turn`。**不是本次改动引起的**，判据三条：
+
+1. 失败方向反了——它断言 `said == 1`（不许说两遍），CI 拿到的是 **0**，即「一次都没说」，不是去重逻辑被破坏。
+2. 本地在同一分支上连跑 3 次，全过。
+3. 本次 diff 只有 3 个文件（`device_launch.py`、`test_device_launch.py`、本文档），与 kickoff 路径无交集。
+
+处置：把 `origin/main`（当时已推进到 `10651a71e`，含 #655）**merge**（不 rebase）进分支并重推，CI 全绿——`test` / `e2e` / `lint` / `guards` / `empty-pr-guard` / `migration-heads` / `scope` 全部 success。@wangchangxin 授权后由平台合并，`merge_commit_sha=d8d3eeb18`，已核实 main 上的 `device_launch.py` 含 `nohup python3`。
+
+合并前本地又跑了一次 unit+integration 全量（5237 passed / 24 skipped / 2 failed），两条失败都逐条排除了：
+
+| 失败 | 原因 | 判据 |
+|---|---|---|
+| `test_market_api::test_market_lists_ai_and_compute_pools` | 本机没有 `ANTHROPIC_AUTH_TOKEN` | 设上该变量后单独跑即通过 |
+| `test_orphan_spool_settle::test_settle_lands_a_stop_only_final_message` | 顺序相关的 flake | 单独跑通过 |
+
+两个文件都不引用 `device_launch` 或 `tunnel`。
+
+**生效时机**：`cheese-tunnel-up` 由启动器每次启动重写到机器上，所以后端部署这版之后，各机器下一次启动就拿到新脚本，无需上机操作。
