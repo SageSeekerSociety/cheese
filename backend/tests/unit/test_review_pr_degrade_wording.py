@@ -54,6 +54,7 @@ def _accept_service() -> tuple[AcceptService, SimpleNamespace, SimpleNamespace]:
         decided_at=None,
         note="",
         note_code=None,
+        nudge_state={},
         rebase_count=0,
         # No PR riding this card yet — accept tries to OPEN one, and it is that
         # attempt which degrades.
@@ -167,7 +168,7 @@ async def test_all_failures_land_on_the_same_stopped_state(
 
 @pytest.mark.anyio
 async def test_degraded_card_never_reaches_the_pr_poller(monkeypatch):
-    """`_nudge_pr_fix` only ever runs for `pr_open` cards, and a card carrying a
+    """The PR nudges only ever run for `pr_open` cards, and a card carrying a
     degrade note is `accepted`. Drive the poller with such a card and it must do
     nothing at all — no note rewrite, no 芝士 summon."""
     service, card, _topic = _accept_service()
@@ -191,26 +192,24 @@ async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
     service, card, topic = _accept_service()
     runner = MagicMock()
 
-    service._nudge_pr_fix(
-        card=card,
-        topic=topic,
-        tail="pytest failed",
-        stage="CI",
-        chat_service=MagicMock(),
-        runner=runner,
-    )
+    def _tick() -> None:
+        nudge = service._ci_nudge(
+            card=card, tail="pytest failed", stage="CI", owner="acme", repo="widgets"
+        )
+        service._dispatch_nudges(
+            card=card,
+            topic=topic,
+            pending=[nudge] if nudge is not None else [],
+            chat_service=MagicMock(),
+            runner=runner,
+        )
+
+    _tick()
     first_note = card.note
     assert card.note_code is NoteCode.checks_failed
     assert runner.submit.call_count == 1
 
-    service._nudge_pr_fix(
-        card=card,
-        topic=topic,
-        tail="pytest failed",
-        stage="CI",
-        chat_service=MagicMock(),
-        runner=runner,
-    )
+    _tick()
 
     assert card.note == first_note
     assert runner.submit.call_count == 1
