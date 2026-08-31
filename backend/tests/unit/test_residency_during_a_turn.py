@@ -167,9 +167,7 @@ _RUNNERS: dict[int, AgentWorkRunner] = {}
 
 
 def _runner(broker) -> AgentWorkRunner:
-    return _RUNNERS.setdefault(
-        id(broker), AgentWorkRunner(broker, turn_timeout_s=20.0)
-    )
+    return _RUNNERS.setdefault(id(broker), AgentWorkRunner(broker, turn_timeout_s=20.0))
 
 
 async def _run_one_session_turn(factory, broker, task_id) -> _Chat:

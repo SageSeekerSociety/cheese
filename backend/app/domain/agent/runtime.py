@@ -324,6 +324,11 @@ class AgentWorkRunner:
         # is what lets `_free_slot` refuse to record `idle` before the
         # `running` it is undoing has landed.
         self._slot_holds: dict[str, tuple[Any, asyncio.Future[None]]] = {}
+        # …and a strong reference to each of those writes for as long as it is
+        # in flight. `_slot_holds` cannot be that reference: a second turn
+        # starting on the same place replaces the entry, and asyncio keeps only
+        # a weak one — the dropped write would be collectable mid-await.
+        self._holds_in_flight: set[asyncio.Future[None]] = set()
         broker.watch_idle(self._channel_went_quiet)
         # 可 debug: lifecycle summaries of the last ~100 turns (/debug/turns).
         self._recent: deque[dict] = deque(maxlen=100)
@@ -1619,10 +1624,10 @@ class AgentWorkRunner:
         # able to wait for it: a turn shorter than this round-trip would
         # otherwise write `idle` first and `running` after, and leave the room
         # one slot poorer until the ghost sweep hours later.
-        self._slot_holds[channel] = (
-            chat_service,
-            asyncio.ensure_future(self._hold_slot(chat_service, topic_id)),
-        )
+        holding = asyncio.ensure_future(self._hold_slot(chat_service, topic_id))
+        self._holds_in_flight.add(holding)
+        holding.add_done_callback(self._holds_in_flight.discard)
+        self._slot_holds[channel] = (chat_service, holding)
         try:
             if landed_user_block_id is not None:
                 frames = chat_service.converse_prepared(
