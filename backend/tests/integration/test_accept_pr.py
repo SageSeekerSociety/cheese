@@ -203,9 +203,7 @@ class FakeGitHubPrClient:
             # 让「冲突」这条路在所有别的用例里悄悄变成不可达。
             mergeable=self.mergeable_by_number.get(number),
             review_comment_count=sum(
-                1
-                for s in self.reviews_by_number.get(number, [])
-                if s.kind == "comment"
+                1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
             ),
         )
 
