@@ -79,8 +79,10 @@ test.describe('房间里派出去的活', () => {
     // 界面叫什么。
     await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}\/running/);
 
-    const view = page.locator('.running-work');
+    const view = page.locator('.board');
     await expect(view.getByRole('heading', { name: '看板' })).toBeVisible();
+    // 板是按列排的，列本身要在 —— 这一页从一张平表变成看板，列就是那个变化。
+    await expect(view.locator('.board-col')).not.toHaveCount(0);
     // 板要答的是「该谁动」，所以它得说出各列各有几件；一件都没有的时候要明说，
     // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
     await expect(view).toContainText(/施工中|交付中|等你|暂无派出去的活/);
