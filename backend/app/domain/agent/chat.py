@@ -90,7 +90,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.models import TaskStatus
-from app.domain.room_task.place import PlaceResolver, room_and_task
+from app.domain.room_task.place import Place, PlaceResolver, room_and_task
 from app.domain.team.repositories import TeamRepository
 from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.repositories import TopicProgressRepository, TopicRepository
@@ -1956,18 +1956,26 @@ class ChatService:
         task.add_done_callback(self._settle_tasks.discard)
 
     async def _save_session_pointer(self, topic_id: uuid.UUID, session_id: str) -> None:
-        """Best-effort: point the topic at the (possibly partial) session so the
-        next summon resumes it. Never raises — used on failure paths."""
+        """Best-effort: point the PLACE at the (possibly partial) session so the
+        next summon resumes it. Never raises — used on failure paths.
+
+        Resolved as a place, not looked up in `topics`: a thread is a `tasks`
+        row, so asking that table for one comes back empty and every write below
+        is skipped — silently, on the success path as much as the failure one.
+        That row is what "this place has run" IS (agent_session/models.py), so a
+        thread that skipped it has no 现场 to open after hours of work, and
+        nothing for a cold start to resume.
+        """
         try:
             async with self._sessions() as session:
-                topic = await TopicRepository(session).get(topic_id)
-                if topic is not None:
+                place = await PlaceResolver(session).resolve(topic_id)
+                if place is not None:
                     # Resolved here rather than threaded in: the hook-consume
                     # path reaches this with no ResolvedAgent in scope, and this
                     # already opens a session to do its own write.
-                    agent = await self._resolved_agent(session, topic)
+                    agent = await self._agent_at(session, place)
                     await AgentSessionService(session).remember(
-                        topic_id=topic_id,
+                        topic_id=place.id,
                         agent_handle=agent.handle,
                         resume_token=session_id,
                     )
@@ -2455,6 +2463,27 @@ class ChatService:
         if project is None:
             return IMPLICIT_DEFAULT
         return await AgentInstanceService(session).for_topic(topic, project)
+
+    async def _agent_at(self, session: AsyncSession, place: Place) -> ResolvedAgent:
+        """Which agent works in *place* — the THREAD's own pick when it is one.
+
+        A thread carries the pick on its own row, copied from the room when the
+        work went out precisely so this question can be answered from the work
+        rather than from the room around it (`Place.agent_instance_id` gives the
+        same answer for the same reason). Reading the room instead would keep
+        being right until somebody hands the room to a different teammate, at
+        which point every thread already out there would start writing its
+        conversation under an agent that never had it.
+
+        Only the conversation key is resolved this way today. The persona and
+        the memory pool a turn uses are still the room's — see the note at the
+        resume lookup in `_assemble_turn`.
+        """
+        project = await ProjectRepository(session).get(place.project_id)
+        if project is None:
+            return IMPLICIT_DEFAULT
+        row = place.task if place.task is not None else place.room
+        return await AgentInstanceService(session).for_topic(row, project)
 
     async def _agent_memory_pool(
         self, session: AsyncSession, topic: Topic
@@ -3597,8 +3626,20 @@ class ChatService:
                 await ws_identity.sync_for_topic(session, topic, task_id=place.task_id)
             # This agent's thread here, not the room's: a room may host several
             # and each resumes its own (agent_session/models.py).
+            #
+            # Deliberately NOT `agent` above: a conversation is looked up under
+            # the same key it was stored under, and the turn that stores it
+            # resolves the agent from the PLACE (`_agent_at`). Reading under one
+            # key and writing under another does not fail — it hands back None
+            # and starts a brand-new conversation, which is the failure this
+            # whole path exists to prevent. `agent` still answers a different
+            # question (persona, harness, memory pool) and still answers it from
+            # the room; the two only diverge once a room is handed to somebody
+            # else after its threads went out, and splitting THAT apart is its
+            # own piece of work.
+            session_agent = await self._agent_at(session, place)
             resume_session_id = await AgentSessionService(session).resume_token(
-                topic_id, agent.handle
+                place.id, session_agent.handle
             )
             untitled = not is_private and topic.title == PLACEHOLDER_TITLE
             # 进度层 (#187): the checklist the last turn left behind. Read inside
