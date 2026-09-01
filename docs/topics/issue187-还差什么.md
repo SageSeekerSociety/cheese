@@ -65,3 +65,55 @@ key 必须同时能调 chat 和 embedding：抽取器每记一条事实要花一
 留给我的两个决定，等它们回来时要拍：
 - 备份期间后端在写会拿到撕裂快照，允许到什么程度（支线会给方案和代价）。
 - 自检放启动期还是只放 `/health/detailed`——放启动期意味着一次外部 API 抖动可能触发 `deploy-docker.sh` 的健康检查回滚。
+
+
+## 2026-09-01：两条支线进度
+
+**viking 备份线 `c71a11fa`：活干完了，证据我自己验过。** 三个提交已在共用分支 `topic/32137159` 上——`377fb5e6b` 备份脚本 + 两个 systemd unit（145 行脚本，每 6 小时 :15，避开 DB 的 :00 和 uploads 的 :30）、`358a8ed20` 314 行测试 + 接进 `deploy-scripts-test.yml`、`742248df5` README-backup.md 的恢复步骤 + `docs/infrastructure.md` 那条 bullet 已按现状改写。
+
+我在房间工作区**亲自跑了** `deploy/tests/test-viking-backup.sh`：**14 条全 PASS**（不是转述它的说法）。
+
+它对「热备份一致性」这个我留给它拍的问题给了方案：tar 前后各按「类型/路径/大小/亚秒 mtime」给整棵树打一次指纹，一致就是干净快照，三次都撞上写入就仍然保留但命名成 `cheese-viking-<ts>-hot.tar.gz`，让恢复的人看得见并优先挑安静的那份。顺手还排除了 `ov.conf`（里面是明文模型 key，且后端每次启动都会从 settings 重写，备份它等于把密钥推到 R2 却什么都不买）。这两个判断我认可。
+
+未结：它还没 `cheese conclude`，已催它逐条补证据，另问了两件事——为什么动了 `--paths` 之外的 `.github/workflows/deploy-scripts-test.yml`，以及 `-hot` 归档在恢复时怎么取舍。
+
+**openviking 端点自检 `2ce20965`：工作区被整个重建，改动全丢，正在重做。**
+
+它回信说 reflog 只剩 `clone` → 一条空记录 → `reset: moving to HEAD`，落在备份线的提交上；它先前合 main 的提交和对 `openviking_store.py` 的两处改动都没了，而 `git status` 干净、无任何提示。就是简报里警告的那个坑——**教训要写进以后所有简报：「改完一小块就 push」里的 push 必须是「第一小块就 push」**，它把第一次 push 拖到了动完刀之后。
+
+**它自己把那个决定拍了，理由过硬，我核实后采信：启动期 + `/health/detailed` 两处都做，但不碰 `/healthz`。**
+我原来担心「自检失败会挡住/回滚一次发布」——**这个担心在当前代码上不成立**，我在房间工作区逐条验过：
+- `deploy/deploy-docker.sh:424` 起的 health 等待循环**不打任何 HTTP**，它把 `docker ps` 的容器状态喂给 `check-app-tier.sh`，只看容器是不是 `(healthy)`；
+- 容器的 healthcheck 是 `docker-compose.base.yml:80` 的 `curl -fsS http://localhost:8081/healthz`；
+- 全仓库**没有任何发布脚本**调 `/readyz` 或 `/health/detailed`（grep 只命中 OpenAPI 定义，以及 `cheesex-healthcheck.sh:5` 一句说 `/readyz remains the dependency-aware deployment gate` 的注释——**那是句过时的注释，该脚本实际 curl 的是另一个端口的 `/health`**）。
+
+所以只要不碰 `/healthz`，自检不可能影响发布。它另外拍的一条也合理：`/readyz` 里把检查分成「必需」（database/redis，行为完全不变）和「咨询性」（memory）——memory 挂了 `/health/detailed` 报 degraded 并显示具体错误（这就是给人看的信号），但**不 503**，因为记忆端点挂是功能降级，不是把整个平台摘出流量池的理由。
+
+## #582（dreaming）：不是解冲突，是挂载点被删了
+
+实际 merge 跑过（`git merge-tree main topic/109efa7c`），冲突只有三个文件，但性质完全不同：
+
+| 文件 | 性质 | 处理 |
+|---|---|---|
+| `backend/.env.example` | **机械冲突**：两边各在同一位置追加了一段新配置（582 加 dreaming 三项，main 加 `MEMORY_BACKEND`/`OPENVIKING_*` 一节） | 双方都保留即可 |
+| `backend/alembic/HEAD` | **标准迁移分叉** | 把 `b1d47f0a3c25` 的 `down_revision` 改指 main 的 `e4c9a2f60b18`，HEAD 写 `b1d47f0a3c25` |
+| `backend/app/domain/scheduler/service.py` | **真问题**：582 侧 156 行 vs main 侧 0 行 | 见下 |
+
+**根因**：#582 的整个设计是「把整理挂在沙箱回收那一刻，因为那是最后一次还能拿记忆里的说法去对工作区」（PR 正文原话：*Hence the hook in `reap_idle_containers` rather than a job of its own*）。而 `c45826d5f`（#630「retire the platform's own box」，8-28 合入）**把 `reap_idle_containers` 连同整个容器载体一起删了**——`list_sandbox_containers` / `remove_container` 在 main 的 `backend/` 里现在是**零命中**。scheduler 里活下来的只有 `reap_idle_device_screens`（`jobs.py:58` 调度，走 `device_hub.all_online_screens()`，回收方式是 `release_topic_screen`）。
+
+好消息：dreaming 的**逻辑本身与载体无关**——`_start_dream_if_worthwhile` 最终只调 `get_work_runner().submit_kickoff(...)`，不碰 Docker。所以 1200 行里真正被打死的只是那个挂载块。
+
+**受影响 / 不受影响的清单**（15 个文件里）：
+- 不受影响：`memory/dream.py`(384 行)、`memory/models.py`、`memory/store.py`、`memory/schemas.py`、`routes/memory_dreams.py`、`routes/memory.py`、迁移、`main.py`、`config.py`、`test_memory_dream.py`(336 行)、`test_memory_dream_api.py`(113 行)。
+- 要重做：`scheduler/service.py` 的挂载块（~157 行）、`test_dream_reap.py`（241 行 / 7 条测试，**每一条都在 monkeypatch `ws.list_sandbox_containers` 和 `ws.remove_container`**，全部要改成 device screen）。
+
+### 三条路（等 <@caisongyang> 选）
+
+**A. 改挂到 `reap_idle_device_screens`** —— 保住原设计意图（临死前在机器上整理）。改动面就是上面那两块；`all_online_screens()` 直接给 `(project_id, topic_id)`，比 582 原来「容器名反查 topic hex」还简单些。
+**缺口（必须知道再选）**：#630 之后一轮落在 device 或 Cloud 上，而 scheduler 里 **Cloud 侧没有任何回收钩子**。所以整理只覆盖跑在自建设备上的话题，Cloud 话题永远轮不到。工作量：一条支线一轮左右。
+
+**B. 脱钩成独立后台作业** —— PR 正文论证过这条不行（「后端作业只能做字符串去重」）。#630 之后这论证削弱了一半（平台自己已经没盒子了，工作区在设备那边，后端照样够不着），但结论不变：放弃「对着工作区核实」这一半价值。好处是覆盖全部话题、不再跟着载体变。不推荐单做。
+
+**C. 关掉 #582，代码留在分支上，等真翻牌了再重开** —— dreaming 是给「会自动长记忆」的后端擦屁股的。**线上现在还是 `db` 后端，不自动抽取，记忆池不会自己变长变乱——它现在解决的是一个还没发生的问题。** 而且这个 PR 已经被分支覆盖 bug 咬过一次（它的 tip 提交名就叫 *Merge the empty tip that overwrote this branch*），放着只会继续烂。代价：1200+ 行含 690 行测试失去 PR 上下文，但分支还在，重开时 cherry-pick。
+
+**我的判断**：翻牌若在近期排期，选 **A**，让 dreaming 和翻牌同一批上线；翻牌若还没排期，选 **C**，别现在付「重做挂载点 + 重写 7 条测试」的钱去修一个暂时用不上的东西。
