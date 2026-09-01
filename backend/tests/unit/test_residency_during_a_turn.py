@@ -307,3 +307,44 @@ async def test_a_turn_shorter_than_its_own_bookkeeping_still_frees_the_slot(
     await asyncio.sleep(0.5)  # well past the slow write
 
     assert await _residency(db_factory, task_id) == Residency.idle
+
+
+@pytest.mark.anyio
+async def test_the_release_is_work_in_flight_until_it_lands(db_factory, monkeypatch):
+    """还额度这一步本身也是活儿，在它落地之前谁问都得说「还在飞」。
+
+    The release happens after the turn's own coroutine is gone — that is the
+    whole point of moving it — so nothing inside the turn can hold it, and it is
+    the runner that has to. A write nobody holds is one a redeploy will not drain
+    and can cut off between the row and the commit, and one a caller already told
+    the work was over is still racing.
+
+    Asked through `active_work_count()` because that is the number /health drains
+    on: what a deployment is told, not what a private set happens to contain.
+    """
+    from app.domain.room_task import services as svc
+
+    original = svc.ResidencyService.release
+    releasing = asyncio.Event()
+
+    async def _slow_release(self, task):
+        releasing.set()
+        await asyncio.sleep(0.3)
+        return await original(self, task)
+
+    monkeypatch.setattr(svc.ResidencyService, "release", _slow_release)
+
+    _, _, (task_id,) = await _a_room(db_factory, threads=1)
+    broker = InProcessBroker()
+    chat = await _run_one_session_turn(db_factory, broker, task_id)
+    runner = _runner(broker)
+
+    # The agent stops. The turn's own coroutine came back long ago, so from here
+    # the release is the only thing left running.
+    await chat.session_finishes(task_id)
+    await _until(releasing.is_set)
+
+    assert runner.active_work_count() > 0, "还额度的写在飞，却没人报告它在飞"
+
+    await _until_residency(db_factory, task_id, Residency.idle)
+    await _until(lambda: runner.active_work_count() == 0)

@@ -22,7 +22,6 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 
-from app.core.background import spawn
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
 from app.domain.agent.host_swap import handle_host_failure, record_host_success
@@ -1750,15 +1749,48 @@ class AgentWorkRunner:
         scheduled rather than awaited: a frame's fan-out must not wait on
         bookkeeping, and no caller of `publish` is in a position to handle a
         failure here.
+
+        Scheduled, but not let go of. `_tasks` is the runner's answer to "is
+        there work in flight" — `/health` drains on it before a redeploy, and it
+        is what anything waiting for a turn to be finished with actually waits
+        on. A release only this function knows about is a database write nobody
+        is waiting for: a deploy does not wait for it and can cut it off between
+        the row and the commit, and a caller already told the work is over is
+        still racing it. Moving the release here was right — the turn's own
+        coroutine is long gone by now — but somebody still has to hold it, and
+        the runner is the one left.
         """
         held = self._slot_holds.get(channel)
         if held is None:
             return
         chat_service, _ = held
-        spawn(
-            self._free_slot(chat_service, uuid.UUID(channel)),
-            name=f"free-slot-{channel}",
-        )
+        releasing = self._free_slot(chat_service, uuid.UUID(channel))
+        try:
+            task = asyncio.ensure_future(releasing)
+        except RuntimeError:
+            # Published from a thread with no running loop (sync tests, scripts).
+            # Nothing to schedule onto is a no-op, not an error — the ghost sweep
+            # is the backstop, the same one a process that dies here relies on.
+            releasing.close()
+            return
+        task.set_name(f"free-slot-{channel}")
+        self._tasks.add(task)
+        task.add_done_callback(self._release_finished)
+
+    def _release_finished(self, task: asyncio.Task) -> None:
+        """Drop the finished release — and read its failure, if it had one.
+
+        A bare `add_done_callback(discard)` is enough for a turn, which reports
+        its own failures; this is bookkeeping nobody else speaks for, and an
+        exception nobody retrieves surfaces (if ever) as a warning at garbage
+        collection, attached to nothing.
+        """
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.warning("slot release %r failed", task.get_name(), exc_info=exc)
 
     async def _free_slot(self, chat_service, topic_id: uuid.UUID) -> None:
         """Release this place's slot and start whoever was queued behind it.
