@@ -59,28 +59,32 @@ test.describe('房间里派出去的活', () => {
     await expect(progress.locator('.task-progress__tally')).toContainText('2 件');
     await expect(progress.getByText(`第一件事 ${stamp}`)).toBeVisible();
     await expect(progress.getByText(`第二件事 ${stamp}`)).toBeVisible();
-    // 每条活带一个状态圆环。不断言是哪个状态：这一条钉的是「有没有」，
-    // 具体哪个状态由 lib/taskRing.spec.ts 逐条钉。
-    await expect(progress.locator('.task-row .ring')).toHaveCount(2);
+    // 每条活带一个状态圆点。不断言是哪个状态：这一条钉的是「有没有」，
+    // 具体哪个状态由 lib/board.spec.ts 逐条钉。
+    await expect(progress.locator('.task-row .board-dot')).toHaveCount(2);
 
     // 点条目进这条活自己的 chat 页 —— 总览里的一行必须是个入口，不然它只是一张表。
     await progress.getByText(`第一件事 ${stamp}`).click();
     await expect(page).toHaveURL(new RegExp(`/topics/${first.id}`));
   });
 
-  test('侧栏的「在跑的活」是一直在的入口，进去是整个项目的视角', async ({ page }) => {
+  test('侧栏的「看板」是一直在的入口，进去是整个项目的视角', async ({ page }) => {
     const stamp = Date.now();
     const roomId = await freshRoom(page, `跨房间 ${stamp}`);
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
 
     // 从侧栏那条常驻入口进去，而不是直接敲地址：这一条要钉的一半正是「找得到」。
-    await page.locator('.pinned-row').filter({ hasText: '在跑的活' }).first().click();
+    await page.locator('.pinned-row').filter({ hasText: '看板' }).first().click();
+    // 路由名和路径仍是 running：改地址会打断所有已经发出去的链接，改的只是这块
+    // 界面叫什么。
     await expect(page).toHaveURL(/\/projects\/[0-9a-f-]{36}\/running/);
 
-    const view = page.locator('.running-work');
-    await expect(view.getByRole('heading', { name: '在跑的活' })).toBeVisible();
-    // 这一页只答「现在有什么在动」。没有在动的时候它得说清楚闲着的去哪儿找了，
-    // 否则一张空表读起来就是「这个项目没活」——而项目里可能有几百条。
-    await expect(view).toContainText(/在跑|没有在动的活/);
+    const view = page.locator('.board');
+    await expect(view.getByRole('heading', { name: '看板' })).toBeVisible();
+    // 板是按列排的，列本身要在 —— 这一页从一张平表变成看板，列就是那个变化。
+    await expect(view.locator('.board-col')).not.toHaveCount(0);
+    // 板要答的是「该谁动」，所以它得说出各列各有几件；一件都没有的时候要明说，
+    // 否则一块空板读起来就是「这个项目没活」——而项目里可能有几百条。
+    await expect(view).toContainText(/施工中|交付中|等你|暂无派出去的活/);
   });
 });

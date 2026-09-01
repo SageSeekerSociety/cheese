@@ -142,6 +142,11 @@ class FakeGitHubPrClient:
         # the App lane: the write mint carries no `checks` permission, so a
         # read made with it is a 403 that the poller retries forever.
         self.check_state_tokens: list[str] = []
+        # PR 回流 (review/pr_signals.py): number → 这个 PR 上的评审动静，
+        # number → GitHub 的 `mergeable`（None = 它还没算完，不是「冲突」）。
+        self.reviews_by_number: dict[int, list] = {}
+        self.mergeable_by_number: dict[int, bool | None] = {}
+        self.review_signal_calls: list[tuple[int, bool]] = []
 
     async def open_pull_request(
         self, *, owner, repo, head, base, title, body, token
@@ -194,6 +199,12 @@ class FakeGitHubPrClient:
             merged=pr["merged"],
             merge_commit_sha=pr["merge_commit_sha"],
             merged_at=pr["merged_at"],
+            # 默认 None，和真 GitHub 在「还没算完」时给的一样 —— 一个默认 True 会
+            # 让「冲突」这条路在所有别的用例里悄悄变成不可达。
+            mergeable=self.mergeable_by_number.get(number),
+            review_comment_count=sum(
+                1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
+            ),
         )
 
     def seed_pr(self, number: int, *, head: str, base: str = "main") -> str:
@@ -282,6 +293,20 @@ class FakeGitHubPrClient:
     async def compare_status(self, *, owner, repo, base, head, token) -> str | None:
         self.compare_status_calls.append((base, head))
         return self.compare_status_by_pair.get((base, head))
+
+    async def review_signals(
+        self, *, owner, repo, number, token, with_comments=True
+    ) -> list:
+        """PR 上的评审动静。默认没有 —— 绝大多数用例跟评审正交。
+
+        `with_comments` 照实记下来（`review_signal_calls`），因为「PR 自己说没有
+        行内评论时就别再问一次」是这条路上真正省下来的那次请求。
+        """
+        self.review_signal_calls.append((number, with_comments))
+        signals = list(self.reviews_by_number.get(number, []))
+        if not with_comments:
+            signals = [s for s in signals if s.kind != "comment"]
+        return signals
 
     async def check_run_names(self, *, owner, repo, ref, token) -> set[str]:
         # Default: everything required is present — existing tests exercise the

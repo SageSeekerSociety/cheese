@@ -288,8 +288,8 @@ def test_poller_skips_archived_topics_even_for_a_card_it_never_closed(
 def test_poll_pause_note_does_not_swallow_a_later_ci_failure(client, monkeypatch):
     """A 的核心回归。
 
-    token 失效 → note 变成 `⚠️ 轮询暂停…`；token 恢复后 CI 红了，修复前
-    `_nudge_pr_fix` 的 `startswith("⚠️")` 会误命中去重：不发消息、不改 note、
+    token 失效 → note 变成 `⚠️ 轮询暂停…`；token 恢复后 CI 红了，修复前那条
+    `startswith("⚠️")` 的去重会误命中：不发消息、不改 note、
     不留痕，芝士永远不知道要修，而唯一的逃生口（pr_head_sha 变化）又需要先有人
     推新提交——死锁。现在必须正常通知。
     """

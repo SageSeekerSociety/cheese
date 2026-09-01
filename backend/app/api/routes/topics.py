@@ -3,7 +3,7 @@
 import shutil
 import uuid
 from dataclasses import asdict
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, UploadFile
@@ -52,10 +52,13 @@ from app.domain.identity.actor import Actor
 from app.domain.machine.services import MachineService
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review import archive
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind, Task
 from app.domain.room_task.place import Place
+from app.domain.room_task.repositories import TaskRepository
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import (
     ClaimService,
@@ -213,18 +216,45 @@ def _viewer(actor: Actor) -> str | None:
     return actor.handle if actor.handle != "anonymous" else None
 
 
+async def _live_room_cards(
+    db: AsyncSession, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, AcceptCard]:
+    """每个房间**自己**那张还没结算的验收卡，一次查完。
+
+    只要没结算的：一张已经决议的卡对看板没有话说（`presentation` 读到它会让位给
+    别的判据），所以拉全量只是白读。哪些状态算「还没结算」不在这里数——那张表是
+    `review/archive.py` 维护的，抄第二份就是让它们走散。
+
+    `task_id is None` 才是房间自己的卡：一条活递的卡把房间记在 `topic_id` 上，不
+    过滤的话，一条活在等验收会让它上面那个房间也显示成等验收。
+    """
+    if not room_ids:
+        return {}
+    cards = await AcceptCardRepository(db).list_live_for_places(
+        room_ids, statuses=archive.OPEN_CARD_STATUSES
+    )
+    # 按 created_at 升序回来，所以同一个房间后写的覆盖先写的 = 留下最新那张。
+    return {c.topic_id: c for c in cards if c.task_id is None}
+
+
 def _topic_out(
     topic: Topic,
     running_ids: set[uuid.UUID],
     last_activity: dict[uuid.UUID, datetime],
     relevance: dict[uuid.UUID, TopicRelevance] | None = None,
+    cards: dict[uuid.UUID, AcceptCard] | None = None,
+    now: datetime | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: the in-memory
     turn-running flag (separate from `status`/归档 — see TopicOut.running: a
     topic can be active-and-idle or active-and-mid-turn, and only this tells
     them apart), 最后活动时间, which is derived from the topic's blocks, and
     与我的相关性, which depends on WHO is asking and so cannot live on the row
-    at all."""
+    at all.
+
+    `presentation` is the last of them: which column of the board this room is
+    in and the one phrase to print on it, derived from the same facts the row
+    already carries plus its live card (`room_task/presentation.py`)."""
     out = TopicOut.model_validate(topic)
     # Assign before dumping so the instant is serialized by the same schema as
     # created_at/updated_at — a hand-rolled isoformat() here rendered "+00:00"
@@ -235,6 +265,10 @@ def _topic_out(
     out.awaits_me = mine.awaits_me
     data = out.model_dump(mode="json")
     data["running"] = topic.id in running_ids
+    facts = presentation.facts_for_room(topic, running_ids, (cards or {}).get(topic.id))
+    data["presentation"] = presentation.room_presentation(
+        facts, now=now or datetime.now(UTC)
+    ).as_dict()
     return data
 
 
@@ -267,7 +301,12 @@ async def list_topics(
     running_ids = runner.running_topic_ids()
     last_activity = await service.last_activity_for_topics([t.id for t in topics])
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
-    items = [_topic_out(t, running_ids, last_activity, relevance) for t in topics]
+    cards = await _live_room_cards(db, [t.id for t in topics])
+    # 一次，给整页用同一个「现在几点」——见 list_project_tasks 里同一行的理由。
+    now = datetime.now(UTC)
+    items = [
+        _topic_out(t, running_ids, last_activity, relevance, cards, now) for t in topics
+    ]
     return ok(page(items, total))
 
 
@@ -302,10 +341,24 @@ async def get_topic(
     topic = place.room
     actor = await _actor_in_place(resolver, place)
     if place.task is not None:
-        return ok(TaskOut.model_validate(place.task).model_dump(mode="json"))
+        # 一条活的头也要带上看板那一格，和它在列表里显示的是同一句话——同一个函数
+        # 算的，所以深链接进来和从侧栏点进来不可能给出两种说法。
+        cards = await AcceptCardRepository(db).latest_by_task([place.task.id])
+        beats = await TaskRepository(db).last_block_at_for_tasks([place.task.id])
+        out = TaskOut.model_validate(place.task).model_dump(mode="json")
+        out["presentation"] = presentation.task_presentation(
+            presentation.facts_for_task(
+                place.task, cards.get(place.task.id), beats.get(place.task.id)
+            ),
+            now=datetime.now(UTC),
+        ).as_dict()
+        return ok(out)
     last_activity = await service.last_activity_for_topics([topic.id])
     relevance = await service.relevance_for_topics([topic], _viewer(actor))
-    return ok(_topic_out(topic, runner.running_topic_ids(), last_activity, relevance))
+    cards = await _live_room_cards(db, [topic.id])
+    return ok(
+        _topic_out(topic, runner.running_topic_ids(), last_activity, relevance, cards)
+    )
 
 
 @router.get("/{topic_id}/blocks")
@@ -426,13 +479,21 @@ async def list_room_tasks(
     # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
     # 人验收" are indistinguishable on screen — both are quiet — and the room
     # overview would have to ask per thread to tell them apart.
-    cards = await AcceptCardRepository(db).latest_by_task([t.id for t, _ in threads])
+    thread_ids = [t.id for t, _ in threads]
+    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
+    beats = await TaskRepository(db).last_block_at_for_tasks(thread_ids)
+    now = datetime.now(UTC)
     items = []
     for task, blocks in threads:
         card = cards.get(task.id)
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
+                # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
+                "presentation": presentation.task_presentation(
+                    presentation.facts_for_task(task, card, beats.get(task.id)),
+                    now=now,
+                ).as_dict(),
                 "blocks": [
                     BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
                 ],

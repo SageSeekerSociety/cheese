@@ -31,6 +31,8 @@ from app.domain.agent.platform_notices import (
     EVENT_MERGE_WITHHELD,
     EVENT_MIGRATION_COLLISION,
     EVENT_PR_CLOSED,
+    EVENT_PR_CONFLICT,
+    EVENT_PR_REVIEW,
     SEVERITY_ERROR,
     SEVERITY_INFO,
     SEVERITY_WARN,
@@ -54,6 +56,7 @@ from app.domain.review import (
     delivery,
     notes,
     pr_publish,
+    pr_signals,
     pr_text,
 )
 from app.domain.review import forge as forge_mod
@@ -1531,7 +1534,7 @@ class AcceptService:
         """两阶段采纳: the platform side of the iterate loop — if 芝士 committed a
         fix since the last push, push it to the PR branch ourselves (芝士's
         sandbox has no GitHub credentials and no network to github.com, so it
-        cannot do this itself; see `_nudge_pr_fix`). Compares the LOCAL branch
+        cannot do this itself; see `_ci_nudge`). Compares the LOCAL branch
         head (cheap, no network) against `card.pr_head_sha` (last known
         pushed/remote head) so an unchanged branch costs nothing — never a
         blind force-push every poll tick. A push failure (expired token,
@@ -1862,7 +1865,8 @@ class AcceptService:
         # what makes the pause self-healing: it stops describing a condition
         # that no longer holds, AND it can no longer sit in front of a real CI
         # failure (which is how "轮询暂停" used to swallow CI 失败 notifications
-        # — see _nudge_pr_fix). Only this exact prefix is cleared; 重推失败 /
+        # — see the 2026-08-10 note in `_ci_nudge`). Only this exact prefix is
+        # cleared; 重推失败 /
         # 拒绝合并 / 检查未通过 notes describe live conditions and stay put.
         if card.note_code in (notes.NoteCode.poll_paused, notes.NoteCode.poll_failed):
             notes.clear(card)
@@ -2099,9 +2103,11 @@ class AcceptService:
         if live_head != card.pr_head_sha:
             # GitHub's actual head disagrees with what we have on record (e.g.
             # our push above just landed and GitHub is catching up, or someone
-            # pushed to the PR branch directly) — GitHub is authoritative.
-            # Clear any "already nudged" marker so a fresh failure on the NEW
-            # commit still notifies (see the note-based dedup in _nudge_pr_fix).
+            # pushed to the PR branch directly) — GitHub is authoritative. The
+            # note describes the OLD commit, so it goes. (The nudge ledger needs
+            # no such reset: a CI/conflict signature has the commit baked into
+            # it, so the same failure on a new commit is already a new fact —
+            # see `_ci_nudge`.)
             card.pr_head_sha = live_head
             notes.clear(card)
             await self._session.flush()
@@ -2109,20 +2115,60 @@ class AcceptService:
         state, tail = await client.check_state(
             owner=owner, repo=repo, ref=card.pr_head_sha, token=creds.read
         )
+
+        # 每件事各排一条待发，谁都不许把别人挡掉 (review/pr_signals.py).
+        #
+        # 这里以前是「红了就 nudge，然后 return」——那个 return 站得太早：同一个
+        # PR 上有人留了评审意见、或者它已经和 main 冲突了，只要 CI 同时是红的，
+        # 芝士就一个字都收不到。AO (`lifecycle/reactions.go`) 在同一个位置踩过
+        # 同一个坑并留了注释；这里抄的是它改完之后的形状：先全部排队，再统一发。
+        #
+        # 收集途中读 GitHub 失败，**不能**把已经排好队的其它待发一起丢掉 ——那只是
+        # 「一件事吞掉另一件事」的另一种写法。所以错误推迟到发完再抛：卡上照样会
+        # 记下这次轮询出过错（`advance_pr_card` 的 except），而 CI 那条已经送到。
+        pending: list[pr_signals.PendingNudge] = []
+        deferred: Exception | None = None
+        if state == "failure":
+            ci = self._ci_nudge(
+                card=card, tail=tail, stage="CI", owner=owner, repo=repo
+            )
+            if ci is not None:
+                pending.append(ci)
+        try:
+            review = await self._review_nudge(
+                card=card,
+                owner=owner,
+                repo=repo,
+                creds=creds,
+                client=client,
+                status=status,
+            )
+            if review is not None:
+                pending.append(review)
+        except Exception as exc:  # noqa: BLE001 — 见上：先发完，再抛
+            deferred = exc
+        # 冲突只在「这一轮不会去合并」时自己报，也就是检查还没绿的时候。检查绿了
+        # 之后合并会真打一次 GitHub，它的 405/409 由 `_note_merge_blocked` 负责说
+        # ——同一件事两个人说，房间里就是两条重复消息。
+        if state in ("pending", "failure"):
+            conflict = self._conflict_nudge(card=card, status=status)
+            if conflict is not None:
+                pending.append(conflict)
+        self._dispatch_nudges(
+            card=card,
+            topic=topic,
+            pending=pending,
+            chat_service=chat_service,
+            runner=runner,
+        )
+        if deferred is not None:
+            raise deferred
+
         if state == "pending":
             self._note_waiting_on_checks(card=card, tail=tail)
             await self._session.flush()
             return
         if state == "failure":
-            self._nudge_pr_fix(
-                card=card,
-                topic=topic,
-                tail=tail,
-                stage="CI",
-                chat_service=chat_service,
-                runner=runner,
-                repo_full_name=f"{owner}/{repo}",
-            )
             await self._session.flush()
             return
 
@@ -2590,7 +2636,7 @@ class AcceptService:
         The note alone was still not enough (2026-08-11): a note is something
         you have to be looking at. The most common refusal — merge conflicts —
         is exactly the kind 芝士 can fix in its own workspace, so this summons
-        it the same way `_nudge_pr_fix` does for a red check. Without the
+        it the same way `_ci_nudge` does for a red check. Without the
         summon nobody is working the card and the topic just sits at `pr_open`
         forever (真实案例: PR #242). Note that the conflict dispatch in
         `routes/accept.py` never covers this — that one only runs for the
@@ -2600,12 +2646,15 @@ class AcceptService:
 
         - **No spam.** The note is rewritten only when the text actually
           changes, so an unchanging reason costs one write, not one per poll.
-          (Stricter than `_nudge_pr_fix`'s code check, which can't notice a
-          405 turning into a 409.)
+          (Stricter than the nudge ledger's content signature, which cannot
+          notice a 405 turning into a 409 — same reason, same string.)
         - **One summon per reason.** The dispatch hangs off that same "the note
           really changed" test, so a 405 that turns into a 409 gets a fresh
           nudge while an unchanging one stays quiet.
         """
+        # GitHub 的原话是外部字符串，而它要被贴进芝士的终端（见
+        # `pr_signals.sanitize_external`）。
+        reason = pr_signals.sanitize_external(reason)
         note = f"PR #{card.pr_number} 检查全绿，但 GitHub 拒绝合并：{reason}"
         if card.note == note:
             return
@@ -2640,69 +2689,230 @@ class AcceptService:
             ),
         )
 
-    def _nudge_pr_fix(
+    def _ci_nudge(
         self,
         *,
         card: AcceptCard,
-        topic: Topic,
         tail: str,
         stage: str,
-        chat_service,
-        runner,
-        repo_full_name: str = "",
-    ) -> None:
-        # Dedup, precisely (2026-08-10). This used to be `startswith("⚠️")`,
-        # which treats the whole ⚠️ family as "already nudged" — so a
-        # `⚠️ 轮询暂停` note left behind by a dead token silently swallowed
-        # every subsequent CI failure: no message, no note, no trace, and the
-        # only escape (pr_head_sha moving) needs a human to push first. Two
-        # separate reasons to stay quiet, spelled out:
-        #   1. we already nudged for THIS stage on this commit — don't spam;
-        #   2. 重推失败/分支分叉 outrank a CI failure and must not be overwritten
-        #      — both mean 芝士's fix never reached GitHub, so the red CI on
-        #      record is stale (docs/topics/诊断信息搬上验收卡.md, 优先级说明).
+        owner: str,
+        repo: str,
+    ) -> pr_signals.PendingNudge | None:
+        """「这个 PR 的检查红了」排成一条待发，或者 None（这轮不该说）。
+
+        只剩**一个**理由不说：重推失败 / 分支分叉。两者都意味着芝士的修复根本没到
+        GitHub，所以 PR 上那片红是旧的，催它再修一遍是催错了对象
+        （docs/topics/诊断信息搬上验收卡.md 的优先级说明）。
+
+        「已经叫过了」不再是这里的判断。它以前是 —— 判据是 `note_code ==
+        checks_failed`，也就是拿**卡面状态**当去重键，于是任何别的东西写一次 note
+        就能顶掉它（2026-08-10 那次 `⚠️ 轮询暂停` 吞掉全部 CI 失败，就是这条的极端
+        形态）。现在去重按内容走账本（`_dispatch_nudges`），卡面爱怎么写怎么写。
+        """
         if card.note_code in (
-            notes.NoteCode.checks_failed,
             notes.NoteCode.repush_failed,
             notes.NoteCode.repush_diverged,
         ):
-            return
-        # `tail` is now a headline PLUS per-job links and log excerpts (see
+            return None
+        # CI 日志是仓库外的人能控制的字符串（谁都能提个 PR 让 workflow 打印任意
+        # 字节），而它最终会被贴进芝士的终端。控制字符在这里就洗掉。
+        clean = pr_signals.sanitize_external(tail)
+        # `tail` is a headline PLUS per-job links and log excerpts (see
         # `github_pr._failure_detail`). The card's note is a one-line field in
         # the UI, so only the headline goes there — the detail is exactly what
         # the message is for, and duplicating it into a 2000-char column would
         # cost the note its glanceability for no reader's benefit.
-        headline = tail.splitlines()[0] if tail else ""
-        notes.record(
-            card, notes.NoteCode.checks_failed, f"{_nudge_note_prefix(stage)}{headline}"
-        )
-        runner.submit(
-            chat_service,
-            topic.id,
-            author="system",
+        headline = clean.splitlines()[0] if clean else ""
+        return pr_signals.PendingNudge(
+            kind=pr_signals.NudgeKind.ci,
+            # 签名取 commit + headline，**不取整段 tail**：headline 正是
+            # `_summarize_runs` 拼出来的「哪几个 job 挂了」，多挂一个、换一个都会
+            # 变；而 tail 里还有日志片段，同一批失败重读一次就可能微妙地不一样，
+            # 拿它当签名等于每轮都重发。带上 commit，是因为芝士推了新提交之后同样
+            # 的失败是**新事实**，必须再说一次。
+            signature=pr_signals.signature(card.pr_head_sha or "", headline),
+            event=f"PR #{card.pr_number} 的 {stage} 检查没通过",
             content=(
                 f"PR #{card.pr_number}（{card.pr_url}）的{stage}检查没通过：\n"
-                f"```\n{tail[:_NUDGE_TAIL_LIMIT]}\n```\n"
-                f"{_ci_log_howto(repo_full_name)}"
+                f"```\n{clean[:_NUDGE_TAIL_LIMIT]}\n```\n"
+                f"{_ci_log_howto(f'{owner}/{repo}')}"
                 "请在这个话题的工作区里修复问题并提交（不需要、也没法自己推到 "
                 "GitHub），平台会自动把新提交同步到这个 PR，检查会自动重新跑；"
                 "转绿后平台会自动合并 PR。"
             ),
-            summon=True,
-            # 平台提示统一契约: this used to land in the room as a message from a
-            # fake human called "system" — up to 4000 characters of job list and
-            # log excerpts in a full chat bubble. Now the room sees one line and
-            # the excerpt rides in `meta.detail`, byte-for-byte the same text
-            # under the same `_NUDGE_TAIL_LIMIT` bound.
-            nudge_event=f"PR #{card.pr_number} 的 {stage} 检查没通过",
-            nudge_meta=notice(
-                EVENT_CI_FAILED,
-                severity=SEVERITY_ERROR,
-                who=WHO_CHEESE,
-                detail=tail[:_NUDGE_TAIL_LIMIT],
-                detail_label=f"{stage} 日志",
-            ),
+            # 平台提示统一契约: the room sees one line and the excerpt rides in
+            # `meta.detail`, under the same `_NUDGE_TAIL_LIMIT` bound the message
+            # body always used.
+            detail=clean[:_NUDGE_TAIL_LIMIT],
+            detail_label=f"{stage} 日志",
+            note=f"{_nudge_note_prefix(stage)}{headline}",
+            note_code=notes.NoteCode.checks_failed,
+            event_type=EVENT_CI_FAILED,
         )
+
+    async def _review_nudge(
+        self,
+        *,
+        card: AcceptCard,
+        owner: str,
+        repo: str,
+        creds: _GitHubCredentials,
+        client,
+        status,
+    ) -> pr_signals.PendingNudge | None:
+        """「有人在 PR 上说话了」排成一条待发。
+
+        去重键是这些意见的 **id 集合**：又来一条新意见必然换签名，同一批被轮询读
+        到十次必然不换。GitHub 的 REST v3 说不出一条评论「解决了没有」（那是
+        GraphQL 的 review thread 才有的字段），所以这里不假装知道 —— 一条意见叫
+        过一次就算说到了，人再说一句就是新的 id、就再叫一次。
+
+        `REVIEW_NUDGE_LIMIT` 到顶之后只写卡面、不再叫芝士：见那个常量的说明。
+
+        列 review 一定要问一次 GitHub；列行内评论只在 PR 自己报了有评论时才问 ——
+        绝大多数轮次那个数是 0，省下来的就是每张在飞的卡每分钟一次请求。
+        """
+        if card.pr_number is None:
+            return None
+        signals = await client.review_signals(
+            owner=owner,
+            repo=repo,
+            number=card.pr_number,
+            token=creds.read,
+            with_comments=getattr(status, "review_comment_count", 0) > 0,
+        )
+        if not signals:
+            return None
+        ledger = pr_signals.NudgeLedger.load(card.nudge_state)
+        signature = pr_signals.signature(*sorted(s.id for s in signals))
+        capped = ledger.rounds(
+            pr_signals.NudgeKind.review
+        ) >= pr_signals.REVIEW_NUDGE_LIMIT and not ledger.already_sent(
+            pr_signals.NudgeKind.review, signature
+        )
+        body = "\n".join(s.line() for s in signals)
+        asked = sum(1 for s in signals if s.kind == "changes_requested")
+        head = "有人在 PR 上要求改动" if asked else "有人在 PR 上留了评审意见"
+        if capped:
+            return pr_signals.PendingNudge(
+                kind=pr_signals.NudgeKind.review,
+                signature=signature,
+                event=f"PR #{card.pr_number} 的评审意见已来回 "
+                f"{pr_signals.REVIEW_NUDGE_LIMIT} 轮，需要人介入",
+                content="",
+                note=(
+                    f"评审意见已自动回流 {pr_signals.REVIEW_NUDGE_LIMIT} 轮仍未收敛，"
+                    "需要人来看一眼"
+                ),
+                note_code=notes.NoteCode.accept_pr_stalled,
+                capped=True,
+            )
+        return pr_signals.PendingNudge(
+            kind=pr_signals.NudgeKind.review,
+            signature=signature,
+            event=f"PR #{card.pr_number} 上{head}",
+            content=(
+                f"{head}（PR #{card.pr_number}，{card.pr_url}）：\n"
+                f"{body}\n\n"
+                "请在这个话题的工作区里按意见改并提交（不需要、也没法自己推到 "
+                "GitHub），平台会自动把新提交同步到这个 PR。如果你不同意某条意见，"
+                "在话题里说清理由，让人来定。"
+            ),
+            detail=body,
+            detail_label="评审意见原文",
+            note=f"{head}（{len(signals)} 条）",
+            note_code=notes.NoteCode.accept_pr_stalled,
+            event_type=EVENT_PR_REVIEW,
+        )
+
+    def _conflict_nudge(
+        self, *, card: AcceptCard, status
+    ) -> pr_signals.PendingNudge | None:
+        """「这个 PR 和主分支冲突了」排成一条待发。
+
+        判据是 GitHub 的 `mergeable is False` —— **不是** falsy。它在 GitHub 还没
+        算完的时候是 None，而刚推完一次的 PR 每次都会经过那个 None：把 None 当冲
+        突，等于每次推送都报一次假冲突。
+
+        没有上限。冲突和 CI 失败一样是客观的：解掉它就消失，所以多叫几轮不会白叫
+        （评审意见不是，见 `REVIEW_NUDGE_LIMIT`）。
+
+        叠加 PR（stacked PR）在这里不需要判断：一棵树 = 一个分支 = 一个 PR，而
+        `pr_base_branch()` 永远给仓库的默认分支，所以我们开出去的 PR 不可能叠在另
+        一个没合的 PR 上。没有这个概念就不造一个出来。
+        """
+        if getattr(status, "mergeable", None) is not False:
+            return None
+        # 分支名是 provider 可控的字符串，而它要被贴进芝士的终端。
+        branch = pr_signals.sanitize_external(getattr(status, "head_ref", "") or "")
+        where = f"分支 {branch} " if branch else ""
+        return pr_signals.PendingNudge(
+            kind=pr_signals.NudgeKind.conflict,
+            # commit 变了就重新算一次：芝士推了一次合并上来，冲突还在，那是新事实。
+            signature=pr_signals.signature("conflict", card.pr_head_sha or ""),
+            event=f"PR #{card.pr_number} 和主分支冲突了",
+            content=(
+                f"PR #{card.pr_number}（{card.pr_url}）的{where}和主分支冲突了，"
+                "GitHub 现在合不了它。\n"
+                "请在这个话题的工作区里把主分支合并进来、解决冲突后提交"
+                "（不需要、也没法自己推到 GitHub），平台会自动把新提交同步到这个 "
+                "PR，检查会自动重新跑。\n"
+                "如果冲突解不动、或者不该由你来解，在话题里说清楚卡在哪。"
+            ),
+            note=f"PR #{card.pr_number} 和主分支冲突，已叫芝士来解",
+            note_code=notes.NoteCode.merge_conflict,
+            event_type=EVENT_PR_CONFLICT,
+        )
+
+    def _dispatch_nudges(
+        self,
+        *,
+        card: AcceptCard,
+        topic: Topic,
+        pending: list[pr_signals.PendingNudge],
+        chat_service,
+        runner,
+    ) -> None:
+        """把这一轮排好的待发，一条不落地发出去。
+
+        三条顺序上的讲究，每一条都是踩出来的：
+
+        - **每条各自去重。** 一条待发的签名和账本上记着的一样就跳过它，**只跳过它
+          自己** —— 一条 CI 失败被去重掉，不能顺手把同一轮的评审意见也带走。
+        - **卡面只留优先级最高的那一句**（`pr_signals.NOTE_PRIORITY`）。卡面是一
+          行，而消息不是：被排掉的那条照样发出去了，只是没占住卡上那一行。
+        - **先发，再改内存，最后落盘。** 落盘失败最多让芝士被多叫一次；反过来（先
+          落盘再发、中间崩了）会**静默丢掉一条真的通知** —— 账本上写着「说过了」，
+          而房间里一个字都没有。多说一次是噪音，少说一次是事故。
+        """
+        ledger = pr_signals.NudgeLedger.load(card.nudge_state)
+        fresh = [p for p in pending if not ledger.already_sent(p.kind, p.signature)]
+        if not fresh:
+            return
+        for nudge in fresh:
+            if nudge.capped:
+                continue
+            runner.submit(
+                chat_service,
+                topic.id,
+                author="system",
+                content=nudge.content,
+                summon=True,
+                nudge_event=nudge.event,
+                nudge_meta=notice(
+                    nudge.event_type,
+                    severity=SEVERITY_ERROR,
+                    who=WHO_CHEESE,
+                    detail=nudge.detail or None,
+                    detail_label=nudge.detail_label or None,
+                ),
+            )
+        loudest = max(fresh, key=lambda n: pr_signals.NOTE_PRIORITY[n.kind])
+        if loudest.note:
+            notes.record(card, loudest.note_code, loudest.note)
+        for nudge in fresh:
+            ledger.record(nudge.kind, nudge.signature)
+        card.nudge_state = ledger.dump()
 
     async def _finish_pr_accept(
         self,
@@ -3323,8 +3533,9 @@ class AcceptService:
 
         红和「还在跑」落在同一个状态上，因为对这张卡来说是同一件事：等它转绿。差
         别只在谁接着动手——红了，轮询器下一轮就把失败详情递给芝士去修。这里不抢它
-        的活，note 也**不能**写成 `checks_failed`：那个码正是 `_nudge_pr_fix` 的去
-        重条件，提前写上去会让那次 nudge 被当成重复的咽掉，于是芝士永远收不到。
+        的活。（这段以前还写着「note 不能写成 checks_failed，否则那次 nudge 会被
+        当成重复的咽掉」——那条耦合已经没了：回流的去重键是内容签名，存在
+        `nudge_state` 上，卡面写什么都不影响它。）
 
         要红着合的出口是现成的、署名的那一个：`merge_despite_checks`（卡片上的
         「人工放行」）。它只认 `pr_open` 的卡——这也是这里必须把卡挂上去、而不是

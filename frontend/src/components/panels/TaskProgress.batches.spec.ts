@@ -51,6 +51,9 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
     tree_id: 't1',
     created_at: '2026-08-23T01:00:00Z',
     updated_at: '2026-08-23T01:00:00Z',
+    // 落哪一列、写哪句话，全由后端给。这一份用例不关心是哪一列，但字段必须在：
+    // 前端没有一条「拿不到就自己算」的退路。
+    presentation: { column: 'building', display_status: '运行中' },
     ...over,
   }
 }
@@ -264,7 +267,7 @@ describe('总览里的批次清单', () => {
 describe('这一段只说中文', () => {
   it('标题和每条活的编号都是中文', async () => {
     const { findByText, queryByText } = mount()
-    await findByText('派出去的活')
+    await findByText('看板')
     expect(queryByText('Task Progress')).toBeNull()
     await findByText(/第 1 件：查一下分页接口/)
   })
