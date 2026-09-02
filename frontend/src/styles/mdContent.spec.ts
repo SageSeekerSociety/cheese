@@ -17,19 +17,23 @@
  * made in a real browser instead; this file protects the structure that
  * measurement depends on.
  */
-import { describe, expect, it } from 'vitest'
-
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { describe, expect, it } from 'vitest'
 
 import mainTs from '../main.ts?raw'
 
 // Read off disk rather than imported: vitest runs with CSS processing off, so
 // `?raw` on a stylesheet arrives as an empty string — in either the plain or the
-// glob form — and every assertion below would pass against nothing. Paths come
-// from `import.meta.dirname`, not `new URL(...)`: happy-dom installs its own
-// global `URL`, and `readFileSync` rejects instances of it.
-const shared = readFileSync(join(import.meta.dirname, 'md-content.css'), 'utf8')
+// glob form — and every assertion below would pass against nothing.
+//
+// The path is resolved through `fileURLToPath`, which takes the URL as a string:
+// happy-dom installs its own global `URL`, and node's fs rejects instances of it
+// with "The URL must be of scheme file".
+const HERE = dirname(fileURLToPath(import.meta.url))
+const shared = readFileSync(join(HERE, 'md-content.css'), 'utf8')
 
 // Every component that renders markdown into a `.md-content` element.
 const VUE_SOURCES = import.meta.glob('../**/*.vue', {
@@ -82,7 +86,7 @@ describe('.md-content 的溢出规则', () => {
         expect(
           declared,
           `${file} 又给 .md-content 写了一份 ${prop}；这类规则归 styles/md-content.css 管，` +
-            `分开写就是这个 bug 本来的样子`,
+            `分开写就是这个 bug 本来的样子`
         ).not.toMatch(new RegExp(`(^|[;{\\s])${prop}\\s*:`))
       }
     }
