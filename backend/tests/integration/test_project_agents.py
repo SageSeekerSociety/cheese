@@ -255,6 +255,193 @@ def test_a_topic_cannot_borrow_another_projects_agent(client):
     assert r.status_code == 404
 
 
+# --- renaming and retiring an agent ------------------------------------------
+
+
+def _update_agent(client, project_id: str, agent_id: str, **body):
+    return client.put(f"/projects/{project_id}/agents/{agent_id}", json=body)
+
+
+def test_renaming_an_agent_keeps_the_memory_it_had(client):
+    """A rename changes what it is CALLED. Its handle keys the memory pool, so
+    moving that would be handing it somebody else's notes — or an empty pool."""
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
+    room = _topic(client, pid, "review")
+    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
+    _remember(client, pid, room, "评审记的事")
+
+    r = _update_agent(client, pid, reviewer["id"], display_name="严格评审")
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["display_name"] == "严格评审"
+    assert r.json()["data"]["handle"] == "reviewer"
+
+    assert [h["abstract"] for h in _recall(client, pid, room, "记的事")] == [
+        "评审记的事"
+    ]
+
+
+def test_an_agent_can_be_put_in_another_type(client):
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
+
+    r = _update_agent(client, pid, reviewer["id"], type_name="product-design")
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["type_name"] == "product-design"
+
+    r = _update_agent(client, pid, reviewer["id"], type_name=None)
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["type_name"] is None
+
+
+def test_renaming_without_naming_a_type_leaves_the_type_alone(client):
+    """The settings page sends both fields, but a caller that sends only a name
+    must not have the agent's type silently stripped off it."""
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer", type_name="product-design")
+
+    r = _update_agent(client, pid, reviewer["id"], display_name="改个名")
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["type_name"] == "product-design"
+
+
+def test_an_unknown_type_is_rejected(client):
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer")
+
+    r = _update_agent(client, pid, reviewer["id"], type_name="no-such-type")
+    assert r.status_code == 422
+
+
+def test_renaming_an_agent_that_is_not_there_is_a_404(client):
+    import uuid as _uuid
+
+    pid = _project(client)
+    r = _update_agent(client, pid, str(_uuid.uuid4()), display_name="谁")
+    assert r.status_code == 404
+
+
+def test_one_project_cannot_rename_anothers_agent(client):
+    """An instance id keys a memory pool, so it may not cross projects — the
+    same rule the topic routes hold, on the write path."""
+    mine, theirs = _project(client, "mine"), _project(client, "theirs")
+    stranger = _add_agent(client, theirs, handle="stranger", display_name="别人的")
+
+    r = _update_agent(client, mine, stranger["id"], display_name="偷来的")
+    assert r.status_code == 404
+    assert _agents(client, theirs)[-1]["display_name"] == "别人的"
+
+
+def test_retiring_an_agent_keeps_it_and_its_memory(client):
+    """停用 is not a delete: the row stays, so the pool it keys stays too."""
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer", display_name="评审")
+    room = _topic(client, pid, "review")
+    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
+    _remember(client, pid, room, "评审记的事")
+
+    r = client.delete(f"/projects/{pid}/agents/{reviewer['id']}")
+    assert r.status_code == 200, r.text
+    assert r.json()["data"] == {"deleted": True}
+
+    listed = {a["handle"]: a for a in _agents(client, pid)}
+    assert "reviewer" in listed, "管理页要能看到已停用的队友"
+    assert listed["reviewer"]["is_active"] is False
+
+    # And the room already working with it carries on, memory and all.
+    assert client.get(f"/topics/{room}/agent").json()["data"]["handle"] == "reviewer"
+    assert [h["abstract"] for h in _recall(client, pid, room, "记的事")] == [
+        "评审记的事"
+    ]
+
+
+def test_a_retired_agent_is_not_offered_for_new_work(client):
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer")
+
+    client.delete(f"/projects/{pid}/agents/{reviewer['id']}")
+
+    offered = [a["handle"] for a in _agents(client, pid) if a["is_active"]]
+    assert "reviewer" not in offered
+    # Setting it as the default would put it back in front of every new room.
+    r = client.put(
+        f"/projects/{pid}/default-agent", json={"instance_id": reviewer["id"]}
+    )
+    assert r.status_code == 422
+
+
+def test_retiring_the_default_falls_back_to_the_implicit_cheese(client):
+    """Nothing may be left pointing at an agent nobody can choose — otherwise
+    every new room in the project is handed the retired one."""
+    pid = _project(client)
+    designer = _add_agent(client, pid, handle="designer", type_name="product-design")
+    client.put(f"/projects/{pid}/default-agent", json={"instance_id": designer["id"]})
+
+    r = client.delete(f"/projects/{pid}/agents/{designer['id']}")
+    assert r.status_code == 200, r.text
+
+    listed = {a["handle"]: a for a in _agents(client, pid)}
+    assert listed["designer"]["is_default"] is False
+    assert listed["cheese"]["is_default"] is True
+
+    room = _topic(client, pid, "after")
+    agent = client.get(f"/topics/{room}/agent").json()["data"]
+    assert agent["handle"] == "cheese"
+    assert agent["inherited"] is True
+
+
+def test_a_room_that_pinned_the_retired_agent_stays_on_it(client):
+    """It is retired from NEW work, not evicted from the work it is doing."""
+    pid = _project(client)
+    reviewer = _add_agent(client, pid, handle="reviewer")
+    room = _topic(client, pid, "review")
+    client.put(f"/topics/{room}/agent", json={"instance_id": reviewer["id"]})
+
+    client.delete(f"/projects/{pid}/agents/{reviewer['id']}")
+
+    agent = client.get(f"/topics/{room}/agent").json()["data"]
+    assert agent["handle"] == "reviewer"
+    assert agent["inherited"] is False
+
+
+def test_retiring_an_agent_that_is_not_there_is_a_404(client):
+    import uuid as _uuid
+
+    pid = _project(client)
+    r = client.delete(f"/projects/{pid}/agents/{_uuid.uuid4()}")
+    assert r.status_code == 404
+
+
+def test_one_project_cannot_retire_anothers_agent(client):
+    mine, theirs = _project(client, "mine"), _project(client, "theirs")
+    stranger = _add_agent(client, theirs, handle="stranger")
+
+    r = client.delete(f"/projects/{mine}/agents/{stranger['id']}")
+    assert r.status_code == 404
+    assert _agents(client, theirs)[-1]["is_active"] is True
+
+
+def test_configuring_the_projects_cheese_again_brings_it_back(client):
+    """Retiring the project's own 芝士 leaves it on the implicit default — the
+    same pool, no row. Giving that 芝士 a type is choosing it again, so the row
+    comes back rather than materializing as a default nobody may pick."""
+    pid = _project(client)
+    client.put(f"/projects/{pid}/default-agent", json={"type_name": "product-design"})
+    cheese = next(a for a in _agents(client, pid) if a["handle"] == "cheese")
+
+    client.delete(f"/projects/{pid}/agents/{cheese['id']}")
+    assert next(
+        a for a in _agents(client, pid) if a["id"] == cheese["id"]
+    )["is_active"] is False
+
+    r = client.put(
+        f"/projects/{pid}/default-agent", json={"type_name": "fullstack-engineer"}
+    )
+    assert r.status_code == 200, r.text
+    back = next(a for a in _agents(client, pid) if a["id"] == cheese["id"])
+    assert (back["is_active"], back["is_default"]) == (True, True)
+
+
 def test_a_duplicate_handle_in_one_project_is_rejected(client):
     pid = _project(client)
     _add_agent(client, pid, handle="reviewer")

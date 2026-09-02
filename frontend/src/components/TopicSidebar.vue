@@ -130,9 +130,12 @@ async function loadProjectAgents(pid: string | null | undefined) {
 }
 watch(() => props.selectedProjectId, loadProjectAgents, { immediate: true })
 
-// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。
+// 默认那个排第一 —— 常用路径是「点开、点第一项」，不用在列表里找。已停用的
+// 不列：这个菜单是在给一个还没建的话题挑队友，正是停用要挡住的那件事。
 const newTopicAgents = computed(() =>
-  [...projectAgents.value].sort((a, b) => Number(b.is_default) - Number(a.is_default))
+  projectAgents.value
+    .filter((a) => a.is_active !== false)
+    .sort((a, b) => Number(b.is_default) - Number(a.is_default))
 )
 
 // ----- Topic tree -----
