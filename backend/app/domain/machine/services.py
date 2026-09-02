@@ -11,6 +11,7 @@ looking is correct the next time anyone asks.
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +71,13 @@ def derive_hostname(project_name: str, project_id: uuid.UUID, index: int) -> str
 # within one coffee. It trades the per-machine ccproxy identity — a fallback the
 # meter already handles — for never leaving a healthy machine unenrolled.
 ENROLL_SETTLE_GRACE = timedelta(minutes=10)
+
+
+@dataclass(frozen=True, slots=True)
+class FailedLease:
+    topic_id: uuid.UUID
+    hostname: str
+    reason: str
 
 
 class MachineService:
@@ -355,6 +363,28 @@ class MachineService:
         self, device_id: str | None = None
     ) -> list[tuple[uuid.UUID, str]]:
         return await self._repo.list_ready_topic_devices(device_id)
+
+    async def failed_topic_leases(self) -> list[FailedLease]:
+        """Topic leases that will never become ready, with the reason in words."""
+        out: list[FailedLease] = []
+        for machine in await self._repo.list_failed_topic_leases():
+            assert machine.topic_id is not None
+            reason = (
+                "MicroCloud 报告机器创建失败"
+                if machine.status == MachineStatus.error
+                else "MicroCloud 报告机器的 AI 通道配置失败"
+            )
+            out.append(
+                FailedLease(
+                    topic_id=machine.topic_id,
+                    hostname=machine.hostname,
+                    reason=(
+                        f"{reason}（status={machine.status}, "
+                        f"ai_status={machine.ai_status}）"
+                    ),
+                )
+            )
+        return out
 
     async def reconcile_ai_mode(self, limit: int = 5) -> int:
         """Level-triggered half of the →ccproxy story: any settled machine on

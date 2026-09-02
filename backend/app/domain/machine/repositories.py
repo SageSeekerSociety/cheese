@@ -132,6 +132,22 @@ class ProjectMachineRepository:
         )
         return [(topic_id, device_id) for topic_id, device_id in rows.all()]
 
+    async def list_failed_topic_leases(self) -> list[ProjectMachine]:
+        """Active topic leases whose machine or AI channel MicroCloud reports as
+        failed — the ones no sweep will ever hand to `list_ready_topic_devices`,
+        so somebody has to tell the room."""
+        rows = await self._session.execute(
+            select(ProjectMachine).where(
+                ProjectMachine.topic_id.is_not(None),
+                ProjectMachine.released_at.is_(None),
+                or_(
+                    ProjectMachine.status == MachineStatus.error,
+                    ProjectMachine.ai_status == AiStatus.error,
+                ),
+            )
+        )
+        return list(rows.scalars())
+
     async def list_for_project(self, project_id: uuid.UUID) -> list[ProjectMachine]:
         result = await self._session.execute(
             select(ProjectMachine)
