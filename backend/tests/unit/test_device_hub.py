@@ -4,8 +4,10 @@ import base64
 import hashlib
 import uuid
 
+import pytest
+
 from app.domain.agent import connector_build
-from app.domain.agent.device_hub import DeviceHub
+from app.domain.agent.device_hub import DeviceHub, DeviceOffline
 
 
 class FakeDeviceTransport:
@@ -53,6 +55,30 @@ async def test_open_screen_sends_session_create_and_registers_token():
     # The screen is discoverable by its token (attribution) and by sid.
     assert hub.screen_by_token(screen.token) is screen
     assert hub.screen(screen.sid) is screen
+
+
+async def test_exec_on_an_offline_device_fails_at_once_instead_of_timing_out():
+    hub = DeviceHub()
+    with pytest.raises(DeviceOffline):
+        await hub.exec("never-attached", ["true"], timeout=1)
+    t = FakeDeviceTransport()
+    await hub.attach_device("dev1", t)
+    await hub.detach_device("dev1", t)
+    with pytest.raises(DeviceOffline):
+        await hub.exec("dev1", ["true"], timeout=1)
+    assert t.sent == [{"t": "welcome", "v": 1}], "nothing was sent into the void"
+
+
+async def test_the_hub_can_name_a_machine_and_date_its_last_frame():
+    hub = DeviceHub()
+    assert hub.device_name("dev1") == "dev1", "unknown machines answer to their id"
+    assert hub.last_seen_age("dev1") is None
+    await hub.attach_device("dev1", FakeDeviceTransport(), name="andy 的笔记本")
+    assert hub.device_name("dev1") == "andy 的笔记本"
+    assert hub.last_seen_age("dev1") is None, "attached, but it has not spoken yet"
+    await hub.on_device_message("dev1", {"t": "heartbeat"})
+    age = hub.last_seen_age("dev1")
+    assert age is not None and 0 <= age < 1
 
 
 async def test_hello_version_skew_is_flagged_not_fatal():

@@ -12,7 +12,10 @@ FAKE_BIN="$ROOT/deploy/tests/fakes/app-tier"
 # inside the test tree. Exported once rather than per case: a future test that
 # forgets it would not fail here, it would fail on someone's machine.
 export VIKING_HOST_PATH="$ROOT/tmp/viking-$$"
-trap 'rm -rf "$ROOT/tmp/viking-$$"' EXIT
+# The claude binary cache is the same shape: created by the deploy so the
+# backend can write it, defaulting to a dev-box path CI cannot create.
+export CLAUDE_CACHE_HOST_PATH="$ROOT/tmp/claude-cache-$$"
+trap 'rm -rf "$ROOT/tmp/viking-$$" "$ROOT/tmp/claude-cache-$$"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -357,6 +360,7 @@ ownership_run() {
     UPLOADS_HOST_PATH="$run_dir/uploads" \
     APPHOME_HOST_PATH="$run_dir/apphome" \
     VIKING_HOST_PATH="$run_dir/viking" \
+    CLAUDE_CACHE_HOST_PATH="$run_dir/claude-cache" \
     HOME="$run_dir" \
     "$@"
 }
@@ -429,6 +433,7 @@ test_rollback_leaves_an_already_migrated_box_alone() {
   # Made by the deploy script, so it has to be marked after the fact — an
   # unmarked path would make this "nothing moved" scenario move something.
   mkdir -p "$run_dir/viking"; : > "$run_dir/viking/.cheese-uid-1000"
+  mkdir -p "$run_dir/claude-cache"; : > "$run_dir/claude-cache/.cheese-uid-1000"
 
   if ownership_run "$run_dir" rollback \
     "$ROOT/deploy/deploy-docker.sh" testsha \

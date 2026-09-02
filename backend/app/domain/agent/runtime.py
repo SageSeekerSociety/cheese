@@ -24,7 +24,7 @@ from typing import Any
 
 from app.core.errors import AppError
 from app.core.obs import bind_context, clear_context
-from app.domain.agent.host_swap import handle_host_failure, record_host_success
+from app.domain.agent.host_failure import handle_host_failure, record_host_success
 from app.domain.agent.platform_failures import (
     HOST_SCOPED_CODES,
     SUBSCRIPTION_CREDENTIAL_EXPIRED,
@@ -293,7 +293,6 @@ class AgentWorkRunner:
         first_output_timeout_s: float = 300.0,
         credential_expiry_of: Callable[[uuid.UUID], int | None] | None = None,
         credential_expired_fuse_s: float = 15.0,
-        replace_cloud_machine: Callable[..., Awaitable[None]] | None = None,
     ) -> None:
         self._broker = broker
         self._timeout = turn_timeout_s
@@ -312,7 +311,6 @@ class AgentWorkRunner:
         # with no such signal) leaves the fuse byte-for-byte unchanged.
         self._credential_expiry_of = credential_expiry_of
         self._credential_expired_fuse_s = credential_expired_fuse_s
-        self._replace_cloud_machine = replace_cloud_machine
         # Keep references so tasks aren't GC'd mid-flight (and for shutdown).
         self._tasks: set[asyncio.Task] = set()
         # 占着房间额度的地点 → (谁的数据库, 那次占用的写入). Keyed by channel so one
@@ -2344,29 +2342,26 @@ class AgentWorkRunner:
                 else:
                     resume_exhausted = True
             if platform_failure is not None and platform_failure.host_scoped:
-                # The machine, not the turn, is the suspect (#186). Account for it
-                # and — if it has now failed once too often — move the topic to a
-                # healthy machine. That also restores the auto-resume this branch
-                # otherwise skips: "don't retry" was only ever right while there
-                # was nowhere else to retry.
+                # The machine, not the turn, is the suspect. Account for it
+                # against the device and, once it has failed twice in a row,
+                # say so in the room by name. No retry and no other machine:
+                # the topic stays pinned where it failed until a person has
+                # looked (host_failure.py says why the swap it used to do is
+                # gone).
                 host_failed = True
                 self._host_failed_topics.add(str(topic_id))
-                swap = await handle_host_failure(
+                verdict = await handle_host_failure(
                     topic_id=topic_id,
                     failure=platform_failure,
-                    replace_cloud_machine=self._replace_cloud_machine,
                 )
-                if swap.message:
+                if verdict.message:
                     await self._post_event(
                         chat_service,
                         topic_id,
                         turn_id,
-                        swap.message,
-                        meta=swap.event_meta,
+                        verdict.message,
+                        meta=verdict.event_meta,
                     )
-                if swap.resume_after_s is not None and not is_resume:
-                    resume_after = swap.resume_after_s
-                    resume_why = swap.resume_reason or resume_why
         if resume_after is not None:
             rec["detail"] = f"{rec.get('detail') or ''} → 已排自动续跑({resume_why})"
             self._schedule_resume(

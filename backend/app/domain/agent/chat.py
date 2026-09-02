@@ -16,7 +16,7 @@ import re
 import shutil
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -1323,7 +1323,6 @@ class ChatService:
         compute: ComputePool,
         profiles: ProfileRegistry | None = None,
         gateway: LlmGateway | None = None,
-        replace_cloud_machine: Callable[..., Awaitable[None]] | None = None,
     ):
         self._sessions = session_factory
         self._base_prompt = base_system_prompt
@@ -1354,7 +1353,6 @@ class ChatService:
         # The lock serializes key-mint and usage-drain read-modify-writes on
         # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
-        self._replace_cloud_machine = replace_cloud_machine
         self._gateway_lock = asyncio.Lock()
         # Load the conversation skills once (spec §8.3 product "soul").
         self._skills = load_skills(DEFAULT_CHAT_SKILLS)

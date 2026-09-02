@@ -497,6 +497,31 @@ async def test_the_platform_key_never_displaces_the_humans():
     assert len(authorized) == 2
 
 
+async def test_the_operators_key_rides_on_every_machine_the_platform_opens(
+    monkeypatch,
+):
+    """The bootstrap key is erased at enrollment; the operator's is what lets
+    someone read a Cloud machine's connector journal after a failed turn."""
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(
+        app_settings, "microcloud_operator_ssh_pubkey", "ssh-ed25519 OPSKEY ops@box"
+    )
+    client = FakeMicroCloud()
+    service = build_service(client)
+
+    await service.provision(
+        project_id=uuid.uuid4(),
+        requested_by="andy",
+        ssh_pubkey="ssh-ed25519 HUMANKEY andy@laptop",
+    )
+
+    authorized = client.created[0]["sshPubkey"].splitlines()
+    assert "ssh-ed25519 OPSKEY ops@box" in authorized
+    assert "ssh-ed25519 HUMANKEY andy@laptop" in authorized
+    assert len(authorized) == 3
+
+
 async def test_a_machine_asked_for_without_a_key_still_gets_the_platforms():
     # Otherwise the platform could never enroll it, and the machine would be
     # provisioned compute nobody — human or agent — can reach.
@@ -753,32 +778,18 @@ async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(cap
 # ---- built-in AI channel (→ccproxy, operator guidance) -----------------------
 
 
-async def test_provision_switches_the_ai_channel_to_ccproxy():
+async def test_provision_leaves_the_ai_channel_to_the_sweep():
+    """MicroCloud refuses to switch a machine that is still provisioning (400)
+    and its create call has no field for the mode, so asking at create time only
+    added a slow refusal to the turn path. The sweep switches once it runs."""
     client = FakeMicroCloud()
     service = build_service(client)
 
     machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
 
-    # newapi's default routes to a cheap non-Claude model; provision must not
-    # leave a machine there.
-    assert client.ai_switches == [(machine.machine_id, "ccproxy")]
-    assert machine.ai_mode == "ccproxy"  # UPPERCASE reply normalized
-    assert machine.ai_status == AiStatus.provisioning
-
-
-async def test_provision_lands_even_when_the_switch_fails():
-    client = FakeMicroCloud()
-
-    async def boom(machine_id, mode):
-        raise MicroCloudError("switch endpoint down")
-
-    client.switch_ai = boom
-    service = build_service(client)
-
-    machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
-
-    # Best-effort: the machine still provisions; the sweep reconciles later.
+    assert client.ai_switches == []
     assert machine.ai_mode == "newapi"
+    assert machine.ai_status == AiStatus.provisioning
 
 
 async def test_sweep_reconciles_a_machine_left_on_newapi():

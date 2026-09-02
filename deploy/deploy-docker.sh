@@ -16,6 +16,8 @@
 #   UPLOADS_HOST_PATH  host dir holding uploads          (default in compose)
 #   VIKING_HOST_PATH   host dir holding the openviking memory tree (created by
 #                      this script if missing; default in compose)
+#   CLAUDE_CACHE_HOST_PATH  host dir holding the claude binaries served to
+#                      enrolling machines (same treatment; default in compose)
 #   PROJECT            compose project name              (default cheese)
 #   DEPLOY_APP_IMAGE_SOURCE  registry (default) or local. In local mode,
 #                      BACKEND_IMAGE and FRONTEND_IMAGE must name existing images.
@@ -398,6 +400,11 @@ VIKING_PATH="${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}"
 # also puts it in reach of the handover below, which skips paths that do not
 # exist yet.
 mkdir -p "$VIKING_PATH" || fail "cannot create $VIKING_PATH"
+# Same story for the claude binaries the backend serves to the machines it
+# enrols: a cache the container has to be able to write, and that has to
+# outlive the container (see the compose file).
+CLAUDE_CACHE_PATH="${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}"
+mkdir -p "$CLAUDE_CACHE_PATH" || fail "cannot create $CLAUDE_CACHE_PATH"
 
 OWNERSHIP_REPORT="$(mktemp)"
 OWNERSHIP_PATHS=(
@@ -405,6 +412,7 @@ OWNERSHIP_PATHS=(
   "${UPLOADS_HOST_PATH:-/home/nictheboy/shared/uploads}"
   "${APPHOME_HOST_PATH:-/home/nictheboy/cheese-app-home}"
   "$VIKING_PATH"
+  "$CLAUDE_CACHE_PATH"
 )
 OWNERSHIP_IMAGE="${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}"
 OWNERSHIP_SECRETS="${GIT_CREDENTIALS_FILE:-/dev/null}"

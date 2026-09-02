@@ -241,12 +241,20 @@ class MachineService:
         # human must not lose theirs by us taking the single key slot: both are
         # authorised, one per line, which is what authorized_keys is.
         bootstrap_private, bootstrap_public = await enrollment.generate_keypair()
-        authorized = enrollment.combine_authorized_keys(bootstrap_public, ssh_pubkey)
+        # The operator's key too: the bootstrap key is erased at enrollment, and
+        # a machine nobody can log into cannot be diagnosed (see the setting).
+        authorized = enrollment.combine_authorized_keys(
+            bootstrap_public, ssh_pubkey, settings.microcloud_operator_ssh_pubkey
+        )
         if authorized:
             body["sshPubkey"] = authorized
 
+        # The AI channel is NOT switched here. MicroCloud answers 400 to a
+        # switch on a machine that is still provisioning and its create call
+        # has no field for the mode, so asking now only cost the turn path a
+        # 22s refusal (measured 2026-09-02, machine 478); `reconcile_ai_mode`
+        # switches it the moment the sweep sees it running.
         created = await self._client.create_machine(body)
-        created = await self._apply_desired_ai_mode(created)
         return await self._repo.add(
             project_id=project_id,
             topic_id=topic_id,
@@ -335,64 +343,10 @@ class MachineService:
             )
         return await self._repo.mark_released(machine, when=datetime.now(UTC))
 
-    async def replace_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine:
-        """Replace one authorized topic lease without borrowing another's VM."""
-        from app.domain.topic.services import TopicService
-
-        topic = await TopicService(self._session).get_or_404(topic_id)
-        await self._repo.lock_provisioning(topic.project_id, topic_id)
-        await self._session.refresh(topic)
-        if topic.status == TopicStatus.archived:
-            raise ValidationError("archived topic cannot replace cloud compute")
-        old = await self._repo.get_active_for_topic(topic_id)
-        if old is None:
-            raise ValidationError("cloud replacement requires an active topic lease")
-        requested_by = old.requested_by
-        owner_user_id = old.owner_user_id
-        if old.status not in {MachineStatus.deleting, MachineStatus.deleted}:
-            await self.destroy(old)
-        binding = await self._devices.topic_binding(topic_id)
-        if binding is not None and old.device_id == binding.device_id:
-            await self._devices.release_topic_device(
-                topic_id, reason="replacing failed topic cloud machine"
-            )
-        await self._repo.mark_released(old, when=datetime.now(UTC))
-        return await self.provision(
-            project_id=topic.project_id,
-            topic_id=topic_id,
-            requested_by=requested_by,
-            owner_user_id=owner_user_id,
-        )
-
-    async def ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
-        return await self._repo.list_ready_topic_devices()
-
-    async def _apply_desired_ai_mode(self, created: dict) -> dict:
-        """Switch a fresh machine's built-in AI channel to the configured mode.
-
-        MicroCloud provisions on newapi, whose default routes to a cheap
-        non-Claude model — the operator guidance is ccproxy (the console's
-        →ccproxy button). Best-effort: a failure here must not fail the
-        provision, and the enrollment sweep reconciles stragglers."""
-        desired = (settings.microcloud_ai_mode or "").strip().lower()
-        current = str(created.get("aiMode") or "").lower()
-        if not desired or current == desired:
-            return created
-        try:
-            switched = await self._client.switch_ai(int(created["id"]), desired)
-        except Exception:  # noqa: BLE001 — the sweep retries; provision must land
-            logger.warning(
-                "switching machine %s AI channel to %s failed — the enrollment "
-                "sweep will retry",
-                created.get("id"),
-                desired,
-            )
-            return created
-        return {
-            **created,
-            "aiMode": str(switched.get("aiMode") or desired).lower(),
-            "aiStatus": str(switched.get("aiStatus") or "provisioning").lower(),
-        }
+    async def ready_topic_devices(
+        self, device_id: str | None = None
+    ) -> list[tuple[uuid.UUID, str]]:
+        return await self._repo.list_ready_topic_devices(device_id)
 
     async def reconcile_ai_mode(self, limit: int = 5) -> int:
         """Level-triggered half of the →ccproxy story: any settled machine on
@@ -556,6 +510,13 @@ class MachineService:
                 actor_user_id=machine.owner_user_id,
             )
 
+        # The device row and its token have to be visible to the connector route
+        # before the machine dials in, and the bootstrap below makes it dial in
+        # while this sweep's transaction is still open. Uncommitted, the first
+        # `link connect` was answered 403 (unknown device token) and only the
+        # connector's 2s retry saved the enrollment — two refusals before the
+        # accept on 2026-09-02, machine 478.
+        await self._session.commit()
         script = enrollment.bootstrap_script(
             origin=origin, token=device.token, device_id=device.device_id
         )
