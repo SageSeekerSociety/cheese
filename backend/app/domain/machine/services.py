@@ -237,6 +237,14 @@ class MachineService:
             "user": user,
             **spec,
         }
+        # Ask for the AI channel at create (micro-cloud#78): a machine born on
+        # ccproxy starts its subscription login the moment it runs, instead of
+        # being set up on newapi first and switched by our sweep — one
+        # provisioning of the channel rather than two. A MicroCloud that
+        # predates the field ignores it and the sweep switches as before.
+        desired_ai_mode = (settings.microcloud_ai_mode or "").strip().lower()
+        if desired_ai_mode:
+            body["aiMode"] = desired_ai_mode
         # The platform needs its own way in to enroll the machine later, and the
         # human must not lose theirs by us taking the single key slot: both are
         # authorised, one per line, which is what authorized_keys is.
@@ -249,11 +257,11 @@ class MachineService:
         if authorized:
             body["sshPubkey"] = authorized
 
-        # The AI channel is NOT switched here. MicroCloud answers 400 to a
-        # switch on a machine that is still provisioning and its create call
-        # has no field for the mode, so asking now only cost the turn path a
-        # 22s refusal (measured 2026-09-02, machine 478); `reconcile_ai_mode`
-        # switches it the moment the sweep sees it running.
+        # No separate switch call here. MicroCloud answers 400 to a switch on a
+        # machine that is still provisioning, so asking right after create only
+        # cost the turn path a 22s refusal (measured 2026-09-02, machine 478).
+        # The mode rides in the create body above; `reconcile_ai_mode` still
+        # switches a machine that came up on the wrong channel.
         created = await self._client.create_machine(body)
         return await self._repo.add(
             project_id=project_id,

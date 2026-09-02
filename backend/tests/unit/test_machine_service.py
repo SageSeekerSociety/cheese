@@ -778,18 +778,31 @@ async def test_forgetting_never_destroys_a_machine_the_platform_did_not_open(cap
 # ---- built-in AI channel (→ccproxy, operator guidance) -----------------------
 
 
-async def test_provision_leaves_the_ai_channel_to_the_sweep():
-    """MicroCloud refuses to switch a machine that is still provisioning (400)
-    and its create call has no field for the mode, so asking at create time only
-    added a slow refusal to the turn path. The sweep switches once it runs."""
+async def test_provision_asks_for_the_ai_channel_in_the_create_call():
+    """The mode rides in the create body (micro-cloud#78) and nothing is asked
+    afterwards: a separate switch on a machine still provisioning was a 22s 400
+    in the turn path. What MicroCloud actually did is read back like any other
+    field, and the sweep reconciles a machine that came up elsewhere."""
     client = FakeMicroCloud()
     service = build_service(client)
 
     machine = await service.provision(project_id=uuid.uuid4(), requested_by="andy")
 
+    assert client.created[0]["aiMode"] == "ccproxy"
     assert client.ai_switches == []
-    assert machine.ai_mode == "newapi"
     assert machine.ai_status == AiStatus.provisioning
+
+
+async def test_provision_sends_no_ai_mode_when_none_is_configured(monkeypatch):
+    from app.core.config import settings as app_settings
+
+    monkeypatch.setattr(app_settings, "microcloud_ai_mode", "")
+    client = FakeMicroCloud()
+    service = build_service(client)
+
+    await service.provision(project_id=uuid.uuid4(), requested_by="andy")
+
+    assert "aiMode" not in client.created[0]
 
 
 async def test_sweep_reconciles_a_machine_left_on_newapi():
