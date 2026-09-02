@@ -296,9 +296,10 @@ class Settings(BaseSettings):
     microcloud_timeout_s: float = 30.0
     # The machine's built-in AI channel (the tenant console's →ccproxy button).
     # MicroCloud provisions new machines on newapi, whose default routes to a
-    # cheap non-Claude model; the operator guidance is ccproxy. Provision
-    # switches right after create, and the enrollment sweep reconciles any
-    # machine that slipped through. "" = leave whatever MicroCloud defaults to.
+    # cheap non-Claude model; the operator guidance is ccproxy. The enrollment
+    # sweep switches a machine over as soon as it is running: MicroCloud
+    # answers 400 to a switch on a machine still provisioning, and its create
+    # call has no field for the mode. "" = leave whatever MicroCloud defaults to.
     microcloud_ai_mode: str = "ccproxy"
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
@@ -309,6 +310,13 @@ class Settings(BaseSettings):
     microcloud_default_memory_mb: int = 4096
     microcloud_default_disk_gb: int = 20
     microcloud_login_user: str = "cheese"
+    # An operator's SSH public key, authorised on every machine the platform
+    # opens, next to the one-shot bootstrap key. That key is erased the moment
+    # enrollment succeeds, so without this nobody can read a Cloud machine's
+    # connector journal afterwards — which is why the 2026-08-29 failure on
+    # machine 477 was never diagnosed. Platform-provisioned machines only: a
+    # self-hosted box is someone else's and never gets a key of ours.
+    microcloud_operator_ssh_pubkey: str = ""
     # The billing project's fund account, and the balance kept in it. MicroCloud
     # bills compute against this; 0 disables top-ups (an operator funds it by hand).
     microcloud_account_name: str = "compute"
@@ -322,9 +330,14 @@ class Settings(BaseSettings):
     # (which happened, and also consumed the per-project limit).
     microcloud_reconcile_interval_s: float = 120.0
     # How often to sweep for machines that came up and still need enrolling as
-    # devices. Its own switch, NOT the project scheduler's: that one spends model
-    # budget on 定期巡检 and ships off, and machines must not depend on it.
-    machine_enroll_interval_seconds: int = 60
+    # devices (and switching to the AI channel above). Its own switch, NOT the
+    # project scheduler's: that one spends model budget on 定期巡检 and ships
+    # off, and machines must not depend on it. Ten seconds, not sixty: a Cloud
+    # topic's first turn crosses this clock twice (running → switch the AI
+    # channel, ready → enroll), and at 60s a person waited up to two minutes on
+    # a timer for a machine that was already there. A tick with nothing
+    # unsettled is three cheap queries.
+    machine_enroll_interval_seconds: int = 10
 
     # --- ccproxy tenant realm: one revocable ticket per device (#420) ---
     # Cheese is one ccproxy tenant (micro-teams/ccproxy). Registering a device

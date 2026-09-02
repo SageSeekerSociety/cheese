@@ -53,6 +53,17 @@ class FakeDevices:
         self.team_assigned.append((device_id, team_id))
 
 
+class FakeSession:
+    """Keeps a timeline of commits and bootstraps, so a test can say which came
+    first; the bootstrap fake appends to the same list."""
+
+    def __init__(self):
+        self.timeline: list[str] = []
+
+    async def commit(self):
+        self.timeline.append("commit")
+
+
 class FakeProjects:
     def __init__(self, team_id=None):
         self.team_id = team_id
@@ -112,8 +123,9 @@ def build_service(
 ):
     from app.domain.machine.services import MachineService
 
+    calls: list[dict] = []
     service = MachineService.__new__(MachineService)
-    service._session = None
+    service._session = FakeSession()
     service._repo = FakeMachineRepo()
     service._projects = FakeProjects(team_id)
     service._devices = FakeDevices()
@@ -122,9 +134,9 @@ def build_service(
     monkeypatch.setattr(
         "app.domain.machine.services.settings.connector_public_base", origin
     )
-    calls: list[dict] = []
 
     async def _run_bootstrap(*, ip, login_user, private_key, script):
+        service._session.timeline.append("bootstrap")
         calls.append(
             {"ip": ip, "user": login_user, "key": private_key, "script": script}
         )
@@ -150,6 +162,22 @@ async def test_enrollment_writes_the_credential_the_device_flow_would_have(
     assert "link connect" in script
     assert machine.device_id == "dev123"
     assert service._devices.assigned == [("dev123", machine.project_id)]
+
+
+async def test_the_credential_is_committed_before_the_machine_is_told_to_dial(
+    monkeypatch,
+):
+    """The bootstrap makes the machine dial in while the sweep's transaction is
+    still open. Until the commit, the connector route answered its hello 403
+    (unknown device token) and only the connector's retry saved enrollment
+    (2026-09-02, machine 478: two refusals before the accept)."""
+    service, _ = build_service(monkeypatch)
+
+    await service.enroll(make_machine())
+
+    timeline = service._session.timeline
+    assert "bootstrap" in timeline
+    assert timeline.index("commit") < timeline.index("bootstrap")
 
 
 async def test_a_machine_the_platform_opened_is_enrolled_as_cloud_supply(monkeypatch):
