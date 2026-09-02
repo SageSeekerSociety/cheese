@@ -1511,6 +1511,36 @@ def test_poll_pr_closed_unmerged_says_so_and_stops_merging(client, monkeypatch):
         _reset_client()
 
 
+def test_poll_pr_closed_unmerged_names_the_exit_that_takes_the_card(
+    client, monkeypatch
+):
+    """卡面写的那条出路，必须是真的受理这张卡的那一条。
+
+    这条测试存在的理由是一个真实的死锁：卡说「撤销这次采纳」，而 `revoke` 第一
+    行就是「只有已验收的卡才能撤销」——一张 `pr_open` 的卡照着做只会挨一句拒绝，
+    而它自己又让话题递不出下一张，于是整个房间从此交付不了。指对门是 `void`。
+
+    连播两轮只说一次这件事由 `test_poll_pr_closed_unmerged_says_so_and_stops_merging`
+    钉着（文案改动最容易撞坏的就是那个判等）。
+
+    只断言卡面。同一句指引还有一份在房间提示的 `meta.detail` 里，但那条走
+    `_notify_merge_result` 的 fire-and-forget `spawn`，在这套测试的事件循环里
+    从来不落块（实测轮询 6 秒，房间里 0 条），断言它只会得到一条假绿。
+    """
+    fake, tid, number = _accept_to_pr_open(client, monkeypatch)
+    try:
+        fake.close_unmerged(number)
+        _poll(client)
+        wait_work_idle()
+
+        note = _cards_for_topic(client, tid)[0]["note"]
+        assert "作废" in note
+        assert "撤销这次采纳" not in note
+        assert "重开 PR" in note  # 另一条出路仍然要说，它一直是合法的
+    finally:
+        _reset_client()
+
+
 def test_poll_steady_state_costs_no_extra_pr_read(client, monkeypatch):
     """The merged-check reuses the PR read the poller already did every tick —
     a quiet card must not double its GitHub API calls."""
