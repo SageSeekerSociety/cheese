@@ -628,7 +628,9 @@ onMounted(load)
 .dot-ai {
   background: var(--faint);
 }
-/* Rendered markdown for the 一页纸总结 (v-html → :deep). */
+/* Rendered markdown for the 一页纸总结 (v-html → :deep). Typography only —
+   the rules that stop wide content widening the column are shared with the
+   other `.md-content` faces and live in `@/styles/md-content.css`. */
 .md-content {
   font-size: 0.92rem;
   line-height: 1.65;
