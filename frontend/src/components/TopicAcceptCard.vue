@@ -29,6 +29,7 @@ import {
   rejectCard,
   revokeCard,
 } from '@/api'
+import TopicAcceptCardVoid from '@/components/TopicAcceptCardVoid.vue'
 import { deliveryNoteTone, deliveryStageOf } from '@/lib/deliveryStage'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -239,6 +240,12 @@ async function onForceMerge() {
   } finally {
     acceptBusy.value = false
   }
+}
+
+// 作废后卡进终态，这个框整个消失（`hasBox` 不再匹配任何一张卡），话题回到可以
+// 重新递卡的状态——所以跟采纳/放行一样，卡列表和侧栏那一行都要重新拉。
+async function onVoided() {
+  await Promise.all([loadAcceptCard(), store.refreshTopicRow(props.topicId)])
 }
 
 async function onRejectCard() {
@@ -517,12 +524,17 @@ defineExpose({ reload: loadAcceptCard })
           />
           <v-btn variant="outlined" class="btn-secondary" :loading="acceptBusy" @click="onRejectCard"> 确认退回 </v-btn>
         </div>
+        <!-- 作废: 退回把卡交还给芝士去改，作废是结束这张卡本身。`conflict` 上
+             尤其需要它——那个状态下退回和改派都是拒绝的，重试采纳又只会再撞一次
+             同一个冲突。 -->
+        <TopicAcceptCardVoid :card="pendingCard" :disabled="acceptBusy" @voided="onVoided" />
       </div>
     </v-card>
 
     <!-- 交付进度: 人已经点过采纳，剩下的（检查、合并——具体几步由项目的 forge
-         决定，后端下发）是机器在跑，要跑几小时。只读，不给任何按钮 —— 授权已经
-         给过了，不该再问人第二次。 -->
+         决定，后端下发）是机器在跑，要跑几小时。这一段本身不问人任何事——授权已经
+         给过了，不该再问第二次；底下两个按钮都不是重问，而是这次交付走不下去的时候
+         人唯一能改变它的两个方向：放行合并，或者作废。 -->
     <v-card v-else-if="deliveringCard" variant="outlined" class="merge-box mt-2">
       <div class="pa-3">
         <div class="d-flex align-center ga-2 mb-1">
@@ -645,6 +657,10 @@ defineExpose({ reload: loadAcceptCard })
             </div>
           </template>
         </div>
+        <!-- 作废: 放行是「合了它」，作废是「不合了」。没有第二条出口的时候这个盒子
+             就是死路——PR 被人关掉之后放行也会停下（GitHub 不接受合并一个已关闭
+             的 PR），而这张卡还活着，话题就再也递不出下一张。 -->
+        <TopicAcceptCardVoid :card="deliveringCard" :disabled="acceptBusy" @voided="onVoided" />
       </div>
     </v-card>
 
