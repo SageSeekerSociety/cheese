@@ -241,6 +241,78 @@ async def test_restart_recovery_uses_durable_topic_pins(monkeypatch):
     assert router.push(str(topic_id), {"hook_event_name": "Stop"}) is False
 
 
+async def test_a_hook_delivered_live_and_again_by_replay_is_consumed_once(
+    monkeypatch, tmp_path
+):
+    """The same hook reaches the consumer twice on a reconnect: out of the spool
+    (replay) and live over /sandbox/hooks. Measured 2026-09-02 on dev (topic
+    0f139cd7): the flush landed once by event id, but the Stop's second copy
+    arrived in a fresh attribution that had never seen the flush, so the reply
+    was posted again. One hook is consumed once, whichever copy comes first."""
+    from app.domain.agent.harness.claude_code import event_spool, hooks_substrate
+
+    project_id, topic_id = uuid.uuid4(), uuid.uuid4()
+    spool = tmp_path / "spool"
+    monkeypatch.setattr(hooks_substrate.ws, "spool_dir", lambda _p, _t: spool)
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, _model, key):
+            if key == topic_id:
+                return SimpleNamespace(id=topic_id, project_id=project_id)
+            return None
+
+    class Service:
+        async def list_topic_bindings(self, device_id):
+            return [
+                TopicDevice(
+                    topic_id=topic_id, device_id=device_id, visibility=Visibility.host
+                )
+            ]
+
+    monkeypatch.setattr(
+        "app.domain.agent.device_provider.sql_device_service",
+        lambda _session: Service(),
+    )
+    router = HookRouter()
+    channel = DeviceChannel(
+        hub=FakeHub(),  # type: ignore[arg-type]
+        session_factory=Session,  # type: ignore[arg-type]
+    )
+    provider = ClaudeCodeRuntime(channel, router=router)
+    landed: list[tuple[object, bool]] = []
+
+    async def consumer(_p, _t, _work, event, _eid, result_text_seen, _unsolicited):
+        landed.append((event, result_text_seen))
+
+    provider.bind_events(consumer)
+
+    flush = {"hook_event_name": "MessageDisplay", "delta": "ok", "_eid": "e-flush"}
+    stop = {"hook_event_name": "Stop", "last_assistant_message": "ok", "_eid": "e-stop"}
+    event_spool.append(spool, "e-flush", flush)
+    event_spool.append(spool, "e-stop", stop)
+
+    recovered = await provider.recover("dev1")
+    await provider.replay(recovered[0], known_texts=set())
+    # The live copy of the Stop, arriving after the replay already consumed it.
+    router.push(str(topic_id), dict(stop))
+    await provider._subscriptions[topic_id].sink.queue.join()
+
+    said = [
+        (type(event).__name__, seen)
+        for event, seen in landed
+        if isinstance(event, AgentMessage | AgentResult)
+    ]
+    assert ("AgentMessage", False) in said
+    assert [s for s in said if s == ("AgentResult", False)] == [], said
+    assert sum(1 for name, _ in said if name == "AgentMessage") == 1
+
+
 async def test_second_turn_reasserts_the_screen_instead_of_trusting_the_registry():
     """The hub's registry outlives what the device actually runs (a connector
     restart kills its sessions; a create sent on a dying transport was never
