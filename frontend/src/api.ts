@@ -1241,12 +1241,16 @@ export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptC
   })
 }
 
-// 作废验收卡: the only human exit out of `pending_gate` / `conflict` / `pr_open`.
-// Those three are refused by accept / reject / revoke / reassign alike, and a
-// live card is itself what stops the topic filing a new one — so without this
-// call a room that reaches one of them can never deliver again (真实案例: PR
-// #545 被人工关闭后卡永久停在 pr_open). It puts the card in a terminal state,
-// which is deliberately NOT the same as 放行: 重新递卡 is the way back.
+// 作废验收卡: the only human exit out of `conflict` / `pr_open`. Both are
+// refused by accept / reject / revoke / reassign alike, and a live card is
+// itself what stops the topic filing a new one — so without this call a room
+// that reaches either can never deliver again (真实案例: PR #545 被人工关闭后卡
+// 永久停在 pr_open). It puts the card in a terminal state, which is deliberately
+// NOT the same as 放行: 重新递卡 is the way back.
+//
+// `void` also takes `pending_gate`, but nothing on screen needs to: nothing
+// mints that status any more, and `gate_sweep.condemn` ages the rows written
+// before the gate retired into `gate_failed`, which does not block a new card.
 //
 // No `decided_by`: 作废 is an authorising action like 采纳/放行, so who did it
 // comes from the session server-side and never from the body. 芝士 is refused

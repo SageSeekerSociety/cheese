@@ -1,12 +1,16 @@
 <script setup lang="ts">
 // 作废这张卡: the human exit out of a card that can no longer move.
 //
-// `pending_gate` / `conflict` / `pr_open` are refused by accept / reject /
-// revoke / reassign alike, and a live card is itself what stops the topic
-// filing a new one — so a room that reaches one of them can never deliver
-// again. 真实案例: PR #545 被人工关闭后卡永久停在 pr_open，界面上一个能点的
-// 东西都没有。The backend has had the exit since 2026-08-11; until now nothing
-// on screen called it.
+// `conflict` and `pr_open` are refused by accept / reject / revoke / reassign
+// alike, and a live card is itself what stops the topic filing a new one — so a
+// room that reaches either can never deliver again. 真实案例: PR #545 被人工关闭
+// 后卡永久停在 pr_open，界面上一个能点的东西都没有。The backend has had the exit
+// since 2026-08-11; until now nothing on screen called it.
+//
+// The third status `void` takes, `pending_gate`, deliberately gets no face here:
+// nothing mints it since the machine gate retired, and `gate_sweep.condemn`
+// ages the rows that predate the retirement into `gate_failed`, which does not
+// block a new card. A button there would be a step built onto a closed road.
 //
 // It is NOT 放行: the card goes to a terminal state, and the way forward is
 // 重新递卡. That distinction is the reason void exists at all (letting the card
