@@ -357,10 +357,14 @@ _BLOCKED_BY_CARD_MESSAGES = {
     AcceptStatus.pending_gate: "已有待处理的验收卡，请改验收人而不是再递一张",
     AcceptStatus.pr_open: (
         "这个话题的验收卡已经在交付中（PR 正在跑 CI / 等部署），"
-        "不能再递一张；要改动就提交到工作区，平台会自动同步到那个 PR"
+        "不能再递一张；要改动就提交到工作区，平台会自动同步到那个 PR。"
+        "如果那个 PR 已经关掉、或这张卡再也走不下去了，请人在验收卡上点「作废」，"
+        "这个话题就能重新递卡"
     ),
     AcceptStatus.conflict: (
-        "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张"
+        "上一张验收卡卡在合并冲突上，解决冲突后由人重试采纳，不要再递一张；"
+        "如果这次采纳已经不该继续了，请人在验收卡上点「作废」，"
+        "这个话题就能重新递卡"
     ),
 }
 
@@ -2587,15 +2591,22 @@ class AcceptService:
         decided and its branch already pushed — a human closing the PR is
         them saying "not this", and merging it locally behind their back
         would be the opposite of what they asked for. A human reopens the PR
-        or revokes the accept; either way the poller picks it up from there.
+        or voids the card; either way the poller picks it up from there.
 
         Without this the card would keep reaching the merge call, take a 405,
         and wear a note that says its checks were green and GitHub refused —
         true but thoroughly misleading about what actually happened.
+
+        The second exit has to be named as 作废 and not 撤销 (2026-09-01): a
+        card sitting at `pr_open` is exactly what `revoke` refuses (it only
+        takes `accepted`), so telling the reader to 撤销这次采纳 sent them at
+        the one door that answers 只有已验收的卡才能撤销 — and from there the
+        room can never file another card again. `void` is the door that opens.
         """
         note = (
             f"PR #{card.pr_number} 已关闭且没有合并，平台不会自动合并。"
-            "需要人决定：重开 PR，或撤销这次采纳。"
+            "需要人决定：在 GitHub 上重开 PR 让它接着走，"
+            "或在验收卡上点「作废」结束这张卡（之后话题可以重新递卡）。"
         )
         if card.note == note:
             return  # already said once — the 60s poll must not repeat it
@@ -2614,7 +2625,8 @@ class AcceptService:
                 who=WHO_HUMAN,
                 detail=(
                     "平台不会自动合并一个被人关掉的 PR。话题保持活跃，"
-                    "需要人决定：重开 PR，或撤销这次采纳。"
+                    "需要人决定：在 GitHub 上重开 PR 让它接着走，"
+                    "或在验收卡上点「作废」结束这张卡（之后话题可以重新递卡）。"
                 ),
                 detail_label="怎么办",
             ),
