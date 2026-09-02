@@ -43,9 +43,7 @@ const label = computed(() => {
 
 // 已停用的不出现在这里 —— 停用的意思就是「不再交新活给它」。它在别的房间里
 // 还在正常干活，那些房间不受影响。
-const others = computed(() =>
-  agents.value.filter((a) => a.id !== current.value?.instance_id && a.is_active !== false)
-)
+const others = computed(() => agents.value.filter((a) => a.id !== current.value?.instance_id && a.is_active !== false))
 
 async function swap(target: ProjectAgent) {
   switching.value = true

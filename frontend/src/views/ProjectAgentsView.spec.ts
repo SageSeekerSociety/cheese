@@ -242,11 +242,8 @@ describe('停用', () => {
   it('已停用的还列在名册上，标出来，并且不再给「停用」和「设为默认」', async () => {
     // 管理页要能看到它们 —— 一个队友攒下的记忆还在，它只是不接新活了。
     listProjectAgents.mockResolvedValue({
-      data: [
-        agent({ id: 'a1' }),
-        agent({ id: 'a2', handle: 'reviewer', display_name: '评审', is_default: false, is_active: false }),
-      ],
-      total: 2,
+      data: [agent({ id: 'a2', handle: 'reviewer', display_name: '评审', is_default: false, is_active: false })],
+      total: 1,
     })
     mountPage()
 
