@@ -343,8 +343,10 @@ class MachineService:
             )
         return await self._repo.mark_released(machine, when=datetime.now(UTC))
 
-    async def ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
-        return await self._repo.list_ready_topic_devices()
+    async def ready_topic_devices(
+        self, device_id: str | None = None
+    ) -> list[tuple[uuid.UUID, str]]:
+        return await self._repo.list_ready_topic_devices(device_id)
 
     async def reconcile_ai_mode(self, limit: int = 5) -> int:
         """Level-triggered half of the →ccproxy story: any settled machine on

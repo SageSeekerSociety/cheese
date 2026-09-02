@@ -221,6 +221,17 @@ async def agent_socket(
             "hook subscription recovery failed for device %s", device.device_id
         )
     try:
+        # A Cloud topic whose machine just came up has been holding a message;
+        # this attach is the last fact it was waiting for, so deliver now instead
+        # of at the next sweep tick (machine/wakeup.py).
+        from app.api.deps import get_cloud_wakeup
+
+        await get_cloud_wakeup().wake_device(device.device_id)
+    except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
+        logger.exception(
+            "cloud wake-up on attach failed for device %s", device.device_id
+        )
+    try:
         while True:
             message = await websocket.receive_json()
             await device_hub.on_device_message(device.device_id, message)
