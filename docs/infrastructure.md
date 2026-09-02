@@ -106,19 +106,20 @@ heartbeat, backup checks) — its single slot used to serialize every heavy job
   from the dev box (`ssh ci@192.168.30.x`, dev box's `~/.ssh/id_ed25519`).
   MicroCloud does not support resizing yet — pick sizes at creation; more
   machines = ask Lg for capacity.
-- The pool shares Proxmox storage with every MicroCloud machine, and the
-  `test` job is bound by that storage's sync-write latency, not by CPU: the
-  unit-test third of the suite runs at the same pace on a good and a bad day,
-  the integration two-thirds (per-test commits, a `CREATE DATABASE ... TEMPLATE`
-  per worker, Postgres at its defaults with `fsync` on) ran 4-5x slower while
-  machines were being provisioned and templates uploaded on the same host
-  (2026-09-02: a 4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall
-  23% of the time, and #668 needed five attempts to finish inside the job's
-  20-minute timeout; #667 took 7 minutes on a quiet host). A run cancelled at
-  the timeout with the pytest percentage still climbing is this, not a hung
-  test; rerun it when the host is quiet. Turning `fsync`, `synchronous_commit`
-  and `full_page_writes` off for the service container would take the storage
-  out of the equation and is the open follow-up.
+- The pool shares one Proxmox disk with every other guest on pve119 (a single
+  1.7 TB SAS logical volume, thin pool `local-lvm`, no NVMe on the box), so a
+  service container's disk IO competes with MicroCloud provisioning, the
+  observability stack and everything else there. The `test` job's integration
+  two-thirds used to be bound by that disk's sync-write latency (2026-09-02: a
+  4 KB `oflag=dsync` write took 3.5 ms on runner-3, IO stall 23% of the time,
+  #668 needed five attempts to finish inside the 20-minute timeout while #667
+  had taken 7 minutes on a quiet host). Since #670 the Postgres data directory
+  of the `test` and `e2e` service containers is a 3 GB tmpfs: no disk in the
+  path, and pytest went from 7m18s (#667, quiet host) to 4m58s (#670, busy
+  host). A full run writes about 1 GB including WAL, measured locally; if the
+  suite ever outgrows the tmpfs, Postgres fails with ENOSPC and the size in the
+  workflow is the knob. The unit-test third never touched the disk and runs at
+  the same pace either way.
 - One runner slot per machine is deliberate: the workflows bind host ports
   5432/6379 for service containers, so two heavy jobs on one machine would
   collide (`port is already allocated`). Lifting this (常驻 PG/Valkey + drop the
