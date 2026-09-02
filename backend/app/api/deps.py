@@ -92,10 +92,6 @@ async def _read_topic_cloud(topic_id: uuid.UUID) -> CloudLease | None:
         return None if machine is None else _cloud_lease(machine)
 
 
-async def _replace_topic_cloud(topic_id: uuid.UUID, session: AsyncSession) -> None:
-    await MachineService(session).replace_topic_machine(topic_id)
-
-
 @lru_cache
 def get_chat_service() -> ChatService:
     # Gateway admin client (L1/L2 — defined in `app.domain.agent.gateway`): only
@@ -120,7 +116,6 @@ def get_chat_service() -> ChatService:
         profiles=get_profile_registry(),
         compute=build_compute_pool(cloud_channel=cloud),
         gateway=gateway,
-        replace_cloud_machine=_replace_topic_cloud,
     )
 
 
@@ -144,5 +139,4 @@ def get_work_runner() -> AgentWorkRunner:
         turn_timeout_s=settings.agent_turn_timeout_s,
         first_output_timeout_s=settings.agent_first_output_timeout_s,
         credential_expiry_of=topic_credential_expiry,
-        replace_cloud_machine=_replace_topic_cloud,
     )

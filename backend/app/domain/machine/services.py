@@ -335,35 +335,6 @@ class MachineService:
             )
         return await self._repo.mark_released(machine, when=datetime.now(UTC))
 
-    async def replace_topic_machine(self, topic_id: uuid.UUID) -> ProjectMachine:
-        """Replace one authorized topic lease without borrowing another's VM."""
-        from app.domain.topic.services import TopicService
-
-        topic = await TopicService(self._session).get_or_404(topic_id)
-        await self._repo.lock_provisioning(topic.project_id, topic_id)
-        await self._session.refresh(topic)
-        if topic.status == TopicStatus.archived:
-            raise ValidationError("archived topic cannot replace cloud compute")
-        old = await self._repo.get_active_for_topic(topic_id)
-        if old is None:
-            raise ValidationError("cloud replacement requires an active topic lease")
-        requested_by = old.requested_by
-        owner_user_id = old.owner_user_id
-        if old.status not in {MachineStatus.deleting, MachineStatus.deleted}:
-            await self.destroy(old)
-        binding = await self._devices.topic_binding(topic_id)
-        if binding is not None and old.device_id == binding.device_id:
-            await self._devices.release_topic_device(
-                topic_id, reason="replacing failed topic cloud machine"
-            )
-        await self._repo.mark_released(old, when=datetime.now(UTC))
-        return await self.provision(
-            project_id=topic.project_id,
-            topic_id=topic_id,
-            requested_by=requested_by,
-            owner_user_id=owner_user_id,
-        )
-
     async def ready_topic_devices(self) -> list[tuple[uuid.UUID, str]]:
         return await self._repo.list_ready_topic_devices()
 

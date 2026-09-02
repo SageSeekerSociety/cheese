@@ -110,8 +110,8 @@ async def resolve_pinned_device(
       * no binding means 「系统挑一台」 on the first turn: pick the first online,
         **non-quarantined** hosted device serving the project and create a runnable
         ``host`` binding (write-once), so every later turn returns to it. Quarantined
-        = judged unhealthy by ``device.health`` (#186); a topic that is already
-        bound is only ever moved by the explicit ``agent.host_swap`` flow, never here.
+        = judged unhealthy by ``device.health``; a topic that is already bound
+        is never moved — not here, not anywhere (``agent.host_failure``).
 
     The #358 visibility gate lives entirely here (the one resolution point every
     production turn passes through), so an `isolated` device — whose per-room
@@ -142,9 +142,10 @@ async def resolve_pinned_device(
     # quarantined. A quarantined machine just failed two turns in a row for a reason
     # that belongs to the box (#186), so pinning a fresh topic to it would hand the
     # next person the failure we already diagnosed. Note this filter applies to the
-    # FIRST pin only. This resolver never moves an ALREADY-pinned topic; movement
-    # goes through the explicit, room-visible path in ``agent.host_swap``, because a
-    # pin that the resolver can quietly change is the original drift bug.
+    # FIRST pin only. This resolver never moves an ALREADY-pinned topic — nothing
+    # does; a machine judged dead is named in the room (``agent.host_failure``)
+    # and waited for, because a pin that can quietly change is the original drift
+    # bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
         # The same fact the market catalogue publishes as `default=True`, read from
