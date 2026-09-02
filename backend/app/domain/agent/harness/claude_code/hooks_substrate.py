@@ -306,6 +306,12 @@ def _advance_replay_cursor(subscription: TopicSubscription) -> None:
         )
 
 
+# How many consumed hook ids a topic remembers (see ``_consumed_hooks``). A
+# reconnect replays the spool's unread tail, and the tail is bounded by how
+# long the live path has been landing events without acknowledging them —
+# hours of a busy screen fit in this.
+_CONSUMED_HOOKS_KEPT = 4000
+
 # How often a suspected-wedged session re-checks liveness while it stays idle (a
 # single ``confirm_alive`` at the 5-minute mark isn't enough — the screen could
 # die at minute 6 and go unnoticed until the 3-hour hard ceiling otherwise).
@@ -833,6 +839,13 @@ class ClaudeCodeRuntime:
         # own the stable router sink, consumer task, and current attribution.
         self._live: dict[uuid.UUID, object] = {}
         self._subscriptions: dict[uuid.UUID, TopicSubscription] = {}
+        # Hook event ids this process has already consumed, per topic. A hook
+        # can reach the consumer twice — live over /sandbox/hooks and again out
+        # of the spool when a reconnect replays it, in either order — and the
+        # second copy must not be translated again. Kept on the runtime, not
+        # the subscription: a reconnect drops and recreates the subscription,
+        # and the whole point is to remember across that.
+        self._consumed_hooks: dict[uuid.UUID, dict[str, None]] = {}
         self._event_consumer: EventConsumer | None = None
         self._activity_consumer: ActivityConsumer | None = None
         self._delivery_locks: dict[uuid.UUID, asyncio.Lock] = {}
@@ -1193,6 +1206,17 @@ class ClaudeCodeRuntime:
             logger.exception("interrupt failed for topic %s", session.topic_id)
             return False
 
+    def _already_consumed(self, topic_id: uuid.UUID, hook_eid: str) -> bool:
+        return hook_eid in self._consumed_hooks.get(topic_id, {})
+
+    def _remember_consumed(self, topic_id: uuid.UUID, hook_eid: str) -> None:
+        seen = self._consumed_hooks.setdefault(topic_id, {})
+        seen[hook_eid] = None
+        # Insertion-ordered, so trimming the front drops the oldest. Bounded
+        # per topic: a screen lives for hours and every hook is one entry.
+        while len(seen) > _CONSUMED_HOOKS_KEPT:
+            del seen[next(iter(seen))]
+
     async def _consume_subscription(self, subscription: TopicSubscription) -> None:
         """Continuously translate the screen's hooks into attributed events."""
         await subscription.ready.wait()
@@ -1212,6 +1236,23 @@ class ClaudeCodeRuntime:
                     subscription.current_work = attribution
                 eid_value = hook.get("_eid")
                 hook_eid = eid_value if isinstance(eid_value, str) else None
+                if hook_eid is not None and self._already_consumed(
+                    subscription.topic_id, hook_eid
+                ):
+                    # The same hook, delivered twice: once live and once from
+                    # the spool on a reconnect (or the other way round).
+                    # Persisting is idempotent by event id for what the
+                    # assembler passes through, but not for what it decides
+                    # FROM a hook: a Stop whose message was already flushed
+                    # persists nothing the first time, so its second copy,
+                    # landing in a fresh attribution that never saw the flush,
+                    # posted the reply again (dev, 2026-09-02, topic 0f139cd7,
+                    # two identical 芝士 messages 0.7s apart). One hook, one
+                    # consumption; the replay bookkeeping still steps over it.
+                    if subscription.replay_queue:
+                        subscription.replay_done.add(hook_eid)
+                        _advance_replay_cursor(subscription)
+                    continue
                 # One hook can surface zero events (a MessageDisplay flush
                 # still buffering toward its message) or several (a Stop
                 # draining a partial message ahead of the result); each
@@ -1288,6 +1329,8 @@ class ClaudeCodeRuntime:
                             subscription.topic_id,
                             eid,
                         )
+                if hook_eid is not None and not consume_failed:
+                    self._remember_consumed(subscription.topic_id, hook_eid)
                 replay_processed = (not events) or (
                     consumer_owned and consumer is not None and not consume_failed
                 )
