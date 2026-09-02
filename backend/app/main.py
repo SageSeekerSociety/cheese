@@ -169,7 +169,9 @@ async def lifespan(_: FastAPI):
     jobs = periodic_jobs(
         scheduler=scheduler,
         machines=MachineEnrollmentSweeper(
-            async_session_factory, on_ready=get_cloud_wakeup().wake
+            async_session_factory,
+            on_ready=get_cloud_wakeup().wake,
+            on_failed=get_cloud_wakeup().report_failures,
         ),
         sessions=async_session_factory,
     )

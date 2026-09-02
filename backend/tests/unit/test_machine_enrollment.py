@@ -374,6 +374,7 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
     from app.domain.machine.services import MachineService
 
     topic_id = uuid.uuid4()
+    failed_leases: list = []
 
     class Session:
         async def __aenter__(self):
@@ -402,6 +403,9 @@ async def test_sweep_wakes_only_fully_settled_topic_machines(monkeypatch):
 
         async def ready_topic_devices(self):
             return [(topic_id, "cloud-1")]
+
+        async def failed_topic_leases(self):
+            return list(failed_leases)
 
     monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
     on_ready = AsyncMock()
@@ -577,3 +581,57 @@ def test_half_an_identity_is_rejected_rather_than_stored():
             )
             is None
         )
+
+
+async def test_sweep_hands_a_lease_microcloud_gave_up_on_to_the_room(monkeypatch):
+    """A lease whose machine or AI channel errored never reaches `on_ready`; the
+    sweep hands it to `on_failed` in the same pass, so the room stops waiting."""
+    from unittest.mock import AsyncMock
+
+    from app.domain.machine.runner import MachineEnrollmentSweeper
+    from app.domain.machine.services import FailedLease, MachineService
+
+    lease = FailedLease(
+        topic_id=uuid.uuid4(), hostname="box-9", reason="MicroCloud 报告机器创建失败"
+    )
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def commit(self):
+            return None
+
+    class Service:
+        available = True
+
+        def __init__(self, _session):
+            pass
+
+        async def refresh_unsettled(self):
+            return None
+
+        async def reconcile_ai_mode(self):
+            return None
+
+        async def enroll_pending(self):
+            return {"enrolled": 0, "failed": 0}
+
+        async def ready_topic_devices(self):
+            return []
+
+        async def failed_topic_leases(self):
+            return [lease]
+
+    monkeypatch.setattr("app.domain.machine.services.MachineService", Service)
+    on_ready, on_failed = AsyncMock(), AsyncMock()
+    await MachineEnrollmentSweeper(
+        Session, on_ready=on_ready, on_failed=on_failed
+    ).sweep()
+
+    on_ready.assert_not_awaited()
+    on_failed.assert_awaited_once_with([lease])
+    assert MachineService is not None

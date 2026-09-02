@@ -152,12 +152,36 @@ def get_cloud_wakeup() -> CloudWakeup:
                 str(topic_id), {"type": "event_block", "block": block}
             )
 
+    async def announce_failure(topic_id: uuid.UUID, text: str) -> None:
+        from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
+
+        block = await chat.post_system_event(
+            topic_id,
+            text,
+            meta={
+                "event_type": "cloud_provisioning",
+                "state": "failed",
+                "severity": SEVERITY_ERROR,
+                "who": WHO_HUMAN,
+                "detail": (
+                    "这条消息还留着，但平台不会自动换一台机器。"
+                    "在项目的算力页看这台机器的状态，处理后再 @芝士。"
+                ),
+                "detail_label": "接下来",
+            },
+        )
+        if block is not None:
+            await get_broker().publish(
+                str(topic_id), {"type": "event_block", "block": block}
+            )
+
     return CloudWakeup(
         ready_leases=ready_leases,
         waiting_topics=chat.cloud_waiting_topics,
         kickoff=kickoff,
         announce=announce,
         is_online=device_hub.is_online,
+        announce_failure=announce_failure,
     )
 
 
