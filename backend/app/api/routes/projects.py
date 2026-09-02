@@ -33,6 +33,7 @@ from app.domain.agent.market import (
 )
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
     AgentInstanceOut,
@@ -53,7 +54,7 @@ from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.machine.services import MachineService
 from app.domain.membership.repositories import MemberRepository
 from app.domain.memory.models import MemoryScope
-from app.domain.project.models import ProjectRole
+from app.domain.project.models import Project, ProjectRole
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project.schemas import (
     ProjectCreate,
@@ -227,6 +228,24 @@ async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
     return ok(ProjectOut.model_validate(project).model_dump(mode="json"))
 
 
+def _holds_the_default(project: Project, row: AgentInstance) -> bool:
+    """Whether this row is what a new topic in the project gets.
+
+    Two ways to be it, and both have to be checked in every place that reports
+    it or the same agent comes back ``is_default`` from one route and not from
+    another: the project points at it, or it IS the project's 芝士 — same
+    handle, therefore the same memory pool — which holds the default even
+    before anything points at it. A retired row holds nothing.
+    """
+    if row.id == project.default_agent_instance_id:
+        return True
+    return (
+        project.default_agent_instance_id is None
+        and row.is_active
+        and row.handle == IMPLICIT_DEFAULT.handle
+    )
+
+
 def _agent_out(
     project_id: uuid.UUID,
     agent: ResolvedAgent,
@@ -263,17 +282,7 @@ async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
         _agent_out(
             project_id,
             AgentInstanceService.resolved(row),
-            # A row under the implicit handle IS the project's 芝士 — same
-            # handle, therefore the same memory pool — so it holds the default
-            # even before anything points at it.
-            # ...unless it was retired: an agent nobody may choose cannot be
-            # what every new room gets.
-            is_default=row.id == project.default_agent_instance_id
-            or (
-                project.default_agent_instance_id is None
-                and row.is_active
-                and row.handle == IMPLICIT_DEFAULT.handle
-            ),
+            is_default=_holds_the_default(project, row),
             is_active=row.is_active,
         )
         for row in rows
@@ -332,7 +341,7 @@ async def update_project_agent(
         _agent_out(
             project_id,
             AgentInstanceService.resolved(instance),
-            is_default=instance.id == project.default_agent_instance_id,
+            is_default=_holds_the_default(project, instance),
             is_active=instance.is_active,
         )
     )
