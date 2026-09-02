@@ -786,6 +786,13 @@ class DeviceChannel(Channel):
             home_dir=home_dir,
             work_dir=work_dir,
             model=launch.model,
+            # The third thing a plan carries, and the one this channel used to
+            # drop on the floor. A screen is retired and reopened for reasons
+            # that say nothing about the conversation (the three gates above),
+            # and until this was passed on, every one of them started the topic's
+            # agent from a blank slate — the room's memory of its own turns
+            # ending at whichever gate last fired.
+            resume_session_id=launch.resume_session_id,
             extra_env=model_env,
             # The base already maps 1:1 onto the backend root (see
             # settings.connector_public_base), and every backend route is bare
