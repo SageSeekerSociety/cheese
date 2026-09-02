@@ -36,6 +36,7 @@ from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
     AgentInstanceOut,
+    AgentInstanceUpdate,
     ProjectDefaultAgentIn,
 )
 from app.domain.agent_instance.services import (
@@ -227,7 +228,11 @@ async def get_project(project_id: uuid.UUID, db: DbSession) -> dict:
 
 
 def _agent_out(
-    project_id: uuid.UUID, agent: ResolvedAgent, *, is_default: bool
+    project_id: uuid.UUID,
+    agent: ResolvedAgent,
+    *,
+    is_default: bool,
+    is_active: bool = True,
 ) -> dict:
     return AgentInstanceOut(
         id=agent.instance_id,
@@ -237,6 +242,7 @@ def _agent_out(
         display_name=agent.display_name,
         is_default=is_default,
         configured=agent.instance_id is not None,
+        is_active=is_active,
     ).model_dump(mode="json")
 
 
@@ -260,11 +266,15 @@ async def list_project_agents(project_id: uuid.UUID, db: DbSession) -> dict:
             # A row under the implicit handle IS the project's 芝士 — same
             # handle, therefore the same memory pool — so it holds the default
             # even before anything points at it.
+            # ...unless it was retired: an agent nobody may choose cannot be
+            # what every new room gets.
             is_default=row.id == project.default_agent_instance_id
             or (
                 project.default_agent_instance_id is None
+                and row.is_active
                 and row.handle == IMPLICIT_DEFAULT.handle
             ),
+            is_active=row.is_active,
         )
         for row in rows
     ]
@@ -294,6 +304,60 @@ async def create_project_agent(
             project_id, AgentInstanceService.resolved(instance), is_default=False
         )
     )
+
+
+@router.put("/{project_id}/agents/{agent_id}")
+async def update_project_agent(
+    project_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    body: AgentInstanceUpdate,
+    db: DbSession,
+) -> dict:
+    """Rename an agent, or put it in another type.
+
+    ``handle`` is not editable and is not accepted here: it keys the memory
+    pool, so changing it would hand the agent an empty one and orphan
+    everything it had learned in this project.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    instance = await service.get_in_project(
+        project_id=project_id, instance_id=agent_id
+    )
+    fields = body.model_fields_set
+    if "display_name" in fields and body.display_name is not None:
+        await service.rename(instance, body.display_name)
+    if "type_name" in fields:
+        await service.set_type(instance, body.type_name)
+    await db.flush()
+    return ok(
+        _agent_out(
+            project_id,
+            AgentInstanceService.resolved(instance),
+            is_default=instance.id == project.default_agent_instance_id,
+            is_active=instance.is_active,
+        )
+    )
+
+
+@router.delete("/{project_id}/agents/{agent_id}")
+async def deactivate_project_agent(
+    project_id: uuid.UUID, agent_id: uuid.UUID, db: DbSession
+) -> dict:
+    """Retire an agent — not a delete.
+
+    The rooms already working with it carry on and its memory is kept; it just
+    stops being offered for new work. The response says ``deleted`` because
+    that is the shape a DELETE returns everywhere here, not because a row went
+    away.
+    """
+    project = await ProjectService(db).get_or_404(project_id)
+    service = AgentInstanceService(db)
+    instance = await service.get_in_project(
+        project_id=project_id, instance_id=agent_id
+    )
+    await service.deactivate(project, instance)
+    return ok({"deleted": True})
 
 
 @router.put("/{project_id}/default-agent")
