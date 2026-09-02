@@ -957,6 +957,44 @@ if [ -n "${{CHEESE_RV_TOKEN_FILE:-}}" ]; then
 fi
 CLAUDE="\\"$CLAUDE_BIN\\"{CLAUDE_BASE_ARGS}"
 [ -n "$CLAUDE_MODEL" ] && CLAUDE="$CLAUDE --model $CLAUDE_MODEL"
+# 上一段对话接在哪儿。A screen is retired and reopened for reasons that have
+# nothing to do with the conversation — an expired credential, a `claude` that
+# died, a tunnel helper that went away — and the transcript of what was said
+# outlives every one of them, sitting right here on this machine's disk. Without
+# this the fresh `claude` starts from nothing and the topic loses its memory of
+# its own turns each time.
+#
+# THE DECISION IS MADE HERE, on the machine, because this is where the file is.
+# `--resume` pointed at a transcript that is not there does not degrade — claude
+# exits and the pane never draws an input box — so it has to be guarded, and the
+# backend cannot do the guarding: the device is behind NAT and its
+# $CLAUDE_CONFIG_DIR is not a path the backend can stat. (That is also why the
+# in-process `build_session_launch` guard, which reads the transcript through a
+# shared mount, was never reachable from this transport.)
+#
+# Only the CREATE branch below can use it: an adopted session already carries a
+# running conversation, and $CLAUDE goes unread there.
+RESUMEF="$HOME/.claude/cheese-resume.attempt"
+RESUME_TRIED="$(cat "$RESUMEF" 2>/dev/null || true)"
+# Consumed on read, always. The stamp says "the last launch asked to resume THIS
+# id and we never saw that session live again" — a transcript claude cannot read
+# would otherwise kill the pane, get the session retired for a dead pane, and be
+# resumed again on the relaunch, forever. Consuming it costs at most one lost
+# continuation and cannot become a wedge: the very next launch starts clean.
+# A resume that WORKED clears it just as well, because the run that adopts that
+# live session reads the stamp and writes nothing back.
+rm -f "$RESUMEF"
+if [ -n "${{CHEESE_RESUME_SESSION:-}}" ] \\
+  && [ "$RESUME_TRIED" != "$CHEESE_RESUME_SESSION" ]; then
+  # Any project slug: the filename is a uuid, so it identifies the session on its
+  # own, and a transcript written under an older cwd is still this conversation.
+  for _t in "$CLAUDE_CONFIG_DIR"/projects/*/"$CHEESE_RESUME_SESSION.jsonl"; do
+    [ -s "$_t" ] || continue
+    CLAUDE="$CLAUDE --resume $CHEESE_RESUME_SESSION"
+    printf '%s\\n' "$CHEESE_RESUME_SESSION" > "$RESUMEF" 2>/dev/null || true
+    break
+  done
+fi
 # The platform system prompt (written next to settings.json above). The path is
 # embedded QUOTED so both consumers survive a home dir with spaces: the tmux
 # branch re-parses $CLAUDE through sh -c, the exec branch through eval.
@@ -1222,6 +1260,7 @@ def build_screen_launch(
     home_dir: str,
     work_dir: str,
     model: str | None = None,
+    resume_session_id: str | None = None,
     extra_env: dict[str, str] | None = None,
     api_base: str | None = None,
     cli_url: str | None = None,
@@ -1255,6 +1294,12 @@ def build_screen_launch(
     }
     if model:
         env["CLAUDE_MODEL"] = model
+    if resume_session_id:
+        # An OFFER, not an instruction: the launcher takes it only if the
+        # transcript is on that machine's disk (see the script). Carried on the
+        # env for the same reason the tunnel vars are — a remote launch is built
+        # entirely out of `extra_env`, and there is no other channel into it.
+        env["CHEESE_RESUME_SESSION"] = resume_session_id
     # Platform-action CLI wiring: the `cheese` script reads these (X-Cheese-Token =
     # CHEESE_TOKEN, the SAME scoped token the hook forwarder uses).
     if cli_url:
