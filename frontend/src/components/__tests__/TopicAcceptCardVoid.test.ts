@@ -30,9 +30,9 @@ vi.mock('@/api', async () => {
   }
 })
 
-import { useWorkspaceStore } from '@/stores/workspace'
-
 import TopicAcceptCard from '../TopicAcceptCard.vue'
+
+import { useWorkspaceStore } from '@/stores/workspace'
 
 let seq = 0
 function card(over: Partial<AcceptCard>): AcceptCard {
