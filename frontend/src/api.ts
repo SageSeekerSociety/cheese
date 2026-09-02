@@ -1241,6 +1241,23 @@ export function mergeCardAnyway(cardId: string, reason: string): Promise<AcceptC
   })
 }
 
+// 作废验收卡: the only human exit out of `pending_gate` / `conflict` / `pr_open`.
+// Those three are refused by accept / reject / revoke / reassign alike, and a
+// live card is itself what stops the topic filing a new one — so without this
+// call a room that reaches one of them can never deliver again (真实案例: PR
+// #545 被人工关闭后卡永久停在 pr_open). It puts the card in a terminal state,
+// which is deliberately NOT the same as 放行: 重新递卡 is the way back.
+//
+// No `decided_by`: 作废 is an authorising action like 采纳/放行, so who did it
+// comes from the session server-side and never from the body. 芝士 is refused
+// outright.
+export function voidAcceptCard(cardId: string, note: string): Promise<AcceptCard> {
+  return request<AcceptCard>(`/accept-cards/${encodeURIComponent(cardId)}/void`, {
+    method: 'POST',
+    body: JSON.stringify({ note }),
+  })
+}
+
 // 改验收人 (spec §4.4: 任何成员都可以改推荐/加人). Reassign a pending card to
 // another reviewer. The backend reuses the create schema, so we pass an empty
 // routing_reason to keep the recommendation neutral on a manual reassign.

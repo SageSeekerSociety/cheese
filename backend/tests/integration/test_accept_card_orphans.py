@@ -470,6 +470,44 @@ def test_cannot_hand_a_second_card_while_the_first_is_in_conflict(client, monkey
     assert len(_cards(client, tid)) == 1
 
 
+def test_the_refusal_tells_you_how_to_get_unstuck(client, monkeypatch):
+    """被互斥挡住的时候，拒绝语要给出那条走得通的路。
+
+    「不能再递一张」对一张还在动的卡是对的；对一张再也动不了的卡（PR 被人关掉、
+    冲突不打算解了）它就是死路——而读拒绝语的往往是芝士，它会照着那句话继续等
+    一个永远不来的结果。所以两条拒绝语都得点名「作废」。
+    """
+    _fake, _pid, tid, _cid, _accepted = _open_pr_card(client, monkeypatch)
+    try:
+        message = _make_card(client, tid, reviewer="bob").json()["message"]
+        assert "作废" in message
+    finally:
+        _reset_client()
+
+
+def test_the_conflict_refusal_tells_you_how_to_get_unstuck(client, monkeypatch):
+    """同上，冲突那条：解冲突不是唯一出路，不解也得有出路。"""
+    from app.domain.workspace import service as ws
+
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    cid = _make_card(client, tid).json()["data"]["id"]
+
+    monkeypatch.setattr(
+        ws,
+        "merge_topic",
+        lambda *_a, **_k: {"merged": False, "conflicts": ["a.py"], "reason": "冲突"},
+    )
+    client.post(
+        f"/accept-cards/{cid}/accept",
+        json={"decided_by": "alice"},
+        headers=session_auth_headers("alice"),
+    )
+    assert _cards(client, tid)[0]["status"] == "conflict"
+
+    assert "作废" in _make_card(client, tid, reviewer="bob").json()["message"]
+
+
 def test_a_failed_gate_still_allows_re_handing_a_card(client, monkeypatch):
     """反向保护：闸门红了卡就作废，修完重新递卡是设计好的流程，不能被互斥挡住。"""
     pid = _make_project(client)
