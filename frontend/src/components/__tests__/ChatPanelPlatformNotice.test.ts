@@ -396,7 +396,7 @@ describe('向后兼容：库里存量的老事件一个都不能变样', () => {
     ])
     await flush()
 
-    expect(container.querySelector('.im-event')!.textContent).toContain('这轮换了一台机器继续跑')
+    expect(container.querySelector('.im-event')!.textContent).toContain('机器「dev-box」连续失败，已暂停派活')
     expect(container.querySelector('[data-testid="platform-notice"]')).toBeNull()
   })
 
