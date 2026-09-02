@@ -295,11 +295,10 @@ class Settings(BaseSettings):
     microcloud_tenant_secret: str = ""
     microcloud_timeout_s: float = 30.0
     # The machine's built-in AI channel (the tenant console's →ccproxy button).
-    # MicroCloud provisions new machines on newapi, whose default routes to a
-    # cheap non-Claude model; the operator guidance is ccproxy. The enrollment
-    # sweep switches a machine over as soon as it is running: MicroCloud
-    # answers 400 to a switch on a machine still provisioning, and its create
-    # call has no field for the mode. "" = leave whatever MicroCloud defaults to.
+    # Sent in the create call (micro-cloud#78), so the machine is born on it;
+    # the enrollment sweep still switches any machine that came up on another
+    # channel — MicroCloud's default without the field is newapi, whose default
+    # routes to a cheap non-Claude model. "" = leave whatever MicroCloud does.
     microcloud_ai_mode: str = "ccproxy"
     # Pin a specific granted offering (machine type + zone + template); 0 = take
     # the first active one, which is right while a tenant is granted exactly one.
