@@ -430,9 +430,10 @@ def test_configuring_the_projects_cheese_again_brings_it_back(client):
     cheese = next(a for a in _agents(client, pid) if a["handle"] == "cheese")
 
     client.delete(f"/projects/{pid}/agents/{cheese['id']}")
-    assert next(
-        a for a in _agents(client, pid) if a["id"] == cheese["id"]
-    )["is_active"] is False
+    assert (
+        next(a for a in _agents(client, pid) if a["id"] == cheese["id"])["is_active"]
+        is False
+    )
 
     r = client.put(
         f"/projects/{pid}/default-agent", json={"type_name": "fullstack-engineer"}

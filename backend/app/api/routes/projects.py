@@ -321,9 +321,7 @@ async def update_project_agent(
     """
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
-    instance = await service.get_in_project(
-        project_id=project_id, instance_id=agent_id
-    )
+    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     fields = body.model_fields_set
     if "display_name" in fields and body.display_name is not None:
         await service.rename(instance, body.display_name)
@@ -353,9 +351,7 @@ async def deactivate_project_agent(
     """
     project = await ProjectService(db).get_or_404(project_id)
     service = AgentInstanceService(db)
-    instance = await service.get_in_project(
-        project_id=project_id, instance_id=agent_id
-    )
+    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     await service.deactivate(project, instance)
     return ok({"deleted": True})
 
