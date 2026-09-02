@@ -19,8 +19,17 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import shared from './md-content.css?raw'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import mainTs from '../main.ts?raw'
+
+// Read off disk rather than imported: vitest runs with CSS processing off, so
+// `?raw` on a stylesheet arrives as an empty string — in either the plain or the
+// glob form — and every assertion below would pass against nothing. Paths come
+// from `import.meta.dirname`, not `new URL(...)`: happy-dom installs its own
+// global `URL`, and `readFileSync` rejects instances of it.
+const shared = readFileSync(join(import.meta.dirname, 'md-content.css'), 'utf8')
 
 // Every component that renders markdown into a `.md-content` element.
 const VUE_SOURCES = import.meta.glob('../**/*.vue', {
