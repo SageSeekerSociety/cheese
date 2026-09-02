@@ -209,7 +209,9 @@ async def agent_socket(
         return
     await websocket.accept()
     transport = _WebSocketDeviceTransport(websocket)
-    await device_hub.attach_device(device.device_id, transport)  # sends welcome{v}
+    await device_hub.attach_device(
+        device.device_id, transport, name=device.name
+    )  # sends welcome{v}
     try:
         from app.api.deps import get_chat_service
 

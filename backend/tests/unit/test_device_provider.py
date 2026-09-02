@@ -54,6 +54,12 @@ class FakeHub:
     def all_online_screens(self) -> list[HubScreen]:
         return list(self.opened)
 
+    def device_name(self, device_id: str) -> str:
+        return "andy 的笔记本" if device_id == "dev1" else device_id
+
+    def last_seen_age(self, device_id: str) -> float | None:
+        return 3.0 if device_id == "dev1" else None
+
     async def open_screen(self, device_id, command, **kw) -> HubScreen:
         screen = HubScreen(
             sid="s1",
@@ -526,6 +532,40 @@ async def test_launch_script_ships_as_a_file_never_as_tmux_argv():
     command = hub.opened[0].command
     assert sum(len(part) for part in command) < 1024
     assert f"$HOME/.cheese/launch/{topic_id}.sh" in command[-1]
+
+
+async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error():
+    """The room used to read 「device 后端启动失败：TimeoutError」 — no step, no
+    machine, nothing about the link (2026-08-29, machine 477). The line has to
+    say which step, which machine, and what the connector looked like."""
+
+    class SilentHub(FakeHub):
+        async def exec(self, device_id, argv, *, stdin=None, **kw) -> dict:
+            self.execs.append((argv, stdin))
+            if stdin is not None:  # the launcher ship is the one exec with input
+                raise TimeoutError
+            return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
+
+    hub = SilentHub()
+    provider = _provider(hub, HookRouter(), uuid.uuid4())
+    events = [
+        e
+        async for e in provider.run_turn(
+            project_id=uuid.uuid4(),
+            topic_id=uuid.uuid4(),
+            prompt="hi",
+            system_prompt="",
+            resume_session_id=None,
+        )
+    ]
+    assert len(events) == 1 and isinstance(events[0], AgentResult)
+    assert events[0].is_error
+    text = events[0].text
+    assert "写启动脚本" in text, text
+    assert "andy 的笔记本" in text and "dev1" in text, text
+    assert "没有应答" in text and "最近一帧是 3 秒前" in text, text
+    assert "TimeoutError" not in text, "the exception class is not a reason"
+    assert not hub.opened, "no screen is opened on a machine that did not answer"
 
 
 async def test_no_topic_is_a_clean_error():
