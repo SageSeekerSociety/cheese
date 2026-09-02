@@ -209,7 +209,9 @@ async def agent_socket(
         return
     await websocket.accept()
     transport = _WebSocketDeviceTransport(websocket)
-    await device_hub.attach_device(device.device_id, transport)  # sends welcome{v}
+    await device_hub.attach_device(
+        device.device_id, transport, name=device.name
+    )  # sends welcome{v}
     try:
         from app.api.deps import get_chat_service
 
@@ -217,6 +219,17 @@ async def agent_socket(
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception(
             "hook subscription recovery failed for device %s", device.device_id
+        )
+    try:
+        # A Cloud topic whose machine just came up has been holding a message;
+        # this attach is the last fact it was waiting for, so deliver now instead
+        # of at the next sweep tick (machine/wakeup.py).
+        from app.api.deps import get_cloud_wakeup
+
+        await get_cloud_wakeup().wake_device(device.device_id)
+    except Exception:  # noqa: BLE001 — a wake-up failure cannot reject the device
+        logger.exception(
+            "cloud wake-up on attach failed for device %s", device.device_id
         )
     try:
         while True:

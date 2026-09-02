@@ -29,7 +29,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
 from app.domain.agent import provider_env
-from app.domain.agent.device_hub import DeviceHub, HubScreen, device_hub
+from app.domain.agent.device_hub import (
+    DeviceHub,
+    DeviceOffline,
+    HubScreen,
+    device_hub,
+)
 from app.domain.agent.harness.claude_code import (
     DEVICE_ALIVE_PROBE,
     DEVICE_TUNNEL_PROBE,
@@ -58,6 +63,10 @@ from app.domain.workspace import service as ws
 # agent_handle). Takes both ids because the device is chosen with topic affinity, not
 # just per project (execution-architecture v4 §affinity).
 logger = logging.getLogger(__name__)
+
+# How long the launcher file write may go unanswered. The hub adds 5s of grace
+# on top for the exec.result frame itself.
+_LAUNCHER_SHIP_TIMEOUT_S = 30
 
 DeviceResolver = Callable[
     [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
@@ -110,8 +119,8 @@ async def resolve_pinned_device(
       * no binding means 「系统挑一台」 on the first turn: pick the first online,
         **non-quarantined** hosted device serving the project and create a runnable
         ``host`` binding (write-once), so every later turn returns to it. Quarantined
-        = judged unhealthy by ``device.health`` (#186); a topic that is already
-        bound is only ever moved by the explicit ``agent.host_swap`` flow, never here.
+        = judged unhealthy by ``device.health``; a topic that is already bound
+        is never moved — not here, not anywhere (``agent.host_failure``).
 
     The #358 visibility gate lives entirely here (the one resolution point every
     production turn passes through), so an `isolated` device — whose per-room
@@ -142,9 +151,10 @@ async def resolve_pinned_device(
     # quarantined. A quarantined machine just failed two turns in a row for a reason
     # that belongs to the box (#186), so pinning a fresh topic to it would hand the
     # next person the failure we already diagnosed. Note this filter applies to the
-    # FIRST pin only. This resolver never moves an ALREADY-pinned topic; movement
-    # goes through the explicit, room-visible path in ``agent.host_swap``, because a
-    # pin that the resolver can quietly change is the original drift bug.
+    # FIRST pin only. This resolver never moves an ALREADY-pinned topic — nothing
+    # does; a machine judged dead is named in the room (``agent.host_failure``)
+    # and waited for, because a pin that can quietly change is the original drift
+    # bug.
     healthy = await service.healthy_devices_for_project(project_id, is_online)
     for device in healthy:
         # The same fact the market catalogue publishes as `default=True`, read from
@@ -558,17 +568,61 @@ class DeviceChannel(Channel):
         assert command[:2] == ["bash", "-lc"] and len(command) == 3
         script = command[2]
         path = f"$HOME/.cheese/launch/{topic_id}.sh"
-        result = await self._hub.exec(
+        started = time.monotonic()
+        try:
+            result = await self._hub.exec(
+                device_id,
+                ["sh", "-c", f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}"'],
+                stdin=script,
+                timeout=_LAUNCHER_SHIP_TIMEOUT_S,
+            )
+        except (TimeoutError, DeviceOffline) as exc:
+            # The first thing a turn asks a machine to do, and on a freshly
+            # enrolled Cloud box the first frame its connector ever has to
+            # answer. Measured 2026-08-29 (machine 477): this exec got no answer
+            # and the room read 「device 后端启动失败：TimeoutError」 — no step, no
+            # machine, no word on whether the connector was even connected.
+            raise ScreenSetupError(
+                self._link_failure(
+                    device_id,
+                    step="写启动脚本",
+                    waited_s=time.monotonic() - started,
+                    offline=isinstance(exc, DeviceOffline),
+                )
+            ) from exc
+        logger.info(
+            "launcher shipped to device %s in %.1fs (topic=%s, %d bytes)",
             device_id,
-            ["sh", "-c", f'mkdir -p "$HOME/.cheese/launch" && cat > "{path}"'],
-            stdin=script,
-            timeout=30,
+            time.monotonic() - started,
+            topic_id,
+            len(script),
         )
         if result.get("exit") != 0:
             raise ScreenSetupError(
                 f"无法把启动脚本写到设备上：{result.get('stderr') or result}"
             )
         return ["bash", "-lc", f'exec bash "{path}"']
+
+    def _link_failure(
+        self, device_id: str, *, step: str, waited_s: float, offline: bool
+    ) -> str:
+        """One line naming the step, the machine, and what the link looked like at
+        that moment — what turns a bare timeout into something a person can act
+        on. Reads only what the hub already holds (no database on a failing path)."""
+        name = self._hub.device_name(device_id)
+        who = f"机器「{name}」" if name != device_id else f"机器 {device_id}"
+        if name != device_id:
+            who = f"{who}（{device_id}）"
+        if offline:
+            link = "连接器不在线"
+        else:
+            age = self._hub.last_seen_age(device_id)
+            link = (
+                "连接器在线，但从没收到过它的任何一帧"
+                if age is None
+                else f"连接器在线，最近一帧是 {age:.0f} 秒前"
+            )
+        return f"{step}时{who}{waited_s:.0f} 秒没有应答；{link}"
 
     async def _ensure_screen(
         self,
@@ -786,6 +840,13 @@ class DeviceChannel(Channel):
             home_dir=home_dir,
             work_dir=work_dir,
             model=launch.model,
+            # The third thing a plan carries, and the one this channel used to
+            # drop on the floor. A screen is retired and reopened for reasons
+            # that say nothing about the conversation (the three gates above),
+            # and until this was passed on, every one of them started the topic's
+            # agent from a blank slate — the room's memory of its own turns
+            # ending at whichever gate last fired.
+            resume_session_id=launch.resume_session_id,
             extra_env=model_env,
             # The base already maps 1:1 onto the backend root (see
             # settings.connector_public_base), and every backend route is bare

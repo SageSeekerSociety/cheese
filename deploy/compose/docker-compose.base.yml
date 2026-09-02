@@ -70,6 +70,12 @@ services:
       # and having it already in place is what makes flipping the backend a
       # one-line env change instead of a deploy edit.
       - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
+      # The claude binaries the backend serves to machines it enrols. It fetches
+      # each version once from the vendor and caches it under connector-dist,
+      # which is image content — so every deploy threw the cache away and the
+      # next enrolment re-downloaded ~40MB inside its own timeout (a dev box
+      # deploys many times a day, so in practice every enrolment paid).
+      - ${CLAUDE_CACHE_HOST_PATH:-/home/nictheboy/cheese-claude-cache}:/app/connector-dist/claude-cache
     # Bind 0.0.0.0, NOT 127.0.0.1: the ghg edge (APISIX) reaches these boxes from
     # a SEPARATE host (192.168.16.13) and proxies straight to the backend on :8081
     # and the frontend on :8080 — a localhost-only bind would be unreachable from
@@ -77,6 +83,11 @@ services:
     # inbound. (etrip is public and uses its OWN compose, not this one.)
     ports:
       - "0.0.0.0:${BACKEND_PORT:-8081}:8081"
+    # tini as PID 1, so orphans get reaped. The git the backend runs is waited on,
+    # but git's own children outlive it and reparent to PID 1 — and uvicorn never
+    # waits on a process it did not start. Without this they pile up as zombies:
+    # 77 `git` after 17 hours on dev (2026-09-01). They cost PIDs, not fds.
+    init: true
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8081/healthz"]
       interval: 15s

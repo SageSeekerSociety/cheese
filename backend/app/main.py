@@ -15,7 +15,6 @@ import importlib
 import logging
 import pkgutil
 import re
-import uuid
 
 # (logging is configured right after imports — see basicConfig below.)
 from collections.abc import Callable
@@ -43,7 +42,6 @@ from app.core.sandbox_auth import (
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
-from app.domain.agent.platform_notices import SEVERITY_INFO, WHO_PLATFORM
 from app.domain.agent_credential.services import ProjectAgentCredentialService
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -163,44 +161,15 @@ async def lifespan(_: FastAPI):
     except Exception:  # noqa: BLE001 — never block startup
         get_logger("cheesex.runtime").exception("startup gate sweep failed")
 
+    from app.api.deps import get_cloud_wakeup
     from app.core.db import async_session_factory
-    from app.domain.agent.device_hub import device_hub
-    from app.domain.agent.runtime import get_broker
     from app.domain.machine.runner import MachineEnrollmentSweeper
     from app.domain.scheduler.jobs import periodic_jobs
-
-    async def resume_ready_cloud_topics(
-        ready: list[tuple[uuid.UUID, str]],
-    ) -> None:
-        chat = get_chat_service()
-        topic_ids = [
-            topic_id for topic_id, device_id in ready if device_hub.is_online(device_id)
-        ]
-        for topic_id in await chat.cloud_waiting_topics(topic_ids):
-            get_work_runner().submit_kickoff(
-                chat,
-                topic_id,
-                prompt="Cloud machine is ready; continue the pending input.",
-            )
-            block = await chat.post_system_event(
-                topic_id,
-                "Cloud 机器已接入，正在继续刚才的消息",
-                meta={
-                    "event_type": "cloud_provisioning",
-                    "state": "ready",
-                    "severity": SEVERITY_INFO,
-                    "who": WHO_PLATFORM,
-                },
-            )
-            if block is not None:
-                await get_broker().publish(
-                    str(topic_id), {"type": "event_block", "block": block}
-                )
 
     jobs = periodic_jobs(
         scheduler=scheduler,
         machines=MachineEnrollmentSweeper(
-            async_session_factory, on_ready=resume_ready_cloud_topics
+            async_session_factory, on_ready=get_cloud_wakeup().wake
         ),
         sessions=async_session_factory,
     )
