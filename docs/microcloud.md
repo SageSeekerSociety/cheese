@@ -32,10 +32,12 @@ then go to `CloudWakeup`, which delivers the message the room has been holding. 
 connector route also wakes the topic the moment the device attaches, so the room does not
 wait for the next tick.
 
-Timings on dev, MicroCloud main after micro-cloud#82 and #83 (2026-09-03): an LXC machine is
-`running` 44 s after the create call and its AI channel `ready` at 52 s; a VM is `running` at
-56 s and `ready` at 65 s. Of the LXC's 44 s about 37 are Proxmox extracting the 405 MB template
-onto its thin pool, 4 boot, 3 the init script. Before #83 every machine also downloaded Claude
+Timings on dev, MicroCloud main after micro-cloud#82, #83 and #84 (2026-09-03): an LXC machine
+is `running` 25 s after the create call and its AI channel `ready` at 31 s (event log of
+machine 752: `pct create` 14 s, ssh reachable 6 s later, init 2 s, ccproxy login 5 s); a VM
+was `running` at 56 s and `ready` at 65 s (703, before the node's disk recovered, see
+`infrastructure.md` on pve119). The `pct create` time is Proxmox extracting the 405 MB
+template onto its thin pool and moves with that disk's load: 37 s on 702 an hour earlier. Before #83 every machine also downloaded Claude
 Code from claude.ai during init (49 s); the template carries the binary now and init copies it.
 On top of that, cheese's sweep notices the ready lease within 10 s, enrolment takes a few
 seconds, and the first turn's own model latency was about 22 s to the first tool call, so a
@@ -61,8 +63,15 @@ What each `aiStatus` means for a machine born on `ccproxy`:
 
 `error` three seconds after `running` was micro-cloud#78's bug: a ccproxy-born machine had
 no `claude` binary, fixed in #79. `provisioning` that never ends has been seen once
-(machine 553 on dev, 8½ minutes, then destroyed with the topic); its ccproxy record went
-with it, so keep such a machine and ask the ops agent for that record before archiving.
+(machine 553 on dev, 8½ minutes, then destroyed with the topic) and could not be explained
+afterwards, because MicroCloud kept no record beyond the two status fields. Since
+micro-cloud#84 every machine has an event log at `GET /machine/{id}/events` (tenant secret,
+page parameters, optional `since`): every Proxmox task with its UPID and duration, ssh
+reachable, init done with the script's output tail, the ccproxy registration, RUNNING, the
+login request id and every change of ccproxy's reported login status, and every failure
+with its exception. It outlives the machine (machines are soft-deleted now), so a stuck or
+failed lease is read there first, before anyone asks for a log. `tmp/cloud-diag/dev_mc_lxc_probe.py`
+prints it after a probe.
 
 ## What ccproxy is, from where cheese stands
 
