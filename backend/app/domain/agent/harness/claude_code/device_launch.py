@@ -91,50 +91,6 @@ def rendezvous_paths(topic_id: str) -> tuple[str, str]:
 # and the transcript dies with the machine — which is why a week of spend could
 # not be attributed to a project, a topic, or even a prompt.
 #
-# Kept OUT of the launcher f-string on purpose: it is dense with braces, and
-# escaping them inside an f-string is a silent-corruption risk for no benefit.
-#
-# python3 rather than shell: the transcript is JSONL, there is no jq on a
-# machine, and a grep/sed parser works right up until a field moves.
-CHEESE_USAGE_READER = """import json, sys
-try:
-    hook = json.loads(sys.stdin.read())
-except Exception:
-    sys.exit(0)
-path = hook.get("transcript_path")
-if not path:
-    sys.exit(0)
-tot = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0}
-model = ""
-try:
-    with open(path, errors="ignore") as fh:
-        for line in fh:
-            try:
-                d = json.loads(line)
-            except Exception:
-                continue
-            m = d.get("message") or {}
-            u = m.get("usage") or {}
-            if not u:
-                continue
-            model = m.get("model") or model
-            tot["input"] += u.get("input_tokens") or 0
-            tot["output"] += u.get("output_tokens") or 0
-            tot["cache_read"] += u.get("cache_read_input_tokens") or 0
-            tot["cache_write"] += u.get("cache_creation_input_tokens") or 0
-except OSError:
-    sys.exit(0)
-if any(tot.values()):
-    print(json.dumps({"hook_event_name": "CheeseUsage", "model": model, **tot}))
-"""
-
-# The reader has to be a FILE, not a heredoc: `python3 - <<PY` hands python the
-# heredoc as its stdin, so the hook payload we actually need to read would never
-# arrive. Verified by running it both ways.
-CHEESE_USAGE_SCRIPT = """#!/bin/sh
-python3 "$HOME/.claude/cheese-usage.py" | cheese-hook >/dev/null 2>&1 || true
-"""
-
 # READ-ONLY against the machine owner's files, by contract (#5). History, so
 # nobody reintroduces the write: the 2026-08-02 measurement showed the login
 # user's ~/.claude/settings.json env block wins over the process environment,
@@ -388,8 +344,6 @@ def launch_holes(
 {ca_pem}CHEESECA
 export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
 """
-    usage_script = CHEESE_USAGE_SCRIPT
-    usage_reader = CHEESE_USAGE_READER
     sync_script = CHEESE_SYNC_SCRIPT
     settings_reconcile = CHEESE_SETTINGS_RECONCILE
     startup_cache_source = Path(startup_cache.__file__).read_text()
@@ -402,7 +356,7 @@ export NODE_EXTRA_CA_CERTS="$HOME/.claude/proxy-ca.pem"
     )
     settings_json = json.dumps(
         hooks_settings(
-            ["cheese-sync", "cheese-usage"] if sync_on_stop else ["cheese-usage"],
+            ["cheese-sync"] if sync_on_stop else [],
             remote_control=remote_control,
         ),
         ensure_ascii=False,
@@ -515,9 +469,9 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 # Ours to create now that the platform keeps its own files in $HOME/.cheese:
 # this directory is this harness's, and everything below writes into it.
 mkdir -p "$CLAUDE_CONFIG_DIR"
-# cheese-sync and cheese-usage are Stop hooks, and settings.json names them
-# by NAME — so this directory has to be on PATH too. The platform puts its
-# own there later; the two never hold the same name.
+# cheese-sync is a Stop hook, and settings.json names it by NAME — so this
+# directory has to be on PATH too. The platform puts its own there later; the
+# two never hold the same name.
 export PATH="$CLAUDE_CONFIG_DIR:$PATH"
 export DISABLE_AUTOUPDATER=1
 cat > "$CLAUDE_CONFIG_DIR/webfetch_transport.cjs" <<'CHEESE_WEBFETCH'
@@ -554,11 +508,6 @@ cat > "$HOME/.claude/cheese-system-prompt.md" <<'SYSPROMPT'
 cat > "$HOME/.claude/cheese-sync" <<'SYNC'
 {sync_script}SYNC
 chmod +x "$HOME/.claude/cheese-sync"
-cat > "$HOME/.claude/cheese-usage.py" <<'USAGEPY'
-{usage_reader}USAGEPY
-cat > "$HOME/.claude/cheese-usage" <<'USAGE'
-{usage_script}USAGE
-chmod +x "$HOME/.claude/cheese-usage"
 """,
         credentials=f"""\
 # Extract the machine's own ccproxy ticket, READING the owner's files only —
