@@ -48,6 +48,11 @@ services:
       # Set here rather than in backend/.env because the value is a CONTAINER
       # path that only makes sense together with the bind mount below.
       - OPENVIKING_DATA_DIR=/data/viking
+      # Raw Claude session files shipped from device homes before the home is
+      # deleted (topic/retire.py): one tar.gz per place per upload, and the
+      # only copy once the home is gone. A container path like the one above,
+      # paired with the bind mount below.
+      - TRANSCRIPTS_DIR=/data/transcripts
       # Agent containers are siblings spawned through docker.sock, not compose
       # services. Pin them to this deployment's sha so a floating/local alias
       # cannot disappear or drift independently of the backend.
@@ -70,6 +75,9 @@ services:
       # and having it already in place is what makes flipping the backend a
       # one-line env change instead of a deploy edit.
       - ${VIKING_HOST_PATH:-/home/nictheboy/cheese-viking}:/data/viking
+      # The transcript archives (TRANSCRIPTS_DIR above). Mounted so they
+      # outlive the container: nothing else holds them.
+      - ${TRANSCRIPTS_HOST_PATH:-/home/nictheboy/cheese-transcripts}:/data/transcripts
       # The claude binaries the backend serves to machines it enrols. It fetches
       # each version once from the vendor and caches it under connector-dist,
       # which is image content — so every deploy threw the cache away and the

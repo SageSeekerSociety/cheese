@@ -199,6 +199,11 @@ class TaskService:
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
 
+    async def mark_transcripts_archived(self, task_id: uuid.UUID, at: datetime) -> bool:
+        """Stamp the thread with when its device home's transcripts reached
+        the platform (topic/retire.py). False when no thread has this id."""
+        return await self._repo.mark_transcripts_archived(task_id, at)
+
     async def open_thread(
         self,
         *,

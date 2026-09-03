@@ -293,6 +293,13 @@ restore/DR runbook in [`deploy/README-backup.md`](../deploy/README-backup.md).
 - **DB**: hourly `pg_dump -Fc` → verify → off-site to Cloudflare R2 (bucket
   `cheese-db-backups`). Prefixes: `db/` (dev), `prod-db/` (prod), `etrip/`.
 - **Uploads** (prod, local disk): hourly additive mirror to R2 `prod-uploads/`.
+- **Transcripts** (`TRANSCRIPTS_HOST_PATH`, default
+  `/home/nictheboy/cheese-transcripts`, mounted at `/data/transcripts`): the
+  raw Claude session files of every place that ran on a device, one
+  `<project>/<place>/<timestamp>.tar.gz` per upload, shipped there before the
+  device home is deleted (`docs/where-a-turn-runs.md` §八). **Not in any
+  backup job yet** — like the memory tree, that directory IS the data, and it
+  needs its own line if it is to survive a box rebuild.
 - **Monitoring** (code-enforced tripwires): `backup-freshness.yml` (daily, fails
   if last backup > 26h), `box-uptime.yml` (twice hourly at :25/:50, fails when
   the last **two** heartbeats both failed to complete — dev box, prod box, or
@@ -376,8 +383,9 @@ both sides ARE the same uid:
 
 **Ops consequence.** The host bind mounts (`WORKSPACES_HOST_PATH`,
 `UPLOADS_HOST_PATH`, `APPHOME_HOST_PATH` — the last one is the backend's `HOME`,
-where git reads its global config from — and `VIKING_HOST_PATH`, the openviking
-memory tree) hold files written by the pre-2026-08 backend as uid 1001.
+where git reads its global config from — `VIKING_HOST_PATH`, the openviking
+memory tree, and `TRANSCRIPTS_HOST_PATH`, the transcript archives) hold files
+written by the pre-2026-08 backend as uid 1001.
 `deploy/deploy-docker.sh` hands them over once via
 `deploy/fix-workspace-ownership.sh` before the swap —
 idempotent, marker-guarded, and it runs the chown in a throwaway root container

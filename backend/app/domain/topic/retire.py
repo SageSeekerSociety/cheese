@@ -1,4 +1,4 @@
-"""What a finished place leaves on disk, and the two things that take it away.
+"""What a finished place leaves on disk, and the one thing that takes it away.
 
 Archiving a room releases its Cloud machine and settles its cards, and until
 2026-09 left two things behind for good:
@@ -12,21 +12,34 @@ Nothing removed either. Measured on the dev box on 2026-09-03: 373 worktrees
 (141 GB), 118 of them for archived topics and 219 for topics no longer in the
 database at all; 162 homes (162 GB), 46 archived and 85 unknown.
 
-Two mechanisms, because archive cannot always reach:
-
-`retire_room_storage` / `retire_thread_storage` run at archive time, from
-`TopicService`, after the Cloud machine is released. Best-effort by design —
+Archive itself still removes neither. `retire_room_storage` /
+`retire_thread_storage` run at archive time, from `TopicService`, and only
+close the place's screen on its device: an archive is reversible
+(`POST /{topic_id}/unarchive`), and for `topic_home_retention_days` the
+worktree and the home stay so that the work comes back with its session intact
+rather than from an empty checkout of the branch. Best-effort by design —
 nothing here may fail an archive, which is a fact about the place and not about
-its disk — and every outcome is one INFO line: removed, or left and why.
+its machine.
 
-`sweep_retired_storage` runs on a clock (scheduler/jobs.py) over what archive
-could not reach: the device was offline, the process died mid-archive, the
-topic was deleted outright, or the place predates archive removing anything.
-It walks this box's worktrees and every online device's homes, resolves each
-entry to a place, and removes what belongs to nothing or to something archived
-longer ago than `topic_home_retention_days`. The retention is the un-archive
-window: inside it the work comes back with its session intact, past it from an
-empty checkout of the branch.
+`sweep_retired_storage` runs on a clock (scheduler/jobs.py). It walks this
+box's worktrees and every online device's homes, resolves each entry to a
+place, and removes what belongs to nothing — at once — or to something archived
+longer ago than the retention. A leftover that resolves to no row is an orphan:
+the topic was deleted outright, or the directory predates the database knowing
+about it. Every removal and every keep is one log line with its reason.
+
+A home is stored before it is deleted. It holds the only copy of the agent's
+raw session files (`.claude/projects/**/*.jsonl` — the room's conversation is
+in `blocks`, that is not), so `_remove_home` first has the device ship
+`.claude/projects` and `.claude/todos` to the platform
+(`PUT /connector/transcripts/<project>/<place>`, stored under
+`settings.transcripts_dir`, see topic/transcripts.py), records the upload on
+the place as `transcripts_archived_at`, and only on a 2xx runs the `rm`. Any
+other answer leaves the home where it is with one WARN line, and the sweep
+tries again next tick. A home that never ran a session has nothing to keep and
+goes without an upload; so does a home whose project row is gone — there is no
+project to file its transcripts under and nobody left who could read them —
+with one WARN line saying so.
 
 The branch is never touched. Its commits are the record; the directory was only
 a checkout of them plus uncommitted work, which an archive abandons by definition.
@@ -43,6 +56,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.device.wiring import sql_device_service
+from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, WorkTreeService
 from app.domain.topic.models import Topic
@@ -55,26 +69,27 @@ logger = logging.getLogger("cheesex.topic.retire")
 # ---- at archive time --------------------------------------------------------
 
 
-async def retire_room_storage(session: AsyncSession, room: Topic) -> None:
-    """Everything on disk that was only ever this room's: every tree it wrote
-    to, then its home on the device that ran it."""
-    tree_ids = {tree.id for tree in await WorkTreeService(session).history(room.id)}
-    # A room's first tree carries the room's own id, and a room from before
-    # trees had rows (or that never took work) has only that directory — so the
-    # room's own name is always one of them, whatever the table says.
-    tree_ids |= {room.id, ws.tree_for_place(room.id)}
-    for tree_id in sorted(tree_ids, key=str):
-        await _retire_worktree(
-            room.project_id,
-            ws.tree_worktree_path(room.project_id, tree_id),
-            reason=f"room {room.id} archived",
-        )
-    await _retire_home(session, room.project_id, room.id)
+async def retire_room_storage(room: Topic) -> None:
+    """Stop the room's session on its device. Nothing comes off disk here: its
+    trees and its home stay for the retention, so that an un-archive picks the
+    work back up with the session intact, and the sweep takes them after."""
+    await _release_screen(room.project_id, room.id)
 
 
-async def retire_thread_storage(session: AsyncSession, thread: Task) -> None:
-    """A thread writes to its room's tree, so only its own home is its to lose."""
-    await _retire_home(session, thread.project_id, thread.id)
+async def retire_thread_storage(thread: Task) -> None:
+    """A thread has its own screen and home; the tree it wrote to is its room's."""
+    await _release_screen(thread.project_id, thread.id)
+
+
+async def _release_screen(project_id: uuid.UUID, place_id: uuid.UUID) -> None:
+    from app.domain.agent.device_provider import release_topic_screen
+
+    # Best-effort and idempotent on its side: a place that never ran on a device
+    # has no screen to close, and a device that is offline has nothing to answer.
+    try:
+        await release_topic_screen(project_id, place_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("retire: place=%s screen not released", place_id, exc_info=True)
 
 
 async def _retire_worktree(project_id: uuid.UUID, wt: Path, *, reason: str) -> bool:
@@ -96,37 +111,21 @@ async def _retire_worktree(project_id: uuid.UUID, wt: Path, *, reason: str) -> b
     return gone
 
 
-async def _retire_home(
-    session: AsyncSession, project_id: uuid.UUID, place_id: uuid.UUID
-) -> None:
-    from app.domain.agent.device_provider import release_topic_screen
-
-    # Close the screen first, so the device's claude is not holding the home
-    # while it is deleted — and the clone under its work dir goes with it.
-    # Best-effort and idempotent on its side; a place that never ran on a device
-    # has no screen to close.
-    try:
-        await release_topic_screen(project_id, place_id)
-    except Exception:  # noqa: BLE001
-        logger.warning("retire: place=%s screen not released", place_id, exc_info=True)
-    # The pin is where a place's turns ran, and it is read AFTER the Cloud
-    # release on purpose: a Cloud topic's pin is dropped with its machine, and
-    # its home dies with the VM — only a self-hosted device is left to clean.
-    binding = await sql_device_service(session).topic_binding(place_id)
-    if binding is None:
-        logger.info(
-            "retire: home=%s/%s outcome=skipped reason=no device pin "
-            "(Cloud machine released, or never ran on a device)",
-            project_id,
-            place_id,
-        )
-        return
-    await _remove_home(project_id, place_id, binding.device_id, reason="archived")
-
-
 async def _remove_home(
-    project_id: uuid.UUID, place_id: uuid.UUID, device_id: str, *, reason: str
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    place_id: uuid.UUID,
+    device_id: str,
+    *,
+    reason: str,
+    store_transcripts: bool = True,
 ) -> bool:
+    """Store the home's transcripts on the platform, then delete it. Only a
+    stored home — or one with nothing to store — is deleted; anything short of
+    that leaves it in place for the sweep to try again. ``store_transcripts``
+    is False for a home whose project row is gone: nothing to file them under,
+    nobody left who could read them, so the home goes unstored — said once, at
+    WARN, since it is the one deletion here that loses a record."""
     from app.domain.agent.device_hub import DeviceOffline, device_hub
     from app.domain.agent.device_provider import remove_device_home
 
@@ -140,6 +139,17 @@ async def _remove_home(
         )
         return False
     try:
+        if store_transcripts:
+            if not await _store_transcripts(session, project_id, place_id, device_id):
+                return False
+        else:
+            logger.warning(
+                "retire: home=%s/%s device=%s transcripts=dropped reason=project "
+                "gone, no project to file them under and nobody left to read them",
+                project_id,
+                place_id,
+                device_id,
+            )
         await remove_device_home(device_id, project_id, place_id)
     except DeviceOffline:
         logger.info(
@@ -175,6 +185,59 @@ async def _remove_home(
         reason,
     )
     return True
+
+
+async def _store_transcripts(
+    session: AsyncSession, project_id: uuid.UUID, place_id: uuid.UUID, device_id: str
+) -> bool:
+    """Have the device ship the home's transcripts and note it on the place.
+    False — after a WARN — when the device row is gone and there is nothing to
+    authenticate the upload as; an upload the device ran and that did not go
+    through raises, like the ``rm`` does, and the caller logs it the same way."""
+    from app.domain.agent.device_provider import upload_device_transcripts
+
+    # The upload authenticates as the device, with the credential the device
+    # already holds; it is read here rather than off the machine because the
+    # exec frame is the one place the platform can hand the command its env.
+    device = await sql_device_service(session).get_device(device_id)
+    if device is None:
+        logger.warning(
+            "retire: home=%s/%s device=%s outcome=left reason=device row gone, "
+            "nothing to upload the transcripts as",
+            project_id,
+            place_id,
+            device_id,
+        )
+        return False
+    outcome, receipt = await upload_device_transcripts(
+        device_id, project_id, place_id, token=device.token
+    )
+    if outcome == "uploaded" and not await _record_transcripts_archived(
+        session, place_id
+    ):
+        outcome = "uploaded (no place row to record it on)"
+    logger.info(
+        "retire: home=%s/%s device=%s transcripts=%s%s",
+        project_id,
+        place_id,
+        device_id,
+        outcome,
+        f" receipt={receipt}" if receipt else "",
+    )
+    return True
+
+
+async def _record_transcripts_archived(
+    session: AsyncSession, place_id: uuid.UUID
+) -> bool:
+    """Stamp the place — a room, or a thread in one — with when its transcripts
+    reached the platform. False when no row has this id (the home of a deleted
+    place: its archive is on disk all the same, there is just nothing to note
+    it on)."""
+    now = datetime.now(UTC)
+    if await TopicRepository(session).mark_transcripts_archived(place_id, now):
+        return True
+    return await TaskService(session).mark_transcripts_archived(place_id, now)
 
 
 # ---- on a clock -------------------------------------------------------------
@@ -283,9 +346,25 @@ async def _sweep_homes(
                         reason,
                     )
                     continue
+                # The transcripts are filed under the project. A home whose
+                # project row is gone has nowhere to file them and nobody who
+                # could ever read them, so it goes unstored.
+                project_gone = await ProjectService(session).get(project_id) is None
+                # An archived place had its screen closed at archive time; an
+                # orphan may still be running one, and its claude must not be
+                # holding the home while it is deleted.
+                await _release_screen(project_id, place_id)
                 gone = await _remove_home(
-                    project_id, place_id, device_id, reason=reason
+                    session,
+                    project_id,
+                    place_id,
+                    device_id,
+                    reason=reason,
+                    store_transcripts=not project_gone,
                 )
+                # Per home, not per device: a `transcripts_archived_at` stamp
+                # must not be lost to a later home's failure on the same tick.
+                await session.commit()
                 counts["homes_removed" if gone else "homes_left"] += 1
 
 
