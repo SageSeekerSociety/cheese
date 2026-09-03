@@ -119,12 +119,14 @@ def _notification_item() -> str:
     return json.dumps({"recipientId": 7, "type": "mention"})
 
 
-async def _drain(monkeypatch, *, send_result, retry=0, start_in_processing=False):
+async def _drain(
+    monkeypatch, *, send_result, retry=0, start_in_processing=False, item=None
+):
     from app.core.config import settings
     from app.domain.notification import maintenance
 
     queue_key = settings.notification_email_queue_key
-    payload = json.loads(_notification_item())
+    payload = json.loads(item or _notification_item())
     if retry:
         payload["_emailRetry"] = retry
     redis = FakeRedis(queue_key, json.dumps(payload))
@@ -201,3 +203,65 @@ async def test_item_claimed_by_a_crashed_consumer_is_recovered(monkeypatch):
     assert result["processed"] == 1
     assert redis.lists[queue_key] == []
     assert redis.lists[f"{queue_key}:processing"] == []
+
+
+# --- what the recipient actually receives -----------------------------------
+#
+# The queue above is careful about not losing mail. These are about the mail
+# itself: it was a hardcoded line ("You have a new notification: MENTION") with
+# no content, no link and no language the recipient reads, and until #650 wired
+# this job up nobody had ever received one, so nobody had seen it.
+
+
+@pytest.mark.anyio
+async def test_the_email_says_what_happened_and_where_to_go(monkeypatch):
+    _result, _redis, sender = await _drain(
+        monkeypatch,
+        send_result=True,
+        item=json.dumps(
+            {
+                "recipientId": 7,
+                "type": "MENTION",
+                "payload": {"content": "这段能不能再看一眼"},
+            }
+        ),
+    )
+    kwargs = sender.send.await_args.kwargs
+    # 收件人是在自己的邮箱里读到它的，那里没有任何上下文。
+    assert "提到了你" in kwargs["subject"]
+    assert "这段能不能再看一眼" in kwargs["body_html"]
+    # 而且要回得来：一封说了有事发生却不告诉你去哪看的信，等于没说。
+    assert "href=" in kwargs["body_html"]
+
+
+@pytest.mark.anyio
+async def test_the_email_escapes_what_other_people_wrote(monkeypatch):
+    """`payload` 装的是别人写的字，而这段 HTML 会落进某个人的邮件客户端。"""
+    _result, _redis, sender = await _drain(
+        monkeypatch,
+        send_result=True,
+        item=json.dumps(
+            {
+                "recipientId": 7,
+                "type": "REPLY",
+                "payload": {"content": "<script>alert(1)</script>"},
+            }
+        ),
+    )
+    body = sender.send.await_args.kwargs["body_html"]
+    assert "<script>" not in body
+    assert "&lt;script&gt;" in body
+
+
+@pytest.mark.anyio
+async def test_an_aggregated_email_says_it_stands_for_a_batch(monkeypatch):
+    """聚合窗口收口发出的那一条代表的是一批。不说明的话，收件人会以为平台把
+    其余几十条弄丢了。"""
+    _result, _redis, sender = await _drain(
+        monkeypatch,
+        send_result=True,
+        item=json.dumps(
+            {"recipientId": 7, "type": "REACTION", "payload": {}, "finalized": True}
+        ),
+    )
+    assert "合并成了一条" in sender.send.await_args.kwargs["subject"]

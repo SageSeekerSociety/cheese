@@ -355,3 +355,28 @@ def test_histogram_custom_buckets_respected():
     h = registry.histogram("custom_hist", buckets=custom)
 
     assert h.buckets == custom
+
+
+@pytest.mark.anyio
+async def test_the_deadline_sweep_leaves_work_that_was_handed_in():
+    """截止时间是交东西的最后一刻，而处在「待审」的人已经交了；没发生的是审核。
+    判他失败，等于因为一个他控制不了的队列惩罚他。系统别处对这一点是一致的：
+    `analytics_view_service` 把 PENDING_REVIEW 和 SUCCESS、FAILED 一起算作已提交，
+    而不是算作进行中。
+    """
+    from app.domain.task.deadline_scheduler import check_and_fail_expired_deadlines
+
+    seen: list[str] = []
+
+    async def fake_execute(statement):
+        seen.append(str(statement.compile(compile_kwargs={"literal_binds": True})))
+        return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: []))
+
+    session = SimpleNamespace(execute=fake_execute, commit=AsyncMock())
+    await check_and_fail_expired_deadlines(session)
+
+    sql = seen[0]
+    # 这两种是真的什么都没交：从没提交，或者被打回之后没有重交。
+    assert "NOT_SUBMITTED" in sql
+    assert "REJECTED_RESUBMITTABLE" in sql
+    assert "PENDING_REVIEW" not in sql
