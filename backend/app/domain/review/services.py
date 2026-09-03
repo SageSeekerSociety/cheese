@@ -238,7 +238,6 @@ _GREEN_CHECK_CONCLUSIONS = frozenset({"success", "neutral", "skipped"})
 CHECKS_GREEN: Final = "green"
 CHECKS_RED: Final = "red"
 CHECKS_RUNNING: Final = "running"
-CHECKS_NONE: Final = "none"
 CHECKS_UNREADABLE: Final = "unreadable"
 
 
@@ -246,14 +245,16 @@ CHECKS_UNREADABLE: Final = "unreadable"
 class _ChecksVerdict:
     """forge 此刻的结论，加上给人看的那一句。
 
-    `mergeable` 是平台合不合的唯一判据：检查全绿，或者这个仓库压根没有检查。"""
+    `mergeable` 是平台合不合的唯一判据，而它只有一个答案：检查全绿。
+
+    「这个仓库压根没有检查」曾经也算，那是错的，见 `_read_checks`。"""
 
     state: str
     line: str
 
     @property
     def mergeable(self) -> bool:
-        return self.state in (CHECKS_GREEN, CHECKS_NONE)
+        return self.state == CHECKS_GREEN
 
 
 def _read_checks(checks: list[dict] | None) -> _ChecksVerdict:
@@ -261,7 +262,18 @@ def _read_checks(checks: list[dict] | None) -> _ChecksVerdict:
     if checks is None:
         return _ChecksVerdict(CHECKS_UNREADABLE, "未能读取 CI 检查状态")
     if not checks:
-        return _ChecksVerdict(CHECKS_NONE, "该 PR 没有任何 CI 检查")
+        # 空不等于「这个仓库没有 CI」，在这里尤其不等于：唯一的调用者
+        # `_accept_via_pr` 是在**刚推完话题分支**之后几毫秒读的，而 GitHub 那时
+        # 还没来得及给这个 commit 建任何 check-run。把空读成「没有 CI」，就等于
+        # 恰好把一个没测过的 commit 直接合了，卡上还留一句「该 PR 没有任何 CI
+        # 检查」当证据。
+        #
+        # 这两种情况在这一刻分不开，而分开它们需要 check-suites 加一段跨轮的宽限
+        # 期（`github_pr.py` 的 `_resolve_zero_checks`，默认 120 秒）。采纳是一次
+        # 性的，没有下一轮可等，所以这里不下结论：判成「还在跑」，卡停到
+        # `pr_open` 交给轮询器，那边有宽限期，真没有 CI 的仓库会在 120 秒后被它
+        # 放行。代价是没有 CI 的仓库采纳时不再当场合并，和 App 那条路径一致。
+        return _ChecksVerdict(CHECKS_RUNNING, "检查还没出现（刚推完，等 forge 建）")
     not_green = [
         c
         for c in checks
@@ -3317,8 +3329,13 @@ class AcceptService:
         right before merging, the PR's check-runs are read once, and a verdict
         that is not green STOPS the merge — the card goes to `pr_open` and
         waits (`_hold_pr_for_checks`) instead of landing a change the forge
-        has not passed. Green, or a repository with no checks at all, merges
-        here and now.
+        has not passed. Only green merges here and now.
+
+        Reading zero check-runs is NOT a repository without CI: this read
+        happens moments after the topic branch was pushed, before GitHub has
+        created anything for that commit. It is treated as "still running" and
+        handed to the poller, which owns the check-suites grace period that can
+        actually tell the two apart.
 
         A 405 from the merge API is translated faithfully: a genuine conflict
         goes to the conflict flow (芝士 dispatched to resolve), anything else

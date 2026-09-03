@@ -768,10 +768,22 @@ def test_a_pr_whose_checks_are_still_running_is_waited_for(client, pr_world):
     assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"
 
 
-def test_a_repo_with_no_checks_is_accepted_exactly_as_before(client, pr_world):
-    """没配 CI 的仓库不受这道闸影响：没有检查就没有红，采纳纯粹是人的判断
-    (#363)。但「这次合并没有任何检查把关」要写在卡上——#362 的四层静默失效里，
-    最后一层就是事后没人说得出这句话。"""
+def test_zero_checks_waits_for_the_poller_instead_of_merging_blind(client, pr_world):
+    """读到零个 check-run 时，这里不再当场判定「这个仓库没有 CI」。
+
+    这条路径是在**刚推完话题分支**之后几毫秒读的，那一刻 GitHub 还没给这个 commit
+    建任何 check-run，所以「没配 CI」和「还没建出来」长得一模一样。原来把它读成
+    前者，于是恰好在最该拦的场景里放行：把一个没测过的 commit 合了，卡上还留一句
+    「该 PR 没有任何 CI 检查」当证据。App 那条路径为同一个姿态付过代价，PR #414
+    在打开 25 秒后被合并，比它最后一个检查完成早了 16 分钟。
+
+    分开这两种情况要靠 check-suites 加一段跨轮的宽限期，而采纳是一次性的，没有
+    下一轮可等。所以判成「还在跑」，交给有宽限期的轮询器。
+
+    这确实改了 #363 的行为：没配 CI 的仓库不再当场合并。它仍然会被采纳，只是由
+    轮询在宽限期结束、确认真的没有任何 workflow 会触发之后放行。用一次一百多秒的
+    等待，换掉一个会把未测代码合进主分支的读法。
+    """
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid)
@@ -781,9 +793,10 @@ def test_a_repo_with_no_checks_is_accepted_exactly_as_before(client, pr_world):
     r = _accept(client, cid)
     assert r.status_code == 200
     card = r.json()["data"]
-    assert card["status"] == "accepted"
-    assert _merged(_FakeClient.calls) != []
-    assert "没有任何 CI 检查" in card["note"]
+    assert card["status"] == "pr_open"
+    assert _merged(_FakeClient.calls) == []
+    assert pr_world["local_merges"] == []
+    assert "还没出现" in card["note"]
 
 
 def test_an_unreadable_verdict_is_not_taken_for_green(client, pr_world):
