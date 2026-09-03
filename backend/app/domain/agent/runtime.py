@@ -2208,6 +2208,12 @@ class AgentWorkRunner:
                     "persisted": False,
                 },
             )
+            # Ends the stream, for the reason spelled out on the timeout path.
+            # `turn_finished` does not cover this: `_run` publishes it only when
+            # `lifecycle["started"]` is set, and a turn the sweep tears down
+            # before its first frame never announced itself, so a subscriber
+            # would be left reading until its own timeout.
+            await self._broker.publish(channel, {"type": "done"})
             # The on-disk registry entry is deliberately left alone: whoever
             # cancelled us owns it (the sweep already claimed it; a shutdown
             # wants startup to find and resume it).
