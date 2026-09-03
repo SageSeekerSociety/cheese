@@ -269,10 +269,52 @@ Two things to know before flipping it:
   chat call (OpenViking's extractor) plus embedding calls. A key that only
   works on the embedding endpoint gets you a backend that stores nothing.
 
+#### Checking that it actually came up
+
+A wrong key does not raise anything. Extraction runs in a background task
+inside OpenViking and the read path returns empty on error, so a rejected key
+looks *exactly* like the db backend: no memories, no complaint. So the backend
+calls both endpoints itself at boot and reports what happened. Two places to
+look, in this order:
+
+1. **The container log, right after the redeploy.** On success:
+
+   ```
+   memory: openviking model endpoints answered — embedding at …, chat at …
+   ```
+
+   On failure it is an `ERROR` line naming the endpoint, the HTTP status, the
+   vendor's own message, and — the part that usually is the answer — *which
+   setting the key came from*. `key from anthropic_auth_token` means the
+   openviking keys were never set and it fell back to the agent gateway's
+   token, which these endpoints will always reject.
+
+2. **`/health/detailed`, any time after.** `checks.memory` carries the same
+   verdict, per endpoint, with a `checked_at`; it is re-probed in the
+   background every 5 minutes, so a key that expires later shows up here too.
+
+   ```bash
+   docker exec cheese-backend-1 curl -s localhost:8081/health/detailed \
+     | jq .checks.memory
+   ```
+
+A failing memory check makes `/health/detailed` report `degraded`, and that is
+all it does: it does **not** 503 `/readyz` and does **not** touch `/healthz`,
+which is the container health check and therefore the deploy's rollback gate.
+Turning "the model vendor is having a bad afternoon" into a rolled-back release
+would cost more than the silence this check exists to break.
+
+One more thing the probe catches that a key test would not: it compares the
+width of the vector it gets back against `OPENVIKING_EMBEDDING_DIMENSION`.
+OpenViking does not ask the endpoint for a specific width, so a model whose
+native width differs from the configured one gives you a working key and a
+broken index.
+
 `backend/tests/integration/test_openviking_fake_endpoint.py` exercises this
 whole path against a local stand-in endpoint, so the wiring is verifiable
 without a key — but it says nothing about extraction quality, which is exactly
-what the real key is for.
+what the real key is for. The self-check has its own key-less coverage in
+`backend/tests/integration/test_memory_endpoint_probe.py`.
 
 ## Backups
 
