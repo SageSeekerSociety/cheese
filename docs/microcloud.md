@@ -32,10 +32,16 @@ then go to `CloudWakeup`, which delivers the message the room has been holding. 
 connector route also wakes the topic the moment the device attaches, so the room does not
 wait for the next tick.
 
-Timings on dev (2026-09-02, LXC offering, MicroCloud 0.4.1): message → 「机器正在创建」
-1 s; running at about +105 s; AI channel ready about 10 s later; enrolled and replying at
-2 m 31 s to 2 m 43 s. A VM offering was 161 s to running. Almost all of it is MicroCloud's
-provisioning; cheese's own steps are a few seconds.
+Timings on dev, MicroCloud main after micro-cloud#82 and #83 (2026-09-03): an LXC machine is
+`running` 44 s after the create call and its AI channel `ready` at 52 s; a VM is `running` at
+56 s and `ready` at 65 s. Of the LXC's 44 s about 37 are Proxmox extracting the 405 MB template
+onto its thin pool, 4 boot, 3 the init script. Before #83 every machine also downloaded Claude
+Code from claude.ai during init (49 s); the template carries the binary now and init copies it.
+On top of that, cheese's sweep notices the ready lease within 10 s, enrolment takes a few
+seconds, and the first turn's own model latency was about 22 s to the first tool call, so a
+Cloud topic's first reply lands roughly 1½ minutes after the message (2 m 31 s to 2 m 43 s on
+2026-09-02, before #83). The next lever on MicroCloud's side is cloning a base container
+instead of extracting the template per machine.
 
 ## Two machine states, not one
 
@@ -104,14 +110,16 @@ that was run end to end for 0.4.1 (2026-09-02).
    Flutter web: through web-plane (profile `main`, lane `microteams`), enable semantics
    with `eval "document.querySelector('flt-semantics-placeholder').click()"` before the
    first `snapshot`.
-5. **LXC machines do not pick up a template change from a bundle.** An LXC machine runs
-   the `init-machine.py` **baked into the rootfs template on Proxmox** (pve119,
-   `local:vztmpl/debian13.tar.zst`), while a VM gets the script piped from the deployed
-   bundle. A change under `templates/lxc/` therefore needs the template rebuilt
-   (`templates/lxc/debian13/build.py`) and re-uploaded
-   (`POST /machine/template/<id>/upload {placementId}`). Proxmox refuses to overwrite, so
-   the old file has to be moved away first by root on pve119; the ops agent's token is
-   scoped to the cheese-dev pool and cannot do that.
+5. **Templates do not follow the bundle by themselves.** An LXC machine runs the
+   `init-machine.py` **baked into the rootfs template on Proxmox** (pve119,
+   `local:vztmpl/debian13.tar.zst`), and since micro-cloud#83 both templates also carry the
+   Claude Code binary, so a change under `templates/` needs the LXC template re-uploaded
+   (CI builds it on every push to `main` and nightly; the ops agent uploads with
+   `POST /machine/template/<id>/upload {placementId}`) and the VM template re-baked (the
+   agent does that from the console, about four minutes). Proxmox refuses to overwrite the
+   LXC file, so the old one has to be moved away first by root on pve119 (into a dated
+   `cache.bak-*` directory next to it); the ops agent's token is scoped to the cheese-dev
+   pool and cannot do that.
 6. **Verify on dev**, then **bump and release.** Once the change has run stably: bump the
    patch version with `scripts/version.sh <x.y.z>`, PR, merge, hand that bundle to the ops
    agent the same way, then
